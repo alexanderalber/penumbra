@@ -51,7 +51,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .clamp(0.0, 1e7)
                     .range(0.0, 60.0)
                     .unit(Unit::Seconds)
-                    .rarely_used()
+                    .more()
                     .doc("Where playback begins when the file is (re)loaded"),
             )
             .output("out", DataKind::Tex)

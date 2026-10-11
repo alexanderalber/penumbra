@@ -121,7 +121,7 @@ fn core_builtins() -> Vec<Builtin> {
             .param(
                 ParamSpec::float("lacunarity", 2.0)
                     .range(1.0, 4.0)
-                    .rarely_used()
+                    .more()
                     .doc("Frequency from one octave to the next"),
             )
             .param(ParamSpec::float("amplitude", 0.5).range(0.0, 2.0))
@@ -131,9 +131,9 @@ fn core_builtins() -> Vec<Builtin> {
                     .range(0.0, 4.0)
                     .doc("Movement through the noise per second; 0 is still"),
             )
-            .param(ParamSpec::vec3("translate", [0.0; 3]).rarely_used().doc("Position in the noise"))
+            .param(ParamSpec::vec3("translate", [0.0; 3]).more().doc("Position in the noise"))
             .param(ParamSpec::bool("color", false).doc("Three independent channels instead of grey"))
-            .param(ParamSpec::float("alpha", 1.0).clamp(0.0, 1.0).rarely_used()),
+            .param(ParamSpec::float("alpha", 1.0).clamp(0.0, 1.0).more()),
             source: include_str!("noise.wgsl"),
             size: Size::Params,
             animated: Some(|cx| cx.float("speed").is_ok_and(|s| s != 0.0)),
@@ -154,9 +154,7 @@ fn core_builtins() -> Vec<Builtin> {
                     .doc("Counter-clockwise"),
             )
             .param(ParamSpec::vec2("scale", [1.0; 2]).range(0.0, 4.0))
-            .param(
-                ParamSpec::vec2("pivot", [0.5; 2]).range(0.0, 1.0).rarely_used().doc("0, 0 is the top left"),
-            )
+            .param(ParamSpec::vec2("pivot", [0.5; 2]).range(0.0, 1.0).more().doc("0, 0 is the top left"))
             .param(ParamSpec::choice("extend", &EXTEND).doc("Outside the input"))
             .input("in", DataKind::Tex)
             .output("out", DataKind::Tex),
@@ -205,10 +203,10 @@ fn core_builtins() -> Vec<Builtin> {
             )
             .param(
                 ParamSpec::choice("space", &["perceptual", "linear"])
-                    .rarely_used()
+                    .more()
                     .doc("Where the levels are evenly spaced: to the eye (sRGB curve) or in linear light"),
             )
-            .param(ParamSpec::bool("alpha", false).rarely_used().doc("Quantize alpha too"))
+            .param(ParamSpec::bool("alpha", false).more().doc("Quantize alpha too"))
             .input("in", DataKind::Tex)
             .output("out", DataKind::Tex),
             source: include_str!("quantize.wgsl"),
@@ -281,7 +279,7 @@ fn sized(desc: NodeDesc) -> NodeDesc {
 pub const KEEP_SIZE: &str = "keep_size";
 
 fn keep_size() -> ParamSpec {
-    ParamSpec::bool(KEEP_SIZE, false).rarely_used().doc(
+    ParamSpec::bool(KEEP_SIZE, false).more().doc(
         "res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look)",
     )
 }

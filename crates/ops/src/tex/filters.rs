@@ -24,11 +24,10 @@ fn own_size(cx: &CookContext<'_>, _input: (u32, u32)) -> Result<(u32, u32), Cook
     Ok((side(cx, "width")?, side(cx, "height")?))
 }
 
-fn size_params(desc: NodeDesc, rarely: bool) -> NodeDesc {
+fn size_params(desc: NodeDesc, more: bool) -> NodeDesc {
     let w = ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels);
     let h = ParamSpec::int("height", 1080).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels);
-    let desc =
-        if rarely { desc.param(w.rarely_used()).param(h.rarely_used()) } else { desc.param(w).param(h) };
+    let desc = if more { desc.param(w.more()).param(h.more()) } else { desc.param(w).param(h) };
     desc.param(super::keep_size())
 }
 
@@ -106,7 +105,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 .param(
                     ParamSpec::vec4("bias", [0.0; 4])
                         .range(-1.0, 1.0)
-                        .rarely_used()
+                        .more()
                         .doc("Added to r, g, b, a afterwards"),
                 ),
             include_str!("channel_mix.wgsl"),
@@ -164,7 +163,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                         .doc("Push for a map value 1 above the midpoint, in image sizes"),
                 )
                 .param(ParamSpec::float("midpoint", 0.5).range(0.0, 1.0).doc("Map value that does not push"))
-                .param(ParamSpec::choice("extend", &EXTEND).rarely_used().doc("Outside the input"))
+                .param(ParamSpec::choice("extend", &EXTEND).more().doc("Outside the input"))
                 .input("in", DataKind::Tex)
                 .input("map", DataKind::Tex)
                 .output("out", DataKind::Tex),
@@ -227,7 +226,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 .param(
                     ParamSpec::vec2("center", [0.5, 0.5])
                         .range(0.0, 1.0)
-                        .rarely_used()
+                        .more()
                         .doc("Optical centre; 0, 0 is the top left"),
                 )
                 .param(choice_default("extend", &EXTEND, "zero").doc("Outside the input")),
@@ -383,9 +382,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                         ParamSpec::vec2("repeat", [2.0, 2.0]).range(1.0, 16.0).doc("Copies across and down"),
                     )
                     .param(ParamSpec::bool("mirror", false).doc("Every other copy mirrored, so edges meet"))
-                    .param(
-                        ParamSpec::vec2("offset", [0.0, 0.0]).range(-1.0, 1.0).rarely_used().doc("In tiles"),
-                    ),
+                    .param(ParamSpec::vec2("offset", [0.0, 0.0]).range(-1.0, 1.0).more().doc("In tiles")),
                 include_str!("tile.wgsl"),
             )
         },

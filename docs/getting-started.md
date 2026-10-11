@@ -36,7 +36,8 @@ else runs without it.
   input. The colour of a node's header is its family, the colour of a wire the kind of data it
   carries (see [Concepts](concepts.md)).
 - **Parameters** (top right): the selected node's name, kind, a one-line summary, the lock, its
-  cook time, and its params. Rarely used params are folded away under "more".
+  cook time, and its params. Params that belong together sit in folded sections, the rarely
+  used ones under "more".
 - **Viewer** (middle right): the selected node's output, or the node pinned with `pin`.
   `window` shows it in a window of its own (on a second monitor, say). A node with several
   outputs gets a button per output.

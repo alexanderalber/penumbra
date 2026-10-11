@@ -301,19 +301,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let desc = crate::view::params(desc).param(ParamSpec::choice("surface", &SURFACES).doc(
         "auto: the texture input where connected, else the file's materials; parts: a colour per part id",
     ));
-    let desc = crate::view::more_params(desc)
-        .param(ParamSpec::color("background", [0.0; 4]).rarely_used())
+    let desc = crate::view::more_params(desc, "camera")
+        .param(ParamSpec::color("background", [0.0; 4]).more())
         .param(
             ParamSpec::bool("cull", false)
-                .rarely_used()
+                .more()
                 .doc("Leave out faces turned away (counter-clockwise is the front)"),
         )
-        .param(ParamSpec::bool("antialias", true).rarely_used().doc("Four samples per pixel"))
+        .param(ParamSpec::bool("antialias", true).more().doc("Four samples per pixel"))
         .param(
             ParamSpec::int("shadow_size", 2048)
                 .clamp(64.0, 8192.0)
                 .range(256.0, 4096.0)
-                .rarely_used()
+                .more()
                 .doc("Texels across each light's shadow map: sharper shadows, more memory"),
         );
     types.register(FnNodeType::new(desc, || Box::new(Render::default()) as Box<dyn Operator>))

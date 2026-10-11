@@ -45,7 +45,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 ParamSpec::node("node")
                     .doc("Path of the node (/name), or the name of a node beside this one"),
             )
-            .param(ParamSpec::int("output", 0).clamp(0.0, 63.0).rarely_used().doc("Which of its outputs"))
+            .param(ParamSpec::int("output", 0).clamp(0.0, 63.0).more().doc("Which of its outputs"))
             .output("out", DataKind::Tex),
         || Box::new(Select) as Box<dyn Operator>,
     ))?;
@@ -58,7 +58,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(ParamSpec::bool("reset", false).doc("Pass `initial` instead, while on"))
         .param(
             ParamSpec::bool("persist", true)
-                .rarely_used()
+                .more()
                 .doc("Keep the loop's last frame in the state snapshots, so a restart carries on from it"),
         )
         .input("initial", DataKind::Tex)

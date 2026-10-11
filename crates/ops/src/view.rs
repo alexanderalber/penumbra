@@ -144,38 +144,41 @@ pub fn params(desc: NodeDesc) -> NodeDesc {
     )
 }
 
-/// The camera's rarely used params: `shift`, `camera`, `near`, `far`.
-pub fn more_params(desc: NodeDesc) -> NodeDesc {
+/// The camera's rarely used params, in `group`: `shift`, `camera`, `near`, `far`.
+pub fn more_params(desc: NodeDesc, group: &str) -> NodeDesc {
     desc.param(
         ParamSpec::vec2("shift", [0.0; 2])
             .range(-1.0, 1.0)
-            .rarely_used()
+            .group(group)
             .doc("Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height"),
     )
-    .param(ParamSpec::text("camera", "").rarely_used().doc(
+    .param(ParamSpec::text("camera", "").group(group).doc(
         "A calibrated camera as JSON (calib.solve's `camera`); replaces position, target, fov, roll and shift",
     ))
     .param(
         ParamSpec::float("near", 0.05)
             .clamp(1e-4, 1e4)
             .curve(Curve::Log)
-            .rarely_used()
+            .group(group)
             .doc("Nearest distance drawn"),
     )
     .param(
         ParamSpec::float("far", 100.0)
             .clamp(1e-3, 1e6)
             .curve(Curve::Log)
-            .rarely_used()
+            .group(group)
             .doc("Farthest distance drawn"),
     )
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    let desc = more_params(params(NodeDesc::new(
-        CAMERA,
-        "A camera: where it is, what it looks at, its lens; for tex.render's camera input",
-    )))
+    let desc = more_params(
+        params(NodeDesc::new(
+            CAMERA,
+            "A camera: where it is, what it looks at, its lens; for tex.render's camera input",
+        )),
+        penumbra_core::MORE,
+    )
     .output("out", DataKind::View);
     types.register(FnNodeType::new(desc, || Box::new(CameraNode) as Box<dyn Operator>))
 }

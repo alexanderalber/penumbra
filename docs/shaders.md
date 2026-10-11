@@ -54,6 +54,16 @@ Examples:
 // @param mode choice(add|multiply|screen) = multiply
 ```
 
+`// @group <name>` puts the params declared after it in a section of that name, folded away
+until opened; `// @group` alone goes back to the main rows:
+
+```wgsl
+// @param scale float = 4 1..32
+// @group detail
+// @param warp float = 0 0..1
+// @param grain float = 0 0..1
+```
+
 `// @density 0.5` tells the [resolution analysis](helpers.md#resolution) how much input
 resolution the shader needs per unit of its output's: 1 by default, 2 when it magnifies by 2,
 0.5 when it shrinks.

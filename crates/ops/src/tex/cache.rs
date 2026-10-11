@@ -34,7 +34,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .doc("How many frames back the output is; 0 is the newest"),
             )
             .param(ParamSpec::bool("record", true).doc("Take new frames; off holds what is kept"))
-            .param(ParamSpec::bool("persist", true).rarely_used().doc(
+            .param(ParamSpec::bool("persist", true).more().doc(
                 "While not recording, keep the held frames in the state snapshots, so they survive a restart",
             ))
             .input("in", DataKind::Tex)

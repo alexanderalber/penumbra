@@ -87,7 +87,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             )
             .param(
                 ParamSpec::bool("bundle", true)
-                    .rarely_used()
+                    .more()
                     .doc("Several messages per packet as a bundle; off sends one packet per message"),
             )
             .input("chans", DataKind::Chan)

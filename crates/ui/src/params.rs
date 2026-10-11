@@ -1,5 +1,7 @@
 //! The param panel of the selected node: one row per declared parameter (the type's, then a
-//! shader's own from its header), widgets chosen by the [`ParamSpec`], rarely used ones collapsed.
+//! shader's own from its header), widgets chosen by the [`ParamSpec`]. The main rows are always
+//! shown; params of a named group sit in a section of their own, folded away until opened
+//! (`param.group.<name>`, "more" last). Whether a section is open is remembered per node type.
 //! One drag is one undo step: all edits of a drag share a history group.
 //!
 //! A parameter driven by a channel shows the channel's value live, its widget (or the bound
@@ -139,29 +141,13 @@ impl ParamPanel {
                 // A constant's params are its rows, drawn as such below.
                 let constant = node.kind == penumbra_ops::chan::CONSTANT;
                 let general = |_: &&ParamSpec| !constant;
-                egui::Grid::new("params").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-                    for spec in desc.params.iter().filter(|s| !s.rarely_used).filter(general) {
-                        self.row(ui, input, node, spec, auto, actions);
-                    }
-                });
+                let main: Vec<&ParamSpec> =
+                    desc.params.iter().filter(|s| s.group.is_empty()).filter(general).collect();
+                self.rows(ui, input, node, "params", &main, auto, actions);
                 if constant {
                     self.constant_rows(ui, input, node, auto, actions);
-                }
-                let rare: Vec<&ParamSpec> =
-                    desc.params.iter().filter(|s| s.rarely_used).filter(general).collect();
-                if !rare.is_empty() {
-                    egui::CollapsingHeader::new(RichText::new("more").color(theme::TEXT_WEAK))
-                        .id_salt("rare")
-                        .show(ui, |ui| {
-                            egui::Grid::new("params_rare").num_columns(2).spacing([8.0, 6.0]).show(
-                                ui,
-                                |ui| {
-                                    for spec in rare {
-                                        self.row(ui, input, node, spec, auto, actions);
-                                    }
-                                },
-                            );
-                        });
+                } else {
+                    self.groups(ui, input, node, "", &desc.params, auto, actions);
                 }
                 if desc.container {
                     self.exposed(ui, input, node, auto, actions);
@@ -333,11 +319,9 @@ impl ParamPanel {
         let source = if node.kind.starts_with("script.") { "from the script" } else { "from the shader" };
         ui.label(RichText::new(source).color(theme::TEXT_WEAK).small());
         let declared = input.instance.unwrap_or(&[]);
-        egui::Grid::new("params_instance").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
-            for spec in declared {
-                self.row(ui, input, node, spec, auto, actions);
-            }
-        });
+        let main: Vec<&ParamSpec> = declared.iter().filter(|s| s.group.is_empty()).collect();
+        self.rows(ui, input, node, "params_instance", &main, auto, actions);
+        self.groups(ui, input, node, "instance.", declared, auto, actions);
         // Values nobody declares (a renamed header param): shown so they can be removed.
         let stray: Vec<(&penumbra_core::Name, &Value)> = node
             .params
@@ -348,6 +332,54 @@ impl ParamPanel {
             .collect();
         if input.instance.is_some() {
             stray_values(ui, input, node, "not declared by the shader", &stray, auto, actions);
+        }
+    }
+
+    /// `specs` as rows of one grid.
+    #[allow(clippy::too_many_arguments)]
+    fn rows(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        grid: &str,
+        specs: &[&ParamSpec],
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        if specs.is_empty() {
+            return;
+        }
+        egui::Grid::new(grid).num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+            for spec in specs {
+                self.row(ui, input, node, spec, auto, actions);
+            }
+        });
+    }
+
+    /// The named groups of `specs`, each a section folded away until opened
+    /// (`param.group.<prefix><name>`). The open state belongs to the node type, so opening a
+    /// render's camera section opens it for every render.
+    #[allow(clippy::too_many_arguments)]
+    fn groups(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        prefix: &str,
+        specs: &[ParamSpec],
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        for group in penumbra_core::param::groups(specs) {
+            let members: Vec<&ParamSpec> = specs.iter().filter(|s| s.group == group).collect();
+            let id = format!("{prefix}{group}");
+            let r = egui::CollapsingHeader::new(RichText::new(group).color(theme::TEXT_WEAK))
+                .id_salt(("param_group", node.kind.as_str(), id.as_str()))
+                .show(ui, |ui| {
+                    self.rows(ui, input, node, &format!("params_{id}"), &members, auto, actions);
+                });
+            auto.add(format!("param.group.{id}"), r.header_response.rect, group);
         }
     }
 

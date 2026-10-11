@@ -59,15 +59,15 @@ fn desc() -> NodeDesc {
         "Bottom right corner, moved from its fitted place, in picture sizes",
         "Bottom left corner, moved from its fitted place, in picture sizes",
     ]) {
-        desc = desc.param(ParamSpec::vec2(name, [0.0, 0.0]).range(-0.5, 0.5).rarely_used().doc(doc));
+        desc = desc.param(ParamSpec::vec2(name, [0.0, 0.0]).range(-0.5, 0.5).group("warp").doc(doc));
     }
-    desc.param(ParamSpec::text("warp", "").multiline().rarely_used().doc(
+    desc.param(ParamSpec::text("warp", "").multiline().group("warp").doc(
         "Mesh warp: one line per grid row, `dx,dy` offsets in picture sizes; empty is none (edit it in the viewer)",
     ))
     .param(
         ParamSpec::float("blend_gamma", 1.0)
             .range(0.2, 3.0)
-            .rarely_used()
+            .more()
             .doc("Exponent on the soft edge; above 1 darkens the overlap, below 1 brightens it"),
     )
     .input("in", DataKind::Tex)

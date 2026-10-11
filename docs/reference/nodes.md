@@ -2,7 +2,7 @@
 
 # Node reference
 
-Every built-in node type with its inputs, outputs and params, by family. Params marked *(more)* sit under "more" in the param panel. A soft range is only the slider's; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
+Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param          panel. A soft range is only the slider's; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
 
 Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp)
 
@@ -343,11 +343,11 @@ Outputs: `out` (tex).
 | `fit` | fit \| fill \| stretch | `"fit"` |  | How the region sits in the picture before the corners move: fit (bars), fill (cropped), stretch |
 | `blend` | bool | `true` |  | Soft edges where other mappers of the same input overlap this one (off for stacked projectors) |
 | `pattern` | bool | `false` |  | An alignment grid of the input instead of the picture |
-| `corner_tl` *(more)* | vec2 | `[0, 0]` | -0.5 to 0.5 (soft) | Top left corner, moved from its fitted place, in picture sizes (drag it in the viewer) |
-| `corner_tr` *(more)* | vec2 | `[0, 0]` | -0.5 to 0.5 (soft) | Top right corner, moved from its fitted place, in picture sizes |
-| `corner_br` *(more)* | vec2 | `[0, 0]` | -0.5 to 0.5 (soft) | Bottom right corner, moved from its fitted place, in picture sizes |
-| `corner_bl` *(more)* | vec2 | `[0, 0]` | -0.5 to 0.5 (soft) | Bottom left corner, moved from its fitted place, in picture sizes |
-| `warp` *(more)* | text |  |  | Mesh warp: one line per grid row, `dx,dy` offsets in picture sizes; empty is none (edit it in the viewer) |
+| `corner_tl` *(warp)* | vec2 | `[0, 0]` | -0.5 to 0.5 (soft) | Top left corner, moved from its fitted place, in picture sizes (drag it in the viewer) |
+| `corner_tr` *(warp)* | vec2 | `[0, 0]` | -0.5 to 0.5 (soft) | Top right corner, moved from its fitted place, in picture sizes |
+| `corner_br` *(warp)* | vec2 | `[0, 0]` | -0.5 to 0.5 (soft) | Bottom right corner, moved from its fitted place, in picture sizes |
+| `corner_bl` *(warp)* | vec2 | `[0, 0]` | -0.5 to 0.5 (soft) | Bottom left corner, moved from its fitted place, in picture sizes |
+| `warp` *(warp)* | text |  |  | Mesh warp: one line per grid row, `dx,dy` offsets in picture sizes; empty is none (edit it in the viewer) |
 | `blend_gamma` *(more)* | float | `1` | 0.2 to 3 (soft) | Exponent on the soft edge; above 1 darkens the overlap, below 1 brightens it |
 
 ### tex.matte
@@ -486,10 +486,10 @@ Outputs: `out` (tex), `data` (tex).
 | `fov` | float | `40` | 5 to 120 ° (soft) | Vertical field of view |
 | `roll` | float | `0` | -180 to 180 ° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
 | `surface` | auto \| material \| texture \| parts \| uv \| normals | `"auto"` |  | auto: the texture input where connected, else the file's materials; parts: a colour per part id |
-| `shift` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
-| `camera` *(more)* | text |  |  | A calibrated camera as JSON (calib.solve's `camera`); replaces position, target, fov, roll and shift |
-| `near` *(more)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn |
-| `far` *(more)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn |
+| `shift` *(camera)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
+| `camera` *(camera)* | text |  |  | A calibrated camera as JSON (calib.solve's `camera`); replaces position, target, fov, roll and shift |
+| `near` *(camera)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn |
+| `far` *(camera)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn |
 | `background` *(more)* | colour | `[0, 0, 0, 0]` |  |  |
 | `cull` *(more)* | bool | `false` |  | Leave out faces turned away (counter-clockwise is the front) |
 | `antialias` *(more)* | bool | `true` |  | Four samples per pixel |
@@ -720,10 +720,10 @@ Outputs: `out` (chan), `spectrum` (chan).
 | `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered; with max_bpm less than an octave apart, so a half or double tempo is not taken |
 | `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered |
 | `normalize` | bool | `true` |  | Levels and spectrum relative to the loudest of the last seconds, so a quiet input still spans 0 to 1 |
-| `floor` *(more)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence and is not raised by normalize |
-| `low` *(more)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends |
-| `high` *(more)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts |
-| `bands` *(more)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output |
+| `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence and is not raised by normalize |
+| `low` *(levels)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends |
+| `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts |
+| `bands` *(levels)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output |
 
 ### chan.audioin
 
