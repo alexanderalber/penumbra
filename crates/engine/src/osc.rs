@@ -156,6 +156,11 @@ impl OscShared {
         self.stop.store(true, Ordering::Release);
         self.hub.notify();
     }
+
+    /// Lets the next osc thread run (another project opened).
+    pub(crate) fn resume(&self) {
+        self.stop.store(false, Ordering::Release);
+    }
 }
 
 /// The osc thread's loop: waits for messages, applies them at most once per [`APPLY_PERIOD`].
@@ -646,7 +651,7 @@ fn osc_learn(e: &Engine, p: &Json) -> CmdResult<Json> {
     let secs = |x: Option<f64>, d: f64| x.filter(|x| x.is_finite()).unwrap_or(d).clamp(0.0, 600.0);
     let timeout = Duration::from_secs_f64(secs(a.timeout, LEARN_TIMEOUT.as_secs_f64()).max(0.1));
     let before = osc.learned().map(|l| format!("{l:?}"));
-    osc.learn(e.session(), &param, timeout)?;
+    osc.learn(&e.session(), &param, timeout)?;
     let wait = Duration::from_secs_f64(secs(a.wait, 0.0)).min(timeout + Duration::from_millis(200));
     let deadline = Instant::now() + wait;
     while Instant::now() < deadline {

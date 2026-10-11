@@ -138,7 +138,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Empty {}
+pub(crate) struct Empty {}
 
 fn no_args(p: &Json) -> Result<()> {
     args::<Empty>(p).map(|_| ())
@@ -269,7 +269,7 @@ fn node_kinds(e: &Engine, p: &Json) -> Result<Json> {
         kind: Option<String>,
     }
     let a: A = args(p)?;
-    let types = e.session().types();
+    let types = e.types();
     let descs: Vec<&NodeDesc> = match &a.kind {
         Some(k) => vec![types.desc(k).ok_or_else(|| format!("unknown node kind `{k}`"))?],
         None => types.kinds().filter_map(|k| types.desc(k)).collect(),
@@ -463,7 +463,7 @@ pub(crate) fn require(net: &Network, path: &NodePath) -> Result<NodeId> {
 }
 
 pub(crate) fn desc_of<'e>(e: &'e Engine, kind: &str) -> Result<&'e NodeDesc> {
-    e.session().types().desc(kind).ok_or_else(|| CommandError(format!("unknown node kind `{kind}`")))
+    e.types().desc(kind).ok_or_else(|| CommandError(format!("unknown node kind `{kind}`")))
 }
 
 // ---------------------------------------------------------------------------------------------

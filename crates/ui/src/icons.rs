@@ -21,10 +21,11 @@ pub enum Icon {
     Redo,
     TakeOver,
     Bind,
+    Folder,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 8] = [
+    pub const ALL: [Icon; 9] = [
         Icon::Play,
         Icon::Pause,
         Icon::Remove,
@@ -33,6 +34,7 @@ impl Icon {
         Icon::Redo,
         Icon::TakeOver,
         Icon::Bind,
+        Icon::Folder,
     ];
 
     /// The `d` attributes of the icon's paths.
@@ -52,6 +54,8 @@ impl Icon {
                 "M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71",
                 "M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71",
             ],
+            // A folder with a tab: the project menu.
+            Icon::Folder => &["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
         }
     }
 }

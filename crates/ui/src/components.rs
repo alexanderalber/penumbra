@@ -67,7 +67,7 @@ pub fn group(
         at.push((g.path.clone(), b.center() - NODE_SIZE / 2.0));
         // Input nodes in a column left of the moved nodes, outputs right of them.
         let net = engine.session().doc().snapshot();
-        let types = engine.session().types();
+        let types = engine.types();
         let (mut row_in, mut row_out) = (0.0, 0.0);
         for port in &g.ports {
             let role = net.resolve(port).and_then(|id| net.port_role(types, id));

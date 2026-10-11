@@ -83,6 +83,9 @@ winit = "=0.30.13"
 cpal = "0.18.2"
 # The window handle eframe hands out, and DWM for the title bar colour (crates/ui/src/titlebar.rs).
 raw-window-handle = "0.6"
+# The native folder dialog for opening and creating projects (as in the storytold apps). Without
+# the wayland feature: the XDG portal alone serves Linux and needs no system libraries to build.
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
 
 [workspace.lints.rust]

@@ -55,10 +55,15 @@
 //! **Audio:** likewise, the cook thread tells the audio [`AudioHub`] which input devices the
 //! network's `chan.audioin` nodes want; the hub keeps a stream thread per device, and the
 //! nodes read what arrived.
+//!
+//! **Another project** ([`Engine::open_project`]): the threads above stop (state saved and
+//! changes written as at closing) and start again for the new session with a fresh cook state.
+//! What does not belong to a project stays: the GPU, the output board and windows, the OSC
+//! and audio hubs, the component library, the clipboard. [`Engine::generation`] tells the UI.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::thread::JoinHandle;
@@ -243,6 +248,9 @@ pub struct CookState {
     osc: Hub,
     /// Told which audio inputs to open when the network changes.
     audio: AudioHub,
+    /// Added to the cooker's pass numbers in what is published, so they keep growing when
+    /// another project opens (the output threads wait for a pass newer than the last they drew).
+    pass_base: u64,
 }
 
 /// Shared between the cook thread, the UI and the outputs.
@@ -345,7 +353,7 @@ impl CookState {
         wanted.extend(request.viewers.iter().copied().filter(|id| net.node(*id).is_some()));
         self.last = self.cooker.cook(&net, self.clock.now(), &wanted, &request.thumbnails);
         let output = OutputFrame {
-            pass: self.last.pass,
+            pass: self.pass_base + self.last.pass,
             time: Some(self.clock.now()),
             projectors: penumbra_ops::out::collect(&net, session.types(), &self.cooker, &mut self.mappings),
         };
@@ -364,7 +372,7 @@ impl CookState {
 
     fn publish(&self, net: &Network, request: &ViewRequest, wall: Instant) {
         let mut frame = ViewFrame {
-            pass: self.last.pass,
+            pass: self.pass_base + self.last.pass,
             time: Some(self.clock.now()),
             playing: self.clock.is_playing(),
             pace: Some(self.pacer.source(wall)),
@@ -410,15 +418,25 @@ impl CookState {
 }
 
 pub struct Engine {
-    session: Arc<Session>,
+    /// The open project; another one replaces it in [`Engine::open_project`].
+    session: Mutex<Arc<Session>>,
+    /// Counts the projects opened in this run, so the UI notices a switch.
+    generation: AtomicU64,
+    /// The node types; the same for every project.
+    types: Arc<NodeTypes>,
+    pool: Arc<JobPool>,
     gpu: OnceLock<Gpu>,
     board: OutputBoard,
     view: Arc<ViewShared>,
-    cook: Sender<CookMsg>,
+    cook: Mutex<Sender<CookMsg>>,
     stop_project: Mutex<Option<Sender<()>>>,
     threads: Mutex<Vec<JoinHandle<()>>>,
+    /// Held while a project closes and another opens, and by the shutdown.
+    switching: Mutex<()>,
     /// The user's component library (`comp.*`); `None` until set or asked for.
     library: Mutex<Option<std::path::PathBuf>>,
+    /// Where the recently opened projects are listed; `None` lists nothing (tests, headless).
+    recent: Mutex<Option<std::path::PathBuf>>,
     /// The nodes copied last (`node.copy`, Ctrl+C).
     clipboard: Mutex<Option<crate::clipboard::Clipboard>>,
     state: Arc<StateShared>,
@@ -433,42 +451,72 @@ impl Engine {
         // Look for Python now, so the log says at startup whether script nodes can run; Python
         // itself starts with the first script.
         penumbra_script::host();
-        let pool = Arc::new(JobPool::with_default_threads()?);
+        let (cook, _) = mpsc::channel();
+        let engine = Arc::new(Engine {
+            session: Mutex::new(session.clone()),
+            generation: AtomicU64::new(0),
+            types: session.types().clone(),
+            pool: Arc::new(JobPool::with_default_threads()?),
+            gpu: OnceLock::new(),
+            board: OutputBoard::new(),
+            view: Arc::new(ViewShared::default()),
+            cook: Mutex::new(cook),
+            stop_project: Mutex::new(None),
+            threads: Mutex::new(Vec::new()),
+            switching: Mutex::new(()),
+            library: Mutex::new(None),
+            recent: Mutex::new(None),
+            clipboard: Mutex::new(None),
+            state: Arc::new(StateShared::default()),
+            osc: Arc::new(OscShared::new(Hub::new())),
+            audio: AudioHub::new(),
+            shut: AtomicBool::new(false),
+        });
+        engine.launch(&session, 0)?;
+        Ok(engine)
+    }
+
+    /// A fresh cook state for `session`, with the resources that outlive a project.
+    fn cook_state(&self, session: &Session, pass_base: u64) -> CookState {
         let rate = Rate::FPS_60;
-        let mut cooker = Cooker::new(session.types().clone(), pool);
+        let mut cooker = Cooker::new(session.types().clone(), self.pool.clone());
         cooker.set_base_dir(Some(session.dir().to_path_buf()));
-        let board = OutputBoard::new();
-        cooker.provide(board.clone());
+        cooker.provide(self.board.clone());
         let mappers = Mappers::new();
         cooker.provide(mappers.clone());
         let renders = Renders::new();
         cooker.provide(renders.clone());
-        let hub = Hub::new();
-        cooker.provide(hub.clone());
-        let osc = Arc::new(OscShared::new(hub.clone()));
-        let audio = AudioHub::new();
-        cooker.provide(audio.clone());
-        let view = Arc::new(ViewShared::default());
-        let state_shared = Arc::new(StateShared::default());
-        let state = CookState {
+        cooker.provide(self.osc.hub().clone());
+        cooker.provide(self.audio.clone());
+        let gpu = self.gpu.get().cloned();
+        if let Some(gpu) = &gpu {
+            cooker.provide(gpu.clone());
+        }
+        CookState {
             cooker,
             clock: ShowClock::new(rate, LatePolicy::Realtime),
             pacer: Pacer::new(rate, Instant::now()),
             watched: BTreeSet::new(),
             last: CookReport::default(),
             sinks: None,
-            gpu: None,
-            view: view.clone(),
+            gpu,
+            view: self.view.clone(),
             mappings: Mappings::default(),
             mappers,
             renders,
             overlay: false,
             resolution: None,
-            state: StateKeeper::new(state_shared.clone(), session.dir()),
+            state: StateKeeper::new(self.state.clone(), session.dir()),
             stats: PassStats::default(),
-            osc: hub,
-            audio: audio.clone(),
-        };
+            osc: self.osc.hub().clone(),
+            audio: self.audio.clone(),
+            pass_base,
+        }
+    }
+
+    /// Starts the cook, project and osc threads for `session`.
+    fn launch(&self, session: &Arc<Session>, pass_base: u64) -> Result<(), Error> {
+        let state = self.cook_state(session, pass_base);
         let spawn_error = |e: std::io::Error| Error::new(format!("cannot start a thread: {e}"));
 
         let (cook_tx, cook_rx) = mpsc::channel();
@@ -477,6 +525,8 @@ impl Engine {
             .name("cook".into())
             .spawn(move || cook_loop(&cook_session, state, &cook_rx))
             .map_err(spawn_error)?;
+        *lock(&self.cook) = cook_tx;
+        lock(&self.threads).push(cook);
 
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let project_session = session.clone();
@@ -488,32 +538,107 @@ impl Engine {
                 }
             })
             .map_err(spawn_error)?;
+        *lock(&self.stop_project) = Some(stop_tx);
+        lock(&self.threads).push(project);
 
-        let (osc_session, osc_shared) = (session.clone(), osc.clone());
+        self.osc.resume();
+        let (osc_session, osc_shared) = (session.clone(), self.osc.clone());
         let osc_thread = std::thread::Builder::new()
             .name("osc".into())
             .spawn(move || crate::osc::run(&osc_session, &osc_shared))
             .map_err(spawn_error)?;
-
-        Ok(Arc::new(Engine {
-            session,
-            gpu: OnceLock::new(),
-            board,
-            view,
-            cook: cook_tx,
-            stop_project: Mutex::new(Some(stop_tx)),
-            threads: Mutex::new(vec![cook, project, osc_thread]),
-            library: Mutex::new(None),
-            clipboard: Mutex::new(None),
-            state: state_shared,
-            osc,
-            audio,
-            shut: AtomicBool::new(false),
-        }))
+        lock(&self.threads).push(osc_thread);
+        Ok(())
     }
 
-    pub fn session(&self) -> &Arc<Session> {
-        &self.session
+    /// Saves the state if due, stops the project's threads and writes its unsaved changes.
+    fn stop_threads(&self) {
+        let session = self.session();
+        let snapshot = session.clone();
+        let due =
+            self.on_cook(move |st| st.state.due(&st.cooker, &snapshot.doc().snapshot())).unwrap_or(false);
+        if due
+            && !self.state.holding()
+            && let Err(e) = self.save_state(Duration::from_secs(10))
+        {
+            log::warn!("state at closing: {e}");
+        }
+        lock(&self.cook).send(CookMsg::Stop).ok();
+        self.osc.stop();
+        if let Some(stop) = lock(&self.stop_project).take() {
+            drop(stop);
+        }
+        let threads = std::mem::take(&mut *lock(&self.threads));
+        for t in threads {
+            if t.join().is_err() {
+                log::error!("a worker thread panicked");
+            }
+        }
+        session.flush(Instant::now());
+    }
+
+    /// Closes the open project and opens `session` instead; the GPU, the outputs and the hubs
+    /// stay. The old project's state is saved and its unsaved changes written first, as at
+    /// closing. That can take seconds, so the UI calls this from a thread of its own.
+    pub fn open_project(self: &Arc<Self>, session: Arc<Session>) -> Result<(), Error> {
+        let _switch = lock(&self.switching);
+        if self.shut.load(Ordering::Acquire) {
+            return Err(Error::new("the app is closing"));
+        }
+        let pass_base = self.view().pass.max(self.output().pass);
+        self.stop_threads();
+        *lock(&self.view.request) = ViewRequest::default();
+        *lock(&self.view.frame) = Arc::new(ViewFrame { pass: pass_base, ..ViewFrame::default() });
+        *lock(&self.view.output) = Arc::new(OutputFrame { pass: pass_base, ..OutputFrame::default() });
+        self.state.update(|s| {
+            s.restore = None;
+            s.last_error = None;
+        });
+        *lock(&self.session) = session.clone();
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.launch(&session, pass_base)?;
+        if self.gpu().is_some() {
+            self.restore_in_background();
+        }
+        self.remember(session.dir());
+        Ok(())
+    }
+
+    /// The open project.
+    pub fn session(&self) -> Arc<Session> {
+        lock(&self.session).clone()
+    }
+
+    /// The node types (every project's session shares them).
+    pub fn types(&self) -> &Arc<NodeTypes> {
+        &self.types
+    }
+
+    /// Grows by one whenever another project opens ([`Engine::open_project`]).
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// Where recently opened projects are listed (`None`: nowhere). The app sets it; tests and
+    /// headless runs leave it unset, so they never touch the user's list.
+    pub fn set_recent_file(&self, file: Option<std::path::PathBuf>) {
+        *lock(&self.recent) = file;
+    }
+
+    /// The recently opened projects, newest first, only those that still have a project file.
+    pub fn recent(&self) -> Vec<std::path::PathBuf> {
+        let file = lock(&self.recent).clone();
+        file.map(|f| crate::projects::read_recent(&f)).unwrap_or_default()
+    }
+
+    /// Puts `dir` on top of the recent projects.
+    pub fn remember(&self, dir: &std::path::Path) {
+        let file = lock(&self.recent).clone();
+        if let Some(file) = file
+            && let Err(e) = crate::projects::remember(&file, dir)
+        {
+            log::warn!("recent projects: {e}");
+        }
     }
 
     /// The directory of the user's component library, shared by all projects: set by
@@ -544,12 +669,28 @@ impl Engine {
             st.cooker.provide(gpu.clone());
             st.gpu = Some(gpu);
         })?;
+        self.restore_in_background();
+        Ok(())
+    }
+
+    /// Reads the open project's saved state back on a thread of its own, unless `state.config`
+    /// says not to; until it is done, nothing is saved ([`StateStatus::holding`]).
+    ///
+    /// [`StateStatus::holding`]: crate::state::StateStatus::holding
+    fn restore_in_background(self: &Arc<Self>) {
         if !self.state.config().restore_on_start {
-            return Ok(());
+            return;
         }
         let engine = Arc::downgrade(self);
+        let generation = self.generation();
         let spawned = std::thread::Builder::new().name("state-restore".into()).spawn(move || {
             let Some(engine) = engine.upgrade() else { return };
+            // No project switch while the state is read back, so it cannot land in the next
+            // project or end the next project's holding early.
+            let _switch = lock(&engine.switching);
+            if engine.generation() != generation || engine.shut.load(Ordering::Acquire) {
+                return;
+            }
             let fresh = engine.state.take_fresh();
             match engine.restore(None, fresh) {
                 Ok(r) if !r.restored.is_empty() => {
@@ -574,7 +715,6 @@ impl Engine {
             log::error!("cannot start the state restore thread: {e}");
             self.state.update(|s| s.holding = false);
         }
-        Ok(())
     }
 
     /// State snapshots: configuration and status.
@@ -594,7 +734,7 @@ impl Engine {
 
     /// The project's state directory.
     pub fn state_dir(&self) -> std::path::PathBuf {
-        crate::state::dir_of(self.session.dir())
+        crate::state::dir_of(self.session().dir())
     }
 
     /// Takes a state snapshot now and waits up to `timeout` for the file. The cook thread only
@@ -618,7 +758,7 @@ impl Engine {
         let limits = self.state.config().limits;
         let mut report = RestoreReport::default();
         if let Some(saved) = crate::state::load(&self.state_dir(), file, &limits, &mut report) {
-            let net = self.session.doc().snapshot();
+            let net = self.session().doc().snapshot();
             let take_state = !fresh && net.switch(PERSIST_STATE);
             let prepared = crate::state::prepare(saved, &net, self.gpu(), take_state, &mut report);
             let results = self.on_cook(move |st| {
@@ -718,7 +858,7 @@ impl Engine {
     /// The pacing output presented a frame at `at` (called from its thread): the cook thread
     /// cooks the next frame now instead of waiting for its timer.
     pub fn vsync(&self, at: Instant) {
-        self.cook.send(CookMsg::Vsync(at)).ok();
+        lock(&self.cook).send(CookMsg::Vsync(at)).ok();
     }
 
     /// Runs `task` on the cook thread between two frames and returns its result.
@@ -732,7 +872,7 @@ impl Engine {
             // The caller may have given up waiting; then nobody wants the result.
             tx.send(task(state)).ok();
         });
-        self.cook.send(CookMsg::Run(run)).map_err(|_| Error::new("the cook thread has stopped"))?;
+        lock(&self.cook).send(CookMsg::Run(run)).map_err(|_| Error::new("the cook thread has stopped"))?;
         rx.recv_timeout(COOK_TASK_TIMEOUT).map_err(|e| match e {
             RecvTimeoutError::Timeout => Error::new("the cook thread did not answer in time"),
             RecvTimeoutError::Disconnected => Error::new("the cook thread dropped the request"),
@@ -745,7 +885,7 @@ impl Engine {
     where
         F: FnOnce(&mut CookState) + Send + 'static,
     {
-        if self.cook.send(CookMsg::Run(Box::new(task))).is_err() {
+        if lock(&self.cook).send(CookMsg::Run(Box::new(task))).is_err() {
             log::warn!("the cook thread has stopped");
         }
     }
@@ -756,29 +896,10 @@ impl Engine {
         if self.shut.swap(true, Ordering::AcqRel) {
             return;
         }
-        let session = self.session.clone();
-        let due =
-            self.on_cook(move |st| st.state.due(&st.cooker, &session.doc().snapshot())).unwrap_or(false);
-        if due
-            && !self.state.holding()
-            && let Err(e) = self.save_state(Duration::from_secs(10))
-        {
-            log::warn!("state at closing: {e}");
-        }
-        self.cook.send(CookMsg::Stop).ok();
-        self.osc.stop();
-        if let Some(stop) = lock(&self.stop_project).take() {
-            drop(stop);
-        }
-        let threads = std::mem::take(&mut *lock(&self.threads));
-        for t in threads {
-            if t.join().is_err() {
-                log::error!("a worker thread panicked");
-            }
-        }
+        let _switch = lock(&self.switching);
+        self.stop_threads();
         self.osc.hub().shutdown();
         self.audio.shutdown();
-        self.session.flush(Instant::now());
     }
 }
 

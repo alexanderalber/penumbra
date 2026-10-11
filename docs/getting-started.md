@@ -9,14 +9,21 @@ cargo run -p penumbra
 ```
 
 With no arguments the app opens a demo project, kept in `%LOCALAPPDATA%\penumbra\demo` on
-Windows (`$XDG_DATA_HOME/penumbra/demo` or `~/.local/share/penumbra/demo` elsewhere). To open
-or create a project of your own, give its directory:
+Windows (`$XDG_DATA_HOME/penumbra/demo` or `~/.local/share/penumbra/demo` elsewhere).
+
+A project is a directory with a `project.ron`. The folder button at the left end of the status
+bar opens the project menu: **New project** (pick or make an empty folder), **Open project**,
+the recently opened projects, the demo, and the project's folder in the file manager. The
+project that was open is written first; the window and the outputs stay. The same from the
+[control channel](control.md): `project.new`, `project.open`, `project.demo`, `project.recent`.
+
+A project can also be given at the start (a missing directory is created):
 
 ```
 cargo run -p penumbra -- --project D:\shows\foyer
 ```
 
-A project is a directory; a missing one is created. Other arguments:
+Other arguments:
 
 | argument | |
 |---|---|
@@ -44,8 +51,8 @@ else runs without it.
 - **Changes** (bottom right): every edit, newest first, with who made it (you, Claude, the
   project file). Hover an entry to outline the nodes it touched, click it to select them.
   Undo and Redo sit in its header.
-- **The status bar**: play and pause of the show clock, the frame and the time, how long the
-  last cook pass took, the outputs (hover for details), the control channel's port, the GPU,
+- **The status bar**: the project menu (the folder), play and pause of the show clock, the
+  frame and the time, how long the last cook pass took, the outputs (hover for details), the control channel's port, the GPU,
   and whether `project.ron` is written yet.
 
 Each section of the right column folds by its header; the open state is kept with the project.
@@ -71,7 +78,7 @@ Each section of the right column folds by its header; the open state is kept wit
    between the content and the projector: its corners and mesh are dragged in the viewer.
 
 Everything is written to the project directory a second after each change; there is no save
-command. Close the app and start it again with the same `--project`, and the network is back.
+command. Close the app (or open another project) and come back to it, and the network is back.
 
 ## Moving around
 

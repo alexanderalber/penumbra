@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use egui::{Color32, Key, Modifiers, PointerButton, Pos2, RichText, Sense, Ui, pos2, vec2};
 use penumbra_core::{NodeId, NodePath};
 use penumbra_engine::{Engine, ViewFrame, ViewRequest};
-use penumbra_project::{Actor, SessionStatus};
+use penumbra_project::{Actor, Session, SessionStatus};
 use serde_json::{Value as Json, json};
 
 use crate::changes::Changes;
@@ -107,6 +107,11 @@ pub struct PenumbraApp {
     /// What this run copied last, and text waiting to go to the system clipboard.
     copied: Option<crate::clipboard::Copied>,
     to_clipboard: Option<String>,
+    /// The folder button with the project menu.
+    projects: crate::projects::ProjectMenu,
+    /// The project shown, and the engine's generation it belongs to: when another project
+    /// opens, the editor starts over for it ([`PenumbraApp::project_switched`]).
+    shown: (u64, Arc<Session>),
 }
 
 /// Resizing the window once more so egui-wgpu reconfigures a surface whose last configure
@@ -179,8 +184,28 @@ impl PenumbraApp {
             library: (Vec::new(), None),
             copied: None,
             to_clipboard: None,
+            projects: crate::projects::ProjectMenu::default(),
+            shown: (engine.generation(), engine.session()),
             engine,
         }
+    }
+
+    /// Another project opened: writes the old one's layout, then starts over with the new
+    /// one's (selection, viewers, change log, texture cache; node ids are not comparable across
+    /// projects). The clipboard, the Helpers window and the window itself stay.
+    fn project_switched(&mut self, now: Instant) {
+        let (generation, old) = (self.engine.generation(), self.engine.session());
+        let (_, previous) = std::mem::replace(&mut self.shown, (generation, old.clone()));
+        self.layout.save_if_due(&previous.doc().snapshot(), now, true);
+        self.layout = Layout::load(Some(old.dir()));
+        self.editor = Editor::default();
+        self.params = ParamPanel::default();
+        self.viewer = Viewer::default();
+        self.window_viewer = Viewer::default();
+        self.changes = Changes::default();
+        self.textures.clear();
+        self.library.1 = None;
+        self.title.clear();
     }
 
     /// Writes the layout now; for runs that end without `on_exit` (headless).
@@ -300,7 +325,7 @@ impl PenumbraApp {
                 }),
                 Action::LearnOsc(param) => {
                     let timeout = penumbra_engine::osc::LEARN_TIMEOUT;
-                    match self.engine.osc().learn(self.engine.session(), &param, timeout) {
+                    match self.engine.osc().learn(&self.engine.session(), &param, timeout) {
                         Ok(()) => {
                             let text = format!(
                                 "{param}: move a control on the OSC device ({} s; Helpers > OSC to cancel)",
@@ -444,6 +469,9 @@ impl PenumbraApp {
     ) {
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
+                if let Some(m) = self.projects.show(ui, &self.engine, &mut self.auto) {
+                    self.message = Some((m, now));
+                }
                 let playing = view.playing;
                 let r = if playing {
                     icons::button(ui, Icon::Pause, "Pause")
@@ -492,7 +520,10 @@ impl PenumbraApp {
         let now = Instant::now();
         let ctx = ui.ctx().clone();
         self.auto.begin_frame();
-        let session = self.engine.session().clone();
+        if self.engine.generation() != self.shown.0 {
+            self.project_switched(now);
+        }
+        let session = self.engine.session();
         let status = session.status(now);
         let net = session.doc().snapshot();
         let view = self.engine.view();
