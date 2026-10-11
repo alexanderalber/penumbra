@@ -1,0 +1,29 @@
+[package]
+name = "penumbra-pyhost"
+description = "The embedded Python of the script node: the only code that links Python (PyO3). Loaded at runtime by penumbra-script, never linked into the app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+# `cdylib` is what penumbra-script loads at runtime (pyhost.dll / libpyhost.so). `rlib` only so
+# that penumbra-script can name this crate as a dependency, which makes cargo build the library
+# whenever the app is built (the Run button builds `-p penumbra` only). Nothing links the rlib:
+# nobody refers to it in code, so the app never imports python3.dll.
+[lib]
+name = "pyhost"
+crate-type = ["cdylib", "rlib"]
+
+# On Windows, PyO3 imports python3.dll by name (raw-dylib), which the loader in penumbra-script
+# has already loaded by full path. Elsewhere the library must not name a libpython at all
+# (`extension-module`): the loader opens the one it found with RTLD_GLOBAL first, so one
+# binary serves every Python from 3.12 on.
+[target.'cfg(windows)'.dependencies]
+pyo3.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+pyo3 = { workspace = true, features = ["extension-module"] }
+
+[lints]
+workspace = true

@@ -1,0 +1,26 @@
+[package]
+name = "penumbra-video"
+description = "Video files: decoding on own threads (FilmCraft, animated GIF, HAP), frame queues, seamless loops. No GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+filmcraft-codecs.workspace = true
+filmcraft-media.workspace = true
+filmcraft-frame.workspace = true
+filmcraft-color.workspace = true
+filmcraft-time.workspace = true
+filmcraft-isobmff.workspace = true
+snap.workspace = true
+gif.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+# Writes the GIFs the tests read.
+image.workspace = true
+
+[lints]
+workspace = true

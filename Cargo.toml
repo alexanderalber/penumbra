@@ -1,0 +1,114 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "xtask"]
+default-members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+publish = false
+
+[workspace.dependencies]
+# internal
+penumbra-calib = { path = "crates/calib" }
+penumbra-core = { path = "crates/core" }
+penumbra-engine = { path = "crates/engine" }
+penumbra-gpu = { path = "crates/gpu" }
+penumbra-graph = { path = "crates/graph" }
+penumbra-mesh = { path = "crates/mesh" }
+penumbra-ops = { path = "crates/ops" }
+penumbra-osc = { path = "crates/osc" }
+penumbra-output = { path = "crates/output" }
+penumbra-project = { path = "crates/project" }
+penumbra-pyhost = { path = "crates/pyhost" }
+penumbra-script = { path = "crates/script" }
+penumbra-system = { path = "crates/system" }
+penumbra-ui = { path = "crates/ui" }
+penumbra-video = { path = "crates/video" }
+
+# foundation
+serde = { version = "1", features = ["derive"] }
+arc-swap = "1"
+serde_json = "1"
+ron = "0.12"
+log = "0.4"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+
+# GPU and UI, pinned exactly (same versions as photocraft and effectcraft). egui-wgpu 0.36.2
+# requires wgpu 30.0 and winit 0.30.13.
+egui = "=0.36.2"
+eframe = { version = "=0.36.2", default-features = false }
+egui-wgpu = "=0.36.2"
+egui_kittest = "=0.36.2"
+wgpu = "=30.0.1"
+# The WGSL front end wgpu itself uses; for shader errors with source lines, the uniform layout
+# of declared params and which bindings a shader reads.
+naga = { version = "=30.0.1", features = ["wgsl-in"] }
+half = "2"
+# Plane samples as bytes for texture uploads (already in the tree through wgpu).
+bytemuck = "1"
+# Image files incl. 16-bit and float.
+photocraft-codecs = { git = "https://github.com/storytold/photocraft", rev = "273ff014e3d21882b3959959eb7da00a42290e56" }
+# PSD and PSB layers (checks lengths before allocating).
+photocraft-psd = { git = "https://github.com/storytold/photocraft", rev = "273ff014e3d21882b3959959eb7da00a42290e56" }
+# Text shaping, bidi, line breaking, bundled OFL fonts, glyph outlines (the text node; measured at
+# 0946660, raised 2026-10-11). Glyph outlines are filled by tiny-skia, the rasteriser effectcraft
+# itself uses.
+effectcraft-text = { git = "https://github.com/storytold/effectcraft", rev = "9a7d3e76991d5372448033b473dc12c2480a6a04" }
+# Video files. Measured at 771b614; raised 2026-10-11 for the open-GOP seek fix.
+filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+filmcraft-frame = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+filmcraft-color = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+# The MP4/MOV sample tables for HAP, which FilmCraft does not decode; HAP's second stage is Snappy.
+filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+snap = "1"
+# The script node: embedded CPython through the stable ABI, so one pyhost library serves Python 3.12
+# and later. Only crates/pyhost uses it.
+pyo3 = { version = "=0.29.3", default-features = false, features = ["abi3-py312"] }
+# Loads Python's library and pyhost at runtime (crates/script); already in the tree through wgpu.
+libloading = "0.8"
+# Linear algebra for crates/calib (SVD for the DLT now, Levenberg-Marquardt in M4).
+nalgebra = { version = "0.34", default-features = false, features = ["std"] }
+# Animated GIFs (FilmCraft reads only a GIF's first frame); `image` writes test GIFs.
+gif = "0.14"
+image = { version = "0.25", default-features = false, features = ["gif"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
+winit = "=0.30.13"
+# The window handle eframe hands out, and DWM for the title bar colour (crates/ui/src/titlebar.rs).
+raw-window-handle = "0.6"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+
+[workspace.lints.rust]
+# `deny`, not `forbid`: a clearly delimited FFI module may opt out with a local `allow`.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# Never crash: no unwrap, expect or panic outside tests. Tests are exempt through clippy.toml.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"
+dbg_macro = "deny"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# The crates with per-pixel loops on the CPU (text masks, image conversion, uploads, GIF
+# frames). Unoptimised, a 300 px text took 170 ms to rasterise and upload instead of a few, which
+# made dragging a text's size stutter in the debug build the Run button starts; a 1500 x 2250 GIF
+# frame took 100 ms instead of 10.
+[profile.dev.package.penumbra-gpu]
+opt-level = 2
+
+[profile.dev.package.penumbra-ops]
+opt-level = 2
+
+[profile.dev.package.penumbra-video]
+opt-level = 2

@@ -1,0 +1,1146 @@
+//! `tex` nodes on the software adapter (WARP on Windows): golden images, determinism, hot
+//! reload, the registry-wide time check.
+//!
+//! Golden images live in `crates/ops/tests/golden/`. `cargo xtask bless` rewrites them
+//! (`PENUMBRA_BLESS=1`); a mismatch writes the actual picture to `target/golden-out/` and
+//! fails. Tolerance 2 LSB on 8-bit sRGB.
+
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant};
+
+use penumbra_core::{LatePolicy, NodeId, NodePath, ParamPath, Rate, ShowClock, Value};
+use penumbra_gpu::{AdapterChoice, Gpu, Pixels, Tex};
+use penumbra_graph::{Cooker, Density, JobPool, Network, NodeTypes, Op, Port};
+
+use crate::builtin_types;
+
+const W: i64 = 96;
+const H: i64 = 64;
+
+fn gpu() -> Option<Gpu> {
+    static GPU: OnceLock<Option<Gpu>> = OnceLock::new();
+    GPU.get_or_init(|| match Gpu::headless(AdapterChoice::Software) {
+        Ok(g) => Some(g),
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(e) => {
+            eprintln!("skipping GPU tests: {e}");
+            None
+        }
+    })
+    .clone()
+}
+
+fn manifest() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+/// Copies `crates/ops/tests/fixtures/<name>` into `dir`.
+fn copy_fixture(name: &str, dir: &Path) {
+    std::fs::copy(manifest().join("tests/fixtures").join(name), dir.join(name)).unwrap();
+}
+
+/// A scratch directory per test.
+fn scratch(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("penumbra-tex-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+fn create(path: &str, kind: &str, params: &[(&str, Value)]) -> Op {
+    Op::Create {
+        path: NodePath::parse(path).unwrap(),
+        kind: kind.into(),
+        params: params.iter().map(|(k, v)| (k.parse().unwrap(), v.clone())).collect(),
+    }
+}
+
+fn connect(from: &str, to: &str, input: u32) -> Op {
+    Op::Connect { from: from.parse().unwrap(), output: 0, to: to.parse().unwrap(), input }
+}
+
+fn set(param: &str, value: Value) -> Op {
+    Op::Set { param: ParamPath::parse(param).unwrap(), value }
+}
+
+fn size() -> [(&'static str, Value); 2] {
+    [("width", Value::Int(W)), ("height", Value::Int(H))]
+}
+
+struct Rig {
+    types: Arc<NodeTypes>,
+    net: Arc<Network>,
+    cooker: Cooker,
+    clock: ShowClock,
+    gpu: Gpu,
+}
+
+impl Rig {
+    fn new(gpu: Gpu, dir: Option<&Path>, ops: &[Op]) -> Self {
+        let types = Arc::new(builtin_types().unwrap());
+        let net = Arc::new(Network::new().apply(&types, ops).unwrap().network);
+        let mut cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(2).unwrap()));
+        cooker.provide(gpu.clone());
+        let hub = penumbra_osc::Hub::new();
+        hub.set_wanted(&crate::osc::wants(&net, &types));
+        cooker.provide(hub);
+        cooker.set_base_dir(dir.map(Path::to_path_buf));
+        Self { types, net, cooker, clock: ShowClock::new(Rate::FPS_60, LatePolicy::Realtime), gpu }
+    }
+
+    fn id(&self, path: &str) -> NodeId {
+        self.net.resolve(&path.parse().unwrap()).unwrap()
+    }
+
+    fn edit(&mut self, ops: &[Op]) {
+        self.net = Arc::new(self.net.apply(&self.types, ops).unwrap().network);
+    }
+
+    fn cook(&mut self, path: &str) {
+        let id = self.id(path);
+        self.cooker.cook(&self.net, self.clock.now(), &[id], &[]);
+    }
+
+    /// Cooks until `path` has a result whose version differs from `after` (asynchronous nodes
+    /// take a few passes).
+    fn cook_until_new(&mut self, path: &str, after: u64) -> Tex {
+        let id = self.id(path);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            self.cooker.cook(&self.net, self.clock.now(), &[id], &[]);
+            let s = self.cooker.status(id).unwrap();
+            if s.version != after
+                && let Some(t) = self.tex(path)
+            {
+                return t;
+            }
+            assert!(Instant::now() < deadline, "{path} produced nothing: {s:?}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn tex(&self, path: &str) -> Option<Tex> {
+        self.cooker.output(Port { node: self.id(path), output: 0 })?.get::<Tex>().cloned()
+    }
+
+    fn pixels(&mut self, path: &str) -> Pixels {
+        let tex = self.cook_until_new(path, 0);
+        self.gpu.read(&tex).unwrap()
+    }
+
+    fn version(&self, path: &str) -> u64 {
+        self.cooker.status(self.id(path)).unwrap().version
+    }
+}
+
+/// Compares with (or, when blessing, writes) `tests/golden/<name>.png`.
+fn golden(name: &str, px: &Pixels) {
+    let file = manifest().join("tests/golden").join(format!("{name}.png"));
+    if std::env::var_os("PENUMBRA_BLESS").is_some() {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, px.to_png().unwrap()).unwrap();
+        return;
+    }
+    let bytes =
+        std::fs::read(&file).unwrap_or_else(|e| panic!("{}: {e}; run `cargo xtask bless`", file.display()));
+    let want = photocraft_codecs::decode(&bytes).unwrap();
+    let got = px.to_srgb8();
+    assert_eq!(want.dimensions(), (px.width, px.height), "{name}: size");
+    let want = want.to_rgba8();
+    let diffs: Vec<u8> = want.iter().zip(&got).map(|(a, b)| a.abs_diff(*b)).collect();
+    let worst = diffs.iter().copied().max().unwrap_or(0);
+    if worst > 2 {
+        let out = manifest().join("../../target/golden-out");
+        std::fs::create_dir_all(&out).unwrap();
+        let actual = out.join(format!("{name}.png"));
+        std::fs::write(&actual, px.to_png().unwrap()).unwrap();
+        let bad = diffs.iter().filter(|d| **d > 2).count();
+        panic!("{name}: {bad} samples off by up to {worst}; actual picture in {}", actual.display());
+    }
+}
+
+/// A 16-bit PNG: red ramp left to right, green ramp top to bottom, alpha 1 except a
+/// transparent right quarter.
+fn write_png16(path: &Path) {
+    let (w, h) = (48u32, 32u32);
+    let mut samples = Vec::new();
+    for y in 0..h {
+        for x in 0..w {
+            let a = if x >= w * 3 / 4 { 0 } else { 65535 };
+            samples.extend([(x * 65535 / (w - 1)) as u16, (y * 65535 / (h - 1)) as u16, 20000, a]);
+        }
+    }
+    let img =
+        photocraft_codecs::Image::from_u16(w, h, photocraft_codecs::ChannelLayout::Rgba, &samples).unwrap();
+    let png = photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &Default::default()).unwrap();
+    std::fs::write(path, png).unwrap();
+}
+
+const SHADER: &str = "\
+// @param tint color = [1, 0.5, 0.25, 1] -- multiplied in
+// @param rings float = 6 1..20
+// @density 0.5
+@fragment
+fn main(v: PnVertex) -> @location(0) vec4f {
+    let src = textureSampleLevel(in0, pn_clamp, v.uv, 0.0);
+    let d = length(v.uv - 0.5);
+    let ring = 0.5 + 0.5 * cos(d * params.rings * 6.2831853 - pn_time.seconds * 3.0);
+    return vec4f(src.rgb * params.tint.rgb * ring, src.a);
+}
+";
+
+#[test]
+fn golden_images() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("golden");
+    write_png16(&dir.join("ramp.png"));
+    copy_fixture("bars.mp4", &dir);
+    // One frame of the bars as HAP (ffmpeg 8): Hap Alpha with alpha rising left to right, and Hap Q.
+    copy_fixture("bars_hap_alpha.mov", &dir);
+    copy_fixture("bars_hap_q.mov", &dir);
+    std::fs::write(dir.join("rings.wgsl"), SHADER).unwrap();
+    let ops = vec![
+        create(
+            "/constant",
+            "tex.constant",
+            &[size()[0].clone(), size()[1].clone(), ("color", Value::Vec4([1.0, 0.5, 0.25, 0.5]))],
+        ),
+        create("/noise", "tex.noise", &size()),
+        create(
+            "/noise_value",
+            "tex.noise",
+            &[
+                size()[0].clone(),
+                size()[1].clone(),
+                ("basis", "value".into()),
+                ("color", Value::Bool(true)),
+                ("seed", Value::Int(3)),
+                ("octaves", Value::Int(4)),
+                ("frequency", Value::Float(8.0)),
+            ],
+        ),
+        create(
+            "/transform",
+            "tex.transform",
+            &[
+                ("rotate", Value::Float(30.0)),
+                ("scale", Value::Vec2([0.5, 0.5])),
+                ("translate", Value::Vec2([0.1, 0.0])),
+                ("extend", "mirror".into()),
+            ],
+        ),
+        create(
+            "/transform_zero",
+            "tex.transform",
+            &[("rotate", Value::Float(-20.0)), ("scale", Value::Vec2([0.7, 0.7])), ("extend", "zero".into())],
+        ),
+        create(
+            "/level",
+            "tex.level",
+            &[
+                ("black", Value::Float(0.2)),
+                ("white", Value::Float(0.8)),
+                ("gamma", Value::Float(2.0)),
+                ("invert", Value::Bool(true)),
+            ],
+        ),
+        create(
+            "/quantize",
+            "tex.quantize",
+            &[("levels", Value::Int(3)), ("block", Value::Int(4)), ("dither", "ordered".into())],
+        ),
+        create("/over", "tex.composite", &[]),
+        create("/swapped", "tex.composite", &[("op", "subtract".into()), ("swap", Value::Bool(true))]),
+        create("/image", "tex.image", &[("file", "ramp.png".into())]),
+        create("/image_moved", "tex.transform", &[("rotate", Value::Float(90.0)), ("extend", "zero".into())]),
+        create("/shader", "tex.shader", &[("file", "rings.wgsl".into()), ("rings", Value::Float(4.0))]),
+        create("/video", "tex.video", &[("file", "bars.mp4".into()), ("play", Value::Bool(false))]),
+        create(
+            "/hap_alpha",
+            "tex.video",
+            &[("file", "bars_hap_alpha.mov".into()), ("play", Value::Bool(false))],
+        ),
+        create("/hap_q", "tex.video", &[("file", "bars_hap_q.mov".into()), ("play", Value::Bool(false))]),
+        create(
+            "/text",
+            "tex.text",
+            &[
+                size()[0].clone(),
+                size()[1].clone(),
+                (
+                    "text",
+                    "Hi
+lumen"
+                        .into(),
+                ),
+                ("size", Value::Float(24.0)),
+                ("color", Value::Vec4([1.0, 0.8, 0.2, 1.0])),
+                ("align", "left".into()),
+                ("position", Value::Vec2([0.1, 0.5])),
+            ],
+        ),
+        // The filters after the M2 polish, on the colour noise or the ramp image.
+        create("/flip", "tex.flip", &[("flip_x", Value::Bool(true)), ("flop", Value::Bool(true))]),
+        create(
+            "/channelmix",
+            "tex.channelmix",
+            &[("red", Value::Vec4([0.0, 0.0, 1.0, 0.0])), ("blue", Value::Vec4([0.5, 0.5, 0.0, 0.0]))],
+        ),
+        create(
+            "/chromakey",
+            "tex.chromakey",
+            &[("key", Value::Vec4([0.2, 0.8, 0.2, 1.0])), ("tolerance", Value::Float(0.12))],
+        ),
+        create("/cross", "tex.cross", &[("cross", Value::Float(0.3))]),
+        create("/displace", "tex.displace", &[("weight", Value::Vec2([0.2, 0.2]))]),
+        create("/edge", "tex.edge", &[]),
+        create(
+            "/fit",
+            "tex.fit",
+            &[size()[0].clone(), size()[1].clone(), ("justify", Value::Vec2([0.0, 0.5]))],
+        ),
+        create("/lensdistort", "tex.lensdistort", &[("k1", Value::Float(0.3))]),
+        create("/limit", "tex.limit", &[("max", Value::Float(0.5)), ("mode", "mirror".into())]),
+        create("/lookup", "tex.lookup", &[]),
+        create("/matte", "tex.matte", &[]),
+        create("/monochrome", "tex.monochrome", &[]),
+        create("/remap", "tex.remap", &[("extend", "mirror".into())]),
+        create("/resolution", "tex.resolution", &[("multiply", Value::Float(0.25))]),
+        create("/slope", "tex.slope", &[]),
+        create("/threshold", "tex.threshold", &[("soft", Value::Float(0.1))]),
+        create("/tile", "tex.tile", &[("repeat", Value::Vec2([3.0, 2.0])), ("mirror", Value::Bool(true))]),
+        create("/blur", "tex.blur", &[("size", Value::Float(6.0))]),
+        connect("/image", "/flip", 0),
+        connect("/noise_value", "/channelmix", 0),
+        connect("/noise_value", "/chromakey", 0),
+        connect("/noise", "/cross", 0),
+        connect("/noise_value", "/cross", 1),
+        connect("/image", "/displace", 0),
+        connect("/noise_value", "/displace", 1),
+        connect("/noise_value", "/edge", 0),
+        connect("/image", "/fit", 0),
+        connect("/image", "/lensdistort", 0),
+        connect("/noise_value", "/limit", 0),
+        connect("/noise", "/lookup", 0),
+        connect("/image", "/lookup", 1),
+        connect("/image", "/matte", 0),
+        connect("/constant", "/matte", 1),
+        connect("/threshold", "/matte", 2),
+        connect("/noise_value", "/monochrome", 0),
+        connect("/image", "/remap", 0),
+        connect("/noise_value", "/remap", 1),
+        connect("/noise_value", "/resolution", 0),
+        connect("/noise", "/slope", 0),
+        connect("/noise", "/threshold", 0),
+        connect("/image", "/tile", 0),
+        connect("/noise_value", "/blur", 0),
+        connect("/noise_value", "/transform", 0),
+        connect("/image", "/transform_zero", 0),
+        connect("/noise", "/level", 0),
+        connect("/noise_value", "/quantize", 0),
+        connect("/noise", "/over", 0),
+        connect("/constant", "/over", 1),
+        connect("/noise_value", "/swapped", 0),
+        connect("/noise", "/swapped", 1),
+        connect("/image", "/image_moved", 0),
+        connect("/noise_value", "/shader", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    rig.clock.advance(60);
+    let names = [
+        "constant",
+        "noise",
+        "noise_value",
+        "transform",
+        "transform_zero",
+        "level",
+        "quantize",
+        "over",
+        "swapped",
+        "image",
+        "image_moved",
+        "shader",
+        "text",
+        "video",
+        "hap_alpha",
+        "hap_q",
+        "flip",
+        "channelmix",
+        "chromakey",
+        "cross",
+        "displace",
+        "edge",
+        "fit",
+        "lensdistort",
+        "limit",
+        "lookup",
+        "matte",
+        "monochrome",
+        "remap",
+        "resolution",
+        "slope",
+        "threshold",
+        "tile",
+        "blur",
+    ];
+    for name in names {
+        let px = rig.pixels(&format!("/{name}"));
+        golden(name, &px);
+    }
+    assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn every_builtin_cooks_without_warnings() {
+    // A registry-wide check: a node reading the clock must declare it (here: a node whose instance
+    // is time-dependent must say so). Every node type is created and cooked with its inputs fed, at
+    // a moving time.
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("every");
+    write_png16(&dir.join("ramp.png"));
+    copy_fixture("bars.mp4", &dir);
+    std::fs::write(
+        dir.join("rows.csv"),
+        "a,b
+1,2
+",
+    )
+    .unwrap();
+    std::fs::write(dir.join("rings.wgsl"), SHADER).unwrap();
+    let types = builtin_types().unwrap();
+    let mut ops = vec![
+        create("/feed", "tex.constant", &size()),
+        create("/chan_feed", "chan.constant", &[]),
+        create("/table_feed", "table.text", &[]),
+        create("/geo_feed", "geo.primitive", &[]),
+        create("/mat_feed", "mat.constant", &[]),
+        create("/light_feed", "light.ambient", &[]),
+        create("/view_feed", "view.camera", &[]),
+    ];
+    let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
+    std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
+    std::fs::write(dir.join("poster.psd"), layers::psd()).unwrap();
+    let kinds: Vec<String> = types.kinds().map(str::to_string).collect();
+    let passes_on = |kind: &str| {
+        matches!(kind, "chan.null" | "chan.select" | "chan.rename" | "table.null" | "chan.oscout")
+    };
+    for (i, kind) in kinds.iter().enumerate() {
+        let path = format!("/n{i}");
+        let mut params: Vec<(&str, Value)> = Vec::new();
+        let desc = types.desc(kind).unwrap();
+        if desc.param_spec("width").is_some() {
+            params.extend(size());
+        }
+        match kind.as_str() {
+            "tex.image" => params.push(("file", "ramp.png".into())),
+            "tex.shader" => params.push(("file", "rings.wgsl".into())),
+            "tex.video" => params.push(("file", "bars.mp4".into())),
+            "tex.noise" => params.push(("speed", Value::Float(0.5))),
+            "tex.select" => params.push(("node", "/feed".into())),
+            "out.projector" => params.push(("display", "test".into())),
+            "table.file" => params.push(("file", "rows.csv".into())),
+            "geo.file" => params.push(("file", "box.obj".into())),
+            "tex.layer" => params.push(("file", "poster.psd".into())),
+            // Any free port, so the test never collides with something listening on 8000.
+            "chan.oscin" => params.push(("port", Value::Int(0))),
+            "light.environment" => params.push(("size", Value::Int(64))),
+            _ => {}
+        }
+        ops.push(create(&path, kind, &params));
+        for (input, spec) in desc.inputs.iter().enumerate() {
+            let feed = match spec.kind {
+                penumbra_graph::DataKind::Tex => Some("/feed"),
+                penumbra_graph::DataKind::Geo => Some("/geo_feed"),
+                penumbra_graph::DataKind::Mat => Some("/mat_feed"),
+                penumbra_graph::DataKind::Light => Some("/light_feed"),
+                penumbra_graph::DataKind::View => Some("/view_feed"),
+                // Component ports and nulls pass on what they get and complain about nothing wired.
+                penumbra_graph::DataKind::Chan if desc.port.is_some() || passes_on(kind) => {
+                    Some("/chan_feed")
+                }
+                penumbra_graph::DataKind::Table if desc.port.is_some() || passes_on(kind) => {
+                    Some("/table_feed")
+                }
+                _ => None,
+            };
+            if let Some(feed) = feed {
+                ops.push(connect(feed, &path, input as u32));
+            }
+        }
+    }
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    for (i, kind) in kinds.iter().enumerate() {
+        let path = format!("/n{i}");
+        if kind == "script.python" && penumbra_script::host().install().is_err() {
+            // Needs a Python; without one its error is the expected outcome.
+            continue;
+        }
+        rig.clock.advance(1);
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            rig.clock.advance(1);
+            rig.cook(&path);
+            let s = rig.cooker.status(rig.id(&path)).unwrap();
+            if s.has_output {
+                // One more pass at a new time, where an undeclared time read would show.
+                rig.clock.advance(1);
+                rig.cook(&path);
+                let s = rig.cooker.status(rig.id(&path)).unwrap();
+                assert_eq!((s.error, s.warning), (None, None), "{kind}");
+                break;
+            }
+            assert!(s.error.is_none(), "{kind}: {s:?}");
+            assert!(Instant::now() < deadline, "{kind} produced nothing");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn noise_is_deterministic_and_only_animated_when_moving() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [create("/n", "tex.noise", &size())];
+    let a = Rig::new(gpu.clone(), None, &ops).pixels("/n");
+    let b = Rig::new(gpu.clone(), None, &ops).pixels("/n");
+    assert_eq!(a, b, "the same noise twice must be bit-identical");
+
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.cook("/n");
+    let v = rig.version("/n");
+    rig.clock.advance(1);
+    rig.cook("/n");
+    assert_eq!(rig.version("/n"), v, "a still noise does not recook when time moves");
+    assert!(!rig.cooker.status(rig.id("/n")).unwrap().time_dependent);
+    rig.edit(&[set("/n.speed", Value::Float(1.0))]);
+    rig.cook("/n");
+    let v = rig.version("/n");
+    rig.clock.advance(1);
+    rig.cook("/n");
+    assert_ne!(rig.version("/n"), v, "a moving noise recooks with time");
+}
+
+#[test]
+fn shader_hot_reload_keeps_the_last_good_version() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("reload");
+    let file = dir.join("s.wgsl");
+    let red = "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(1.0, 0.0, 0.0, 1.0); }";
+    std::fs::write(&file, red).unwrap();
+    let ops = [create(
+        "/s",
+        "tex.shader",
+        &[
+            ("file", "s.wgsl".into()),
+            ("resolution", "custom".into()),
+            ("width", Value::Int(8)),
+            ("height", Value::Int(8)),
+        ],
+    )];
+    let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+    let px = rig.pixels("/s");
+    assert_eq!(px.get(3, 3), Some([1.0, 0.0, 0.0, 1.0]));
+    let id = rig.id("/s");
+    assert!(!rig.cooker.status(id).unwrap().time_dependent);
+
+    // A broken version: the node warns with the compiler's message and keeps working.
+    std::fs::write(
+        &file,
+        "// @param gain float = 2\n@fragment fn main(v: PnVertex) -> @location(0) vec4f { return oops; }",
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        rig.cook("/s");
+        let s = rig.cooker.status(id).unwrap();
+        if let Some(w) = s.warning {
+            assert!(w.contains("s.wgsl:2") && w.contains("last version that compiled"), "{w}");
+            assert!(s.error.is_none());
+            break;
+        }
+        assert!(Instant::now() < deadline, "the broken shader was not noticed");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // Fixed, with a declared param and the clock: picked up, params reported, time-dependent.
+    let v = rig.version("/s");
+    std::fs::write(
+        &file,
+        "// @param gain float = 0.5 0..1\n@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(0.0, params.gain + pn_time.seconds * 0.0, 0.0, 1.0); }",
+    )
+    .unwrap();
+    let tex = rig.cook_until_new_after_reload("/s", v);
+    assert_eq!(rig.gpu.read(&tex).unwrap().get(0, 0), Some([0.0, 0.5, 0.0, 1.0]));
+    let s = rig.cooker.status(id).unwrap();
+    assert_eq!(s.warning, None);
+    assert!(s.time_dependent);
+    assert_eq!(s.params.unwrap()[0].name, "gain");
+
+    // Values are checked against the header: unknown names and wrong types warn.
+    rig.edit(&[set("/s.gain", Value::Float(0.25)), set("/s.bogus", Value::Int(1))]);
+    rig.cook("/s");
+    let s = rig.cooker.status(id).unwrap();
+    assert_eq!(s.warning.as_deref(), Some("the shader declares no param `bogus`"));
+    let px = rig.gpu.read(&rig.tex("/s").unwrap()).unwrap();
+    assert_eq!(px.get(0, 0), Some([0.0, 0.25, 0.0, 1.0]));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+impl Rig {
+    /// Like [`Rig::cook_until_new`], but keeps the clock moving so a reload (which arrives
+    /// through the watcher and a job) gets its passes.
+    fn cook_until_new_after_reload(&mut self, path: &str, after: u64) -> Tex {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            self.cook(path);
+            let s = self.cooker.status(self.id(path)).unwrap();
+            if s.version != after && s.warning.is_none() && s.params.is_some() {
+                return self.tex(path).unwrap();
+            }
+            assert!(Instant::now() < deadline, "{path} did not reload: {s:?}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+#[test]
+fn image_reloads_and_reports_bad_files() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("image");
+    write_png16(&dir.join("a.png"));
+    let mut rig = Rig::new(gpu, Some(&dir), &[create("/i", "tex.image", &[("file", "a.png".into())])]);
+    assert_eq!(rig.pixels("/i").width, 48);
+    let id = rig.id("/i");
+    std::fs::write(dir.join("a.png"), b"not a png any more").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        rig.cook("/i");
+        let s = rig.cooker.status(id).unwrap();
+        if s.error.is_some() {
+            // The last good picture stays.
+            assert!(s.has_output);
+            break;
+        }
+        assert!(Instant::now() < deadline, "the broken file was not noticed");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    rig.edit(&[set("/i.file", "missing.png".into())]);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        rig.cook("/i");
+        let e = rig.cooker.status(id).unwrap().error.unwrap_or_default();
+        if e.contains("missing.png") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "missing file not reported: {e}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn without_a_gpu_tex_nodes_fail_cleanly() {
+    let types = Arc::new(builtin_types().unwrap());
+    let net = Arc::new(Network::new().apply(&types, &[create("/c", "tex.constant", &[])]).unwrap().network);
+    let mut cooker = Cooker::new(types, Arc::new(JobPool::new(1).unwrap()));
+    let id = net.resolve(&"/c".parse().unwrap()).unwrap();
+    cooker.cook(&net, ShowClock::new(Rate::FPS_60, LatePolicy::Realtime).now(), &[id], &[]);
+    assert!(cooker.status(id).unwrap().error.unwrap().contains("no GPU"));
+}
+
+#[test]
+fn transform_density_follows_scale() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/c", "tex.constant", &size()),
+        create("/t", "tex.transform", &[("scale", Value::Vec2([2.0, 1.0]))]),
+        connect("/c", "/t", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.cook("/t");
+    // Scaled up by 2 across: the input needs twice the pixels across.
+    let d = rig.cooker.density(rig.id("/t"), 0).unwrap().demand([100.0, 50.0]).unwrap();
+    assert!((d[0] - 200.0).abs() < 1e-9 && (d[1] - 50.0).abs() < 1e-9, "{d:?}");
+    assert_eq!(rig.cooker.density(rig.id("/c"), 0), Some(Density::SAME));
+    assert!(rig.cooker.sets_size(rig.id("/c")));
+    assert!(!rig.cooker.sets_size(rig.id("/t")));
+}
+
+#[test]
+fn text_follows_a_new_size_before_its_raster_is_done() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [create(
+        "/t",
+        "tex.text",
+        &[size()[0].clone(), size()[1].clone(), ("text", "ii".into()), ("size", Value::Float(16.0))],
+    )];
+    let mut rig = Rig::new(gpu, None, &ops);
+    // Columns with ink, from the left edge of the first to the right edge of the last.
+    let ink = |px: &Pixels| {
+        let cols: Vec<u32> = (0..px.width)
+            .filter(|x| (0..px.height).any(|y| px.data[(y * px.width + x) as usize][3] > 0.5))
+            .collect();
+        cols.last().unwrap() - cols.first().unwrap() + 1
+    };
+    let small = ink(&rig.pixels("/t"));
+    rig.edit(&[set("/t.size", Value::Float(32.0))]);
+    // The cook that starts the new raster draws the old one twice as large.
+    rig.cook("/t");
+    let tex = rig.tex("/t").unwrap();
+    let scaled = ink(&rig.gpu.read(&tex).unwrap());
+    assert!((f64::from(scaled) / f64::from(small) - 2.0).abs() < 0.3, "{small} -> {scaled}");
+}
+
+/// Red of the top left pixel of a node's output, after cooking it.
+fn red(rig: &mut Rig, path: &str) -> f32 {
+    rig.cook(path);
+    let tex = rig.tex(path).unwrap();
+    rig.gpu.read(&tex).unwrap().get(0, 0).unwrap()[0]
+}
+
+fn constant(path: &str, r: f64) -> Op {
+    create(
+        path,
+        "tex.constant",
+        &[("width", Value::Int(8)), ("height", Value::Int(4)), ("color", Value::Vec4([r, 0.0, 0.0, 1.0]))],
+    )
+}
+
+#[test]
+fn feedback_loops_through_its_target() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        constant("/c", 0.1),
+        create("/fb", "tex.feedback", &[]),
+        create("/acc", "tex.composite", &[("op", "add".into())]),
+        connect("/c", "/fb", 0),
+        connect("/acc", "/fb", 1),
+        connect("/fb", "/acc", 0),
+        connect("/c", "/acc", 1),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        rig.clock.advance(1);
+        seen.push(red(&mut rig, "/acc"));
+    }
+    let want = [0.2, 0.3, 0.4, 0.5];
+    for (got, want) in seen.iter().zip(want) {
+        assert!((got - want).abs() < 0.01, "{seen:?}");
+    }
+    // Reset passes the input again; a frame that does not move time does not loop.
+    rig.edit(&[set("/fb.reset", Value::Bool(true))]);
+    rig.clock.advance(1);
+    assert!((red(&mut rig, "/acc") - 0.2).abs() < 0.01);
+    let still = red(&mut rig, "/acc");
+    assert!((still - 0.2).abs() < 0.01, "{still}");
+    // A loop through a normal input is still refused.
+    let back = connect("/acc", "/c2", 0);
+    let e = rig.net.apply(&rig.types, &[create("/c2", "tex.level", &[]), connect("/c2", "/fb", 0), back]);
+    assert!(e.unwrap_err().0.contains("loop"));
+}
+
+#[test]
+fn feedback_keeps_a_restored_frame_until_the_loop_moves_on() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        constant("/c", 0.1),
+        create("/fb", "tex.feedback", &[]),
+        create("/acc", "tex.composite", &[("op", "add".into())]),
+        connect("/c", "/fb", 0),
+        connect("/acc", "/fb", 1),
+        connect("/fb", "/acc", 0),
+        connect("/c", "/acc", 1),
+    ];
+    let mut rig = Rig::new(gpu.clone(), None, &ops);
+    for _ in 0..4 {
+        rig.clock.advance(1);
+        red(&mut rig, "/acc");
+    }
+    let saved = red(&mut rig, "/fb");
+    assert!(saved > 0.35, "{saved}");
+    let kept = rig.cooker.kept();
+    let [(_, penumbra_graph::Kept::State(items))] = kept.as_slice() else { panic!("{kept:?}") };
+
+    // A restart in which only the feedback cooks for a while (its loop's end is not looked at):
+    // it keeps passing the saved frame instead of falling back to `initial`.
+    let mut again = Rig::new(gpu, None, &ops);
+    again.cooker.cook(&again.net, again.clock.now(), &[], &[]);
+    again.cooker.restore(again.id("/fb"), penumbra_graph::Kept::State(items.clone())).unwrap();
+    for _ in 0..3 {
+        again.clock.advance(1);
+        assert!((red(&mut again, "/fb") - saved).abs() < 0.01);
+    }
+    // Once the end of the loop has made something from it, the loop carries on from there.
+    let next = red(&mut again, "/acc");
+    assert!((next - (saved + 0.1)).abs() < 0.01, "{next} after {saved}");
+    again.clock.advance(1);
+    assert!((red(&mut again, "/acc") - (saved + 0.2)).abs() < 0.01);
+    // A restore into a running loop shows the saved frame once the clock moves, then goes on.
+    again.cooker.restore(again.id("/fb"), penumbra_graph::Kept::State(items.clone())).unwrap();
+    again.clock.advance(1);
+    assert!((red(&mut again, "/acc") - (saved + 0.1)).abs() < 0.01);
+    again.clock.advance(1);
+    assert!((red(&mut again, "/acc") - (saved + 0.2)).abs() < 0.01);
+}
+
+#[test]
+fn select_follows_the_named_node_and_switch_picks_or_blends() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        constant("/a", 0.2),
+        constant("/b", 0.6),
+        create("/sel", "tex.select", &[("node", "/a".into())]),
+        create("/sw", "tex.switch", &[("index", Value::Float(1.0))]),
+        connect("/a", "/sw", 0),
+        connect("/b", "/sw", 3),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    assert!((red(&mut rig, "/sel") - 0.2).abs() < 0.01);
+    rig.edit(&[set("/a.color", Value::Vec4([0.4, 0.0, 0.0, 1.0]))]);
+    assert!((red(&mut rig, "/sel") - 0.4).abs() < 0.01, "select recooks when its node changes");
+    // Index 1 is the second connected input, whatever its slot.
+    assert!((red(&mut rig, "/sw") - 0.6).abs() < 0.01);
+    rig.edit(&[set("/sw.index", Value::Float(0.25)), set("/sw.blend", Value::Bool(true))]);
+    assert!((red(&mut rig, "/sw") - 0.45).abs() < 0.01, "a quarter of the way from 0.4 to 0.6");
+    rig.edit(&[set("/sw.index", Value::Float(7.0))]);
+    assert!((red(&mut rig, "/sw") - 0.6).abs() < 0.01, "past the last is the last");
+}
+
+#[test]
+fn cache_outputs_frames_back() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        constant("/c", 0.0),
+        create("/cache", "tex.cache", &[("length", Value::Int(3)), ("index", Value::Int(2))]),
+        connect("/c", "/cache", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    for i in 1..=4 {
+        rig.edit(&[set("/c.color", Value::Vec4([f64::from(i) * 0.1, 0.0, 0.0, 1.0]))]);
+        rig.clock.advance(1);
+        rig.cook("/cache");
+    }
+    // Kept: 0.4, 0.3, 0.2 (newest first); two back is 0.2.
+    assert!((red(&mut rig, "/cache") - 0.2).abs() < 0.01);
+    rig.edit(&[set("/cache.index", Value::Int(0)), set("/cache.record", Value::Bool(false))]);
+    assert!((red(&mut rig, "/cache") - 0.4).abs() < 0.01);
+    rig.edit(&[set("/c.color", Value::Vec4([0.9, 0.0, 0.0, 1.0]))]);
+    rig.clock.advance(1);
+    assert!((red(&mut rig, "/cache") - 0.4).abs() < 0.01, "not recording holds what is kept");
+
+    // Held frames are state; a second cooker (a restart) takes them back.
+    let kept = rig.cooker.kept();
+    let [(id, penumbra_graph::Kept::State(items))] = kept.as_slice() else { panic!("{kept:?}") };
+    assert_eq!((*id, items.len()), (rig.id("/cache"), 3));
+    let mut again = Rig::new(rig.gpu.clone(), None, &ops);
+    again.edit(&[set("/cache.index", Value::Int(1)), set("/cache.record", Value::Bool(false))]);
+    again.cooker.cook(&again.net, again.clock.now(), &[], &[]);
+    again.cooker.restore(again.id("/cache"), penumbra_graph::Kept::State(items.clone())).unwrap();
+    assert!((red(&mut again, "/cache") - 0.3).abs() < 0.01);
+    // A recording cache keeps nothing: it refills by itself.
+    rig.edit(&[set("/cache.record", Value::Bool(true))]);
+    rig.clock.advance(1);
+    rig.cook("/cache");
+    assert!(rig.cooker.kept().is_empty());
+}
+
+#[test]
+fn resizing_nodes_set_their_resolution() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        constant("/c", 0.5),
+        create("/half", "tex.resolution", &[("multiply", Value::Float(0.5))]),
+        create(
+            "/custom",
+            "tex.resolution",
+            &[("mode", "custom".into()), ("width", Value::Int(5)), ("height", Value::Int(3))],
+        ),
+        create("/fit", "tex.fit", &[("width", Value::Int(16)), ("height", Value::Int(16))]),
+        create("/flop", "tex.flip", &[("flop", Value::Bool(true))]),
+        connect("/c", "/half", 0),
+        connect("/c", "/custom", 0),
+        connect("/c", "/fit", 0),
+        connect("/c", "/flop", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let size = |rig: &mut Rig, p: &str| rig.cook_until_new(p, 0).size();
+    assert_eq!(size(&mut rig, "/half"), (4, 2));
+    assert_eq!(size(&mut rig, "/custom"), (5, 3));
+    assert_eq!(size(&mut rig, "/fit"), (16, 16));
+    assert_eq!(size(&mut rig, "/flop"), (4, 8));
+    // Fit keeps the aspect: an 8 x 4 image in a 16 x 16 frame is 16 x 8, centred.
+    let px = rig.gpu.read(&rig.tex("/fit").unwrap()).unwrap();
+    assert_eq!(px.get(8, 0).unwrap()[3], 0.0, "transparent above");
+    assert!((px.get(8, 8).unwrap()[0] - 0.5).abs() < 0.01, "the image in the middle");
+    // Half the input's size: the input needs twice what the output needs. A custom size and a
+    // fit set their own size; the fit's input spans half the frame's height.
+    assert_eq!(rig.cooker.density(rig.id("/half"), 0), Some(Density::needs([2.0; 2])));
+    assert_eq!(rig.cooker.density(rig.id("/custom"), 0), Some(Density::SAME));
+    assert!(!rig.cooker.sets_size(rig.id("/half")));
+    assert!(rig.cooker.sets_size(rig.id("/custom")));
+    assert!(rig.cooker.sets_size(rig.id("/fit")));
+    let fit = rig.cooker.density(rig.id("/fit"), 0).unwrap().demand([16.0, 16.0]).unwrap();
+    assert!((fit[0] - 16.0).abs() < 1e-9 && (fit[1] - 8.0).abs() < 1e-9, "{fit:?}");
+    let flop = rig.cooker.density(rig.id("/flop"), 0).unwrap().demand([4.0, 8.0]).unwrap();
+    assert_eq!(flop, [8.0, 4.0]);
+}
+
+#[test]
+fn mappers_on_one_surface_blend_with_each_other() {
+    use crate::tex::mapper::Mappers;
+    let Some(gpu) = gpu() else { return };
+    let small = || [("width", Value::Int(120)), ("height", Value::Int(8))];
+    let white = [("color", Value::Vec4([1.0; 4])), ("width", Value::Int(64)), ("height", Value::Int(16))];
+    let mapper = |x: f64| {
+        let mut p = small().to_vec();
+        p.push(("region", Value::Vec4([x, 0.0, 0.6, 1.0])));
+        p.push(("fit", Value::Text("stretch".into())));
+        p
+    };
+    let mut rig = Rig::new(
+        gpu,
+        None,
+        &[
+            create("/c", "tex.constant", &white),
+            create("/d", "tex.constant", &white),
+            create("/a", "tex.mapper", &mapper(0.0)),
+            create("/b", "tex.mapper", &mapper(0.4)),
+            create("/x", "tex.mapper", &mapper(0.4)),
+            connect("/c", "/a", 0),
+            connect("/c", "/b", 0),
+            connect("/d", "/x", 0),
+        ],
+    );
+    let mappers = Mappers::new();
+    rig.cooker.provide(mappers.clone());
+    let ids = [rig.id("/a"), rig.id("/b"), rig.id("/x")];
+    // The first pass publishes the regions and wakes the others; the second blends.
+    for _ in 0..3 {
+        rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
+        rig.clock.advance(1);
+    }
+    let read = |rig: &Rig, path: &str| rig.gpu.read(&rig.tex(path).unwrap()).unwrap();
+    let (pa, pb, px) = (read(&rig, "/a"), read(&rig, "/b"), read(&rig, "/x"));
+    // Surface 0.5 is pixel 99.5 of /a and 19.5 of /b: half each; /x is on another surface.
+    let (va, vb) = (pa.get(99, 4).unwrap()[0], pb.get(20, 4).unwrap()[0]);
+    assert!((va + vb - 1.0).abs() < 0.05 && (va - 0.5).abs() < 0.1, "{va} {vb}");
+    assert!((px.get(20, 4).unwrap()[0] - 1.0).abs() < 1e-3);
+    assert!(mappers.mapping(ids[0]).is_some());
+
+    // /b stops blending: /a takes the overlap fully again.
+    rig.edit(&[set("/b.blend", Value::Bool(false))]);
+    for _ in 0..3 {
+        rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
+        rig.clock.advance(1);
+    }
+    assert!((read(&rig, "/a").get(99, 4).unwrap()[0] - 1.0).abs() < 1e-3);
+
+    // A broken warp text is an error on the node.
+    rig.edit(&[set("/a.warp", Value::Text("0,0 1".into()))]);
+    rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
+    assert!(rig.cooker.status(ids[0]).unwrap().error.unwrap().contains("warp"));
+
+    // Deleting /a wakes /b, which no longer has it as a peer.
+    rig.edit(&[Op::Delete { path: "/a".parse().unwrap() }]);
+    mappers.prune(&rig.net);
+    assert!(mappers.mapping(ids[0]).is_none());
+}
+
+#[test]
+fn shapes_give_masks_per_tag_a_distance_field_outlines_and_a_table() {
+    use penumbra_core::Table;
+    let Some(gpu) = gpu() else { return };
+    // 96 x 64: the window is pixels 24..48 x 16..32, three copies 24 px apart (one row).
+    let text = "window rect 0.25,0.25 0.25,0.25 repeat 3x1 0.25,0\ndoor ellipse 0,0.5 0.25,0.5\n";
+    let mut rig = Rig::new(
+        gpu,
+        None,
+        &[
+            create(
+                "/s",
+                "tex.shapes",
+                &[
+                    ("width", Value::Int(W)),
+                    ("height", Value::Int(H)),
+                    ("shapes", Value::Text(text.into())),
+                    ("tag", Value::Text("window".into())),
+                ],
+            ),
+            create(
+                "/doors",
+                "tex.shapes",
+                &[size()[0].clone(), size()[1].clone(), ("tag", Value::Text("door".into()))],
+            ),
+            Op::Connect { from: "/s".parse().unwrap(), output: 3, to: "/doors".parse().unwrap(), input: 0 },
+        ],
+    );
+    let mask = rig.pixels("/s");
+    assert_eq!(mask.get(30, 20).unwrap(), [1.0; 4], "inside the first window");
+    assert_eq!(mask.get(80, 20).unwrap(), [1.0; 4], "inside the third copy");
+    assert_eq!(mask.get(12, 48).unwrap(), [0.0; 4], "the door is not a window");
+    let out = |rig: &Rig, path: &str, o: u32| {
+        rig.cooker.output(Port { node: rig.id(path), output: o }).cloned().unwrap()
+    };
+    let sdf = rig.gpu.read(out(&rig, "/s", 1).get::<Tex>().unwrap()).unwrap();
+    // Pixel 10's centre is 13.5 px left of the first window: 13.5 / 96 surface widths, growing leftwards.
+    let v = sdf.get(10, 20).unwrap();
+    assert!((v[0] - 13.5 / 96.0).abs() < 1e-3 && (v[1] + 1.0).abs() < 1e-3, "{v:?}");
+    let outline = rig.gpu.read(out(&rig, "/s", 2).get::<Tex>().unwrap()).unwrap();
+    assert!(outline.get(24, 20).unwrap()[3] > 0.9, "the window's left edge");
+    assert!(outline.get(12, 32).unwrap()[3] > 0.9, "the door's top, though not in the mask");
+    let table = out(&rig, "/s", 3);
+    let table = table.get::<Table>().unwrap();
+    assert_eq!(table.num_rows(), 5);
+    assert_eq!(table.cell(3, 3), "0.75");
+
+    // The second node draws the doors of the first one's table.
+    rig.cook("/doors");
+    let doors = rig.gpu.read(&rig.tex("/doors").unwrap()).unwrap();
+    assert_eq!(doors.get(12, 48).unwrap(), [1.0; 4]);
+    assert_eq!(doors.get(30, 20).unwrap(), [0.0; 4]);
+
+    // A broken line is an error naming it; the last picture stays.
+    rig.edit(&[set("/s.shapes", Value::Text("window rect 0,0".into()))]);
+    rig.cook("/s");
+    let error = rig.cooker.status(rig.id("/s")).unwrap().error.unwrap();
+    assert!(error.contains("line 1"), "{error}");
+    assert!(rig.tex("/s").is_some());
+}
+
+#[test]
+fn resolution_analysis_walks_back_from_the_projectors() {
+    use crate::out::{BoardState, DisplayInfo, ProjectorState};
+    use crate::res::{Scene, Verdict, analyze, pixel_params};
+    use crate::tex::mapper::Mappers;
+    let Some(gpu) = gpu() else { return };
+    let dims = |w: i64, h: i64| [("width", Value::Int(w)), ("height", Value::Int(h))];
+    let mut mapper = dims(192, 108).to_vec();
+    mapper.push(("region", Value::Vec4([0.0, 0.0, 0.5, 1.0])));
+    let mut rig = Rig::new(
+        gpu,
+        None,
+        &[
+            // Small, scaled up by 2 and blurred, half of it on a 192 x 108 projector: far too
+            // coarse. The constant can grow, the transform and the blur follow it.
+            create("/c", "tex.constant", &dims(16, 9)),
+            create("/t", "tex.transform", &[("scale", Value::Vec2([2.0, 2.0]))]),
+            create("/b", "tex.blur", &[]),
+            create("/m", "tex.mapper", &mapper),
+            create("/p", "out.projector", &[]),
+            connect("/c", "/t", 0),
+            connect("/t", "/b", 0),
+            connect("/b", "/m", 0),
+            connect("/m", "/p", 0),
+            // Large content through a mapper smaller than its projector: the mapper is too
+            // coarse, the content wasted.
+            create("/big", "tex.constant", &dims(384, 216)),
+            create("/m2", "tex.mapper", &dims(128, 72)),
+            create("/p2", "out.projector", &[]),
+            connect("/big", "/m2", 0),
+            connect("/m2", "/p2", 0),
+        ],
+    );
+    let mappers = Mappers::new();
+    rig.cooker.provide(mappers.clone());
+    // Both projectors on a display of 192 x 108 (small, so WARP is quick).
+    let shown = ProjectorState { display: Some("d".into()), ..ProjectorState::default() };
+    let board = BoardState {
+        managed: true,
+        displays: vec![DisplayInfo {
+            id: "d".into(),
+            monitor: "test".into(),
+            port: "0".into(),
+            connector: String::new(),
+            os_name: String::new(),
+            size: [192, 108],
+            position: [0, 0],
+            refresh_hz: None,
+            editor: false,
+        }],
+        projectors: [(rig.id("/p"), shown.clone()), (rig.id("/p2"), shown)].into(),
+        ..BoardState::default()
+    };
+    let cook = |rig: &mut Rig| {
+        let ids = [rig.id("/p"), rig.id("/p2")];
+        for _ in 0..2 {
+            rig.cooker.cook(&rig.net, rig.clock.now(), &ids, &[]);
+            rig.clock.advance(1);
+        }
+    };
+    let analysis = |rig: &Rig| {
+        analyze(&Scene {
+            net: &rig.net,
+            types: &rig.types,
+            cooker: &rig.cooker,
+            board: Some(&board),
+            max_side: 16384,
+        })
+    };
+    cook(&mut rig);
+    let report = analysis(&rig);
+    let node = |r: &crate::res::Report, p: &str| r.nodes.iter().find(|n| n.path == p).unwrap().clone();
+    assert_eq!(report.projectors.len(), 2);
+    assert!(
+        report.projectors.iter().all(|p| !p.assumed && p.raster == [192, 108]),
+        "{:?}",
+        report.projectors
+    );
+    let m = node(&report, "/m");
+    assert_eq!((m.needed, m.verdict), ([192, 108], Verdict::Ok), "{m:?}");
+    // Half the surface fills 96 pixels across (fitted, so its height fills 108).
+    let b = node(&report, "/b");
+    assert_eq!((b.needed, b.verdict, b.sets_size, b.suggested), ([192, 108], Verdict::Coarse, false, None));
+    let c = node(&report, "/c");
+    assert_eq!(c.needed, [384, 216], "scaled up by 2: twice the surface's need");
+    assert_eq!((c.sets_size, c.suggested), (true, Some([384, 216])));
+    let (m2, big) = (node(&report, "/m2"), node(&report, "/big"));
+    assert_eq!((m2.verdict, m2.suggested), (Verdict::Coarse, Some([192, 108])));
+    assert_eq!((big.needed, big.verdict, big.suggested), ([192, 108], Verdict::Wasted, Some([192, 108])));
+    // The overlay of /m shows the constant, twice as coarse as the blur it sees.
+    let o = report.overlays.get(&rig.id("/m")).unwrap();
+    assert!((o.factor - 0.5).abs() < 1e-3 && o.scale == [1.0, 1.0], "{o:?}");
+    // The blur's radius is in pixels: its look changes when the constant grows.
+    assert_eq!(pixel_params(&rig.net, &rig.types, &rig.cooker, &[rig.id("/c")]), ["/b.size"]);
+
+    // The overlay on the pictures: red where too coarse, through the constant behind /m and
+    // through /m2 itself (its surface alone would be blue).
+    mappers.set_overlays(report.overlays.clone());
+    cook(&mut rig);
+    let centre = |rig: &Rig, p: &str| {
+        let px = rig.gpu.read(&rig.tex(p).unwrap()).unwrap();
+        px.get(px.width / 2, px.height / 2).unwrap()
+    };
+    let is_red = |c: [f32; 4]| c[0] > 0.2 && c[0] > 4.0 * c[1].max(c[2]);
+    let is_blue = |c: [f32; 4]| c[2] > 0.2 && c[2] > 2.0 * c[0].max(c[1]);
+    assert!(is_red(centre(&rig, "/m")), "{:?}", centre(&rig, "/m"));
+    assert!(is_red(centre(&rig, "/m2")), "{:?}", centre(&rig, "/m2"));
+    mappers.set_overlays(Default::default());
+
+    // Optimise, pinning the large constant: the rest gets its suggestion.
+    rig.edit(&[set("/big.keep_size", Value::Bool(true))]);
+    cook(&mut rig);
+    let ops = analysis(&rig).optimize_ops(&rig.net, None);
+    assert_eq!(ops.len(), 4, "{ops:?}");
+    rig.edit(&ops);
+    cook(&mut rig);
+    let after = analysis(&rig);
+    assert_eq!(node(&after, "/c").verdict, Verdict::Ok);
+    assert_eq!(node(&after, "/m2").verdict, Verdict::Ok);
+    assert_eq!(node(&after, "/big").verdict, Verdict::Wasted);
+    // The surface follows the constant at twice what it needs; the weakest link is the
+    // constant, at one to one, so the overlay halves the surface's two.
+    assert_eq!(node(&after, "/b").verdict, Verdict::Wasted);
+    let o = after.overlays.get(&rig.id("/m")).unwrap();
+    assert!((o.factor - 0.5).abs() < 1e-3, "{o:?}");
+    // /m2 is fine now; the pinned constant behind it is twice as fine as needed: blue.
+    mappers.set_overlays(after.overlays.clone());
+    cook(&mut rig);
+    assert!(is_blue(centre(&rig, "/m2")), "{:?}", centre(&rig, "/m2"));
+    assert!(!is_red(centre(&rig, "/m")) && !is_blue(centre(&rig, "/m")), "{:?}", centre(&rig, "/m"));
+}
+
+mod geo;
+mod layers;
