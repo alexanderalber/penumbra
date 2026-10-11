@@ -15,6 +15,7 @@ penumbra-engine.workspace = true
 penumbra-gpu.workspace = true
 penumbra-ops.workspace = true
 penumbra-osc.workspace = true
+penumbra-audio.workspace = true
 penumbra-system.workspace = true
 serde.workspace = true
 serde_json.workspace = true

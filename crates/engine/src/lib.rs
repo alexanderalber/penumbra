@@ -4,6 +4,7 @@
 //! control channel all call the same registry. [`Engine`] runs an open project: the cook thread
 //! and the project thread (autosave, external edits). It uses the GPU (snapshots) but no UI.
 
+pub mod audio;
 pub mod calib;
 pub mod clipboard;
 pub mod command;
@@ -42,5 +43,6 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     calib::register(&mut registry);
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
+    audio::register(&mut registry, engine);
     registry
 }
