@@ -10,7 +10,7 @@
 //! moved down until it overlaps nothing. A deleted node's position is remembered for the run,
 //! so undoing the delete brings it back where it was.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -378,7 +378,8 @@ impl Layout {
                     p
                 }
             };
-            let p = if any_placed || beside.is_some() { self.free_spot(wanted, parent) } else { wanted };
+            // Nodes placed beside their input do not count in `column_rows`, so check every spot.
+            let p = self.free_spot(wanted, parent);
             self.pos.insert(id, p);
         }
         self.touch(now);
@@ -502,17 +503,30 @@ fn round(v: f32) -> f32 {
     v.round()
 }
 
-/// Longest path from a node without inputs or bindings, per node.
+/// Longest path from a node without inputs or bindings, per node, counted within its level.
+///
+/// A wire between levels (into a component's port node, or out of one) counts as a wire between
+/// the two nodes on the level both chains of parents share: the component and its neighbour.
+/// Counting the inner nodes' depth would push a component's downstream neighbours far right.
 fn depths(net: &Network) -> HashMap<NodeId, usize> {
-    let mut depth: HashMap<NodeId, usize> = HashMap::new();
-    // Relax until stable; the network has no loops, so this ends after at most n rounds.
+    let mut edges: Vec<(NodeId, NodeId)> = Vec::new();
+    for node in net.nodes() {
+        // Binding sources count like inputs, so a channel lands left of what it drives.
+        for up in node.upstream() {
+            if let Some(edge) = sibling_edge(net, up, node.id) {
+                edges.push(edge);
+            }
+        }
+    }
+    let mut depth: HashMap<NodeId, usize> = net.nodes().map(|n| (n.id, 0)).collect();
+    // Relax until stable. Within one level wires between components can form a loop, so the
+    // rounds are bounded rather than run to a fixed point.
     for _ in 0..=net.len() {
         let mut changed = false;
-        for node in net.nodes() {
-            // Binding sources count like inputs, so a channel lands left of what it drives.
-            let d = node.upstream().map(|n| depth.get(&n).map_or(1, |d| d + 1)).max().unwrap_or(0);
-            if depth.get(&node.id) != Some(&d) {
-                depth.insert(node.id, d);
+        for (from, to) in &edges {
+            let d = depth.get(from).copied().unwrap_or(0) + 1;
+            if depth.get(to).is_none_or(|old| *old < d) {
+                depth.insert(*to, d);
                 changed = true;
             }
         }
@@ -520,7 +534,44 @@ fn depths(net: &Network) -> HashMap<NodeId, usize> {
             break;
         }
     }
+    // A source sits just left of the first node it feeds, not in the far left column: a channel
+    // that drives a transform deep in a chain lands beside it.
+    let has_input: HashSet<NodeId> = edges.iter().map(|(_, to)| *to).collect();
+    let mut pulled: HashMap<NodeId, usize> = HashMap::new();
+    for (from, to) in &edges {
+        if has_input.contains(from) {
+            continue;
+        }
+        let d = depth.get(to).copied().unwrap_or(0).saturating_sub(1);
+        pulled.entry(*from).and_modify(|old| *old = (*old).min(d)).or_insert(d);
+    }
+    depth.extend(pulled);
     depth
+}
+
+/// The wire `from` -> `to` as one between their ancestors (or themselves) on a shared level;
+/// none when one holds the other.
+fn sibling_edge(net: &Network, from: NodeId, to: NodeId) -> Option<(NodeId, NodeId)> {
+    let chain = |id: NodeId| {
+        let mut out = vec![id];
+        let mut cur = id;
+        while let Some(p) = net.node(cur).and_then(|n| n.parent) {
+            if out.len() > net.len() {
+                break;
+            }
+            out.push(p);
+            cur = p;
+        }
+        out
+    };
+    let parent = |id: NodeId| net.node(id).and_then(|n| n.parent);
+    let froms = chain(from);
+    for a in chain(to) {
+        if let Some(b) = froms.iter().find(|b| parent(**b) == parent(a)) {
+            return (*b != a).then_some((*b, a));
+        }
+    }
+    None
 }
 
 fn read(file: &Path) -> Result<Option<(FileRepr, String)>, String> {
@@ -612,6 +663,38 @@ mod tests {
         assert_eq!(layout.get(a), None);
         layout.sync(&net, now);
         assert_eq!(layout.get(a), Some(start));
+    }
+
+    #[test]
+    fn depth_counts_within_a_level() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let wire = |from: &str, to: &str| Op::Connect {
+            from: from.parse().unwrap(),
+            output: 0,
+            to: to.parse().unwrap(),
+            input: 0,
+        };
+        let ops = vec![
+            create("/src", "chan.constant"),
+            create("/comp", "comp.base"),
+            create("/comp/in", "chan.in"),
+            create("/comp/a", "chan.math"),
+            create("/comp/b", "chan.math"),
+            create("/comp/out", "chan.out"),
+            create("/after", "chan.math"),
+            wire("/src", "/comp/in"),
+            wire("/comp/in", "/comp/a"),
+            wire("/comp/a", "/comp/b"),
+            wire("/comp/b", "/comp/out"),
+            wire("/comp/out", "/after"),
+        ];
+        let net = Network::new().apply(&types, &ops).unwrap().network;
+        let depth = depths(&net);
+        let d = |path: &str| depth[&net.resolve(&path.parse().unwrap()).unwrap()];
+        // Outside: the component sits one step after its source, its consumer one after it,
+        // however deep the inside is.
+        assert_eq!((d("/src"), d("/comp"), d("/after")), (0, 1, 2));
+        assert_eq!((d("/comp/in"), d("/comp/a"), d("/comp/out")), (0, 1, 3));
     }
 
     #[test]
