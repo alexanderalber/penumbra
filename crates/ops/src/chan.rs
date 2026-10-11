@@ -97,7 +97,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "a op b per channel; b's channel of the same name, else its first; `b` while input b is \
              unconnected",
         )
-        .param(ParamSpec::choice("op", &["add", "subtract", "multiply", "divide", "min", "max", "power"]))
+        .param(
+            ParamSpec::choice(
+                "op",
+                &["add", "subtract", "multiply", "divide", "min", "max", "power", "modulo", "floor"],
+            )
+            .doc("modulo: a wrapped into 0 to b; floor: a down to a multiple of b (b = 1: whole numbers)"),
+        )
         .param(ParamSpec::float("b", 0.0).range(-1.0, 1.0).doc("Used while input b is unconnected"))
         .input("a", DataKind::Chan)
         .input("b", DataKind::Chan)
@@ -126,6 +132,23 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .output("out", DataKind::Chan)
             .time_dependent(),
         || Box::new(Filter::default()) as Box<dyn Operator>,
+    ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            "chan.speed",
+            "Adds up each channel over time, as a rate per second: a speed becomes a position",
+        )
+        .param(
+            ParamSpec::choice("limit", &["none", "loop", "clamp"])
+                .doc("Keep the sum within min and max: start again from min (loop) or stop there (clamp)"),
+        )
+        .param(ParamSpec::float("min", 0.0).range(-10.0, 10.0))
+        .param(ParamSpec::float("max", 1.0).range(-10.0, 10.0))
+        .param(ParamSpec::bool("reset", false).doc("Hold the sum at 0 (or min) while on"))
+        .input("in", DataKind::Chan)
+        .output("out", DataKind::Chan)
+        .time_dependent(),
+        || Box::new(Speed::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("chan.merge", "The channels of all inputs side by side")
@@ -509,6 +532,8 @@ impl Operator for Math {
             "min" => f64::min,
             "max" => f64::max,
             "power" => f64::powf,
+            "modulo" => |a, b| if b == 0.0 { a } else { a.rem_euclid(b) },
+            "floor" => |a, b| if b == 0.0 { a } else { (a / b).floor() * b },
             _ => |a, b| a + b,
         };
         // The layout (names, length, rate) comes from a, else from b.
@@ -594,6 +619,68 @@ impl Operator for Filter {
             if let Some(v) = y {
                 state.insert(ch.name.clone(), v);
             }
+            channels.push(Channel { name: ch.name.clone(), samples });
+        }
+        self.state = state;
+        out(Chans::new(input.rate(), channels)?)
+    }
+}
+
+/// Integrates each channel: per-frame channels by the time since the last cook (like
+/// [`Filter`]), channels with many samples by their sample period.
+#[derive(Default)]
+struct Speed {
+    state: BTreeMap<Name, f64>,
+    last: Option<Tick>,
+}
+
+/// `v` kept within `lo..hi` by `limit`.
+fn limited(v: f64, limit: &str, lo: f64, hi: f64) -> f64 {
+    match limit {
+        "loop" if hi > lo => lo + (v - lo).rem_euclid(hi - lo),
+        "loop" | "clamp" => v.clamp(lo.min(hi), hi.max(lo)),
+        _ => v,
+    }
+}
+
+impl Operator for Speed {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let now = cx.time().tick;
+        let Some(input) = cx.input_as::<Chans>(0) else {
+            self.state.clear();
+            self.last = None;
+            return out(Chans::empty(cx.rate().as_f64())?);
+        };
+        let limit = cx.text("limit")?;
+        let (lo, hi) = (cx.float("min")?, cx.float("max")?);
+        let start = limited(0.0, limit, lo, hi);
+        // Going back in time (a seek) or a reset starts over.
+        let dt = match self.last {
+            Some(last) if now.0 >= last.0 => Tick(now.0 - last.0).seconds(),
+            _ => {
+                self.state.clear();
+                0.0
+            }
+        };
+        self.last = Some(now);
+        let reset = cx.bool("reset")?;
+        if reset {
+            self.state.clear();
+        }
+        let per_sample = input.len() > 1;
+        let mut state = BTreeMap::new();
+        let mut channels = Vec::with_capacity(input.channels().len());
+        for ch in input.channels() {
+            let mut sum = self.state.get(&ch.name).copied().unwrap_or(start);
+            let mut samples = Vec::with_capacity(ch.samples.len());
+            for &x in &ch.samples {
+                let step = if per_sample { 1.0 / input.rate() } else { dt };
+                if !reset {
+                    sum = limited(sum + x * step, limit, lo, hi);
+                }
+                samples.push(sum);
+            }
+            state.insert(ch.name.clone(), sum);
             channels.push(Channel { name: ch.name.clone(), samples });
         }
         self.state = state;
@@ -872,5 +959,53 @@ mod tests {
         f.net = Arc::new(f.net.apply(&builtin_types().unwrap(), &[set("/c.value0", 0.0)]).unwrap().network);
         f.clock.advance(1);
         assert_eq!(f.value("/f"), 0.0);
+    }
+
+    #[test]
+    fn modulo_and_floor() {
+        let mut f = F::new(&[
+            create("/c", "chan.constant"),
+            set("/c.value0", -3.5),
+            create("/mod", "chan.math"),
+            set("/mod.op", "modulo"),
+            set("/mod.b", 3.0),
+            create("/floor", "chan.math"),
+            set("/floor.op", "floor"),
+            set("/floor.b", 2.0),
+            connect("/c", "/mod", 0),
+            connect("/c", "/floor", 0),
+        ]);
+        assert!((f.value("/mod") - 2.5).abs() < 1e-12);
+        assert_eq!(f.value("/floor"), -4.0);
+    }
+
+    #[test]
+    fn speed_adds_up_loops_and_resets() {
+        let mut f = F::new(&[
+            create("/c", "chan.constant"),
+            set("/c.value0", 1.0),
+            create("/s", "chan.speed"),
+            set("/s.limit", "loop"),
+            set("/s.max", 3.0),
+            connect("/c", "/s", 0),
+        ]);
+        assert_eq!(f.value("/s"), 0.0);
+        // 2 s at 1 per second.
+        f.clock.advance(120);
+        assert!((f.value("/s") - 2.0).abs() < 1e-9);
+        // Frames nobody asked for still count; past max it starts again from min.
+        f.clock.advance(90);
+        assert!((f.value("/s") - 0.5).abs() < 1e-9);
+        f.net = Arc::new(f.net.apply(&builtin_types().unwrap(), &[set("/s.reset", true)]).unwrap().network);
+        f.clock.advance(1);
+        assert_eq!(f.value("/s"), 0.0);
+        f.net = Arc::new(
+            f.net
+                .apply(&builtin_types().unwrap(), &[set("/s.reset", false), set("/s.limit", "clamp")])
+                .unwrap()
+                .network,
+        );
+        f.clock.advance(600);
+        assert_eq!(f.value("/s"), 3.0);
     }
 }

@@ -29,6 +29,8 @@ premultiplied RGBA; values above 1 are kept.
 
 Comment lines starting with `// @param` declare params. They appear in the node's param panel
 under "from the shader", and are set, bound to channels, saved and undone like any other.
+The node's own params (`file`, `resolution`, `width`, `height`, `keep_size`) are taken: a
+shader declaring one of those names does not load, so call a line width `line`, not `width`.
 
 ```
 // @param <name> <kind> [= <default>] [<min>..<max>] [-- <doc>]

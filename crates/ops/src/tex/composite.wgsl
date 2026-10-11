@@ -32,6 +32,23 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         case op_average: {
             return (a + b) * 0.5;
         }
+        case op_inside: {
+            return b * a.a;
+        }
+        case op_outside: {
+            return b * (1.0 - a.a);
+        }
+        case op_overlay: {
+            // The separable blend over straight colours, where both are; each alone elsewhere.
+            let x = pn_unpremultiply(a).rgb;
+            let y = pn_unpremultiply(b).rgb;
+            let o = select(1.0 - 2.0 * (1.0 - x) * (1.0 - y), 2.0 * x * y, x < vec3f(0.5));
+            let rgb = o * a.a * b.a + y * b.a * (1.0 - a.a) + x * a.a * (1.0 - b.a);
+            return vec4f(rgb, b.a + a.a * (1.0 - b.a));
+        }
+        case op_atop: {
+            return b * a.a + a * (1.0 - b.a);
+        }
         default: {
             return b + a * (1.0 - b.a);
         }

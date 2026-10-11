@@ -14,6 +14,7 @@ mod flow;
 mod image;
 mod layer;
 pub mod mapper;
+mod ramp;
 pub mod render;
 mod shader;
 pub mod shapes;
@@ -234,8 +235,12 @@ fn core_builtins() -> Vec<Builtin> {
                     "maximum",
                     "minimum",
                     "average",
+                    "inside",
+                    "outside",
+                    "atop",
+                    "overlay",
                 ],
-            ))
+            ).doc("inside, outside: the top only where the bottom is, or is not; atop: the top over the bottom, only where the bottom is; overlay: darkens the dark and brightens the bright parts of the bottom by the top"))
             .param(
                 ParamSpec::bool("swap", false)
                     .doc("Swap the inputs: bottom onto top (TouchDesigner's Swap Operation Order)"),
@@ -304,6 +309,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     image::register(types)?;
     layer::register(types)?;
     mapper::register(types)?;
+    ramp::register(types)?;
     render::register(types)?;
     shader::register(types)?;
     shapes::register(types)?;
@@ -327,6 +333,9 @@ pub fn warm_up(gpu: &Gpu) {
     }
     if let Err(e) = blur::warm_up(gpu) {
         log::error!("built-in shader tex.blur does not compile: {e}");
+    }
+    if let Err(e) = ramp::warm_up(gpu) {
+        log::error!("built-in shader tex.ramp does not compile: {e}");
     }
     if let Err(e) = shapes::warm_up(gpu) {
         log::error!("built-in shader tex.shapes does not compile: {e}");

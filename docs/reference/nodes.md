@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.out](#texout), [tex.quantize](#texquantize), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
+[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
 
 ### tex.blobtrack
 
@@ -120,7 +120,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average | `"over"` |  |  |
+| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average \| inside \| outside \| atop \| overlay | `"over"` |  | inside, outside: the top only where the bottom is, or is not; atop: the top over the bottom, only where the bottom is; overlay: darkens the dark and brightens the bright parts of the bottom by the top |
 | `swap` | bool | `false` |  | Swap the inputs: bottom onto top (TouchDesigner's Swap Operation Order) |
 
 ### tex.constant
@@ -241,6 +241,22 @@ Outputs: `out` (tex).
 | `flip_x` | bool | `false` |  | Left becomes right |
 | `flip_y` | bool | `false` |  | Top becomes bottom |
 | `flop` | bool | `false` |  | Swap the axes (transpose); the output is as wide as the input is high |
+
+### tex.hsv
+
+Turn the hue, scale saturation and value
+
+Inputs:
+
+- `in` (tex)
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `hue` | float | `0` | -180 to 180 ° (soft) | Added to the hue: 120 turns red into green; any angle, it wraps |
+| `saturation` | float | `1` | 0 to 2 (soft) | Times the saturation |
+| `value` | float | `1` | 0 to 2 (soft) | Times the value (the brightest channel) |
 
 ### tex.image
 
@@ -474,6 +490,22 @@ Outputs: `out` (tex).
 | `dither` | none \| ordered | `"none"` |  | Ordered: a 4 x 4 Bayer pattern per block, so gradients survive few levels |
 | `space` *(more)* | perceptual \| linear | `"perceptual"` |  | Where the levels are evenly spaced: to the eye (sRGB curve) or in linear light |
 | `alpha` *(more)* | bool | `false` |  | Quantize alpha too |
+
+### tex.ramp
+
+Colours at positions, blended in between: a gradient
+
+Inputs: none.
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` | int | `1920` | 1 to 16384 px |  |
+| `height` | int | `1080` | 1 to 16384 px |  |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `keys` | text | an example script |  | One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; 1 when left out) |
+| `shape` | horizontal \| vertical \| radial \| circular | `"horizontal"` |  | Where 0 and 1 are: left to right, bottom to top, centre to the middle of the top edge, once around the centre counter-clockwise from the right |
 
 ### tex.remap
 
@@ -740,7 +772,7 @@ Outputs: `out` (tex), `info` (chan).
 
 ## chan
 
-[chan.audioanalysis](#chanaudioanalysis), [chan.audioin](#chanaudioin), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.oscin](#chanoscin), [chan.oscout](#chanoscout), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect)
+[chan.audioanalysis](#chanaudioanalysis), [chan.audioin](#chanaudioin), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.oscin](#chanoscin), [chan.oscout](#chanoscout), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed)
 
 ### chan.audioanalysis
 
@@ -855,7 +887,7 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | add \| subtract \| multiply \| divide \| min \| max \| power | `"add"` |  |  |
+| `op` | add \| subtract \| multiply \| divide \| min \| max \| power \| modulo \| floor | `"add"` |  | modulo: a wrapped into 0 to b; floor: a down to a multiple of b (b = 1: whole numbers) |
 | `b` | float | `0` | -1 to 1 (soft) | Used while input b is unconnected |
 
 ### chan.merge
@@ -977,6 +1009,25 @@ Outputs: `out` (chan).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `channels` | text | `"*"` |  | Space-separated names, `*` matches any run of characters: `x y pos*`; `^name` leaves channels out. Renaming is chan.rename's job |
+
+### chan.speed
+
+Adds up each channel over time, as a rate per second: a speed becomes a position
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `in` (chan)
+
+Outputs: `out` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `limit` | none \| loop \| clamp | `"none"` |  | Keep the sum within min and max: start again from min (loop) or stop there (clamp) |
+| `min` | float | `0` | -10 to 10 (soft) |  |
+| `max` | float | `1` | -10 to 10 (soft) |  |
+| `reset` | bool | `false` |  | Hold the sum at 0 (or min) while on |
 
 ## table
 

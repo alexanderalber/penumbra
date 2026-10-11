@@ -347,6 +347,27 @@ lumen"
         create("/threshold", "tex.threshold", &[("soft", Value::Float(0.1))]),
         create("/tile", "tex.tile", &[("repeat", Value::Vec2([3.0, 2.0])), ("mirror", Value::Bool(true))]),
         create("/blur", "tex.blur", &[("size", Value::Float(6.0))]),
+        create("/hsv", "tex.hsv", &[("hue", Value::Float(120.0)), ("saturation", Value::Float(0.5))]),
+        create("/cut", "tex.threshold", &[("output", "alpha".into())]),
+        create("/outside", "tex.composite", &[("op", "outside".into())]),
+        create("/atop", "tex.composite", &[("op", "atop".into())]),
+        create("/overlay", "tex.composite", &[("op", "overlay".into())]),
+        create(
+            "/ramp",
+            "tex.ramp",
+            &[
+                size()[0].clone(),
+                size()[1].clone(),
+                (
+                    "keys",
+                    "0 1 0.5 0 1
+0.6 0.1 0.2 1 0.5
+0.6 0 0 0 0"
+                        .into(),
+                ),
+                ("shape", "radial".into()),
+            ],
+        ),
         connect("/image", "/flip", 0),
         connect("/noise_value", "/channelmix", 0),
         connect("/noise_value", "/chromakey", 0),
@@ -371,6 +392,14 @@ lumen"
         connect("/noise", "/threshold", 0),
         connect("/image", "/tile", 0),
         connect("/noise_value", "/blur", 0),
+        connect("/noise_value", "/hsv", 0),
+        connect("/noise", "/cut", 0),
+        connect("/cut", "/outside", 0),
+        connect("/image", "/outside", 1),
+        connect("/cut", "/atop", 0),
+        connect("/image", "/atop", 1),
+        connect("/noise_value", "/overlay", 0),
+        connect("/image", "/overlay", 1),
         connect("/noise_value", "/transform", 0),
         connect("/image", "/transform_zero", 0),
         connect("/noise", "/level", 0),
@@ -419,6 +448,11 @@ lumen"
         "threshold",
         "tile",
         "blur",
+        "hsv",
+        "outside",
+        "atop",
+        "overlay",
+        "ramp",
     ];
     for name in names {
         let px = rig.pixels(&format!("/{name}"));
@@ -603,6 +637,23 @@ fn shader_hot_reload_keeps_the_last_good_version() {
             break;
         }
         assert!(Instant::now() < deadline, "the broken shader was not noticed");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // A param named like one of the node's own is refused, not shadowed by the node's value.
+    std::fs::write(
+        &file,
+        "// @param width float = 2\n@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(params.width); }",
+    )
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        rig.cook("/s");
+        let s = rig.cooker.status(id).unwrap();
+        if s.warning.as_deref().is_some_and(|w| w.contains("`width` is a param of the node itself")) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the clashing param was not noticed: {s:?}");
         std::thread::sleep(Duration::from_millis(20));
     }
 
