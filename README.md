@@ -18,7 +18,9 @@ a local JSON control channel.
 cargo run -p penumbra
 ```
 
-With no arguments the app opens a demo project.
+With no arguments the app opens a demo project. The [documentation](docs/README.md) starts
+with [getting started](docs/getting-started.md) and has a reference of every
+[node](docs/reference/nodes.md) and [command](docs/reference/commands.md).
 
 ## Acknowledgements
 

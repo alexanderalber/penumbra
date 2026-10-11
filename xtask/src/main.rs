@@ -9,6 +9,8 @@
 //! - `layers`: lower crates must not depend on GPU or UI crates.
 //! - `bless`: rewrite the golden images (`crates/ops/tests/golden/`) from the current renders on
 //!   the software adapter. Look at the result before committing it.
+//! - `docs`: rewrite the generated reference (`docs/reference/`) from the node types and
+//!   commands. `test` fails while it is out of date.
 
 use std::process::{Command, ExitCode};
 use std::time::Instant;
@@ -59,7 +61,10 @@ fn main() -> ExitCode {
         "linux" => linux(),
         "layers" => layers(),
         "bless" => bless(),
-        other => Err(format!("unknown task `{other}`; tasks: ci, fmt, clippy, test, linux, layers, bless")),
+        "docs" => docs(),
+        other => {
+            Err(format!("unknown task `{other}`; tasks: ci, fmt, clippy, test, linux, layers, bless, docs"))
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -107,6 +112,21 @@ fn bless() -> Result<(), String> {
     eprintln!(
         "xtask: golden images rewritten; check `git diff --stat crates/ops/tests/golden` and look at them"
     );
+    Ok(())
+}
+
+fn docs() -> Result<(), String> {
+    let args = ["test", "-p", "penumbra-ui", "reference_docs_are_current"];
+    eprintln!("xtask: PENUMBRA_BLESS=1 cargo {}", args.join(" "));
+    let status = Command::new(cargo_bin())
+        .args(args)
+        .env("PENUMBRA_BLESS", "1")
+        .status()
+        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    if !status.success() {
+        return Err(format!("writing the reference failed ({status})"));
+    }
+    eprintln!("xtask: reference rewritten; check `git diff docs/reference`");
     Ok(())
 }
 
