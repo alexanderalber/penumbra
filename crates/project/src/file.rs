@@ -14,17 +14,19 @@
 //! )
 //! ```
 //!
-//! Nodes are keyed by path, one per line, sorted. `params` holds only values that differ from
-//! the declared default (the app writes it that way; a file may list defaults too). `inputs`
-//! maps an input name to the node feeding it: `"path"` for its first output, `"path:name"`
-//! (or `"path:1"`) for another. `binds` maps a parameter (or one component, `translate.0`) to
-//! the channel driving it: `"path"` for the first channel of the node's first `chan` output,
-//! `"path:name"` for the channel called `name` (after the colon comes a channel here, not an
-//! output). Node keys are absolute; the paths in `inputs` and `binds` are read on the level of
-//! the node they belong to, by the rule node references use ([`NodePath::resolve_ref`]):
-//! absolute (`/a/b`), a name beside the node, `sub/x` below, `../x` up. The app writes the
-//! shorter form ([`NodePath::write_ref`]). `settings` holds the project settings that differ
-//! from their default ([`penumbra_graph::SETTINGS`]). Missing `settings`, `params`, `inputs`, `binds` and `locked` mean empty and `false`. Unknown fields are refused, so a typo is an error rather than silently ignored.
+//! Nodes are keyed by path, one per line, sorted. `params` holds only values that differ from the
+//! declared default (the app writes it that way; a file may list defaults too). `inputs` maps an
+//! input name to the node feeding it: `"path"` for its first output, `"path:name"` (or `"path:1"`)
+//! for another. `binds` maps a parameter (or one component, `translate.0`) to the channel driving
+//! it: `"path"` for the first channel of the node's first `chan` output, `"path:name"` for the
+//! channel called `name` (after the colon comes a channel here, not an output). Node keys are
+//! absolute; the paths in `inputs` and `binds` are read on the level of the node they belong to, by
+//! the rule node references use ([`NodePath::resolve_ref`]): absolute (`/a/b`), a name beside the
+//! node, `sub/x` below, `../x` up. The app writes the shorter form ([`NodePath::write_ref`]).
+//! `settings` holds the project settings that differ from their default
+//! ([`penumbra_graph::SETTINGS`]). Missing `settings`, `params`, `inputs`, `binds` and `locked`
+//! mean empty and `false`. Unknown fields are refused, so a typo is an error rather than silently
+//! ignored.
 
 use std::collections::BTreeMap;
 

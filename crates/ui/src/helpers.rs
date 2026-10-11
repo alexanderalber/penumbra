@@ -231,7 +231,8 @@ impl Helpers {
         let r = ui
             .add_enabled(input.can_edit, egui::Checkbox::new(&mut persist, "keep node state across restarts"))
             .on_hover_text(
-                "Feedback loops, held caches and other nodes continue where they were at the next start                  (project setting persist_state). Locked nodes keep their outputs either way",
+                "Feedback loops, held caches and other nodes continue where they were at the next \
+                 start (project setting persist_state). Locked nodes keep their outputs either way",
             );
         auto.add("helpers.state.persist", r.rect, "keep node state across restarts");
         if r.changed()
@@ -313,7 +314,8 @@ impl Helpers {
                 });
             }
             let r = ui.button("Start fresh").on_hover_text(
-                "Feedback loops, caches and other nodes forget what they hold, here and in the state folder;                  locked nodes keep their outputs (state.discard; --fresh at the start)",
+                "Feedback loops, caches and other nodes forget what they hold, here and in the state \
+                 folder; locked nodes keep their outputs (state.discard; --fresh at the start)",
             );
             auto.add("helpers.state.discard", r.rect, "Start fresh");
             if r.clicked() {

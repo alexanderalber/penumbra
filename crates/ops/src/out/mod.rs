@@ -161,7 +161,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let desc = NodeDesc::new(PROJECTOR, "A projector: shows its input fullscreen on a display, or in a part of it")
         .param(
             ParamSpec::text("display", "")
-                .doc("Display id from output.displays, e.g. `EPSON PJ @ port 4`; the monitor name alone works when unique"),
+                .doc("Display id from output.list, e.g. `EPSON PJ @ port 4`; the monitor name alone works when unique"),
         )
         .param(ParamSpec::bool("active", true).doc("Open the output window"))
         .param(ParamSpec::choice("fit", &["fit", "fill", "stretch"]).doc(
@@ -174,7 +174,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5)"),
         )
         .param(ParamSpec::bool("test", false).doc(
-            "A test pattern in the projector's own pixels instead of the input: square cells, centre,              circle, and the image's edge in this projector's colour",
+            "A test pattern in the projector's own pixels instead of the input: square cells, centre, \
+             circle, and the image's edge in this projector's colour",
         ))
         .input("in", DataKind::Tex)
         // Not reading the clock; declared so the node picks up what the output side reports
@@ -211,7 +212,7 @@ impl Operator for Projector {
             return Ok(Cooked::Outputs(Vec::new()));
         }
         if cx.text("display")?.trim().is_empty() {
-            cx.warn("no display chosen (see output.displays)");
+            cx.warn("no display chosen (see output.list)");
             return Ok(Cooked::Outputs(Vec::new()));
         }
         let Some(board) = cx.resource::<OutputBoard>() else {

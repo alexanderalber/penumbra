@@ -42,7 +42,7 @@ pub const INPUTS: usize = 4;
 const PRELUDE: &str = r#"
 // ---- penumbra prelude ----
 struct PnFrame { resolution: vec2f, texel: vec2f }
-struct PnTime { seconds: f32, frame: f32, _lc0: f32, _lc1: f32 }
+struct PnTime { seconds: f32, frame: f32, _pn0: f32, _pn1: f32 }
 struct PnVertex { @builtin(position) pos: vec4f, @location(0) uv: vec2f }
 @group(0) @binding(0) var<uniform> pn: PnFrame;
 @group(0) @binding(1) var<uniform> pn_time: PnTime;

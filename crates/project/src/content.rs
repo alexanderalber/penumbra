@@ -85,13 +85,13 @@ fn is_inside(path: &NodePath, ancestor: &NodePath) -> bool {
     path.names().len() > ancestor.names().len() && path.names().starts_with(ancestor.names())
 }
 
-/// The ops that turn `base` into `theirs`. Bindings are dependencies like connections and
-/// follow the same order: changed ones are dropped before any is made. Applied to a network whose content is `base`, the
-/// result has the content `theirs`; applied to a network that has moved on from `base` (the
-/// user's edits since the file was last written), it carries only the changes between `base`
-/// and `theirs` over, which is the three-way merge of an external file edit. A conflicting
-/// change (the user deleted the node the file edit sets a parameter on) makes the batch fail as
-/// a whole.
+/// The ops that turn `base` into `theirs`. Bindings are dependencies like connections and follow
+/// the same order: changed ones are dropped before any is made. Applied to a network whose content
+/// is `base`, the result has the content `theirs`; applied to a network that has moved on from
+/// `base` (the user's edits since the file was last written), it carries only the changes between
+/// `base` and `theirs` over, which is the three-way merge of an external file edit. A conflicting
+/// change (the user deleted the node the file edit sets a parameter on) makes the batch fail as a
+/// whole.
 ///
 /// Renames cannot be told apart from a delete plus a create, so a renamed node starts with a
 /// fresh operator. A node whose kind changed is deleted and created again, with everything
