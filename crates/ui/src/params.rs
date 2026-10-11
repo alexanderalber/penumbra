@@ -46,6 +46,9 @@ pub struct ParamPanel {
     rename: Option<(NodeId, String)>,
     /// Files offered for a file param, listed when its menu opens.
     files: Option<(String, Vec<String>)>,
+    /// Audio inputs offered for a `chan.audioin`'s `device`, listed when its menu opens
+    /// (listing takes some milliseconds, too long for every frame).
+    audio_inputs: Option<(String, Result<Vec<penumbra_audio::DeviceInfo>, String>)>,
     /// Lines the colour row being drawn takes: swatch and fields on one, the fields below the
     /// swatch, or the fields two by two below it (narrow column).
     color_lines: u8,
@@ -714,6 +717,9 @@ impl ParamPanel {
                     if node.kind == penumbra_ops::out::PROJECTOR && spec.name == "display" {
                         display_menu(ui, input.displays, key, auto, new);
                     }
+                    if node.kind == penumbra_ops::audio::AUDIO_IN && spec.name == "device" {
+                        self.device_menu(ui, key, auto, new);
+                    }
                     if spec.node_ref {
                         node_menu(ui, input, node, key, auto, new);
                     }
@@ -776,6 +782,58 @@ impl ParamPanel {
         });
         if r.inner.is_none() && self.files.as_ref().is_some_and(|(k, _)| k == key) {
             self.files = None;
+        }
+    }
+
+    /// The audio inputs of this machine for a `chan.audioin`'s `device`
+    /// (`param.<path>.device.menu`, entries `device.default` and `device.<i>`).
+    fn device_menu(
+        &mut self,
+        ui: &mut Ui,
+        key: &str,
+        auto: &mut automation::Registry,
+        new: &mut Option<Value>,
+    ) {
+        let r = ui.menu_button("\u{2026}", |ui| {
+            if self.audio_inputs.as_ref().is_none_or(|(k, _)| k != key) {
+                self.audio_inputs = Some((key.to_string(), penumbra_audio::capture::devices()));
+            }
+            let r = ui.button("the system's default input").on_hover_text("Leaves `device` empty");
+            auto.add("device.default", r.rect, "default input");
+            if r.clicked() {
+                *new = Some(Value::Text(String::new()));
+                ui.close();
+            }
+            match self.audio_inputs.as_ref().map(|(_, l)| l) {
+                Some(Ok(list)) if list.is_empty() => {
+                    ui.label(RichText::new("no audio inputs found").color(theme::TEXT_WEAK));
+                }
+                Some(Ok(list)) => {
+                    for (i, d) in list.iter().enumerate() {
+                        let mut text = d.name.clone();
+                        if let (Some(rate), Some(ch)) = (d.rate, d.channels) {
+                            text.push_str(&format!("  {rate} Hz, {ch} ch"));
+                        }
+                        if d.default {
+                            text.push_str("  (default)");
+                        }
+                        let r = ui.button(text);
+                        auto.add(format!("device.{i}"), r.rect, d.name.clone());
+                        if r.clicked() {
+                            *new = Some(Value::Text(d.name.clone()));
+                            ui.close();
+                        }
+                    }
+                }
+                Some(Err(e)) => {
+                    ui.colored_label(theme::WARNING, e);
+                }
+                None => {}
+            }
+        });
+        auto.add(format!("param.{key}.menu"), r.response.rect, "audio inputs");
+        if r.inner.is_none() && self.audio_inputs.as_ref().is_some_and(|(k, _)| k == key) {
+            self.audio_inputs = None;
         }
     }
 }
