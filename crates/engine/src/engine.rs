@@ -54,12 +54,13 @@
 //!
 //! **Audio:** likewise, the cook thread tells the audio [`AudioHub`] which input devices the
 //! network's `chan.audioin` nodes want; the hub keeps a stream thread per device, and the
-//! nodes read what arrived.
+//! nodes read what arrived. **Cameras** the same way: the [`CameraHub`] opens what the
+//! `tex.videoin` nodes want, a capture thread per camera, and keeps each one's newest frame.
 //!
 //! **Another project** ([`Engine::open_project`]): the threads above stop (state saved and
 //! changes written as at closing) and start again for the new session with a fresh cook state.
 //! What does not belong to a project stays: the GPU, the output board and windows, the OSC
-//! and audio hubs, the component library, the clipboard. [`Engine::generation`] tells the UI.
+//! audio and camera hubs, the component library, the clipboard. [`Engine::generation`] tells the UI.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -70,6 +71,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use penumbra_audio::Hub as AudioHub;
+use penumbra_camera::Hub as CameraHub;
 use penumbra_core::{Error, FrameTime, LatePolicy, NodeId, PaceSource, Pacer, ParamSpec, Rate, ShowClock};
 use penumbra_gpu::Gpu;
 use penumbra_graph::{
@@ -248,6 +250,8 @@ pub struct CookState {
     osc: Hub,
     /// Told which audio inputs to open when the network changes.
     audio: AudioHub,
+    /// Told which cameras to open when the network changes.
+    camera: CameraHub,
     /// Added to the cooker's pass numbers in what is published, so they keep growing when
     /// another project opens (the output threads wait for a pass newer than the last they drew).
     pass_base: u64,
@@ -345,6 +349,7 @@ impl CookState {
             self.sinks = Some((net.clone(), sinks));
             self.osc.set_wanted(&penumbra_ops::osc::wants(&net, types));
             self.audio.set_wanted(&penumbra_ops::audio::wants(&net, types));
+            self.camera.set_wanted(&penumbra_ops::tex::videoin::wants(&net, types));
         }
         let mut wanted: Vec<NodeId> = self.sinks.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
         self.watched.retain(|id| net.node(*id).is_some());
@@ -442,6 +447,7 @@ pub struct Engine {
     state: Arc<StateShared>,
     osc: Arc<OscShared>,
     audio: AudioHub,
+    camera: CameraHub,
     shut: AtomicBool,
 }
 
@@ -470,6 +476,7 @@ impl Engine {
             state: Arc::new(StateShared::default()),
             osc: Arc::new(OscShared::new(Hub::new())),
             audio: AudioHub::new(),
+            camera: CameraHub::new(),
             shut: AtomicBool::new(false),
         });
         engine.launch(&session, 0)?;
@@ -488,6 +495,7 @@ impl Engine {
         cooker.provide(renders.clone());
         cooker.provide(self.osc.hub().clone());
         cooker.provide(self.audio.clone());
+        cooker.provide(self.camera.clone());
         let gpu = self.gpu.get().cloned();
         if let Some(gpu) = &gpu {
             cooker.provide(gpu.clone());
@@ -510,6 +518,7 @@ impl Engine {
             stats: PassStats::default(),
             osc: self.osc.hub().clone(),
             audio: self.audio.clone(),
+            camera: self.camera.clone(),
             pass_base,
         }
     }
@@ -732,6 +741,11 @@ impl Engine {
         &self.audio
     }
 
+    /// The cameras.
+    pub fn camera(&self) -> &CameraHub {
+        &self.camera
+    }
+
     /// The project's state directory.
     pub fn state_dir(&self) -> std::path::PathBuf {
         crate::state::dir_of(self.session().dir())
@@ -900,6 +914,7 @@ impl Engine {
         self.stop_threads();
         self.osc.hub().shutdown();
         self.audio.shutdown();
+        self.camera.shutdown();
     }
 }
 

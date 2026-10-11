@@ -3118,6 +3118,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "penumbra-camera"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde",
+ "windows",
+]
+
+[[package]]
 name = "penumbra-core"
 version = "0.1.0"
 dependencies = [
@@ -3133,6 +3142,7 @@ dependencies = [
  "log",
  "penumbra-audio",
  "penumbra-calib",
+ "penumbra-camera",
  "penumbra-core",
  "penumbra-gpu",
  "penumbra-graph",
@@ -3189,6 +3199,7 @@ dependencies = [
  "log",
  "penumbra-audio",
  "penumbra-calib",
+ "penumbra-camera",
  "penumbra-core",
  "penumbra-gpu",
  "penumbra-graph",
@@ -3279,6 +3290,7 @@ dependencies = [
  "egui_kittest",
  "log",
  "penumbra-audio",
+ "penumbra-camera",
  "penumbra-core",
  "penumbra-engine",
  "penumbra-gpu",

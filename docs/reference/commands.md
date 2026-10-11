@@ -202,3 +202,11 @@ Every command of the running app, as `pn ctl <command>` or a control-channel req
 | `ui.state` | Selection, viewer, pan and zoom, editing mode; {positions?} |
 | `ui.type` | Type text into the focused field; {text} |
 | `ui.view` | Pin the viewer to a node, or unpin without a path; {path?} |
+
+## videoin
+
+| command | |
+|---|---|
+| `videoin.config` | Camera settings for this run: {enabled?} |
+| `videoin.devices` | The cameras of this machine with their modes (size, rate, pixel format, whether penumbra reads it) |
+| `videoin.status` | Camera streams (device, mode, open, error, frames, fps, dropped, delay_ms from the camera's timestamp) |

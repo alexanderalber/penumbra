@@ -29,7 +29,8 @@ const LINUX_LINK_OVERRIDES: &[&str] = &[
 /// Which crates may not reach which: (crate, forbidden dependencies). `core`, `graph` and
 /// `project` stay headless; `gpu`, `ops` and `engine` use wgpu but no UI. `system` is OS code and
 /// `video` decodes files, both without GPU or windows; `output` has windows (winit) but no egui.
-/// `script` and `pyhost` (Python) and `audio` (input devices, analysis) are headless too.
+/// `script` and `pyhost` (Python) `audio` (input devices, analysis) and
+/// `camera` (capture devices) are headless too.
 const UI: &[&str] = &["egui", "eframe", "egui-wgpu", "egui-winit", "winit"];
 const EGUI: &[&str] = &["egui", "eframe", "egui-wgpu", "egui-winit"];
 const UI_AND_GPU: &[&str] = &["egui", "eframe", "egui-wgpu", "egui-winit", "winit", "wgpu"];
@@ -46,6 +47,7 @@ const LAYERS: &[(&str, &[&str])] = &[
     ("penumbra-mesh", UI_AND_GPU),
     ("penumbra-osc", UI_AND_GPU),
     ("penumbra-audio", UI_AND_GPU),
+    ("penumbra-camera", UI_AND_GPU),
     ("penumbra-script", UI_AND_GPU),
     ("penumbra-pyhost", UI_AND_GPU),
     ("penumbra-output", EGUI),

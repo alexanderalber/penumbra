@@ -36,6 +36,8 @@ pub struct Inputs<'a> {
     /// A chan node whose output wire is being dragged in the editor: dropped onto a param
     /// (or one component's field) it binds it.
     pub chan_drag: Option<NodeId>,
+    /// The engine's cameras, offered for a `tex.videoin`'s `device` and `mode`.
+    pub cameras: &'a penumbra_camera::Hub,
 }
 
 #[derive(Default)]
@@ -51,6 +53,9 @@ pub struct ParamPanel {
     /// Audio inputs offered for a `chan.audioin`'s `device`, listed when its menu opens
     /// (listing takes some milliseconds, too long for every frame).
     audio_inputs: Option<(String, Result<Vec<penumbra_audio::DeviceInfo>, String>)>,
+    /// Cameras offered for a `tex.videoin`'s `device` or `mode`, listed when the menu opens
+    /// (listing opens every camera briefly).
+    cameras: Option<(String, Result<Vec<penumbra_camera::DeviceInfo>, String>)>,
     /// Lines the colour row being drawn takes: swatch and fields on one, the fields below the
     /// swatch, or the fields two by two below it (narrow column).
     color_lines: u8,
@@ -752,6 +757,18 @@ impl ParamPanel {
                     if node.kind == penumbra_ops::audio::AUDIO_IN && spec.name == "device" {
                         self.device_menu(ui, key, auto, new);
                     }
+                    if node.kind == penumbra_ops::tex::VIDEO_IN
+                        && (spec.name == "device" || spec.name == "mode")
+                    {
+                        let device = input
+                            .types
+                            .desc(&node.kind)
+                            .and_then(|d| node.param(d, "device"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        self.camera_menu(ui, input.cameras, key, spec.name == "mode", &device, auto, new);
+                    }
                     if spec.node_ref {
                         node_menu(ui, input, node, key, auto, new);
                     }
@@ -868,6 +885,98 @@ impl ParamPanel {
             self.audio_inputs = None;
         }
     }
+
+    /// The cameras of this machine for a `tex.videoin`'s `device`, or the modes of the camera
+    /// its `device` picks for `mode` (`param.<path>.menu`, entries `camera.first` /
+    /// `mode.best` and `camera.<i>` / `mode.<i>`).
+    #[allow(clippy::too_many_arguments)]
+    fn camera_menu(
+        &mut self,
+        ui: &mut Ui,
+        hub: &penumbra_camera::Hub,
+        key: &str,
+        modes: bool,
+        device: &str,
+        auto: &mut automation::Registry,
+        new: &mut Option<Value>,
+    ) {
+        let r = ui.menu_button("\u{2026}", |ui| {
+            if self.cameras.as_ref().is_none_or(|(k, _)| k != key) {
+                self.cameras = Some((key.to_string(), hub.devices()));
+            }
+            let list = match self.cameras.as_ref().map(|(_, l)| l) {
+                Some(Ok(list)) => list,
+                Some(Err(e)) => {
+                    ui.colored_label(theme::WARNING, e);
+                    return;
+                }
+                None => return,
+            };
+            let mut pick = |ui: &mut Ui, id: String, text: String, value: String, hover: &str| {
+                let r = ui.button(text).on_hover_text(hover);
+                auto.add(id, r.rect, value.clone());
+                if r.clicked() {
+                    *new = Some(Value::Text(value));
+                    ui.close();
+                }
+            };
+            if !modes {
+                pick(
+                    ui,
+                    "camera.first".into(),
+                    "the first camera".into(),
+                    String::new(),
+                    "Leaves `device` empty",
+                );
+                if list.is_empty() {
+                    ui.label(RichText::new("no cameras found").color(theme::TEXT_WEAK));
+                }
+                for (i, d) in list.iter().enumerate() {
+                    pick(ui, format!("camera.{i}"), d.name.clone(), d.name.clone(), &d.id);
+                }
+                return;
+            }
+            pick(ui, "mode.best".into(), "the largest, fastest".into(), String::new(), "Leaves `mode` empty");
+            let Some(cam) = camera_for(list, device) else {
+                ui.label(RichText::new("no camera matches `device`").color(theme::TEXT_WEAK));
+                return;
+            };
+            if let Some(e) = &cam.error {
+                ui.colored_label(theme::WARNING, e);
+            }
+            for (i, m) in cam.modes.iter().enumerate() {
+                if m.readable {
+                    pick(ui, format!("mode.{i}"), m.label.clone(), m.label.clone(), &cam.name);
+                } else {
+                    ui.label(RichText::new(format!("{} (not read)", m.label)).color(theme::TEXT_WEAK));
+                }
+            }
+        });
+        auto.add(
+            format!("param.{key}.menu"),
+            r.response.rect,
+            if modes { "camera modes" } else { "cameras" },
+        );
+        if r.inner.is_none() && self.cameras.as_ref().is_some_and(|(k, _)| k == key) {
+            self.cameras = None;
+        }
+    }
+}
+
+/// The camera a `device` pattern picks from a list: empty the first, else an exact name, else
+/// the first containing it (as the capture thread picks).
+fn camera_for<'l>(
+    list: &'l [penumbra_camera::DeviceInfo],
+    pattern: &str,
+) -> Option<&'l penumbra_camera::DeviceInfo> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return list.first();
+    }
+    let lower = pattern.to_lowercase();
+    list.iter()
+        .find(|d| d.name.eq_ignore_ascii_case(pattern))
+        .or_else(|| list.iter().find(|d| d.name.to_lowercase().contains(&lower)))
 }
 
 /// `add` in a layout as wide as `ui` offers and as high as the param's widget: one line, or the

@@ -14,6 +14,7 @@ publish = false
 # internal
 penumbra-audio = { path = "crates/audio" }
 penumbra-calib = { path = "crates/calib" }
+penumbra-camera = { path = "crates/camera" }
 penumbra-core = { path = "crates/core" }
 penumbra-engine = { path = "crates/engine" }
 penumbra-gpu = { path = "crates/gpu" }
@@ -86,6 +87,8 @@ raw-window-handle = "0.6"
 # The native folder dialog for opening and creating projects (as in the storytold apps). Without
 # the wayland feature: the XDG portal alone serves Linux and needs no system libraries to build.
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+# Media Foundation for camera input (crates/camera); the COM interfaces need the full crate.
+windows = "0.62"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
 
 [workspace.lints.rust]
@@ -107,12 +110,15 @@ dbg_macro = "deny"
 opt-level = 2
 
 # The crates with per-pixel, per-sample or per-vertex loops on the CPU (text masks, image
-# conversion, uploads, GIF frames, audio analysis, meshes). Unoptimised, a 300 px text took
+# conversion, uploads, GIF frames, audio analysis, meshes, camera frames). Unoptimised, a 300 px text took
 # 170 ms to rasterise and upload instead of a few, which made dragging a text's size stutter in
 # the debug build the Run button starts; a 1500 x 2250 GIF frame took 100 ms instead of 10;
 # analysing a frame of audio took about 2 ms; one pass over the 6.4 million vertices of a
 # 1.8 million triangle STL took 155 ms instead of 5.
 [profile.dev.package.penumbra-audio]
+opt-level = 2
+
+[profile.dev.package.penumbra-camera]
 opt-level = 2
 
 [profile.dev.package.penumbra-gpu]

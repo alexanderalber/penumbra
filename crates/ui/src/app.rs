@@ -644,6 +644,7 @@ impl PenumbraApp {
                             displays: &board.displays,
                             outputs: &view.outputs,
                             chan_drag,
+                            cameras: self.engine.camera(),
                         };
                         self.params.show(ui, &input, &mut self.auto, &mut actions);
                     }
