@@ -27,6 +27,7 @@ penumbra-project = { path = "crates/project" }
 penumbra-pyhost = { path = "crates/pyhost" }
 penumbra-script = { path = "crates/script" }
 penumbra-system = { path = "crates/system" }
+penumbra-track = { path = "crates/track" }
 penumbra-ui = { path = "crates/ui" }
 penumbra-video = { path = "crates/video" }
 
@@ -128,6 +129,9 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.penumbra-ops]
+opt-level = 2
+
+[profile.dev.package.penumbra-track]
 opt-level = 2
 
 [profile.dev.package.penumbra-video]

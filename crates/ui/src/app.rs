@@ -323,6 +323,27 @@ impl PenumbraApp {
                         self.message = Some((m, now));
                     }
                 }),
+                Action::LearnBackground { node, delay } => {
+                    let wait = Duration::from_secs_f64(delay);
+                    let learned = self.engine.on_cook(move |st| {
+                        st.cooker
+                            .resource::<penumbra_ops::tex::blobtrack::BlobTracks>()
+                            .is_some_and(|t| t.learn(node, wait))
+                    });
+                    match learned {
+                        Ok(true) => {
+                            let text = if delay > 0.0 {
+                                format!("the background is taken in {delay:.0} s")
+                            } else {
+                                "the background is taken from the next frame".to_string()
+                            };
+                            self.message = Some((text, now));
+                            Ok(())
+                        }
+                        Ok(false) => Err(penumbra_core::Error::new("the tracker has not cooked yet")),
+                        Err(e) => Err(e),
+                    }
+                }
                 Action::LearnOsc(param) => {
                     let timeout = penumbra_engine::osc::LEARN_TIMEOUT;
                     match self.engine.osc().learn(&self.engine.session(), &param, timeout) {

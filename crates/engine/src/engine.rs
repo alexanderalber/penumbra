@@ -366,6 +366,9 @@ impl CookState {
         self.view.output_ready.notify_all();
         self.mappers.prune(&net);
         self.renders.prune(&net);
+        if let Some(t) = self.cooker.resource::<penumbra_ops::tex::blobtrack::BlobTracks>() {
+            t.prune(|id| net.node(id).is_some());
+        }
         self.refresh_resolution(&net, session.types(), request.resolution);
         if let Some(gpu) = &self.gpu {
             gpu.poll();
@@ -496,6 +499,7 @@ impl Engine {
         cooker.provide(self.osc.hub().clone());
         cooker.provide(self.audio.clone());
         cooker.provide(self.camera.clone());
+        cooker.provide(penumbra_ops::tex::blobtrack::BlobTracks::new());
         let gpu = self.gpu.get().cloned();
         if let Some(gpu) = &gpu {
             cooker.provide(gpu.clone());

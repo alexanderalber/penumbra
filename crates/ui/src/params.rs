@@ -132,6 +132,21 @@ impl ParamPanel {
                 );
             }
         });
+        if node.kind == penumbra_ops::tex::blobtrack::BLOBTRACK {
+            // Not an edit (nothing in the network changes), so allowed while Claude edits too.
+            ui.horizontal(|ui| {
+                let r = ui.button("learn background").on_hover_text("The next frame becomes the empty scene");
+                auto.add("param.learn", r.rect, "learn background");
+                if r.clicked() {
+                    actions.push(Action::LearnBackground { node: input.node, delay: 0.0 });
+                }
+                let r = ui.button("in 5 s").on_hover_text("Time to leave the picture first");
+                auto.add("param.learn_later", r.rect, "learn in 5 s");
+                if r.clicked() {
+                    actions.push(Action::LearnBackground { node: input.node, delay: 5.0 });
+                }
+            });
+        }
         ui.separator();
 
         let Some(desc) = desc else {
