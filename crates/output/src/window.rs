@@ -219,18 +219,41 @@ fn present_loop(
     let blank = penumbra_gpu::Tex::new(gpu, 1, 1, "blank").map_err(|e| e.to_string())?;
     log::info!("output: {}x{} {format:?}, Fifo", config.width, config.height);
     let mut last_pass = 0;
+    // Reconfigures in a row without a frame in between.
+    let mut retries: u32 = 0;
     while !shared.stop.load(Ordering::Relaxed) {
         let (nw, nh) = unpack(shared.size.load(Ordering::Relaxed));
         if (nw, nh) != (w, h) && nw > 0 && nh > 0 {
             (w, h) = (nw, nh);
             config.width = w;
             config.height = h;
-            gpu.configure_surface(surface, &config).map_err(|e| e.0)?;
+            // On failure the surface reports itself outdated next, and that path retries.
+            if let Err(e) = gpu.configure_surface(surface, &config) {
+                log::warn!("output: {}", e.0);
+            }
         }
         let frame = match surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => {
+                if retries > 1 {
+                    log::info!("output: surface back after {retries} reconfigures");
+                }
+                retries = 0;
+                t
+            }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                gpu.configure_surface(surface, &config).map_err(|e| e.0)?;
+                // One reconfigure normally fixes it (a resize, a mode change), so the first is
+                // immediate. If the cause persists (a display renegotiating its signal), each
+                // attempt waits for the GPU to idle and holds off every other submission, so
+                // retrying at full speed would stall the editor and the cook thread. Back off
+                // instead, and keep trying: giving up would leave the projector black.
+                std::thread::sleep(backoff(retries));
+                retries = retries.saturating_add(1);
+                if retries == 2 {
+                    log::warn!("output: the surface stays outdated, retrying with backoff");
+                }
+                if let Err(e) = gpu.configure_surface(surface, &config) {
+                    log::debug!("output: {}", e.0);
+                }
                 continue;
             }
             other => {
@@ -271,6 +294,18 @@ fn present_loop(
     Ok(())
 }
 
+/// The wait before reconfigure number `retries + 1` of a streak: none for the first, then
+/// doubling from 1 ms up to [`MAX_BACKOFF`].
+fn backoff(retries: u32) -> Duration {
+    match retries {
+        0 => Duration::ZERO,
+        n => Duration::from_millis(1u64 << (n - 1).min(16)).min(MAX_BACKOFF),
+    }
+}
+
+/// The longest wait between two reconfigures while a surface stays outdated.
+const MAX_BACKOFF: Duration = Duration::from_millis(100);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,5 +329,15 @@ mod tests {
         assert_eq!(s.missed, 1);
         assert!(s.fps > 55.0 && s.fps < 61.0, "{}", s.fps);
         assert!(s.max_ms > 49.0, "{}", s.max_ms);
+    }
+
+    #[test]
+    fn backoff_starts_immediate_and_is_capped() {
+        assert_eq!(backoff(0), Duration::ZERO);
+        assert_eq!(backoff(1), Duration::from_millis(1));
+        assert_eq!(backoff(2), Duration::from_millis(2));
+        assert_eq!(backoff(7), Duration::from_millis(64));
+        assert_eq!(backoff(8), MAX_BACKOFF);
+        assert_eq!(backoff(u32::MAX), MAX_BACKOFF);
     }
 }
