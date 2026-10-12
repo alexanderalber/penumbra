@@ -8,7 +8,34 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.out](#texout), [tex.quantize](#texquantize), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
+[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.out](#texout), [tex.quantize](#texquantize), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
+
+### tex.blobtrack
+
+Finds blobs (people, hands, spots of light) and follows them with ids that stay
+
+Inputs:
+
+- `in` (tex)
+- `background` (tex)
+
+Outputs: `out` (tex), `blobs` (table), `chans` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `detect` | background \| bright | `"background"` |  | background: what differs from the empty scene (the `background` input where connected, else learned: `blobtrack.learn`); bright: whatever is brighter than `threshold` |
+| `threshold` | float | `0.1` | 0 to 0.5 (soft) | Difference to the background (in any channel), or brightness, from which a pixel counts |
+| `adapt` | float | `30` | 0 to 300 s (soft) | How soon a lasting change (light, a moved chair) becomes background; someone standing still fades ten times slower. 0: never |
+| `min_area` | float | `0.1` | 0 to 5 % (soft) | Smaller blobs are ignored (of the picture's area) |
+| `max_area` | float | `50` | 1 to 100 % (soft) | Larger blobs are ignored (the whole room changing is not a blob) |
+| `max_blobs` | int | `16` | 1 to 32 (soft) | Most blobs, the largest |
+| `show` | overlay \| mask \| difference \| background | `"overlay"` |  | What `out` shows: the picture with the blobs marked, the pixels counted, the difference (the threshold is mid grey) or the learned background |
+| `size` *(more)* | int | `320` | 64 to 960 px (soft) | Width the input is analysed at; more finds smaller things and costs more |
+| `open` *(more)* | int | `1` | 0 to 6 px (soft) | Removes specks and lines thinner than twice this (at the analysed size) |
+| `close` *(more)* | int | `2` | 0 to 6 px (soft) | Fills holes and joins parts closer than twice this |
+| `reach` *(more)* | float | `0.15` | 0 to 0.5 (soft) | How far a blob may jump between frames and keep its id, beyond where its speed puts it (of the width) |
+| `hold` *(more)* | float | `0.5` | 0 to 5 s (soft) | A blob gone for less keeps its id when it comes back |
+| `slots` *(more)* | int | `4` | 0 to 8 (soft) | Blobs in `chans`, each as id, x, y, area with the slot's number (id 0: empty) |
 
 ### tex.blur
 

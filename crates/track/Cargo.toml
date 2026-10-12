@@ -1,0 +1,13 @@
+[package]
+name = "penumbra-track"
+description = "Blob tracking on the CPU, pure and testable: background model, threshold, morphology, connected components, stable ids. No GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

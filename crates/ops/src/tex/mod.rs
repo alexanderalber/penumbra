@@ -6,6 +6,7 @@
 //! premultiplied alpha, origin top left. Without a GPU (headless tools, tests of other crates)
 //! these nodes fail with a clear error instead of producing anything.
 
+pub mod blobtrack;
 mod blur;
 mod cache;
 mod filters;
@@ -296,6 +297,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 as Box<dyn Operator>
         }))?;
     }
+    blobtrack::register(types)?;
     blur::register(types)?;
     cache::register(types)?;
     flow::register(types)?;
@@ -319,6 +321,9 @@ pub fn warm_up(gpu: &Gpu) {
         if let Err(e) = gpu.cached_pass(&b.desc.kind, b.source, &b.desc.params) {
             log::error!("built-in shader {} does not compile: {e}", b.desc.kind);
         }
+    }
+    if let Err(e) = blobtrack::warm_up(gpu) {
+        log::error!("built-in shader tex.blobtrack does not compile: {e}");
     }
     if let Err(e) = blur::warm_up(gpu) {
         log::error!("built-in shader tex.blur does not compile: {e}");

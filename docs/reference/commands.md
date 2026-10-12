@@ -19,6 +19,12 @@ Every command of the running app, as `pn ctl <command>` or a control-channel req
 | `audio.devices` | The audio inputs of this machine: name, default, rate, channels, format |
 | `audio.status` | Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) |
 
+## blobtrack
+
+| command | |
+|---|---|
+| `blobtrack.learn` | A tex.blobtrack takes a frame as the background (the empty scene): {path, delay?} (seconds before it does, default 0) |
+
 ## calib
 
 | command | |

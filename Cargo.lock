@@ -3206,6 +3206,7 @@ dependencies = [
  "penumbra-mesh",
  "penumbra-osc",
  "penumbra-script",
+ "penumbra-track",
  "penumbra-video",
  "photocraft-codecs",
  "photocraft-psd",
@@ -3279,6 +3280,10 @@ dependencies = [
  "serde_json",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "penumbra-track"
+version = "0.1.0"
 
 [[package]]
 name = "penumbra-ui"

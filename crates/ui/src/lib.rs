@@ -87,6 +87,11 @@ pub enum Action {
     /// Bind this param (`/n.scale`, a vector as a whole) to the next OSC address that arrives
     /// (`osc.learn`).
     LearnOsc(String),
+    /// A `tex.blobtrack` takes the first frame after `delay` seconds as its background.
+    LearnBackground {
+        node: NodeId,
+        delay: f64,
+    },
 }
 
 impl Action {

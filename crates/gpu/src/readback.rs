@@ -197,8 +197,19 @@ impl Gpu {
     /// (state snapshots every minute) then allocate nothing: on DX12 a new readback buffer each
     /// time made the allocator reserve another block of system memory now and then.
     pub fn read_async_reusing(&self, textures: &[&Tex], spare: &mut ReadPool) -> Result<PendingRead, Error> {
+        self.read_async_notify(textures, spare, None)
+    }
+
+    /// [`Gpu::read_async_reusing`] calling `ready` once every buffer is mapped (from inside
+    /// [`Gpu::poll`] or [`PendingRead::wait`], so it must be quick: waking a node is).
+    pub fn read_async_notify(
+        &self,
+        textures: &[&Tex],
+        spare: &mut ReadPool,
+        ready: Option<Arc<dyn Fn() + Send + Sync>>,
+    ) -> Result<PendingRead, Error> {
         let device = self.device();
-        let (items, error) = self.scoped(|| {
+        let ((items, index), error) = self.scoped(|| {
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("read_async") });
             let mut items = Vec::with_capacity(textures.len());
@@ -234,24 +245,29 @@ impl Gpu {
                 );
                 items.push(ReadItem { buffer, width, height, padded });
             }
-            self.submit([encoder.finish()]);
-            items
+            let index = self.submit([encoder.finish()]);
+            (items, index)
         });
         if let Some(e) = error {
             return Err(Error::new(format!("readback failed: {e}")));
         }
         let mapped = Arc::new(AtomicUsize::new(0));
         let failed = Arc::new(AtomicBool::new(false));
+        let count = items.len();
         for item in &items {
-            let (mapped, failed) = (mapped.clone(), failed.clone());
+            let (mapped, failed, ready) = (mapped.clone(), failed.clone(), ready.clone());
             item.buffer.map_async(wgpu::MapMode::Read, .., move |r| match r {
                 Ok(()) => {
-                    mapped.fetch_add(1, Ordering::AcqRel);
+                    if mapped.fetch_add(1, Ordering::AcqRel) + 1 == count
+                        && let Some(f) = &ready
+                    {
+                        f();
+                    }
                 }
                 Err(_) => failed.store(true, Ordering::Release),
             });
         }
-        Ok(PendingRead { items, mapped, failed })
+        Ok(PendingRead { items, mapped, failed, index })
     }
 
     /// A texture from rows of little-endian half floats as [`PendingRead::rows`] delivers them
@@ -264,6 +280,14 @@ impl Gpu {
         bytes: &mut [u8],
         label: &str,
     ) -> Result<Tex, Error> {
+        let tex = Tex::new(self, width, height, label)?;
+        self.write_rgba16f(&tex, bytes)?;
+        Ok(tex)
+    }
+
+    /// [`Gpu::upload_rgba16f`] into an existing texture of the same size (a [`crate::TexRing`]'s).
+    pub fn write_rgba16f(&self, tex: &Tex, bytes: &mut [u8]) -> Result<(), Error> {
+        let (width, height) = tex.size();
         let expected = u64::from(width).saturating_mul(u64::from(height)).saturating_mul(8);
         if bytes.len() as u64 != expected {
             return Err(Error::new(format!(
@@ -277,7 +301,6 @@ impl Gpu {
                 *h = [0, 0];
             }
         }
-        let tex = Tex::new(self, width, height, label)?;
         let ((), error) = self.scoped(|| {
             self.queue().write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -297,7 +320,7 @@ impl Gpu {
         });
         match error {
             Some(e) => Err(Error::new(format!("upload failed: {e}"))),
-            None => Ok(tex),
+            None => Ok(()),
         }
     }
 }
@@ -310,6 +333,7 @@ pub struct PendingRead {
     items: Vec<ReadItem>,
     mapped: Arc<AtomicUsize>,
     failed: Arc<AtomicBool>,
+    index: wgpu::SubmissionIndex,
 }
 
 struct ReadItem {
@@ -377,6 +401,19 @@ impl PendingRead {
                 })
                 .collect(),
         )
+    }
+
+    /// Waits at most `timeout` for the copies (and everything submitted before them), then
+    /// says where the readback stands. For a small readback whose result is wanted in the same
+    /// frame; the wait blocks the calling thread, so keep `timeout` short.
+    pub fn wait(&self, gpu: &Gpu, timeout: Duration) -> ReadState {
+        if self.state() == ReadState::Waiting {
+            let wait =
+                wgpu::PollType::Wait { submission_index: Some(self.index.clone()), timeout: Some(timeout) };
+            // A timeout is not an error here: the caller looks again later.
+            let _ = gpu.device().poll(wait);
+        }
+        self.state()
     }
 
     pub fn state(&self) -> ReadState {

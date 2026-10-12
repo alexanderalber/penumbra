@@ -17,6 +17,7 @@ penumbra-gpu.workspace = true
 penumbra-mesh.workspace = true
 penumbra-osc.workspace = true
 penumbra-script.workspace = true
+penumbra-track.workspace = true
 penumbra-video.workspace = true
 log.workspace = true
 serde.workspace = true
