@@ -5,8 +5,8 @@
 //! one pyramid plus the steps. The same input frame again is not measured twice.
 //!
 //! Output, at the analysed size: red and green the motion in image sizes per input frame (x in
-//! widths, y in heights, down positive), signed; blue how well the motion there is pinned down
-//! (0 to 1); alpha 1. What is at a pixel now was that far up and left in the previous frame, so
+//! widths, y in heights, down positive), signed; blue 0, or with `confidence` how well the
+//! motion there is pinned down (0 to 1); alpha 1. What is at a pixel now was that far up and left in the previous frame, so
 //! `tex.displace` with `midpoint` 0 and `weight` -1 pulls the previous frame onto this one.
 
 use std::sync::Arc;
@@ -37,6 +37,10 @@ fn desc() -> NodeDesc {
         .param(ParamSpec::bool("colors", false).doc(
             "Show the motion as colours instead of passing the numbers on: direction as hue, speed as \
              brightness. For looking at it; nodes that use the motion want this off",
+        ))
+        .param(ParamSpec::bool("confidence", false).more().doc(
+            "Blue says how well the motion is pinned down, 0 to 1: high where there is texture, moving \
+             or not, low on a plain wall; off, blue is 0 and a still picture black",
         ))
         .param(
             ParamSpec::float("threshold", 0.4)

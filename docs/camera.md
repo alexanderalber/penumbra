@@ -86,9 +86,10 @@ fractions such as 2.5 are meaningful, and a channel can drive it smoothly.
 `tex.opticalflow` behind the `tex.videoin` (or behind a `tex.denoise`) measures how far each
 part of the picture moved since the previous frame. Its output is a small picture, `size` wide
 (320 by default, under "more"), whose red and green are the motion in image sizes per frame:
-red to the right, green downwards (x in widths, y in heights), negative the other way. Blue says
-how well the motion there is pinned down (0 to 1): a plain wall cannot show which way it moves,
-an edge only across itself.
+red to the right, green downwards (x in widths, y in heights), negative the other way; blue is 0,
+so a still picture is black. With `confidence` (under "more") blue says instead how well the
+motion there is pinned down (0 to 1): a plain wall cannot show which way it moves, an edge only
+across itself.
 
 The numbers are not for looking at; turn on `colors` to see the motion as colours, direction as
 hue and speed as brightness (full at 1/80 of the width per frame). `threshold` fades out motion

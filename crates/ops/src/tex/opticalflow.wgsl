@@ -116,7 +116,7 @@ fn pn_flow_out(v: PnVertex) -> vec4f {
     let keep = select(1.0, smoothstep(0.5 * t, t, speed), t > 0.0);
     let motion = f.xy * keep;
     if (params.colors == 0u) {
-        return vec4f(motion, f.z, 1.0);
+        return vec4f(motion, select(0.0, f.z, params.confidence != 0u), 1.0);
     }
     // Direction as hue, speed as brightness, full at 1/80 of the width per frame.
     let m = motion * vec2f(1.0, dims.y / dims.x);

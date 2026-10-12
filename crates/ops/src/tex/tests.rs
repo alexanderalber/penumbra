@@ -1471,7 +1471,7 @@ fn opticalflow_finds_known_motion() {
     let Some(gpu) = gpu() else { return };
     let ops = [
         create("/cam", "tex.videoin", &[("device", "test".into())]),
-        create("/of", "tex.opticalflow", &[("size", Value::Int(160))]),
+        create("/of", "tex.opticalflow", &[("size", Value::Int(160)), ("confidence", Value::Bool(true))]),
         connect("/cam", "/of", 0),
     ];
     let mut rig = Rig::new(gpu, None, &ops);
