@@ -15,8 +15,9 @@
 //! - `notices`: the third-party notices a build must ship with, written to
 //!   `target/THIRD-PARTY-NOTICES.html` by cargo-about (`about.toml`, `about.hbs`). Fails when a
 //!   dependency's licence is not accepted in `about.toml` or cannot be determined.
-//! - `dist`: a release build for Windows, zipped with everything it needs beside the exe and
-//!   the documentation: `target/dist/penumbra-VERSION-windows-x64.zip`. Not part of `ci`.
+//! - `dist`: a release build for Windows, zipped with everything it needs beside the exe, the
+//!   documentation and the examples: `target/dist/penumbra-VERSION-windows-x64.zip`. Not part
+//!   of `ci`.
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -231,6 +232,7 @@ fn dist() -> Result<(), String> {
     // The documentation of exactly this version, readable offline. Getting started shows the
     // screenshot by a path relative to docs/, so it keeps that place.
     copy_dir(&root.join("docs"), &stage.join("docs"))?;
+    copy_dir(&root.join("examples"), &stage.join("examples"))?;
     std::fs::create_dir_all(stage.join("assets")).map_err(|e| format!("cannot create assets: {e}"))?;
     let shot = root.join("assets").join("screenshot.png");
     std::fs::copy(&shot, stage.join("assets").join("screenshot.png"))

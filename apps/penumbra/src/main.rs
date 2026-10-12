@@ -274,4 +274,30 @@ mod tests {
         drop(session);
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// The examples ship in the release zip, so a change to the project format, or a node type or
+    /// input renamed, must not leave one that no longer opens.
+    #[test]
+    fn the_examples_open() {
+        let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+        let mut count = 0;
+        for entry in std::fs::read_dir(&root).unwrap() {
+            let dir = entry.unwrap().path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let text = std::fs::read_to_string(dir.join("project.ron")).unwrap();
+            let content = penumbra_project::parse(&text, &types)
+                .unwrap_or_else(|e| panic!("{}: {}", dir.display(), e.0));
+            assert!(content.nodes.len() > 1, "{}", dir.display());
+            // Shaders and scripts the project names are beside it.
+            for part in text.split("\"file\": \"").skip(1) {
+                let name = part.split('"').next().unwrap();
+                assert!(dir.join(name).is_file(), "{}: {name} is missing", dir.display());
+            }
+            count += 1;
+        }
+        assert!(count >= 6, "only {count} examples found");
+    }
 }

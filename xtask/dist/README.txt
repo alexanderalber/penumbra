@@ -9,6 +9,10 @@ Starting
 
 1. Unpack this folder anywhere (not inside the zip view of Explorer).
 2. Double-click penumbra.exe. It opens a demo project.
+3. More examples are in the examples folder, each showing one side of penumbra (feedback
+   loops, sound, tracking, Python, 3D projection). Open one with the folder button at the
+   left end of the status bar: Open project, then the example's folder. examples\README.md
+   lists them.
 
 Windows may warn "Windows protected your PC", because this program is not signed. Click
 "More info", then "Run anyway".
@@ -29,6 +33,7 @@ Files
                             from a terminal; not needed to use the app
 - docs\                     the documentation of this version (Markdown); start at
                             docs\README.md
+- examples\                 example projects, listed in examples\README.md
 - CLAUDE.md                 how Claude Code drives the app, read by it when started here
 - THIRD-PARTY-NOTICES.html  licences of the components penumbra is built from
 - LICENSE-MIT, LICENSE-APACHE

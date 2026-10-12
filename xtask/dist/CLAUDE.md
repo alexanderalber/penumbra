@@ -12,6 +12,10 @@ running app over its control channel. The documentation of exactly this version 
 3. As needed: `docs/reference/commands.md` (every command) and `docs/reference/nodes.md`
    (every node type), plus the topic pages listed in `docs/README.md`.
 
+`examples/` holds small finished projects (`examples/README.md` lists them); their
+`project.ron` files are good models of networks, bindings and feedback loops. Open one with
+`project.open dir=<absolute path to the example>`.
+
 ## Talking to the app
 
 The user starts `penumbra.exe` (a double-click opens a demo project). It listens on
