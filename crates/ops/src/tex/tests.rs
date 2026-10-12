@@ -1354,3 +1354,58 @@ fn denoise_calms_noise_follows_motion_and_reaches_small_changes() {
     assert!(step > 0.002, "one code is {step}");
     assert!((got - want).abs() < step * 0.1, "{got}, want {want}");
 }
+
+/// Standard deviations of luma and of colour (blue minus luma).
+fn luma_colour_noise(px: &penumbra_gpu::Pixels) -> (f64, f64) {
+    let (mut luma, mut colour) = (Vec::new(), Vec::new());
+    for y in 0..px.height {
+        for x in 0..px.width {
+            let [r, g, b, _] = px.get(x, y).unwrap().map(f64::from);
+            let l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            luma.push(l);
+            colour.push(b - l);
+        }
+    }
+    let std = |v: &[f64]| {
+        let m = v.iter().sum::<f64>() / v.len() as f64;
+        (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64).sqrt()
+    };
+    (std(&luma), std(&colour))
+}
+
+#[test]
+fn denoise_treats_brightness_and_colour_noise_apart() {
+    let Some(gpu) = gpu() else { return };
+    // Noise in luma and in both chroma planes.
+    let frame = |seed: u32| {
+        let mut f = noisy_frame(128, 6, seed);
+        let mut state = seed.wrapping_mul(2_654_435_761);
+        for c in f.cb.iter_mut().chain(f.cr.iter_mut()) {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            *c = (122 + (state >> 16) % 13) as u8;
+        }
+        f
+    };
+    let run = |params: &[(&str, Value)]| {
+        let ops = [
+            create("/cam", "tex.videoin", &[("device", "test".into())]),
+            create("/dn", "tex.denoise", params),
+            connect("/cam", "/dn", 0),
+        ];
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        let mut out = None;
+        for i in 0..30 {
+            out = Some(denoise_frame(&mut rig, frame(i)));
+        }
+        (luma_colour_noise(&rig.pixels("/cam")), luma_colour_noise(&out.unwrap()))
+    };
+    let off = |name: &'static str| (name, Value::Float(if name.ends_with("frames") { 1.0 } else { 0.0 }));
+
+    let (raw, only_brightness) = run(&[off("color_frames"), off("color_spatial")]);
+    assert!(only_brightness.0 < raw.0 * 0.5, "luma {raw:?} -> {only_brightness:?}");
+    assert!(only_brightness.1 > raw.1 * 0.8, "colour {raw:?} -> {only_brightness:?}");
+
+    let (raw, only_colour) = run(&[off("frames"), off("spatial")]);
+    assert!(only_colour.0 > raw.0 * 0.8, "luma {raw:?} -> {only_colour:?}");
+    assert!(only_colour.1 < raw.1 * 0.5, "colour {raw:?} -> {only_colour:?}");
+}
