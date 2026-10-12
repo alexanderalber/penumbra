@@ -45,7 +45,9 @@ field: the slider covers the usual range, a typed value may go beyond it (the re
 "soft" for such a range); a hard range clamps. Colours are linear and may go above 1. File
 params are relative to the project directory and reload when the file changes.
 
-- **"more"** folds away the rarely used params.
+- **Folded sections** group params that belong together (a render's `camera`, a mapper's
+  `warp`); **"more"**, always the last, holds the rarely used ones. Only the main rows are
+  shown at first; a section stays open for every node of that type once opened.
 - **A reset button** appears beside a param that is not at its default.
 - **One drag is one undo step**, however long it takes.
 - **Params from a file:** a shader's header and a script's `PARAMS` add their own rows, under

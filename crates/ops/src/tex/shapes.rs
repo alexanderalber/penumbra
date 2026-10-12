@@ -44,7 +44,7 @@ fn desc() -> NodeDesc {
             .clamp(0.0, 64.0)
             .range(0.5, 8.0)
             .unit(Unit::Pixels)
-            .rarely_used()
+            .more()
             .doc("Width of the outlines"),
     )
     .input("table", DataKind::Table)

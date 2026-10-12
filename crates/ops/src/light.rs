@@ -114,7 +114,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::int("size", 1024)
                 .clamp(f64::from(WIDTHS.0), f64::from(WIDTHS.1))
                 .range(128.0, 2048.0)
-                .rarely_used()
+                .more()
                 .doc("Texels across the baked reflections: sharper mirrors, more memory and a longer bake"),
         )
         .output("out", DataKind::Light),
@@ -156,13 +156,13 @@ fn bias() -> ParamSpec {
     ParamSpec::float("bias", 1.0)
         .clamp(0.0, 20.0)
         .range(0.0, 4.0)
-        .rarely_used()
+        .more()
         .doc("Shadow offset, times the usual: more against stripes on lit surfaces, less against light leaking where objects touch")
 }
 
 fn falloff() -> ParamSpec {
     ParamSpec::choice("falloff", &FALLOFF)
-        .rarely_used()
+        .more()
         .doc("none: as bright at any distance; inverse square: as bright as the colour at 1 m, fading with distance")
 }
 

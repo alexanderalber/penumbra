@@ -7,6 +7,8 @@
 //! // @param octaves int = 3 1..8
 //! // @param invert bool
 //! // @param mode choice(add|multiply|screen) = multiply
+//! // @group detail
+//! // @param warp float = 0 0..1
 //! // @density 0.5
 //! ```
 //!
@@ -15,7 +17,9 @@
 //! `true`) or, for a choice, a bare word; without one it is zero, false or the first choice.
 //! A range is a soft range (slider only). `@density` is the resolution the shader needs of its
 //! inputs per unit of its output's (default 1; 2 when it magnifies by 2, 0.5 when it shrinks),
-//! for `res.analyze`. Lines may appear anywhere in the file.
+//! for `res.analyze`. `@group <name>` puts the params declared after it in a section of the
+//! panel that is folded away until opened; `@group` alone goes back to the main rows. Lines may
+//! appear anywhere in the file.
 
 use penumbra_core::{Error, ParamSpec, Value};
 
@@ -29,6 +33,7 @@ pub struct Header {
 /// Parses every `// @...` line of `source`. Errors name the line.
 pub fn parse(source: &str) -> Result<Header, Error> {
     let mut header = Header { params: Vec::new(), density: 1.0 };
+    let mut group = String::new();
     for (i, line) in source.lines().enumerate() {
         let Some(rest) = line.trim_start().strip_prefix("//") else { continue };
         let rest = rest.trim();
@@ -39,11 +44,14 @@ pub fn parse(source: &str) -> Result<Header, Error> {
         let (word, args) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
         if word == "@param" {
             let decl = args;
-            let spec = param(decl).map_err(|e| e.context(ctx()))?;
+            let spec = param(decl).map_err(|e| e.context(ctx()))?.group(&group);
+            spec.validate_spec().map_err(|e| e.context(ctx()))?;
             if header.params.iter().any(|p| p.name == spec.name) {
                 return Err(Error::new(format!("param `{}` declared twice", spec.name)).context(ctx()));
             }
             header.params.push(spec);
+        } else if word == "@group" {
+            group = args.trim().to_string();
         } else if word == "@density" {
             let d = args;
             header.density =
@@ -51,9 +59,8 @@ pub fn parse(source: &str) -> Result<Header, Error> {
                     Error::new(format!("@density wants a positive number, got `{}`", d.trim())).context(ctx())
                 })?;
         } else {
-            return Err(
-                Error::new(format!("unknown header `{word}`; known: @param, @density")).context(ctx())
-            );
+            return Err(Error::new(format!("unknown header `{word}`; known: @param, @group, @density"))
+                .context(ctx()));
         }
     }
     Ok(header)
@@ -138,13 +145,19 @@ mod tests {
              //@param octaves int 1..8\n\
              // @param invert bool\n\
              // @param mode choice(add|multiply) = multiply\n\
+             // @group detail\n\
+             // @param warp float\n\
+             // @group\n\
+             // @param last bool\n\
              // @density 0.5\n\
              // a normal comment",
         )
         .unwrap();
         assert_eq!(h.density, 0.5);
         let names: Vec<&str> = h.params.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["scale", "tint", "octaves", "invert", "mode"]);
+        assert_eq!(names, ["scale", "tint", "octaves", "invert", "mode", "warp", "last"]);
+        let groups: Vec<&str> = h.params.iter().map(|p| p.group.as_str()).collect();
+        assert_eq!(groups, ["", "", "", "", "", "detail", ""]);
         let scale = &h.params[0];
         assert_eq!(scale.default, Value::Float(4.0));
         assert_eq!(scale.range.map(|r| (r.min, r.max, r.hard)), Some((1.0, 32.0, false)));
@@ -165,6 +178,7 @@ mod tests {
             ("// @density -1", "positive"),
             ("// @paramx float", "unknown header"),
             ("// @param mode choice(a|b) = c", "must be one of"),
+            ("// @group a group name far longer than it may be\n// @param x float", "line 2"),
         ] {
             let e = parse(src).err().unwrap_or_else(|| panic!("{src} parsed"));
             assert!(e.0.contains(needle), "{src}: {e}");

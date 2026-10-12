@@ -1,7 +1,7 @@
 //! Parameter metadata.
 //!
 //! Every node declares its parameters as [`ParamSpec`]s: type, default, range, unit, slider curve,
-//! a "rarely used" flag that collapses the parameter in the UI, and a one-line doc. The spec is the
+//! the group the UI shows it in (main rows, or a section folded away), and a one-line doc. The spec is the
 //! single source for validation (every edit passes [`ParamSpec::check`]), for the param panel and
 //! for what `node.info` reports.
 
@@ -13,6 +13,10 @@ use crate::{Error, Name, Value};
 pub const MAX_TEXT: usize = 64 * 1024;
 /// Longest accepted file path in bytes.
 pub const MAX_FILE: usize = 4096;
+/// The group of rarely used params, shown after every other group.
+pub const MORE: &str = "more";
+/// Longest accepted group name in bytes.
+pub const MAX_GROUP: usize = 32;
 
 /// What kind of value a parameter holds and how the UI edits it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -100,8 +104,11 @@ pub struct ParamSpec {
     pub range: Option<Range>,
     pub unit: Unit,
     pub curve: Curve,
-    /// Collapsed in the param panel until expanded.
-    pub rarely_used: bool,
+    /// The section of the param panel it sits in: empty for the main rows, which are always
+    /// shown; any other name is a section folded away until opened ([`MORE`] for the rarely
+    /// used ones).
+    #[serde(default)]
+    pub group: String,
     /// Text edited in a box of several lines (a table typed in by hand).
     #[serde(default)]
     pub multiline: bool,
@@ -125,7 +132,7 @@ impl ParamSpec {
             range: None,
             unit: Unit::None,
             curve: Curve::Linear,
-            rarely_used: false,
+            group: String::new(),
             multiline: false,
             lines: 0,
             node_ref: false,
@@ -206,9 +213,15 @@ impl ParamSpec {
         self
     }
 
-    pub fn rarely_used(mut self) -> Self {
-        self.rarely_used = true;
+    /// In the section `group` ([`ParamSpec::group`]); empty for the main rows.
+    pub fn group(mut self, group: &str) -> Self {
+        self.group = group.to_string();
         self
+    }
+
+    /// In the section of rarely used params ([`MORE`]).
+    pub fn more(self) -> Self {
+        self.group(MORE)
     }
 
     pub fn doc(mut self, doc: &str) -> Self {
@@ -317,6 +330,16 @@ impl ParamSpec {
             && !(g.is_finite() && g > 0.0)
         {
             return Err(Error::new(format!("power curve gamma {g} must be positive")).context(ctx()));
+        }
+        if self.group.len() > MAX_GROUP
+            || self.group.trim() != self.group
+            || self.group.chars().any(char::is_control)
+        {
+            return Err(Error::new(format!(
+                "group `{}` must be at most {MAX_GROUP} bytes, without control characters or                  surrounding spaces",
+                self.group.escape_debug()
+            ))
+            .context(ctx()));
         }
         match &self.kind {
             ParamKind::Vec(n) if !(2..=4).contains(n) => {
@@ -462,6 +485,22 @@ impl ParamSpec {
     }
 }
 
+/// The named groups of `specs` in the order the panel shows them: as they first appear, with
+/// [`MORE`] last. The main rows (empty group) are not among them.
+pub fn groups(specs: &[ParamSpec]) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
+    for s in specs {
+        if !s.group.is_empty() && !out.contains(&s.group.as_str()) {
+            out.push(&s.group);
+        }
+    }
+    if let Some(i) = out.iter().position(|g| *g == MORE) {
+        let more = out.remove(i);
+        out.push(more);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -555,5 +594,29 @@ mod tests {
         assert_eq!(ParamSpec::float("x", 0.0).to_slider(1.0), None);
         assert_eq!(specs[0].to_slider(-5.0), Some(0.0));
         assert_eq!(specs[0].from_slider(f64::NAN), Some(0.0));
+    }
+
+    #[test]
+    fn groups_in_panel_order() {
+        let specs = [
+            ParamSpec::float("a", 0.0),
+            ParamSpec::float("b", 0.0).more(),
+            ParamSpec::float("c", 0.0).group("camera"),
+            ParamSpec::float("d", 0.0).group("levels"),
+            ParamSpec::float("e", 0.0).group("camera"),
+        ];
+        assert_eq!(groups(&specs), ["camera", "levels", "more"]);
+        assert!(ParamSpec::float("x", 0.0).group("light").validate_spec().is_ok());
+        assert!(ParamSpec::float("x", 0.0).group(" light").validate_spec().is_err());
+        assert!(
+            ParamSpec::float("x", 0.0)
+                .group(
+                    "a
+b"
+                )
+                .validate_spec()
+                .is_err()
+        );
+        assert!(ParamSpec::float("x", 0.0).group(&"g".repeat(MAX_GROUP + 1)).validate_spec().is_err());
     }
 }

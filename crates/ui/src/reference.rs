@@ -125,10 +125,10 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
     }
     let _ = writeln!(out, "| param | type | default | range | meaning |\n|---|---|---|---|---|");
     for p in &desc.params {
-        let more = if p.rarely_used { " *(more)*" } else { "" };
+        let group = if p.group.is_empty() { String::new() } else { format!(" *({})*", p.group) };
         let _ = writeln!(
             out,
-            "| `{}`{more} | {} | {} | {} | {} |",
+            "| `{}`{group} | {} | {} | {} | {} |",
             p.name,
             cell(&param_type(p)),
             cell(&param_default(p)),
@@ -142,7 +142,7 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
 fn nodes_md(types: &NodeTypes) -> String {
     let mut out = format!(
         "{HEADER}\n\n# Node reference\n\nEvery built-in node type with its inputs, outputs and params, by family. \
-         Params marked *(more)* sit under \"more\" in the param panel. A soft range is only the \
+         A param marked with a group, like *(more)*, sits in that folded section of the param          panel. A soft range is only the \
          slider's; typed values outside it are kept. For what the families are for, see \
          [Concepts](../concepts.md).\n\n"
     );

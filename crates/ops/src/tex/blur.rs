@@ -25,7 +25,7 @@ fn desc() -> NodeDesc {
                 .doc("Radius: three standard deviations"),
         )
         .param(ParamSpec::choice("direction", &["both", "horizontal", "vertical"]))
-        .param(ParamSpec::choice("extend", &EXTEND).rarely_used().doc("What lies beyond the edges"))
+        .param(ParamSpec::choice("extend", &EXTEND).more().doc("What lies beyond the edges"))
         .input("in", DataKind::Tex)
         .output("out", DataKind::Tex)
 }

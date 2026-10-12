@@ -64,14 +64,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .clamp(1.0, super::MAX_SIDE)
                     .curve(Curve::Log)
                     .unit(Unit::Pixels)
-                    .rarely_used(),
+                    .more(),
             )
             .param(
                 ParamSpec::int("height", 1080)
                     .clamp(1.0, super::MAX_SIDE)
                     .curve(Curve::Log)
                     .unit(Unit::Pixels)
-                    .rarely_used(),
+                    .more(),
             )
             .param(super::keep_size())
             .output("out", DataKind::Tex),

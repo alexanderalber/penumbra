@@ -13,7 +13,7 @@ pub const COMP_KIND: &str = "comp.base";
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(COMP_KIND, "Holds nodes; its input and output nodes are its ports")
-            .param(ParamSpec::text(EXPOSE, "").multiline().rarely_used().doc(
+            .param(ParamSpec::text(EXPOSE, "").multiline().more().doc(
                 "Inner params shown on the component, one per line: `name = node.param` or `node.param`",
             ))
             .container(),

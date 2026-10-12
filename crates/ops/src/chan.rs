@@ -20,7 +20,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(
                 ParamSpec::int("rows", 1)
                     .clamp(1.0, CONSTANT_MAX_ROWS as f64)
-                    .rarely_used()
+                    .more()
                     .doc("How many rows; row k is the params `name<k>` and `value<k>`, counted from 0"),
             )
             .output("out", DataKind::Chan)
@@ -40,7 +40,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(ParamSpec::choice("shape", &["sine", "triangle", "square", "saw"]).doc("Wave form"))
             .param(ParamSpec::float("amplitude", 1.0).range(0.0, 2.0))
             .param(ParamSpec::float("offset", 0.0).range(-1.0, 1.0))
-            .param(ParamSpec::float("phase", 0.0).range(0.0, 1.0).rarely_used().doc("In cycles"))
+            .param(ParamSpec::float("phase", 0.0).range(0.0, 1.0).more().doc("In cycles"))
             .time_dependent(),
         |cx| {
             let cycles = cx.time().seconds() * cx.float("rate")? + cx.float("phase")?;
@@ -76,11 +76,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(ParamSpec::float("amplitude", 1.0).range(0.0, 2.0))
         .param(ParamSpec::float("offset", 0.0).range(-1.0, 1.0))
         .param(ParamSpec::int("seed", 0).range(0.0, 100.0))
-        .param(ParamSpec::int("octaves", 2).clamp(1.0, 8.0).rarely_used())
+        .param(ParamSpec::int("octaves", 2).clamp(1.0, 8.0).more())
         .param(
             ParamSpec::float("roughness", 0.5)
                 .range(0.0, 1.0)
-                .rarely_used()
+                .more()
                 .doc("Amplitude from one octave to the next"),
         )
         .time_dependent(),

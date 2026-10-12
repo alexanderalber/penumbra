@@ -69,7 +69,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 
 fn emit() -> ParamSpec {
     ParamSpec::color("emit", [0.0, 0.0, 0.0, 1.0])
-        .rarely_used()
+        .more()
         .doc("Light the surface gives off by itself; alpha is unused")
 }
 

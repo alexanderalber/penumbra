@@ -78,14 +78,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::float("min_bpm", 70.0)
                 .clamp(20.0, 400.0)
                 .range(40.0, 200.0)
-                .rarely_used()
+                .more()
                 .doc("The slowest tempo considered; with max_bpm less than an octave apart, so a half or double tempo is not taken"),
         )
         .param(
             ParamSpec::float("max_bpm", 180.0)
                 .clamp(20.0, 400.0)
                 .range(80.0, 300.0)
-                .rarely_used()
+                .more()
                 .doc("The fastest tempo considered"),
         )
         .param(
@@ -97,7 +97,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(-120.0, 0.0)
                 .range(-90.0, -20.0)
                 .unit(Unit::Decibels)
-                .rarely_used()
+                .group("levels")
                 .doc("Quieter than this counts as silence and is not raised by normalize"),
         )
         .param(
@@ -105,7 +105,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(20.0, 20_000.0)
                 .range(40.0, 500.0)
                 .unit(Unit::Hertz)
-                .rarely_used()
+                .group("levels")
                 .doc("Where the low band ends"),
         )
         .param(
@@ -113,14 +113,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(20.0, 20_000.0)
                 .range(1000.0, 8000.0)
                 .unit(Unit::Hertz)
-                .rarely_used()
+                .group("levels")
                 .doc("Where the high band starts"),
         )
         .param(
             ParamSpec::int("bands", 32)
                 .clamp(1.0, penumbra_audio::analysis::MAX_BANDS as f64)
                 .range(4.0, 128.0)
-                .rarely_used()
+                .group("levels")
                 .doc("Bands of the spectrum output"),
         )
         .input("audio", DataKind::Chan)

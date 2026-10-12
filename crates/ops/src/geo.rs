@@ -34,7 +34,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "A mesh file (OBJ, STL, glTF/GLB) with its parts; reloads when the file changes",
         )
         .param(ParamSpec::file("file", penumbra_mesh::EXTENSIONS).doc("Relative to the project directory"))
-        .param(ParamSpec::choice("up", &UP).rarely_used().doc(
+        .param(ParamSpec::choice("up", &UP).more().doc(
             "Which axis is up in the file, turned into penumbra's z up; auto: y for glTF and OBJ, z for STL",
         ))
         .param(ParamSpec::choice("normals", &NORMALS).doc(
@@ -43,14 +43,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(
             ParamSpec::int("rings", 1)
                 .clamp(1.0, f64::from(penumbra_mesh::MAX_RINGS))
-                .rarely_used()
+                .more()
                 .doc("smooth: rings of faces averaged around each corner; 3 to 6 for voxel or marching-cubes meshes"),
         )
         .param(
             ParamSpec::float("crease", 180.0)
                 .clamp(0.0, 180.0)
                 .unit(Unit::Degrees)
-                .rarely_used()
+                .more()
                 .doc("smooth: edges sharper than this stay hard; 180 smooths everything"),
         )
         .output("out", DataKind::Geo)
@@ -70,7 +70,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .clamp(3.0, f64::from(prim::MAX_SEGMENTS))
                     .range(3.0, 128.0)
                     .curve(Curve::Log)
-                    .rarely_used()
+                    .more()
                     .doc("Around the sphere"),
             )
             .output("out", DataKind::Geo),

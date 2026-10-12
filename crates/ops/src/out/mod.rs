@@ -170,7 +170,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(
             ParamSpec::vec4("viewport", [0.0, 0.0, 1.0, 1.0])
                 .clamp(0.0, 1.0)
-                .rarely_used()
+                .more()
                 .doc("x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5)"),
         )
         .param(ParamSpec::bool("test", false).doc(

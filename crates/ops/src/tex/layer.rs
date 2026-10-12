@@ -29,7 +29,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         ))
         .param(
             ParamSpec::bool("placed", true)
-                .rarely_used()
+                .more()
                 .doc("The layer where it sits on the canvas (the canvas's size); off: only its own rectangle"),
         )
         .output("out", DataKind::Tex)
