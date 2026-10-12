@@ -14,7 +14,7 @@ explained here.
 - [Tracking](tracking.md): blobs with ids that stay, from a camera, with `tex.blobtrack`.
 - [Shaders](shaders.md): writing a `tex.shader` in WGSL.
 - [Scripts](scripts.md): writing a `script.python` node.
-- [Control](control.md): the control channel, `pn ctl`, headless runs, environment variables.
+- [Control](control.md): the control channel, `penumbra-cli ctl`, headless runs, environment variables.
 
 Generated from the code, so always complete:
 

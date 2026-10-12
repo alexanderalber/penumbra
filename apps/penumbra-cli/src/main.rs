@@ -1,14 +1,16 @@
-//! `pn`: penumbra on the command line.
+//! `penumbra-cli`: penumbra on the command line.
 //!
 //! ```text
-//! pn ctl <method> [params]     send one request to a running app, print the reply
-//! pn [--port N] ...            control channel port (default: PENUMBRA_PORT or 9880)
-//! pn soak [options]            run the engine headless for a while, report leaks and stalls
+//! penumbra-cli ctl <method> [params]   send one request to a running app, print the reply
+//! penumbra-cli [--port N] ...          control channel port (default: PENUMBRA_PORT or 9880)
+//! penumbra-cli soak [options]          run the engine headless for a while, report leaks and stalls
 //! ```
 //!
 //! `params` is either one JSON object (`'{"a": 1}'`) or `key=value` pairs, where each value is
 //! parsed as JSON if it can be and taken as a string otherwise (`name=noise1 amp=0.5`).
-//! Without arguments, `pn` pings the app.
+//! Without arguments, `penumbra-cli` pings the app. Started by a double-click, which gives it a
+//! console window of its own that closes when it exits, it also says what it is and waits for
+//! Enter, so the window does not just flash and vanish.
 //!
 //! Exit code: 0 when the reply has `"ok": true`, 1 otherwise.
 
@@ -25,18 +27,34 @@ use std::time::Duration;
 use penumbra_engine::control;
 use serde_json::{Map, Value};
 
-const USAGE: &str = "usage: pn [--port N] ctl <method> [{json} | key=value ...]
-       pn soak --help";
+const USAGE: &str = "usage: penumbra-cli [--port N] ctl <method> [{json} | key=value ...]
+       penumbra-cli soak --help";
 const TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Shown when the tool is started by a double-click instead of from a terminal.
+const DOUBLE_CLICKED: &str = "This is penumbra-cli, the command-line tool of penumbra. It sends commands to a
+running penumbra.exe and is meant to be used from a terminal (cmd or PowerShell).
+To use penumbra itself, start penumbra.exe instead.
+";
+
 fn main() -> ExitCode {
-    match run(std::env::args().skip(1).collect()) {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let double_clicked = args.is_empty() && penumbra_system::process::own_console();
+    if double_clicked {
+        println!("{DOUBLE_CLICKED}");
+    }
+    let code = match run(args) {
         Ok(code) => code,
         Err(e) => {
-            eprintln!("pn: {e}");
+            eprintln!("penumbra-cli: {e}");
             ExitCode::FAILURE
         }
+    };
+    if double_clicked {
+        println!("\nPress Enter to close this window.");
+        let _ = std::io::stdin().read_line(&mut String::new());
     }
+    code
 }
 
 fn run(args: Vec<String>) -> Result<ExitCode, String> {

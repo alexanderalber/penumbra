@@ -1,6 +1,7 @@
 //! Project automation. `cargo xtask` with no arguments runs `ci`.
 //!
-//! - `ci`: everything that must pass before a commit: `fmt`, `clippy`, `test`, `linux`, `layers`.
+//! - `ci`: everything that must pass before a commit: `fmt`, `clippy`, `test`, `linux`, `layers`,
+//!   `notices`.
 //! - `fmt`: `cargo fmt --check`.
 //! - `clippy`: clippy on all targets with `-D warnings`.
 //! - `test`: the workspace tests.
@@ -11,7 +12,13 @@
 //!   the software adapter. Look at the result before committing it.
 //! - `docs`: rewrite the generated reference (`docs/reference/`) from the node types and
 //!   commands. `test` fails while it is out of date.
+//! - `notices`: the third-party notices a build must ship with, written to
+//!   `target/THIRD-PARTY-NOTICES.html` by cargo-about (`about.toml`, `about.hbs`). Fails when a
+//!   dependency's licence is not accepted in `about.toml` or cannot be determined.
+//! - `dist`: a release build for Windows, zipped with everything it needs beside the exe:
+//!   `target/dist/penumbra-VERSION-windows-x64.zip`. Not part of `ci`.
 
+use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::time::Instant;
 
@@ -66,9 +73,11 @@ fn main() -> ExitCode {
         "layers" => layers(),
         "bless" => bless(),
         "docs" => docs(),
-        other => {
-            Err(format!("unknown task `{other}`; tasks: ci, fmt, clippy, test, linux, layers, bless, docs"))
-        }
+        "notices" => notices(),
+        "dist" => dist(),
+        other => Err(format!(
+            "unknown task `{other}`; tasks: ci, fmt, clippy, test, linux, layers, bless, docs, notices, dist"
+        )),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -86,6 +95,7 @@ fn ci() -> Result<(), String> {
     test()?;
     linux()?;
     layers()?;
+    notices()?;
     eprintln!("xtask: ci passed in {:.0} s", start.elapsed().as_secs_f64());
     Ok(())
 }
@@ -131,6 +141,111 @@ fn docs() -> Result<(), String> {
         return Err(format!("writing the reference failed ({status})"));
     }
     eprintln!("xtask: reference rewritten; check `git diff docs/reference`");
+    Ok(())
+}
+
+fn root() -> Result<&'static Path, String> {
+    Path::new(env!("CARGO_MANIFEST_DIR")).parent().ok_or_else(|| "xtask has no parent directory".into())
+}
+
+fn notices() -> Result<(), String> {
+    let root = root()?;
+    let template = root.join("about.hbs");
+    let out = root.join("target").join("THIRD-PARTY-NOTICES.html");
+    let (template, out) = (template.to_string_lossy(), out.to_string_lossy());
+    let args = ["about", "generate", "--workspace", "--locked", "--fail", "-o", &out, &template];
+    eprintln!("xtask: cargo {}", args.join(" "));
+    let status = Command::new(cargo_bin())
+        .args(args)
+        .current_dir(root)
+        .status()
+        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    if !status.success() {
+        return Err(format!(
+            "generating the notices failed ({status})\n(if cargo-about is missing: `cargo install cargo-about --locked --features cli`)"
+        ));
+    }
+    eprintln!("xtask: notices written to {out}");
+    Ok(())
+}
+
+/// The Windows target, named explicitly so that the static CRT applies to the shipped binaries
+/// only, not to build scripts and proc macros.
+const WINDOWS_TARGET: &str = "x86_64-pc-windows-msvc";
+
+/// What ships beside the exe, from the target directory.
+const DIST_BINARIES: &[&str] = &["penumbra.exe", "penumbra-cli.exe", "pyhost.dll"];
+
+fn dist() -> Result<(), String> {
+    if !cfg!(windows) {
+        return Err("dist builds for Windows only so far".into());
+    }
+    let root = root()?;
+    notices()?;
+
+    // A static C runtime, so the exe does not need the Visual C++ redistributable, which a fresh
+    // Windows may lack. pyhost is built explicitly: the app's build makes only its rlib.
+    let args = ["build", "--release", "--locked", "--target", WINDOWS_TARGET];
+    let packages = ["-p", "penumbra", "-p", "penumbra-cli", "-p", "penumbra-pyhost"];
+    eprintln!("xtask: cargo {} {}", args.join(" "), packages.join(" "));
+    let status = Command::new(cargo_bin())
+        .args(args)
+        .args(packages)
+        .env("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS", "-C target-feature=+crt-static")
+        .current_dir(root)
+        .status()
+        .map_err(|e| format!("cannot run cargo: {e}"))?;
+    if !status.success() {
+        return Err(format!("the release build failed ({status})"));
+    }
+
+    let version = env!("CARGO_PKG_VERSION");
+    let name = format!("penumbra-{version}-windows-x64");
+    let dist = root.join("target").join("dist");
+    let stage = dist.join(&name);
+    if stage.exists() {
+        std::fs::remove_dir_all(&stage).map_err(|e| format!("cannot clear {}: {e}", stage.display()))?;
+    }
+    std::fs::create_dir_all(&stage).map_err(|e| format!("cannot create {}: {e}", stage.display()))?;
+
+    let release = root.join("target").join(WINDOWS_TARGET).join("release");
+    let mut files: Vec<(std::path::PathBuf, &str)> =
+        DIST_BINARIES.iter().map(|f| (release.join(f), *f)).collect();
+    files.push((root.join("target").join("THIRD-PARTY-NOTICES.html"), "THIRD-PARTY-NOTICES.html"));
+    files.push((root.join("LICENSE-MIT"), "LICENSE-MIT"));
+    files.push((root.join("LICENSE-APACHE"), "LICENSE-APACHE"));
+    for (from, to) in &files {
+        std::fs::copy(from, stage.join(to)).map_err(|e| format!("cannot copy {}: {e}", from.display()))?;
+    }
+    // Windows line endings, whatever the checkout has: the README is for people opening it in
+    // whatever editor a double-click picks.
+    let readme = include_str!("../dist/README.txt")
+        .replace("{version}", version)
+        .replace("\r\n", "\n")
+        .replace('\n', "\r\n");
+    std::fs::write(stage.join("README.txt"), readme).map_err(|e| format!("cannot write README.txt: {e}"))?;
+
+    // Windows' own tar (bsdtar) writes zip archives, `-a` picks the format from the extension.
+    // Named by full path: the GNU tar of Git for Windows may come first on PATH and cannot.
+    let tar = Path::new(&std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()))
+        .join("System32")
+        .join("tar.exe");
+    let zip = dist.join(format!("{name}.zip"));
+    if zip.exists() {
+        std::fs::remove_file(&zip).map_err(|e| format!("cannot remove {}: {e}", zip.display()))?;
+    }
+    let status = Command::new(&tar)
+        .arg("-a")
+        .arg("-cf")
+        .arg(&zip)
+        .arg(&name)
+        .current_dir(&dist)
+        .status()
+        .map_err(|e| format!("cannot run tar: {e}"))?;
+    if !status.success() {
+        return Err(format!("zipping failed ({status})"));
+    }
+    eprintln!("xtask: {} written", zip.display());
     Ok(())
 }
 

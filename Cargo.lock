@@ -3127,6 +3127,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "penumbra-cli"
+version = "0.1.0"
+dependencies = [
+ "penumbra-engine",
+ "penumbra-gpu",
+ "penumbra-ops",
+ "penumbra-project",
+ "penumbra-system",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "penumbra-core"
 version = "0.1.0"
 dependencies = [
@@ -3455,19 +3468,6 @@ name = "plain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
-
-[[package]]
-name = "pn"
-version = "0.1.0"
-dependencies = [
- "penumbra-engine",
- "penumbra-gpu",
- "penumbra-ops",
- "penumbra-project",
- "penumbra-system",
- "serde",
- "serde_json",
-]
 
 [[package]]
 name = "png"

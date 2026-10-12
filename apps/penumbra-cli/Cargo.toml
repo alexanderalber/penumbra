@@ -1,5 +1,5 @@
 [package]
-name = "pn"
+name = "penumbra-cli"
 description = "penumbra command line: control channel client, soak test."
 version.workspace = true
 edition.workspace = true

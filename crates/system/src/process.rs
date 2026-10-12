@@ -1,5 +1,5 @@
 //! This process's memory, handles and threads (`system.process`, the soak test), and a memory cap
-//! for measurement runs.
+//! for measurement runs, and whether the process owns its console window.
 
 use penumbra_core::Error;
 use serde::Serialize;
@@ -41,6 +41,20 @@ pub fn cap_memory(bytes: u64) -> Result<(), Error> {
     {
         let _ = bytes;
         Err(Error::new("a memory cap is only implemented on Windows (use ulimit -v elsewhere)"))
+    }
+}
+
+/// Whether this process has a console window to itself, which is what a double-click on a
+/// console program gives it: the window closes the moment the process exits. False when started
+/// from a terminal, with no console at all, and outside Windows.
+pub fn own_console() -> bool {
+    #[cfg(windows)]
+    {
+        crate::windows::own_console()
+    }
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 

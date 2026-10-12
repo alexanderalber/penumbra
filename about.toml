@@ -1,0 +1,84 @@
+# cargo-about: the third-party notices that ship with a build (`cargo xtask notices`).
+#
+# `accepted` is also the order of preference: for a crate under "MIT OR Apache-2.0" the notices
+# carry MIT. A dependency under a licence missing here fails `cargo xtask ci`; add it only after
+# checking what it asks of a binary distribution.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unicode-3.0",
+    "IJG",
+    # Symphonia (audio in FilmCraft): MPL-2.0 asks that the notices say where its source is.
+    "MPL-2.0",
+    # Fonts: effectcraft-text's and egui's bundled faces.
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+    "Bitstream-Vera",
+]
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+# penumbra's own crates (`publish = false`) are covered by its own licence, not listed as third party.
+private = { ignore = true }
+
+# effectcraft-text embeds three OFL fonts from its repository's `assets/fonts/`, which its
+# manifest licence does not mention. The checksums tie this to the pinned revision: a raised pin
+# with changed licence files fails until they are checked again.
+[effectcraft-text.clarify]
+license = "(MIT OR Apache-2.0) AND OFL-1.1"
+
+[[effectcraft-text.clarify.files]]
+path = "../../LICENSE-MIT"
+license = "MIT"
+checksum = "7b6db9a363688683feacdf9b528f059637f2e5d2edbacd8720fc9b26781c9abe"
+
+[[effectcraft-text.clarify.files]]
+path = "../../LICENSE-APACHE"
+license = "Apache-2.0"
+checksum = "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"
+
+[[effectcraft-text.clarify.files]]
+path = "../../assets/fonts/OFL-Inter.txt"
+license = "OFL-1.1"
+checksum = "262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a"
+
+[[effectcraft-text.clarify.files]]
+path = "../../assets/fonts/OFL-JetBrainsMono.txt"
+license = "OFL-1.1"
+checksum = "a76abf002c49097d146e86740a3105a5d00450b1592e820a1109a8c5680cd697"
+
+[[effectcraft-text.clarify.files]]
+path = "../../assets/fonts/OFL-NotoSerif.txt"
+license = "OFL-1.1"
+checksum = "cee9892f9f0cc8fe882c9e9537ee6a89621d86ee7ceaf70b02e2b2b1c25c061a"
+
+# egui's default fonts: the manifest licence leaves out Hack (MIT and the Bitstream Vera licence)
+# and does not point at the font licence files in `fonts/`.
+[epaint_default_fonts.clarify]
+license = "(MIT OR Apache-2.0) AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/emoji-icon-font-mit-license.txt"
+license = "MIT"
+checksum = "b9d2c1d909aa149996fd4c91dcb92b2362a04431640c1d200959da94caf8cde1"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/Hack-Regular.txt"
+license = "MIT AND Bitstream-Vera"
+checksum = "47c0cccbeec7e8614548cc485588b28149e7874188df5f41b36efebcee285c87"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/OFL.txt"
+license = "OFL-1.1"
+checksum = "6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2"
+
+[[epaint_default_fonts.clarify.files]]
+path = "fonts/UFL.txt"
+license = "Ubuntu-font-1.0"
+checksum = "2f0015108d68627bd788d313f529c21ff4da2c2c42a5e1f3883acc83480f9002"
