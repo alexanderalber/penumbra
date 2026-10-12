@@ -40,6 +40,9 @@ pub struct Model {
     /// One per [`Mesh::ranges`]: the middle of its triangles' box, for drawing transparent
     /// surfaces back to front.
     pub(crate) centers: Vec<[f32; 3]>,
+    /// The mesh's box, measured once: a render asks for it on every cook, and walking millions
+    /// of vertices each time cost a frame's budget several times over.
+    pub(crate) bounds: Option<Bounds>,
 }
 
 impl Model {
@@ -135,9 +138,10 @@ impl Model {
                 Bounds::of(corners).map_or([0.0; 3], |b| b.center())
             })
             .collect();
+        let bounds = mesh.bounds();
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        Ok((Model { mesh, id, vertices, indices, textures, centers }, warnings))
+        Ok((Model { mesh, id, vertices, indices, textures, centers, bounds }, warnings))
     }
 
     /// GPU memory of the buffers and textures.
@@ -260,7 +264,7 @@ impl Geo {
     pub fn bounds(&self) -> Option<Bounds> {
         let mut out: Option<Bounds> = None;
         for item in &self.items {
-            let Some(b) = item.model.mesh.bounds() else { continue };
+            let Some(b) = item.model.bounds else { continue };
             for c in b.corners() {
                 let p = transform(&item.world, c.map(f64::from)).map(|x| x as f32);
                 out = Some(out.map_or(Bounds { min: p, max: p }, |o| o.with(p)));
