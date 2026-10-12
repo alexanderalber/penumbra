@@ -27,7 +27,7 @@ pub mod tex;
 pub mod video;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
 use penumbra_core::Error;
@@ -241,8 +241,7 @@ impl Gpu {
     /// the queue directly), so [`Gpu::configure_surface`] can keep submissions out while wgpu
     /// waits for an idle GPU.
     pub fn submit(&self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) -> wgpu::SubmissionIndex {
-        self.wait_for_hold();
-        let _shared = self.inner.submit_lock.read().unwrap_or_else(PoisonError::into_inner);
+        let _shared = self.shared();
         self.inner.queue.submit(buffers)
     }
 
@@ -256,6 +255,34 @@ impl Gpu {
         if held.is_none_or(|h| h < until) {
             *held = Some(until);
         }
+    }
+
+    /// Holds submissions back like [`Gpu::hold`] and waits for those under way to finish, so
+    /// that nothing of penumbra's reaches the queue until `until` (or [`MAX_HOLD`]). For a
+    /// surface configure we cannot take the lock around, because the code doing it (eframe
+    /// handling a resize) may itself run a frame that submits through this `Gpu`.
+    pub fn quiesce(&self, until: Instant) {
+        self.hold(until);
+        drop(self.inner.submit_lock.write().unwrap_or_else(PoisonError::into_inner));
+    }
+
+    /// The shared side of the submit lock, taken once no hold is in force. The hold is looked
+    /// at again under the lock: a submission that passed the wait just before
+    /// [`Gpu::quiesce`] set the hold would otherwise slip through after it.
+    fn shared(&self) -> RwLockReadGuard<'_, ()> {
+        let start = Instant::now();
+        loop {
+            self.wait_for_hold();
+            let shared = self.inner.submit_lock.read().unwrap_or_else(PoisonError::into_inner);
+            if !self.held() || start.elapsed() >= MAX_HOLD {
+                return shared;
+            }
+        }
+    }
+
+    fn held(&self) -> bool {
+        let until = *self.inner.held_until.lock().unwrap_or_else(PoisonError::into_inner);
+        until.is_some_and(|u| u > Instant::now())
     }
 
     fn wait_for_hold(&self) {
@@ -296,8 +323,7 @@ impl Gpu {
 
     /// Presents a surface texture, under the same lock as [`Gpu::submit`].
     pub fn present(&self, frame: wgpu::SurfaceTexture) {
-        self.wait_for_hold();
-        let _shared = self.inner.submit_lock.read().unwrap_or_else(PoisonError::into_inner);
+        let _shared = self.shared();
         self.inner.queue.present(frame);
     }
 

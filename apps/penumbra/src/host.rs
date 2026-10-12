@@ -3,6 +3,7 @@
 //! their own threads).
 
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use penumbra_engine::Engine;
 use penumbra_output::Outputs;
@@ -14,6 +15,11 @@ use winit::window::WindowId;
 /// Filled by the app creator once eframe has its device: the instance that created it, which
 /// the output windows need for their surfaces.
 pub type InstanceSlot = Arc<Mutex<Option<wgpu::Instance>>>;
+
+/// How long penumbra's submissions wait when an eframe window changes size. eframe configures
+/// the surface while it handles the event, and wgpu fails that configure (leaving the window
+/// black until the next resize) if another thread submits while it waits for an idle GPU.
+const RESIZE_QUIET: Duration = Duration::from_millis(250);
 
 pub struct Host<'a> {
     pub eframe: eframe::EframeWinitApplication<'a>,
@@ -59,6 +65,13 @@ impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
         if !self.outputs.window_event(window_id, &event) {
+            if let WindowEvent::Resized(size) = &event
+                && size.width > 0
+                && size.height > 0
+                && let Some(gpu) = self.engine.gpu()
+            {
+                gpu.quiesce(Instant::now() + RESIZE_QUIET);
+            }
             self.eframe.window_event(event_loop, window_id, event);
         }
     }
