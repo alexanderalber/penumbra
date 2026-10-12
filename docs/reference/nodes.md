@@ -494,7 +494,8 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `colors` | bool | `false` |  | Show the motion as colours instead of passing the numbers on: direction as hue, speed as brightness. For looking at it; nodes that use the motion want this off |
 | `confidence` *(more)* | bool | `false` |  | Blue says how well the motion is pinned down, 0 to 1: high where there is texture, moving or not, low on a plain wall; off, blue is 0 and a still picture black |
-| `threshold` | float | `0.4` | 0 to 4 px (soft) | Slower motion than this fades out (none below half of it), so camera noise does not shimmer; in pixels at the analysed size per frame |
+| `fill` | int | `4` | 0 to 6 (soft) | Rounds of filling in: the motion found at edges and texture spreads into plain parts of the same thing (skin, a shirt), not across edges; each round reaches twice as far. 0: off |
+| `threshold` | float | `0.25` | 0 to 4 px (soft) | Slower motion than this fades out (none below half of it), so camera noise does not shimmer; in pixels at the analysed size per frame |
 | `size` *(more)* | int | `320` | 64 to 960 px (soft) | Width the input is analysed at, and the output's; more sees finer motion and costs more |
 | `levels` *(more)* | int | `4` | 1 to 6 (soft) | Pyramid levels, each half the size of the one before; each one doubles the fastest motion followed |
 | `iterations` *(more)* | int | `3` | 1 to 6 (soft) | Refining steps per level; more is more exact and costs more |

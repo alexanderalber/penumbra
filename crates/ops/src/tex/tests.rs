@@ -1511,3 +1511,73 @@ fn opticalflow_finds_known_motion() {
     let [r, g, b, a] = px.get(80, 48).unwrap();
     assert!(r > 0.9 && g < 0.3 && b < 0.3 && a == 1.0, "{:?}", [r, g, b, a]);
 }
+
+/// A plain grey square with a textured rim at `at`, over a still textured background, with
+/// camera noise: a hand over a room, in short.
+fn object_frame(at: [f64; 2], seed: u32) -> penumbra_camera::CameraFrame {
+    let (w, h) = (160u32, 96u32);
+    let mut state = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    let luma = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (f64::from(x), f64::from(y))))
+        .map(|(x, y)| {
+            let (u, v) = (x - at[0], y - at[1]);
+            let inside = (0.0..56.0).contains(&u) && (0.0..44.0).contains(&v);
+            let rim = inside && (u < 8.0 || u >= 48.0 || v < 8.0 || v >= 36.0);
+            let value = if rim {
+                150.0 + 40.0 * (u * 0.9).sin() * (v * 0.8).cos()
+            } else if inside {
+                150.0 + 3.0 * (u * 0.2).sin()
+            } else {
+                90.0 + 30.0 * (x * 0.3).sin() * (y * 0.25 + 1.0).cos()
+            };
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = f64::from((state >> 16) % 5) - 2.0;
+            (value + noise).round().clamp(16.0, 235.0) as u8
+        })
+        .collect();
+    penumbra_camera::CameraFrame {
+        width: w,
+        height: h,
+        y: luma,
+        cb: vec![128; (w * h / 4) as usize],
+        cr: vec![128; (w * h / 4) as usize],
+        ..camera_frame(128, 128, 128)
+    }
+}
+
+#[test]
+fn opticalflow_fills_in_plain_parts_of_a_moving_thing() {
+    let Some(gpu) = gpu() else { return };
+    let interior_error = |fill: i64| {
+        let ops = [
+            create("/cam", "tex.videoin", &[("device", "test".into())]),
+            create("/of", "tex.opticalflow", &[("size", Value::Int(160)), ("fill", Value::Int(fill))]),
+            connect("/cam", "/of", 0),
+        ];
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        let step = [3.0, 1.5];
+        let mut errors = Vec::new();
+        for i in 0..4u32 {
+            let at = [40.0 + f64::from(i) * step[0], 20.0 + f64::from(i) * step[1]];
+            let (_, px) = flow_of(&mut rig, object_frame(at, i));
+            if i == 0 {
+                continue;
+            }
+            // The plain middle of the square, away from its rim.
+            for y in (at[1] as u32 + 12)..(at[1] as u32 + 32) {
+                for x in (at[0] as u32 + 12)..(at[0] as u32 + 44) {
+                    let [r, g, ..] = px.get(x, y).unwrap();
+                    let m = [f64::from(r) * 160.0, f64::from(g) * 96.0];
+                    errors.push(((m[0] - step[0]).powi(2) + (m[1] - step[1]).powi(2)).sqrt());
+                }
+            }
+        }
+        errors.sort_by(f64::total_cmp);
+        (errors[errors.len() / 2], errors[errors.len() * 9 / 10])
+    };
+    // Lucas-Kanade alone is unsure in the plain middle; filled in from the rim, it moves as one.
+    let raw = interior_error(0);
+    let filled = interior_error(4);
+    assert!(raw.1 > 0.8, "{raw:?}");
+    assert!(filled.0 < raw.0 * 0.6 && filled.1 < 0.5, "{raw:?} -> {filled:?}");
+}

@@ -31,6 +31,9 @@ const PREP: i64 = 0;
 const DOWN: i64 = 1;
 const SOLVE: i64 = 2;
 const OUT: i64 = 3;
+const SMOOTH: i64 = 4;
+/// Most smoothing rounds; the last one's taps are 2^(n-1) pixels apart.
+const MAX_SMOOTH: i64 = 6;
 
 fn desc() -> NodeDesc {
     NodeDesc::new(KIND, "How far each part of the picture moved since the previous frame (optical flow)")
@@ -42,8 +45,12 @@ fn desc() -> NodeDesc {
             "Blue says how well the motion is pinned down, 0 to 1: high where there is texture, moving \
              or not, low on a plain wall; off, blue is 0 and a still picture black",
         ))
+        .param(ParamSpec::int("fill", 4).clamp(0.0, MAX_SMOOTH as f64).range(0.0, MAX_SMOOTH as f64).doc(
+            "Rounds of filling in: the motion found at edges and texture spreads into plain parts of the \
+             same thing (skin, a shirt), not across edges; each round reaches twice as far. 0: off",
+        ))
         .param(
-            ParamSpec::float("threshold", 0.4)
+            ParamSpec::float("threshold", 0.25)
                 .clamp(0.0, 16.0)
                 .range(0.0, 4.0)
                 .curve(Curve::Power(2.0))
@@ -87,6 +94,7 @@ fn desc() -> NodeDesc {
 fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
     let mut params = desc().params;
     params.push(ParamSpec::int("stage", 0));
+    params.push(ParamSpec::int("spread", 1));
     gpu.cached_pass(KIND, SOURCE, &params)
 }
 
@@ -117,6 +125,7 @@ struct OpticalFlow {
     /// Per level: the luma pyramid and the motion.
     values: Vec<TexRing>,
     flows: Vec<TexRing>,
+    smoothed: TexRing,
     out: TexRing,
     /// The previous input frame's pyramid.
     previous: Option<Vec<Tex>>,
@@ -149,9 +158,11 @@ impl Operator for OpticalFlow {
 
         // All passes go out in one submission.
         let mut batch = Batch::new(gpu, KIND);
-        let mut render = |target: &Tex, stage: i64, inputs: &[Option<&Tex>]| {
-            let param = move |name: &str| {
-                if name == "stage" { Some(Value::Int(stage)) } else { cx.param(name).cloned() }
+        let mut render = |target: &Tex, stage: i64, spread: i64, inputs: &[Option<&Tex>]| {
+            let param = move |name: &str| match name {
+                "stage" => Some(Value::Int(stage)),
+                "spread" => Some(Value::Int(spread)),
+                _ => cx.param(name).cloned(),
             };
             pass.encode(&mut batch, target, &PassInput { inputs, seconds: 0.0, frame: 0, param: &param });
         };
@@ -161,8 +172,8 @@ impl Operator for OpticalFlow {
         for (&(lw, lh), values) in sizes.iter().zip(&mut self.values) {
             let target = values.next(gpu, lw, lh, KIND)?;
             match pyramid.last() {
-                None => render(&target, PREP, &[Some(src)]),
-                Some(finer) => render(&target, DOWN, &[Some(finer)]),
+                None => render(&target, PREP, 1, &[Some(src)]),
+                Some(finer) => render(&target, DOWN, 1, &[Some(finer)]),
             }
             pyramid.push(target);
         }
@@ -179,13 +190,21 @@ impl Operator for OpticalFlow {
                 let (lw, lh) = now.size();
                 for _ in 0..iterations {
                     let target = flows.next(gpu, lw, lh, KIND)?;
-                    render(&target, SOLVE, &[Some(now), Some(before), flow.as_ref()]);
+                    render(&target, SOLVE, 1, &[Some(now), Some(before), flow.as_ref()]);
                     flow = Some(target);
                 }
             }
         }
+        if let (Some(finest), Some(mut current)) = (pyramid.first(), flow.take()) {
+            for round in 0..cx.int("fill")?.clamp(0, MAX_SMOOTH) {
+                let target = self.smoothed.next(gpu, width, height, KIND)?;
+                render(&target, SMOOTH, 1 << round, &[Some(&current), Some(finest)]);
+                current = target;
+            }
+            flow = Some(current);
+        }
         let out = self.out.next(gpu, width, height, KIND)?;
-        render(&out, OUT, &[flow.as_ref()]);
+        render(&out, OUT, 1, &[flow.as_ref()]);
         batch.submit();
 
         self.previous = Some(pyramid);
