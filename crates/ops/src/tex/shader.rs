@@ -86,6 +86,13 @@ impl Operator for Shader {
                 }
                 let source = std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?;
                 let header = header::parse(&source).map_err(|e| format!("{label}: {e}"))?;
+                // Such a param would silently take the node's own value.
+                if let Some(p) = header.params.iter().find(|p| FIXED.contains(&p.name.as_str())) {
+                    return Err(format!(
+                        "{label}: `{}` is a param of the node itself; give the shader's another name",
+                        p.name
+                    ));
+                }
                 let pass = Pass::compile(&gpu, &label, &source, &header.params).map_err(|e| e.0)?;
                 Ok(Compiled { pass: Arc::new(pass), header })
             }));

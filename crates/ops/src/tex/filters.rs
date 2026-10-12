@@ -289,6 +289,22 @@ pub(super) fn builtins() -> Vec<Builtin> {
             include_str!("monochrome.wgsl"),
         ),
         pass(
+            filter("tex.hsv", "Turn the hue, scale saturation and value")
+                .param(
+                    ParamSpec::float("hue", 0.0)
+                        .range(-180.0, 180.0)
+                        .unit(Unit::Degrees)
+                        .doc("Added to the hue: 120 turns red into green; any angle, it wraps"),
+                )
+                .param(ParamSpec::float("saturation", 1.0).range(0.0, 2.0).doc("Times the saturation"))
+                .param(
+                    ParamSpec::float("value", 1.0)
+                        .range(0.0, 2.0)
+                        .doc("Times the value (the brightest channel)"),
+                ),
+            include_str!("hsv.wgsl"),
+        ),
+        pass(
             NodeDesc::new("tex.remap", "Fetch the input where a map's red and green point")
                 .param(ParamSpec::choice("extend", &EXTEND).doc("Outside the input"))
                 .input("in", DataKind::Tex)
