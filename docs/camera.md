@@ -19,6 +19,11 @@ the node are skipped, never queued up. If the camera goes away (a pulled cable),
 its last picture with a warning, and the camera is opened again every two seconds until it is
 back.
 
+A frame identical to the one before, byte for byte, is skipped. A camera sending 30p over a
+60 Hz HDMI signal (common: a Cam Link then reports 59.94 fps) repeats every frame, and the
+repeats would make motion and averaging see a still picture every other frame. Such a camera
+gives about 30 new pictures a second; set the camera's HDMI output to 60p for 60.
+
 A camera can be open in one program at a time on most systems: if another program (OBS, the
 camera app, a browser) holds it, the node reports that the camera cannot be opened.
 
@@ -75,3 +80,27 @@ Brightness noise (grain) and colour noise (coloured speckles) have their own str
 Colour can usually take more than brightness before the picture looks soft. `frames` is not a
 count of frames kept but how fast the average follows (each new frame weighs `1 / frames`), so
 fractions such as 2.5 are meaningful, and a channel can drive it smoothly.
+
+## Motion
+
+`tex.opticalflow` behind the `tex.videoin` (or behind a `tex.denoise`) measures how far each
+part of the picture moved since the previous frame. Its output is a small picture, `size` wide
+(320 by default, under "more"), whose red and green are the motion in image sizes per frame:
+red to the right, green downwards (x in widths, y in heights), negative the other way. Blue says
+how well the motion there is pinned down (0 to 1): a plain wall cannot show which way it moves,
+an edge only across itself.
+
+The numbers are not for looking at; turn on `colors` to see the motion as colours, direction as
+hue and speed as brightness (full at 1/80 of the width per frame). `threshold` fades out motion
+slower than that, in pixels at the analysed size per frame, so camera noise does not shimmer;
+a still camera picture moves by 0.1 to 0.3 of those pixels by noise alone.
+
+Where a pixel's content was in the previous frame is its position minus the motion, so a
+`tex.displace` with `midpoint` 0 and `weight` -1, -1 pulls the previous frame onto the current
+one, and a positive weight pushes the picture along with the motion.
+
+Under "more": `levels` (each doubles the fastest motion it follows), `iterations` (refining steps per level) and
+`window` (the neighbourhood each pixel is judged from: larger is smoother, smaller keeps small
+moving things apart). With the defaults it costs about 3 ms per new frame on the CPU, most of it
+handing its passes (two per level plus one per iteration and level) to the GPU; the GPU's part
+is small.

@@ -4,7 +4,9 @@
 //!
 //! The node recooks when a frame arrives, not on the show clock, so the picture stays live while
 //! the show is paused. A frame that arrives while the node is not wanted is simply replaced by
-//! the next one: a live picture shows the freshest frame, never a backlog.
+//! the next one: a live picture shows the freshest frame, never a backlog. A frame identical to
+//! the one shown (a capture card repeating each frame of a 30p source on a 60 Hz signal) is
+//! skipped, so the node's output changes only with the picture.
 //!
 //! The `info` output carries channels about the stream, updated with every frame: `fps`
 //! (arriving, measured), `delay_ms` (the camera's timestamp to the capture thread), `age_ms`
@@ -93,6 +95,13 @@ impl Operator for VideoIn {
     }
 }
 
+fn same_picture(a: &CameraFrame, b: &CameraFrame) -> bool {
+    (a.width, a.height, a.format, a.shift) == (b.width, b.height, b.format, b.shift)
+        && a.y == b.y
+        && a.cb == b.cb
+        && a.cr == b.cr
+}
+
 impl VideoIn {
     fn cook_inner(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let hub = cx
@@ -117,6 +126,16 @@ impl VideoIn {
         let frame = hub.latest(&key);
         let new = frame.as_ref().is_some_and(|f| self.shown.as_ref().is_none_or(|s| !Arc::ptr_eq(s, f)));
         let changed = cx.params_changed() && self.has_output;
+        // A repeat of the frame shown, byte for byte, is no new picture: a capture card fed 30p
+        // over a 60 Hz signal delivers every frame twice. Passed on, it would make nodes that
+        // compare frames (motion, averages) see no change every other frame.
+        if let (Some(f), Some(s), true, false) = (&frame, &self.shown, new, changed)
+            && self.has_output
+            && same_picture(f, s)
+        {
+            self.shown = Some(f.clone());
+            return Ok(Cooked::Unchanged);
+        }
         match frame {
             Some(f) if new || changed => {
                 let gpu = super::gpu(cx)?;

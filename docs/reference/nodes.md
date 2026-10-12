@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
+[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.opticalflow](#texopticalflow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
 
 ### tex.blobtrack
 
@@ -479,6 +479,25 @@ Inputs:
 - `in` (tex)
 
 Outputs: `out` (tex).
+
+### tex.opticalflow
+
+How far each part of the picture moved since the previous frame (optical flow)
+
+Inputs:
+
+- `in` (tex)
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `colors` | bool | `false` |  | Show the motion as colours instead of passing the numbers on: direction as hue, speed as brightness. For looking at it; nodes that use the motion want this off |
+| `threshold` | float | `0.4` | 0 to 4 px (soft) | Slower motion than this fades out (none below half of it), so camera noise does not shimmer; in pixels at the analysed size per frame |
+| `size` *(more)* | int | `320` | 64 to 960 px (soft) | Width the input is analysed at, and the output's; more sees finer motion and costs more |
+| `levels` *(more)* | int | `4` | 1 to 6 (soft) | Pyramid levels, each half the size of the one before; each one doubles the fastest motion followed |
+| `iterations` *(more)* | int | `3` | 1 to 6 (soft) | Refining steps per level; more is more exact and costs more |
+| `window` *(more)* | int | `3` | 1 to 6 px (soft) | Radius of the neighbourhood each pixel's motion is judged from; more is smoother and steadier, less keeps small moving things apart |
 
 ### tex.out
 
