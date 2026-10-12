@@ -1,0 +1,18 @@
+[package]
+name = "penumbra-camera"
+description = "Camera input (Media Foundation on Windows): devices, modes, a capture thread per camera, the newest frame for whoever shows it. No GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+log.workspace = true
+serde.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Media_MediaFoundation", "Win32_System_Com"] }
+
+[lints]
+workspace = true

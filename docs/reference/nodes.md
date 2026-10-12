@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.out](#texout), [tex.quantize](#texquantize), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.transform](#textransform), [tex.video](#texvideo)
+[tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.out](#texout), [tex.quantize](#texquantize), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
 
 ### tex.blur
 
@@ -696,6 +696,20 @@ Outputs: `out` (tex), `info` (chan).
 | `speed` | float | `1` | 0 to 4 (soft) | Playback rate; every frame is still decoded, so high speeds cost CPU |
 | `loop` | bool | `true` |  | Off stops on the last frame |
 | `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is (re)loaded |
+
+### tex.videoin
+
+A live camera or capture card; resolution of the camera's mode
+
+Inputs: none.
+
+Outputs: `out` (tex), `info` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `device` | text |  |  | Part of the camera's name (the ... menu lists them), e.g. `Cam Link`; empty: the first camera |
+| `mode` | text |  |  | Size, rate and pixel format, each optional, e.g. `1920x1080@60 NV12` or `@30`; empty: the largest, fastest the camera offers |
+| `range` *(more)* | auto \| limited \| full | `"auto"` |  | Whether black is 16 or 0 in the camera's Y'CbCr; auto believes the camera (limited when it does not say). Raised blacks mean the camera sends full range while limited is assumed |
 
 ## chan
 

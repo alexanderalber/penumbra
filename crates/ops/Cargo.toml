@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 penumbra-audio.workspace = true
 penumbra-calib.workspace = true
+penumbra-camera.workspace = true
 penumbra-core.workspace = true
 penumbra-graph.workspace = true
 penumbra-gpu.workspace = true

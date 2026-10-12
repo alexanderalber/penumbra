@@ -76,6 +76,26 @@ struct Rig {
     gpu: Gpu,
     /// Audio is fed here (key `test`), not read from a device.
     audio: penumbra_audio::Hub,
+    /// Camera frames are fed here (key `test`), not read from a camera.
+    camera: penumbra_camera::Hub,
+}
+
+/// A camera frame of one colour, 4:2:0, limited range.
+fn camera_frame(y: u8, cb: u8, cr: u8) -> penumbra_camera::CameraFrame {
+    penumbra_camera::CameraFrame {
+        width: 8,
+        height: 4,
+        format: penumbra_camera::PixelFormat::Nv12,
+        y: vec![y; 32],
+        cb: vec![cb; 8],
+        cr: vec![cr; 8],
+        shift: (1, 1),
+        matrix: penumbra_camera::Matrix::Bt709,
+        full_range: false,
+        sequence: 0,
+        arrived: Instant::now(),
+        delay_ms: None,
+    }
 }
 
 impl Rig {
@@ -90,8 +110,19 @@ impl Rig {
         let audio = penumbra_audio::Hub::new();
         audio.feed("test", 48_000, 2, &[0.0; 2]).unwrap();
         cooker.provide(audio.clone());
+        let camera = penumbra_camera::Hub::new();
+        camera.feed(&penumbra_camera::Key::new("test", ""), camera_frame(126, 128, 128));
+        cooker.provide(camera.clone());
         cooker.set_base_dir(dir.map(Path::to_path_buf));
-        Self { types, net, cooker, clock: ShowClock::new(Rate::FPS_60, LatePolicy::Realtime), gpu, audio }
+        Self {
+            types,
+            net,
+            cooker,
+            clock: ShowClock::new(Rate::FPS_60, LatePolicy::Realtime),
+            gpu,
+            audio,
+            camera,
+        }
     }
 
     fn id(&self, path: &str) -> NodeId {
@@ -453,6 +484,7 @@ fn every_builtin_cooks_without_warnings() {
             "chan.oscin" => params.push(("port", Value::Int(0))),
             "light.environment" => params.push(("size", Value::Int(64))),
             "chan.audioin" => params.push(("device", "test".into())),
+            "tex.videoin" => params.push(("device", "test".into())),
             _ => {}
         }
         ops.push(create(&path, kind, &params));
@@ -701,6 +733,31 @@ fn text_follows_a_new_size_before_its_raster_is_done() {
     let tex = rig.tex("/t").unwrap();
     let scaled = ink(&rig.gpu.read(&tex).unwrap());
     assert!((f64::from(scaled) / f64::from(small) - 2.0).abs() < 0.3, "{small} -> {scaled}");
+}
+
+#[test]
+fn a_camera_frame_becomes_a_texture_and_every_new_one_a_new_result() {
+    let Some(gpu) = gpu() else { return };
+    let mut rig = Rig::new(gpu, None, &[create("/cam", "tex.videoin", &[("device", "test".into())])]);
+    let key = penumbra_camera::Key::new("test", "");
+    rig.camera.feed(&key, camera_frame(235, 128, 128));
+    let px = rig.pixels("/cam");
+    assert_eq!((px.width, px.height), (8, 4));
+    let white = px.get(3, 2).unwrap();
+    assert!(white.iter().all(|v| (v - 1.0).abs() < 0.01), "{white:?}");
+    // Nothing new: no new result.
+    let v = rig.version("/cam");
+    rig.cook("/cam");
+    assert_eq!(rig.version("/cam"), v);
+    // Black in limited range, then the same frame read as full range is a dark grey.
+    rig.camera.feed(&key, camera_frame(16, 128, 128));
+    let tex = rig.cook_until_new("/cam", v);
+    assert!(rig.gpu.read(&tex).unwrap().get(0, 0).unwrap()[0].abs() < 0.01);
+    let v = rig.version("/cam");
+    rig.edit(&[set("/cam.range", "full".into())]);
+    let tex = rig.cook_until_new("/cam", v);
+    let grey = rig.gpu.read(&tex).unwrap().get(0, 0).unwrap()[0];
+    assert!(grey > 0.003 && grey < 0.01, "{grey}");
 }
 
 /// Red of the top left pixel of a node's output, after cooking it.

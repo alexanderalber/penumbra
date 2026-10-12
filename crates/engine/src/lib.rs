@@ -16,6 +16,7 @@ pub mod osc;
 pub mod projects;
 pub mod state;
 pub mod state_commands;
+pub mod videoin;
 
 #[cfg(test)]
 mod tests;
@@ -45,6 +46,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
     audio::register(&mut registry, engine);
+    videoin::register(&mut registry, engine);
     projects::register(&mut registry, engine);
     registry
 }

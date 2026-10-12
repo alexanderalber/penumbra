@@ -18,9 +18,11 @@ mod shader;
 pub mod shapes;
 mod text;
 mod video;
+pub mod videoin;
 
 pub use text::{DEFAULT_FONT, TEXT, families as font_families};
 pub use video::VIDEO;
+pub use videoin::VIDEO_IN;
 
 use std::sync::Arc;
 
@@ -305,6 +307,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     shapes::register(types)?;
     text::register(types)?;
     video::register(types)?;
+    videoin::register(types)?;
     Ok(())
 }
 
