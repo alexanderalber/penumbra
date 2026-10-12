@@ -74,6 +74,8 @@ struct Rig {
     cooker: Cooker,
     clock: ShowClock,
     gpu: Gpu,
+    /// Audio is fed here (key `test`), not read from a device.
+    audio: penumbra_audio::Hub,
 }
 
 impl Rig {
@@ -85,8 +87,11 @@ impl Rig {
         let hub = penumbra_osc::Hub::new();
         hub.set_wanted(&crate::osc::wants(&net, &types));
         cooker.provide(hub);
+        let audio = penumbra_audio::Hub::new();
+        audio.feed("test", 48_000, 2, &[0.0; 2]).unwrap();
+        cooker.provide(audio.clone());
         cooker.set_base_dir(dir.map(Path::to_path_buf));
-        Self { types, net, cooker, clock: ShowClock::new(Rate::FPS_60, LatePolicy::Realtime), gpu }
+        Self { types, net, cooker, clock: ShowClock::new(Rate::FPS_60, LatePolicy::Realtime), gpu, audio }
     }
 
     fn id(&self, path: &str) -> NodeId {
@@ -418,6 +423,7 @@ fn every_builtin_cooks_without_warnings() {
         create("/mat_feed", "mat.constant", &[]),
         create("/light_feed", "light.ambient", &[]),
         create("/view_feed", "view.camera", &[]),
+        create("/audio_feed", "chan.audioin", &[("device", "test".into())]),
     ];
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
@@ -446,6 +452,7 @@ fn every_builtin_cooks_without_warnings() {
             // Any free port, so the test never collides with something listening on 8000.
             "chan.oscin" => params.push(("port", Value::Int(0))),
             "light.environment" => params.push(("size", Value::Int(64))),
+            "chan.audioin" => params.push(("device", "test".into())),
             _ => {}
         }
         ops.push(create(&path, kind, &params));
@@ -457,6 +464,7 @@ fn every_builtin_cooks_without_warnings() {
                 penumbra_graph::DataKind::Light => Some("/light_feed"),
                 penumbra_graph::DataKind::View => Some("/view_feed"),
                 // Component ports and nulls pass on what they get and complain about nothing wired.
+                penumbra_graph::DataKind::Chan if kind == "chan.audioanalysis" => Some("/audio_feed"),
                 penumbra_graph::DataKind::Chan if desc.port.is_some() || passes_on(kind) => {
                     Some("/chan_feed")
                 }
@@ -481,6 +489,8 @@ fn every_builtin_cooks_without_warnings() {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             rig.clock.advance(1);
+            // A frame of audio for the audio nodes.
+            rig.audio.feed("test", 48_000, 2, &[0.1; 1600]).unwrap();
             rig.cook(&path);
             let s = rig.cooker.status(rig.id(&path)).unwrap();
             if s.has_output {

@@ -8,7 +8,8 @@ explained here.
   undo and the change log, who is editing, what the editor's colours and badges mean, the
   project directory.
 - [The Helpers window](helpers.md): outputs, resolution, show-machine checks, persistent state,
-  OSC.
+  OSC, audio.
+- [Audio](audio.md): reacting to sound: levels, onsets, tempo, beat and bar.
 - [Shaders](shaders.md): writing a `tex.shader` in WGSL.
 - [Scripts](scripts.md): writing a `script.python` node.
 - [Control](control.md): the control channel, `pn ctl`, headless runs, environment variables.

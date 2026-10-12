@@ -699,7 +699,43 @@ Outputs: `out` (tex), `info` (chan).
 
 ## chan
 
-[chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.oscin](#chanoscin), [chan.oscout](#chanoscout), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect)
+[chan.audioanalysis](#chanaudioanalysis), [chan.audioin](#chanaudioin), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.oscin](#chanoscin), [chan.oscout](#chanoscout), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect)
+
+### chan.audioanalysis
+
+Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audioin)
+
+Inputs:
+
+- `audio` (chan)
+
+Outputs: `out` (chan), `spectrum` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `channel` | text |  |  | The channel to analyse, e.g. `ch1`; empty: all mixed |
+| `offset` | float | `0` | -200 to 200 (soft) | Milliseconds to move beat and bar ahead by, to make up for the projector's delay |
+| `beats_per_bar` | int | `4` | 2 to 8 (soft) |  |
+| `sensitivity` | float | `0.5` | 0 to 1 | How readily an onset or kick counts: higher finds quieter ones |
+| `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered; with max_bpm less than an octave apart, so a half or double tempo is not taken |
+| `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered |
+| `normalize` | bool | `true` |  | Levels and spectrum relative to the loudest of the last seconds, so a quiet input still spans 0 to 1 |
+| `floor` *(more)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence and is not raised by normalize |
+| `low` *(more)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends |
+| `high` *(more)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts |
+| `bands` *(more)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output |
+
+### chan.audioin
+
+Audio from an input device: one channel per device channel, at its sample rate
+
+Inputs: none.
+
+Outputs: `out` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `device` | text |  |  | Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's default input |
 
 ### chan.constant
 

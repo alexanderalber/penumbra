@@ -1,6 +1,7 @@
 //! Built-in node types: `chan` and `table` nodes on the CPU, `tex` nodes on the GPU, the projector
 //! output and the Python script node.
 
+pub mod audio;
 pub mod chan;
 pub mod comp;
 pub mod geo;
@@ -23,6 +24,7 @@ pub use tex::warm_up;
 
 /// Registers every built-in node type.
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
+    audio::register(types)?;
     chan::register(types)?;
     comp::register(types)?;
     geo::register(types)?;

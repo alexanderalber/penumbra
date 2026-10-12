@@ -12,6 +12,7 @@ publish = false
 
 [workspace.dependencies]
 # internal
+penumbra-audio = { path = "crates/audio" }
 penumbra-calib = { path = "crates/calib" }
 penumbra-core = { path = "crates/core" }
 penumbra-engine = { path = "crates/engine" }
@@ -78,6 +79,8 @@ gif = "0.14"
 image = { version = "0.25", default-features = false, features = ["gif"] }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 winit = "=0.30.13"
+# Audio input: WASAPI on Windows, ALSA on Linux (crates/audio).
+cpal = "0.18.2"
 # The window handle eframe hands out, and DWM for the title bar colour (crates/ui/src/titlebar.rs).
 raw-window-handle = "0.6"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
@@ -100,10 +103,14 @@ dbg_macro = "deny"
 [profile.dev.package."*"]
 opt-level = 2
 
-# The crates with per-pixel loops on the CPU (text masks, image conversion, uploads, GIF
-# frames). Unoptimised, a 300 px text took 170 ms to rasterise and upload instead of a few, which
-# made dragging a text's size stutter in the debug build the Run button starts; a 1500 x 2250 GIF
-# frame took 100 ms instead of 10.
+# The crates with per-pixel or per-sample loops on the CPU (text masks, image conversion,
+# uploads, GIF frames, audio analysis). Unoptimised, a 300 px text took 170 ms to rasterise and
+# upload instead of a few, which made dragging a text's size stutter in the debug build the Run
+# button starts; a 1500 x 2250 GIF frame took 100 ms instead of 10; analysing a frame of audio
+# took about 2 ms.
+[profile.dev.package.penumbra-audio]
+opt-level = 2
+
 [profile.dev.package.penumbra-gpu]
 opt-level = 2
 

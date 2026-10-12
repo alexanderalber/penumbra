@@ -11,6 +11,14 @@ Every command of the running app, as `pn ctl <command>` or a control-channel req
 |---|---|
 | `ping` | Check that the control channel answers |
 
+## audio
+
+| command | |
+|---|---|
+| `audio.config` | Audio settings for this run: {enabled?} |
+| `audio.devices` | The audio inputs of this machine: name, default, rate, channels, format |
+| `audio.status` | Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) |
+
 ## calib
 
 | command | |

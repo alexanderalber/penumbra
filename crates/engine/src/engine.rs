@@ -51,6 +51,10 @@
 //! `chan.oscin` nodes want whenever the network changes; the hub is a resource of the cooker
 //! (the nodes read what arrived); the **osc thread** turns messages into param edits and ends
 //! learns.
+//!
+//! **Audio:** likewise, the cook thread tells the audio [`AudioHub`] which input devices the
+//! network's `chan.audioin` nodes want; the hub keeps a stream thread per device, and the
+//! nodes read what arrived.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -60,6 +64,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use penumbra_audio::Hub as AudioHub;
 use penumbra_core::{Error, FrameTime, LatePolicy, NodeId, PaceSource, Pacer, ParamSpec, Rate, ShowClock};
 use penumbra_gpu::Gpu;
 use penumbra_graph::{
@@ -236,6 +241,8 @@ pub struct CookState {
     pub stats: PassStats,
     /// Told which ports to listen on when the network changes.
     osc: Hub,
+    /// Told which audio inputs to open when the network changes.
+    audio: AudioHub,
 }
 
 /// Shared between the cook thread, the UI and the outputs.
@@ -329,6 +336,7 @@ impl CookState {
                 .collect();
             self.sinks = Some((net.clone(), sinks));
             self.osc.set_wanted(&penumbra_ops::osc::wants(&net, types));
+            self.audio.set_wanted(&penumbra_ops::audio::wants(&net, types));
         }
         let mut wanted: Vec<NodeId> = self.sinks.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
         self.watched.retain(|id| net.node(*id).is_some());
@@ -415,6 +423,7 @@ pub struct Engine {
     clipboard: Mutex<Option<crate::clipboard::Clipboard>>,
     state: Arc<StateShared>,
     osc: Arc<OscShared>,
+    audio: AudioHub,
     shut: AtomicBool,
 }
 
@@ -437,6 +446,8 @@ impl Engine {
         let hub = Hub::new();
         cooker.provide(hub.clone());
         let osc = Arc::new(OscShared::new(hub.clone()));
+        let audio = AudioHub::new();
+        cooker.provide(audio.clone());
         let view = Arc::new(ViewShared::default());
         let state_shared = Arc::new(StateShared::default());
         let state = CookState {
@@ -456,6 +467,7 @@ impl Engine {
             state: StateKeeper::new(state_shared.clone(), session.dir()),
             stats: PassStats::default(),
             osc: hub,
+            audio: audio.clone(),
         };
         let spawn_error = |e: std::io::Error| Error::new(format!("cannot start a thread: {e}"));
 
@@ -495,6 +507,7 @@ impl Engine {
             clipboard: Mutex::new(None),
             state: state_shared,
             osc,
+            audio,
             shut: AtomicBool::new(false),
         }))
     }
@@ -572,6 +585,11 @@ impl Engine {
     /// OSC: the hub, params set by address, learn.
     pub fn osc(&self) -> &Arc<OscShared> {
         &self.osc
+    }
+
+    /// The audio inputs.
+    pub fn audio(&self) -> &AudioHub {
+        &self.audio
     }
 
     /// The project's state directory.
@@ -759,6 +777,7 @@ impl Engine {
             }
         }
         self.osc.hub().shutdown();
+        self.audio.shutdown();
         self.session.flush(Instant::now());
     }
 }

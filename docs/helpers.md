@@ -83,6 +83,17 @@ Two ways to control a param from OSC:
   `/scene/speed 0.5` sets `/scene.speed`, `/n/translate/0 0.5` one component. These values are
   live: they do not enter the undo history.
 
+## Audio
+
+What the [audio input](audio.md) is doing:
+
+- **listen** off closes every audio input for this run; the nodes stay.
+- Per input a `chan.audioin` opened: the device, its sample rate and channels, glitches the
+  system reported, an error if the device is missing or failed, and a level meter per channel
+  (red near clipping).
+- **inputs on this machine** lists the input devices with their format; **list again** after
+  plugging one in. Part of a name goes into a `chan.audioin`'s `device`.
+
 ## Show machine
 
 Windows settings that can ruin a show, each with a **Fix** and, after fixing, a **Restore**

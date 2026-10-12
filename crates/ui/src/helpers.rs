@@ -44,6 +44,9 @@ pub struct Helpers {
     state_message: Arc<Mutex<Option<(bool, String)>>>,
     /// This machine's address on the network, looked up now and then (for setting up a phone).
     local_ip: Option<(Instant, Option<String>)>,
+    /// The audio inputs of this machine, listed on first view and on request (listing takes
+    /// some milliseconds, too long for every frame).
+    audio_inputs: Option<Result<Vec<penumbra_audio::DeviceInfo>, String>>,
 }
 
 impl Helpers {
@@ -128,6 +131,8 @@ impl Helpers {
                     self.state(ui, input, auto, actions);
                     ui.separator();
                     self.osc(ui, input.engine, auto);
+                    ui.separator();
+                    self.audio(ui, input.engine, auto);
                     ui.separator();
                     self.machine(ui, auto);
                 });
@@ -470,6 +475,81 @@ impl Helpers {
         }
     }
 
+    fn audio(&mut self, ui: &mut Ui, engine: &Arc<Engine>, auto: &mut automation::Registry) {
+        ui.heading("Audio");
+        let weak = theme::TEXT_WEAK;
+        let hub = engine.audio();
+        let mut config = hub.config();
+        let r = ui.checkbox(&mut config.enabled, "listen").on_hover_text(
+            "Off closes every audio input for this run (audio.config enabled); the nodes stay",
+        );
+        auto.add("helpers.audio.enabled", r.rect, "listen");
+        if r.changed() {
+            hub.set_config(config);
+        }
+        let streams = hub.status();
+        if streams.is_empty() {
+            ui.label(RichText::new("Nothing listens: add a chan.audioin node (Tab > chan).").color(weak));
+        }
+        for s in &streams {
+            let asked =
+                if s.key.is_empty() { "the default input".to_string() } else { format!("`{}`", s.key) };
+            let mut text = s.device.clone().unwrap_or_else(|| asked.clone());
+            if s.rate > 0 {
+                text.push_str(&format!(" \u{b7} {} Hz \u{b7} {} channels", s.rate, s.channels));
+            }
+            if s.glitches > 0 {
+                text.push_str(&format!(" \u{b7} {} glitches", s.glitches));
+            }
+            ui.label(text).on_hover_text(format!(
+                "asked for: {asked}; opened {} times; {} frames received",
+                s.opens, s.frames
+            ));
+            if let Some(e) = &s.error {
+                ui.colored_label(if s.open { weak } else { theme::WARNING }, e);
+            }
+            if s.open {
+                for (i, db) in s.peak_db.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("ch{}", i + 1)).monospace().color(weak));
+                        meter(ui, *db);
+                        ui.label(RichText::new(format!("{db:>6.1} dB")).monospace().color(weak));
+                    });
+                }
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("inputs on this machine").color(weak));
+            let r = ui.small_button("list again");
+            auto.add("helpers.audio.list", r.rect, "list again");
+            if r.clicked() || self.audio_inputs.is_none() {
+                self.audio_inputs = Some(penumbra_audio::capture::devices());
+            }
+        });
+        match &self.audio_inputs {
+            Some(Ok(list)) if list.is_empty() => {
+                ui.label(RichText::new("none").color(weak));
+            }
+            Some(Ok(list)) => {
+                for d in list {
+                    let mut text = d.name.clone();
+                    if let (Some(r), Some(c)) = (d.rate, d.channels) {
+                        text.push_str(&format!("   {r} Hz, {c} ch"));
+                    }
+                    if d.default {
+                        text.push_str("   (default)");
+                    }
+                    ui.label(RichText::new(text).monospace().color(weak))
+                        .on_hover_text("Put part of this name into a chan.audioin's device");
+                }
+            }
+            Some(Err(e)) => {
+                ui.colored_label(theme::WARNING, e);
+            }
+            None => {}
+        }
+    }
+
     fn machine(&mut self, ui: &mut Ui, auto: &mut automation::Registry) {
         ui.heading("Show machine");
         let checks = self.checks(Instant::now(), RECHECK).to_vec();
@@ -661,4 +741,17 @@ fn spawn(name: &str, work: impl FnOnce() + Send + 'static) {
     if let Err(e) = std::thread::Builder::new().name(name.into()).spawn(work) {
         log::error!("cannot start {name}: {e}");
     }
+}
+
+/// A level meter from -60 to 0 dBFS; red above -1 dBFS, where clipping is near.
+fn meter(ui: &mut Ui, db: f64) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(180.0, 10.0), egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, 2.0, theme::BG_USER);
+    // `as`: a fraction of the width.
+    let t = ((db + 60.0) / 60.0).clamp(0.0, 1.0) as f32;
+    let mut fill = rect;
+    fill.set_width(rect.width() * t);
+    let color = if db > -1.0 { theme::ERROR } else { theme::kind_color(penumbra_graph::DataKind::Chan) };
+    painter.rect_filled(fill, 2.0, color);
 }
