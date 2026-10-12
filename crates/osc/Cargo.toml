@@ -1,0 +1,15 @@
+[package]
+name = "penumbra-osc"
+description = "OSC over UDP: a bounded parser and encoder, address patterns, listeners with rate limits, sending. No GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+log.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

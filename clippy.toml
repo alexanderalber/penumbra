@@ -1,0 +1,9 @@
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+# Panics inside wgpu when the device cannot create the buffer (out of GPU memory); use
+# `Gpu::uniform_buffer` or `create_buffer` plus `Queue::write_buffer`.
+disallowed-methods = [
+    { path = "wgpu::util::DeviceExt::create_buffer_init", reason = "panics when out of GPU memory; use Gpu::uniform_buffer" },
+]

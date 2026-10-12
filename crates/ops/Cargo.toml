@@ -1,0 +1,31 @@
+[package]
+name = "penumbra-ops"
+description = "Built-in node types."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+penumbra-calib.workspace = true
+penumbra-core.workspace = true
+penumbra-graph.workspace = true
+penumbra-gpu.workspace = true
+penumbra-mesh.workspace = true
+penumbra-osc.workspace = true
+penumbra-script.workspace = true
+penumbra-video.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+half.workspace = true
+effectcraft-text.workspace = true
+tiny-skia.workspace = true
+
+[dev-dependencies]
+photocraft-codecs.workspace = true
+photocraft-psd.workspace = true
+
+[lints]
+workspace = true

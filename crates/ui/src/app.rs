@@ -1,0 +1,1376 @@
+//! The editor window: node editor, param panel, viewer, change log, status bar, and the UI side of
+//! the `ui.*` commands.
+
+use std::collections::{BTreeSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender};
+use std::time::{Duration, Instant};
+
+use egui::{Color32, Key, Modifiers, PointerButton, Pos2, RichText, Sense, Ui, pos2, vec2};
+use penumbra_core::{NodeId, NodePath};
+use penumbra_engine::{Engine, ViewFrame, ViewRequest};
+use penumbra_project::{Actor, SessionStatus};
+use serde_json::{Value as Json, json};
+
+use crate::changes::Changes;
+use crate::control::{Reply, UiRequest};
+use crate::editor::{self, Editor};
+use crate::icons::{self, Icon};
+use crate::layout::Layout;
+use crate::params::{self, ParamPanel};
+use crate::textures::Textures;
+use crate::viewer::Viewer;
+use crate::{Action, automation, theme};
+
+/// How long a screenshot may take to arrive.
+const SHOT_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long an edit error stays in the status bar.
+const MESSAGE_SECONDS: u64 = 8;
+/// Resizes [`PenumbraApp::heal_surface`] tries within [`HEAL_WINDOW`] before it gives up. A GPU
+/// kept busy or full by another program (ComfyUI, 2026-10-11) fails every reconfigure, and each
+/// nudge caused the next failure: a resize about once a minute for as long as it lasted.
+const MAX_HEALS: u32 = 3;
+const HEAL_WINDOW: Duration = Duration::from_secs(300);
+/// How long penumbra's GPU work waits after a window's size changed, so egui's configures
+/// of the following sizes find the GPU idle (see [`penumbra_gpu::Gpu::hold`]).
+const RESIZE_HOLD: Duration = Duration::from_millis(250);
+/// How long a window's size must stay put before a failed configure is healed: a nudge while
+/// the user still drags the border fought the drag and took the focus.
+const RESIZE_SETTLE: Duration = Duration::from_millis(500);
+/// Height of a collapsed section of the right column, header only.
+const SECTION_HEADER: f32 = 30.0;
+
+/// What the app is started with besides the engine.
+pub struct AppOptions {
+    /// Shown in the status bar: the control channel address or why it is not available.
+    pub control: Result<u16, String>,
+    /// Where `ui.*` requests arrive ([`crate::control::Bridge::new`]).
+    pub requests: Option<Receiver<UiRequest>>,
+    pub bridge: Option<Arc<crate::control::Bridge>>,
+}
+
+struct Shot {
+    token: u64,
+    file: PathBuf,
+    reply: Sender<Reply>,
+    /// Frames to draw before asking, so the picture is settled.
+    settle: u32,
+    asked: bool,
+    deadline: Instant,
+}
+
+pub struct PenumbraApp {
+    engine: Arc<Engine>,
+    control: Result<u16, String>,
+    adapter: String,
+    textures: Textures,
+    layout: Layout,
+    editor: Editor,
+    params: ParamPanel,
+    viewer: Viewer,
+    /// The viewer's window of its own: separate zoom, output choice and editors.
+    window_viewer: Viewer,
+    /// Whether the viewer's window was shown last frame; if not, this frame creates its surface.
+    window_viewer_shown: bool,
+    changes: Changes,
+    auto: automation::Registry,
+    requests: Option<Receiver<UiRequest>>,
+    synthetic: VecDeque<egui::Event>,
+    input_waiters: Vec<Sender<Reply>>,
+    shots: Vec<Shot>,
+    next_token: u64,
+    message: Option<(String, Instant)>,
+    /// The editing mode the visuals were last set for (`true`: Claude's blue).
+    themed: Option<bool>,
+    /// The editing mode the native title bar was last coloured for, and the window title last
+    /// sent.
+    title_bar: Option<bool>,
+    title: String,
+    gpu: Option<penumbra_gpu::Gpu>,
+    /// Surface reconfigure failures already answered, and the resize in progress.
+    surface_failures: u64,
+    nudge: Option<(egui::ViewportId, Nudge)>,
+    /// A failed configure not answered yet: no window was resized since.
+    heal_pending: bool,
+    /// The sizes of the editor's and the viewer's window last seen, and when and which one
+    /// last changed.
+    sizes: [Option<egui::Vec2>; 2],
+    resized: Option<(Instant, egui::ViewportId)>,
+    /// Nudges since the window was last quiet for [`HEAL_WINDOW`], and when the last one began.
+    heals: (u32, Option<Instant>),
+    helpers: crate::helpers::Helpers,
+    /// The window's place on the desktop as last told to the outputs.
+    editor_rect: Option<[i32; 4]>,
+    /// Component files on offer in the add dialog, and when they were last listed.
+    library: (Vec<crate::add_dialog::Offered>, Option<Instant>),
+    /// What this run copied last, and text waiting to go to the system clipboard.
+    copied: Option<crate::clipboard::Copied>,
+    to_clipboard: Option<String>,
+}
+
+/// Resizing the window once more so egui-wgpu reconfigures a surface whose last configure
+/// failed (see [`penumbra_gpu::ErrorLog::surface_configure_failures`]): the cook thread shares
+/// the device and may submit while wgpu waits for an idle GPU during a resize. Two frames: away
+/// and back.
+enum Nudge {
+    Restore(egui::Vec2),
+    Remaximize,
+}
+
+impl PenumbraApp {
+    pub fn new(cc: &eframe::CreationContext<'_>, engine: Arc<Engine>, options: AppOptions) -> Self {
+        let mut shared_gpu = None;
+        let adapter = match cc.wgpu_render_state.as_ref() {
+            Some(rs) => {
+                // One device for the UI and the cook thread, so textures need no copies.
+                let gpu = penumbra_gpu::Gpu::new(rs.adapter.clone(), rs.device.clone(), rs.queue.clone());
+                let warm = gpu.clone();
+                let spawned = std::thread::Builder::new()
+                    .name("shader-warm-up".into())
+                    .spawn(move || penumbra_ops_warm_up(&warm));
+                if let Err(e) = spawned {
+                    log::warn!("cannot precompile the built-in shaders: {e}");
+                }
+                if let Err(e) = engine.attach_gpu(gpu.clone()) {
+                    log::error!("{e}");
+                }
+                shared_gpu = Some(gpu.clone());
+                gpu.name()
+            }
+            None => "no wgpu adapter".into(),
+        };
+        log::info!("GPU: {adapter}");
+        if let Some(bridge) = &options.bridge {
+            bridge.attach(cc.egui_ctx.clone());
+        }
+        let layout = Layout::load(Some(engine.session().dir()));
+        cc.egui_ctx.set_visuals(theme::visuals(false));
+        Self {
+            control: options.control,
+            adapter,
+            textures: Textures::new(cc.wgpu_render_state.clone()),
+            layout,
+            editor: Editor::default(),
+            params: ParamPanel::default(),
+            viewer: Viewer::default(),
+            window_viewer: Viewer::default(),
+            window_viewer_shown: false,
+            changes: Changes::default(),
+            auto: automation::Registry::default(),
+            requests: options.requests,
+            synthetic: VecDeque::new(),
+            input_waiters: Vec::new(),
+            shots: Vec::new(),
+            next_token: 1,
+            message: None,
+            themed: None,
+            title_bar: None,
+            title: String::new(),
+            gpu: shared_gpu,
+            surface_failures: 0,
+            nudge: None,
+            heal_pending: false,
+            sizes: [None; 2],
+            resized: None,
+            heals: (0, None),
+            helpers: crate::helpers::Helpers::default(),
+            editor_rect: None,
+            library: (Vec::new(), None),
+            copied: None,
+            to_clipboard: None,
+            engine,
+        }
+    }
+
+    /// Writes the layout now; for runs that end without `on_exit` (headless).
+    pub fn close(&mut self) {
+        let net = self.engine.session().doc().snapshot();
+        self.layout.save_if_due(&net, Instant::now(), true);
+    }
+
+    /// Synthetic input queued by `ui.click` and friends, one pointer event per frame. The
+    /// headless runner feeds these to its harness; the window takes them in `raw_input_hook`.
+    pub fn take_synthetic(&mut self) -> Option<egui::Event> {
+        self.synthetic.pop_front()
+    }
+
+    fn selected(&self) -> Option<NodeId> {
+        match self.editor.selection.iter().copied().collect::<Vec<_>>().as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        }
+    }
+
+    fn apply(&mut self, actions: Vec<Action>, now: Instant) {
+        let session = self.engine.session().clone();
+        for action in actions {
+            let result = match action {
+                Action::Edit { ops, label, group, place } => {
+                    session.edit(Actor::User, &ops, group, &label, now).map(|out| {
+                        if let Some(id) = out.created.first() {
+                            if let Some(at) = place {
+                                self.layout.set(*id, at, now);
+                            }
+                            self.editor.selection = [*id].into();
+                        }
+                    })
+                }
+                Action::Undo => self.undo(now),
+                Action::Redo => self.redo(now),
+                Action::TakeOver => {
+                    session.take_over();
+                    Ok(())
+                }
+                Action::Selected => Ok(()),
+                Action::SelectNodes(set) => {
+                    self.editor.selection = set;
+                    Ok(())
+                }
+                Action::Pin(id) => {
+                    self.viewer.pinned = id;
+                    Ok(())
+                }
+                Action::Play(playing) => {
+                    self.engine.post_cook(move |st| {
+                        if playing {
+                            st.clock.play();
+                        } else {
+                            st.clock.pause();
+                        }
+                    });
+                    Ok(())
+                }
+                Action::OpenHelpers => {
+                    self.helpers.open();
+                    Ok(())
+                }
+                Action::Thumbnails(mode) => {
+                    self.engine.post_cook(move |st| {
+                        let mut policy = st.cooker.thumbnail_policy();
+                        policy.mode = mode;
+                        st.cooker.set_thumbnail_policy(policy);
+                    });
+                    Ok(())
+                }
+                Action::Message(m) => Err(penumbra_core::Error::new(m)),
+                Action::Group(ids) => {
+                    crate::components::group(&self.engine, &mut self.editor, &mut self.layout, &ids, now)
+                }
+                Action::Dissolve(id) => {
+                    crate::components::dissolve(&self.engine, &mut self.editor, &mut self.layout, id, now)
+                }
+                Action::SaveComponent(id) => crate::components::save(&self.engine, id).map(|text| {
+                    self.message = Some((text, now));
+                    self.library.1 = None;
+                }),
+                Action::RemoveComponent(name) => crate::components::remove(&self.engine, &name).map(|text| {
+                    self.message = Some((text, now));
+                    self.library.1 = None;
+                }),
+                Action::AddComponent { name, level, at } => crate::components::add(
+                    &self.engine,
+                    &mut self.editor,
+                    &mut self.layout,
+                    &name,
+                    level,
+                    at,
+                    now,
+                ),
+                Action::Copy(ids) => {
+                    crate::clipboard::copy(&self.engine, &self.layout, &ids).map(|c| self.copied_now(c, now))
+                }
+                Action::Cut(ids) => {
+                    crate::clipboard::cut(&self.engine, &self.layout, &ids).map(|c| self.copied_now(c, now))
+                }
+                Action::Paste { text, level, at } => crate::clipboard::paste(
+                    &self.engine,
+                    &mut self.editor,
+                    &mut self.layout,
+                    self.copied.as_ref(),
+                    text.as_deref(),
+                    level,
+                    at,
+                    now,
+                )
+                .map(|message| {
+                    if let Some(m) = message {
+                        self.message = Some((m, now));
+                    }
+                }),
+                Action::LearnOsc(param) => {
+                    let timeout = penumbra_engine::osc::LEARN_TIMEOUT;
+                    match self.engine.osc().learn(self.engine.session(), &param, timeout) {
+                        Ok(()) => {
+                            let text = format!(
+                                "{param}: move a control on the OSC device ({} s; Helpers > OSC to cancel)",
+                                timeout.as_secs()
+                            );
+                            self.message = Some((text, now));
+                            Ok(())
+                        }
+                        Err(e) => Err(penumbra_core::Error::new(e)),
+                    }
+                }
+            };
+            if let Err(e) = result {
+                log::warn!("{e}");
+                self.message = Some((e.0, now));
+            }
+        }
+    }
+
+    /// Keeps what was just copied for pasting and hands its text to the system clipboard.
+    fn copied_now(&mut self, copied: crate::clipboard::Copied, now: Instant) {
+        self.message = Some((format!("copied {} node(s)", copied.count), now));
+        self.to_clipboard = Some(copied.text.clone());
+        self.copied = Some(copied);
+    }
+
+    /// Undoes the newest step: a node move (view state, not in the history) or a history
+    /// entry, whichever came last.
+    fn undo(&mut self, now: Instant) -> Result<(), penumbra_core::Error> {
+        let session = self.engine.session().clone();
+        let entry = session
+            .doc()
+            .with_history(|h| h.applied().checked_sub(1).and_then(|i| h.entries().get(i)).map(|e| e.at));
+        match self.layout.last_move() {
+            Some(m) if entry.is_none_or(|e| m >= e) => {
+                self.layout.undo_move(now);
+                Ok(())
+            }
+            _ => session.undo(Actor::User, now).map(|_| ()),
+        }
+    }
+
+    /// Redoes the oldest undone step, a move or a history entry.
+    fn redo(&mut self, now: Instant) -> Result<(), penumbra_core::Error> {
+        let session = self.engine.session().clone();
+        let entry = session.doc().with_history(|h| h.entries().get(h.applied()).map(|e| e.at));
+        match self.layout.next_redo() {
+            Some(m) if entry.is_none_or(|e| m < e) => {
+                self.layout.redo_move(now);
+                Ok(())
+            }
+            _ => session.redo(Actor::User, now).map(|_| ()),
+        }
+    }
+
+    fn global_keys(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        if ctx.text_edit_focused() {
+            return;
+        }
+        let (undo, redo) = ctx.input_mut(|i| {
+            let redo = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
+                || i.consume_key(Modifiers::COMMAND, Key::Y);
+            (i.consume_key(Modifiers::COMMAND, Key::Z), redo)
+        });
+        if undo {
+            actions.push(Action::Undo);
+        }
+        if redo {
+            actions.push(Action::Redo);
+        }
+    }
+
+    /// Who is editing goes into the window title; a bar on top only while there is more to say:
+    /// Claude's claim with its countdown and the take-over button, file and autosave errors
+    /// (a whole line for "You are editing" was too much).
+    fn top_bar(&mut self, ui: &mut Ui, status: &SessionStatus, actions: &mut Vec<Action>) {
+        let claude = status.edit.mode == "claude";
+        let mode = if claude {
+            let label = status.edit.label.as_deref().filter(|l| !l.is_empty()).unwrap_or("working");
+            format!("Claude is editing: {label}")
+        } else {
+            "you are editing".to_string()
+        };
+        let title = window_title(self.engine.session().dir(), &mode);
+        if title != self.title {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
+        if !claude && status.file_error.is_none() && status.write_error.is_none() && !status.merge_waiting {
+            return;
+        }
+        egui::Panel::top("mode").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                if claude {
+                    let label = status.edit.label.as_deref().filter(|l| !l.is_empty()).unwrap_or("working");
+                    ui.label(
+                        RichText::new(format!("Claude is editing: {label}")).color(theme::CLAUDE).strong(),
+                    );
+                    if let Some(s) = status.edit.expires_in {
+                        ui.label(
+                            RichText::new(format!("(lapses in {s:.0} s without a command)"))
+                                .color(theme::TEXT_WEAK),
+                        );
+                    }
+                    let r = icons::button(ui, Icon::TakeOver, "Take over");
+                    self.auto.add("button.take_over", r.rect, "Take over");
+                    if r.clicked() {
+                        actions.push(Action::TakeOver);
+                    }
+                }
+                if let Some(e) = &status.file_error {
+                    if claude {
+                        ui.separator();
+                    }
+                    ui.colored_label(theme::ERROR, format!("project file not merged: {e}"));
+                }
+                if let Some(e) = &status.write_error {
+                    if claude || status.file_error.is_some() {
+                        ui.separator();
+                    }
+                    ui.colored_label(theme::ERROR, format!("autosave failed: {e}"));
+                }
+                if status.merge_waiting {
+                    if claude || status.file_error.is_some() || status.write_error.is_some() {
+                        ui.separator();
+                    }
+                    ui.colored_label(theme::FILE, "a file edit waits until you pause");
+                }
+            });
+        });
+    }
+
+    fn status_bar(
+        &mut self,
+        ui: &mut Ui,
+        status: &SessionStatus,
+        view: &ViewFrame,
+        board: &penumbra_ops::out::BoardState,
+        actions: &mut Vec<Action>,
+        now: Instant,
+    ) {
+        egui::Panel::bottom("status").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let playing = view.playing;
+                let r = if playing {
+                    icons::button(ui, Icon::Pause, "Pause")
+                } else {
+                    icons::button(ui, Icon::Play, "Play")
+                };
+                self.auto.add("button.play", r.rect, "Play/Pause");
+                if r.clicked() {
+                    actions.push(Action::Play(!playing));
+                }
+                if let Some(t) = view.time {
+                    ui.monospace(format!("{:>7}  {:>8.2} s", t.frame, t.seconds()));
+                }
+                ui.label(
+                    RichText::new(format!("cook {:.2} ms", view.elapsed.as_secs_f64() * 1000.0))
+                        .color(theme::TEXT_WEAK),
+                );
+                ui.separator();
+                self.helpers.status(ui, board, view.pace, &mut self.auto);
+                ui.separator();
+                match &self.control {
+                    Ok(port) => {
+                        ui.label(RichText::new(format!("control 127.0.0.1:{port}")).color(theme::TEXT_WEAK))
+                    }
+                    Err(e) => ui.colored_label(theme::ERROR, format!("control channel: {e}")),
+                };
+                ui.separator();
+                ui.label(RichText::new(&self.adapter).color(theme::TEXT_WEAK));
+                ui.separator();
+                ui.label(
+                    RichText::new(if status.unsaved { "unsaved" } else { "saved" }).color(theme::TEXT_WEAK),
+                );
+                if let Some((m, at)) = &self.message {
+                    if now.saturating_duration_since(*at).as_secs() < MESSAGE_SECONDS {
+                        ui.separator();
+                        ui.colored_label(theme::WARNING, m);
+                    } else {
+                        self.message = None;
+                    }
+                }
+            });
+        });
+    }
+
+    fn frame(&mut self, ui: &mut Ui) {
+        let now = Instant::now();
+        let ctx = ui.ctx().clone();
+        self.auto.begin_frame();
+        let session = self.engine.session().clone();
+        let status = session.status(now);
+        let net = session.doc().snapshot();
+        let view = self.engine.view();
+        let board = self.engine.board().state();
+        let can_edit = status.edit.mode != "claude";
+        if self.themed != Some(!can_edit) {
+            self.themed = Some(!can_edit);
+            ctx.set_visuals(theme::visuals(!can_edit));
+        }
+        self.changes.refresh(session.doc());
+        let recent = self.changes.recent(now);
+        let mut actions = Vec::new();
+        self.global_keys(&ctx, &mut actions);
+        let window = ui.max_rect();
+
+        self.top_bar(ui, &status, &mut actions);
+        self.status_bar(ui, &status, &view, &board, &mut actions, now);
+
+        let selected = self.selected();
+        let detail =
+            selected.and_then(|id| view.detail_params.as_ref().filter(|(d, _)| *d == id)).map(|(_, p)| p);
+        // A wire dragged from a chan output can be dropped onto a param to bind it. Taken before
+        // the editor draws, which ends the drag on release.
+        let chan_drag = self.editor.wire_source().and_then(|(node, output)| {
+            let kind = net
+                .node(node)
+                .and_then(|n| session.types().desc(&n.kind))?
+                .outputs
+                .get(output as usize)?
+                .kind;
+            (kind == penumbra_graph::DataKind::Chan).then_some(node)
+        });
+        let target = self.viewer.target(&net, selected);
+        // One right column: params on top, then viewer and changes, each collapsible; the
+        // editor gets everything else.
+        egui::Panel::right("column").resizable(true).default_size(360.0).min_size(260.0).show(ui, |ui| {
+            // The column is as wide as the user dragged it, never as its content: egui widens a
+            // panel to whatever was drawn into it, so a node with a long row made the column
+            // jump when selected. The content goes into a child that does not report its size back;
+            // what does not fit is clipped.
+            let rect = ui.max_rect();
+            ui.expand_to_include_rect(rect);
+            let mut column = ui.new_child(egui::UiBuilder::new().id_salt("column_content").max_rect(rect));
+            column.set_clip_rect(rect.intersect(ui.clip_rect()));
+            let ui = &mut column;
+            let mut sections = self.layout.sections;
+            let changes_open = sections.changes;
+            let panel = if changes_open {
+                egui::Panel::bottom("changes").resizable(true).default_size(200.0).min_size(90.0)
+            } else {
+                egui::Panel::bottom("changes_closed").resizable(false).exact_size(SECTION_HEADER)
+            };
+            panel.show(ui, |ui| {
+                let undo = (status.can_undo && can_edit) || self.layout.last_move().is_some();
+                let redo = (status.can_redo && can_edit) || self.layout.next_redo().is_some();
+                section(ui, &mut self.auto, "changes", "Changes", &mut sections.changes, |ui, auto| {
+                    crate::changes::buttons(ui, undo, redo, auto, &mut actions);
+                });
+                if changes_open {
+                    self.changes.show(ui, &mut self.auto, &mut actions);
+                }
+            });
+
+            let viewer_open = sections.viewer;
+            let width = ui.available_width();
+            let panel = if viewer_open {
+                egui::Panel::bottom("viewer")
+                    .resizable(true)
+                    .default_size(width * 9.0 / 16.0 + SECTION_HEADER + 8.0)
+                    .min_size(100.0)
+            } else {
+                egui::Panel::bottom("viewer_closed").resizable(false).exact_size(SECTION_HEADER)
+            };
+            panel.show(ui, |ui| {
+                let outputs = target.and_then(|id| view.outputs.get(&id));
+                let doc = session.doc();
+                let new_group = || doc.new_group();
+                let (map, shapes, output_names) =
+                    node_editors(&net, session.types(), &view, target, can_edit, &new_group);
+                let viewer = &mut self.viewer;
+                section(ui, &mut self.auto, "viewer", "Viewer", &mut sections.viewer, |ui, auto| {
+                    viewer.header(ui, &net, target, outputs, &output_names, false, auto, &mut actions);
+                });
+                if viewer_open {
+                    self.viewer.show(
+                        ui,
+                        target,
+                        outputs,
+                        view.time.map(|t| t.frame),
+                        theme::picture_bg(!can_edit),
+                        &mut self.textures,
+                        map.as_ref(),
+                        shapes.as_ref(),
+                        &mut self.auto,
+                        &mut actions,
+                    );
+                }
+            });
+
+            egui::CentralPanel::default().show(ui, |ui| {
+                section(ui, &mut self.auto, "params", "Parameters", &mut sections.params, |_, _| {});
+                if !sections.params {
+                    return;
+                }
+                match selected {
+                    Some(id) => {
+                        let doc = session.doc();
+                        let new_group = || doc.new_group();
+                        let input = params::Inputs {
+                            net: &net,
+                            types: session.types(),
+                            node: id,
+                            status: view.status.get(&id),
+                            instance: detail.map(Vec::as_slice),
+                            can_edit,
+                            project_dir: Some(session.dir()),
+                            new_group: &new_group,
+                            displays: &board.displays,
+                            outputs: &view.outputs,
+                            chan_drag,
+                        };
+                        self.params.show(ui, &input, &mut self.auto, &mut actions);
+                    }
+                    None => {
+                        let n = self.editor.selection.len();
+                        let text = if n == 0 {
+                            "Select a node to edit its parameters.".to_string()
+                        } else {
+                            format!("{n} nodes selected")
+                        };
+                        ui.label(RichText::new(text).color(theme::TEXT_WEAK));
+                    }
+                }
+            });
+            self.layout.set_sections(sections, now);
+        });
+
+        // The library is listed again every few seconds (two small directories).
+        if self.library.1.is_none_or(|t| now.saturating_duration_since(t) > Duration::from_secs(3)) {
+            self.library = (crate::components::library_names(&self.engine), Some(now));
+        }
+        let period = view.time.map_or(1.0 / 60.0, |t| t.rate.period().as_secs_f64());
+        let background = if can_edit { theme::BG_USER } else { theme::BG_CLAUDE };
+        let (thumbnails, passive) = egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| {
+                let input = editor::Inputs {
+                    net: &net,
+                    types: session.types(),
+                    status: &view.status,
+                    outputs: &view.outputs,
+                    pictures: &view.pictures,
+                    thumbnail_mode: view.thumbnails,
+                    chan_bars: self.layout.options.chan_bars,
+                    period,
+                    can_edit,
+                    viewer: target,
+                    highlight: &self.changes.hovered,
+                    recent: &recent,
+                    now,
+                    library: &self.library.0,
+                };
+                self.editor.show(
+                    ui,
+                    &input,
+                    &mut self.layout,
+                    &mut self.textures,
+                    &mut self.auto,
+                    &mut actions,
+                    background,
+                )
+            })
+            .inner;
+
+        let helpers = crate::helpers::HelpersInput {
+            board: &board,
+            net: &net,
+            view: &view,
+            engine: &self.engine,
+            can_edit,
+        };
+        self.helpers.show(&ctx, &helpers, &mut self.auto, &mut actions);
+        self.viewer_window(&ctx, &net, &view, can_edit, &mut actions);
+        self.apply(actions, now);
+        if let Some(text) = self.to_clipboard.take() {
+            ctx.copy_text(text);
+        }
+        let mut viewers: Vec<NodeId> = self.viewer.target(&net, self.selected()).into_iter().collect();
+        viewers.extend(self.viewer.window.filter(|id| !viewers.contains(id)));
+        self.engine.set_view(ViewRequest {
+            viewers,
+            thumbnails,
+            passive,
+            detail: self.selected(),
+            resolution: self.helpers.open,
+        });
+        self.textures.end_frame();
+        self.layout.save_if_due(&net, now, false);
+        // A line under the title bar, like the one the status bar draws above itself (user,
+        // 2026-10-09). Painted last, over whatever panel sits at the top.
+        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+        ui.painter().hline(window.x_range(), window.top() + stroke.width / 2.0, stroke);
+    }
+
+    /// The viewer's window (`viewer.window`): a node's output in a window of its own, larger
+    /// than the viewer, with the mapper's or the shapes' editor where the node has one. Stays on
+    /// the node it was opened for; closes when that node goes away.
+    fn viewer_window(
+        &mut self,
+        ctx: &egui::Context,
+        net: &penumbra_graph::Network,
+        view: &penumbra_engine::ViewFrame,
+        can_edit: bool,
+        actions: &mut Vec<Action>,
+    ) {
+        let opening = !std::mem::replace(&mut self.window_viewer_shown, false);
+        let Some(id) = self.viewer.window else { return };
+        if net.node(id).is_none() {
+            self.viewer.window = None;
+            return;
+        }
+        self.window_viewer_shown = true;
+        let session = self.engine.session().clone();
+        let doc = session.doc();
+        let new_group = || doc.new_group();
+        let title = format!("Viewer {}", net.path_of(id).map(|p| p.to_string()).unwrap_or_default());
+        let builder =
+            egui::ViewportBuilder::default().with_title(title.clone()).with_inner_size([1280.0, 800.0]);
+        let (window, textures, auto) = (&mut self.window_viewer, &mut self.textures, &mut self.auto);
+        let mut close = false;
+        let background = theme::picture_bg(!can_edit);
+        let frame = view.time.map(|t| t.frame);
+        let mut content = |ui: &mut Ui| {
+            let (map, shapes, names) =
+                node_editors(net, session.types(), view, Some(id), can_edit, &new_group);
+            let outputs = view.outputs.get(&id);
+            ui.horizontal(|ui| window.header(ui, net, Some(id), outputs, &names, true, auto, actions));
+            window.show(
+                ui,
+                Some(id),
+                outputs,
+                frame,
+                background,
+                textures,
+                map.as_ref(),
+                shapes.as_ref(),
+                auto,
+                actions,
+            );
+        };
+        let gpu = self.gpu.as_ref().filter(|_| opening);
+        let mut size = None;
+        let show = || {
+            ctx.show_viewport_immediate(viewer_viewport(), builder, |ctx, class| {
+                size = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+                if class == egui::ViewportClass::EmbeddedWindow {
+                    // Where the platform has no second window (the headless runs), egui already
+                    // wraps this in a window inside the main one; it has no close button.
+                    if ctx.button("close").clicked() {
+                        close = true;
+                    }
+                    egui::Frame::NONE.fill(background).show(ctx, |ui| content(ui));
+                } else {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame::NONE.fill(background))
+                        .show(ctx, |ui| content(ui));
+                    close = ctx.input(|i| i.viewport().close_requested());
+                }
+            })
+        };
+        // Opening the window creates and configures its surface inside this call. wgpu waits
+        // for an idle GPU first and fails if the cook thread submits meanwhile; a resize keeps
+        // the old swapchain then, but a new surface stays unconfigured and wgpu panics on its
+        // first frame. So the first frame runs with penumbra's submissions held off; later frames
+        // do not, since presenting can block for a whole refresh.
+        match gpu {
+            Some(gpu) => gpu.alone(show),
+            None => show(),
+        }
+        self.note_size(viewer_viewport(), size);
+        if close {
+            self.viewer.window = None;
+        }
+    }
+
+    /// Tells the outputs where the editor window is, so no projector opens over it.
+    fn tell_outputs(&mut self, ctx: &egui::Context) {
+        let rect = ctx.input(|i| {
+            let v = i.viewport();
+            let (r, ppp) = (v.outer_rect?, v.native_pixels_per_point?);
+            let min = r.min * ppp;
+            let size = r.size() * ppp;
+            Some([min.x.round() as i32, min.y.round() as i32, size.x.round() as i32, size.y.round() as i32])
+        });
+        if rect != self.editor_rect {
+            self.editor_rect = rect;
+            self.engine.board().update(|s| s.editor = rect);
+        }
+    }
+
+    // ------------------------------------------------------------------------- ui.* commands
+
+    fn drain_requests(&mut self, ctx: &egui::Context) {
+        let Some(rx) = self.requests.take() else { return };
+        while let Ok(req) = rx.try_recv() {
+            let reply = req.reply.clone();
+            match self.handle(ctx, &req) {
+                Outcome::Done(r) => {
+                    reply.send(r).ok();
+                }
+                Outcome::AfterInput => self.input_waiters.push(reply),
+                Outcome::Screenshot(file) => {
+                    let token = self.next_token;
+                    self.next_token += 1;
+                    self.shots.push(Shot {
+                        token,
+                        file,
+                        reply,
+                        settle: 3,
+                        asked: false,
+                        deadline: Instant::now() + SHOT_TIMEOUT,
+                    });
+                }
+            }
+        }
+        self.requests = Some(rx);
+    }
+
+    fn element_pos(&self, p: &Json) -> Result<Pos2, String> {
+        if let Some(id) = p.get("id").and_then(Json::as_str) {
+            return self
+                .auto
+                .find(id)
+                .map(|e| e.rect().center())
+                .ok_or_else(|| format!("no element `{id}` on screen; `ui.elements` lists them"));
+        }
+        match (p.get("x").and_then(Json::as_f64), p.get("y").and_then(Json::as_f64)) {
+            (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Ok(pos2(x as f32, y as f32)),
+            _ => Err("give `id` or `x` and `y`".into()),
+        }
+    }
+
+    fn handle(&mut self, ctx: &egui::Context, req: &UiRequest) -> Outcome {
+        match self.handle_inner(ctx, req) {
+            Ok(o) => o,
+            Err(e) => Outcome::Done(Err(e)),
+        }
+    }
+
+    fn handle_inner(&mut self, ctx: &egui::Context, req: &UiRequest) -> Result<Outcome, String> {
+        let p = &req.params;
+        let session = self.engine.session().clone();
+        let net = session.doc().snapshot();
+        let now = Instant::now();
+        let path_of = |id: NodeId| net.path_of(id).map(|p| p.to_string());
+        let resolve = |s: &str| -> Result<NodeId, String> {
+            let path: NodePath = s.parse().map_err(|e| format!("{e}"))?;
+            net.resolve(&path).ok_or_else(|| format!("no node at {path}"))
+        };
+        let modifiers = Modifiers {
+            ctrl: p.get("ctrl").and_then(Json::as_bool).unwrap_or(false),
+            command: p.get("ctrl").and_then(Json::as_bool).unwrap_or(false),
+            shift: p.get("shift").and_then(Json::as_bool).unwrap_or(false),
+            alt: p.get("alt").and_then(Json::as_bool).unwrap_or(false),
+            mac_cmd: false,
+        };
+        let button = match p.get("button").and_then(Json::as_str) {
+            None | Some("left") => PointerButton::Primary,
+            Some("right") => PointerButton::Secondary,
+            Some("middle") => PointerButton::Middle,
+            Some(other) => return Err(format!("unknown button `{other}`; left, right or middle")),
+        };
+        let done = |v: Json| Ok(Outcome::Done(Ok(v)));
+        match req.method.as_str() {
+            "ui.state" => {
+                let selection: Vec<Option<String>> =
+                    self.editor.selection.iter().map(|id| path_of(*id)).collect();
+                let selected = self.selected();
+                let mut state = json!({
+                    "selection": selection,
+                    "viewer": self.viewer.target(&net, selected).and_then(path_of),
+                    "pinned": self.viewer.pinned.and_then(path_of),
+                    "view": {"origin": [self.layout.view.origin.x, self.layout.view.origin.y], "zoom": self.layout.view.zoom},
+                    "canvas": rect_json(self.editor.canvas),
+                    "window": rect_json(ctx.content_rect()),
+                    "editing": session.status(now).edit,
+                    "thumbnails_paused": self.editor.paused.iter().filter_map(|id| path_of(*id)).collect::<Vec<_>>(),
+                    "level": editor::level_path(&net, self.editor.level),
+                });
+                if let Some(id) = selected
+                    && let Some(o) = state.as_object_mut()
+                {
+                    o.insert("params".into(), json!(params::values(&net, session.types(), id)));
+                }
+                if p.get("positions").and_then(Json::as_bool).unwrap_or(false)
+                    && let Some(o) = state.as_object_mut()
+                {
+                    o.insert("positions".into(), json!(self.layout.positions(&net)));
+                }
+                done(state)
+            }
+            "ui.elements" => {
+                let prefix = p.get("prefix").and_then(Json::as_str).unwrap_or("");
+                done(json!({"elements": self.auto.query(prefix)}))
+            }
+            "ui.click" => {
+                let at = self.element_pos(p)?;
+                let count = if p.get("double").and_then(Json::as_bool).unwrap_or(false) { 2 } else { 1 };
+                self.synthetic.push_back(egui::Event::PointerMoved(at));
+                for _ in 0..count {
+                    self.synthetic.push_back(egui::Event::PointerButton {
+                        pos: at,
+                        button,
+                        pressed: true,
+                        modifiers,
+                    });
+                    self.synthetic.push_back(egui::Event::PointerButton {
+                        pos: at,
+                        button,
+                        pressed: false,
+                        modifiers,
+                    });
+                }
+                Ok(Outcome::AfterInput)
+            }
+            "ui.drag" => {
+                let from = self.element_pos(p.get("from").unwrap_or(&Json::Null))?;
+                let to = self.element_pos(p.get("to").unwrap_or(&Json::Null))?;
+                let steps = p.get("steps").and_then(Json::as_u64).unwrap_or(8).clamp(2, 200);
+                self.synthetic.push_back(egui::Event::PointerMoved(from));
+                self.synthetic.push_back(egui::Event::PointerButton {
+                    pos: from,
+                    button,
+                    pressed: true,
+                    modifiers,
+                });
+                for i in 1..=steps {
+                    let t = i as f32 / steps as f32;
+                    self.synthetic.push_back(egui::Event::PointerMoved(from + (to - from) * t));
+                }
+                self.synthetic.push_back(egui::Event::PointerButton {
+                    pos: to,
+                    button,
+                    pressed: false,
+                    modifiers,
+                });
+                Ok(Outcome::AfterInput)
+            }
+            "ui.scroll" => {
+                let at = self.element_pos(p)?;
+                let dy = p.get("dy").and_then(Json::as_f64).filter(|d| d.is_finite()).unwrap_or(0.0) as f32;
+                self.synthetic.push_back(egui::Event::PointerMoved(at));
+                self.synthetic.push_back(egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: vec2(0.0, dy),
+                    phase: egui::TouchPhase::Move,
+                    modifiers,
+                });
+                Ok(Outcome::AfterInput)
+            }
+            "ui.key" => {
+                let name = p.get("key").and_then(Json::as_str).ok_or("`key` is missing")?;
+                let key = Key::from_name(name).ok_or_else(|| format!("unknown key `{name}`"))?;
+                // As the window's integration does: Ctrl+C, X, V become clipboard events, the
+                // paste with what was copied last (the system clipboard is not read here).
+                if modifiers.command {
+                    let event = match key {
+                        Key::C => Some(egui::Event::Copy),
+                        Key::X => Some(egui::Event::Cut),
+                        Key::V => {
+                            penumbra_engine::clipboard::copied_text(&self.engine).map(egui::Event::Paste)
+                        }
+                        _ => None,
+                    };
+                    if let Some(event) = event {
+                        self.synthetic.push_back(event);
+                        return Ok(Outcome::AfterInput);
+                    }
+                }
+                for pressed in [true, false] {
+                    self.synthetic.push_back(egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers,
+                    });
+                }
+                Ok(Outcome::AfterInput)
+            }
+            "ui.type" => {
+                let text = p.get("text").and_then(Json::as_str).ok_or("`text` is missing")?;
+                self.synthetic.push_back(egui::Event::Text(text.to_string()));
+                Ok(Outcome::AfterInput)
+            }
+            "ui.select" => {
+                let paths = p.get("paths").and_then(Json::as_array).ok_or("`paths` must be a list")?;
+                let mut set = BTreeSet::new();
+                for path in paths {
+                    set.insert(resolve(path.as_str().ok_or("paths are strings")?)?);
+                }
+                // The editor shows one component's inside at a time: the one holding the nodes.
+                let level = set.iter().next().and_then(|id| net.node(*id)).and_then(|n| n.parent);
+                if set.iter().any(|id| net.node(*id).is_some_and(|n| n.parent != level)) {
+                    return Err("the nodes must sit side by side (in the same component)".into());
+                }
+                if !set.is_empty() {
+                    self.editor.enter(level, &mut self.layout, now);
+                }
+                self.editor.selection = set;
+                done(json!({"selected": paths}))
+            }
+            "ui.enter" => {
+                let level = match p.get("path").and_then(Json::as_str).filter(|s| *s != "/") {
+                    Some(path) => {
+                        let id = resolve(path)?;
+                        let container = net
+                            .node(id)
+                            .and_then(|n| session.types().desc(&n.kind))
+                            .is_some_and(|d| d.container);
+                        if !container {
+                            return Err(format!("{path} is not a component"));
+                        }
+                        Some(id)
+                    }
+                    None => None,
+                };
+                self.editor.enter(level, &mut self.layout, now);
+                done(json!({"level": editor::level_path(&net, level)}))
+            }
+            "ui.view" => {
+                let pinned = match p.get("path").and_then(Json::as_str) {
+                    Some(path) => Some(resolve(path)?),
+                    None => None,
+                };
+                self.viewer.pinned = pinned;
+                done(json!({"pinned": pinned.and_then(path_of)}))
+            }
+            "ui.place" => {
+                let nodes = p.get("nodes").and_then(Json::as_object).ok_or("`nodes` must be an object")?;
+                for (path, at) in nodes {
+                    let id = resolve(path)?;
+                    let xy = at.as_array().and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
+                    let Some((x, y)) = xy.filter(|(x, y)| x.is_finite() && y.is_finite()) else {
+                        return Err(format!("{path}: position must be [x, y]"));
+                    };
+                    self.layout.set(id, pos2(x as f32, y as f32), now);
+                }
+                done(json!({"placed": nodes.len()}))
+            }
+            "ui.options" => {
+                let mut options = self.layout.options;
+                if let Some(v) = p.get("chan_bars") {
+                    options.chan_bars = v.as_bool().ok_or("`chan_bars` must be true or false")?;
+                }
+                self.layout.set_options(options, now);
+                done(json!({"chan_bars": options.chan_bars}))
+            }
+            "ui.arrange" => {
+                self.layout.arrange(&net, now);
+                self.editor.frame_all();
+                done(json!({"arranged": net.len()}))
+            }
+            "ui.frame" => {
+                self.editor.frame_all();
+                done(json!({}))
+            }
+            "ui.screenshot" => {
+                let file = match p.get("file").and_then(Json::as_str) {
+                    Some(f) => PathBuf::from(f),
+                    None => std::env::temp_dir().join("penumbra").join("ui.png"),
+                };
+                if ctx.input(|i| i.viewport().minimized == Some(true)) {
+                    return Err("the window is minimised; nothing is drawn".into());
+                }
+                Ok(Outcome::Screenshot(file))
+            }
+            other => Err(format!("unknown ui command `{other}`")),
+        }
+    }
+
+    /// Notes a window's size (`id`: the editor's or the viewer's). While it changes, the GPU
+    /// work is held back so egui's configures succeed, and no healing happens.
+    fn note_size(&mut self, id: egui::ViewportId, size: Option<egui::Vec2>) {
+        let slot = usize::from(id == viewer_viewport());
+        let Some(last) = self.sizes.get_mut(slot) else { return };
+        if size.is_none() || *last == size {
+            return;
+        }
+        let first = last.is_none();
+        *last = size;
+        if first {
+            return;
+        }
+        let now = Instant::now();
+        self.resized = Some((now, id));
+        // Egui configures again for the new size: a failure before is answered by that one.
+        self.heal_pending = false;
+        if let Some(gpu) = &self.gpu {
+            gpu.hold(now + RESIZE_HOLD);
+        }
+    }
+
+    /// Recovers a window left black by a failed surface reconfigure (see [`Nudge`]), once its
+    /// size has settled.
+    fn heal_surface(&mut self, ctx: &egui::Context) {
+        if let Some((id, nudge)) = self.nudge.take() {
+            let command = match nudge {
+                Nudge::Restore(size) => egui::ViewportCommand::InnerSize(size),
+                Nudge::Remaximize => egui::ViewportCommand::Maximized(true),
+            };
+            ctx.send_viewport_cmd_to(id, command);
+            ctx.request_repaint();
+            return;
+        }
+        let failures = self.gpu.as_ref().map_or(0, |g| g.errors().surface_configure_failures);
+        if failures > self.surface_failures {
+            self.surface_failures = failures;
+            self.heal_pending = true;
+        }
+        if !self.heal_pending {
+            return;
+        }
+        let now = Instant::now();
+        if let Some((at, _)) = self.resized
+            && now.saturating_duration_since(at) < RESIZE_SETTLE
+        {
+            ctx.request_repaint_after(RESIZE_SETTLE);
+            return;
+        }
+        self.heal_pending = false;
+        if self.heals.1.is_some_and(|at| now.saturating_duration_since(at) > HEAL_WINDOW) {
+            self.heals.0 = 0;
+        }
+        if self.heals.0 >= MAX_HEALS {
+            if self.heals.0 == MAX_HEALS {
+                log::warn!("the window surface keeps failing to reconfigure; not resizing again for a while");
+                self.heals.0 += 1;
+            }
+            self.message = Some((
+                "the window cannot be resized: the GPU is busy or its memory full (another program?)".into(),
+                now,
+            ));
+            return;
+        }
+        self.heals = (self.heals.0 + 1, Some(now));
+        // The window resized last; the editor's when none was.
+        let id = self.resized.map_or(egui::ViewportId::ROOT, |(_, id)| id);
+        let (maximized, size) = ctx.input_for(id, |i| {
+            (i.viewport().maximized == Some(true), i.viewport().inner_rect.map(|r| r.size()))
+        });
+        log::warn!("the window surface was not reconfigured after a resize; resizing once more to recover");
+        if let Some(gpu) = &self.gpu {
+            gpu.hold(now + RESIZE_HOLD);
+        }
+        if maximized {
+            ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Maximized(false));
+            self.nudge = Some((id, Nudge::Remaximize));
+        } else if let Some(size) = size {
+            ctx.send_viewport_cmd_to(id, egui::ViewportCommand::InnerSize(size + vec2(1.0, 1.0)));
+            self.nudge = Some((id, Nudge::Restore(size)));
+        }
+        ctx.request_repaint();
+    }
+
+    fn screenshots(&mut self, ctx: &egui::Context) {
+        if self.shots.is_empty() {
+            return;
+        }
+        let now = Instant::now();
+        for shot in &mut self.shots {
+            if shot.settle > 0 {
+                shot.settle -= 1;
+            } else if !shot.asked {
+                shot.asked = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(shot.token)));
+            }
+        }
+        let arrived: Vec<(u64, Arc<egui::ColorImage>)> = ctx.input(|i| {
+            i.raw
+                .events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Screenshot { user_data, image, .. } => {
+                        let token = user_data.data.as_ref().and_then(|d| d.downcast_ref::<u64>()).copied()?;
+                        Some((token, image.clone()))
+                    }
+                    _ => None,
+                })
+                .collect()
+        });
+        for (token, image) in arrived {
+            if let Some(i) = self.shots.iter().position(|s| s.token == token) {
+                let shot = self.shots.remove(i);
+                shot.reply.send(save_png(&shot.file, &image)).ok();
+            }
+        }
+        self.shots.retain(|s| {
+            if now > s.deadline {
+                s.reply.send(Err("no frame was drawn in time (window hidden?)".into())).ok();
+                false
+            } else {
+                true
+            }
+        });
+        ctx.request_repaint();
+    }
+}
+
+/// The header of a collapsible section of the right column: a triangle and the title (both
+/// toggle it, automation id `section.<id>`), then `extra` (buttons that stay usable while the
+/// section is collapsed).
+fn section(
+    ui: &mut Ui,
+    auto: &mut automation::Registry,
+    id: &str,
+    title: &str,
+    open: &mut bool,
+    extra: impl FnOnce(&mut Ui, &mut automation::Registry),
+) {
+    ui.horizontal(|ui| {
+        let (rect, tri) = ui.allocate_exact_size(vec2(12.0, 16.0), Sense::click());
+        let label = ui.add(egui::Label::new(RichText::new(title).strong()).sense(Sense::click()));
+        let hovered = tri.hovered() || label.hovered();
+        let color = if hovered { ui.visuals().strong_text_color() } else { ui.visuals().text_color() };
+        let c = rect.center();
+        let points = if *open {
+            vec![c + vec2(-4.5, -2.5), c + vec2(4.5, -2.5), c + vec2(0.0, 3.5)]
+        } else {
+            vec![c + vec2(-2.5, -4.5), c + vec2(3.5, 0.0), c + vec2(-2.5, 4.5)]
+        };
+        ui.painter().add(egui::Shape::convex_polygon(points, color, egui::Stroke::NONE));
+        auto.add(format!("section.{id}"), rect.union(label.rect), title);
+        if tri.clicked() || label.clicked() {
+            *open = !*open;
+        }
+        extra(ui, auto);
+    });
+}
+
+enum Outcome {
+    Done(Reply),
+    /// Reply once the queued synthetic input has been processed.
+    AfterInput,
+    Screenshot(PathBuf),
+}
+
+fn rect_json(r: egui::Rect) -> Json {
+    json!([r.min.x, r.min.y, r.width(), r.height()])
+}
+
+fn save_png(file: &std::path::Path, image: &egui::ColorImage) -> Reply {
+    let [w, h] = image.size;
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for c in &image.pixels {
+        rgba.extend_from_slice(&c.to_srgba_unmultiplied());
+    }
+    let png = penumbra_gpu::encode_png_rgba8(w as u32, h as u32, rgba).map_err(|e| e.0)?;
+    if let Some(dir) = file.parent()
+        && !dir.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    std::fs::write(file, png).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok(json!({"file": file.display().to_string(), "width": w, "height": h}))
+}
+
+/// Project name, directory, app: the project is its directory.
+fn window_title(dir: &std::path::Path, mode: &str) -> String {
+    let name =
+        dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned());
+    format!("{name}  \u{b7}  {mode}  \u{b7}  {}  \u{b7}  penumbra", dir.display())
+}
+
+fn penumbra_ops_warm_up(gpu: &penumbra_gpu::Gpu) {
+    penumbra_ops::warm_up(gpu);
+}
+
+impl eframe::App for PenumbraApp {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // Pointer events one per frame, so egui sees press, moves and release as a drag.
+        let pointer = |e: &egui::Event| {
+            matches!(
+                e,
+                egui::Event::PointerMoved(_)
+                    | egui::Event::PointerButton { .. }
+                    | egui::Event::MouseWheel { .. }
+            )
+        };
+        while let Some(e) = self.synthetic.front() {
+            let is_pointer = pointer(e);
+            if is_pointer && raw_input.events.iter().any(pointer) {
+                break;
+            }
+            if let Some(e) = self.synthetic.pop_front() {
+                let was_key_release = matches!(e, egui::Event::Key { pressed: false, .. });
+                raw_input.events.push(e);
+                if is_pointer || was_key_release {
+                    break;
+                }
+            }
+        }
+    }
+
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.drain_requests(ctx);
+        if self.synthetic.is_empty() {
+            for w in self.input_waiters.drain(..) {
+                w.send(Ok(json!({}))).ok();
+            }
+        } else {
+            ctx.request_repaint();
+        }
+        self.screenshots(ctx);
+        let size = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+        self.note_size(egui::ViewportId::ROOT, size);
+        self.heal_surface(ctx);
+    }
+
+    fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        self.frame(ui);
+        self.tell_outputs(ui.ctx());
+        // The native title bar follows the theme (Windows 11; elsewhere nothing happens).
+        if self.title_bar != self.themed
+            && let Some(claude) = self.themed
+        {
+            self.title_bar = Some(claude);
+            let v = theme::visuals(claude);
+            if !crate::titlebar::set_colors(frame, v.panel_fill, v.text_color()) {
+                log::debug!("the title bar colour cannot be set on this system");
+            }
+        }
+        // Thumbnails and the viewer change with the show clock; nothing needs 240 Hz.
+        ui.ctx().request_repaint_after(Duration::from_millis(16));
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        Color32::from_gray(20).to_normalized_gamma_f32()
+    }
+
+    fn on_exit(&mut self) {
+        self.close();
+        self.engine.shutdown();
+    }
+}
+
+/// The viewer's own window (`viewer.window`).
+fn viewer_viewport() -> egui::ViewportId {
+    egui::ViewportId::from_hash_of("penumbra.viewer")
+}
+
+/// What the viewer edits for node `target`: a mapper's handles, a `tex.shapes`' shapes; and the
+/// names of its outputs.
+fn node_editors<'a>(
+    net: &'a penumbra_graph::Network,
+    types: &'a penumbra_graph::NodeTypes,
+    view: &'a penumbra_engine::ViewFrame,
+    target: Option<NodeId>,
+    can_edit: bool,
+    new_group: &'a dyn Fn() -> penumbra_core::GroupId,
+) -> (Option<crate::mapping::MapInputs<'a>>, Option<crate::shapes::ShapeInputs<'a>>, Vec<String>) {
+    let map = target.and_then(|id| {
+        Some(crate::mapping::MapInputs {
+            net,
+            types,
+            node: id,
+            mapping: view.mappings.get(&id)?,
+            can_edit,
+            new_group,
+        })
+    });
+    let shapes = target
+        .filter(|id| crate::shapes::is_shapes(net, *id))
+        .map(|id| crate::shapes::ShapeInputs { net, types, node: id, can_edit, new_group });
+    let names = target
+        .and_then(|id| net.node(id))
+        .and_then(|n| types.desc(&n.kind))
+        .map(|d| d.outputs.iter().map(|o| o.name.clone()).collect())
+        .unwrap_or_default();
+    (map, shapes, names)
+}

@@ -1,0 +1,19 @@
+[package]
+name = "penumbra-calib"
+description = "Calibration math, pure and testable: homographies, projectors and cameras as pinholes (DLT, Levenberg-Marquardt). No GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+penumbra-core.workspace = true
+nalgebra.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

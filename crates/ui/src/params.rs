@@ -1,0 +1,1468 @@
+//! The param panel of the selected node: one row per declared parameter (the type's, then a
+//! shader's own from its header), widgets chosen by the [`ParamSpec`], rarely used ones collapsed.
+//! One drag is one undo step: all edits of a drag share a history group.
+//!
+//! A parameter driven by a channel shows the channel's value live, its widget (or the bound
+//! component's) disabled, and the source next to it. The link button binds and unbinds
+//! (`param.<path>.bind`).
+
+use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
+
+use egui::{RichText, Ui};
+use penumbra_core::{Chans, GroupId, Name, NodeId, ParamKind, ParamPath, ParamSpec, Value};
+use penumbra_graph::{Data, DataKind, Network, NodeDef, NodeStatus, NodeTypes, Op};
+
+use crate::icons::{self, Icon};
+use crate::{Action, automation, theme};
+
+pub struct Inputs<'a> {
+    pub net: &'a Network,
+    pub types: &'a NodeTypes,
+    pub node: NodeId,
+    pub status: Option<&'a NodeStatus>,
+    /// Params the instance declares (a shader's header), when the cook thread published them.
+    pub instance: Option<&'a [ParamSpec]>,
+    pub can_edit: bool,
+    pub project_dir: Option<&'a Path>,
+    pub new_group: &'a dyn Fn() -> GroupId,
+    /// Connected displays, offered for a projector's `display`.
+    pub displays: &'a [penumbra_ops::out::DisplayInfo],
+    /// Outputs the cook thread published (thumbnails, viewer): where the bind menu finds the
+    /// channel names of chan nodes on screen.
+    pub outputs: &'a BTreeMap<NodeId, Vec<Data>>,
+    /// A chan node whose output wire is being dragged in the editor: dropped onto a param
+    /// (or one component's field) it binds it.
+    pub chan_drag: Option<NodeId>,
+}
+
+#[derive(Default)]
+pub struct ParamPanel {
+    /// The widget being dragged or typed into and its history group.
+    group: Option<(egui::Id, GroupId)>,
+    group_seen: bool,
+    /// Text being typed into, by param path, committed on Enter or when focus leaves.
+    buffers: HashMap<String, String>,
+    rename: Option<(NodeId, String)>,
+    /// Files offered for a file param, listed when its menu opens.
+    files: Option<(String, Vec<String>)>,
+    /// Lines the colour row being drawn takes: swatch and fields on one, the fields below the
+    /// swatch, or the fields two by two below it (narrow column).
+    color_lines: u8,
+    /// Lines each colour row needs, measured in its cell last frame (the cell's width is only
+    /// known once the label is drawn, and the label needs the row's height).
+    color_measured: HashMap<String, u8>,
+    /// The label of the row being drawn when it is not the param's name (an exposed param).
+    label: Option<String>,
+    /// The row being drawn has a param of its own as its label (a constant's channel name).
+    name_edit: Option<ParamSpec>,
+    /// The row being drawn is row k of a constant and may be taken away; `removed` says it was.
+    removable: Option<usize>,
+    removed: bool,
+}
+
+impl ParamPanel {
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        self.group_seen = false;
+        let Some(node) = input.net.node(input.node) else { return };
+        let Some(path) = input.net.path_of(input.node) else { return };
+        let desc = input.types.desc(&node.kind);
+
+        // Name (rename on Enter), kind, summary, status.
+        ui.horizontal(|ui| {
+            let editing = self.rename.as_ref().is_some_and(|(id, _)| *id == input.node);
+            if !editing {
+                self.rename = Some((input.node, node.name.to_string()));
+            }
+            if let Some((_, text)) = self.rename.as_mut() {
+                let r = ui.add_enabled(
+                    input.can_edit,
+                    egui::TextEdit::singleline(text).font(egui::TextStyle::Heading).desired_width(160.0),
+                );
+                auto.add("param.name", r.rect, "name");
+                if r.lost_focus() && text.as_str() != node.name.as_str() {
+                    match text.parse() {
+                        Ok(name) => actions.push(Action::edit(vec![Op::Rename { path: path.clone(), name }])),
+                        Err(e) => actions.push(Action::Message(format!("{e}"))),
+                    }
+                    self.rename = None;
+                }
+            }
+            ui.label(RichText::new(&node.kind).color(theme::TEXT_WEAK));
+        });
+        if let Some(d) = desc {
+            ui.label(RichText::new(&d.summary).color(theme::TEXT_WEAK).small());
+        }
+        if let Some(s) = input.status {
+            if let Some(e) = &s.error {
+                ui.colored_label(theme::ERROR, e);
+            }
+            if let Some(w) = &s.warning {
+                ui.colored_label(theme::WARNING, w);
+            }
+        }
+        ui.horizontal(|ui| {
+            let mut locked = node.locked;
+            let r = ui.add_enabled(input.can_edit, egui::Checkbox::new(&mut locked, "locked"));
+            auto.add("param.locked", r.rect, "locked");
+            if r.changed() {
+                actions.push(Action::edit(vec![Op::Lock { path: path.clone(), locked }]));
+            }
+            if let Some(s) = input.status {
+                ui.label(
+                    RichText::new(format!("cook {:.2} ms", s.stats.average.as_secs_f64() * 1000.0))
+                        .color(theme::TEXT_WEAK)
+                        .small(),
+                );
+            }
+        });
+        ui.separator();
+
+        let Some(desc) = desc else {
+            ui.colored_label(theme::ERROR, format!("unknown node kind `{}`", node.kind));
+            return;
+        };
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            // Numbers in a monospace font: with proportional digits a changing value (a drag, a
+            // bound live value) wobbled inside its field.
+            ui.style_mut().drag_value_text_style = egui::TextStyle::Monospace;
+            ui.add_enabled_ui(input.can_edit, |ui| {
+                // A constant's params are its rows, drawn as such below.
+                let constant = node.kind == penumbra_ops::chan::CONSTANT;
+                let general = |_: &&ParamSpec| !constant;
+                egui::Grid::new("params").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+                    for spec in desc.params.iter().filter(|s| !s.rarely_used).filter(general) {
+                        self.row(ui, input, node, spec, auto, actions);
+                    }
+                });
+                if constant {
+                    self.constant_rows(ui, input, node, auto, actions);
+                }
+                let rare: Vec<&ParamSpec> =
+                    desc.params.iter().filter(|s| s.rarely_used).filter(general).collect();
+                if !rare.is_empty() {
+                    egui::CollapsingHeader::new(RichText::new("more").color(theme::TEXT_WEAK))
+                        .id_salt("rare")
+                        .show(ui, |ui| {
+                            egui::Grid::new("params_rare").num_columns(2).spacing([8.0, 6.0]).show(
+                                ui,
+                                |ui| {
+                                    for spec in rare {
+                                        self.row(ui, input, node, spec, auto, actions);
+                                    }
+                                },
+                            );
+                        });
+                }
+                if desc.container {
+                    self.exposed(ui, input, node, auto, actions);
+                }
+                if constant {
+                    // Its rows are its declared params.
+                } else if desc.extra_params {
+                    self.instance_params(ui, input, node, auto, actions);
+                } else {
+                    // Values from the project file the type no longer declares.
+                    let stray: Vec<(&penumbra_core::Name, &Value)> =
+                        node.params.iter().filter(|(n, _)| desc.param_spec(n.as_str()).is_none()).collect();
+                    let note = format!("not a param of {}", node.kind);
+                    stray_values(ui, input, node, &note, &stray, auto, actions);
+                }
+            });
+        });
+        if !self.group_seen {
+            self.group = None;
+        }
+    }
+
+    /// A component's exposed params: rows of the inner params they stand for, under the exposed
+    /// names.
+    fn exposed(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        let mut errors = Vec::new();
+        let list = input.net.exposed_with_errors(input.types, node.id, &mut errors);
+        ui.add_space(6.0);
+        if list.is_empty() && errors.is_empty() {
+            let hint = "Nothing exposed yet: list inner params under more > expose, one per line, like `speed = lfo1.rate`.";
+            ui.label(RichText::new(hint).color(theme::TEXT_WEAK).small());
+            return;
+        }
+        ui.label(RichText::new("exposed").color(theme::TEXT_WEAK).small());
+        let mut problems: Vec<String> = errors;
+        egui::Grid::new("params_exposed").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+            for x in &list {
+                let target =
+                    x.target.clone().and_then(|t| input.net.resolve_alias(input.types, &t).map_err(|e| e.0));
+                let found = target.as_ref().ok().and_then(|t| {
+                    let id = input.net.resolve(t.node())?;
+                    let inner = input.net.node(id)?;
+                    let spec = input.types.desc(&inner.kind)?.param_spec(t.param().as_str())?.clone();
+                    Some((inner.clone(), spec))
+                });
+                match (found, target) {
+                    (Some((inner, spec)), _) => {
+                        self.label = Some(x.name.to_string());
+                        self.row(ui, input, &inner, &spec, auto, actions);
+                        self.label = None;
+                    }
+                    (None, Ok(t)) => {
+                        let declared_by_file = input
+                            .net
+                            .resolve(t.node())
+                            .and_then(|id| input.net.node(id))
+                            .and_then(|n| input.types.desc(&n.kind))
+                            .is_some_and(|d| d.extra_params);
+                        problems.push(if declared_by_file {
+                            format!("{}: {t} is declared by its file; set it inside or with node.set", x.name)
+                        } else {
+                            format!("{}: {t} does not exist", x.name)
+                        });
+                    }
+                    (None, Err(e)) => problems.push(format!("{}: {e}", x.name)),
+                }
+            }
+        });
+        for p in problems {
+            ui.colored_label(theme::WARNING, p);
+        }
+    }
+
+    /// A `chan.constant`'s rows: the channel's name in an editable label, its value as a param
+    /// row (slider, bind, reset), "-" to take the row away and "+" below to add one
+    /// (`param.<path>.row.<k>.remove`, `param.<path>.row.add`).
+    fn constant_rows(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        use penumbra_ops::chan::{CONSTANT_MAX_ROWS, constant_row, constant_row_specs};
+        let Some(desc) = input.types.desc(&node.kind) else { return };
+        let Some(path) = input.net.path_of(node.id) else { return };
+        let rows = constant_rows_of(node);
+        let mut remove: Option<usize> = None;
+        egui::Grid::new("params_constant").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+            for k in 0..rows {
+                let [name_spec, value_spec] = if k == 0 {
+                    let (n, v) = constant_row(0);
+                    match (desc.param_spec(&n), desc.param_spec(&v)) {
+                        (Some(n), Some(v)) => [n.clone(), v.clone()],
+                        _ => continue,
+                    }
+                } else {
+                    constant_row_specs(k)
+                };
+                self.name_edit = Some(name_spec);
+                self.removable = (rows > 1).then_some(k);
+                self.row(ui, input, node, &value_spec, auto, actions);
+                if self.removed {
+                    remove = Some(k);
+                }
+                self.name_edit = None;
+                self.removable = None;
+                self.removed = false;
+            }
+        });
+        let add = ui.add_enabled(rows < CONSTANT_MAX_ROWS, egui::Button::new("+").small());
+        auto.add(format!("param.{path}.row.add"), add.rect, "add a row");
+        if add.on_hover_text("add a channel").clicked() {
+            actions.push(Action::edit(constant_add_ops(&path, node, rows)));
+        }
+        if let Some(k) = remove {
+            actions.push(Action::edit(constant_remove_ops(input.net, &path, node, k, rows)));
+        }
+    }
+
+    /// The label cell of a row whose label is a param of its own (a constant's channel name):
+    /// a text field, committed on Enter or when focus leaves.
+    fn name_field(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        spec: &ParamSpec,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) -> Option<egui::Response> {
+        let path = input.net.path_of(node.id)?;
+        let param = ParamPath::new(path, spec.name.parse().ok()?).ok()?;
+        let key = param.to_string();
+        let current =
+            node.params.get(spec.name.as_str()).unwrap_or(&spec.default).as_str().unwrap_or("").to_string();
+        let buffer = self.buffers.entry(key.clone()).or_insert_with(|| current.clone());
+        // A fixed width: in the grid's first column the box would shrink to its text.
+        let r = ui.add_sized([100.0, ui.spacing().interact_size.y], egui::TextEdit::singleline(buffer));
+        auto.add(format!("param.{key}"), r.rect, spec.name.clone());
+        if !r.has_focus() && !r.lost_focus() && *buffer != current {
+            buffer.clone_from(&current);
+        }
+        if r.lost_focus() && *buffer != current {
+            actions
+                .push(Action::edit(vec![Op::Set { param, value: Value::Text(buffer.trim().to_string()) }]));
+        }
+        Some(r)
+    }
+
+    fn instance_params(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        let Some(desc) = input.types.desc(&node.kind) else { return };
+        ui.add_space(6.0);
+        let source = if node.kind.starts_with("script.") { "from the script" } else { "from the shader" };
+        ui.label(RichText::new(source).color(theme::TEXT_WEAK).small());
+        let declared = input.instance.unwrap_or(&[]);
+        egui::Grid::new("params_instance").num_columns(2).spacing([8.0, 6.0]).show(ui, |ui| {
+            for spec in declared {
+                self.row(ui, input, node, spec, auto, actions);
+            }
+        });
+        // Values nobody declares (a renamed header param): shown so they can be removed.
+        let stray: Vec<(&penumbra_core::Name, &Value)> = node
+            .params
+            .iter()
+            .filter(|(n, _)| {
+                desc.param_spec(n.as_str()).is_none() && !declared.iter().any(|s| s.name == n.as_str())
+            })
+            .collect();
+        if input.instance.is_some() {
+            stray_values(ui, input, node, "not declared by the shader", &stray, auto, actions);
+        }
+    }
+
+    /// One parameter: label, widget, reset button.
+    fn row(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        spec: &ParamSpec,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        let Some(path) = input.net.path_of(node.id) else { return };
+        let Ok(name) = spec.name.parse::<penumbra_core::Name>() else { return };
+        let Ok(param) = ParamPath::new(path, name) else { return };
+        let key = param.to_string();
+        let explicit = node.params.get(spec.name.as_str());
+        let stored = explicit.unwrap_or(&spec.default).clone();
+        // Bound parts: `None` for the whole param, `Some(i)` for component i.
+        let bound: Vec<Option<u8>> =
+            node.binds.keys().filter(|k| k.param.as_str() == spec.name).map(|k| k.component).collect();
+        // A bound param shows what the node cooks with.
+        let live = input.status.and_then(|s| s.bound.get(spec.name.as_str()));
+        let value = live.filter(|_| !bound.is_empty()).unwrap_or(&stored).clone();
+        let name_edit = self.name_edit.take();
+        let removable = self.removable;
+        let mut remove_clicked = false;
+        let mut label = RichText::new(self.label.as_deref().unwrap_or(&spec.name));
+        let replaced = replaced(node, spec);
+        if replaced {
+            label = label.color(theme::TEXT_WEAK).italics();
+        } else if !bound.is_empty() {
+            label = label.color(theme::kind_color(DataKind::Chan));
+        } else if explicit.is_none() {
+            label = label.color(theme::TEXT_WEAK);
+        }
+        // Too narrow for the swatch and four number fields side by side, a colour takes more
+        // lines (they clipped at the right edge).
+        let is_color = spec.kind == ParamKind::Color;
+        self.color_lines = if is_color { self.color_measured.get(&key).copied().unwrap_or(1) } else { 1 };
+        let height = row_height(ui, spec, self.color_lines);
+        let one = ui.spacing().interact_size.y;
+        // The grid centres a cell in its row; the label of a taller row sits at its top.
+        let l = match &name_edit {
+            Some(name_spec) => self.name_field(ui, input, node, name_spec, auto, actions),
+            None => Some(
+                ui.allocate_ui_with_layout(
+                    egui::vec2(0.0, height),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        if height > one {
+                            let text = ui.text_style_height(&egui::TextStyle::Body);
+                            ui.add_space(((one - text) / 2.0).max(0.0));
+                        }
+                        ui.add(egui::Label::new(label).wrap_mode(egui::TextWrapMode::Extend))
+                    },
+                )
+                .inner,
+            ),
+        };
+        if let Some(l) = l {
+            if replaced {
+                l.on_hover_text("The camera input replaces this while it is connected");
+            } else if !spec.doc.is_empty() {
+                l.on_hover_text(&spec.doc);
+            }
+        }
+        let mut new: Option<Value> = None;
+        let mut active_id: Option<(egui::Id, bool)> = None;
+        // Rects of the parts (slider, number fields), as `param.<path>.<i>`.
+        let mut parts: Vec<egui::Rect> = Vec::new();
+        // The cell spans the column's width: reset, bindings and bind button from the right
+        // edge, the widget in what is left, so sliders and text fields use the whole width
+        // whatever the node. A text box of several lines hangs from the top.
+        let align = if height > one { egui::Align::Min } else { egui::Align::Center };
+        let cell = |ui: &mut Ui| {
+            if replaced {
+                ui.disable();
+            }
+            if let Some(k) = removable {
+                let r = ui.small_button("-").on_hover_text("take this row away");
+                auto.add(format!("param.{}.row.{k}.remove", param.node()), r.rect, "remove the row");
+                remove_clicked = r.clicked();
+            }
+            let reset = ui
+                .add_visible(explicit.is_some(), |ui: &mut Ui| icons::small_button(ui, Icon::Reset))
+                .on_hover_text("reset to the default");
+            auto.add(format!("param.{key}.reset"), reset.rect, "reset");
+            let binds: Vec<_> = node.binds.iter().filter(|(k, _)| k.param.as_str() == spec.name).collect();
+            for (part, b) in binds.into_iter().rev() {
+                let from = input.net.path_of(b.node).map_or("?".to_string(), |p| {
+                    let p = level_of(input.net, node.id).write_ref(&p);
+                    match &b.channel {
+                        Some(c) => format!("{p}:{c}"),
+                        None => p,
+                    }
+                });
+                // The default font has no arrows; the link icon before it says enough.
+                let text = match part.component {
+                    Some(c) => format!("{c}: {from}"),
+                    None => from,
+                };
+                ui.label(RichText::new(text).color(theme::kind_color(DataKind::Chan)).small());
+            }
+            if spec.bind_components() > 0 {
+                bind_menu(ui, input, node, &param, spec, auto, actions);
+            }
+            if is_color {
+                let lines = color_lines(ui);
+                if lines != self.color_lines {
+                    self.color_measured.insert(key.clone(), lines);
+                    ui.ctx().request_repaint();
+                }
+            }
+            line(ui, height, egui::Layout::left_to_right(align), |ui| {
+                let mut track = |r: &egui::Response| {
+                    parts.push(r.rect);
+                    let active = r.dragged() || r.has_focus();
+                    if r.changed() || active {
+                        active_id = Some((r.id, active));
+                    }
+                };
+                self.widget(ui, input, node, spec, &key, &value, &stored, &bound, &mut track, auto, &mut new);
+            });
+            reset
+        };
+        let row = line(ui, height, egui::Layout::right_to_left(align), cell);
+        let (widget, reset) = (row.response, row.inner);
+        self.removed = remove_clicked;
+        auto.add(format!("param.{key}"), widget.rect, spec.name.clone());
+        for (i, r) in parts.iter().enumerate() {
+            auto.add(format!("param.{key}.{i}"), *r, spec.name.clone());
+        }
+        if let Some(src) = input.chan_drag.filter(|s| *s != node.id) {
+            drop_target(ui, input, src, &param, spec, widget.rect, &parts, actions);
+        }
+        ui.end_row();
+
+        let group = match active_id {
+            Some((wid, active)) => {
+                let g = match self.group {
+                    Some((id, g)) if id == wid => g,
+                    _ => {
+                        let g = (input.new_group)();
+                        self.group = Some((wid, g));
+                        g
+                    }
+                };
+                if active {
+                    self.group_seen = true;
+                }
+                Some(g)
+            }
+            None => None,
+        };
+        if let Some(value) = new {
+            actions.push(Action::Edit {
+                ops: vec![Op::Set { param: param.clone(), value }],
+                label: String::new(),
+                group,
+                place: None,
+            });
+        }
+        if reset.clicked() {
+            actions.push(Action::edit(vec![Op::Reset { param }]));
+        }
+    }
+
+    /// The editing widget of one param, left to right in the width `ui` offers; ranged floats
+    /// stretch their slider, text fields and menus their box to fill it.
+    #[allow(clippy::too_many_arguments)]
+    fn widget(
+        &mut self,
+        ui: &mut Ui,
+        input: &Inputs<'_>,
+        node: &NodeDef,
+        spec: &ParamSpec,
+        key: &str,
+        value: &Value,
+        stored: &Value,
+        bound: &[Option<u8>],
+        track: &mut dyn FnMut(&egui::Response),
+        auto: &mut automation::Registry,
+        new: &mut Option<Value>,
+    ) {
+        let whole_bound = bound.contains(&None);
+        let part_bound =
+            |i: usize| whole_bound || bound.iter().any(|c| c.is_some_and(|c| usize::from(c) == i));
+        match &spec.kind {
+            ParamKind::Bool => {
+                let mut b = value.as_bool().unwrap_or(false);
+                let r = ui.add_enabled(!whole_bound, egui::Checkbox::without_text(&mut b));
+                if r.changed() {
+                    *new = Some(Value::Bool(b));
+                }
+            }
+            ParamKind::Int => {
+                let mut i = value.as_i64().unwrap_or(0);
+                let mut dv = egui::DragValue::new(&mut i).speed(0.1);
+                if let Some(r) = spec.range {
+                    dv = dv.range(r.min as i64..=r.max as i64).clamp_existing_to_range(r.hard);
+                }
+                let r = ui.add_enabled(!whole_bound, dv);
+                track(&r);
+                if r.changed() {
+                    *new = Some(Value::Int(i));
+                }
+            }
+            ParamKind::Float => {
+                let mut f = value.as_f64().unwrap_or(0.0);
+                if spec.range.is_none() {
+                    let r = ui.add_enabled(!whole_bound, float_drag(&mut f, spec, whole_bound));
+                    track(&r);
+                    if r.changed() {
+                        *new = Some(Value::Float(f));
+                    }
+                    return;
+                }
+                // The number at the right end, the slider in all the width before it. Parts
+                // stay in reading order: slider first. The number's width is fixed per param:
+                // following its text, it moved the slider under a still pointer, which picked
+                // another value, which changed the text again (the field flickered between two
+                // numbers).
+                let pos = spec.to_slider(f).unwrap_or(0.0);
+                let number_w = number_width(ui, spec);
+                let one = ui.spacing().interact_size.y;
+                line(ui, one, egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let size = [number_w, ui.spacing().interact_size.y];
+                    let number = ui
+                        .add_enabled_ui(!whole_bound, |ui| {
+                            ui.add_sized(size, float_drag(&mut f, spec, whole_bound))
+                        })
+                        .inner;
+                    let mut pos = pos;
+                    ui.spacing_mut().slider_width = ui.available_width().max(40.0);
+                    let slider = ui
+                        .add_enabled(!whole_bound, egui::Slider::new(&mut pos, 0.0..=1.0).show_value(false));
+                    track(&slider);
+                    track(&number);
+                    if number.changed() {
+                        *new = Some(Value::Float(f));
+                    } else if slider.changed()
+                        && let Some(v) = spec.from_slider(pos)
+                    {
+                        *new = Some(Value::Float(v));
+                    }
+                });
+            }
+            ParamKind::Vec(n) => {
+                let mut c: Vec<f64> = value.components().map(<[f64]>::to_vec).unwrap_or_default();
+                c.resize(usize::from(*n), 0.0);
+                let mut changed = false;
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let w = share(ui, c.len());
+                for (i, x) in c.iter_mut().enumerate() {
+                    let mut dv = egui::DragValue::new(x).speed(0.01).max_decimals(4);
+                    if part_bound(i) {
+                        dv = dv.fixed_decimals(3);
+                    }
+                    let r = ui
+                        .add_enabled_ui(!part_bound(i), |ui| {
+                            ui.add_sized([w, ui.spacing().interact_size.y], dv)
+                        })
+                        .inner;
+                    track(&r);
+                    changed |= r.changed();
+                }
+                if changed {
+                    *new = vector(&keep_bound(&c, stored, &part_bound));
+                }
+            }
+            ParamKind::Color => {
+                let mut c: Vec<f64> = value.components().map(<[f64]>::to_vec).unwrap_or_default();
+                c.resize(4, 1.0);
+                let (r0, g0, b0, a0) = (c.first(), c.get(1), c.get(2), c.get(3));
+                let get = |x: Option<&f64>| x.copied().unwrap_or(1.0) as f32;
+                let mut rgba = egui::Rgba::from_rgba_unmultiplied(get(r0), get(g0), get(b0), get(a0));
+                let mut changed = false;
+                let swatch = |ui: &mut Ui,
+                              c: &mut Vec<f64>,
+                              changed: &mut bool,
+                              track: &mut dyn FnMut(&egui::Response)| {
+                    let r = ui
+                        .add_enabled_ui(bound.is_empty(), |ui| {
+                            egui::color_picker::color_edit_button_rgba(
+                                ui,
+                                &mut rgba,
+                                egui::color_picker::Alpha::OnlyBlend,
+                            )
+                        })
+                        .inner;
+                    track(&r);
+                    if r.changed() {
+                        let [r1, g1, b1, a1] = rgba.to_rgba_unmultiplied();
+                        *c = vec![f64::from(r1), f64::from(g1), f64::from(b1), f64::from(a1)];
+                        *changed = true;
+                    }
+                };
+                // Exact numbers, also above 1 (HDR), which the picker cannot show.
+                let fields = |ui: &mut Ui,
+                              c: &mut Vec<f64>,
+                              parts: std::ops::Range<usize>,
+                              changed: &mut bool,
+                              track: &mut dyn FnMut(&egui::Response)| {
+                    ui.spacing_mut().item_spacing.x = 4.0;
+                    let w = share(ui, parts.len());
+                    for (i, x) in c.iter_mut().enumerate().filter(|(i, _)| parts.contains(i)) {
+                        let mut dv = egui::DragValue::new(x).speed(0.005).max_decimals(3);
+                        if part_bound(i) {
+                            dv = dv.fixed_decimals(3);
+                        }
+                        let r = ui
+                            .add_enabled_ui(!part_bound(i), |ui| {
+                                ui.add_sized([w, ui.spacing().interact_size.y], dv)
+                            })
+                            .inner;
+                        track(&r);
+                        *changed |= r.changed();
+                    }
+                };
+                let mut swatch = swatch;
+                match self.color_lines {
+                    1 => {
+                        swatch(ui, &mut c, &mut changed, track);
+                        fields(ui, &mut c, 0..4, &mut changed, track);
+                    }
+                    2 => {
+                        ui.vertical(|ui| {
+                            swatch(ui, &mut c, &mut changed, track);
+                            ui.horizontal(|ui| fields(ui, &mut c, 0..4, &mut changed, track));
+                        });
+                    }
+                    _ => {
+                        ui.vertical(|ui| {
+                            swatch(ui, &mut c, &mut changed, track);
+                            ui.horizontal(|ui| fields(ui, &mut c, 0..2, &mut changed, track));
+                            ui.horizontal(|ui| fields(ui, &mut c, 2..4, &mut changed, track));
+                        });
+                    }
+                }
+                if changed {
+                    *new = vector(&keep_bound(&c, stored, &part_bound));
+                }
+            }
+            ParamKind::Choice(choices) => {
+                let current = value.as_str().unwrap_or("");
+                let options: Vec<&str> = choices.iter().map(String::as_str).collect();
+                choice_box(ui, key, current, &options, new);
+            }
+            ParamKind::Text | ParamKind::File { .. } => {
+                if node.kind == penumbra_ops::tex::TEXT
+                    && let Some(options) = font_options(node, spec)
+                {
+                    let current = value.as_str().unwrap_or("");
+                    let options: Vec<&str> = options.iter().map(String::as_str).collect();
+                    choice_box(ui, key, current, &options, new);
+                    return;
+                }
+                let current = value.as_str().unwrap_or("").to_string();
+                // Menus at the right end, the text box in the width before them.
+                let height = row_height(ui, spec, 1);
+                line(ui, height, egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    if let ParamKind::File { extensions } = &spec.kind {
+                        self.file_menu(ui, input.project_dir, key, extensions, new);
+                    }
+                    if node.kind == penumbra_ops::out::PROJECTOR && spec.name == "display" {
+                        display_menu(ui, input.displays, key, auto, new);
+                    }
+                    if spec.node_ref {
+                        node_menu(ui, input, node, key, auto, new);
+                    }
+                    let buffer = self.buffers.entry(key.to_string()).or_insert_with(|| current.clone());
+                    let width = ui.available_width();
+                    let r = if spec.multiline {
+                        // A text longer than the box (a script) scrolls inside it rather than
+                        // growing over the rows below.
+                        egui::ScrollArea::vertical()
+                            .id_salt(("multiline", key))
+                            .max_height(height)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(buffer)
+                                        .code_editor()
+                                        .desired_rows(multiline_rows(spec))
+                                        .desired_width(width),
+                                )
+                            })
+                            .inner
+                    } else {
+                        ui.add(egui::TextEdit::singleline(buffer).desired_width(width))
+                    };
+                    if !r.has_focus() && !r.lost_focus() && *buffer != current {
+                        // Changed elsewhere (undo, Claude): show the new value.
+                        buffer.clone_from(&current);
+                    }
+                    if r.lost_focus() && *buffer != current {
+                        *new = Some(Value::Text(buffer.clone()));
+                    }
+                });
+            }
+        }
+    }
+
+    fn file_menu(
+        &mut self,
+        ui: &mut Ui,
+        dir: Option<&Path>,
+        key: &str,
+        extensions: &[String],
+        new: &mut Option<Value>,
+    ) {
+        let Some(dir) = dir else { return };
+        let r = ui.menu_button("\u{2026}", |ui| {
+            if self.files.as_ref().is_none_or(|(k, _)| k != key) {
+                self.files = Some((key.to_string(), list_files(dir, extensions)));
+            }
+            let files = self.files.as_ref().map(|(_, f)| f.as_slice()).unwrap_or(&[]);
+            if files.is_empty() {
+                ui.label(RichText::new("no matching files in the project directory").color(theme::TEXT_WEAK));
+            }
+            for f in files {
+                if ui.button(f).clicked() {
+                    *new = Some(Value::Text(f.clone()));
+                    ui.close();
+                }
+            }
+        });
+        if r.inner.is_none() && self.files.as_ref().is_some_and(|(k, _)| k == key) {
+            self.files = None;
+        }
+    }
+}
+
+/// `add` in a layout as wide as `ui` offers and as high as the param's widget: one line, or the
+/// box of a text of several lines. A row's grid cell centres what it is given in the row's
+/// height, so a cell claiming less than it draws would sink a little lower every frame.
+fn line<R>(
+    ui: &mut Ui,
+    height: f32,
+    layout: egui::Layout,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), height), layout, add)
+}
+
+/// Height of a param row: one line, more (a colour in a narrow column), or the box of a text of
+/// several lines.
+fn row_height(ui: &Ui, spec: &ParamSpec, lines: u8) -> f32 {
+    let one = ui.spacing().interact_size.y;
+    if spec.multiline {
+        // What `TextEdit::multiline(..).code_editor().desired_rows(multiline_rows(spec))` takes.
+        ui.text_style_height(&egui::TextStyle::Monospace) * multiline_rows(spec) as f32
+            + 2.0 * ui.spacing().button_padding.y.max(4.0)
+    } else {
+        let n = f32::from(lines.max(1));
+        n * one + (n - 1.0) * ui.spacing().item_spacing.y
+    }
+}
+
+/// Lines a colour row needs in the width `ui` has left: 1 for swatch and four number fields
+/// side by side, 2 with the fields below the swatch, 3 with them two by two. A number field is
+/// never narrower than its text, so the widths are measured, not assumed (the fields still clipped
+/// at a fixed guess).
+fn color_lines(ui: &Ui) -> u8 {
+    let s = ui.spacing();
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let text = ui.fonts_mut(|f| f.layout_no_wrap("0.000".into(), font, egui::Color32::WHITE).size().x);
+    let field = text + 2.0 * s.button_padding.x + 2.0;
+    let gap = 4.0;
+    let room = ui.available_width();
+    let four = 4.0 * field + 3.0 * gap;
+    if room >= s.interact_size.x + s.item_spacing.x + four {
+        1
+    } else if room >= four {
+        2
+    } else {
+        3
+    }
+}
+
+/// `path.name` as a param path.
+fn named(path: &penumbra_core::NodePath, name: &str) -> Result<ParamPath, penumbra_core::Error> {
+    path.param(name.parse()?)
+}
+
+/// How many rows a `chan.constant` has.
+fn constant_rows_of(node: &NodeDef) -> usize {
+    let max = penumbra_ops::chan::CONSTANT_MAX_ROWS;
+    let rows = node.params.get("rows").and_then(Value::as_i64).unwrap_or(1);
+    usize::try_from(rows).unwrap_or(1).clamp(1, max)
+}
+
+/// The edit that adds a row to a `chan.constant`, its channel named so that no row shares it.
+fn constant_add_ops(path: &penumbra_core::NodePath, node: &NodeDef, rows: usize) -> Vec<Op> {
+    use penumbra_ops::chan::{constant_row, constant_row_specs};
+    let name_of = |k: usize| {
+        let (name, _) = constant_row(k);
+        node.params
+            .get(name.as_str())
+            .and_then(Value::as_str)
+            .map_or_else(|| format!("chan{k}"), str::to_string)
+    };
+    let taken: Vec<String> = (0..rows).map(name_of).collect();
+    let k = rows;
+    let mut ops = Vec::new();
+    let (name_param, _) = constant_row(k);
+    let [name_spec, _] = constant_row_specs(k);
+    let default = name_spec.default.as_str().unwrap_or("value").to_string();
+    // A row left over from a lower `rows` keeps its name.
+    let current =
+        node.params.get(name_param.as_str()).and_then(Value::as_str).map_or(default.clone(), str::to_string);
+    if taken.contains(&current) {
+        let free = (k..k + 1000).map(|i| format!("chan{i}")).find(|n| !taken.contains(n)).unwrap_or(default);
+        if let Ok(param) = named(path, &name_param) {
+            ops.push(Op::Set { param, value: Value::Text(free) });
+        }
+    }
+    if let Ok(param) = named(path, "rows") {
+        ops.push(Op::Set { param, value: Value::Int(i64::try_from(k + 1).unwrap_or(1)) });
+    }
+    ops
+}
+
+/// The edit that takes row `k` (from 0) of `rows` away from a `chan.constant`: the rows after it move up
+/// one (names, values and bindings), the last one is cleared. One undo step.
+fn constant_remove_ops(
+    net: &Network,
+    path: &penumbra_core::NodePath,
+    node: &NodeDef,
+    k: usize,
+    rows: usize,
+) -> Vec<Op> {
+    use penumbra_ops::chan::{constant_row, constant_row_specs};
+    let mut ops = Vec::new();
+    let default_name = |j: usize| constant_row_specs(j)[0].default.as_str().unwrap_or("value").to_string();
+    let bind_of =
+        |param: &str| node.binds.iter().find(|(p, _)| p.param.as_str() == param && p.component.is_none());
+    for j in k..rows {
+        let (name_j, value_j) = constant_row(j);
+        let (Ok(name_p), Ok(value_p)) = (named(path, &name_j), named(path, &value_j)) else { continue };
+        if bind_of(&value_j).is_some() {
+            ops.push(Op::Unbind { param: value_p.clone(), component: None });
+        }
+        if j + 1 == rows {
+            ops.push(Op::Reset { param: name_p });
+            ops.push(Op::Reset { param: value_p });
+            continue;
+        }
+        // Row j takes row j + 1's name (also a default one, so the channel keeps its name),
+        // value and binding.
+        let (name_next, value_next) = constant_row(j + 1);
+        let name = node
+            .params
+            .get(name_next.as_str())
+            .and_then(Value::as_str)
+            .map_or_else(|| default_name(j + 1), str::to_string);
+        if name == default_name(j) {
+            ops.push(Op::Reset { param: name_p });
+        } else {
+            ops.push(Op::Set { param: name_p, value: Value::Text(name) });
+        }
+        match node.params.get(value_next.as_str()) {
+            Some(v) => ops.push(Op::Set { param: value_p.clone(), value: v.clone() }),
+            None => ops.push(Op::Reset { param: value_p.clone() }),
+        }
+        if let Some((_, b)) = bind_of(&value_next)
+            && let Some(from) = net.path_of(b.node)
+        {
+            ops.push(Op::Bind { param: value_p, component: None, from, channel: b.channel.clone() });
+        }
+    }
+    if let Ok(param) = named(path, "rows") {
+        ops.push(Op::Set {
+            param,
+            value: Value::Int(i64::try_from(rows.saturating_sub(1).max(1)).unwrap_or(1)),
+        });
+    }
+    ops
+}
+
+/// Lines of a multiline text param's box, unless the param asks for more ([`ParamSpec::lines`]).
+const MULTILINE_ROWS: usize = 6;
+
+fn multiline_rows(spec: &ParamSpec) -> usize {
+    if spec.lines == 0 { MULTILINE_ROWS } else { usize::from(spec.lines) }
+}
+
+/// The width of each of `n` fields sharing what is left of the line.
+fn share(ui: &Ui, n: usize) -> f32 {
+    let n = n.max(1) as f32;
+    let gaps = ui.spacing().item_spacing.x * (n - 1.0);
+    ((ui.available_width() - gaps) / n).floor().max(24.0)
+}
+
+/// A width for a ranged float's number field that holds its usual values: the widest of the
+/// range's ends with four decimals and the unit.
+fn number_width(ui: &Ui, spec: &ParamSpec) -> f32 {
+    let unit = spec.unit.symbol();
+    let unit = if unit.is_empty() { String::new() } else { format!(" {unit}") };
+    let (lo, hi) = spec.range.map_or((0.0, 1.0), |r| (r.min, r.max));
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let widest = [lo, hi]
+        .iter()
+        .map(|v| {
+            let text = format!("{v:.3}{unit}");
+            ui.fonts_mut(|f| f.layout_no_wrap(text, font.clone(), egui::Color32::WHITE).size().x)
+        })
+        .fold(0.0, f32::max);
+    (widest + 2.0 * ui.spacing().button_padding.x).clamp(48.0, 110.0)
+}
+
+/// The number field of a float param.
+fn float_drag<'a>(f: &'a mut f64, spec: &ParamSpec, live: bool) -> egui::DragValue<'a> {
+    let speed = spec.range.map_or(0.01, |r| (r.max - r.min) / 300.0);
+    let mut dv = egui::DragValue::new(f).speed(speed).max_decimals(4);
+    if live {
+        // A live value with a fixed number of decimals, so the field does not change width
+        // every frame.
+        dv = dv.fixed_decimals(3);
+    }
+    if let Some(r) = spec.range.filter(|r| r.hard) {
+        dv = dv.range(r.min..=r.max);
+    }
+    let unit = spec.unit.symbol();
+    if !unit.is_empty() {
+        dv = dv.suffix(format!(" {unit}"));
+    }
+    dv
+}
+
+/// A menu of `options` as wide as `ui` offers. A value not among them (a font that is not
+/// installed here) stays shown as the current one.
+fn choice_box(ui: &mut Ui, key: &str, current: &str, options: &[&str], new: &mut Option<Value>) {
+    egui::ComboBox::from_id_salt(key)
+        .selected_text(current)
+        .width(ui.available_width())
+        .height(400.0)
+        .show_ui(ui, |ui| {
+            for &choice in options {
+                if ui.selectable_label(choice == current, choice).clicked() && choice != current {
+                    *new = Some(Value::Text(choice.to_string()));
+                }
+            }
+        });
+}
+
+/// What `tex.text`'s `font` and `style` offer: the installed and bundled families, and the
+/// styles of the node's family. `None` (a plain text box) while the fonts are being scanned,
+/// for any other param, and for the style of a family that is not installed.
+fn font_options(node: &NodeDef, spec: &ParamSpec) -> Option<Vec<String>> {
+    let families = penumbra_ops::tex::font_families()?;
+    match spec.name.as_str() {
+        "font" => Some(families.iter().map(|(f, _)| f.clone()).collect()),
+        "style" => {
+            let family =
+                node.params.get("font").and_then(Value::as_str).unwrap_or(penumbra_ops::tex::DEFAULT_FONT);
+            families.iter().find(|(f, _)| f.eq_ignore_ascii_case(family)).map(|(_, styles)| styles.clone())
+        }
+        _ => None,
+    }
+}
+
+/// The connected displays for a projector's `display` (`param.<path>.display.menu`, entries
+/// `display.<i>`).
+fn display_menu(
+    ui: &mut Ui,
+    displays: &[penumbra_ops::out::DisplayInfo],
+    key: &str,
+    auto: &mut automation::Registry,
+    new: &mut Option<Value>,
+) {
+    let r = ui.menu_button("\u{2026}", |ui| {
+        if displays.is_empty() {
+            ui.label(RichText::new("no displays known (headless?)").color(theme::TEXT_WEAK));
+        }
+        for (i, d) in displays.iter().enumerate() {
+            let hz = d.refresh_hz.map_or(String::new(), |hz| format!(" @ {hz:.0} Hz"));
+            let mut text = RichText::new(format!("{}  {}x{}{hz}", d.id, d.size[0], d.size[1]));
+            if d.editor {
+                text = text.color(theme::TEXT_WEAK);
+            }
+            let mut r = ui.button(text);
+            if d.editor {
+                r = r.on_hover_text("shows the editor; a projector there stays closed");
+            }
+            auto.add(format!("display.{i}"), r.rect, d.id.clone());
+            if r.clicked() {
+                *new = Some(Value::Text(d.id.clone()));
+                ui.close();
+            }
+        }
+    });
+    auto.add(format!("param.{key}.menu"), r.response.rect, "displays");
+}
+
+/// The nodes a node reference param can name: those with an output of the node's own output
+/// kind, other than itself (`param.<path>.<name>.menu`, entries `noderef.<i>`).
+fn node_menu(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    key: &str,
+    auto: &mut automation::Registry,
+    new: &mut Option<Value>,
+) {
+    let kind = input.types.desc(&node.kind).and_then(|d| d.outputs.first()).map(|o| o.kind);
+    let level = level_of(input.net, node.id);
+    let r = ui.menu_button("\u{2026}", |ui| {
+        let mut paths: Vec<String> = input
+            .net
+            .nodes()
+            .filter(|n| n.id != node.id)
+            .filter(|n| {
+                let outs = input.types.desc(&n.kind).map(|d| d.outputs.as_slice()).unwrap_or(&[]);
+                outs.iter().any(|o| Some(o.kind) == kind)
+            })
+            .filter_map(|n| input.net.path_of(n.id).map(|p| level.write_ref(&p)))
+            .collect();
+        sort_refs(&mut paths);
+        if paths.is_empty() {
+            ui.label(RichText::new("no node to name").color(theme::TEXT_WEAK));
+        }
+        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+            for (i, p) in paths.iter().enumerate() {
+                let r = ui.button(p);
+                auto.add(format!("noderef.{i}"), r.rect, p.clone());
+                if r.clicked() {
+                    *new = Some(Value::Text(p.clone()));
+                    ui.close();
+                }
+            }
+        });
+    });
+    auto.add(format!("param.{key}.menu"), r.response.rect, "nodes");
+}
+
+/// Values nobody declares, each with a remove button (`param.<path>.<name>.remove`).
+fn stray_values(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    note: &str,
+    stray: &[(&penumbra_core::Name, &Value)],
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    if stray.is_empty() {
+        return;
+    }
+    let Some(path) = input.net.path_of(node.id) else { return };
+    ui.add_space(6.0);
+    ui.label(RichText::new(note).color(theme::WARNING).small());
+    for (name, value) in stray {
+        ui.horizontal(|ui| {
+            ui.label(format!("{name} = {value}"));
+            let r = icons::small_button(ui, Icon::Remove).on_hover_text("remove");
+            auto.add(format!("param.{path}.{name}.remove"), r.rect, "remove");
+            if r.clicked()
+                && let Ok(param) = ParamPath::new(path.clone(), (*name).clone())
+            {
+                actions.push(Action::edit(vec![Op::Reset { param }]));
+            }
+        });
+    }
+}
+
+/// `edited` with every bound component taken from `stored` instead: the widgets show the
+/// channel's values, but an edit of another component must not write them into the project.
+fn keep_bound(edited: &[f64], stored: &Value, bound: &dyn Fn(usize) -> bool) -> Vec<f64> {
+    let stored = stored.components().unwrap_or(&[]);
+    edited
+        .iter()
+        .enumerate()
+        .map(|(i, x)| if bound(i) { stored.get(i).copied().unwrap_or(*x) } else { *x })
+        .collect()
+}
+
+/// While a chan wire is dragged: outlines the param (or the vector component) under the
+/// pointer and binds it on release. Scalars take the whole row, vectors and colours the field of
+/// one component.
+#[allow(clippy::too_many_arguments)]
+fn drop_target(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    src: NodeId,
+    param: &ParamPath,
+    spec: &ParamSpec,
+    row: egui::Rect,
+    parts: &[egui::Rect],
+    actions: &mut Vec<Action>,
+) {
+    let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) else { return };
+    let target = match (&spec.kind, spec.bind_components()) {
+        (_, 0) => None,
+        (_, 1) => row.contains(pointer).then_some((row, None)),
+        // The colour's first part is the picker; its numbers follow.
+        (ParamKind::Color, _) => parts
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, r)| r.contains(pointer))
+            .and_then(|(i, r)| Some((*r, Some(u8::try_from(i - 1).ok()?)))),
+        _ => parts
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.contains(pointer))
+            .and_then(|(i, r)| Some((*r, Some(u8::try_from(i).ok()?)))),
+    };
+    let Some((rect, component)) = target else { return };
+    ui.painter().rect_stroke(
+        rect.expand(2.0),
+        egui::CornerRadius::same(3),
+        egui::Stroke::new(2.0, theme::kind_color(DataKind::Chan)),
+        egui::StrokeKind::Outside,
+    );
+    if ui.input(|i| i.pointer.primary_released())
+        && input.can_edit
+        && let Some(from) = input.net.path_of(src)
+    {
+        actions.push(Action::edit(vec![Op::Bind { param: param.clone(), component, from, channel: None }]));
+    }
+}
+
+/// The link button of a bindable param (`param.<path>.bind`): chan nodes to bind to (with their
+/// channels where known; a vector or colour first asks for the component), and unbind.
+#[allow(clippy::too_many_arguments)]
+fn bind_menu(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    param: &ParamPath,
+    spec: &ParamSpec,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    let key = param.to_string();
+    // Named as the project file names them, from the node's level.
+    let level = level_of(input.net, node.id);
+    let mut sources: Vec<(NodeId, String)> = input
+        .net
+        .nodes()
+        .filter(|n| n.id != node.id)
+        .filter(|n| {
+            input.types.desc(&n.kind).is_some_and(|d| d.outputs.iter().any(|o| o.kind == DataKind::Chan))
+        })
+        .filter_map(|n| Some((n.id, level.write_ref(&input.net.path_of(n.id)?))))
+        .collect();
+    sources.sort_by_key(|(_, label)| ref_order(label));
+    let id = ui.make_persistent_id(("bind", &key));
+    let r = icons::small_button(ui, Icon::Bind).on_hover_text("bind to a channel");
+    auto.add(format!("param.{key}.bind"), r.rect, "bind");
+    egui::Popup::menu(&r).id(id).show(|ui| {
+        let n = spec.bind_components();
+        if n == 1 {
+            source_list(ui, input, &sources, param, None, auto, actions);
+        } else {
+            for c in 0..n {
+                let label = match (&spec.kind, c) {
+                    (ParamKind::Color, 0) => "r".to_string(),
+                    (ParamKind::Color, 1) => "g".to_string(),
+                    (ParamKind::Color, 2) => "b".to_string(),
+                    (ParamKind::Color, _) => "a".to_string(),
+                    (_, 0) => "x".to_string(),
+                    (_, 1) => "y".to_string(),
+                    (_, 2) => "z".to_string(),
+                    _ => "w".to_string(),
+                };
+                let r = ui.menu_button(format!("{c} ({label})"), |ui| {
+                    source_list(ui, input, &sources, param, Some(c), auto, actions);
+                });
+                auto.add(format!("bind.component.{c}"), r.response.rect, label);
+            }
+        }
+        ui.separator();
+        let listening = input.net.nodes().any(|n| n.kind == penumbra_ops::osc::OSC_IN);
+        let r = ui
+            .add_enabled(listening && input.can_edit, egui::Button::new("learn from OSC"))
+            .on_hover_text(if listening {
+                "Bind to the next OSC address that arrives with a number (a vector: one number per component)"
+            } else {
+                "Needs a chan.oscin node: Tab > chan > oscin"
+            })
+            .on_disabled_hover_text(if listening {
+                "Not while Claude is editing"
+            } else {
+                "Needs a chan.oscin node: Tab > chan > oscin"
+            });
+        auto.add("bind.learn", r.rect, "learn from OSC");
+        if r.clicked() {
+            actions.push(Action::LearnOsc(param.to_string()));
+            ui.close();
+        }
+        if node.binds.keys().any(|k| k.param.as_str() == spec.name) {
+            ui.separator();
+            for part in node.binds.keys().filter(|k| k.param.as_str() == spec.name) {
+                let text = match part.component {
+                    Some(c) => format!("unbind {c}"),
+                    None => "unbind".to_string(),
+                };
+                let r = ui.button(text);
+                auto.add(format!("bind.unbind.{part}"), r.rect, "unbind");
+                if r.clicked() {
+                    actions.push(Action::edit(vec![Op::Unbind {
+                        param: param.clone(),
+                        component: part.component,
+                    }]));
+                    ui.close();
+                }
+            }
+        }
+    });
+}
+
+/// Chan nodes to bind to, each with its channels when the view has its output (automation ids
+/// `bind.<i>` for a node's first channel, `bind.<i>.<channel>` for a named one).
+fn source_list(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    sources: &[(NodeId, String)],
+    param: &ParamPath,
+    component: Option<u8>,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    if sources.is_empty() {
+        ui.label(RichText::new("no chan nodes in the network").color(theme::TEXT_WEAK));
+    }
+    let mut chosen: Option<(NodeId, Option<Name>)> = None;
+    for (i, (id, path)) in sources.iter().enumerate() {
+        let names: Vec<Name> = input
+            .outputs
+            .get(id)
+            .and_then(|o| o.iter().find(|d| d.kind() == DataKind::Chan))
+            .and_then(|d| d.get::<Chans>())
+            .map(|c| c.names().cloned().collect())
+            .unwrap_or_default();
+        if names.len() <= 1 {
+            let label = match names.first() {
+                Some(n) if n.as_str() != "value" => format!("{path}:{n}"),
+                _ => path.clone(),
+            };
+            let r = ui.button(label);
+            auto.add(format!("bind.{i}"), r.rect, path.clone());
+            if r.clicked() {
+                chosen = Some((*id, None));
+            }
+        } else {
+            let r = ui.menu_button(path, |ui| {
+                for n in &names {
+                    let r = ui.button(n.as_str());
+                    auto.add(format!("bind.{i}.{n}"), r.rect, n.to_string());
+                    if r.clicked() {
+                        chosen = Some((*id, Some(n.clone())));
+                    }
+                }
+            });
+            auto.add(format!("bind.{i}"), r.response.rect, path.clone());
+        }
+    }
+    if let Some((id, channel)) = chosen
+        && let Some(from) = input.net.path_of(id)
+    {
+        actions.push(Action::edit(vec![Op::Bind { param: param.clone(), component, from, channel }]));
+        ui.close();
+    }
+}
+
+/// The level a node sits on, from which its references are written.
+fn level_of(net: &Network, id: NodeId) -> penumbra_core::NodePath {
+    net.path_of(id).and_then(|p| p.parent()).unwrap_or_else(penumbra_core::NodePath::root)
+}
+
+/// Sort key of a reference in a menu: nodes on the same level first, then below, then up, then
+/// absolute ones.
+fn ref_order(label: &str) -> (u8, String) {
+    let group = if label.starts_with('/') {
+        3
+    } else if label.starts_with("..") {
+        2
+    } else if label.contains('/') {
+        1
+    } else {
+        0
+    };
+    (group, label.to_lowercase())
+}
+
+fn sort_refs(refs: &mut [String]) {
+    refs.sort_by_key(|r| ref_order(r));
+}
+
+fn vector(c: &[f64]) -> Option<Value> {
+    Some(match *c {
+        [x, y] => Value::Vec2([x, y]),
+        [x, y, z] => Value::Vec3([x, y, z]),
+        [x, y, z, w] => Value::Vec4([x, y, z, w]),
+        _ => return None,
+    })
+}
+
+/// Files under `dir` (two levels deep, at most 500) with one of `extensions`, as relative paths
+/// with forward slashes.
+fn list_files(dir: &Path, extensions: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![(dir.to_path_buf(), 0)];
+    while let Some((d, depth)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries.flatten() {
+            if out.len() >= 500 {
+                break;
+            }
+            let p = e.path();
+            if p.is_dir() {
+                if depth < 2 {
+                    stack.push((p, depth + 1));
+                }
+                continue;
+            }
+            let ext = p.extension().and_then(|x| x.to_str()).map(str::to_lowercase).unwrap_or_default();
+            if (!extensions.is_empty() && !extensions.contains(&ext)) || ext == "tmp" {
+                continue;
+            }
+            if let Ok(rel) = p.strip_prefix(dir) {
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Params of a node as a map, for `ui.state`.
+pub fn values(net: &Network, types: &NodeTypes, id: NodeId) -> BTreeMap<String, Value> {
+    let mut out = BTreeMap::new();
+    let Some(node) = net.node(id) else { return out };
+    if let Some(desc) = types.desc(&node.kind) {
+        for spec in &desc.params {
+            out.insert(
+                spec.name.clone(),
+                node.params.get(spec.name.as_str()).unwrap_or(&spec.default).clone(),
+            );
+        }
+    }
+    for (name, value) in &node.params {
+        out.entry(name.to_string()).or_insert_with(|| value.clone());
+    }
+    out
+}
+
+/// Whether an input of the node, connected, replaces this param: a render's camera input
+/// replaces its own camera params.
+fn replaced(node: &NodeDef, spec: &ParamSpec) -> bool {
+    node.kind == penumbra_ops::tex::render::RENDER
+        && penumbra_ops::view::CAMERA_PARAMS.contains(&spec.name.as_str())
+        && node.inputs.get(penumbra_ops::tex::render::CAMERA_INPUT).is_some_and(Option::is_some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use penumbra_core::NodePath;
+
+    fn set(p: &str, v: impl Into<Value>) -> Op {
+        Op::Set { param: ParamPath::parse(p).unwrap(), value: v.into() }
+    }
+
+    #[test]
+    fn constant_rows_move_up_when_one_goes() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let create = |p: &str, kind: &str| Op::Create {
+            path: NodePath::parse(p).unwrap(),
+            kind: kind.into(),
+            params: Default::default(),
+        };
+        let net = Network::new()
+            .apply(
+                &types,
+                &[
+                    create("/lfo", "chan.lfo"),
+                    create("/c", "chan.constant"),
+                    set("/c.rows", 3_i64),
+                    set("/c.name0", "a"),
+                    set("/c.value0", 0.1),
+                    set("/c.value1", 0.2),
+                    set("/c.name2", "z"),
+                    set("/c.value2", 0.3),
+                    Op::Bind {
+                        param: ParamPath::parse("/c.value2").unwrap(),
+                        component: None,
+                        from: "/lfo".parse().unwrap(),
+                        channel: None,
+                    },
+                ],
+            )
+            .unwrap()
+            .network;
+        let path: NodePath = "/c".parse().unwrap();
+        let id = net.resolve(&path).unwrap();
+        let ops = constant_remove_ops(&net, &path, net.node(id).unwrap(), 0, 3);
+        let net = net.apply(&types, &ops).unwrap().network;
+        let c = net.node(id).unwrap();
+        let get = |n: &str| c.params.get(n).cloned();
+        // Row 1 (default name `chan1`) is now row 0 and keeps its channel name.
+        assert_eq!(get("name0"), Some(Value::Text("chan1".into())));
+        assert_eq!(get("value0"), Some(Value::Float(0.2)));
+        assert_eq!(get("name1"), Some(Value::Text("z".into())));
+        assert_eq!(get("value1"), Some(Value::Float(0.3)));
+        assert_eq!((get("name2"), get("value2")), (None, None));
+        assert_eq!(get("rows"), Some(Value::Int(2)));
+        let bound: Vec<String> = c.binds.keys().map(ToString::to_string).collect();
+        assert_eq!(bound, ["value1"]);
+        // Adding a row picks a name no row has.
+        let ops = constant_add_ops(&path, c, 2);
+        let net = net.apply(&types, &ops).unwrap().network;
+        let c = net.node(id).unwrap();
+        assert_eq!(c.params.get("rows"), Some(&Value::Int(3)));
+        assert_eq!(c.params.get("name2"), None, "chan2 is free");
+    }
+}

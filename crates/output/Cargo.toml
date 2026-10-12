@@ -1,0 +1,22 @@
+[package]
+name = "penumbra-output"
+description = "Projector outputs: fullscreen windows on their displays, presented from own threads on the shared device."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+penumbra-core.workspace = true
+penumbra-engine.workspace = true
+penumbra-gpu.workspace = true
+penumbra-graph.workspace = true
+penumbra-ops.workspace = true
+penumbra-system.workspace = true
+log.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+
+[lints]
+workspace = true

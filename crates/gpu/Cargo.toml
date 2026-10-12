@@ -1,0 +1,23 @@
+[package]
+name = "penumbra-gpu"
+description = "The wgpu device, textures, fullscreen shader passes, readback and image files. No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+penumbra-core.workspace = true
+penumbra-mesh.workspace = true
+wgpu.workspace = true
+naga.workspace = true
+half.workspace = true
+bytemuck.workspace = true
+photocraft-codecs.workspace = true
+photocraft-psd.workspace = true
+log.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

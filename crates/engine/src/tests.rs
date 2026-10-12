@@ -1,0 +1,801 @@
+//! End-to-end tests of the engine through its command registry, on a project in a temporary
+//! directory with the built-in node types.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use penumbra_graph::Op;
+use penumbra_project::{Actor, Content, Session};
+use serde_json::{Value as Json, json};
+
+use crate::{Engine, Registry};
+
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("penumbra-engine-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        Self(dir)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+struct Fixture {
+    engine: Arc<Engine>,
+    registry: Registry,
+    _dir: TempDir,
+}
+
+impl Fixture {
+    fn new(name: &str) -> Self {
+        let dir = TempDir::new(name);
+        let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+        let session = Arc::new(Session::open(&dir.0, types, &Content::default()).unwrap());
+        let engine = Engine::start(session).unwrap();
+        let registry = crate::engine_registry(&engine);
+        Self { engine, registry, _dir: dir }
+    }
+
+    fn call(&self, method: &str, params: Json) -> Json {
+        let r = self.registry.dispatch(method, &params);
+        assert_eq!(r["ok"], true, "{method} {params}: {r}");
+        r["result"].clone()
+    }
+
+    fn fail(&self, method: &str, params: Json) -> String {
+        let r = self.registry.dispatch(method, &params);
+        assert_eq!(r["ok"], false, "{method} {params} should fail: {r}");
+        r["error"].as_str().unwrap().to_string()
+    }
+
+    fn file(&self) -> String {
+        std::fs::read_to_string(self.engine.session().file()).unwrap_or_default()
+    }
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        self.engine.shutdown();
+    }
+}
+
+/// Polls `check` for up to 5 s.
+fn eventually(what: &str, mut check: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !check() {
+        assert!(Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn build_a_network_and_watch_it_cook() {
+    let f = Fixture::new("build");
+    f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo", "params": {"rate": 2}}));
+    f.call("node.create", json!({"path": "/c", "kind": "chan.constant"}));
+    f.call("node.create", json!({"path": "/m", "kind": "chan.math"}));
+    f.call("node.connect", json!({"from": "/lfo", "to": "/m", "input": "a"}));
+    f.call("node.connect", json!({"from": "/c", "to": "/m", "input": 1}));
+    f.call("node.set", json!({"path": "/c", "params": {"value0": 0.5}}));
+    f.call("node.set", json!({"path": "/m", "params": {"op": "multiply"}}));
+
+    let info = f.call("node.info", json!({"path": "/m"}));
+    assert_eq!(info["inputs"][0]["from"], "/lfo");
+    assert_eq!(info["inputs"][1]["from"], "/c");
+    assert_eq!(info["params"][0], json!({"name": "op", "value": "multiply", "default": "add"}));
+    // A frame in between gives /m a runtime (and so a status), but nothing cooks it unasked.
+    assert!(info["status"].is_null() || info["status"]["cooks"] == 0, "nothing asked for /m yet");
+    let lfo = f.call("node.info", json!({"path": "/lfo"}));
+    assert_eq!(lfo["outputs"][0]["to"][0], json!({"node": "/m", "input": "a"}));
+
+    f.call("node.watch", json!({"path": "/m"}));
+    eventually("/m to cook", || {
+        let s = f.call("node.info", json!({"path": "/m"}))["status"].clone();
+        s["version"].as_u64().unwrap_or(0) > 0 && s["cooks"].as_u64().unwrap_or(0) > 2
+    });
+    let s = f.call("cook.status", json!({}));
+    assert_eq!(s["watched"], json!(["/m"]));
+    assert!(s["frame"].as_i64().unwrap() > 0);
+
+    let list = f.call("node.list", json!({}));
+    assert_eq!(list["nodes"].as_array().unwrap().len(), 3);
+    assert_eq!(list["nodes"][0], json!({"path": "/c", "kind": "chan.constant"}));
+    let kinds = f.call("node.kinds", json!({"kind": "chan.lfo"}));
+    assert_eq!(kinds["kinds"][0]["params"][0]["name"], "rate");
+}
+
+#[test]
+fn errors_say_what_is_wrong() {
+    let f = Fixture::new("errors");
+    assert!(f.fail("node.create", json!({"path": "/x", "kind": "chan.nope"})).contains("chan.lfo"));
+    assert!(f.fail("node.create", json!({"path": "x", "kind": "chan.lfo"})).contains("must start with"));
+    assert!(f.fail("node.create", json!({"path": "/x", "kind": "chan.lfo", "colour": 1})).contains("colour"));
+    f.call("node.create", json!({"path": "/x", "kind": "chan.lfo"}));
+    assert!(f.fail("node.set", json!({"path": "/x", "params": {"rate": "fast"}})).contains("rate"));
+    assert!(f.fail("node.connect", json!({"from": "/x", "to": "/x", "input": "q"})).contains("no input"));
+    assert!(f.fail("node.info", json!({"path": "/y"})).contains("no node at /y"));
+    assert!(f.fail("node.batch", json!({"ops": []})).contains("empty"));
+    assert!(f.fail("nope", json!({})).contains("commands"));
+    let all = f.call("commands", json!({}));
+    assert!(all["commands"].as_array().unwrap().iter().any(|c| c["id"] == "node.batch"));
+}
+
+#[test]
+fn a_claim_groups_edits_and_blocks_the_user() {
+    let f = Fixture::new("claim");
+    f.call("edit.begin", json!({"label": "demo"}));
+    let s = f.engine.session();
+    let op =
+        Op::Create { path: "/u".parse().unwrap(), kind: "chan.constant".into(), params: Default::default() };
+    assert!(s.edit(Actor::User, &[op], None, "", Instant::now()).is_err());
+    f.call("node.create", json!({"path": "/a", "kind": "chan.constant"}));
+    let r = f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/b", "kind": "chan.constant"},
+            {"op": "set", "param": "/b.value0", "value": 0.25},
+        ]}),
+    );
+    assert_eq!(r["history"], "merged");
+    assert_eq!(r["created"], json!(["/b"]));
+    let h = f.call("history.list", json!({}));
+    assert_eq!(h["total"], 1);
+    assert_eq!(f.call("edit.end", json!({}))["was_claimed"], true);
+    assert_eq!(f.call("edit.status", json!({}))["mode"], "user");
+
+    f.call("history.undo", json!({}));
+    assert_eq!(f.call("node.list", json!({}))["nodes"], json!([]));
+    f.call("history.redo", json!({}));
+    assert_eq!(f.call("node.list", json!({}))["nodes"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn autosave_and_external_edits_run_on_the_project_thread() {
+    let f = Fixture::new("files");
+    f.call("node.create", json!({"path": "/a", "kind": "chan.constant", "params": {"value0": 0.75}}));
+    eventually("autosave", || {
+        f.file().contains(r#""/a": (kind: "chan.constant", params: {"value0": 0.75}),"#)
+    });
+    let edited = f.file().replace("0.75", "0.5");
+    std::fs::write(f.engine.session().file(), edited).unwrap();
+    eventually("the merge", || {
+        f.call("node.info", json!({"path": "/a"}))["params"][0]["value"] == json!(0.5)
+    });
+    let h = f.call("history.list", json!({}));
+    assert_eq!(h["entries"][0]["source"], "project_file");
+    assert_eq!(f.call("project.info", json!({}))["file_error"], Json::Null);
+}
+
+#[test]
+fn shutdown_writes_what_autosave_has_not_yet() {
+    let f = Fixture::new("shutdown");
+    f.call("node.create", json!({"path": "/late", "kind": "chan.constant"}));
+    f.engine.shutdown();
+    assert!(f.file().contains("/late"), "{}", f.file());
+    // The cook thread is gone; commands that need it fail instead of hanging.
+    assert!(f.fail("cook.status", json!({})).contains("stopped"));
+}
+
+#[test]
+fn thumbnail_switch() {
+    let f = Fixture::new("thumbs");
+    assert_eq!(f.call("cook.status", json!({}))["thumbnails"]["mode"], "always");
+    f.call("cook.thumbnails", json!({"mode": "when_free"}));
+    assert_eq!(f.call("cook.status", json!({}))["thumbnails"]["mode"], "when_free");
+    assert!(f.fail("cook.thumbnails", json!({"enabled": false})).contains("mode"));
+}
+
+#[test]
+fn snapshot_of_a_texture_node() {
+    let f = Fixture::new("snapshot");
+    assert!(f.fail("node.snapshot", json!({"path": "/n"})).contains("no GPU"));
+    assert_eq!(f.call("gpu.info", json!({}))["attached"], false);
+    let gpu = match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        Ok(g) => g,
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(_) => return,
+    };
+    f.engine.attach_gpu(gpu).unwrap();
+    assert!(
+        f.engine
+            .attach_gpu(penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software).unwrap())
+            .is_err()
+    );
+    f.call("node.create", json!({"path": "/n", "kind": "tex.noise", "params": {"width": 32, "height": 16}}));
+    f.call("node.create", json!({"path": "/l", "kind": "chan.lfo"}));
+    let out = f.engine.session().dir().join("shots").join("n.png");
+    let r = f.call("node.snapshot", json!({"path": "/n", "file": out}));
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(32), Some(16)));
+    let png = std::fs::read(&out).unwrap();
+    assert_eq!(png.get(1..4), Some(&b"PNG"[..]));
+    let mean = r["stats"]["mean"][0].as_f64().unwrap();
+    assert!(mean > 0.1 && mean < 0.9, "{r}");
+    assert!(f.fail("node.snapshot", json!({"path": "/l"})).contains("not a texture"));
+    assert!(f.fail("node.snapshot", json!({"path": "/n", "output": "nope"})).contains("nope"));
+
+    // A shader node's params from its header show up in node.info.
+    std::fs::write(
+        f.engine.session().dir().join("s.wgsl"),
+        "// @param gain float = 0.5\n@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(params.gain); }",
+    )
+    .unwrap();
+    f.call(
+        "node.create",
+        json!({"path": "/s", "kind": "tex.shader", "params": {"file": "s.wgsl", "resolution": "custom", "width": 4, "height": 4, "typo": 1}}),
+    );
+    let r = f.call("node.snapshot", json!({"path": "/s"}));
+    assert!((r["stats"]["mean"][0].as_f64().unwrap() - 0.5).abs() < 1e-3, "{r}");
+    assert!(r["warning"].as_str().unwrap().contains("typo"));
+    let info = f.call("node.info", json!({"path": "/s"}));
+    assert_eq!(info["instance_params"][0]["name"], "gain");
+    assert_eq!(info["instance_params"][1], json!({"name": "typo", "value": 1, "declared": false}));
+
+    // A mapper: the right half of a white input, its top left corner pulled a quarter in.
+    f.call(
+        "node.create",
+        json!({"path": "/c", "kind": "tex.constant", "params": {"color": [1, 1, 1, 1], "width": 64, "height": 36}}),
+    );
+    f.call(
+        "node.create",
+        json!({"path": "/m", "kind": "tex.mapper", "params": {"region": [0.5, 0, 0.5, 1], "fit": "stretch", "corner_tl": [0.25, 0.25], "width": 192, "height": 108}}),
+    );
+    assert!(f.fail("node.snapshot", json!({"path": "/m"})).contains("connect an input"));
+    f.call("node.connect", json!({"from": "/c", "to": "/m", "input": 0}));
+    let r = f.call("node.snapshot", json!({"path": "/m"}));
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(192), Some(108)), "{r}");
+    // The quadrilateral (0.25, 0.25), (1, 0), (1, 1), (0, 1) covers 3/4 of the picture.
+    let mean = r["stats"]["mean"][0].as_f64().unwrap();
+    assert!((mean - 0.75).abs() < 0.02, "{r}");
+    // Crossed corners are an error on the node, which keeps its last good picture.
+    f.call("node.set", json!({"path": "/m", "params": {"corner_tl": [2, 2]}}));
+    let r = f.call("node.snapshot", json!({"path": "/m"}));
+    assert!(r["error"].as_str().unwrap_or_default().contains("corners"), "{r}");
+    assert!((r["stats"]["mean"][0].as_f64().unwrap() - 0.75).abs() < 0.02, "{r}");
+    assert_eq!(f.call("gpu.info", json!({}))["errors"], 0);
+}
+
+#[test]
+fn bind_a_param_and_read_channels() {
+    let f = Fixture::new("bind");
+    f.call(
+        "node.create",
+        json!({"path": "/c", "kind": "chan.constant", "params": {"value0": 0.5, "name0": "x"}}),
+    );
+    f.call("node.create", json!({"path": "/m", "kind": "chan.math", "params": {"op": "multiply", "b": 4}}));
+    f.call("node.create", json!({"path": "/n", "kind": "tex.noise"}));
+    f.call("node.bind", json!({"param": "/m.b", "from": "/c", "channel": "x"}));
+    f.call("node.bind", json!({"param": "/n.translate.2", "from": "/c"}));
+    f.call("node.connect", json!({"from": "/c", "to": "/m"}));
+    let read = f.call("chan.read", json!({"path": "/m", "samples": true}));
+    assert_eq!(read["channels"], json!([{"name": "x", "value": 0.25, "samples": [0.25]}]));
+    assert_eq!(read["rate"], 60.0);
+    let info = f.call("node.info", json!({"path": "/m"}));
+    assert_eq!(info["binds"], json!([{"param": "b", "from": "/c:x"}]));
+    assert_eq!(info["status"]["bound"], json!({"b": 0.5}));
+    eventually("autosave", || f.file().contains(r#"binds: {"translate.2": "c"}"#));
+    assert!(f.fail("node.bind", json!({"param": "/n.translate", "from": "/c"})).contains("one at a time"));
+    assert!(f.fail("node.bind", json!({"param": "/c.value0", "from": "/m"})).contains("loop"));
+    assert!(f.fail("chan.read", json!({"path": "/n"})).contains("no Chan output"));
+    f.call("node.unbind", json!({"param": "/m.b"}));
+    assert_eq!(f.call("chan.read", json!({"path": "/m"}))["channels"][0]["value"], 2.0);
+}
+
+#[test]
+fn the_view_cooks_viewers_and_thumbnails_and_publishes_them() {
+    let f = Fixture::new("view");
+    f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo"}));
+    f.call("node.create", json!({"path": "/c", "kind": "chan.constant", "params": {"value0": 0.25}}));
+    let net = f.engine.session().doc().snapshot();
+    let lfo = net.resolve(&"/lfo".parse().unwrap()).unwrap();
+    let c = net.resolve(&"/c".parse().unwrap()).unwrap();
+    f.engine.set_view(crate::ViewRequest {
+        viewers: vec![lfo],
+        thumbnails: vec![c],
+        passive: Vec::new(),
+        detail: Some(lfo),
+        resolution: false,
+    });
+    eventually("both outputs in the view", || {
+        let v = f.engine.view();
+        v.outputs.contains_key(&lfo) && v.outputs.contains_key(&c) && v.status.len() == 2
+    });
+    let v = f.engine.view();
+    assert_eq!(v.outputs[&c][0].get::<penumbra_core::Chans>().and_then(|c| c.value(None)), Some(0.25));
+    assert!(v.thumbnails == penumbra_graph::ThumbnailMode::Always && v.playing);
+    // The LFO is a viewer, so it cooks every frame.
+    let before = v.status[&lfo].stats.cooks;
+    eventually("the viewer to keep cooking", || f.engine.view().status[&lfo].stats.cooks > before + 3);
+
+    f.call("cook.play", json!({"playing": false}));
+    eventually("the clock to stop", || !f.engine.view().playing);
+    let frame = f.engine.view().time.unwrap().frame;
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(f.engine.view().time.unwrap().frame, frame);
+    f.call("cook.play", json!({}));
+    eventually("the clock to run", || f.engine.view().playing);
+
+    // Pictures nobody cooks are shown only while current: the constant stays, a free-running
+    // LFO that only the viewer cooked stops being shown once the viewer moves on.
+    f.call("node.create", json!({"path": "/lfo2", "kind": "chan.lfo"}));
+    let net = f.engine.session().doc().snapshot();
+    let lfo2 = net.resolve(&"/lfo2".parse().unwrap()).unwrap();
+    f.call("cook.thumbnails", json!({"mode": "when_free"}));
+    f.engine.set_view(crate::ViewRequest {
+        viewers: vec![lfo, lfo2],
+        thumbnails: vec![c, lfo, lfo2],
+        passive: Vec::new(),
+        detail: None,
+        resolution: false,
+    });
+    eventually("all current", || f.engine.view().pictures.len() == 3);
+    f.engine.set_view(crate::ViewRequest {
+        viewers: vec![lfo],
+        thumbnails: vec![c, lfo, lfo2],
+        passive: Vec::new(),
+        detail: None,
+        resolution: false,
+    });
+    eventually("the uncooked LFO hidden", || {
+        let v = f.engine.view();
+        v.pictures == [c, lfo].into() && !v.outputs.contains_key(&lfo2)
+    });
+    f.call("cook.thumbnails", json!({"mode": "never"}));
+    eventually("no pictures", || {
+        let v = f.engine.view();
+        v.pictures.is_empty() && v.outputs.contains_key(&lfo)
+    });
+}
+
+#[test]
+fn resolution_analysis_and_optimisation_through_commands() {
+    let f = Fixture::new("res");
+    let gpu = match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        Ok(g) => g,
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(_) => return,
+    };
+    f.engine.attach_gpu(gpu).unwrap();
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/c", "kind": "tex.constant", "params": {"width": 480, "height": 270}},
+            {"op": "create", "path": "/m", "kind": "tex.mapper"},
+            {"op": "create", "path": "/p", "kind": "out.projector"},
+            {"op": "connect", "from": "/c", "to": "/m"},
+            {"op": "connect", "from": "/m", "to": "/p"},
+        ]}),
+    );
+    let width = || {
+        let info = f.call("node.info", json!({"path": "/c"}));
+        info["params"].as_array().unwrap().iter().find(|p| p["name"] == "width").unwrap()["value"].clone()
+    };
+    let node =
+        |r: &Json, path: &str| r["nodes"].as_array().unwrap().iter().find(|n| n["path"] == path).cloned();
+    let mut report = Json::Null;
+    eventually("the chain to cook", || {
+        report = f.call("res.analyze", json!({}));
+        node(&report, "/c").is_some_and(|n| !n["size"].is_null())
+    });
+    let c = node(&report, "/c").unwrap();
+    assert_eq!((c["verdict"].as_str(), &c["suggested"]), (Some("coarse"), &json!([1920, 1080])), "{report}");
+    assert_eq!(node(&report, "/m").unwrap()["verdict"], "ok");
+    assert_eq!(report["projectors"][0]["assumed"], true);
+
+    let dry = f.call("res.optimize", json!({"dry_run": true}));
+    assert_eq!(dry["changes"], json!([{"path": "/c", "from": [480, 270], "to": [1920, 1080]}]), "{dry}");
+    assert_eq!(width(), 480);
+    let done = f.call("res.optimize", json!({}));
+    assert_eq!(done["history"], "new", "{done}");
+    assert_eq!(width(), 1920);
+    f.call("history.undo", json!({}));
+    assert_eq!(width(), 480);
+    assert!(f.fail("res.optimize", json!({"paths": ["/nope"]})).contains("/nope"));
+
+    assert_eq!(f.call("res.overlay", json!({}))["mappers"], 1);
+    eventually("the overlay in the view", || f.engine.view().overlay && f.engine.view().resolution.is_some());
+    f.call("res.overlay", json!({"on": false}));
+    eventually("the overlay gone", || !f.engine.view().overlay && f.engine.view().resolution.is_none());
+}
+
+#[test]
+fn components_group_save_load_and_dissolve() {
+    let f = Fixture::new("comps");
+    let lib = TempDir::new("comps-lib");
+    f.engine.set_library(Some(lib.0.clone()));
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/lfo", "kind": "chan.lfo"},
+            {"op": "create", "path": "/gain", "kind": "chan.math"},
+            {"op": "create", "path": "/k", "kind": "chan.constant", "params": {"value0": 2.0}},
+            {"op": "create", "path": "/sum", "kind": "chan.math"},
+            {"op": "connect", "from": "/lfo", "to": "/gain"},
+            {"op": "connect", "from": "/gain", "to": "/sum"},
+        ]}),
+    );
+    let r = f.call("comp.collapse", json!({"paths": ["/gain", "/k"], "name": "fx"}));
+    assert_eq!(r["path"], "/fx");
+    assert_eq!(r["moved"]["/gain"], "/fx/gain");
+    // A wire straight into the middle is refused; through the component's input it works.
+    let e = f.fail("node.connect", json!({"from": "/lfo", "to": "/fx/gain", "input": "b"}));
+    assert!(e.contains("different components"), "{e}");
+    let info = f.call("node.info", json!({"path": "/fx"}));
+    assert_eq!(info["component"]["inputs"][0]["name"], "lfo_in", "{info}");
+    assert_eq!(info["component"]["inputs"][0]["from"], "/lfo");
+    assert_eq!(info["component"]["outputs"][0]["name"], "gain_out");
+    f.call("node.disconnect", json!({"to": "/fx", "input": "lfo_in"}));
+    f.call("node.connect", json!({"from": "/lfo", "to": "/fx", "input": 0}));
+    f.call("node.connect", json!({"from": "/fx", "output": "gain_out", "to": "/sum", "input": "b"}));
+    // Exposed params act on the inner ones.
+    f.call("node.set", json!({"path": "/fx", "params": {"expose": "level = k.value0"}}));
+    f.call("node.set", json!({"path": "/fx", "params": {"level": 5.0}}));
+    let k = f.call("node.info", json!({"path": "/fx/k"}));
+    assert_eq!(k["params"][0]["value"], 5.0, "{k}");
+    let info = f.call("node.info", json!({"path": "/fx"}));
+    assert_eq!(info["component"]["exposed"][0]["value"], 5.0, "{info}");
+    let v = f.call("chan.read", json!({"path": "/sum"}));
+    assert!(v.to_string().contains("value"), "{v}");
+
+    // Into the library and back, twice.
+    let saved = f.call("comp.save", json!({"path": "/fx"}));
+    assert_eq!(saved["dropped"].as_array().map(Vec::len), Some(1), "{saved}");
+    assert!(lib.0.join("fx.comp.ron").is_file());
+    let listed = f.call("comp.library", json!({}));
+    assert_eq!(listed["components"][0]["name"], "fx", "{listed}");
+    let loaded = f.call("comp.load", json!({"file": "fx"}));
+    assert_eq!(loaded["path"], "/fx1");
+    let k1 = f.call("node.info", json!({"path": "/fx1/k"}));
+    assert_eq!(k1["params"][0]["value"], 5.0);
+    assert!(f.fail("comp.load", json!({"file": "nope"})).contains("no component file"));
+    // Out of the library again: moved aside, no longer offered.
+    let removed = f.call("comp.remove", json!({"name": "fx"}));
+    assert!(lib.0.join("removed").join("fx.comp.ron").is_file(), "{removed}");
+    assert!(!lib.0.join("fx.comp.ron").exists());
+    assert_eq!(f.call("comp.library", json!({}))["components"], json!([]));
+    assert!(f.fail("comp.remove", json!({"name": "fx"})).contains("no component file"));
+
+    // Dissolving joins the wires again.
+    let r = f.call("comp.expand", json!({"path": "/fx"}));
+    assert_eq!(r["moved"]["/fx/gain"], "/gain", "{r}");
+    let sum = f.call("node.info", json!({"path": "/sum"}));
+    assert_eq!(sum["inputs"][1]["from"], "/gain", "{sum}");
+    let gain = f.call("node.info", json!({"path": "/gain"}));
+    assert_eq!(gain["inputs"][0]["from"], "/lfo", "{gain}");
+    // One undo brings the component back.
+    f.call("history.undo", json!({}));
+    f.call("node.info", json!({"path": "/fx/gain"}));
+}
+
+#[test]
+fn geometry_through_commands() {
+    let f = Fixture::new("geo");
+    let gpu = match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        Ok(g) => g,
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(_) => return,
+    };
+    f.engine.attach_gpu(gpu).unwrap();
+    f.call("node.create", json!({"path": "/box", "kind": "geo.primitive", "params": {"size": [2, 1, 1]}}));
+    f.call("node.create", json!({"path": "/ball", "kind": "geo.primitive", "params": {"shape": "sphere"}}));
+    f.call(
+        "node.create",
+        json!({"path": "/up", "kind": "geo.transform", "params": {"translate": [0, 0, 1]}}),
+    );
+    f.call("node.create", json!({"path": "/both", "kind": "geo.merge"}));
+    f.call("node.connect", json!({"from": "/ball", "to": "/up"}));
+    f.call("node.connect", json!({"from": "/box", "to": "/both", "input": 0}));
+    f.call("node.connect", json!({"from": "/up", "to": "/both", "input": 1}));
+    let info = f.call("geo.info", json!({"path": "/both"}));
+    assert_eq!(info["parts"][0], json!({"id": 0, "name": "box", "triangles": 12}));
+    assert_eq!(info["parts"][1]["name"], "sphere");
+    assert_eq!(info["bounds"]["min"], json!([-1.0, -0.5, -0.5]));
+    assert_eq!(info["bounds"]["max"][2], 1.5);
+    // A geo node's snapshot is its picture.
+    let r = f.call("node.snapshot", json!({"path": "/both"}));
+    assert_eq!(r["width"], 512);
+    // render.frame points the camera at the middle of the geometry, keeping its direction.
+    f.call("node.create", json!({"path": "/r", "kind": "tex.render", "params": {"width": 64, "height": 36, "position": [0, -50, 0]}}));
+    f.call("node.connect", json!({"from": "/both", "to": "/r"}));
+    let framed = f.call("render.frame", json!({"path": "/r"}));
+    assert_eq!(framed["target"], json!([0.0, 0.0, 0.5]));
+    let y = framed["position"][1].as_f64().unwrap();
+    assert!(y < -2.0 && y > -6.0 && framed["position"][0] == 0.0, "{framed}");
+    let r = f.call("node.snapshot", json!({"path": "/r"}));
+    assert!(r["stats"]["max"][3].as_f64().unwrap() > 0.99, "{r}");
+    assert!(f.fail("render.frame", json!({"path": "/box"})).contains("not a tex.render"));
+    // With a camera node wired in, framing moves that node and leaves the render's own params.
+    f.call(
+        "node.create",
+        json!({"path": "/cam", "kind": "view.camera", "params": {"position": [50, 0, 0.5]}}),
+    );
+    f.call("node.connect", json!({"from": "/cam", "to": "/r", "input": "camera"}));
+    let position = |path: &str| {
+        let info = f.call("node.info", json!({"path": path}));
+        info["params"].as_array().unwrap().iter().find(|p| p["name"] == "position").unwrap()["value"].clone()
+    };
+    let own = position("/r");
+    let framed = f.call("render.frame", json!({"path": "/r"}));
+    assert_eq!(framed["camera"], "/cam", "{framed}");
+    let x = framed["position"][0].as_f64().unwrap();
+    assert!(x > 2.0 && x < 6.0 && framed["position"][1] == 0.0, "{framed}");
+    assert_eq!(position("/cam"), framed["position"]);
+    assert_eq!(position("/r"), own);
+    f.call("node.disconnect", json!({"to": "/r", "input": "camera"}));
+    // res.analyze waits for the render node to measure what its camera sees of its texture.
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/c", "kind": "tex.constant", "params": {"width": 64, "height": 64}},
+            {"op": "create", "path": "/p", "kind": "out.projector"},
+            {"op": "connect", "from": "/c", "to": "/r", "input": 1},
+            {"op": "connect", "from": "/r", "to": "/p"},
+        ]}),
+    );
+    let node =
+        |r: &Json, path: &str| r["nodes"].as_array().unwrap().iter().find(|n| n["path"] == path).cloned();
+    let mut report = Json::Null;
+    eventually("the texture's need", || {
+        report = f.call("res.analyze", json!({}));
+        node(&report, "/c").is_some()
+    });
+    assert_eq!(report["pending"], json!([]), "{report}");
+    // A 64 x 36 render on an assumed 1920 x 1080 projector: everything is far too coarse.
+    let c = node(&report, "/c").unwrap();
+    assert!(c["needed"][0].as_u64().unwrap() > 200 && c["verdict"] == "coarse", "{report}");
+    let overlay = f.call("res.overlay", json!({}));
+    assert_eq!((overlay["mappers"].as_u64(), overlay["renders"].as_u64()), (Some(0), Some(1)));
+    f.call("res.overlay", json!({"on": false}));
+    assert!(f.fail("geo.info", json!({"path": "/r"})).contains("Geo"));
+}
+
+/// An engine on `dir` (kept when the engine goes), as the app would open it again.
+fn open(dir: &std::path::Path) -> (Arc<Engine>, Registry) {
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let session = Arc::new(Session::open(dir, types, &Content::default()).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let registry = crate::engine_registry(&engine);
+    (engine, registry)
+}
+
+fn ok(registry: &Registry, method: &str, params: Json) -> Json {
+    let r = registry.dispatch(method, &params);
+    assert_eq!(r["ok"], true, "{method} {params}: {r}");
+    r["result"].clone()
+}
+
+fn warp() -> Option<penumbra_gpu::Gpu> {
+    match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        Ok(g) => Some(g),
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(_) => None,
+    }
+}
+
+#[test]
+fn feedback_and_locked_textures_survive_a_restart() {
+    let dir = TempDir::new("state");
+    let Some(gpu) = warp() else { return };
+    let shots = dir.0.join("shots");
+    let (before_fb, before_hold);
+    {
+        let (engine, r) = open(&dir.0);
+        engine.attach_gpu(gpu).unwrap();
+        // Operators' state is kept only where the project asks for it.
+        let settings = ok(&r, "project.settings", json!({"set": {"persist_state": true}}));
+        assert_eq!(settings["settings"][0]["value"], true, "{settings}");
+        // A loop that adds 1/16 per frame: black, then brighter until the clock stops.
+        let size = json!({"width": 40, "height": 24});
+        ok(&r, "node.create", json!({"path": "/black", "kind": "tex.constant", "params": size}));
+        let step = json!({"width": 40, "height": 24, "color": [0.0625, 0.03125, 0.0, 1.0]});
+        ok(&r, "node.create", json!({"path": "/step", "kind": "tex.constant", "params": step}));
+        ok(&r, "node.create", json!({"path": "/fb", "kind": "tex.feedback"}));
+        ok(&r, "node.create", json!({"path": "/add", "kind": "tex.composite", "params": {"op": "add"}}));
+        ok(&r, "node.connect", json!({"from": "/black", "to": "/fb", "input": "initial"}));
+        ok(&r, "node.connect", json!({"from": "/fb", "to": "/add", "input": "bottom"}));
+        ok(&r, "node.connect", json!({"from": "/step", "to": "/add", "input": "top"}));
+        ok(&r, "node.connect", json!({"from": "/add", "to": "/fb", "input": "previous"}));
+        ok(&r, "node.watch", json!({"path": "/add"}));
+        // The startup restore found nothing; saving is allowed from then on.
+        eventually("the startup restore", || engine.state().status().restore.is_some());
+        assert_eq!(engine.state().status().restore.unwrap().note.as_deref(), Some("no saved state"));
+        eventually("a few frames of the loop", || {
+            let s = ok(&r, "node.snapshot", json!({"path": "/fb", "file": shots.join("probe.png")}));
+            s["stats"]["mean"][0].as_f64().unwrap() > 0.3
+        });
+        ok(&r, "cook.play", json!({"playing": false}));
+        // A locked node that lost its input: only the state file can bring its picture back.
+        ok(&r, "node.create", json!({"path": "/hold", "kind": "tex.null"}));
+        ok(&r, "node.connect", json!({"from": "/step", "to": "/hold", "input": 0}));
+        ok(&r, "node.snapshot", json!({"path": "/hold", "file": shots.join("hold_probe.png")}));
+        ok(&r, "node.lock", json!({"path": "/hold"}));
+        ok(&r, "node.disconnect", json!({"to": "/hold", "input": 0}));
+        before_fb = ok(&r, "node.snapshot", json!({"path": "/fb", "file": shots.join("fb_before.png")}));
+        before_hold =
+            ok(&r, "node.snapshot", json!({"path": "/hold", "file": shots.join("hold_before.png")}));
+
+        let info = ok(&r, "state.info", json!({}));
+        let kept: Vec<&str> =
+            info["kept_now"].as_array().unwrap().iter().map(|k| k["path"].as_str().unwrap()).collect();
+        assert_eq!(kept, ["/fb", "/hold"], "{info}");
+        let saved = ok(&r, "state.save", json!({}));
+        assert_eq!(saved["nodes"], json!(["/fb", "/hold"]), "{saved}");
+        assert!(saved["bytes"].as_u64().unwrap() > 2 * 40 * 24 * 8, "{saved}");
+        engine.shutdown();
+        // Closing saved once more: the first file became the previous one.
+        assert!(dir.0.join("state").join("previous.pnstate").exists());
+        assert!(std::fs::read_to_string(dir.0.join("state").join(".gitignore")).unwrap().contains('*'));
+    }
+    let mean = |s: &Json| s["stats"]["mean"].clone();
+    {
+        let (engine, r) = open(&dir.0);
+        ok(&r, "cook.play", json!({"playing": false}));
+        engine.attach_gpu(warp().unwrap()).unwrap();
+        eventually("the startup restore", || engine.state().status().restore.is_some());
+        let report = engine.state().status().restore.unwrap();
+        assert_eq!(report.restored, ["/fb", "/hold"], "{report:?}");
+        let fb = ok(&r, "node.snapshot", json!({"path": "/fb", "file": shots.join("fb_after.png")}));
+        let hold = ok(&r, "node.snapshot", json!({"path": "/hold", "file": shots.join("hold_after.png")}));
+        assert_eq!(mean(&fb), mean(&before_fb), "{fb} vs {before_fb}");
+        assert_eq!(fb["stats"], before_fb["stats"]);
+        assert_eq!(hold["stats"], before_hold["stats"]);
+        assert_eq!(
+            std::fs::read(shots.join("fb_after.png")).unwrap(),
+            std::fs::read(shots.join("fb_before.png")).unwrap()
+        );
+        // The loop carries on from the restored frame, not from black.
+        ok(&r, "node.watch", json!({"path": "/add"}));
+        ok(&r, "cook.play", json!({"playing": true}));
+        eventually("the loop to move on", || {
+            let s = ok(&r, "node.snapshot", json!({"path": "/fb", "file": shots.join("probe.png")}));
+            s["stats"]["mean"][0].as_f64().unwrap() > before_fb["stats"]["mean"][0].as_f64().unwrap()
+        });
+
+        // A damaged latest file: moved aside, the previous one is used.
+        ok(&r, "cook.play", json!({"playing": false}));
+        let state = dir.0.join("state");
+        let latest = std::fs::read(state.join("latest.pnstate")).unwrap();
+        std::fs::write(state.join("latest.pnstate"), &latest[..latest.len() / 2]).unwrap();
+        let report = ok(&r, "state.restore", json!({}));
+        assert!(report["file"].as_str().unwrap().ends_with("previous.pnstate"), "{report}");
+        assert!(report["broken"][0][1].as_str().unwrap().contains("truncated"), "{report}");
+        assert!(state.join("broken.pnstate").exists());
+        // A file that is not one at all, named explicitly: an error, nothing touched.
+        std::fs::write(state.join("junk.pnstate"), b"definitely not a state file, just some text").unwrap();
+        let reply = r.dispatch("state.restore", &json!({"file": state.join("junk.pnstate")}));
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("not a penumbra state file"), "{reply}");
+        assert_eq!(ok(&r, "gpu.info", json!({}))["errors"], 0);
+
+        // Discarding: the loop starts over, the files go, the locked picture stays.
+        ok(&r, "state.save", json!({}));
+        ok(&r, "state.save", json!({}));
+        let done = ok(&r, "state.discard", json!({}));
+        assert!(done["done"].as_str().unwrap().contains("started fresh: 1 nodes"), "{done}");
+        assert!(state.join("discarded.pnstate").exists());
+        assert!(!state.join("previous.pnstate").exists());
+        eventually("the loop to start over", || {
+            let s = ok(&r, "node.snapshot", json!({"path": "/fb", "file": shots.join("probe.png")}));
+            s["stats"]["mean"][0].as_f64().unwrap() < before_fb["stats"]["mean"][0].as_f64().unwrap()
+        });
+        let hold = ok(&r, "node.snapshot", json!({"path": "/hold", "file": shots.join("probe.png")}));
+        assert_eq!(hold["stats"], before_hold["stats"]);
+        // Off again: closing keeps the locked node only.
+        ok(&r, "project.settings", json!({"set": {"persist_state": null}}));
+        engine.shutdown();
+    }
+    {
+        let (engine, r) = open(&dir.0);
+        engine.attach_gpu(warp().unwrap()).unwrap();
+        eventually("the startup restore", || engine.state().status().restore.is_some());
+        let report = engine.state().status().restore.unwrap();
+        assert_eq!(report.restored, ["/hold"], "{report:?}");
+        assert!(report.skipped.is_empty(), "/fb was not written: {report:?}");
+        // On, and the loop is kept again.
+        ok(&r, "project.settings", json!({"set": {"persist_state": true}}));
+        ok(&r, "node.watch", json!({"path": "/add"}));
+        eventually("the loop in a snapshot", || {
+            ok(&r, "state.save", json!({}))["nodes"] == json!(["/fb", "/hold"])
+        });
+        engine.shutdown();
+    }
+    {
+        // A fresh start (`--fresh`): the loop's state is left out, the locked node is not.
+        let (engine, _r) = open(&dir.0);
+        engine.state().start_fresh();
+        engine.attach_gpu(warp().unwrap()).unwrap();
+        eventually("the startup restore", || engine.state().status().restore.is_some());
+        let report = engine.state().status().restore.unwrap();
+        assert_eq!(report.restored, ["/hold"], "{report:?}");
+        assert_eq!(report.skipped, [("/fb".to_string(), "left out: a fresh start".to_string())]);
+        engine.shutdown();
+    }
+}
+
+#[test]
+fn nothing_is_saved_before_the_saved_state_was_read() {
+    let f = Fixture::new("state-hold");
+    // No GPU, so the startup restore has not happened: saving would overwrite the file.
+    assert!(f.fail("state.save", json!({})).contains("not been read back"));
+    assert_eq!(f.call("state.info", json!({}))["status"]["holding"], true);
+    // Saying not to restore lifts that; a locked channel node is kept without any GPU.
+    f.call("state.config", json!({"restore_on_start": false, "interval": 5}));
+    f.call("node.create", json!({"path": "/k", "kind": "chan.constant", "params": {"value0": 2.5}}));
+    f.call("node.watch", json!({"path": "/k"}));
+    eventually("a cook", || f.call("node.info", json!({"path": "/k"}))["status"]["has_output"] == true);
+    f.call("node.lock", json!({"path": "/k"}));
+    let saved = f.call("state.save", json!({}));
+    assert_eq!(saved["nodes"], json!(["/k"]), "{saved}");
+    assert_eq!(f.call("state.info", json!({}))["persist"], false, "off by default");
+    assert!(f.fail("project.settings", json!({"set": {"persist": true}})).contains("persist_state"));
+    assert!(f.fail("project.settings", json!({"set": {"persist_state": 1}})).contains("true or false"));
+    assert!(f.fail("state.config", json!({"interval": 0})).contains("seconds"));
+    // Restoring without a GPU is refused by the command (textures could not be uploaded).
+    assert!(f.fail("state.restore", json!({})).contains("no GPU"));
+    let stats = f.call("cook.stats", json!({"reset": true}));
+    assert!(stats["passes"].as_u64().unwrap() > 0, "{stats}");
+    let p = f.call("system.process", json!({}));
+    assert!(p["process"]["private_bytes"].as_u64().unwrap() > 0, "{p}");
+}
+
+#[path = "osc_tests.rs"]
+mod osc_tests;
+
+#[test]
+fn copy_and_paste_nodes() {
+    let f = Fixture::new("clipboard");
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/lfo", "kind": "chan.lfo"},
+            {"op": "create", "path": "/gain", "kind": "chan.math"},
+            {"op": "create", "path": "/k", "kind": "chan.constant", "params": {"value0": 2.0}},
+            {"op": "connect", "from": "/lfo", "to": "/gain"},
+            {"op": "connect", "from": "/k", "to": "/gain", "input": 1},
+            {"op": "create", "path": "/scene", "kind": "comp.base"},
+        ]}),
+    );
+    // A locked node's copy holds what the original held, not what its params would make now.
+    assert_eq!(f.call("chan.read", json!({"path": "/k"}))["channels"][0]["value"], 2.0);
+    f.call("node.lock", json!({"path": "/k"}));
+    f.call("node.set", json!({"path": "/k", "params": {"value0": 5.0}}));
+    let c = f.call("node.copy", json!({"paths": ["/gain", "/k"]}));
+    assert_eq!(c["nodes"], json!(["/gain", "/k"]), "{c}");
+    assert_eq!(c["held"], 1, "{c}");
+    assert!(c["text"].as_str().unwrap().starts_with("// penumbra nodes"), "{c}");
+
+    let r = f.call("node.paste", json!({}));
+    assert_eq!(r["pasted"], json!(["/gain1", "/k1"]), "{r}");
+    assert_eq!(r["dropped"], json!([]));
+    let gain1 = f.call("node.info", json!({"path": "/gain1"}));
+    assert_eq!(gain1["inputs"][0]["from"], "/lfo", "{gain1}");
+    assert_eq!(gain1["inputs"][1]["from"], "/k1", "{gain1}");
+    assert_eq!(f.call("chan.read", json!({"path": "/k1"}))["channels"][0]["value"], 2.0);
+
+    // Into a component: the wire from /lfo cannot cross its edge and is listed.
+    let r = f.call("node.paste", json!({"into": "/scene"}));
+    assert_eq!(r["pasted"], json!(["/scene/gain", "/scene/k"]), "{r}");
+    assert_eq!(r["dropped"], json!(["/scene/gain input `a` from /lfo"]), "{r}");
+    // One undo step each.
+    f.call("history.undo", json!({}));
+    assert!(f.fail("node.info", json!({"path": "/scene/gain"})).contains("no node"));
+
+    // Cut is copy plus delete, one undo step; the text pastes as given, too.
+    let cut = f.call("node.cut", json!({"paths": ["/gain1", "/k1"]}));
+    assert!(f.fail("node.info", json!({"path": "/gain1"})).contains("no node"));
+    let text = cut["text"].as_str().unwrap().to_string();
+    let r = f.call("node.paste", json!({"text": text, "into": "/scene"}));
+    assert_eq!(r["pasted"], json!(["/scene/gain1", "/scene/k1"]), "{r}");
+    f.call("history.undo", json!({}));
+    f.call("history.undo", json!({}));
+    f.call("node.info", json!({"path": "/gain1"}));
+    assert!(f.fail("node.paste", json!({"text": "hello"})).contains("copied nodes"));
+    assert!(f.fail("node.paste", json!({"into": "/k"})).contains("cannot hold"));
+    assert!(f.fail("node.copy", json!({"paths": ["/k", "/scene/k"]})).contains("no node"));
+}

@@ -1,0 +1,21 @@
+[package]
+name = "penumbra-project"
+description = "The project as text: RON format, load and save, diff and merge, autosave, editing modes. No GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+penumbra-core.workspace = true
+penumbra-graph.workspace = true
+serde.workspace = true
+ron.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
