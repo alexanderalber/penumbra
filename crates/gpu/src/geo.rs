@@ -293,13 +293,28 @@ pub enum Shading {
     Occluder,
 }
 
-/// A material drawn as the edges of its triangles only.
+/// A material drawn as the edges of its triangles, over its faces.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Wire {
     /// The lines' width in pixels of the render.
     pub width: f32,
     /// Leave out edges inside flat polygons (a quad's diagonal), as a modelling tool shows them.
     pub polygons: bool,
+    /// What the faces between the lines show.
+    pub faces: Faces,
+    /// Linear, straight alpha: the faces' colour ([`Faces::Filled`]).
+    pub fill: [f32; 4],
+}
+
+/// What a wireframe's faces show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Faces {
+    /// Nothing: the lines behind show through.
+    Open,
+    /// The fill colour; opaque, it hides the lines behind.
+    Filled,
+    /// Nothing, but they hide what is behind them: only the lines in front show.
+    Hidden,
 }
 
 /// A material from a `mat` node, put on geometry by `geo.material`.

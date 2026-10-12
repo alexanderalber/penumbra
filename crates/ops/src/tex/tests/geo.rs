@@ -1279,14 +1279,44 @@ fn wireframes_show_edges_and_occluders_hide() {
         connect("/hidden", "/both", 1),
         cam("/occluded"),
         connect("/both", "/occluded", 0),
+        // Faces filled in blue, and faces hiding what is behind them (the wall, too).
+        create(
+            "/filled_mat",
+            "mat.wireframe",
+            &[
+                ("line_width", Value::Float(3.0)),
+                ("faces", "filled".into()),
+                ("fill", Value::Vec4([0.0, 0.0, 1.0, 1.0])),
+            ],
+        ),
+        create("/filled", "geo.material", &[]),
+        connect("/box", "/filled", 0),
+        connect("/filled_mat", "/filled", 1),
+        cam("/filled_seen"),
+        connect("/filled", "/filled_seen", 0),
+        create(
+            "/front_mat",
+            "mat.wireframe",
+            &[("line_width", Value::Float(3.0)), ("faces", "hidden".into())],
+        ),
+        create("/front", "geo.material", &[]),
+        connect("/box", "/front", 0),
+        connect("/front_mat", "/front", 1),
+        create("/front_wall", "geo.merge", &[]),
+        connect("/red_wall", "/front_wall", 0),
+        connect("/front", "/front_wall", 1),
+        cam("/front_seen"),
+        connect("/front_wall", "/front_seen", 0),
     ];
     let mut rig = Rig::new(gpu, None, &ops);
-    for path in ["/quads_seen", "/tris_seen", "/occluded"] {
+    for path in ["/quads_seen", "/tris_seen", "/occluded", "/filled_seen", "/front_seen"] {
         rig.pixels(path);
     }
     look(&mut rig, "/quads_seen", "wireframe_polygons", (super::W, super::H));
     look(&mut rig, "/tris_seen", "wireframe_triangles", (super::W, super::H));
     look(&mut rig, "/occluded", "occluder", (super::W, super::H));
+    look(&mut rig, "/filled_seen", "wireframe_filled", (super::W, super::H));
+    look(&mut rig, "/front_seen", "wireframe_hidden", (super::W, super::H));
     // The materials' own pictures.
     for path in ["/quads_mat", "/hole"] {
         let out = rig.cooker.output(Port { node: rig.id(path), output: 0 }).unwrap();
@@ -1307,6 +1337,19 @@ fn wireframes_show_edges_and_occluders_hide() {
     assert_eq!(lines, 4, "{row:?}");
     let full = quads.data.iter().map(|p| p[3]).fold(0.0, f32::max);
     assert!(full > 0.99, "lines are opaque in their middle: {full}");
+    // Filled: blue between the lines, which hides the back face's.
+    let filled = rig.pixels("/filled_seen");
+    let mid = at(&filled, cx, cy);
+    assert!(mid[2] > 0.99 && mid[0] < 0.01 && mid[3] > 0.99, "{mid:?}");
+    let row: Vec<f32> = (0..filled.width).map(|x| at(&filled, x, cy)[0]).collect();
+    assert_eq!(row.windows(2).filter(|w| w[0] < 0.5 && w[1] >= 0.5).count(), 2, "{row:?}");
+    // Hidden: only the front face's lines, nothing between them, the wall behind hidden.
+    let front = rig.pixels("/front_seen");
+    assert_eq!(at(&front, cx, cy), [0.0; 4], "nothing in the middle, not even the wall");
+    let side = at(&front, 4, cy);
+    assert!(side[0] > 0.99 && side[3] > 0.99, "the wall beside it: {side:?}");
+    let row: Vec<f32> = (0..front.width).map(|x| at(&front, x, cy)[1]).collect();
+    assert_eq!(row.windows(2).filter(|w| w[0] < 0.5 && w[1] >= 0.5).count(), 2, "{row:?}");
     let tris = rig.pixels("/tris_seen");
     assert!(at(&tris, cx, cy)[3] > 0.9, "the diagonals cross in the middle: {:?}", at(&tris, cx, cy));
 
