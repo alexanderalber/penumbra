@@ -936,7 +936,13 @@ impl ParamPanel {
                 }
                 return;
             }
-            pick(ui, "mode.best".into(), "the largest, fastest".into(), String::new(), "Leaves `mode` empty");
+            pick(
+                ui,
+                "mode.best".into(),
+                "auto".into(),
+                String::new(),
+                "Leaves `mode` empty: the largest size, then the highest rate",
+            );
             let Some(cam) = camera_for(list, device) else {
                 ui.label(RichText::new("no camera matches `device`").color(theme::TEXT_WEAK));
                 return;

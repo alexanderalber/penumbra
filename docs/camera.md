@@ -8,9 +8,10 @@ HDMI output, or a webcam. Tracking (blobs, laser spots) will build on it.
 1. Add a `tex.videoin` (Tab > tex > videoin). With `device` empty it opens the first camera of
    the machine. The `...` menu beside `device` lists the cameras; part of a name typed in works
    too, e.g. `Cam Link`.
-2. `mode` picks size, rate and pixel format. Empty takes the largest, fastest mode the camera
-   offers. The `...` menu beside `mode` lists the modes of the camera `device` picks; a partial
-   mode works too: `@30` (any size at 30 fps), `1280x720`, `YUY2`.
+2. `mode` picks size, rate and pixel format. Empty (`auto` in the menu) takes the largest size
+   the camera offers at its highest rate. The `...` menu beside `mode` lists the modes of the
+   camera `device` picks; a partial mode works too: `@30` (any size at 30 fps), `1280x720`,
+   `YUY2`.
 
 The node recooks when a frame arrives, not on the show clock, so the picture stays live while
 the show is paused. It always shows the newest frame; frames that arrive while nothing looks at
