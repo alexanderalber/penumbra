@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.opticalflow](#texopticalflow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.timemachine](#textimemachine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
+[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fromchan](#texfromchan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.opticalflow](#texopticalflow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.timemachine](#textimemachine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
 
 ### tex.blobtrack
 
@@ -260,6 +260,22 @@ Outputs: `out` (tex).
 | `flip_x` | bool | `false` |  | Left becomes right |
 | `flip_y` | bool | `false` |  | Top becomes bottom |
 | `flop` | bool | `false` |  | Swap the axes (transpose); the output is as wide as the input is high |
+
+### tex.fromchan
+
+Channels as a picture: a row per channel, a pixel per sample
+
+Inputs:
+
+- `in` (chan)
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `layout` | rows \| rgba | `"rows"` |  | rows: one grey row per channel, as many pixels wide as there are samples; rgba: the first four channels as red, green, blue and alpha of one row (alpha 1 where missing) |
+| `low` | float | `0` | -1 to 1 (soft) | Channel value that becomes 0 |
+| `high` | float | `1` | 0 to 2 (soft) | Channel value that becomes 1 |
 
 ### tex.hsv
 
@@ -834,7 +850,7 @@ Outputs: `out` (tex), `info` (chan).
 
 ## chan
 
-[chan.audioanalysis](#chanaudioanalysis), [chan.audioin](#chanaudioin), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.oscin](#chanoscin), [chan.oscout](#chanoscout), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed)
+[chan.audioanalysis](#chanaudioanalysis), [chan.audioin](#chanaudioin), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.fromtex](#chanfromtex), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.oscin](#chanoscin), [chan.oscout](#chanoscout), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed)
 
 ### chan.audioanalysis
 
@@ -904,6 +920,22 @@ Outputs: `out` (chan).
 |---|---|---|---|---|
 | `rise` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step up; 0 follows at once |
 | `fall` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step down |
+
+### chan.fromtex
+
+A picture as channels: averaged down to a few pixels, one channel per row and colour
+
+Inputs:
+
+- `in` (tex)
+
+Outputs: `out` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `columns` | int | `1` | 1 to 256 (soft) | Samples per channel: the picture is averaged down to this many columns |
+| `rows` | int | `1` | 1 to 64 (soft) | Rows averaged to; more than one numbers the channels by row from the top (r0, r1, ..) |
+| `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives: r, g, b, a; r, g, b; r; or lum (the brightness, Rec. 709). Values are linear and premultiplied, as the picture holds them |
 
 ### chan.in
 
