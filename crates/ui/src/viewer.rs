@@ -5,6 +5,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use egui::emath::GuiRounding as _;
 use egui::{Color32, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use penumbra_core::{Chans, Name, NodeId, Table};
 use penumbra_graph::{Data, DataKind, Network};
@@ -211,7 +212,10 @@ impl Viewer {
                     }
                     let area = rect.shrink(4.0);
                     let w = area.width().min(area.height() * aspect);
-                    let fit = Rect::from_center_size(area.center(), vec2(w, w / aspect));
+                    // On whole pixels: the checker's anti-aliased edge would show as a grey
+                    // line below or beside a picture ending inside a pixel.
+                    let fit = Rect::from_center_size(area.center(), vec2(w, w / aspect))
+                        .round_to_pixels(painter.pixels_per_point());
                     theme::checker(&painter, fit, 1.5);
                     painter.image(
                         tid,
@@ -240,7 +244,10 @@ impl Viewer {
                     let aspect = tex.width() as f32 / tex.height().max(1) as f32;
                     let area = rect.shrink(4.0);
                     let w = area.width().min(area.height() * aspect);
-                    let fit = Rect::from_center_size(area.center(), vec2(w, w / aspect));
+                    // On whole pixels: the checker's anti-aliased edge would show as a grey
+                    // line below or beside a picture ending inside a pixel.
+                    let fit = Rect::from_center_size(area.center(), vec2(w, w / aspect))
+                        .round_to_pixels(painter.pixels_per_point());
                     theme::checker(&painter, fit, 1.5);
                     painter.image(
                         tid,

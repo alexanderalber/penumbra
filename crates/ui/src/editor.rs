@@ -13,6 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
 
+use egui::emath::GuiRounding as _;
 use egui::{
     Align2, Color32, CornerRadius, CursorIcon, FontId, Key, Modifiers, PointerButton, Pos2, Rect, Sense,
     Shape, Stroke, StrokeKind, Ui, Vec2, pos2, vec2,
@@ -1032,7 +1033,7 @@ impl Editor {
                     {
                         let area = body_rect.shrink(2.0 * zoom);
                         let aspect = tex.width() as f32 / tex.height().max(1) as f32;
-                        let fit = fit_rect(area, aspect);
+                        let fit = fit_rect(area, aspect).round_to_pixels(painter.pixels_per_point());
                         theme::checker(painter, fit, zoom);
                         painter.image(
                             tid,
@@ -1063,7 +1064,7 @@ impl Editor {
                     {
                         let area = body_rect.shrink(2.0 * zoom);
                         let aspect = tex.width() as f32 / tex.height().max(1) as f32;
-                        let fit = fit_rect(area, aspect);
+                        let fit = fit_rect(area, aspect).round_to_pixels(painter.pixels_per_point());
                         theme::checker(painter, fit, zoom);
                         painter.image(
                             tid,
