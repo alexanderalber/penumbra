@@ -8,6 +8,8 @@ Python), its own node families and names.
 Built to be driven by Claude Code as much as by hand: every action is a command, reachable over
 a local JSON control channel.
 
+![penumbra: a node network that projects a title onto a wall, with the rendered room in the viewer](assets/screenshot.png)
+
 **Status:** personal project, work in progress.
 
 ## Running
