@@ -96,4 +96,6 @@ impl Action {
 }
 
 #[cfg(test)]
+mod reference;
+#[cfg(test)]
 mod tests;
