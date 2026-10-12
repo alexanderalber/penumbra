@@ -9,6 +9,7 @@
 pub mod blobtrack;
 mod blur;
 mod cache;
+mod denoise;
 mod filters;
 mod flow;
 mod image;
@@ -305,6 +306,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     blobtrack::register(types)?;
     blur::register(types)?;
     cache::register(types)?;
+    denoise::register(types)?;
     flow::register(types)?;
     image::register(types)?;
     layer::register(types)?;
@@ -333,6 +335,9 @@ pub fn warm_up(gpu: &Gpu) {
     }
     if let Err(e) = blur::warm_up(gpu) {
         log::error!("built-in shader tex.blur does not compile: {e}");
+    }
+    if let Err(e) = denoise::warm_up(gpu) {
+        log::error!("built-in shader tex.denoise does not compile: {e}");
     }
     if let Err(e) = ramp::warm_up(gpu) {
         log::error!("built-in shader tex.ramp does not compile: {e}");

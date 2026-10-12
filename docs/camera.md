@@ -59,3 +59,13 @@ delay, error), `videoin.config {enabled}` switches all cameras off and on for th
 
 Camera input exists on Windows (Media Foundation) so far; on other systems the node reports
 that it is not built there yet.
+
+## Noise
+
+A camera in a dark room is noisy, and the noise flickers into whatever reads the picture
+(tracking, a feedback, a projection of the camera itself). `tex.denoise` behind the
+`tex.videoin` calms it: where the picture is still it averages over about `frames` frames;
+where it moves (a change beyond `motion`) it shows the new frame at once and smooths that
+within the frame instead (`spatial`), keeping edges. Raise `motion` when the noise still
+flickers; lower it, or lower `frames`, when moving things leave trails. It costs about half a
+millisecond per 1080p frame.
