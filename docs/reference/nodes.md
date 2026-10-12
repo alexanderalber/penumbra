@@ -610,8 +610,8 @@ Outputs: `out` (tex), `data` (tex).
 | `antialias` *(more)* | bool | `true` |  | Four samples per pixel |
 | `shadow_size` *(more)* | int | `2048` | 256 to 4096 (soft) | Texels across each light's shadow map: sharper shadows, more memory |
 | `ao` *(occlusion)* | bool | `false` |  | Ambient occlusion: less ambient and environment light in creases and where objects meet; direct light and unlit surfaces stay as they are |
-| `ao_radius` *(occlusion)* | float | `0.3` | 0.01 to 2 m (soft) | How far around a point geometry darkens it |
-| `ao_strength` *(occlusion)* | float | `1` | 0 to 3 (soft) | 1 as estimated; more darkens, less lightens |
+| `ao_radius` *(occlusion)* | float | `0.5` | 0.01 to 2 m (soft) | How far around a point geometry darkens it |
+| `ao_strength` *(occlusion)* | float | `1` | 0 to 3 (soft) | How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker |
 
 ### tex.resolution
 
