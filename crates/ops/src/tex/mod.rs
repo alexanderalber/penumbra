@@ -21,6 +21,7 @@ pub mod render;
 mod shader;
 pub mod shapes;
 mod text;
+mod timemachine;
 mod video;
 pub mod videoin;
 
@@ -318,6 +319,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     shader::register(types)?;
     shapes::register(types)?;
     text::register(types)?;
+    timemachine::register(types)?;
     video::register(types)?;
     videoin::register(types)?;
     Ok(())
@@ -352,6 +354,9 @@ pub fn warm_up(gpu: &Gpu) {
     }
     if let Err(e) = text::warm_up(gpu) {
         log::error!("built-in shader tex.text does not compile: {e}");
+    }
+    if let Err(e) = timemachine::warm_up(gpu) {
+        log::error!("built-in shader tex.timemachine does not compile: {e}");
     }
     if let Err(e) = gpu.video_pipeline() {
         log::error!("built-in shader video.wgsl does not compile: {e}");

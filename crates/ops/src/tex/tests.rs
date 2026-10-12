@@ -972,6 +972,46 @@ fn cache_outputs_frames_back() {
 }
 
 #[test]
+fn timemachine_looks_back_as_far_as_the_map_says() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        constant("/c", 0.0),
+        create(
+            "/white",
+            "tex.constant",
+            &[("width", Value::Int(8)), ("height", Value::Int(4)), ("color", Value::Vec4([1.0; 4]))],
+        ),
+        create("/tm", "tex.timemachine", &[("length", Value::Int(2))]),
+        connect("/c", "/tm", 0),
+        connect("/white", "/tm", 1),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    for i in 1..=4 {
+        rig.edit(&[set("/c.color", Value::Vec4([f64::from(i) * 0.1, 0.0, 0.0, 1.0]))]);
+        rig.clock.advance(1);
+        rig.cook("/tm");
+    }
+    // Kept: 0.4, 0.3, 0.2 (newest first); white is two back.
+    assert!((red(&mut rig, "/tm") - 0.2).abs() < 0.01);
+    rig.clock.advance(1);
+    assert!((red(&mut rig, "/tm") - 0.2).abs() < 0.01, "the same input frame is not taken twice");
+    // Without a map, the offset delays everything; not recording holds what is kept.
+    rig.edit(&[
+        Op::Disconnect { to: "/tm".parse().unwrap(), input: 1 },
+        set("/tm.offset", Value::Float(1.0)),
+        set("/tm.record", Value::Bool(false)),
+        set("/c.color", Value::Vec4([0.9, 0.0, 0.0, 1.0])),
+    ]);
+    assert!((red(&mut rig, "/tm") - 0.3).abs() < 0.01);
+    // Past the budget fewer frames are kept, with a warning.
+    rig.edit(&[set("/tm.length", Value::Int(1_000_000)), set("/tm.record", Value::Bool(true))]);
+    rig.cook("/tm");
+    let s = rig.cooker.status(rig.id("/tm")).unwrap();
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains("keeping 3072")), "{s:?}");
+    assert!((red(&mut rig, "/tm") - 0.9).abs() < 0.01, "a new stack starts from the current frame");
+}
+
+#[test]
 fn resizing_nodes_set_their_resolution() {
     let Some(gpu) = gpu() else { return };
     let ops = [
