@@ -115,7 +115,9 @@ impl Viewer {
                 Some(d) if d.kind() == DataKind::Chan => d.get::<Chans>().map(|c| {
                     let n = c.channels().len();
                     let rate = c.rate();
-                    if c.len() > 1 {
+                    // Audio comes in blocks whose length changes from frame to frame (one or two
+                    // device callbacks); the count would flicker and says nothing.
+                    if c.len() > 1 && rate < penumbra_audio::analysis::MIN_RATE {
                         format!("{n} ch x {} @ {rate} Hz", c.len())
                     } else {
                         format!("{n} ch @ {rate} Hz")
