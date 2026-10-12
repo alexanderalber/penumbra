@@ -174,7 +174,7 @@ pub fn collapse(e: &Engine, actor: Actor, paths: &[NodePath], name: Option<Name>
         None => fresh_child(&net, &level, "group")?,
     };
     let base = content(&net)?;
-    let types = e.session().types();
+    let types = e.types();
     let c = component::collapse(&base, types, paths, &at, COMP_KIND)?;
     let ops = diff(&base, &c.content);
     let outcome = edit_as(e, actor, &ops, &format!("group into {at}"))?;
@@ -189,7 +189,7 @@ pub fn expand(
 ) -> Result<(BTreeMap<NodePath, NodePath>, EditOutcome)> {
     let net = e.session().doc().snapshot();
     let base = content(&net)?;
-    let x = component::expand(&base, e.session().types(), path)?;
+    let x = component::expand(&base, e.types(), path)?;
     let ops = diff(&base, &x.content);
     let out = edit_as(e, actor, &ops, &format!("dissolve {path}"))?;
     Ok((x.moved, out))
@@ -240,7 +240,7 @@ pub struct Saved {
 /// Writes the component at `path` to `file` (absolute or in the project; default: the library).
 pub fn save(e: &Engine, path: &NodePath, file: Option<&str>) -> Result<Saved> {
     let net = e.session().doc().snapshot();
-    let types = e.session().types();
+    let types = e.types();
     let (comp, dropped) = component::extract(&content(&net)?, types, path)?;
     let text = component::print(&comp, types)?;
     let name = path.name().ok_or("the root is not a component")?;
@@ -304,7 +304,7 @@ pub fn load(
     }
     let text =
         std::fs::read_to_string(&file).map_err(|err| format!("cannot read {}: {err}", file.display()))?;
-    let types: &NodeTypes = e.session().types();
+    let types: &NodeTypes = e.types();
     let comp = component::parse(&text, types).map_err(|err| err.context(file.display().to_string()))?;
     let top = comp.nodes.keys().find(|k| k.names().len() == 1).and_then(|k| k.name()).cloned();
     let net = e.session().doc().snapshot();
@@ -375,7 +375,7 @@ pub fn port_node(
     role: PortRole,
 ) -> Result<Option<NodePath>> {
     let id = require(net, path)?;
-    let types = e.session().types();
+    let types = e.types();
     if !net.node(id).and_then(|n| types.desc(&n.kind)).is_some_and(|d| d.container) {
         return Ok(None);
     }
@@ -397,7 +397,7 @@ pub fn port_node(
 
 /// The ports of component `id` and its exposed params, for `node.info`.
 pub fn info(e: &Engine, net: &Network, id: NodeId) -> Option<Json> {
-    let types = e.session().types();
+    let types = e.types();
     let node = net.node(id)?;
     if !types.desc(&node.kind).is_some_and(|d| d.container) {
         return None;

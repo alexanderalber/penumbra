@@ -123,7 +123,11 @@ Every command of the running app, as `pn ctl <command>` or a control-channel req
 
 | command | |
 |---|---|
+| `project.demo` | Open the demo project (made again if missing) |
 | `project.info` | Project directory, unsaved changes, file errors, who is editing |
+| `project.new` | Make an empty project in dir (created if missing, must hold no project.ron) and open it; {dir} |
+| `project.open` | Close this project (state saved, changes written) and open the one in dir; {dir} |
+| `project.recent` | Recently opened projects, newest first (the demo is not listed), and the open one |
 | `project.save` | Write project.ron now, also over a file that failed to merge |
 | `project.settings` | Project settings with their values and what they do; {set?: {name: value}}, null resets (one undo step) |
 

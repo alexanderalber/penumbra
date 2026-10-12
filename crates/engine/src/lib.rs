@@ -13,6 +13,7 @@ pub mod components;
 pub mod control;
 pub mod engine;
 pub mod osc;
+pub mod projects;
 pub mod state;
 pub mod state_commands;
 
@@ -44,5 +45,6 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
     audio::register(&mut registry, engine);
+    projects::register(&mut registry, engine);
     registry
 }

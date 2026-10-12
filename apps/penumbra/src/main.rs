@@ -2,9 +2,10 @@
 //! a window, plus a fullscreen output window per display that an active `out.projector` names.
 //!
 //! Arguments: `--project DIR` (project directory, created if missing; default: the demo project
-//! in the user's data directory), `--port N` (control channel port, default from
-//! `PENUMBRA_PORT` or 9880), `--fresh` (discard what feedback loops, caches and other nodes
-//! kept from the last run; locked nodes keep their outputs).
+//! in the user's data directory; the project menu opens others while it runs), `--port N`
+//! (control channel port, default from `PENUMBRA_PORT` or 9880), `--fresh` (discard what
+//! feedback loops, caches and other nodes kept from the last run; locked nodes keep their
+//! outputs).
 //!
 //! `--headless SCRIPT` runs the UI without a window, driven by a script of control-channel
 //! requests (see `penumbra_ui::headless`), prints each reply and exits; `ui.screenshot` in
@@ -18,37 +19,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use eframe::egui;
-use penumbra_engine::{Engine, control};
+use penumbra_engine::{Engine, control, projects};
 use penumbra_project::{Content, Session};
 use penumbra_ui::{AppOptions, Bridge, PenumbraApp};
 use serde_json::Value;
-
-/// Content of a new demo project.
-const DEMO: &str = r#"(
-    version: 1,
-    nodes: {
-        "/pulse": (kind: "chan.lfo", params: {"rate": 0.25, "amplitude": 0.4, "offset": 1.0}),
-        "/drift": (kind: "chan.noise", params: {"frequency": 0.3, "amplitude": 0.08, "offset": 0.5}),
-        "/noise1": (kind: "tex.noise", params: {"color": true, "speed": 0.2}),
-        "/rings1": (kind: "tex.shader", params: {"file": "rings.wgsl"}, inputs: {"in0": "noise1"}),
-        "/level1": (kind: "tex.level", params: {"contrast": 1.5}, inputs: {"in": "rings1"}, binds: {"brightness": "pulse"}),
-        "/title": (kind: "tex.text", params: {"text": "penumbra", "size": 140.0}, binds: {"position.1": "drift"}),
-        "/comp1": (kind: "tex.composite", inputs: {"bottom": "level1", "top": "title"}),
-    },
-)"#;
-
-/// The demo's shader, written next to the project when missing.
-const DEMO_SHADER: &str = "// Rings over the input, moving outwards. Edit and save: the node reloads.
-// @param rings float = 6 1..30 -- rings across the image height
-// @param tint color = [1, 0.8, 0.6, 1]
-@fragment
-fn main(v: PnVertex) -> @location(0) vec4f {
-    let src = textureSampleLevel(in0, pn_clamp, v.uv, 0.0);
-    let p = (v.uv - 0.5) * vec2f(pn.resolution.x / pn.resolution.y, 1.0);
-    let ring = 0.5 + 0.5 * cos(length(p) * params.rings * 6.2831853 - pn_time.seconds * 2.0);
-    return vec4f(src.rgb * params.tint.rgb * ring, src.a);
-}
-";
 
 fn main() -> std::process::ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -70,16 +44,6 @@ struct Args {
     fresh: bool,
 }
 
-/// Writes the demo's shader into `dir` if it is missing; returns the demo content.
-fn prepare_demo(dir: &Path, types: &penumbra_graph::NodeTypes) -> Result<Content, String> {
-    let shader = dir.join("rings.wgsl");
-    if !shader.exists() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-        std::fs::write(&shader, DEMO_SHADER).map_err(|e| format!("{}: {e}", shader.display()))?;
-    }
-    penumbra_project::parse(DEMO, types).map_err(|e| e.context("demo").0)
-}
-
 fn run() -> Result<(), String> {
     let args = parse_args(std::env::args().skip(1))?;
     let types = Arc::new(penumbra_ops::builtin_types().map_err(|e| e.to_string())?);
@@ -91,12 +55,12 @@ fn run() -> Result<(), String> {
             // A leftover from an earlier run with the same process id would not be the demo.
             let _ = std::fs::remove_dir_all(&dir);
             scratch = Some(dir.clone());
-            let template = prepare_demo(&dir, &types)?;
+            let template = projects::prepare_demo(&dir, &types).map_err(|e| e.0)?;
             (dir, template)
         }
         (None, None) => {
-            let dir = demo_dir()?;
-            let template = prepare_demo(&dir, &types)?;
+            let dir = projects::demo_dir().map_err(|e| format!("{e}; pass --project DIR"))?;
+            let template = projects::prepare_demo(&dir, &types).map_err(|e| e.0)?;
             (dir, template)
         }
     };
@@ -116,6 +80,12 @@ fn run() -> Result<(), String> {
         }
         return result;
     }
+
+    match projects::default_recent_file() {
+        Ok(file) => engine.set_recent_file(Some(file)),
+        Err(e) => log::warn!("no list of recent projects: {e}"),
+    }
+    engine.remember(&dir);
 
     let (bridge, requests) = Bridge::new();
     let mut registry = penumbra_engine::engine_registry(&engine);
@@ -245,24 +215,6 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     Ok(parsed)
 }
 
-/// `%LOCALAPPDATA%\penumbra\demo` on Windows, `$XDG_DATA_HOME/penumbra/demo` (or
-/// `~/.local/share/penumbra/demo`) elsewhere. Outside the repository, so autosave never
-/// touches tracked files.
-fn demo_dir() -> Result<PathBuf, String> {
-    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
-    let base = if cfg!(windows) {
-        var("LOCALAPPDATA").ok_or("LOCALAPPDATA is not set; pass --project DIR")?
-    } else {
-        match var("XDG_DATA_HOME") {
-            Some(d) => d,
-            None => var("HOME")
-                .ok_or("neither XDG_DATA_HOME nor HOME is set; pass --project DIR")?
-                .join(".local/share"),
-        }
-    };
-    Ok(base.join("penumbra").join("demo"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,7 +244,7 @@ mod tests {
     #[test]
     fn the_demo_project_opens() {
         let types = Arc::new(penumbra_ops::builtin_types().unwrap());
-        let demo = penumbra_project::parse(DEMO, &types).unwrap();
+        let demo = penumbra_project::parse(projects::DEMO, &types).unwrap();
         let dir = std::env::temp_dir().join(format!("penumbra-app-demo-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let session = Session::open(&dir, types, &demo).unwrap();

@@ -18,6 +18,7 @@ pub mod icons;
 pub mod layout;
 mod mapping;
 pub mod params;
+pub mod projects;
 mod shapes;
 pub mod textures;
 pub mod theme;

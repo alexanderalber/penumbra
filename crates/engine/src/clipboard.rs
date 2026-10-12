@@ -64,7 +64,7 @@ pub fn copy(e: &Engine, paths: &[NodePath]) -> Result<Copied> {
     let net = e.session().doc().snapshot();
     let base = Content::from_network(&net)?;
     let clip = clipboard::copy(&base, paths)?;
-    let text = clipboard::print(&clip, e.session().types())?;
+    let text = clipboard::print(&clip, e.types())?;
     let locked: Vec<(NodePath, NodeId)> = clip
         .content
         .nodes
@@ -128,7 +128,7 @@ pub fn paste(e: &Engine, actor: Actor, text: Option<&str>, into: &NodePath) -> R
         (None, Some(c)) => c.text.clone(),
         (None, None) => return Err("nothing copied yet".into()),
     };
-    let types = e.session().types();
+    let types = e.types();
     let clip = clipboard::parse(&text, types)?;
     let net = e.session().doc().snapshot();
     let base = Content::from_network(&net)?;

@@ -59,6 +59,14 @@ impl Textures {
         Some(id)
     }
 
+    /// Frees every entry (another project opened).
+    pub fn clear(&mut self) {
+        for e in self.entries.values_mut() {
+            e.used = false;
+        }
+        self.end_frame();
+    }
+
     /// Frees what was not shown since the last call. Called once per frame, after drawing.
     pub fn end_frame(&mut self) {
         let Some(render) = self.render.as_ref() else { return };

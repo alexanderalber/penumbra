@@ -802,3 +802,42 @@ fn copy_and_paste_nodes() {
     assert!(f.fail("node.paste", json!({"into": "/k"})).contains("cannot hold"));
     assert!(f.fail("node.copy", json!({"paths": ["/k", "/scene/k"]})).contains("no node"));
 }
+
+#[test]
+fn another_project_opens_while_the_engine_keeps_running() {
+    let f = Fixture::new("switch-a");
+    let other = TempDir::new("switch-b");
+    f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo"}));
+    let first = f.engine.session().file().to_path_buf();
+    let before = f.engine.view().pass;
+    eventually("a few passes", || f.engine.view().pass > before + 2);
+
+    assert!(f.fail("project.open", json!({"dir": other.0})).contains("project.new"));
+    let r = f.call("project.new", json!({"dir": other.0}));
+    assert_eq!(r["switched"], true);
+    assert_eq!(f.engine.generation(), 1);
+    // The old project's change was written on the way out, the new one is empty.
+    assert!(std::fs::read_to_string(&first).unwrap().contains("/lfo"));
+    assert_eq!(f.call("node.list", json!({}))["nodes"], json!([]));
+    assert!(f.fail("project.new", json!({"dir": other.0})).contains("project.open"));
+
+    // The cook thread runs for the new project, and pass numbers keep growing.
+    let at_switch = f.engine.view().pass;
+    assert!(at_switch >= before);
+    f.call("node.create", json!({"path": "/n", "kind": "chan.noise"}));
+    f.call("node.watch", json!({"path": "/n"}));
+    eventually("/n to cook", || {
+        f.call("node.info", json!({"path": "/n"}))["status"]["cooks"].as_u64().unwrap_or(0) > 2
+    });
+    assert!(f.engine.view().pass > at_switch);
+
+    // Back to the first one: its node is there again; opening the open project is a no-op.
+    let dir = first.parent().unwrap().to_path_buf();
+    assert_eq!(f.call("project.open", json!({"dir": dir}))["switched"], true);
+    assert_eq!(f.call("node.list", json!({}))["nodes"][0]["path"], "/lfo");
+    assert_eq!(f.call("project.open", json!({"dir": dir}))["switched"], false);
+    assert_eq!(f.engine.generation(), 2);
+    assert!(std::fs::read_to_string(other.0.join(penumbra_project::FILE_NAME)).unwrap().contains("/n"));
+    // No recent file is set in tests, so nothing is listed.
+    assert_eq!(f.call("project.recent", json!({}))["recent"], json!([]));
+}
