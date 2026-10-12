@@ -1118,3 +1118,99 @@ fn an_environment_lights_and_reflects_by_its_picture() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Ambient occlusion: a wall darkens beside a box standing on it, in its ambient light only;
+/// open wall and the box's flat front stay as without it, direct light is left alone, and
+/// without ambient light nothing changes.
+#[test]
+fn ambient_occlusion_darkens_creases_in_the_ambient_light() {
+    let Some(gpu) = gpu() else { return };
+    let cam = |path: &str, ao: bool| {
+        render(
+            path,
+            &[
+                ("position", Value::Vec3([0.0, -4.0, 0.0])),
+                ("fov", Value::Float(40.0)),
+                ("ao", Value::Bool(ao)),
+                ("ao_radius", Value::Float(0.3)),
+            ],
+        )
+    };
+    let mut ops = vec![
+        // A white wall at y = 0 facing the camera, and a 0.3 m box standing out of it.
+        create(
+            "/wall",
+            "geo.primitive",
+            &[("shape", "plane".into()), ("size", Value::Vec3([4.0, 1.0, 2.0]))],
+        ),
+        create("/box", "geo.primitive", &[("size", Value::Vec3([0.3; 3]))]),
+        create("/box_at", "geo.transform", &[("translate", Value::Vec3([0.0, -0.15, 0.0]))]),
+        connect("/box", "/box_at", 0),
+        create("/both", "geo.merge", &[]),
+        connect("/wall", "/both", 0),
+        connect("/box_at", "/both", 1),
+        create("/white", "mat.phong", &[("specular", Value::Vec4([0.0, 0.0, 0.0, 1.0]))]),
+        create("/scene", "geo.material", &[]),
+        connect("/both", "/scene", 0),
+        connect("/white", "/scene", 1),
+        // Half ambient, half from the camera's direction.
+        create("/fill", "light.ambient", &[("intensity", Value::Float(0.5))]),
+        create(
+            "/sun",
+            "light.directional",
+            &[("position", Value::Vec3([0.0, -4.0, 0.0])), ("intensity", Value::Float(0.5))],
+        ),
+        create("/lights", "light.merge", &[]),
+        connect("/fill", "/lights", 0),
+        connect("/sun", "/lights", 1),
+    ];
+    // (render, ambient occlusion, lights)
+    let cases = [
+        ("/plain", false, "/lights"),
+        ("/ao", true, "/lights"),
+        ("/sun_plain", false, "/sun"),
+        ("/sun_ao", true, "/sun"),
+    ];
+    for (path, ao, lights) in cases {
+        ops.push(cam(path, ao));
+        ops.push(connect("/scene", path, 0));
+        ops.push(connect(lights, path, 2));
+    }
+    let mut rig = Rig::new(gpu, None, &ops);
+    // Where a point (x, z) of the wall shows in the picture, from y = -4 with fov 40.
+    let px_of = |px: &Pixels, x: f64, z: f64| {
+        let f = 0.5 * px.height as f64 / 20f64.to_radians().tan();
+        let u = (0.5 * px.width as f64 + f * x / 4.0) as u32;
+        let v = (0.5 * px.height as f64 - f * z / 4.0) as u32;
+        at(px, u, v)
+    };
+    let plain = rig.pixels("/plain");
+    let ao = rig.pixels("/ao");
+    for path in ["/plain", "/ao"] {
+        let s = rig.cooker.status(rig.id(path)).unwrap();
+        assert!(s.error.is_none() && s.warning.is_none(), "{path}: {s:?}");
+    }
+    // Without occlusion the wall is evenly 1 (half ambient, half head on).
+    let open = px_of(&plain, -1.2, 0.3)[0];
+    assert!((open - 1.0).abs() < 0.03, "plain wall: {open}");
+    // Beside the box: darker, but never below the direct half; alike on all four sides.
+    let sides = [(-0.2, 0.0), (0.2, 0.0), (0.0, 0.2), (0.0, -0.2)].map(|(x, z)| px_of(&ao, x, z)[0]);
+    for v in sides {
+        assert!((0.5..0.92).contains(&v), "beside the box: {sides:?}");
+    }
+    let (lo, hi) = sides.iter().fold((f32::MAX, 0f32), |(a, b), v| (a.min(*v), b.max(*v)));
+    assert!(hi - lo < 0.03, "uneven around the box: {sides:?}");
+    // Far from it and on the box's flat front: as without.
+    for (what, x, z) in [("open wall", -1.2, 0.3), ("open wall", 1.3, -0.6), ("box front", 0.0, 0.0)] {
+        let (a, b) = (px_of(&ao, x, z)[0], px_of(&plain, x, z)[0]);
+        assert!((a - b).abs() < 0.03, "{what} at {x} {z}: {a} with, {b} without");
+    }
+    // Direct light alone: nothing to dim, and a warning.
+    let (sun_plain, sun_ao) = (rig.pixels("/sun_plain"), rig.pixels("/sun_ao"));
+    let (a, b) = (px_of(&sun_ao, 0.2, 0.0)[0], px_of(&sun_plain, 0.2, 0.0)[0]);
+    assert!((a - b).abs() < 1e-3, "direct light only: {a} with, {b} without");
+    let s = rig.cooker.status(rig.id("/sun_ao")).unwrap();
+    assert!(s.warning.as_deref().is_some_and(|w| w.contains("ambient")), "{s:?}");
+    look(&mut rig, "/ao", "ambient_occlusion", (super::W, super::H));
+    look(&mut rig, "/plain", "ambient_occlusion_off", (super::W, super::H));
+}

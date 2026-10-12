@@ -5,6 +5,8 @@
 // the view), the measuring pass for res.analyze (the texture coordinates' derivatives per
 // pixel), and per light casting shadows the shadow pass (depth only, see-through pixels left
 // out) and the tint pass (what see-through surfaces let through, and the nearest one's depth).
+// For ambient occlusion a prepass writes the opaque pixels' positions and normals (ao.wgsl takes
+// it from there); the colour pass dims ambient and environment light by the result.
 
 // Alpha from which a pixel is opaque (render::OPAQUE).
 const OPAQUE: f32 = 0.998;
@@ -40,7 +42,7 @@ struct Frame {
     overlay_factor: f32,
     overlay_cap: f32,
     // x: texels across a shadow map; y: across a tint map; z: 1 where the tint maps hold
-    // anything.
+    // anything; w: 1 where ambient occlusion was drawn.
     shadow: vec4f,
     lights: array<Light, 16>,
 };
@@ -79,6 +81,8 @@ struct Draw {
 @group(3) @binding(8) var env_specular: texture_2d<f32>;
 @group(3) @binding(9) var env_irradiance: texture_2d<f32>;
 @group(3) @binding(10) var env_samp: sampler;
+// Ambient occlusion (ao.wgsl's blur): visibility in red, the distance along the view in green.
+@group(3) @binding(11) var ao_map: texture_2d<f32>;
 
 const PI: f32 = 3.14159265;
 
@@ -273,7 +277,8 @@ fn phong_roughness(shininess: f32) -> f32 {
     return sqrt(2.0 / (shininess + 2.0));
 }
 
-fn lighting(p: vec3f, n: vec3f, shininess: f32) -> Lit {
+// `open`: what ambient occlusion leaves of ambient and environment light.
+fn lighting(p: vec3f, n: vec3f, shininess: f32, open: f32) -> Lit {
     var out: Lit;
     out.diffuse = vec3f(0.0);
     out.highlight = vec3f(0.0);
@@ -282,12 +287,12 @@ fn lighting(p: vec3f, n: vec3f, shininess: f32) -> Lit {
         let light = frame.lights[i];
         let kind = u32(light.position.w + 0.5);
         if kind == 0u {
-            out.diffuse += light.color.rgb;
+            out.diffuse += light.color.rgb * open;
             continue;
         }
         if kind == 5u {
-            out.diffuse += env_diffuse(light, n);
-            out.highlight += env_reflection(light, reflect(-v, n), phong_roughness(shininess));
+            out.diffuse += env_diffuse(light, n) * open;
+            out.highlight += env_reflection(light, reflect(-v, n), phong_roughness(shininess)) * open;
             continue;
         }
         let inc = incoming(light, kind, p, n);
@@ -309,8 +314,9 @@ fn env_brdf(f0: vec3f, roughness: f32, ndv: f32) -> vec3f {
 // A pbr material at `p` (normal `n`, facing the viewer) with straight colour `albedo` and
 // alpha `a`: premultiplied diffuse plus reflections, which stay at full strength on
 // see-through surfaces (glass reflects). Light units as phong's: a light of colour 1 head on
-// gives a matte white surface 1, so the highlight carries the pi the diffuse leaves out.
-fn pbr(p: vec3f, n: vec3f, albedo: vec3f, a: f32) -> vec3f {
+// gives a matte white surface 1, so the highlight carries the pi the diffuse leaves out. `open`
+// as lighting()'s.
+fn pbr(p: vec3f, n: vec3f, albedo: vec3f, a: f32, open: f32) -> vec3f {
     let v = normalize(frame.eye.xyz - p);
     let rough = clamp(draw.roughness, 0.03, 1.0);
     let alpha2 = pow(rough, 4.0);
@@ -324,12 +330,12 @@ fn pbr(p: vec3f, n: vec3f, albedo: vec3f, a: f32) -> vec3f {
         let light = frame.lights[i];
         let kind = u32(light.position.w + 0.5);
         if kind == 0u {
-            diffuse += light.color.rgb * (1.0 - metal);
+            diffuse += light.color.rgb * (1.0 - metal) * open;
             continue;
         }
         if kind == 5u {
-            diffuse += env_diffuse(light, n) * (1.0 - metal);
-            reflected += env_reflection(light, reflect(-v, n), rough) * env_brdf(f0, rough, ndv);
+            diffuse += env_diffuse(light, n) * (1.0 - metal) * open;
+            reflected += env_reflection(light, reflect(-v, n), rough) * env_brdf(f0, rough, ndv) * open;
             continue;
         }
         let inc = incoming(light, kind, p, n);
@@ -359,10 +365,41 @@ fn cover(t: vec4f) -> vec4f {
     }
 }
 
+// What ambient occlusion leaves at this fragment: the pixel's own, unless it shows another
+// surface (the map has one sample per pixel, the colour pass four at edges); then of its
+// neighbours the one nearest the fragment's distance along the view. 1 where none is near (a
+// surface the prepass did not see) or without occlusion.
+fn occlusion(v: VOut) -> f32 {
+    if frame.shadow.w < 0.5 {
+        return 1.0;
+    }
+    let depth = dot(frame.view_z, vec4f(v.world, 1.0));
+    let last = vec2i(textureDimensions(ao_map)) - 1;
+    let at = vec2i(floor(v.pos.xy));
+    let near = 0.01 * abs(depth) + 1e-4;
+    let own = textureLoad(ao_map, clamp(at, vec2i(0), last), 0);
+    if own.g > 0.0 && abs(own.g - depth) < near {
+        return own.r;
+    }
+    var best = 1.0;
+    var off = 3.0 * near;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let a = textureLoad(ao_map, clamp(at + vec2i(x, y), vec2i(0), last), 0);
+            let d = abs(a.g - depth);
+            if a.g > 0.0 && d < off {
+                off = d;
+                best = a.r;
+            }
+        }
+    }
+    return best;
+}
+
 // The colour pass's opaque pixels, writing depth.
 @fragment
 fn fs_solid(v: VOut) -> @location(0) vec4f {
-    let c = shade(v);
+    let c = shade(v, occlusion(v));
     if c.a < OPAQUE {
         discard;
     }
@@ -372,14 +409,16 @@ fn fs_solid(v: VOut) -> @location(0) vec4f {
 // The colour pass's see-through pixels, over what is behind them.
 @fragment
 fn fs_blend(v: VOut) -> @location(0) vec4f {
-    let c = shade(v);
+    // Ambient occlusion holds what lies behind a see-through surface, not the surface.
+    let c = shade(v, 1.0);
     if c.a >= OPAQUE || c.a < 0.002 {
         discard;
     }
     return c;
 }
 
-fn shade(v: VOut) -> vec4f {
+// `open`: what ambient occlusion leaves of ambient and environment light.
+fn shade(v: VOut, open: f32) -> vec4f {
     let t = textureSample(tex, samp, v.uv);
     // Derivatives in uniform control flow, before any branch.
     let r = density(v.uv);
@@ -411,10 +450,10 @@ fn shade(v: VOut) -> vec4f {
     let facing = select(-n, n, dot(n, frame.eye.xyz - v.world) >= 0.0);
     if draw.shading == 2u && frame.mode <= 1u && frame.shade_all == 0u {
         let albedo = clamp(base.rgb / max(base.a, 1e-6), vec3f(0.0), vec3f(1e4));
-        let rgb = pbr(v.world, facing, albedo, base.a) + draw.emit.rgb * base.a;
+        let rgb = pbr(v.world, facing, albedo, base.a, open) + draw.emit.rgb * base.a;
         base = vec4f(rgb, base.a);
     } else if phong || (frame.shade_all == 1u && frame.mode != 4u) {
-        let lit = lighting(v.world, facing, draw.specular.w);
+        let lit = lighting(v.world, facing, draw.specular.w, open);
         var rgb = base.rgb * lit.diffuse;
         if phong {
             rgb += (lit.highlight * draw.specular.rgb + draw.emit.rgb) * base.a;
@@ -426,6 +465,29 @@ fn shade(v: VOut) -> vec4f {
         base = vec4f(overlay_tint(r, straight) * base.a, base.a);
     }
     return base;
+}
+
+// For ambient occlusion, the opaque pixels as fs_solid draws them: the position and the distance
+// along the view (0: nothing), and the normal turned to the viewer.
+struct Prepass {
+    @location(0) position: vec4f,
+    @location(1) normal: vec4f,
+};
+
+@fragment
+fn fs_prepass(v: VOut) -> Prepass {
+    if cover(textureSample(tex, samp, v.uv)).a < OPAQUE {
+        discard;
+    }
+    var n = v.normal;
+    if dot(n, n) < 1e-12 {
+        n = frame.eye.xyz - v.world;
+    }
+    n = normalize(n);
+    var out: Prepass;
+    out.position = vec4f(v.world, max(dot(frame.view_z, vec4f(v.world, 1.0)), 1e-6));
+    out.normal = vec4f(select(-n, n, dot(n, frame.eye.xyz - v.world) >= 0.0), 1.0);
+    return out;
 }
 
 // Depth only, from a light: only what is opaque (as the colour pass's alpha) casts a full

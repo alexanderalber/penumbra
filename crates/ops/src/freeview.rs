@@ -139,6 +139,7 @@ impl FreeView {
                 antialias: true,
                 overlay: None,
                 shadow_size: 0,
+                ao: None,
             };
             (data, None, Vec::new(), look, home)
         };
