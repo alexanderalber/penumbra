@@ -105,11 +105,13 @@ fn run() -> Result<(), String> {
         }
     };
 
-    let mut options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_title("penumbra").with_inner_size([1600.0, 1000.0]),
-        renderer: eframe::Renderer::Wgpu,
-        ..Default::default()
-    };
+    let mut viewport =
+        egui::ViewportBuilder::default().with_title("penumbra").with_inner_size([1600.0, 1000.0]);
+    if let Some(icon) = app_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+    let mut options =
+        eframe::NativeOptions { viewport, renderer: eframe::Renderer::Wgpu, ..Default::default() };
     // DX12 on Windows: with Vulkan, one shared device throttles the UI to the projectors' vsync
     // (measured). `WGPU_BACKEND` still overrides; Linux keeps Vulkan.
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
@@ -123,6 +125,24 @@ fn run() -> Result<(), String> {
     // Normally done in `on_exit` already; repeated here for a window that failed to open.
     engine.shutdown();
     result
+}
+
+/// The window icon, chosen once at start for the taskbar's colour: a plain sphere on a light
+/// taskbar, the sphere in a ring on a dark one or when the colour is unknown (the icon in the
+/// exe). `None` leaves eframe's default.
+fn app_icon() -> Option<Arc<egui::IconData>> {
+    let png: &[u8] = if penumbra_system::appearance::taskbar_is_light() == Some(true) {
+        include_bytes!("../../../assets/app-icon/penumbra-light.png")
+    } else {
+        include_bytes!("../../../assets/app-icon/penumbra.png")
+    };
+    match eframe::icon_data::from_png_bytes(png) {
+        Ok(icon) => Some(Arc::new(icon)),
+        Err(e) => {
+            log::warn!("no app icon: {e}");
+            None
+        }
+    }
 }
 
 /// Runs the editor window and the output windows until the editor closes. The event loop is

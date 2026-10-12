@@ -95,6 +95,9 @@ windows = "0.62"
 # needs no C library.
 hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
+# The app icon and version info in penumbra.exe (apps/penumbra/build.rs), as in the storytold
+# apps.
+winresource = "0.1"
 
 [workspace.lints.rust]
 # `deny`, not `forbid`: a clearly delimited FFI module may opt out with a local `allow`.

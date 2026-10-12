@@ -14,6 +14,7 @@ penumbra-graph.workspace = true
 penumbra-ops.workspace = true
 penumbra-output.workspace = true
 penumbra-project.workspace = true
+penumbra-system.workspace = true
 penumbra-ui.workspace = true
 serde_json.workspace = true
 log.workspace = true
@@ -24,6 +25,9 @@ wgpu.workspace = true
 # The event loop is the app's (output windows next to eframe's); keeps winit's default
 # backends (Wayland via dlopen, X11) on Linux.
 winit.workspace = true
+
+[build-dependencies]
+winresource.workspace = true
 
 [lints]
 workspace = true
