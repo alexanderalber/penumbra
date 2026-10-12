@@ -9,8 +9,9 @@
 //! A [`Material`] can be put on every model of a [`Geo`] by `geo.material`; without one, a model
 //! shows its file's materials as they are (unlit, as [`Shading::Constant`]).
 
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use penumbra_core::Error;
 use penumbra_mesh::{Bounds, Mesh};
@@ -19,6 +20,12 @@ use crate::{Gpu, Tex};
 
 /// Bytes of one vertex on the GPU: position, normal, uv as `f32`.
 pub const VERTEX_BYTES: u64 = 32;
+/// Bytes of one corner of a wireframe's triangle: a vertex, then its barycentric coordinates and
+/// which of the triangle's edges lie inside a flat polygon.
+pub const WIRE_BYTES: u64 = 48;
+/// Faces whose normals differ by less than this cosine (about one degree) count as one flat
+/// polygon for a wireframe's `polygons` edges.
+const FLAT: f32 = 0.99985;
 /// Most texture memory one model's material images may take once decoded (half floats).
 pub const MAX_TEXTURE_BYTES: u64 = 1 << 30;
 
@@ -43,6 +50,9 @@ pub struct Model {
     /// The mesh's box, measured once: a render asks for it on every cook, and walking millions
     /// of vertices each time cost a frame's budget several times over.
     pub(crate) bounds: Option<Bounds>,
+    /// Every triangle's corners on their own, for wireframes: made on the first wireframe draw,
+    /// since it takes three times the vertices.
+    wire: Mutex<Option<wgpu::Buffer>>,
 }
 
 impl Model {
@@ -141,7 +151,56 @@ impl Model {
         let bounds = mesh.bounds();
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        Ok((Model { mesh, id, vertices, indices, textures, centers, bounds }, warnings))
+        let wire = Mutex::new(None);
+        Ok((Model { mesh, id, vertices, indices, textures, centers, bounds, wire }, warnings))
+    }
+
+    /// The vertices a wireframe draws: three per triangle in index order (so a run of indices
+    /// draws the same corners unindexed), each with its barycentric coordinates and, in the
+    /// fourth float, a bit per edge that lies inside a flat polygon (bit k: the edge opposite
+    /// corner k). Made once, on first use.
+    pub(crate) fn wire(&self, gpu: &Gpu) -> Result<wgpu::Buffer, Error> {
+        let mut slot = self.wire.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(b) = slot.as_ref() {
+            return Ok(b.clone());
+        }
+        let bytes = self.mesh.indices.len() as u64 * WIRE_BYTES;
+        if bytes > gpu.device().limits().max_buffer_size {
+            return Err(Error::new(format!(
+                "{} triangles are too many for a wireframe",
+                self.mesh.triangle_count()
+            )));
+        }
+        let inside = inner_edges(&self.mesh);
+        let mut data = Vec::with_capacity(bytes as usize);
+        for (t, corners) in self.mesh.indices.as_chunks::<3>().0.iter().enumerate() {
+            let mask = f32::from(inside.get(t).copied().unwrap_or(0));
+            for (k, i) in corners.iter().enumerate() {
+                let v = self.mesh.vertices.get(*i as usize).copied().unwrap_or_default();
+                let mut bary = [0.0f32; 3];
+                if let Some(b) = bary.get_mut(k) {
+                    *b = 1.0;
+                }
+                for f in v.position.iter().chain(&v.normal).chain(&v.uv).chain(&bary).chain([&mask]) {
+                    data.extend_from_slice(&f.to_le_bytes());
+                }
+            }
+        }
+        let (buffer, error) = gpu.scoped(|| {
+            let b = gpu.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some("wireframe"),
+                size: data.len() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            gpu.queue().write_buffer(&b, 0, &data);
+            b
+        });
+        if let Some(e) = error {
+            return Err(Error::new(format!("cannot upload the wireframe: {e}")));
+        }
+        *slot = Some(buffer.clone());
+        Ok(buffer)
     }
 
     /// GPU memory of the buffers and textures.
@@ -149,7 +208,61 @@ impl Model {
         self.vertices.size()
             + self.indices.size()
             + self.textures.iter().flatten().map(Tex::bytes).sum::<u64>()
+            + self
+                .wire
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_ref()
+                .map_or(0, wgpu::Buffer::size)
     }
+}
+
+/// Per triangle, a bit per edge (bit k: the edge opposite corner k) shared with exactly one
+/// other triangle that lies in the same plane: the diagonal of a quad, the fan inside an
+/// n-gon. Edges are matched by their corners' positions, so vertices split at a seam still
+/// meet.
+pub(crate) fn inner_edges(mesh: &Mesh) -> Vec<u8> {
+    let position = |i: u32| mesh.vertices.get(i as usize).map(|v| v.position);
+    let triangles = mesh.indices.as_chunks::<3>().0;
+    let normals: Vec<Option<[f32; 3]>> = triangles
+        .iter()
+        .map(|t| {
+            let [a, b, c] = t.map(position);
+            let (a, b, c) = (a?, b?, c?);
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            (len > 0.0 && len.is_finite()).then(|| n.map(|x| x / len))
+        })
+        .collect();
+    // Each edge's triangles and which of their edges it is.
+    type Key = [u32; 3];
+    let mut edges: HashMap<(Key, Key), Vec<(usize, u8)>> = HashMap::new();
+    for (t, corners) in triangles.iter().enumerate() {
+        for k in 0..3u8 {
+            let a = corners.get(usize::from((k + 1) % 3)).and_then(|i| position(*i));
+            let b = corners.get(usize::from((k + 2) % 3)).and_then(|i| position(*i));
+            let (Some(a), Some(b)) = (a, b) else { continue };
+            let (a, b) = (a.map(f32::to_bits), b.map(f32::to_bits));
+            edges.entry(if a < b { (a, b) } else { (b, a) }).or_default().push((t, k));
+        }
+    }
+    let mut mask = vec![0u8; triangles.len()];
+    for shared in edges.values() {
+        let &[(s, j), (t, k)] = shared.as_slice() else { continue };
+        let (Some(Some(a)), Some(Some(b))) = (normals.get(s), normals.get(t)) else { continue };
+        // Either winding: a flat polygon's triangles may face opposite ways in a sloppy file.
+        if (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]).abs() >= FLAT {
+            if let Some(m) = mask.get_mut(s) {
+                *m |= 1 << j;
+            }
+            if let Some(m) = mask.get_mut(t) {
+                *m |= 1 << k;
+            }
+        }
+    }
+    mask
 }
 
 /// One model placed in the world.
@@ -174,6 +287,19 @@ pub enum Shading {
     /// Metallic and rough as in glTF: Lambert diffuse and a GGX highlight (Cook-Torrance); black
     /// without lights.
     Pbr,
+    /// Nothing, but what lies behind it is hidden: a real object standing in front of a
+    /// projection, or a cut-out. Casts shadows. The pictures geo nodes show of themselves draw it
+    /// as any surface.
+    Occluder,
+}
+
+/// A material drawn as the edges of its triangles only.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wire {
+    /// The lines' width in pixels of the render.
+    pub width: f32,
+    /// Leave out edges inside flat polygons (a quad's diagonal), as a modelling tool shows them.
+    pub polygons: bool,
 }
 
 /// A material from a `mat` node, put on geometry by `geo.material`.
@@ -195,6 +321,8 @@ pub struct Material {
     pub roughness: f32,
     /// Replaces the file's textures where given.
     pub texture: Option<Tex>,
+    /// Only the triangles' edges show; `None`: the whole surface.
+    pub wire: Option<Wire>,
 }
 
 impl Material {
@@ -209,6 +337,7 @@ impl Material {
             metallic: 0.0,
             roughness: 0.5,
             texture: None,
+            wire: None,
         }
     }
 }
@@ -326,6 +455,26 @@ mod tests {
         // Uneven: normals lean towards the squashed axis.
         let n = normal_matrix(&scale(0.001, 0.002, 0.004));
         assert!((n[0][0] - 1.0).abs() < 1e-12 && (n[2][2] - 0.25).abs() < 1e-12);
+    }
+
+    #[test]
+    fn inner_edges_are_the_diagonals_of_flat_quads() {
+        // A unit quad as two triangles, and a third one folded up along the quad's right edge.
+        let at = |p: [f32; 3]| penumbra_mesh::Vertex { position: p, ..Default::default() };
+        let mesh = Mesh {
+            vertices: vec![
+                at([0.0, 0.0, 0.0]),
+                at([1.0, 0.0, 0.0]),
+                at([1.0, 1.0, 0.0]),
+                at([0.0, 1.0, 0.0]),
+                at([1.0, 0.0, 1.0]),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3, 1, 4, 2],
+            ..Default::default()
+        };
+        // The diagonal 0-2 is opposite the first triangle's second corner and the second
+        // triangle's third; the fold 1-2 stays.
+        assert_eq!(inner_edges(&mesh), vec![0b010, 0b100, 0]);
     }
 
     #[test]
