@@ -15,8 +15,8 @@
 //! - `notices`: the third-party notices a build must ship with, written to
 //!   `target/THIRD-PARTY-NOTICES.html` by cargo-about (`about.toml`, `about.hbs`). Fails when a
 //!   dependency's licence is not accepted in `about.toml` or cannot be determined.
-//! - `dist`: a release build for Windows, zipped with everything it needs beside the exe:
-//!   `target/dist/penumbra-VERSION-windows-x64.zip`. Not part of `ci`.
+//! - `dist`: a release build for Windows, zipped with everything it needs beside the exe and
+//!   the documentation: `target/dist/penumbra-VERSION-windows-x64.zip`. Not part of `ci`.
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -224,6 +224,17 @@ fn dist() -> Result<(), String> {
         .replace("\r\n", "\n")
         .replace('\n', "\r\n");
     std::fs::write(stage.join("README.txt"), readme).map_err(|e| format!("cannot write README.txt: {e}"))?;
+    // For a Claude Code session started in the unpacked folder, which reads CLAUDE.md on its own.
+    std::fs::write(stage.join("CLAUDE.md"), include_str!("../dist/CLAUDE.md"))
+        .map_err(|e| format!("cannot write CLAUDE.md: {e}"))?;
+
+    // The documentation of exactly this version, readable offline. Getting started shows the
+    // screenshot by a path relative to docs/, so it keeps that place.
+    copy_dir(&root.join("docs"), &stage.join("docs"))?;
+    std::fs::create_dir_all(stage.join("assets")).map_err(|e| format!("cannot create assets: {e}"))?;
+    let shot = root.join("assets").join("screenshot.png");
+    std::fs::copy(&shot, stage.join("assets").join("screenshot.png"))
+        .map_err(|e| format!("cannot copy {}: {e}", shot.display()))?;
 
     // Windows' own tar (bsdtar) writes zip archives, `-a` picks the format from the extension.
     // Named by full path: the GNU tar of Git for Windows may come first on PATH and cannot.
@@ -246,6 +257,23 @@ fn dist() -> Result<(), String> {
         return Err(format!("zipping failed ({status})"));
     }
     eprintln!("xtask: {} written", zip.display());
+    Ok(())
+}
+
+/// Copies a directory tree of plain files.
+fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(to).map_err(|e| format!("cannot create {}: {e}", to.display()))?;
+    let entries = std::fs::read_dir(from).map_err(|e| format!("cannot read {}: {e}", from.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("cannot read {}: {e}", from.display()))?;
+        let path = entry.path();
+        let target = to.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target).map_err(|e| format!("cannot copy {}: {e}", path.display()))?;
+        }
+    }
     Ok(())
 }
 

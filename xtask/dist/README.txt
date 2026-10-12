@@ -27,9 +27,25 @@ Files
 - pyhost.dll                runs Python for script nodes; keep it next to penumbra.exe
 - penumbra-cli.exe          command line tool (control channel client, soak test), for use
                             from a terminal; not needed to use the app
+- docs\                     the documentation of this version (Markdown); start at
+                            docs\README.md
+- CLAUDE.md                 how Claude Code drives the app, read by it when started here
 - THIRD-PARTY-NOTICES.html  licences of the components penumbra is built from
 - LICENSE-MIT, LICENSE-APACHE
 
-Documentation and source code: https://github.com/alexanderalber/penumbra
+Driving penumbra from Claude Code or a script
+---------------------------------------------
+
+Everything the app does is a command on a local control channel: JSON lines over TCP on
+127.0.0.1, port 9880. While penumbra.exe runs, from a terminal in this folder:
+
+    penumbra-cli ctl ping
+    penumbra-cli ctl commands
+    penumbra-cli ctl node.list
+
+Details in docs\control.md. To let Claude Code work with penumbra, start Claude Code in this
+folder; it reads CLAUDE.md, which points it to the same documentation.
+
+Source code: https://github.com/alexanderalber/penumbra
 
 penumbra is licensed under the MIT license or the Apache License 2.0, at your option.
