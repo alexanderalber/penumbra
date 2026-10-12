@@ -11,7 +11,7 @@ mod camera;
 mod homography;
 mod solve;
 
-pub use camera::{Camera, Intrinsics, MAX_COORDINATE, Pose};
+pub use camera::{Camera, Intrinsics, MAX_COORDINATE, Pose, unproject_clip};
 pub use homography::{Homography, MAX_PAIRS};
 pub use solve::{MAX_ITERATIONS, Options, Solution, Spread, Start, calibrate};
 

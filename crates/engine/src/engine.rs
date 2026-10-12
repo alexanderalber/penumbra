@@ -77,6 +77,7 @@ use penumbra_gpu::Gpu;
 use penumbra_graph::{
     CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, PERSIST_STATE, ThumbnailMode,
 };
+use penumbra_ops::freeview;
 use penumbra_ops::mapping::Mapping;
 use penumbra_ops::out::{Mappings, OutputBoard, ProjectorFrame};
 use penumbra_ops::res::{Report, Scene};
@@ -84,6 +85,7 @@ use penumbra_ops::tex::mapper::Mappers;
 use penumbra_ops::tex::render::Renders;
 use penumbra_osc::Hub;
 use penumbra_project::Session;
+use penumbra_spacenav::SpaceNav;
 use serde::Serialize;
 
 use crate::osc::OscShared;
@@ -108,7 +110,7 @@ enum CookMsg {
 }
 
 /// What the UI shows, so the cook thread knows what to cook and publish ([`Engine::set_view`]).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ViewRequest {
     /// Cooked every frame, like an output (the viewer).
     pub viewers: Vec<NodeId>,
@@ -120,6 +122,8 @@ pub struct ViewRequest {
     pub detail: Option<NodeId>,
     /// Publish the resolution analysis ([`ViewFrame::resolution`]).
     pub resolution: bool,
+    /// Free views to draw after every pass, one per viewer showing one ([`ViewFrame::free`]).
+    pub free: Vec<freeview::Request>,
 }
 
 /// What the cook thread publishes after every pass for the UI.
@@ -152,6 +156,8 @@ pub struct ViewFrame {
     pub resolution: Option<Arc<Report>>,
     /// The resolution overlay is on (`res.overlay`).
     pub overlay: bool,
+    /// The free views asked for, in the request's order: the picture, or why there is none.
+    pub free: Vec<(freeview::Request, Result<freeview::Picture, String>)>,
 }
 
 /// How the cook passes went since the last reset (`cook.stats`): the numbers a soak test
@@ -238,6 +244,8 @@ pub struct CookState {
     mappers: Mappers,
     /// Render nodes' measured fields and overlays.
     pub renders: Renders,
+    /// What draws the free views, one per request.
+    free_views: Vec<freeview::FreeView>,
     /// The resolution overlay is on (`res.overlay`).
     overlay: bool,
     /// The latest analysis with the network and pass it was made for.
@@ -374,12 +382,40 @@ impl CookState {
             gpu.poll();
         }
         self.state.after_pass(&self.cooker, &net, self.gpu.as_ref(), self.clock.now().frame);
-        self.publish(&net, &request, now);
+        let free = self.draw_free_views(&net, &request.free);
+        self.publish(&net, &request, now, free);
         self.stats.add(started, self.last.elapsed, due, self.clock.now().rate.period());
     }
 
-    fn publish(&self, net: &Network, request: &ViewRequest, wall: Instant) {
+    /// The free views the UI asks for, drawn from this pass's results.
+    fn draw_free_views(
+        &mut self,
+        net: &Network,
+        requests: &[freeview::Request],
+    ) -> Vec<(freeview::Request, Result<freeview::Picture, String>)> {
+        self.free_views.truncate(requests.len());
+        while self.free_views.len() < requests.len() {
+            self.free_views.push(freeview::FreeView::new());
+        }
+        let Some(gpu) = &self.gpu else {
+            return requests.iter().map(|r| (*r, Err("no GPU yet".to_string()))).collect();
+        };
+        requests
+            .iter()
+            .zip(self.free_views.iter_mut())
+            .map(|(r, fv)| (*r, fv.draw(gpu, net, &self.cooker, &self.renders, r).map_err(|e| e.0)))
+            .collect()
+    }
+
+    fn publish(
+        &self,
+        net: &Network,
+        request: &ViewRequest,
+        wall: Instant,
+        free: Vec<(freeview::Request, Result<freeview::Picture, String>)>,
+    ) {
         let mut frame = ViewFrame {
+            free,
             pass: self.pass_base + self.last.pass,
             time: Some(self.clock.now()),
             playing: self.clock.is_playing(),
@@ -451,6 +487,8 @@ pub struct Engine {
     osc: Arc<OscShared>,
     audio: AudioHub,
     camera: CameraHub,
+    /// The 3D mouse; its reader starts when the UI first asks for it.
+    spacenav: SpaceNav,
     shut: AtomicBool,
 }
 
@@ -480,6 +518,7 @@ impl Engine {
             osc: Arc::new(OscShared::new(Hub::new())),
             audio: AudioHub::new(),
             camera: CameraHub::new(),
+            spacenav: SpaceNav::new(),
             shut: AtomicBool::new(false),
         });
         engine.launch(&session, 0)?;
@@ -516,6 +555,7 @@ impl Engine {
             mappings: Mappings::default(),
             mappers,
             renders,
+            free_views: Vec::new(),
             overlay: false,
             resolution: None,
             state: StateKeeper::new(self.state.clone(), session.dir()),
@@ -751,6 +791,11 @@ impl Engine {
     }
 
     /// The project's state directory.
+    /// The 3D mouse; [`SpaceNav::start`] opens it.
+    pub fn spacenav(&self) -> &SpaceNav {
+        &self.spacenav
+    }
+
     pub fn state_dir(&self) -> std::path::PathBuf {
         crate::state::dir_of(self.session().dir())
     }
@@ -919,6 +964,7 @@ impl Engine {
         self.osc.hub().shutdown();
         self.audio.shutdown();
         self.camera.shutdown();
+        self.spacenav.shutdown();
     }
 }
 

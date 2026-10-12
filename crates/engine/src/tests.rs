@@ -301,6 +301,7 @@ fn the_view_cooks_viewers_and_thumbnails_and_publishes_them() {
         passive: Vec::new(),
         detail: Some(lfo),
         resolution: false,
+        free: Vec::new(),
     });
     eventually("both outputs in the view", || {
         let v = f.engine.view();
@@ -333,6 +334,7 @@ fn the_view_cooks_viewers_and_thumbnails_and_publishes_them() {
         passive: Vec::new(),
         detail: None,
         resolution: false,
+        free: Vec::new(),
     });
     eventually("all current", || f.engine.view().pictures.len() == 3);
     f.engine.set_view(crate::ViewRequest {
@@ -341,6 +343,7 @@ fn the_view_cooks_viewers_and_thumbnails_and_publishes_them() {
         passive: Vec::new(),
         detail: None,
         resolution: false,
+        free: Vec::new(),
     });
     eventually("the uncooked LFO hidden", || {
         let v = f.engine.view();
@@ -510,6 +513,36 @@ fn geometry_through_commands() {
     let r = f.call("node.snapshot", json!({"path": "/r"}));
     assert!(r["stats"]["max"][3].as_f64().unwrap() > 0.99, "{r}");
     assert!(f.fail("render.frame", json!({"path": "/box"})).contains("not a tex.render"));
+    // The free view: a render's starts at its camera, and draws that camera as a frustum; a
+    // geometry's starts framed. Any camera can be given; the viewer asks through the view.
+    let free = f.call("view.free", json!({"path": "/r", "width": 96, "height": 54}));
+    let eye = free["home"]["eye"].as_array().unwrap();
+    assert!((eye[1].as_f64().unwrap() - y).abs() < 1e-6, "{free}");
+    assert!((free["home"]["target"][2].as_f64().unwrap() - 0.5).abs() < 1e-6, "{free}");
+    assert_eq!((free["width"].clone(), free["lines"].clone()), (json!(96), json!(10)));
+    let free = f.call(
+        "view.free",
+        json!({"path": "/both", "camera": {"eye": [0, 0, 9], "target": [0, 0, 0], "roll": 0, "fov": 30}}),
+    );
+    assert_eq!((free["camera"]["eye"][2].clone(), free["lines"].clone()), (json!(9.0), json!(0)));
+    assert!(
+        f.fail(
+            "view.free",
+            json!({"path": "/box", "camera": {"eye": [0, 0, 0], "target": [0, 0, 0], "roll": 0, "fov": 30}})
+        )
+        .contains("apart")
+    );
+    f.call("node.create", json!({"path": "/k", "kind": "tex.constant"}));
+    assert!(f.fail("view.free", json!({"path": "/k"})).contains("no 3D scene"));
+    let net = f.engine.session().doc().snapshot();
+    let r = net.resolve(&"/r".parse().unwrap()).unwrap();
+    let request = penumbra_ops::freeview::Request { node: r, output: 0, camera: None, size: (80, 40) };
+    f.engine.set_view(crate::ViewRequest { viewers: vec![r], free: vec![request], ..Default::default() });
+    eventually("the free view in the view", || {
+        f.engine.view().free.first().is_some_and(|(_, p)| p.as_ref().is_ok_and(|p| p.tex.size() == (80, 40)))
+    });
+    f.engine.set_view(crate::ViewRequest::default());
+    f.call("node.delete", json!({"path": "/k"}));
     // With a camera node wired in, framing moves that node and leaves the render's own params.
     f.call(
         "node.create",

@@ -147,7 +147,8 @@ fn run_window(
             if let Some(rs) = &cc.wgpu_render_state {
                 *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(rs.instance.clone());
             }
-            let app_options = AppOptions { control, requests: Some(requests), bridge: Some(bridge) };
+            let app_options =
+                AppOptions { control, requests: Some(requests), bridge: Some(bridge), spacenav: true };
             Ok(Box::new(PenumbraApp::new(cc, app_engine, app_options)))
         }),
         &event_loop,

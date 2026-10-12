@@ -88,6 +88,7 @@ pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(
                     control: Err("headless".into()),
                     requests: Some(requests),
                     bridge: Some(bridge),
+                    spacenav: false,
                 },
             )
         });

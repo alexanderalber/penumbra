@@ -791,7 +791,7 @@ const SNAPSHOT_WAIT: Duration = Duration::from_secs(10);
 /// Cooks node `id` on demand (it need not be watched or feed an output) and returns output
 /// `output` with the node's status. Waits while a job is in flight, so the result is the
 /// current one rather than the previous file's.
-fn cook_now(e: &Engine, id: NodeId, output: u32) -> Result<(Option<Data>, Option<NodeStatus>)> {
+pub(crate) fn cook_now(e: &Engine, id: NodeId, output: u32) -> Result<(Option<Data>, Option<NodeStatus>)> {
     let deadline = Instant::now() + SNAPSHOT_WAIT;
     loop {
         let session = e.session().clone();
