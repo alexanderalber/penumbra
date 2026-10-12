@@ -103,3 +103,10 @@ that puts back what the fix replaced:
   over it. The fix turns off game capture and the Game Bar for the current user.
 - **Notifications:** banners for updates, mail and chat pop up on the main display. The fix
   turns notification banners off for the current user.
+
+Not checked here, because it lives in the graphics driver: with G-Sync (or FreeSync) enabled
+for windowed mode, the monitor follows the frame rate of the focused window. The editor
+redraws at about 60 Hz while nothing moves, so a 240 Hz monitor drops to 60 Hz (the mouse
+pointer turns choppy) as long as penumbra has the focus. Enable G-Sync for fullscreen only, or
+set **Monitor Technology** to **Fixed Refresh** for `penumbra.exe` in the NVIDIA Control Panel.
+The output windows are not affected; they present at their display's fixed vsync.
