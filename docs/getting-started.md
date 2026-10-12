@@ -2,7 +2,9 @@
 
 ## Running
 
-penumbra is built from source with a current stable Rust:
+On Windows, download the zip from the
+[latest release](https://github.com/alexanderalber/penumbra/releases/latest), unpack it and
+double-click `penumbra.exe`. Or build it from source with a current stable Rust:
 
 ```
 cargo run -p penumbra
