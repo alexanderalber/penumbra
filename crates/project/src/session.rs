@@ -196,8 +196,9 @@ impl Session {
         self.doc.types()
     }
 
-    /// Applies `ops` as one batch, if the gate lets `actor` edit now. `group` matters for the
-    /// user and OSC learn only (one per parameter drag; `None` for a one-off edit); Claude's edits are grouped by its claim.
+    /// Applies `ops` as one batch, if the gate lets `actor` edit now. `group` matters for the user
+    /// and OSC learn only (one per parameter drag; `None` for a one-off edit); Claude's edits are
+    /// grouped by its claim.
     pub fn edit(
         &self,
         actor: Actor,

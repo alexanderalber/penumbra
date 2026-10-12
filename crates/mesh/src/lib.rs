@@ -8,10 +8,10 @@
 //!
 //! Conventions: world units are metres where known, **z up** (the user's choice, as Blender and
 //! most CAD tools). The readers return what the file holds; [`Mesh::to_z_up`] turns a y-up mesh
-//! (glTF by its spec, OBJ by habit) into z up, and [`Up::of_file`] says what a format usually is. Texture coordinates have their origin at the top left,
-//! as every texture in penumbra (OBJ's `vt` is flipped on the way in). Triangles are lists of
-//! three indices; the winding is kept as in the file but not relied on (the renderer does not
-//! cull by default).
+//! (glTF by its spec, OBJ by habit) into z up, and [`Up::of_file`] says what a format usually is.
+//! Texture coordinates have their origin at the top left, as every texture in penumbra (OBJ's `vt`
+//! is flipped on the way in). Triangles are lists of three indices; the winding is kept as in the
+//! file but not relied on (the renderer does not cull by default).
 
 mod gltf;
 mod obj;

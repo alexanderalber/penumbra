@@ -1428,9 +1428,10 @@ fn frame_bytes(view: &View, look: &Look, maps: Maps, lights: &[Light], placed: &
     b
 }
 
-/// render.wgsl's `Light`: position and kind, direction (an environment light: its turn in
-/// radians and its last mip) and the cone's outer cosine, colour and the inner cosine, then whether it fades with distance, its shadow layer and picture slot
-/// (each plus one, 0 for none) and its bias, then the matrix to its clip space.
+/// render.wgsl's `Light`: position and kind, direction (an environment light: its turn in radians
+/// and its last mip) and the cone's outer cosine, colour and the inner cosine, then whether it
+/// fades with distance, its shadow layer and picture slot (each plus one, 0 for none) and its bias,
+/// then the matrix to its clip space.
 fn light_bytes(l: &Light, p: &Placed) -> Vec<u8> {
     let mut b = Vec::with_capacity(LIGHT_BYTES as usize);
     let mut f = |v: f32| b.extend_from_slice(&(if v.is_finite() { v } else { 0.0 }).to_le_bytes());

@@ -1,5 +1,6 @@
 //! The engine's commands: `project.*`, `edit.*`, `history.*`, `node.*`, `chan.*`, `table.*`,
-//! `cook.*`, `gpu.*`, `output.*`, `res.*`, `script.*`, `system.*`, `text.*`. The UI adds `ui.*` (crate `penumbra-ui`).
+//! `cook.*`, `gpu.*`, `output.*`, `res.*`, `script.*`, `system.*`, `text.*`. The UI adds `ui.*`
+//! (crate `penumbra-ui`).
 //!
 //! Every edit goes through the session as Claude ([`Actor::Claude`]), so it passes the gate:
 //! inside an `edit.begin` / `edit.end` claim all edits form one history entry; without a claim

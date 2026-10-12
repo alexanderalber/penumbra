@@ -1546,7 +1546,8 @@ fn options_menu(
         let tip = match mode {
             ThumbnailMode::Always => "every visible node shows a live picture",
             ThumbnailMode::WhenFree => {
-                "nothing is cooked for thumbnails; a node shows its picture only while it is up to                  date (it cooks for an output or the viewer, or nothing changed)"
+                "nothing is cooked for thumbnails; a node shows its picture only while it is \
+                 up to date (it cooks for an output or the viewer, or nothing changed)"
             }
             ThumbnailMode::Never => "no thumbnails",
         };
@@ -1805,7 +1806,8 @@ fn rounded(points: &[Pos2], radius: f32) -> Route {
     route
 }
 
-/// Length of a route, with the stretches inside a node counted two hundred times: any clean route beats one that clips a node.
+/// Length of a route, with the stretches inside a node counted two hundred times: any clean route
+/// beats one that clips a node.
 pub(crate) fn route_cost(route: &[[Pos2; 4]], nodes: &[Rect], zoom: f32) -> f32 {
     let points: Vec<Pos2> =
         route.iter().flat_map(|s| (0..=32).map(move |i| cubic_at(s, i as f32 / 32.0))).collect();
