@@ -221,6 +221,7 @@ pub fn preview_lit(
         antialias: true,
         overlay: None,
         shadow_size: 0,
+        ao: None,
     };
     let lights = match kind {
         Preview::Geometry => [Light::ambient([0.25; 3]), Light::point(view.eye, [0.75; 3])],

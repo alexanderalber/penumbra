@@ -5,7 +5,8 @@
 //! outputs: the picture, and the data pass (texture coordinates, part id + 1, distance along the
 //! view). Lights come in through the `lights` input; without them phong materials are black,
 //! constant ones as they are. Lights casting shadows draw them through shadow maps of
-//! `shadow_size`.
+//! `shadow_size`. Ambient occlusion (`ao`) dims ambient and environment light in creases and
+//! where objects meet.
 //!
 //! For `res.analyze` a render node that shows its texture input measures, while the analysis asks
 //! for it ([`Renders`]), how far the texture coordinates move per pixel of its picture: a small
@@ -18,11 +19,11 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use penumbra_core::{Error, NodeId, ParamSpec, Value};
+use penumbra_core::{Error, NodeId, ParamSpec, Unit, Value};
 use penumbra_gpu::projection::Overlay;
 use penumbra_gpu::render::{
-    Derivatives, LightKind, Look, MAX_LIGHTS, MAX_PROJECTORS, MAX_SHADOWS, Measurement, Renderer, Surface,
-    View,
+    Ao, Derivatives, LightKind, Look, MAX_LIGHTS, MAX_PROJECTORS, MAX_SHADOWS, Measurement, Renderer,
+    Surface, View,
 };
 use penumbra_gpu::{Geo, Lights, Tex, TexRing};
 use penumbra_graph::{
@@ -333,6 +334,24 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(256.0, 4096.0)
                 .more()
                 .doc("Texels across each light's shadow map: sharper shadows, more memory"),
+        )
+        .param(ParamSpec::bool("ao", false).group("occlusion").doc(
+            "Ambient occlusion: less ambient and environment light in creases and where objects meet; direct light and unlit surfaces stay as they are",
+        ))
+        .param(
+            ParamSpec::float("ao_radius", 0.3)
+                .clamp(0.001, 1000.0)
+                .range(0.01, 2.0)
+                .unit(Unit::Metres)
+                .group("occlusion")
+                .doc("How far around a point geometry darkens it"),
+        )
+        .param(
+            ParamSpec::float("ao_strength", 1.0)
+                .clamp(0.0, 8.0)
+                .range(0.0, 3.0)
+                .group("occlusion")
+                .doc("1 as estimated; more darkens, less lightens"),
         );
     types.register(FnNodeType::new(desc, || Box::new(Render::default()) as Box<dyn Operator>))
 }
@@ -409,6 +428,15 @@ impl Operator for Render {
         if around > 1 {
             cx.warn(format!("{around} environment lights: only the first is drawn"));
         }
+        let ao = cx.bool("ao")?.then(|| -> Result<Ao, CookError> {
+            Ok(Ao { radius: cx.float("ao_radius")? as f32, strength: cx.float("ao_strength")? as f32 })
+        });
+        let ao = ao.transpose()?;
+        if ao.is_some()
+            && !drawn.iter().any(|l| matches!(l.kind, LightKind::Ambient | LightKind::Environment))
+        {
+            cx.warn("ambient occlusion dims only ambient and environment light, and none is wired");
+        }
         let shown = surface == Surface::Texture && texture.is_some();
         let renders = cx.resource::<Renders>();
         let look = Look {
@@ -419,6 +447,7 @@ impl Operator for Render {
             antialias: cx.bool("antialias")?,
             overlay: renders.and_then(|r| r.overlay(cx.node())).filter(|_| shown),
             shadow_size: u32::try_from(cx.int("shadow_size")?).unwrap_or(2048),
+            ao,
         };
         let color = self.ring.next(gpu, w, h, RENDER)?;
         let data = self.data_ring.next(gpu, w, h, "tex.render data")?;
