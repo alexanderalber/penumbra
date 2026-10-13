@@ -145,9 +145,11 @@ impl Viewer {
                 }
                 Some(d) if d.kind() == DataKind::Mat => {
                     d.get::<penumbra_gpu::Mat>().map(|m| match m.material.shading {
+                        _ if m.material.wire.is_some() => "wireframe".to_string(),
                         penumbra_gpu::geo::Shading::Constant => "constant".to_string(),
                         penumbra_gpu::geo::Shading::Phong => "phong".to_string(),
                         penumbra_gpu::geo::Shading::Pbr => "pbr".to_string(),
+                        penumbra_gpu::geo::Shading::Occluder => "occluder".to_string(),
                     })
                 }
                 Some(d) if d.kind() == DataKind::Light => d.get::<penumbra_gpu::Lights>().map(|l| {

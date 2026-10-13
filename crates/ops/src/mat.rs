@@ -1,6 +1,7 @@
 //! `mat` nodes: materials as in TouchDesigner, put on geometry by `geo.material`. `mat.constant`
 //! shows its colour as it is, with or without lights; `mat.phong` and `mat.pbr` (metallic and rough
-//! as in glTF) answer the render's lights and are black without them.
+//! as in glTF) answer the render's lights and are black without them. `mat.wireframe` draws only
+//! the edges, unlit; `mat.occluder` draws nothing but hides what is behind it.
 //!
 //! A material replaces the file's colours and textures: its colour, times its texture input
 //! where connected. The data on a `mat` connection is a [`Mat`]: the
@@ -9,9 +10,9 @@
 use std::sync::Arc;
 
 use half::f16;
-use penumbra_core::{Curve, Error, ParamSpec};
+use penumbra_core::{Curve, Error, ParamSpec, Unit};
 use penumbra_gpu::environment::EnvironmentMaps;
-use penumbra_gpu::geo::{Material, Model, Shading};
+use penumbra_gpu::geo::{Material, Model, Shading, Wire};
 use penumbra_gpu::image::Decoded;
 use penumbra_gpu::render::{Environment, Light, LightKind, Renderer};
 use penumbra_gpu::{Geo, Gpu, Mat, Tex};
@@ -64,6 +65,34 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .output("out", DataKind::Mat),
         || Box::new(MatNode::new(Shading::Phong)) as Box<dyn Operator>,
     ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new("mat.wireframe", "Only the edges, as lines of a width in pixels, unlit")
+            .param(
+                ParamSpec::color("color", [1.0; 4])
+                    .doc("The lines' colour: linear RGBA, straight alpha; times the texture input"),
+            )
+            .param(
+                ParamSpec::float("line_width", 1.5)
+                    .clamp(0.1, 64.0)
+                    .range(0.5, 8.0)
+                    .unit(Unit::Pixels)
+                    .doc("The lines' width in pixels of the render"),
+            )
+            .param(ParamSpec::choice("edges", &["polygons", "triangles"]).doc(
+                "polygons: leave out edges inside flat faces (a quad's diagonal); triangles: every edge",
+            ))
+            .input("texture", DataKind::Tex)
+            .output("out", DataKind::Mat),
+        || Box::new(MatNode::wire()) as Box<dyn Operator>,
+    ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            "mat.occluder",
+            "Invisible, but hides what is behind it: a real object in front of a projection; casts shadows",
+        )
+        .output("out", DataKind::Mat),
+        || Box::new(MatNode::new(Shading::Occluder)) as Box<dyn Operator>,
+    ))?;
     Ok(())
 }
 
@@ -88,6 +117,8 @@ fn rgba(cx: &CookContext<'_>, name: &str) -> Result<[f32; 4], CookError> {
 
 struct MatNode {
     shading: Shading,
+    /// `mat.wireframe`.
+    wire: bool,
     /// The sphere the picture shows, uploaded once.
     sphere: Option<Arc<Model>>,
     /// Surroundings for a pbr material's picture, baked once: metal shows nothing but its
@@ -98,7 +129,11 @@ struct MatNode {
 
 impl MatNode {
     fn new(shading: Shading) -> Self {
-        Self { shading, sphere: None, studio: None, renderer: Renderer::new() }
+        Self { shading, wire: false, sphere: None, studio: None, renderer: Renderer::new() }
+    }
+
+    fn wire() -> Self {
+        Self { wire: true, ..Self::new(Shading::Constant) }
     }
 
     /// A grey studio: bright above, fading to the horizon, a dark floor.
@@ -126,7 +161,9 @@ impl MatNode {
         if let Some(s) = &self.sphere {
             return Ok(s.clone());
         }
-        let (model, _) = Model::upload(gpu, prim::sphere(0.5, 48)?, "material sphere")?;
+        // A wireframe's picture reads better with fewer, larger faces.
+        let segments = if self.wire { 16 } else { 48 };
+        let (model, _) = Model::upload(gpu, prim::sphere(0.5, segments)?, "material sphere")?;
         let model = Arc::new(model);
         self.sphere = Some(model.clone());
         Ok(model)
@@ -136,8 +173,18 @@ impl MatNode {
 impl Operator for MatNode {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU: mat nodes cannot cook"))?;
-        let mut material =
-            Material { shading: self.shading, color: rgba(cx, "color")?, ..Material::constant() };
+        let mut material = Material { shading: self.shading, ..Material::constant() };
+        if self.shading != Shading::Occluder {
+            material.color = rgba(cx, "color")?;
+        }
+        if self.wire {
+            let polygons = match cx.text("edges")? {
+                "polygons" => true,
+                "triangles" => false,
+                other => return Err(CookError::failed(format!("unknown edges `{other}`"))),
+            };
+            material.wire = Some(Wire { width: cx.float("line_width")? as f32, polygons });
+        }
         if self.shading == Shading::Phong {
             let [r, g, b, _] = rgba(cx, "specular")?;
             material.specular = [r, g, b];
@@ -153,9 +200,20 @@ impl Operator for MatNode {
         }
         material.texture = cx.input_as::<Tex>(0).cloned();
         let material = Arc::new(material);
+        // An occluder's picture would be empty: a dark matte sphere, a hole, stands in for it.
+        let shown = if self.shading == Shading::Occluder {
+            Arc::new(Material {
+                shading: Shading::Phong,
+                color: [0.06, 0.06, 0.06, 1.0],
+                specular: [0.0; 3],
+                ..Material::constant()
+            })
+        } else {
+            material.clone()
+        };
         let mut geo = Geo::single(self.sphere(gpu)?);
         for item in &mut geo.items {
-            item.material = Some(material.clone());
+            item.material = Some(shown.clone());
         }
         let mut extra = Vec::new();
         if self.shading == Shading::Pbr {

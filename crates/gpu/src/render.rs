@@ -12,7 +12,13 @@
 //! ([`Look::overlay`]) from the same derivatives, per pixel.
 //!
 //! Lights are [`Light`]s passed with each render, at most [`MAX_LIGHTS`]; only [`Shading::Phong`]
-//! materials answer them. No light is added by itself: phong without lights is black.
+//! and [`Shading::Pbr`] materials answer them. No light is added by itself: phong without lights
+//! is black.
+//!
+//! Wireframes ([`crate::geo::Wire`]) draw each triangle's corners on their own, with barycentric
+//! coordinates, from a buffer the model makes on first use; the lines lie inside the triangles,
+//! so an outline edge whose neighbour faces are seen edge-on shows at half the width. Occluders
+//! ([`Shading::Occluder`]) draw before everything else, writing depth but no colour.
 //!
 //! Projector lights and shadows: a projector light carries its own world-to-clip matrix and a
 //! picture it throws onto the geometry (at most [`MAX_PROJECTORS`] pictures per render).
@@ -42,7 +48,7 @@ use penumbra_core::Error;
 use penumbra_mesh::Bounds;
 
 use crate::environment::EnvironmentMaps;
-use crate::geo::{Geo, Mat4, Material, Shading, VERTEX_BYTES, normal_matrix};
+use crate::geo::{Geo, Mat4, Material, Shading, VERTEX_BYTES, WIRE_BYTES, normal_matrix};
 use crate::projection::Overlay;
 use crate::{FORMAT, Gpu, Tex};
 
@@ -60,7 +66,7 @@ pub const MAX_SHADOWS: usize = 8;
 pub const MAX_PROJECTORS: usize = 4;
 const LIGHT_BYTES: u64 = 128;
 const FRAME_BYTES: u64 = 144 + MAX_LIGHTS as u64 * LIGHT_BYTES;
-const DRAW_BYTES: u64 = 176;
+const DRAW_BYTES: u64 = 192;
 const AO_BYTES: u64 = 96;
 /// Most draws (runs of one part and material, over all models) in one render.
 pub const MAX_DRAWS: usize = 1 << 16;
@@ -365,8 +371,14 @@ impl Measurement {
     }
 }
 
-/// Samples, pass, faces left out.
-type PipelineKey = (u32, Pass, Option<wgpu::Face>);
+/// Samples, pass, faces left out, wireframe.
+type PipelineKey = (u32, Pass, Option<wgpu::Face>, bool);
+
+/// A pass's pipeline for whole surfaces, and for wireframes where the render draws any.
+struct Pipes {
+    plain: wgpu::RenderPipeline,
+    wire: Option<wgpu::RenderPipeline>,
+}
 
 /// Pipelines and layouts, one set per device ([`Gpu::render_pipelines`]).
 pub struct Pipelines {
@@ -380,7 +392,7 @@ pub struct Pipelines {
     layout: wgpu::PipelineLayout,
     /// ... and the light group: the colour pass.
     color_layout: wgpu::PipelineLayout,
-    /// By (samples, pass, faces left out).
+    /// By (samples, pass, faces left out, wireframe).
     built: std::sync::Mutex<HashMap<PipelineKey, wgpu::RenderPipeline>>,
     /// Whether the texture format allows four samples.
     msaa: bool,
@@ -583,8 +595,9 @@ impl Pipelines {
         samples: u32,
         pass: Pass,
         cull: Option<wgpu::Face>,
+        wire: bool,
     ) -> Result<wgpu::RenderPipeline, Error> {
-        let key = (samples, pass, cull);
+        let key = (samples, pass, cull, wire);
         let mut built = self.built.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(p) = built.get(&key) {
             return Ok(p.clone());
@@ -593,7 +606,14 @@ impl Pipelines {
             wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 },
             wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 12, shader_location: 1 },
             wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 24, shader_location: 2 },
+            // Wireframes only: barycentric coordinates and the edges inside flat polygons.
+            wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x4, offset: 32, shader_location: 3 },
         ];
+        let (entry, stride, attributes) = if wire {
+            ("vs_wire", WIRE_BYTES, &attributes[..])
+        } else {
+            ("vs", VERTEX_BYTES, &attributes[..3])
+        };
         let target = |format: wgpu::TextureFormat| {
             Some(wgpu::ColorTargetState { format, blend: pass.blend(), write_mask: wgpu::ColorWrites::ALL })
         };
@@ -610,12 +630,12 @@ impl Pipelines {
                 layout: Some(if pass.colour() { &self.color_layout } else { &self.layout }),
                 vertex: wgpu::VertexState {
                     module: &self.module,
-                    entry_point: Some("vs"),
+                    entry_point: Some(entry),
                     compilation_options: Default::default(),
                     buffers: &[Some(wgpu::VertexBufferLayout {
-                        array_stride: VERTEX_BYTES,
+                        array_stride: stride,
                         step_mode: wgpu::VertexStepMode::Vertex,
-                        attributes: &attributes,
+                        attributes,
                     })],
                 },
                 primitive: wgpu::PrimitiveState { cull_mode: cull, ..Default::default() },
@@ -974,19 +994,27 @@ impl Renderer {
         }
         let samples = if look.antialias && pipelines.msaa { 4 } else { 1 };
         let cull = look.cull.then_some(wgpu::Face::Back);
-        let color_pipeline = pipelines.pipeline(gpu, samples, Pass::Solid, cull)?;
+        // Materials show only where the surface is theirs; parts, uv and normals are whole.
+        let shows_material = matches!(look.surface, Surface::Material | Surface::Texture);
+        let any_wire =
+            shows_material && geo.items.iter().any(|i| i.material.as_ref().is_some_and(|m| m.wire.is_some()));
+        let pipes = |samples: u32, pass: Pass, cull: Option<wgpu::Face>| -> Result<Pipes, Error> {
+            Ok(Pipes {
+                plain: pipelines.pipeline(gpu, samples, pass, cull, false)?,
+                wire: if any_wire { Some(pipelines.pipeline(gpu, samples, pass, cull, true)?) } else { None },
+            })
+        };
+        let color_pipeline = pipes(samples, Pass::Solid, cull)?;
         let data_pipeline = match data {
-            Some(_) => Some(pipelines.pipeline(gpu, 1, Pass::Data, cull)?),
+            Some(_) => Some(pipes(1, Pass::Data, cull)?),
             None => None,
         };
-        let measure_pipeline =
-            if measure { Some(pipelines.pipeline(gpu, 1, Pass::Measure, cull)?) } else { None };
+        let measure_pipeline = if measure { Some(pipes(1, Pass::Measure, cull)?) } else { None };
         let lights = lights.get(..MAX_LIGHTS).unwrap_or(lights);
         let placed = place_lights(lights, geo.bounds().as_ref(), look.shadow_size > 0);
         let layers = placed.iter().filter(|p| p.layer.is_some()).count() as u32;
         // Both faces cast shadows, whatever the colour pass culls.
-        let shadow_pipeline =
-            if layers > 0 { Some(pipelines.pipeline(gpu, 1, Pass::Shadow, None)?) } else { None };
+        let shadow_pipeline = if layers > 0 { Some(pipes(1, Pass::Shadow, None)?) } else { None };
         // Ambient occlusion only where it can show: on lit surfaces, with ambient or environment
         // light to dim.
         let ambient = lights
@@ -1002,8 +1030,7 @@ impl Renderer {
                 && a.strength.is_finite()
                 && a.strength > 0.0
         });
-        let prepass_pipeline =
-            if ao.is_some() { Some(pipelines.pipeline(gpu, 1, Pass::Prepass, cull)?) } else { None };
+        let prepass_pipeline = if ao.is_some() { Some(pipes(1, Pass::Prepass, cull)?) } else { None };
         // The measuring pass's targets and the buffer it is read back through: made anew each
         // time (measurements are rare, at most one per node in flight).
         let msize = measure_size(size);
@@ -1078,6 +1105,10 @@ impl Renderer {
             texture: Option<Tex>,
             /// Can show see-through pixels: drawn again, sorted, after the opaque ones.
             clear: bool,
+            /// Drawn as the edges of its triangles, from the model's wireframe vertices.
+            wire: bool,
+            /// Shows nothing but hides what is behind it: drawn before everything else.
+            occluder: bool,
             /// Distance of its middle along the view, for the sorting.
             depth: f64,
         }
@@ -1096,10 +1127,12 @@ impl Renderer {
                 let plain = Material::constant();
                 // The geometry's material where the surface shows one; parts, uv and normals
                 // are flat.
-                let m = match (look.surface, item.material.as_deref()) {
-                    (Surface::Material | Surface::Texture, Some(m)) => m,
+                let m = match item.material.as_deref() {
+                    Some(m) if shows_material => m,
                     _ => &plain,
                 };
+                let wire = m.wire.is_some();
+                let occluder = m.shading == Shading::Occluder && !look.shade_all;
                 // A geometry's material replaces the file's colour and textures; without one
                 // the file's show as they are.
                 let tex = match (look.surface, item.material.as_deref()) {
@@ -1114,19 +1147,29 @@ impl Renderer {
                     (Surface::Material, None) => file.map_or([1.0; 4], |mat| mat.color),
                     _ => m.color,
                 };
-                // A texture may hold see-through texels anywhere; a colour says so itself.
-                let clear = match look.surface {
-                    Surface::Material => color[3] < OPAQUE || tex.is_some(),
-                    Surface::Texture => tex.is_some(),
-                    _ => false,
-                };
+                // A texture may hold see-through texels anywhere; a colour says so itself. A
+                // wireframe is mostly see-through, an occluder never.
+                let clear = !occluder
+                    && (wire
+                        || match look.surface {
+                            Surface::Material => color[3] < OPAQUE || tex.is_some(),
+                            Surface::Texture => tex.is_some(),
+                            _ => false,
+                        });
                 let center = model.centers.get(k).copied().unwrap_or_default().map(f64::from);
                 let [cx, cy, cz] = crate::geo::transform(&item.world, center);
                 let z = view.view_z;
                 let depth = z[0] * cx + z[1] * cy + z[2] * cz + z[3];
                 let slot = calls.len() as u32;
                 draw_bytes.resize(slot as usize * align as usize, 0);
-                draw_bytes.extend(draw_slot(&item.world, &normals, color, m, item.part_offset + r.part));
+                draw_bytes.extend(draw_slot(
+                    &item.world,
+                    &normals,
+                    color,
+                    m,
+                    occluder,
+                    item.part_offset + r.part,
+                ));
                 calls.push(DrawCall {
                     model: index,
                     first: r.first,
@@ -1134,8 +1177,21 @@ impl Renderer {
                     slot,
                     texture: tex,
                     clear,
+                    wire,
+                    occluder,
                     depth: if depth.is_finite() { depth } else { 0.0 },
                 });
+            }
+        }
+        // Occluders first: they leave the colour as it is, so what was drawn before them would
+        // show through.
+        let mut order: Vec<usize> = (0..calls.len()).collect();
+        order.sort_by_key(|k| calls.get(*k).is_none_or(|c| !c.occluder));
+        // The wireframe vertices of every model drawn as one.
+        let mut wires: HashMap<usize, wgpu::Buffer> = HashMap::new();
+        for c in calls.iter().filter(|c| c.wire) {
+            if let (false, Some(item)) = (wires.contains_key(&c.model), geo.items.get(c.model)) {
+                wires.insert(c.model, item.model.wire(gpu)?);
             }
         }
         // See-through draws, farthest first.
@@ -1150,15 +1206,15 @@ impl Renderer {
         let blend_pipelines = if behind.is_empty() {
             Vec::new()
         } else if look.cull {
-            vec![pipelines.pipeline(gpu, samples, Pass::Blend, cull)?]
+            vec![pipes(samples, Pass::Blend, cull)?]
         } else {
             vec![
-                pipelines.pipeline(gpu, samples, Pass::Blend, Some(wgpu::Face::Front))?,
-                pipelines.pipeline(gpu, samples, Pass::Blend, Some(wgpu::Face::Back))?,
+                pipes(samples, Pass::Blend, Some(wgpu::Face::Front))?,
+                pipes(samples, Pass::Blend, Some(wgpu::Face::Back))?,
             ]
         };
         let tinted = layers > 0 && !behind.is_empty();
-        let tint_pipeline = if tinted { Some(pipelines.pipeline(gpu, 1, Pass::Tint, None)?) } else { None };
+        let tint_pipeline = if tinted { Some(pipes(1, Pass::Tint, None)?) } else { None };
         if !draw_bytes.is_empty() {
             let need = draw_bytes.len() as u64;
             if self.draws.as_ref().is_none_or(|b| b.size() < need) {
@@ -1360,22 +1416,41 @@ impl Renderer {
                     view_entry(11, occlusion),
                 ],
             });
-            // Draws `calls[k]` for each k, binding a model's buffers only when it changes.
+            // Draws `calls[k]` for each k with `pipes`, binding a model's buffers and switching
+            // between surfaces and wireframes only when that changes.
             let draw_some = |rp: &mut wgpu::RenderPass<'_>,
                              draw_group: &wgpu::BindGroup,
+                             pipes: &Pipes,
                              which: &mut dyn Iterator<Item = usize>| {
-                let mut bound_model = usize::MAX;
+                let mut bound: Option<(usize, bool)> = None;
+                let mut set: Option<bool> = None;
                 for k in which {
                     let (Some(call), Some(tg)) = (calls.get(k), call_groups.get(k)) else { continue };
                     let Some(item) = geo.items.get(call.model) else { continue };
-                    if bound_model != call.model {
-                        rp.set_vertex_buffer(0, item.model.vertices.slice(..));
-                        rp.set_index_buffer(item.model.indices.slice(..), wgpu::IndexFormat::Uint32);
-                        bound_model = call.model;
+                    if set != Some(call.wire) {
+                        let pipeline = if call.wire { pipes.wire.as_ref() } else { Some(&pipes.plain) };
+                        let Some(pipeline) = pipeline else { continue };
+                        rp.set_pipeline(pipeline);
+                        set = Some(call.wire);
+                    }
+                    if bound != Some((call.model, call.wire)) {
+                        if call.wire {
+                            let Some(b) = wires.get(&call.model) else { continue };
+                            rp.set_vertex_buffer(0, b.slice(..));
+                        } else {
+                            rp.set_vertex_buffer(0, item.model.vertices.slice(..));
+                            rp.set_index_buffer(item.model.indices.slice(..), wgpu::IndexFormat::Uint32);
+                        }
+                        bound = Some((call.model, call.wire));
                     }
                     rp.set_bind_group(1, draw_group, &[(u64::from(call.slot) * align) as u32]);
                     rp.set_bind_group(2, tg, &[]);
-                    rp.draw_indexed(call.first..call.first + call.count, 0, 0..1);
+                    if call.wire {
+                        // The wireframe's corners lie in index order, three per triangle.
+                        rp.draw(call.first..call.first + call.count, 0..1);
+                    } else {
+                        rp.draw_indexed(call.first..call.first + call.count, 0, 0..1);
+                    }
                 }
             };
             let [r, g, b, a] = look.background.map(|c| if c.is_finite() { f64::from(c) } else { 0.0 });
@@ -1412,9 +1487,9 @@ impl Renderer {
                             occlusion_query_set: None,
                             multiview_mask: None,
                         });
-                        rp.set_pipeline(pipeline);
+                        rp.set_pipeline(&pipeline.plain);
                         rp.set_bind_group(0, &from, &[]);
-                        draw_some(&mut rp, draw_group, &mut (0..calls.len()));
+                        draw_some(&mut rp, draw_group, pipeline, &mut (0..calls.len()));
                     }
                     if let (Some(tint), Some(layer)) = (&tint_pipeline, tints.layer_views.get(k)) {
                         // Everything passes, nothing is near (half float's largest).
@@ -1435,9 +1510,9 @@ impl Renderer {
                             occlusion_query_set: None,
                             multiview_mask: None,
                         });
-                        rp.set_pipeline(tint);
+                        rp.set_pipeline(&tint.plain);
                         rp.set_bind_group(0, &from, &[]);
-                        draw_some(&mut rp, draw_group, &mut behind.iter().copied());
+                        draw_some(&mut rp, draw_group, tint, &mut behind.iter().copied());
                     }
                 }
             }
@@ -1474,9 +1549,9 @@ impl Renderer {
                         multiview_mask: None,
                     });
                     if let Some(draw_group) = &draw_group {
-                        rp.set_pipeline(prepass);
+                        rp.set_pipeline(&prepass.plain);
                         rp.set_bind_group(0, &frame_group, &[]);
-                        draw_some(&mut rp, draw_group, &mut (0..calls.len()));
+                        draw_some(&mut rp, draw_group, prepass, &mut (0..calls.len()));
                     }
                 }
                 // The estimate reads positions and normals (its fourth binding is unused), the
@@ -1514,7 +1589,7 @@ impl Renderer {
                 &'a wgpu::TextureView,
                 Option<&'a wgpu::TextureView>,
                 &'a wgpu::TextureView,
-                &'a wgpu::RenderPipeline,
+                &'a Pipes,
             );
             let mut passes: Vec<Target<'_>> = Vec::new();
             if let Some(depth) = self.depth.as_ref().map(|(_, v)| v) {
@@ -1561,18 +1636,17 @@ impl Renderer {
                     multiview_mask: None,
                 });
                 let Some(draw_group) = &draw_group else { continue };
-                rp.set_pipeline(pipeline);
+                rp.set_pipeline(&pipeline.plain);
                 rp.set_bind_group(0, &frame_group, &[]);
                 if pass.colour() {
                     rp.set_bind_group(3, &light_group, &[]);
                 }
-                draw_some(&mut rp, draw_group, &mut (0..calls.len()));
+                draw_some(&mut rp, draw_group, pipeline, &mut order.iter().copied());
                 // The see-through pixels over the opaque ones, farthest first.
                 if pass == Pass::Solid {
                     for k in &behind {
                         for p in &blend_pipelines {
-                            rp.set_pipeline(p);
-                            draw_some(&mut rp, draw_group, &mut std::iter::once(*k));
+                            draw_some(&mut rp, draw_group, p, &mut std::iter::once(*k));
                         }
                     }
                 }
@@ -1736,7 +1810,15 @@ fn light_bytes(l: &Light, p: &Placed) -> Vec<u8> {
     b
 }
 
-fn draw_slot(world: &Mat4, normals: &[[f64; 3]; 3], color: [f32; 4], m: &Material, part: u32) -> Vec<u8> {
+/// render.wgsl's `Draw`; `occluder` where `m` hides what is behind it in this render.
+fn draw_slot(
+    world: &Mat4,
+    normals: &[[f64; 3]; 3],
+    color: [f32; 4],
+    m: &Material,
+    occluder: bool,
+    part: u32,
+) -> Vec<u8> {
     let mut b = Vec::with_capacity(DRAW_BYTES as usize);
     let mut f = |v: f32| b.extend_from_slice(&(if v.is_finite() { v } else { 0.0 }).to_le_bytes());
     for v in columns(world) {
@@ -1761,15 +1843,25 @@ fn draw_slot(world: &Mat4, normals: &[[f64; 3]; 3], color: [f32; 4], m: &Materia
         f(v.max(0.0));
     }
     f(0.0);
+    // An occluder in a picture of a geo node shades as any surface.
     let shading: u32 = match m.shading {
         Shading::Constant => 0,
         Shading::Phong => 1,
         Shading::Pbr => 2,
+        Shading::Occluder if occluder => 3,
+        Shading::Occluder => 0,
     };
     b.extend_from_slice(&part.to_le_bytes());
     b.extend_from_slice(&shading.to_le_bytes());
     for v in [m.metallic.clamp(0.0, 1.0), m.roughness.clamp(0.0, 1.0)] {
         b.extend_from_slice(&(if v.is_finite() { v } else { 0.0 }).to_le_bytes());
+    }
+    // The wireframe's width in pixels (0: the whole surface) and whether it leaves out the edges
+    // inside flat polygons.
+    let (width, polygons) = m.wire.map_or((0.0, false), |w| (w.width, w.polygons));
+    let width = if width.is_finite() { width.clamp(0.0, 256.0) } else { 1.0 };
+    for v in [width, if polygons { 1.0 } else { 0.0 }] {
+        b.extend_from_slice(&v.to_le_bytes());
     }
     b.resize(DRAW_BYTES as usize, 0);
     b

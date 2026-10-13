@@ -1267,7 +1267,7 @@ Outputs: `out` (geo).
 
 ## mat
 
-[mat.constant](#matconstant), [mat.pbr](#matpbr), [mat.phong](#matphong)
+[mat.constant](#matconstant), [mat.occluder](#matoccluder), [mat.pbr](#matpbr), [mat.phong](#matphong), [mat.wireframe](#matwireframe)
 
 ### mat.constant
 
@@ -1282,6 +1282,14 @@ Outputs: `out` (mat).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | Linear RGBA, straight alpha; replaces the file's colour; times the texture input |
+
+### mat.occluder
+
+Invisible, but hides what is behind it: a real object in front of a projection; casts shadows
+
+Inputs: none.
+
+Outputs: `out` (mat).
 
 ### mat.pbr
 
@@ -1316,6 +1324,22 @@ Outputs: `out` (mat).
 | `specular` | colour | `[0.5, 0.5, 0.5, 1]` |  | The highlight's colour; alpha is unused |
 | `shininess` | float | `32` | 1 to 512 (soft) | Higher: a smaller, sharper highlight |
 | `emit` *(more)* | colour | `[0, 0, 0, 1]` |  | Light the surface gives off by itself; alpha is unused |
+
+### mat.wireframe
+
+Only the edges, as lines of a width in pixels, unlit
+
+Inputs:
+
+- `texture` (tex)
+
+Outputs: `out` (mat).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `color` | colour | `[1, 1, 1, 1]` |  | The lines' colour: linear RGBA, straight alpha; times the texture input |
+| `line_width` | float | `1.5` | 0.5 to 8 px (soft) | The lines' width in pixels of the render |
+| `edges` | polygons \| triangles | `"polygons"` |  | polygons: leave out edges inside flat faces (a quad's diagonal); triangles: every edge |
 
 ## light
 

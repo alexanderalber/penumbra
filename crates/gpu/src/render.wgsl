@@ -7,6 +7,10 @@
 // out) and the tint pass (what see-through surfaces let through, and the nearest one's depth).
 // For ambient occlusion a prepass writes the opaque pixels' positions and normals (ao.wgsl takes
 // it from there); the colour pass dims ambient and environment light by the result.
+//
+// Wireframes draw every triangle's corners on their own (vs_wire), with barycentric
+// coordinates: a pixel's distance to the nearest edge, in pixels, gives the line's coverage in
+// every pass. Occluders draw first, write depth and leave the colour as it is.
 
 // Alpha from which a pixel is opaque (render::OPAQUE).
 const OPAQUE: f32 = 0.998;
@@ -57,10 +61,13 @@ struct Draw {
     specular: vec4f,
     emit: vec4f,
     part: u32,
-    // 0 constant, 1 phong, 2 pbr.
+    // 0 constant, 1 phong, 2 pbr, 3 occluder.
     shading: u32,
     metallic: f32,
     roughness: f32,
+    // x: a wireframe's line width in pixels, 0 for a whole surface; y: 1 where the edges inside
+    // flat polygons are left out.
+    wire: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -91,17 +98,57 @@ struct VOut {
     @location(0) world: vec3f,
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
+    // Wireframes: barycentric coordinates, and in w the bits of the edges inside flat polygons
+    // (bit k: the edge opposite corner k).
+    @location(3) edge: vec4f,
 };
 
 @vertex
 fn vs(@location(0) p: vec3f, @location(1) n: vec3f, @location(2) uv: vec2f) -> VOut {
+    return place(p, n, uv);
+}
+
+fn place(p: vec3f, n: vec3f, uv: vec2f) -> VOut {
     let w = draw.world * vec4f(p, 1.0);
     var o: VOut;
     o.pos = frame.clip * w;
     o.world = w.xyz;
     o.normal = mat3x3f(draw.n0.xyz, draw.n1.xyz, draw.n2.xyz) * n;
     o.uv = uv;
+    o.edge = vec4f(1.0, 1.0, 1.0, 0.0);
     return o;
+}
+
+@vertex
+fn vs_wire(
+    @location(0) p: vec3f,
+    @location(1) n: vec3f,
+    @location(2) uv: vec2f,
+    @location(3) edge: vec4f,
+) -> VOut {
+    var o = place(p, n, uv);
+    o.edge = edge;
+    return o;
+}
+
+// How much of the pixel a wireframe's lines cover; 1 on a whole surface. Uses derivatives:
+// call in uniform control flow.
+fn lines(v: VOut) -> f32 {
+    let b = v.edge.xyz;
+    let gx = dpdx(b);
+    let gy = dpdy(b);
+    let across = sqrt(gx * gx + gy * gy);
+    if draw.wire.x <= 0.0 {
+        return 1.0;
+    }
+    // Pixels to each edge; the edges inside flat polygons far away where they are left out.
+    var d = b / max(across, vec3f(1e-9));
+    if draw.wire.y > 0.5 {
+        let inside = u32(v.edge.w + 0.5);
+        d = select(d, vec3f(1e9), (vec3u(inside) & vec3u(1u, 2u, 4u)) != vec3u(0u));
+    }
+    let near = min(d.x, min(d.y, d.z));
+    return clamp(0.5 * draw.wire.x + 0.5 - near, 0.0, 1.0);
 }
 
 // A distinct colour per part id: hues a golden angle apart.
@@ -399,6 +446,10 @@ fn occlusion(v: VOut) -> f32 {
 // The colour pass's opaque pixels, writing depth.
 @fragment
 fn fs_solid(v: VOut) -> @location(0) vec4f {
+    // An occluder: depth only, the colour as it is (it draws first, so that is the background).
+    if draw.shading == 3u {
+        return vec4f(0.0);
+    }
     let c = shade(v, occlusion(v));
     if c.a < OPAQUE {
         discard;
@@ -422,6 +473,7 @@ fn shade(v: VOut, open: f32) -> vec4f {
     let t = textureSample(tex, samp, v.uv);
     // Derivatives in uniform control flow, before any branch.
     let r = density(v.uv);
+    let line = lines(v);
     var n = v.normal;
     if dot(n, n) < 1e-12 {
         n = frame.eye.xyz - v.world;
@@ -430,7 +482,7 @@ fn shade(v: VOut, open: f32) -> vec4f {
     var base: vec4f;
     switch frame.mode {
         case 0u, 1u: {
-            base = cover(t);
+            base = cover(t) * line;
         }
         case 2u: {
             base = vec4f(palette(draw.part), 1.0);
@@ -476,7 +528,7 @@ struct Prepass {
 
 @fragment
 fn fs_prepass(v: VOut) -> Prepass {
-    if cover(textureSample(tex, samp, v.uv)).a < OPAQUE {
+    if cover(textureSample(tex, samp, v.uv)).a * lines(v) < OPAQUE {
         discard;
     }
     var n = v.normal;
@@ -494,7 +546,7 @@ fn fs_prepass(v: VOut) -> Prepass {
 // shadow; the tint pass takes the rest.
 @fragment
 fn fs_shadow(v: VOut) {
-    if cover(textureSample(tex, samp, v.uv)).a < OPAQUE {
+    if cover(textureSample(tex, samp, v.uv)).a * lines(v) < OPAQUE {
         discard;
     }
 }
@@ -506,7 +558,7 @@ fn fs_shadow(v: VOut) {
 // all, and a cut-out's colourless clear texels tint nothing.
 @fragment
 fn fs_tint(v: VOut) -> @location(0) vec4f {
-    let c = cover(textureSample(tex, samp, v.uv));
+    let c = cover(textureSample(tex, samp, v.uv)) * lines(v);
     if c.a >= OPAQUE || c.a < 0.002 {
         discard;
     }
@@ -515,12 +567,29 @@ fn fs_tint(v: VOut) -> @location(0) vec4f {
     return vec4f(through, (frame.clip * vec4f(v.world, 1.0)).z);
 }
 
+// The measuring and data passes: an occluder writes nothing (as the cleared target) but hides
+// what is behind it; a wireframe only where its lines cover at least half the pixel.
 @fragment
 fn fs_measure(v: VOut) -> @location(0) vec4f {
-    return vec4f(dpdx(v.uv), dpdy(v.uv));
+    let d = vec4f(dpdx(v.uv), dpdy(v.uv));
+    let line = lines(v);
+    if draw.shading == 3u {
+        return vec4f(0.0);
+    }
+    if line < 0.5 {
+        discard;
+    }
+    return d;
 }
 
 @fragment
 fn fs_data(v: VOut) -> @location(0) vec4f {
+    let line = lines(v);
+    if draw.shading == 3u {
+        return vec4f(0.0);
+    }
+    if line < 0.5 {
+        discard;
+    }
     return vec4f(v.uv, f32(draw.part + 1u), dot(frame.view_z, vec4f(v.world, 1.0)));
 }

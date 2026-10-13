@@ -1230,3 +1230,92 @@ fn ambient_occlusion_darkens_creases_in_the_ambient_light() {
     look(&mut rig, "/ao", "ambient_occlusion", (super::W, super::H));
     look(&mut rig, "/plain", "ambient_occlusion_off", (super::W, super::H));
 }
+
+/// A wireframe shows its edges only (a quad's diagonal only when asked for every triangle);
+/// an occluder shows nothing, also in the data pass, and hides what is behind it even where
+/// that was merged in before it.
+#[test]
+fn wireframes_show_edges_and_occluders_hide() {
+    let Some(gpu) = gpu() else { return };
+    let cam = |path: &str| {
+        render(path, &[("position", Value::Vec3([0.0, -2.5, 0.0])), ("fov", Value::Float(40.0))])
+    };
+    let ops = vec![
+        create("/box", "geo.primitive", &[("size", Value::Vec3([1.0, 1.0, 1.0]))]),
+        create("/quads_mat", "mat.wireframe", &[("line_width", Value::Float(3.0))]),
+        create("/quads", "geo.material", &[]),
+        connect("/box", "/quads", 0),
+        connect("/quads_mat", "/quads", 1),
+        cam("/quads_seen"),
+        connect("/quads", "/quads_seen", 0),
+        create(
+            "/tris_mat",
+            "mat.wireframe",
+            &[("line_width", Value::Float(3.0)), ("edges", "triangles".into())],
+        ),
+        create("/tris", "geo.material", &[]),
+        connect("/box", "/tris", 0),
+        connect("/tris_mat", "/tris", 1),
+        cam("/tris_seen"),
+        connect("/tris", "/tris_seen", 0),
+        // A red wall behind an occluding box, the wall merged in first.
+        create(
+            "/wall",
+            "geo.primitive",
+            &[("shape", "plane".into()), ("size", Value::Vec3([5.0, 1.0, 3.0]))],
+        ),
+        create("/wall_at", "geo.transform", &[("translate", Value::Vec3([0.0, 1.0, 0.0]))]),
+        connect("/wall", "/wall_at", 0),
+        create("/red", "mat.constant", &[("color", Value::Vec4([1.0, 0.0, 0.0, 1.0]))]),
+        create("/red_wall", "geo.material", &[]),
+        connect("/wall_at", "/red_wall", 0),
+        connect("/red", "/red_wall", 1),
+        create("/hole", "mat.occluder", &[]),
+        create("/hidden", "geo.material", &[]),
+        connect("/box", "/hidden", 0),
+        connect("/hole", "/hidden", 1),
+        create("/both", "geo.merge", &[]),
+        connect("/red_wall", "/both", 0),
+        connect("/hidden", "/both", 1),
+        cam("/occluded"),
+        connect("/both", "/occluded", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    for path in ["/quads_seen", "/tris_seen", "/occluded"] {
+        rig.pixels(path);
+    }
+    look(&mut rig, "/quads_seen", "wireframe_polygons", (super::W, super::H));
+    look(&mut rig, "/tris_seen", "wireframe_triangles", (super::W, super::H));
+    look(&mut rig, "/occluded", "occluder", (super::W, super::H));
+    // The materials' own pictures.
+    for path in ["/quads_mat", "/hole"] {
+        let out = rig.cooker.output(Port { node: rig.id(path), output: 0 }).unwrap();
+        let mat = out.get::<penumbra_gpu::Mat>().unwrap();
+        let px = rig.gpu.read(mat.preview.as_ref().unwrap()).unwrap();
+        assert!(px.data.iter().any(|p| p[3] > 0.5), "{path} shows something of itself");
+        if let Some(dir) = std::env::var_os("PENUMBRA_LOOK") {
+            let file = Path::new(&dir).join(format!("{}_preview.png", path.trim_start_matches('/')));
+            std::fs::write(file, px.to_png().unwrap()).unwrap();
+        }
+    }
+    let (cx, cy) = ((super::W / 2) as u32, (super::H / 2) as u32);
+    let quads = rig.pixels("/quads_seen");
+    let row: Vec<f32> = (0..quads.width).map(|x| at(&quads, x, cy)[3]).collect();
+    assert!(at(&quads, cx, cy)[3] < 0.05, "a quad's middle is open: {row:?}");
+    // Across the middle: the front face's sides and the back face's, seen through it.
+    let lines = row.windows(2).filter(|w| w[0] < 0.5 && w[1] >= 0.5).count();
+    assert_eq!(lines, 4, "{row:?}");
+    let full = quads.data.iter().map(|p| p[3]).fold(0.0, f32::max);
+    assert!(full > 0.99, "lines are opaque in their middle: {full}");
+    let tris = rig.pixels("/tris_seen");
+    assert!(at(&tris, cx, cy)[3] > 0.9, "the diagonals cross in the middle: {:?}", at(&tris, cx, cy));
+
+    let px = rig.pixels("/occluded");
+    assert_eq!(at(&px, cx, cy), [0.0; 4], "the box hides the wall and shows nothing");
+    let side = at(&px, 4, cy);
+    assert!(side[0] > 0.99 && side[1] < 0.01 && side[3] > 0.99, "the wall beside it: {side:?}");
+    rig.cook("/occluded");
+    let d = data(&rig, "/occluded");
+    assert_eq!(at(&d, cx, cy), [0.0; 4], "nothing in the data pass either");
+    assert_eq!(at(&d, 4, cy)[2].round(), 1.0, "the wall is part 0");
+}
