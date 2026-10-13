@@ -17,6 +17,7 @@ pub mod helpers;
 pub mod icons;
 pub mod layout;
 mod mapping;
+pub mod navigate;
 pub mod params;
 pub mod projects;
 mod shapes;

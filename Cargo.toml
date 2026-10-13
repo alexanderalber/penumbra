@@ -26,6 +26,7 @@ penumbra-output = { path = "crates/output" }
 penumbra-project = { path = "crates/project" }
 penumbra-pyhost = { path = "crates/pyhost" }
 penumbra-script = { path = "crates/script" }
+penumbra-spacenav = { path = "crates/spacenav" }
 penumbra-system = { path = "crates/system" }
 penumbra-track = { path = "crates/track" }
 penumbra-ui = { path = "crates/ui" }
@@ -90,6 +91,9 @@ raw-window-handle = "0.6"
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 # Media Foundation for camera input (crates/camera); the COM interfaces need the full crate.
 windows = "0.62"
+# The SpaceNavigator as plain HID (crates/spacenav), Windows only for now; the native backend
+# needs no C library.
+hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Dwm"] }
 
 [workspace.lints.rust]

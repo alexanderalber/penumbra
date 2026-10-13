@@ -12,6 +12,7 @@ explained here.
 - [Audio](audio.md): reacting to sound: levels, onsets, tempo, beat and bar.
 - [Camera](camera.md): a live camera or capture card with `tex.videoin`.
 - [Tracking](tracking.md): blobs with ids that stay, from a camera, with `tex.blobtrack`.
+- [Looking around in 3D](navigation.md): the viewer's free view, steering a camera, the 3D mouse.
 - [Shaders](shaders.md): writing a `tex.shader` in WGSL.
 - [Scripts](scripts.md): writing a `script.python` node.
 - [Control](control.md): the control channel, `penumbra-cli ctl`, headless runs, environment variables.

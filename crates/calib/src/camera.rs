@@ -263,6 +263,19 @@ pub(crate) fn rms(errors: &[f64]) -> f64 {
     (errors.iter().map(|e| e * e).sum::<f64>() / errors.len() as f64).sqrt()
 }
 
+/// The world point a clip-space point stands for (`clip`: as [`Camera::clip_from_world`] makes it;
+/// `point`: x and y in -1..1, depth 0 at near to 1 at far). `None` when the matrix cannot be
+/// inverted or the point lies on the camera's plane.
+pub fn unproject_clip(clip: &[[f64; 4]; 4], point: [f64; 3]) -> Option<[f64; 3]> {
+    let m = Matrix4::from_fn(|r, c| clip.get(r).and_then(|row| row.get(c)).copied().unwrap_or(0.0));
+    let p = m.try_inverse()? * nalgebra::Vector4::new(point[0], point[1], point[2], 1.0);
+    if p.w.abs() <= 1e-300 || p.w.is_nan() {
+        return None;
+    }
+    let out = [p.x / p.w, p.y / p.w, p.z / p.w];
+    out.iter().all(|v| v.is_finite()).then_some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,6 +358,19 @@ mod tests {
         }
         assert!(c.clip_from_world(0.0, 10.0).is_none());
         assert!(c.clip_from_world(1.0, 1.0).is_none());
+    }
+
+    #[test]
+    fn unprojecting_undoes_the_clip_matrix() {
+        let c = camera();
+        let m = c.clip_from_world(0.1, 100.0).unwrap();
+        let mm = Matrix4::from_fn(|i, j| m[i][j]);
+        for p in [[0.3, 0.1, 0.4], [2.0, -0.5, 3.0]] {
+            let clip = mm * nalgebra::Vector4::new(p[0], p[1], p[2], 1.0);
+            let back = unproject_clip(&m, [clip.x / clip.w, clip.y / clip.w, clip.z / clip.w]).unwrap();
+            assert!((0..3).all(|k| (back[k] - p[k]).abs() < 1e-9), "{back:?} {p:?}");
+        }
+        assert!(unproject_clip(&[[0.0; 4]; 4], [0.0; 3]).is_none());
     }
 
     #[test]

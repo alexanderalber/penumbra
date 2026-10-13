@@ -4,6 +4,7 @@
 pub mod audio;
 pub mod chan;
 pub mod comp;
+pub mod freeview;
 pub mod geo;
 pub mod light;
 pub mod mapping;

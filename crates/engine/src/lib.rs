@@ -13,6 +13,7 @@ pub mod commands;
 pub mod components;
 pub mod control;
 pub mod engine;
+pub mod navigation;
 pub mod osc;
 pub mod projects;
 pub mod state;
@@ -50,5 +51,6 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     videoin::register(&mut registry, engine);
     blobtrack::register(&mut registry, engine);
     projects::register(&mut registry, engine);
+    navigation::register(&mut registry, engine);
     registry
 }

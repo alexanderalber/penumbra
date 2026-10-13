@@ -18,6 +18,7 @@ use crate::control::{Reply, UiRequest};
 use crate::editor::{self, Editor};
 use crate::icons::{self, Icon};
 use crate::layout::Layout;
+use crate::navigate::{self, Move};
 use crate::params::{self, ParamPanel};
 use crate::textures::Textures;
 use crate::viewer::Viewer;
@@ -48,6 +49,8 @@ pub struct AppOptions {
     /// Where `ui.*` requests arrive ([`crate::control::Bridge::new`]).
     pub requests: Option<Receiver<UiRequest>>,
     pub bridge: Option<Arc<crate::control::Bridge>>,
+    /// Open the 3D mouse (not in headless runs, which must not grab devices).
+    pub spacenav: bool,
 }
 
 struct Shot {
@@ -112,6 +115,8 @@ pub struct PenumbraApp {
     /// The project shown, and the engine's generation it belongs to: when another project
     /// opens, the editor starts over for it ([`PenumbraApp::project_switched`]).
     shown: (u64, Arc<Session>),
+    /// When the 3D mouse was last applied, for the time its deflection was held.
+    flown: Instant,
 }
 
 /// Resizing the window once more so egui-wgpu reconfigures a surface whose last configure
@@ -148,6 +153,9 @@ impl PenumbraApp {
         log::info!("GPU: {adapter}");
         if let Some(bridge) = &options.bridge {
             bridge.attach(cc.egui_ctx.clone());
+        }
+        if options.spacenav {
+            engine.spacenav().start();
         }
         let layout = Layout::load(Some(engine.session().dir()));
         cc.egui_ctx.set_visuals(theme::visuals(false));
@@ -186,6 +194,7 @@ impl PenumbraApp {
             to_clipboard: None,
             projects: crate::projects::ProjectMenu::default(),
             shown: (engine.generation(), engine.session()),
+            flown: Instant::now(),
             engine,
         }
     }
@@ -628,10 +637,29 @@ impl PenumbraApp {
                 let (map, shapes, output_names) =
                     node_editors(&net, session.types(), &view, target, can_edit, &new_group);
                 let viewer = &mut self.viewer;
+                let scene = target.and_then(|id| navigate::scene(&net, session.types(), id, viewer.output));
                 section(ui, &mut self.auto, "viewer", "Viewer", &mut sections.viewer, |ui, auto| {
-                    viewer.header(ui, &net, target, outputs, &output_names, false, auto, &mut actions);
+                    viewer.header(
+                        ui,
+                        &net,
+                        target,
+                        outputs,
+                        &output_names,
+                        false,
+                        scene.as_ref(),
+                        auto,
+                        &mut actions,
+                    );
                 });
                 if viewer_open {
+                    let nav = scene.as_ref().map(|scene| crate::viewer::NavInputs {
+                        scene,
+                        free: free_picture(&view, scene.node, self.viewer.output, false),
+                        net: &net,
+                        types: session.types(),
+                        can_edit,
+                        new_group: &new_group,
+                    });
                     self.viewer.show(
                         ui,
                         target,
@@ -641,6 +669,7 @@ impl PenumbraApp {
                         &mut self.textures,
                         map.as_ref(),
                         shapes.as_ref(),
+                        nav.as_ref(),
                         &mut self.auto,
                         &mut actions,
                     );
@@ -732,18 +761,33 @@ impl PenumbraApp {
         };
         self.helpers.show(&ctx, &helpers, &mut self.auto, &mut actions);
         self.viewer_window(&ctx, &net, &view, can_edit, &mut actions);
+        self.fly(&ctx, &net, &view, can_edit, now, &mut actions);
         self.apply(actions, now);
         if let Some(text) = self.to_clipboard.take() {
             ctx.copy_text(text);
         }
-        let mut viewers: Vec<NodeId> = self.viewer.target(&net, self.selected()).into_iter().collect();
+        let main = self.viewer.target(&net, self.selected());
+        let mut viewers: Vec<NodeId> = main.into_iter().collect();
         viewers.extend(self.viewer.window.filter(|id| !viewers.contains(id)));
+        let mut free = Vec::new();
+        let types = session.types();
+        if self.layout.sections.viewer
+            && let Some(scene) = main.and_then(|id| navigate::scene(&net, types, id, self.viewer.output))
+        {
+            free.extend(self.viewer.free_request(&scene));
+        }
+        if let Some(scene) =
+            self.viewer.window.and_then(|id| navigate::scene(&net, types, id, self.window_viewer.output))
+        {
+            free.extend(self.window_viewer.free_request(&scene));
+        }
         self.engine.set_view(ViewRequest {
             viewers,
             thumbnails,
             passive,
             detail: self.selected(),
             resolution: self.helpers.open,
+            free,
         });
         self.textures.end_frame();
         self.layout.save_if_due(&net, now, false);
@@ -785,7 +829,18 @@ impl PenumbraApp {
             let (map, shapes, names) =
                 node_editors(net, session.types(), view, Some(id), can_edit, &new_group);
             let outputs = view.outputs.get(&id);
-            ui.horizontal(|ui| window.header(ui, net, Some(id), outputs, &names, true, auto, actions));
+            let scene = navigate::scene(net, session.types(), id, window.output);
+            ui.horizontal(|ui| {
+                window.header(ui, net, Some(id), outputs, &names, true, scene.as_ref(), auto, actions)
+            });
+            let nav = scene.as_ref().map(|scene| crate::viewer::NavInputs {
+                scene,
+                free: free_picture(view, id, window.output, true),
+                net,
+                types: session.types(),
+                can_edit,
+                new_group: &new_group,
+            });
             window.show(
                 ui,
                 Some(id),
@@ -795,6 +850,7 @@ impl PenumbraApp {
                 textures,
                 map.as_ref(),
                 shapes.as_ref(),
+                nav.as_ref(),
                 auto,
                 actions,
             );
@@ -832,6 +888,91 @@ impl PenumbraApp {
         if close {
             self.viewer.window = None;
         }
+    }
+
+    /// The 3D mouse: flies the viewer showing a free view or steering (the viewer's window when
+    /// it has one and the main viewer does not); its left button locks and unlocks the horizon,
+    /// its right one starts the free view over.
+    fn fly(
+        &mut self,
+        ctx: &egui::Context,
+        net: &penumbra_graph::Network,
+        view: &ViewFrame,
+        can_edit: bool,
+        now: Instant,
+        actions: &mut Vec<Action>,
+    ) {
+        let dt = now.saturating_duration_since(self.flown).as_secs_f64().min(0.05);
+        self.flown = now;
+        let nav = self.engine.spacenav();
+        let presses = nav.take_presses();
+        let motion = nav.motion();
+        let session = self.engine.session();
+        let types = session.types();
+        let main = self
+            .viewer
+            .target(net, self.selected())
+            .filter(|_| self.layout.sections.viewer)
+            .and_then(|id| navigate::scene(net, types, id, self.viewer.output))
+            .filter(|s| self.viewer.nav.mode(s) != navigate::Mode::Picture);
+        let (viewer, scene, in_window) = match main {
+            Some(scene) => (&mut self.viewer, scene, false),
+            None => {
+                let window = self
+                    .viewer
+                    .window
+                    .and_then(|id| navigate::scene(net, types, id, self.window_viewer.output))
+                    .filter(|s| self.window_viewer.nav.mode(s) != navigate::Mode::Picture);
+                match window {
+                    Some(scene) => (&mut self.window_viewer, scene, true),
+                    None => return,
+                }
+            }
+        };
+        if presses & 1 != 0 {
+            let locked = !viewer.nav.horizon_locked;
+            viewer.nav.horizon_locked = locked;
+            actions.push(Action::Message(
+                if locked {
+                    "3D mouse: horizon locked"
+                } else {
+                    "3D mouse: horizon unlocked, tilt the cap sideways to roll"
+                }
+                .into(),
+            ));
+        }
+        if presses & 2 != 0 && viewer.nav.mode(&scene) == navigate::Mode::Free {
+            viewer.nav.home(scene.node);
+        }
+        if !motion.moving() {
+            viewer.nav.settle(now, false);
+            return;
+        }
+        let distance = match viewer.nav.mode(&scene) {
+            navigate::Mode::Free => viewer.nav.camera(scene.node).map(|o| o.distance()),
+            _ => scene
+                .steer
+                .as_ref()
+                .ok()
+                .and_then(|c| navigate::stored_orbit(net, types, *c))
+                .map(|o| o.distance()),
+        };
+        let Some(distance) = distance else { return };
+        let m = Move::fly(motion.fly(), dt, distance, viewer.nav.horizon_locked);
+        let doc = session.doc();
+        let new_group = || doc.new_group();
+        let inputs = crate::viewer::NavInputs {
+            scene: &scene,
+            free: free_picture(view, scene.node, viewer.output, in_window),
+            net,
+            types,
+            can_edit,
+            new_group: &new_group,
+        };
+        if let Err(e) = viewer.navigate(&m, &inputs, actions) {
+            actions.push(Action::Message(e));
+        }
+        ctx.request_repaint();
     }
 
     /// Tells the outputs where the editor window is, so no projector opens over it.
@@ -1087,6 +1228,89 @@ impl PenumbraApp {
                 self.viewer.pinned = pinned;
                 done(json!({"pinned": pinned.and_then(path_of)}))
             }
+            "ui.camera" => {
+                let selected = self.selected();
+                let id = self.viewer.target(&net, selected).ok_or("the viewer shows nothing")?;
+                let types = session.types();
+                let scene = navigate::scene(&net, types, id, self.viewer.output)
+                    .ok_or("the viewer does not show a render or geometry")?;
+                let nav = &mut self.viewer.nav;
+                if let Some(mode) = p.get("mode") {
+                    let mode: navigate::Mode = serde_json::from_value(mode.clone())
+                        .map_err(|_| "`mode` is picture, free or steer")?;
+                    if mode == navigate::Mode::Steer
+                        && let Err(why) = &scene.steer
+                    {
+                        return Err(why.clone());
+                    }
+                    nav.set_mode(id, mode);
+                }
+                if p.get("home").and_then(Json::as_bool).unwrap_or(false) {
+                    nav.home(id);
+                }
+                if let Some(c) = p.get("camera") {
+                    let o: penumbra_ops::view::Orbit = serde_json::from_value(c.clone())
+                        .map_err(|e| format!("`camera` needs eye, target, roll, fov: {e}"))?;
+                    if !o.is_valid() {
+                        return Err("`camera` needs finite numbers and an eye apart from the target".into());
+                    }
+                    nav.set_camera(id, o);
+                }
+                let mut m = Move::none();
+                if let Some([y, x]) = numbers::<2>(p, "orbit")? {
+                    m.orbit = [y, x];
+                }
+                if let Some(v) = numbers::<2>(p, "pan")? {
+                    m.pan = v;
+                }
+                if let Some([d]) = numbers::<1>(p, "dolly")? {
+                    m.dolly = d;
+                }
+                if let Some(v) = numbers::<3>(p, "travel")? {
+                    m.travel = v;
+                }
+                if let Some(v) = numbers::<2>(p, "look")? {
+                    m.look = v;
+                }
+                if let Some([r]) = numbers::<1>(p, "roll")? {
+                    m.roll = r;
+                }
+                // The command is who steers, whoever holds the editing mode.
+                let can_edit = true;
+                let doc = session.doc();
+                let new_group = || doc.new_group();
+                let mut actions = Vec::new();
+                if !m.is_none() {
+                    if nav.mode(&scene) == navigate::Mode::Free && nav.camera(id).is_none() {
+                        return Err("the free view has no camera yet (its first picture brings it)".into());
+                    }
+                    nav.apply(&m, &scene, &net, types, can_edit, &new_group, now, &mut actions)?;
+                    // A command's move is a movement of its own.
+                    nav.settle(now + Duration::from_secs(1), false);
+                }
+                if p.get("take").and_then(Json::as_bool).unwrap_or(false) {
+                    let ops = nav.take_view(&scene, &net)?;
+                    actions.push(Action::Edit {
+                        ops,
+                        label: "take the view".into(),
+                        group: None,
+                        place: None,
+                    });
+                }
+                let mode = nav.mode(&scene);
+                let camera = nav.camera(id);
+                let locked = nav.horizon_locked;
+                let steer = scene.steer.clone().ok().and_then(path_of);
+                self.apply(actions, now);
+                let net = session.doc().snapshot();
+                done(json!({
+                    "mode": mode,
+                    "camera": camera,
+                    "steers": steer,
+                    "steered": scene.steer.ok().and_then(|c| navigate::stored_orbit(&net, types, c)),
+                    "horizon_locked": locked,
+                }))
+            }
             "ui.place" => {
                 let nodes = p.get("nodes").and_then(Json::as_object).ok_or("`nodes` must be an object")?;
                 for (path, at) in nodes {
@@ -1261,6 +1485,31 @@ impl PenumbraApp {
 /// The header of a collapsible section of the right column: a triangle and the title (both
 /// toggle it, automation id `section.<id>`), then `extra` (buttons that stay usable while the
 /// section is collapsed).
+/// `p[name]`: `N` finite numbers (one may come bare); `None` when absent.
+fn numbers<const N: usize>(p: &Json, name: &str) -> Result<Option<[f64; N]>, String> {
+    let Some(v) = p.get(name) else { return Ok(None) };
+    let list: Option<Vec<f64>> = match v {
+        Json::Array(a) => a.iter().map(Json::as_f64).collect(),
+        other => other.as_f64().map(|x| vec![x]),
+    };
+    list.filter(|l| l.iter().all(|x| x.is_finite()))
+        .and_then(|l| <[f64; N]>::try_from(l).ok())
+        .map(Some)
+        .ok_or_else(|| format!("`{name}` must be {N} number(s)"))
+}
+
+/// The free view the engine drew for `node` at `output`: the main viewer's request comes
+/// first, the viewer window's after it.
+fn free_picture(
+    view: &ViewFrame,
+    node: NodeId,
+    output: u32,
+    window: bool,
+) -> Option<&Result<penumbra_ops::freeview::Picture, String>> {
+    let mut matching = view.free.iter().filter(|(r, _)| r.node == node && r.output == output).map(|(_, p)| p);
+    if window { matching.next_back() } else { matching.next() }
+}
+
 fn section(
     ui: &mut Ui,
     auto: &mut automation::Registry,

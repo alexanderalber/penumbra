@@ -13,6 +13,8 @@
 //! - `ui.scroll {id | x, y, dy}` (the editor zooms on the wheel)
 //! - `ui.key {key, ctrl?, shift?, alt?}`, `ui.type {text}`
 //! - `ui.select {paths}`, `ui.view {path?}` (pin the viewer; no path unpins)
+//! - `ui.camera {mode?, home?, camera?, orbit?, pan?, dolly?, travel?, look?, roll?, take?}`: the
+//!   viewer's free view and steering ([`crate::navigate`])
 //! - `ui.place {nodes: {path: [x, y]}}`, `ui.arrange`, `ui.frame`
 //! - `ui.screenshot {file?}`: PNG of the window
 
@@ -85,6 +87,12 @@ const COMMANDS: &[(&str, &str)] = &[
     ("ui.select", "Select nodes in the editor (it shows the component they sit in); {paths}"),
     ("ui.enter", "Show the inside of a component in the editor, the top level without a path; {path?}"),
     ("ui.view", "Pin the viewer to a node, or unpin without a path; {path?}"),
+    (
+        "ui.camera",
+        "The viewer's 3D view of a render or geometry: {mode?: picture|free|steer, home?, camera?: {eye, target, roll, fov}, \
+         orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; \
+         moves go to the free view's camera, or in steer mode to the camera node; take puts the free view into it",
+    ),
     ("ui.place", "Move nodes in the editor; {nodes: {path: [x, y]}}"),
     ("ui.options", "The editor's options (right-click on empty space); {chan_bars?}"),
     ("ui.arrange", "Lay out all nodes again by depth and frame them"),

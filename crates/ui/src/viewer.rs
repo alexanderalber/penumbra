@@ -9,11 +9,13 @@ use egui::emath::GuiRounding as _;
 use egui::{Color32, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
 use penumbra_core::{Chans, Name, NodeId, Table};
 use penumbra_graph::{Data, DataKind, Network};
+use penumbra_ops::freeview::Request;
 use penumbra_ops::view::{Lens, Viewpoint};
 
 use crate::automation;
 use crate::editor::format_value;
 use crate::mapping::{MapEditor, MapInputs};
+use crate::navigate::{Mode, Move, Navigation, Scene};
 use crate::shapes::{ShapeEditor, ShapeInputs};
 use crate::textures::Textures;
 use crate::{Action, theme};
@@ -37,6 +39,19 @@ pub struct Viewer {
     pub shapes: ShapeEditor,
     /// The node shown in the viewer's window of its own, if one is open (the main viewer's).
     pub window: Option<NodeId>,
+    /// The free view's cameras and the modes chosen for 3D nodes.
+    pub nav: Navigation,
+}
+
+/// What the viewer needs to look around in a 3D node.
+pub struct NavInputs<'a> {
+    pub scene: &'a Scene,
+    /// The free view as the engine drew it for this viewer, if it asked.
+    pub free: Option<&'a Result<penumbra_ops::freeview::Picture, String>>,
+    pub net: &'a Network,
+    pub types: &'a penumbra_graph::NodeTypes,
+    pub can_edit: bool,
+    pub new_group: &'a dyn Fn() -> penumbra_core::GroupId,
 }
 
 impl Viewer {
@@ -71,6 +86,7 @@ impl Viewer {
         outputs: Option<&Vec<Data>>,
         names: &[String],
         in_window: bool,
+        scene: Option<&Scene>,
         auto: &mut automation::Registry,
         actions: &mut Vec<Action>,
     ) {
@@ -97,7 +113,7 @@ impl Viewer {
                 }
             }
             let count = outputs.map_or(0, Vec::len);
-            if count > 1 {
+            if count > 1 && !scene.is_some_and(|sc| self.nav.mode(sc) == Mode::Free) {
                 for o in 0..count {
                     let name = names.get(o).cloned().unwrap_or_else(|| format!("out {o}"));
                     let o = o as u32;
@@ -170,6 +186,7 @@ impl Viewer {
         textures: &mut Textures,
         map: Option<&MapInputs<'_>>,
         shapes: Option<&ShapeInputs<'_>>,
+        nav: Option<&NavInputs<'_>>,
         auto: &mut automation::Registry,
         actions: &mut Vec<Action>,
     ) {
@@ -180,11 +197,51 @@ impl Viewer {
         if let Some(input) = shapes {
             self.shapes.header(ui, input, auto, actions);
         }
-        let (rect, _) = ui.allocate_exact_size(ui.available_size(), Sense::hover());
+        if let Some(nav) = nav.filter(|n| n.scene.render) {
+            // A line of its own, as the mapping controls: the header is full already.
+            ui.horizontal(|ui| self.mode_switch(ui, nav.net, nav.scene, auto, actions));
+        }
+        let mode = nav.map(|n| self.nav.mode(n.scene));
+        let sense =
+            if mode.is_some_and(|m| m != Mode::Picture) { Sense::click_and_drag() } else { Sense::hover() };
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), sense);
         auto.add("viewer", rect, "viewer");
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, CornerRadius::ZERO, background);
         let Some(id) = target else { return };
+        if let (Some(nav), Some(mode)) = (nav, mode)
+            && mode != Mode::Picture
+        {
+            let ppp = painter.pixels_per_point();
+            let area = rect.shrink(4.0);
+            self.nav.size = (
+                (area.width() * ppp).round().max(16.0) as u32,
+                (area.height() * ppp).round().max(16.0) as u32,
+            );
+            let m = crate::navigate::mouse_move(ui, &response, area.height());
+            let now = std::time::Instant::now();
+            if response.double_clicked() && mode == Mode::Free {
+                self.nav.home(nav.scene.node);
+            } else if let Err(e) =
+                self.nav.apply(&m, nav.scene, nav.net, nav.types, nav.can_edit, nav.new_group, now, actions)
+            {
+                actions.push(Action::Message(e));
+            }
+            self.nav.settle(now, response.dragged() || !m.is_none());
+            if !self.nav.horizon_locked {
+                painter.text(
+                    rect.left_bottom() + vec2(8.0, -6.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    "3D mouse: horizon unlocked",
+                    egui::FontId::proportional(11.0),
+                    theme::TEXT_WEAK,
+                );
+            }
+            if mode == Mode::Free {
+                self.free_picture(&painter, rect, id, nav, textures);
+                return;
+            }
+        }
         let data = outputs.and_then(|o| o.get(self.output as usize).or_else(|| o.first()));
         let Some(data) = data else {
             painter.text(
@@ -285,6 +342,118 @@ impl Viewer {
                             theme::TEXT,
                         );
                     }
+                }
+            }
+        }
+    }
+
+    /// The free view's picture with its lines, fitted into `rect`.
+    fn free_picture(
+        &mut self,
+        painter: &egui::Painter,
+        rect: Rect,
+        id: NodeId,
+        nav: &NavInputs<'_>,
+        textures: &mut Textures,
+    ) {
+        let message = |text: &str| {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::proportional(14.0),
+                theme::TEXT_WEAK,
+            );
+        };
+        match nav.free {
+            Some(Ok(picture)) if picture.node == id => {
+                self.nav.arrived(picture);
+                // A slot of its own in the texture cache: the node's outputs use their numbers.
+                let Some(tid) = textures.show((id, u32::MAX), &picture.tex) else { return };
+                let (w, h) = picture.tex.size();
+                let aspect = w as f32 / h.max(1) as f32;
+                let area = rect.shrink(4.0);
+                let fw = area.width().min(area.height() * aspect);
+                let fit = Rect::from_center_size(area.center(), vec2(fw, fw / aspect))
+                    .round_to_pixels(painter.pixels_per_point());
+                theme::checker(painter, fit, 1.5);
+                painter.image(tid, fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                crate::navigate::draw_lines(painter, fit, picture);
+            }
+            Some(Err(e)) => message(e),
+            _ => message("drawing the free view"),
+        }
+    }
+
+    /// What the free view asks the engine for, while the viewer shows one of `scene`.
+    pub fn free_request(&self, scene: &Scene) -> Option<Request> {
+        (self.nav.mode(scene) == Mode::Free).then(|| Request {
+            node: scene.node,
+            output: self.output,
+            camera: self.nav.camera(scene.node),
+            size: self.nav.size,
+        })
+    }
+
+    /// A move from elsewhere (the 3D mouse, a command), applied as the mouse's are.
+    pub fn navigate(
+        &mut self,
+        m: &Move,
+        nav: &NavInputs<'_>,
+        actions: &mut Vec<Action>,
+    ) -> Result<(), String> {
+        let now = std::time::Instant::now();
+        let r = self.nav.apply(m, nav.scene, nav.net, nav.types, nav.can_edit, nav.new_group, now, actions);
+        self.nav.settle(now, !m.is_none());
+        r
+    }
+
+    /// Picture, free view, steer; and taking the free view into the camera node.
+    fn mode_switch(
+        &mut self,
+        ui: &mut Ui,
+        net: &Network,
+        scene: &Scene,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        let current = self.nav.mode(scene);
+        let free_tip = "Look around with a camera of the viewer's own: drag to turn, middle-drag to move, \
+                        right-drag or the wheel to come closer, double-click to start over";
+        let mut modes = vec![(Mode::Free, free_tip)];
+        if scene.render {
+            modes.insert(0, (Mode::Picture, "The render's own picture"));
+            modes.push((Mode::Steer, "Navigating moves the render's camera; each movement is one undo step"));
+        }
+        for (mode, tip) in modes {
+            let tip = match (&scene.steer, mode) {
+                (Err(why), Mode::Steer) => why.as_str(),
+                _ => tip,
+            };
+            let enabled = mode != Mode::Steer || scene.steer.is_ok();
+            let r = ui
+                .add_enabled(enabled, egui::Button::selectable(current == mode, mode.name()))
+                .on_hover_text(tip)
+                .on_disabled_hover_text(tip);
+            auto.add(format!("viewer.mode.{}", mode.name()), r.rect, "mode");
+            if r.clicked() {
+                self.nav.set_mode(scene.node, mode);
+            }
+        }
+        if current == Mode::Free && scene.render {
+            let r = ui
+                .add_enabled(scene.steer.is_ok(), egui::Button::new("take view"))
+                .on_hover_text("Move the render's camera to where the free view looks from (one undo step)");
+            auto.add("viewer.take_view", r.rect, "take view");
+            if r.clicked() {
+                match self.nav.take_view(scene, net) {
+                    Ok(ops) => actions.push(Action::Edit {
+                        ops,
+                        label: "take the view".into(),
+                        group: None,
+                        place: None,
+                    }),
+                    Err(e) => actions.push(Action::Message(e)),
                 }
             }
         }

@@ -47,7 +47,8 @@ else runs without it.
   used ones under "more".
 - **Viewer** (middle right): the selected node's output, or the node pinned with `pin`.
   `window` shows it in a window of its own (on a second monitor, say). A node with several
-  outputs gets a button per output.
+  outputs gets a button per output. For geometry and renders it can also look around in the
+  scene ([Looking around in 3D](navigation.md)).
 - **Changes** (bottom right): every edit, newest first, with who made it (you, Claude, the
   project file). Hover an entry to outline the nodes it touched, click it to select them.
   Undo and Redo sit in its header.

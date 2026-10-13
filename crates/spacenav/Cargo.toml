@@ -1,0 +1,18 @@
+[package]
+name = "penumbra-spacenav"
+description = "A 3Dconnexion SpaceNavigator read as plain HID (no 3DxWare): a reader thread, six shaped axes and two buttons. No GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+log.workspace = true
+serde.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+hidapi.workspace = true
+
+[lints]
+workspace = true

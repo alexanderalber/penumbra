@@ -109,6 +109,17 @@ struct Entry {
     pending: Option<(u64, Instant, Measurement)>,
     /// When the last measurement started.
     started: Option<Instant>,
+    /// How it drew last, for the viewer's free view.
+    scene: Option<RenderScene>,
+}
+
+/// How a render node drew its last picture: its camera, size and look. The viewer's free view
+/// shows the same scene from elsewhere and draws this camera into it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RenderScene {
+    pub viewpoint: Viewpoint,
+    pub size: (u32, u32),
+    pub look: Look,
 }
 
 impl Entry {
@@ -237,8 +248,13 @@ impl Renders {
         self.lock().entries.retain(|id, _| net.node(*id).is_some_and(|n| n.kind == RENDER));
     }
 
-    /// Records what node `id` shows and returns whether it should measure now.
-    fn publish(&self, id: NodeId, waker: Waker, key: Option<u64>) -> bool {
+    /// How node `id` drew last ([`RenderScene`]).
+    pub fn scene(&self, id: NodeId) -> Option<RenderScene> {
+        self.lock().entries.get(&id)?.scene
+    }
+
+    /// Records what node `id` shows and how it draws, and returns whether it should measure now.
+    fn publish(&self, id: NodeId, waker: Waker, key: Option<u64>, scene: RenderScene) -> bool {
         let mut inner = self.lock();
         let now = Instant::now();
         let active = inner.active(now);
@@ -248,9 +264,11 @@ impl Renders {
             field: None,
             pending: None,
             started: None,
+            scene: None,
         });
         e.waker = waker;
         e.key = key;
+        e.scene = Some(scene);
         active
             && e.stale()
             && e.pending.is_none()
@@ -405,7 +423,8 @@ impl Operator for Render {
         let color = self.ring.next(gpu, w, h, RENDER)?;
         let data = self.data_ring.next(gpu, w, h, "tex.render data")?;
         let key = shown.then(|| field_key(geo, &view, look.cull, (w, h)));
-        let measure = renders.is_some_and(|r| r.publish(cx.node(), cx.waker(), key));
+        let scene = RenderScene { viewpoint, size: (w, h), look };
+        let measure = renders.is_some_and(|r| r.publish(cx.node(), cx.waker(), key, scene));
         match (renders, key) {
             (Some(renders), Some(key)) if measure => {
                 let m = self.renderer.render_and_measure(
