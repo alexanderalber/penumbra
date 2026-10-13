@@ -1,8 +1,9 @@
 //! The "add node" dialog, after TouchDesigner's OP Create Dialog: a search field on top, a tab
 //! per group of node families below it, all types of the active group in columns (each family
 //! from a new column in its colour, alphabetical, top to bottom, then the next column), and the
-//! summary of the type under the pointer at the bottom. Small families share a tab (user,
-//! 2026-10-11: nine tabs were too many); the colours still tell them apart.
+//! summary of the type under the pointer at the bottom. Small families share a tab (nine tabs
+//! were too many); the colours tell them apart, and a heading over each family's columns says
+//! what it holds, since the colours alone left one guessing which block was which.
 //!
 //! Typing does not hide types: those whose name does not contain the text are greyed out, so
 //! the grid keeps its shape and the eye its places. Families with a match are marked in their
@@ -27,6 +28,18 @@ const GROUPS: [&[&str]; 5] =
 /// Names of the tabs holding several families, by their first family; a tab of one family is named
 /// by it.
 const NAMES: [(&str, &str); 2] = [("geo", "rendering"), ("script", "system")];
+/// The headings over the families of a shared tab; a family missing here is headed by its name.
+const HEADINGS: [(&str, &str); 7] = [
+    ("geo", "geometry"),
+    ("mat", "materials"),
+    ("light", "lights"),
+    ("view", "cameras"),
+    ("script", "scripts"),
+    ("out", "outputs"),
+    ("comp", "components"),
+];
+/// Height of the heading row.
+const HEADING: f32 = 18.0;
 /// Types per column before the next column starts.
 const ROWS: usize = 12;
 const CELL: egui::Vec2 = vec2(150.0, 22.0);
@@ -287,6 +300,38 @@ impl AddDialog {
                         }
                     });
                     ui.separator();
+
+                    // A tab of several families: a heading over each, with a line in its colour
+                    // across its columns.
+                    if group.len() > 1 {
+                        let (row, _) = ui.allocate_exact_size(vec2(width, HEADING), Sense::hover());
+                        let painter = ui.painter_at(row);
+                        for family in group {
+                            let columns: Vec<usize> =
+                                cells.iter().filter(|c| &c.family == family).map(|c| c.col).collect();
+                            let (Some(first), Some(last)) = (columns.iter().min(), columns.iter().max()) else {
+                                continue;
+                            };
+                            let left = row.min.x + *first as f32 * CELL.x + 1.0;
+                            let right = row.min.x + (*last + 1) as f32 * CELL.x - 1.0;
+                            let heading = HEADINGS
+                                .iter()
+                                .find(|(f, _)| f == family)
+                                .map_or(family.as_str(), |(_, h)| *h);
+                            let r = painter.text(
+                                pos2(left + 5.0, row.center().y - 1.0),
+                                Align2::LEFT_CENTER,
+                                heading,
+                                FontId::proportional(13.0),
+                                theme::TEXT,
+                            );
+                            auto.add(format!("add.heading.{family}"), r, heading);
+                            painter.line_segment(
+                                [pos2(left, row.max.y - 1.0), pos2(right, row.max.y - 1.0)],
+                                Stroke::new(2.0, theme::family_color(family)),
+                            );
+                        }
+                    }
 
                     // The grid: columns of ROWS, top to bottom.
                     let (grid, _) = ui.allocate_exact_size(vec2(width, rows as f32 * CELL.y), Sense::hover());

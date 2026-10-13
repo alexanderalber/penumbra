@@ -89,7 +89,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         render_frame,
     );
     add("cook.status", "Show clock, last cook pass, watched nodes, thumbnail policy", cook_status);
-    add("cook.thumbnails", "Global thumbnail switch; {mode: always | when_free | never}", cook_thumbnails);
+    add(
+        "cook.thumbnails",
+        "Global thumbnail switch and rate; {mode?: always | when_free | never, every?: cook passes          between two thumbnail cooks of a node, 1 = every frame}",
+        cook_thumbnails,
+    );
     add("cook.play", "Run or stop the show clock; {playing?} (default true)", cook_play);
     add("gpu.info", "GPU adapter, texture size limit, errors raised so far", gpu_info);
     add("text.fonts", "Font families and their styles, for tex.text's font and style; {family?}", text_fonts);
@@ -745,20 +749,33 @@ fn cook_status(e: &Engine, p: &Json) -> Result<Json> {
     }))
 }
 
+/// The slowest thumbnail rate `cook.thumbnails` takes: one cook a second at 60 fps.
+const MAX_THUMBNAIL_EVERY: u32 = 60;
+
 fn cook_thumbnails(e: &Engine, p: &Json) -> Result<Json> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct A {
-        mode: ThumbnailMode,
+        mode: Option<ThumbnailMode>,
+        every: Option<u32>,
     }
     let a: A = args(p)?;
-    let mode = a.mode;
-    e.on_cook(move |st| {
+    if a.mode.is_none() && a.every.is_none() {
+        return Err(CommandError("give `mode`, `every` or both".into()));
+    }
+    if let Some(every) = a.every
+        && !(1..=MAX_THUMBNAIL_EVERY).contains(&every)
+    {
+        return Err(CommandError(format!("`every` must be 1 to {MAX_THUMBNAIL_EVERY} cook passes")));
+    }
+    let policy = e.on_cook(move |st| {
         let mut policy = st.cooker.thumbnail_policy();
-        policy.mode = mode;
+        policy.mode = a.mode.unwrap_or(policy.mode);
+        policy.min_interval = a.every.unwrap_or(policy.min_interval);
         st.cooker.set_thumbnail_policy(policy);
+        policy
     })?;
-    Ok(json!({"mode": mode}))
+    Ok(json!({"mode": policy.mode, "every": policy.min_interval}))
 }
 
 fn cook_play(e: &Engine, p: &Json) -> Result<Json> {

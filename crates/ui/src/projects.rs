@@ -1,12 +1,14 @@
 //! The project menu behind the folder button at the left end of the status bar: a new project,
-//! open one, the recent ones, the demo, and the project's folder in the file manager.
+//! open one, the recent ones, the demo, the shipped examples, and the project's folder in the
+//! file manager.
 //!
 //! Opening runs on a thread of its own, since the old project's state is saved first, which can
 //! take seconds; the folder dialog too. The window keeps drawing meanwhile, and the button is
 //! disabled until it is done.
 //!
 //! Automation ids: `button.project`, then in the menu `project.new`, `project.open`,
-//! `project.recent.<i>` (newest first), `project.demo`, `project.folder`.
+//! `project.recent.<i>` (newest first), `project.demo`, `project.examples` (a submenu with
+//! `project.example.<name>`), `project.folder`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,6 +36,7 @@ enum Target {
     Open(PathBuf),
     New(PathBuf),
     Demo,
+    Example(String),
 }
 
 #[derive(Default)]
@@ -44,6 +47,8 @@ pub struct ProjectMenu {
     opening: Option<(String, Receiver<Result<Opened, Error>>)>,
     /// The recent projects, listed when the menu opens.
     recent: Option<Vec<PathBuf>>,
+    /// The shipped examples, listed when the menu opens.
+    examples: Option<Vec<String>>,
 }
 
 /// The last part of `dir`, else all of it.
@@ -78,6 +83,7 @@ impl ProjectMenu {
         auto.add("button.project", r.rect, "Project");
         if r.clicked() {
             self.recent = None;
+            self.examples = None;
         }
         let mut chosen = None;
         egui::Popup::menu(&r).id(ui.make_persistent_id("project_menu")).show(|ui| {
@@ -127,6 +133,39 @@ impl ProjectMenu {
                 }
                 ui.close();
             }
+            let examples = self.examples.get_or_insert_with(|| {
+                projects::examples_source().map(|d| projects::list_examples(&d)).unwrap_or_default()
+            });
+            let copies = projects::examples_copy_dir().ok();
+            ui.add_enabled_ui(!examples.is_empty(), |ui| {
+                let r = ui.menu_button("Examples", |ui| {
+                    for name in examples.iter() {
+                        let copy = copies.as_ref().map(|c| c.join(name));
+                        let open = copy.as_ref().is_some_and(|c| projects::same_dir(c, &current));
+                        let tip = match &copy {
+                            Some(c) if c.join(FILE_NAME).is_file() => {
+                                format!("Opens your copy in {}, with your changes", c.display())
+                            }
+                            Some(c) => format!(
+                                "Copied to {} and opened; the shipped one stays as it is",
+                                c.display()
+                            ),
+                            None => "The user's data folder is unknown".to_string(),
+                        };
+                        let b = ui.add(egui::Button::new(name.as_str()).selected(open)).on_hover_text(tip);
+                        auto.add(format!("project.example.{name}"), b.rect, name.as_str());
+                        if b.clicked() {
+                            if !open {
+                                chosen = Some(Target::Example(name.clone()));
+                            }
+                            ui.close();
+                        }
+                    }
+                });
+                auto.add("project.examples", r.response.rect, "Examples");
+            })
+            .response
+            .on_disabled_hover_text("No examples folder beside penumbra");
             ui.separator();
             let b = ui.button("Show project folder").on_hover_text(current.display().to_string());
             auto.add("project.folder", b.rect, "Show project folder");
@@ -215,6 +254,7 @@ impl ProjectMenu {
         let name = match &target {
             Target::Open(dir) | Target::New(dir) => name_of(dir),
             Target::Demo => "the demo project".to_string(),
+            Target::Example(name) => format!("the example {name}"),
         };
         let (tx, rx) = mpsc::channel();
         let engine = engine.clone();
@@ -223,6 +263,7 @@ impl ProjectMenu {
                 Target::Open(dir) => projects::open(&engine, &dir),
                 Target::New(dir) => projects::create(&engine, &dir),
                 Target::Demo => projects::open_demo(&engine),
+                Target::Example(name) => projects::open_example(&engine, &name),
             };
             tx.send(result).ok();
         });

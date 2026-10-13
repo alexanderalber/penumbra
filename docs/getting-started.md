@@ -15,9 +15,10 @@ Windows (`$XDG_DATA_HOME/penumbra/demo` or `~/.local/share/penumbra/demo` elsewh
 
 A project is a directory with a `project.ron`. The folder button at the left end of the status
 bar opens the project menu: **New project** (pick or make an empty folder), **Open project**,
-the recently opened projects, the demo, and the project's folder in the file manager. The
-project that was open is written first; the window and the outputs stay. The same from the
-[control channel](control.md): `project.new`, `project.open`, `project.demo`, `project.recent`.
+the recently opened projects, the demo, the examples that come with penumbra, and the project's
+folder in the file manager. The project that was open is written first; the window and the
+outputs stay. The same from the [control channel](control.md): `project.new`, `project.open`,
+`project.demo`, `project.examples`, `project.example`, `project.recent`.
 
 A project can also be given at the start (a missing directory is created):
 
@@ -93,7 +94,7 @@ command. Close the app (or open another project) and come back to it, and the ne
 | right- or middle-drag | pan |
 | mouse wheel | zoom around the pointer |
 | right-click a node | its menu: view (pin), pause thumbnail, lock, delete, cut, copy, group |
-| right-click empty canvas | the editor's options: channel bars, thumbnails, Helpers |
+| right-click empty canvas | the editor's options: channel bars, the viewer as background, thumbnails and their rate, Helpers |
 | Tab, double-click on canvas | add a node |
 | Delete or Backspace | delete the selection |
 | F | frame all nodes |

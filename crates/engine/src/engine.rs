@@ -136,6 +136,8 @@ pub struct ViewFrame {
     pub pace: Option<PaceSource>,
     /// The global thumbnail switch (`cook.thumbnails`).
     pub thumbnails: ThumbnailMode,
+    /// Cook passes between two thumbnail cooks of a node (`cook.thumbnails`' `every`).
+    pub thumbnail_every: u32,
     /// Duration of the last pass.
     pub elapsed: Duration,
     /// Status of every node the cooker knows, without instance params.
@@ -421,6 +423,7 @@ impl CookState {
             playing: self.clock.is_playing(),
             pace: Some(self.pacer.source(wall)),
             thumbnails: self.cooker.thumbnail_policy().mode,
+            thumbnail_every: self.cooker.thumbnail_policy().min_interval,
             elapsed: self.last.elapsed,
             resolution: self.resolution.as_ref().map(|(_, _, r)| r.clone()),
             overlay: self.overlay,

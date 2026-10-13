@@ -57,7 +57,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `cook.play` | Run or stop the show clock; {playing?} (default true) |
 | `cook.stats` | Cook pass timings since the last reset: passes, slowest pass, longest gap, late frames, stalls; {reset?} |
 | `cook.status` | Show clock, last cook pass, watched nodes, thumbnail policy |
-| `cook.thumbnails` | Global thumbnail switch; {mode: always \| when_free \| never} |
+| `cook.thumbnails` | Global thumbnail switch and rate; {mode?: always \| when_free \| never, every?: cook passes between two thumbnail cooks of a node, 1 = every frame} |
 
 ## edit
 
@@ -130,6 +130,8 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `project.demo` | Open the demo project (made again if missing) |
+| `project.example` | Open a shipped example: copied into the user's data folder on the first open, so the shipped one stays as it is; later opens keep the changes; {name} |
+| `project.examples` | The examples shipped with penumbra, by name, and where they lie |
 | `project.info` | Project directory, unsaved changes, file errors, who is editing |
 | `project.new` | Make an empty project in dir (created if missing, must hold no project.ron) and open it; {dir} |
 | `project.open` | Close this project (state saved, changes written) and open the one in dir; {dir} |
@@ -207,7 +209,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.enter` | Show the inside of a component in the editor, the top level without a path; {path?} |
 | `ui.frame` | Fit all nodes into the editor |
 | `ui.key` | Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?} |
-| `ui.options` | The editor's options (right-click on empty space); {chan_bars?} |
+| `ui.options` | The editor's options (right-click on empty space); {chan_bars?, viewer_background?} |
 | `ui.place` | Move nodes in the editor; {nodes: {path: [x, y]}} |
 | `ui.screenshot` | PNG of the window; {file?} (default %TEMP%/penumbra/ui.png) |
 | `ui.scroll` | Mouse wheel over an element or point; {id \| x, y, dy} |

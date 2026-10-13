@@ -1,12 +1,19 @@
 //! Opening and creating projects while the app runs (`project.open`, `project.new`,
-//! `project.demo`, `project.recent`), the demo project and the list of recent projects.
+//! `project.demo`, `project.examples`, `project.example`, `project.recent`), the demo project,
+//! the shipped examples and the list of recent projects.
 //!
 //! A project is a directory with a `project.ron`. Opening one switches the running engine over
 //! ([`Engine::open_project`]); the window, the GPU and the outputs stay.
 //!
 //! The recent projects are a small JSON file in the user's data directory
 //! ([`default_recent_file`]), newest first. The demo project is left out: it opens on every
-//! start without arguments and would always sit on top; the menu offers it separately.
+//! start without arguments and would always sit on top; the menu offers it separately. So are the
+//! examples, which the menu lists too.
+//!
+//! The examples ship in `examples/` beside the executable (in a checkout: at the repository
+//! root, a few levels above it). penumbra saves into the project it has open, so an example is
+//! not opened in place: the first time it is copied into `examples` in [`data_dir`], and that
+//! copy opens from then on, keeping the user's changes. The shipped folder stays as it is.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -75,6 +82,78 @@ pub fn demo_dir() -> Result<PathBuf, Error> {
     Ok(data_dir()?.join("demo"))
 }
 
+/// Where opened examples are copied to, `examples` in [`data_dir`].
+pub fn examples_copy_dir() -> Result<PathBuf, Error> {
+    Ok(data_dir()?.join("examples"))
+}
+
+/// How many directories above the executable's own the shipped examples are looked for: the
+/// release zip has them beside it, a checkout three levels up (`target/debug/deps` for tests).
+const EXAMPLES_SEARCH_DEPTH: usize = 4;
+
+/// The shipped `examples` directory: beside the executable or a few levels above it, the
+/// first one holding examples (cargo keeps an `examples` directory of its own beside the
+/// executable in a checkout).
+pub fn examples_source() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors()
+        .skip(1)
+        .take(EXAMPLES_SEARCH_DEPTH + 1)
+        .map(|d| d.join("examples"))
+        .find(|d| !list_examples(d).is_empty())
+}
+
+/// The examples in `source`: its subdirectories holding a project file, by name.
+pub fn list_examples(source: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(source) else { return Vec::new() };
+    let mut names: Vec<String> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()) && e.path().join(FILE_NAME).is_file())
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .collect();
+    names.sort();
+    names
+}
+
+/// The copy of example `name` from `source` in `copies`, made unless there is one (with a
+/// project file) already.
+pub fn copy_example(source: &Path, name: &str, copies: &Path) -> Result<PathBuf, Error> {
+    if !list_examples(source).iter().any(|n| n == name) {
+        return Err(Error::new(format!("there is no example named `{name}` in {}", source.display())));
+    }
+    let to = copies.join(name);
+    if !to.join(FILE_NAME).is_file() {
+        copy_tree(&source.join(name), &to)?;
+    }
+    Ok(to)
+}
+
+/// Copies the files and directories below `from` into `to`; links are skipped.
+fn copy_tree(from: &Path, to: &Path) -> Result<(), Error> {
+    let fail = |p: &Path, e: std::io::Error| Error::new(format!("{}: {e}", p.display()));
+    std::fs::create_dir_all(to).map_err(|e| fail(to, e))?;
+    for entry in std::fs::read_dir(from).map_err(|e| fail(from, e))? {
+        let entry = entry.map_err(|e| fail(from, e))?;
+        let path = entry.path();
+        let kind = entry.file_type().map_err(|e| fail(&path, e))?;
+        let target = to.join(entry.file_name());
+        if kind.is_dir() {
+            copy_tree(&path, &target)?;
+        } else if kind.is_file() {
+            std::fs::copy(&path, &target).map_err(|e| fail(&path, e))?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether the menu lists `dir` anyway: the demo or a copy of an example.
+fn listed_elsewhere(dir: &Path) -> bool {
+    if demo_dir().is_ok_and(|demo| same_dir(&demo, dir)) {
+        return true;
+    }
+    examples_copy_dir().is_ok_and(|copies| dir.parent().is_some_and(|parent| same_dir(&copies, parent)))
+}
+
 /// The list of recent projects, `recent.json` in [`data_dir`].
 pub fn default_recent_file() -> Result<PathBuf, Error> {
     Ok(data_dir()?.join("recent.json"))
@@ -130,12 +209,13 @@ pub fn read_recent(file: &Path) -> Vec<PathBuf> {
     read_all(file).into_iter().filter(|d| d.join(FILE_NAME).is_file()).collect()
 }
 
-/// Puts `dir` on top of the recent projects in `file` (the demo project is left out).
+/// Puts `dir` on top of the recent projects in `file` (the demo project and the examples are left
+/// out).
 pub fn remember(file: &Path, dir: &Path) -> Result<(), Error> {
-    if demo_dir().is_ok_and(|demo| same_dir(&demo, dir)) {
+    let dir = absolute(dir);
+    if listed_elsewhere(&dir) {
         return Ok(());
     }
-    let dir = absolute(dir);
     let mut list = read_all(file);
     list.retain(|d| !same_dir(d, &dir) && d.join(FILE_NAME).is_file());
     list.insert(0, dir);
@@ -201,6 +281,20 @@ pub fn open_demo(engine: &Arc<Engine>) -> Result<Opened, Error> {
     switch(engine, &dir, &template)
 }
 
+/// Opens the shipped example `name`, from its copy in the user's data directory (made on the
+/// first open).
+pub fn open_example(engine: &Arc<Engine>, name: &str) -> Result<Opened, Error> {
+    let source = examples_source().ok_or_else(|| Error::new("no examples folder beside penumbra"))?;
+    let dir = copy_example(&source, name, &examples_copy_dir()?)?;
+    open(engine, &dir)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NameArg {
+    name: String,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct DirArg {
@@ -212,7 +306,8 @@ fn reply(r: Result<Opened, Error>) -> Result<Json, CommandError> {
     Ok(json!({"dir": opened.dir, "switched": opened.switched}))
 }
 
-/// Registers `project.open`, `project.new`, `project.demo` and `project.recent`.
+/// Registers `project.open`, `project.new`, `project.demo`, `project.examples`,
+/// `project.example` and `project.recent`.
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
@@ -234,6 +329,23 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
             args::<crate::commands::Empty>(p)?;
             reply(open_demo(&e))
         },
+    ));
+    registry.register(FnCommand::new(
+        "project.examples",
+        "The examples shipped with penumbra, by name, and where they lie",
+        move |p| {
+            args::<crate::commands::Empty>(p)?;
+            let source = examples_source();
+            let names = source.as_deref().map(list_examples).unwrap_or_default();
+            Ok(json!({"examples": names, "dir": source.map(|d| d.display().to_string())}))
+        },
+    ));
+    let e = Arc::clone(engine);
+    registry.register(FnCommand::new(
+        "project.example",
+        "Open a shipped example: copied into the user's data folder on the first open, so the \
+         shipped one stays as it is; later opens keep the changes; {name}",
+        move |p| reply(open_example(&e, &args::<NameArg>(p)?.name)),
     ));
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
@@ -282,6 +394,32 @@ mod tests {
             remember(&file, &d).unwrap();
         }
         assert_eq!(read_recent(&file).len(), RECENT_MAX);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn an_example_is_copied_once_and_then_kept() {
+        let root = temp("examples");
+        let source = root.join("examples");
+        for name in ["b", "a"] {
+            std::fs::create_dir_all(source.join(name).join("sub")).unwrap();
+            std::fs::write(source.join(name).join(FILE_NAME), "(version: 1)").unwrap();
+            std::fs::write(source.join(name).join("sub").join("x.wgsl"), "// x").unwrap();
+        }
+        std::fs::create_dir_all(source.join("not-a-project")).unwrap();
+        std::fs::write(source.join("README.md"), "# Examples").unwrap();
+        assert_eq!(list_examples(&source), ["a", "b"]);
+
+        let copies = root.join("copies");
+        let dir = copy_example(&source, "a", &copies).unwrap();
+        assert!(dir.join("sub").join("x.wgsl").is_file());
+        // A second open keeps what the user changed.
+        std::fs::write(dir.join(FILE_NAME), "(version: 1, nodes: {})").unwrap();
+        copy_example(&source, "a", &copies).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(), "(version: 1, nodes: {})");
+        for bad in ["c", "not-a-project", "..", "../examples/a", ""] {
+            assert!(copy_example(&source, bad, &copies).is_err(), "{bad}");
+        }
         std::fs::remove_dir_all(&root).unwrap();
     }
 
