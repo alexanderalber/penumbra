@@ -1516,6 +1516,7 @@ mod tests {
     #[test]
     fn thumbnails_cook_only_when_dirty_and_rate_limited() {
         let mut f = Fixture::new(&[create("/t", "test.time"), create("/k", "test.const")]);
+        f.cooker.set_thumbnail_policy(ThumbnailPolicy { min_interval: 6, ..Default::default() });
         let (cooked, _) = f.cook_with(&[], &["/t", "/k"]);
         assert_eq!(cooked, ["/t", "/k"]);
         // Next passes: /k is clean (free check), /t is dirty but rate limited.
