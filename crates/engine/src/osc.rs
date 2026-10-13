@@ -327,6 +327,9 @@ pub fn value_for(
     let text = args.iter().find_map(Arg::as_str);
     let first = || numbers.first().copied().ok_or_else(|| format!("`{}` needs a number", spec.name));
     let e = |e: penumbra_core::Error| e.0;
+    if spec.code {
+        return Err(format!("`{}` is code; OSC does not set it", spec.name));
+    }
     match &spec.kind {
         ParamKind::Bool | ParamKind::Int | ParamKind::Float => {
             spec.bind_value(current, None, first()?).map_err(e)
