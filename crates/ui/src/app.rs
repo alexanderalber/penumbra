@@ -738,6 +738,7 @@ impl PenumbraApp {
                     thumbnail_every: view.thumbnail_every,
                     fps: view.time.map_or(60.0, |t| t.rate.as_f64()),
                     chan_bars: self.layout.options.chan_bars,
+                    binding_lines: self.layout.options.binding_lines,
                     backdrop: target
                         .filter(|_| self.layout.options.viewer_background)
                         .map(|id| (id, self.viewer.output)),

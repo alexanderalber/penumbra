@@ -30,7 +30,7 @@ pub const NODE_SIZE: Vec2 = vec2(150.0, 118.0);
 /// The editor's zoom range: far enough out for a large network, far enough in to read a
 /// thumbnail closely.
 pub const ZOOM: (f32, f32) = (0.15, 6.0);
-const GAP: Vec2 = vec2(50.0, 24.0);
+pub(crate) const GAP: Vec2 = vec2(50.0, 24.0);
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -70,11 +70,13 @@ pub struct EditorOptions {
     pub chan_bars: bool,
     /// The viewer's picture behind the network, filling the editor.
     pub viewer_background: bool,
+    /// Every binding as a line; off, only those of the selected or hovered nodes.
+    pub binding_lines: bool,
 }
 
 impl Default for EditorOptions {
     fn default() -> Self {
-        Self { chan_bars: true, viewer_background: false }
+        Self { chan_bars: true, viewer_background: false, binding_lines: false }
     }
 }
 
@@ -260,6 +262,26 @@ impl Layout {
             .filter_map(|(id, from)| Some((id, from, self.get(id)?)))
             .filter(|(_, from, to)| from != to)
             .collect();
+        self.record(nodes);
+    }
+
+    /// Moves nodes to new places as one undo step, as a drag of them would; how many moved.
+    pub fn move_to(&mut self, to: &HashMap<NodeId, Pos2>, now: Instant) -> usize {
+        let nodes: Vec<(NodeId, Pos2, Pos2)> = to
+            .iter()
+            .filter(|(_, p)| p.x.is_finite() && p.y.is_finite())
+            .filter_map(|(id, p)| Some((*id, self.get(*id)?, *p)))
+            .filter(|(_, from, to)| from != to)
+            .collect();
+        for (id, _, p) in &nodes {
+            self.set(*id, *p, now);
+        }
+        let moved = nodes.len();
+        self.record(nodes);
+        moved
+    }
+
+    fn record(&mut self, nodes: Vec<(NodeId, Pos2, Pos2)>) {
         if nodes.is_empty() {
             return;
         }
@@ -389,13 +411,6 @@ impl Layout {
             self.pos.insert(id, p);
         }
         self.touch(now);
-    }
-
-    /// Lays out every node again by depth, as for a new project.
-    pub fn arrange(&mut self, net: &Network, now: Instant) {
-        self.pos.clear();
-        self.loaded.clear();
-        self.sync(net, now);
     }
 
     fn parent_of(&self, id: NodeId) -> Option<NodeId> {
@@ -658,6 +673,14 @@ mod tests {
         assert_eq!(layout.get(a), Some(start));
         assert!(layout.redo_move(now));
         assert_eq!(layout.get(a), Some(pos2(900.0, 900.0)));
+        // Moving several at once (as arranging does) is one step.
+        let b = net.resolve(&"/b".parse().unwrap()).unwrap();
+        let (a_was, b_was) = (layout.get(a).unwrap(), layout.get(b).unwrap());
+        let to: HashMap<NodeId, Pos2> = [(a, pos2(1.0, 2.0)), (b, pos2(3.0, 4.0))].into();
+        assert_eq!(layout.move_to(&to, now), 2);
+        assert!(layout.undo_move(now));
+        assert_eq!((layout.get(a), layout.get(b)), (Some(a_was), Some(b_was)));
+        assert!(layout.redo_move(now) && layout.undo_move(now));
         // A drag that ends where it started records nothing.
         layout.begin_move([a]);
         layout.end_move();

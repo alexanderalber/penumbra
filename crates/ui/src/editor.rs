@@ -8,7 +8,7 @@
 //! ([`crate::add_dialog`]), a double-click on a component enters it (on other nodes it does
 //! nothing; pinning to the viewer is in the node menu). Drag from an output to an input
 //! connects; dragging a connected input picks its wire up (drop on nothing to disconnect).
-//! Keys: Tab adds a node, Delete deletes, F frames.
+//! Keys: Tab adds a node, Delete deletes, F frames, L arranges ([`crate::arrange`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Instant;
@@ -48,6 +48,9 @@ pub struct Inputs<'a> {
     pub fps: f64,
     /// The bar under a single channel's value (`EditorOptions::chan_bars`).
     pub chan_bars: bool,
+    /// Every binding as a line (`EditorOptions::binding_lines`), not only those of the
+    /// selected or hovered nodes.
+    pub binding_lines: bool,
     /// The viewer's node and output, drawn behind the network (`EditorOptions::viewer_background`).
     pub backdrop: Option<(NodeId, u32)>,
     /// Frame period in seconds, for the cook-time tint.
@@ -93,6 +96,8 @@ pub struct Editor {
     pub canvas: Rect,
     /// The component whose inside is shown; `None` for the top level.
     pub level: Option<NodeId>,
+    /// The node under the pointer in the last frame, whose binding lines show.
+    hovered: Option<NodeId>,
 }
 
 /// One port on screen. A component's ports stand for its input and output nodes: `target` is
@@ -132,6 +137,7 @@ impl Default for Editor {
             frame_request: true,
             canvas: Rect::NOTHING,
             level: None,
+            hovered: None,
         }
     }
 }
@@ -225,6 +231,23 @@ fn ports_of(
         .map(|(o, s)| port(Pos2::ZERO, s.kind, (node.id, o as u32), &s.name, false))
         .collect();
     (ins, outs)
+}
+
+/// A node's height and the heights of its input and output ports below its top, in graph units,
+/// each port by the node and slot it really is (see [`ports_of`]).
+#[allow(clippy::type_complexity)]
+pub(crate) fn node_ports(
+    net: &Network,
+    types: &NodeTypes,
+    node: &penumbra_graph::NodeDef,
+) -> (f32, Vec<((NodeId, u32), f32)>, Vec<((NodeId, u32), f32)>) {
+    let (ins, outs) = ports_of(net, types, node);
+    let body = body_height(types.desc(&node.kind), ins.len().max(outs.len()));
+    let side = |ports: Vec<PortGeo>| {
+        let n = ports.len();
+        ports.into_iter().enumerate().map(|(i, p)| (p.target, port_y(HEADER, body, i, n))).collect()
+    };
+    (HEADER + body, side(ins), side(outs))
 }
 
 /// A port under the pointer: (input?, node, slot, kind).
@@ -516,7 +539,7 @@ impl Editor {
         // Wires, bindings and references, under the nodes.
         self.draw_wires(&painter, input, &placed);
         draw_outside_readers(&painter, &placed, &outside_readers);
-        draw_bindings(&painter, input, &placed);
+        draw_bindings(&painter, input, &placed, &self.selection, self.hovered);
         draw_references(&painter, input, &placed);
 
         let geos = &placed.geos;
@@ -649,6 +672,7 @@ impl Editor {
         let net = input.net;
         let mut clicked_node = false;
         let mut hovered_port: Option<PortHit> = None;
+        self.hovered = None;
         for g in geos {
             if !g.rect.expand(PORT_PICK).intersects(canvas) {
                 continue;
@@ -657,6 +681,9 @@ impl Editor {
             let path = net.path_of(g.id).map(|p| p.to_string()).unwrap_or_default();
             let resp = ui.interact(g.rect, ui.id().with(("node", g.id)), Sense::click_and_drag());
             auto.add(format!("node.{path}"), g.rect, node.kind.clone());
+            if resp.hovered() {
+                self.hovered = Some(g.id);
+            }
             self.node_interaction(ui, &resp, g.id, input, layout, actions, &mut clicked_node);
             self.draw_node(ui, painter, g, input, textures, &path, &resp);
             for (i, port) in g.inputs.iter().enumerate() {
@@ -824,7 +851,22 @@ impl Editor {
         }
         // A right-click on empty space: the editor's options (it did nothing before, and the
         // thumbnail switch sat in the status bar).
-        resp.context_menu(|ui| options_menu(ui, input, layout, auto, actions));
+        let mut arrange = false;
+        let selected = self.selection.len();
+        resp.context_menu(|ui| arrange = options_menu(ui, input, layout, auto, actions, selected));
+        if arrange {
+            self.arrange(input, layout);
+        }
+    }
+
+    /// Arranges the selection when it holds two nodes or more, else everything shown (and frames
+    /// it), as one undo step.
+    fn arrange(&mut self, input: &Inputs<'_>, layout: &mut Layout) {
+        let only = (self.selection.len() > 1).then_some(&self.selection);
+        crate::arrange::level(input.net, input.types, layout, self.level, only, input.now);
+        if only.is_none() {
+            self.frame_all();
+        }
     }
 
     fn open_add_menu(&mut self, input: &Inputs<'_>, screen: Pos2, at: Pos2) {
@@ -1362,14 +1404,18 @@ impl Editor {
         let Some(pointer) = ui.input(|i| i.pointer.hover_pos()).filter(|p| canvas.contains(*p)) else {
             return;
         };
-        let (delete, frame, add, all) = ui.input_mut(|i| {
+        let (delete, frame, add, all, arrange) = ui.input_mut(|i| {
             (
                 i.consume_key(Modifiers::NONE, Key::Delete) || i.consume_key(Modifiers::NONE, Key::Backspace),
                 i.consume_key(Modifiers::NONE, Key::F),
                 i.consume_key(Modifiers::NONE, Key::Tab),
                 i.consume_key(Modifiers::COMMAND, Key::A),
+                i.consume_key(Modifiers::NONE, Key::L),
             )
         });
+        if arrange {
+            self.arrange(input, layout);
+        }
         // Components: Ctrl+G groups the selection, I goes into the selected component, U up
         // (TouchDesigner's keys).
         let (group, enter, up) = ui.input_mut(|i| {
@@ -1529,14 +1575,26 @@ fn fit_rect(area: Rect, aspect: f32) -> Rect {
 }
 
 /// The editor's options, from a right-click on empty space.
+/// The editor's options; returns whether "Arrange" was clicked.
 fn options_menu(
     ui: &mut Ui,
     input: &Inputs<'_>,
     layout: &mut Layout,
     auto: &mut automation::Registry,
     actions: &mut Vec<Action>,
-) {
+    selected: usize,
+) -> bool {
     use penumbra_graph::ThumbnailMode;
+    let label = if selected > 1 { "Arrange selection" } else { "Arrange" };
+    let r = ui.button(format!("{label}  (L)")).on_hover_text(
+        "Moves the nodes so that wires cross as little as possible and run straight where they can;          the selection when two or more nodes are selected, else everything shown. Ctrl+Z puts them back",
+    );
+    auto.add("options.arrange", r.rect, label);
+    let arrange = r.clicked();
+    if arrange {
+        ui.close();
+    }
+    ui.separator();
     let mut options = layout.options;
     let r = ui
         .checkbox(&mut options.chan_bars, "Channel bars")
@@ -1546,6 +1604,10 @@ fn options_menu(
         .checkbox(&mut options.viewer_background, "Viewer as background")
         .on_hover_text("The viewer's picture behind the network, dimmed so nodes and wires stay readable");
     auto.add("options.viewer_background", r.rect, "Viewer as background");
+    let r = ui.checkbox(&mut options.binding_lines, "All binding lines").on_hover_text(
+        "A line for every binding. Off, a binding shows as a short stub on the node it drives, and as a          line while its source or that node is selected or under the pointer",
+    );
+    auto.add("options.binding_lines", r.rect, "All binding lines");
     layout.set_options(options, input.now);
     let r = ui.button("Helpers").on_hover_text(
         "Displays, output windows, what paces the show clock, resolution, state, OSC, audio, show-machine checks",
@@ -1597,6 +1659,7 @@ fn options_menu(
             }
         }
     });
+    arrange
 }
 
 /// The thumbnail rates the options menu offers, as frames between two cooks of a node.
@@ -1787,13 +1850,14 @@ fn wire_points(a: Pos2, b: Pos2, zoom: f32) -> [Pos2; 4] {
 }
 
 /// The route of a wire from output `a` of node `from` to input `b` of node `to`. A forward wire
-/// keeps the plain curve. A backward wire can swing below both nodes, above them, or snake
-/// through the gap between them when one sits above the other, each as one curve or, when
-/// that clips a node, as a wider loop around both; the one that runs through the least node
-/// area wins, then the shorter one.
+/// keeps the plain curve unless that clips a node; then it bends into a free horizontal corridor
+/// between the nodes in its way, runs along it and bends out to its input. A backward wire can
+/// swing below both nodes, above them, or snake through the gap between them when one sits
+/// above the other, each as one curve or, when that clips a node, as a wider loop around both;
+/// the one that runs through the least node area wins, then the shorter one.
 pub(crate) fn wire_route(a: Pos2, b: Pos2, from: Rect, to: Rect, nodes: &[Rect], zoom: f32) -> Route {
     if b.x >= a.x - 20.0 * zoom {
-        return vec![wire_points(a, b, zoom)];
+        return forward_route(a, b, nodes, zoom);
     }
     let out = 80.0 * zoom;
     let margin = 30.0 * zoom;
@@ -1831,6 +1895,51 @@ pub(crate) fn wire_route(a: Pos2, b: Pos2, from: Rect, to: Rect, nodes: &[Rect],
         .map(|(r, weight)| (route_cost(&r, nodes, zoom) * weight, r))
         .min_by(|x, y| x.0.total_cmp(&y.0))
         .map_or_else(|| vec![wire_points(a, b, zoom)], |(_, r)| r)
+}
+
+/// A forward wire: the plain curve, or when that clips a node the cheapest corridor route.
+/// Corridors are tried just above and below each node between the two ends, nearest first.
+fn forward_route(a: Pos2, b: Pos2, nodes: &[Rect], zoom: f32) -> Route {
+    let plain = vec![wire_points(a, b, zoom)];
+    // The bends need room: a wire to the neighbouring column stays a plain curve.
+    let bend = 60.0 * zoom;
+    if b.x - a.x < bend * 3.0 {
+        return plain;
+    }
+    let plain_cost = route_cost(&plain, nodes, zoom);
+    if plain_cost <= route_cost(&plain, &[], zoom) * 1.001 {
+        return plain;
+    }
+    let span =
+        Rect::from_min_max(pos2(a.x + bend * 0.5, f32::NEG_INFINITY), pos2(b.x - bend * 0.5, f32::INFINITY));
+    let middle = (a.y + b.y) / 2.0;
+    let margin = 12.0 * zoom;
+    let mut heights: Vec<f32> = nodes
+        .iter()
+        .filter(|r| r.min.x < span.max.x && r.max.x > span.min.x)
+        .flat_map(|r| [r.min.y - margin, r.max.y + margin])
+        .collect();
+    heights.sort_by(|x, y| (x - middle).abs().total_cmp(&(y - middle).abs()));
+    heights.dedup_by(|x, y| (*x - *y).abs() < 1.0);
+    heights.truncate(16);
+    // An S from each end into the corridor and a straight run along it.
+    let along = |y: f32| -> Route {
+        let (p, q) = (pos2(a.x + bend, y), pos2(b.x - bend, y));
+        let h = bend * 0.5;
+        vec![
+            [a, a + vec2(h, 0.0), p - vec2(h, 0.0), p],
+            [p, p.lerp(q, 1.0 / 3.0), p.lerp(q, 2.0 / 3.0), q],
+            [q, q + vec2(h, 0.0), b - vec2(h, 0.0), b],
+        ]
+    };
+    heights
+        .into_iter()
+        .map(along)
+        // A corridor route is less calm than the plain curve: it has to be clearly better.
+        .map(|r| (route_cost(&r, nodes, zoom) * 1.15, r))
+        .chain(std::iter::once((plain_cost, plain.clone())))
+        .min_by(|x, y| x.0.total_cmp(&y.0))
+        .map_or(plain, |(_, r)| r)
 }
 
 /// A loop from `a` out to the right as far as `right`, across at height `y`, back to `left` and
@@ -1964,10 +2073,18 @@ fn dashed(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, zoom: f32) 
 }
 
 /// Bindings: a dashed line from the source's first chan output to the top of the node whose
-/// param it drives, one per pair of nodes. One from outside the component shown is a stub above
-/// the node, with the source's path; one to a node outside a stub below the source, with the
-/// reader's path.
-fn draw_bindings(painter: &egui::Painter, input: &Inputs<'_>, placed: &Placed<'_>) {
+/// param it drives, one per pair of nodes. Unless every line is asked for, only the lines of the
+/// selected nodes and the one under the pointer are drawn: one channel often drives many nodes,
+/// and its fan of lines would cover the network. The others are a short stub on the node they
+/// drive. One from outside the component shown is a stub above the node, with the source's path;
+/// one to a node outside a stub below the source, with the reader's path.
+fn draw_bindings(
+    painter: &egui::Painter,
+    input: &Inputs<'_>,
+    placed: &Placed<'_>,
+    selection: &BTreeSet<NodeId>,
+    hovered: Option<NodeId>,
+) {
     let zoom = placed.view.zoom;
     let bindings = placed.bindings();
     for (src, readers) in &bindings.to_outside {
@@ -2013,8 +2130,14 @@ fn draw_bindings(painter: &egui::Painter, input: &Inputs<'_>, placed: &Placed<'_
         };
         let b = top_or_bottom(from.rect, to.rect);
         let hot = input.highlight.contains(&reader) && input.highlight.contains(&src);
-        let color = theme::kind_color(DataKind::Chan).gamma_multiply(if hot { 1.0 } else { 0.7 });
-        dashed(painter, a, b, color, zoom);
+        let touched = [src, reader].iter().any(|id| selection.contains(id) || hovered == Some(*id));
+        let color = theme::kind_color(DataKind::Chan).gamma_multiply(if hot || touched { 1.0 } else { 0.7 });
+        if input.binding_lines || hot || touched {
+            dashed(painter, a, b, color, zoom);
+        } else {
+            let away = if b.y > to.rect.center().y { 1.0 } else { -1.0 };
+            dashed(painter, b, b + vec2(0.0, 12.0 * zoom * away), color, zoom);
+        }
         painter.circle_filled(b, 3.0 * zoom, color);
     }
 }

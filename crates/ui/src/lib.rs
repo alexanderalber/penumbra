@@ -6,6 +6,7 @@
 
 pub mod add_dialog;
 pub mod app;
+pub mod arrange;
 pub mod automation;
 pub mod changes;
 mod clipboard;

@@ -15,7 +15,7 @@
 //! - `ui.select {paths}`, `ui.view {path?}` (pin the viewer; no path unpins)
 //! - `ui.camera {mode?, home?, camera?, orbit?, pan?, dolly?, travel?, look?, roll?, take?}`: the
 //!   viewer's free view and steering ([`crate::navigate`])
-//! - `ui.place {nodes: {path: [x, y]}}`, `ui.arrange`, `ui.frame`
+//! - `ui.place {nodes: {path: [x, y]}}`, `ui.arrange {nodes?: [path]}`, `ui.frame`
 //! - `ui.screenshot {file?}`: PNG of the window
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -91,8 +91,14 @@ const COMMANDS: &[(&str, &str)] = &[
          moves go to the free view's camera, or in steer mode to the camera node; take puts the free view into it",
     ),
     ("ui.place", "Move nodes in the editor; {nodes: {path: [x, y]}}"),
-    ("ui.options", "The editor's options (right-click on empty space); {chan_bars?, viewer_background?}"),
-    ("ui.arrange", "Lay out all nodes again by depth and frame them"),
+    (
+        "ui.options",
+        "The editor's options (right-click on empty space); {chan_bars?, viewer_background?, binding_lines?}",
+    ),
+    (
+        "ui.arrange",
+        "Arrange the nodes so wires cross little and run straight: {nodes?: [path]}, else every level (one undo step per level)",
+    ),
     ("ui.frame", "Fit all nodes into the editor"),
     ("ui.screenshot", "PNG of the window; {file?} (default %TEMP%/penumbra/ui.png)"),
 ];
