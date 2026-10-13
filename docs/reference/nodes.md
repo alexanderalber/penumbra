@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.opticalflow](#texopticalflow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
+[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.opticalflow](#texopticalflow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.timemachine](#textimemachine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
 
 ### tex.blobtrack
 
@@ -759,6 +759,28 @@ Outputs: `out` (tex).
 | `repeat` | vec2 | `[2, 2]` | 1 to 16 (soft) | Copies across and down |
 | `mirror` | bool | `false` |  | Every other copy mirrored, so edges meet |
 | `offset` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | In tiles |
+
+### tex.timemachine
+
+Per pixel, a frame from the past: the map says how far back (black now, white oldest)
+
+Inputs:
+
+- `in` (tex)
+- `map` (tex)
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `length` | int | `120` | 1 to 1800 f (soft) | How far back white reaches, in input frames (a camera at 30 fps: 600 are 20 s) |
+| `offset` | float | `0` | 0 to 600 f (soft) | Frames back added everywhere; without a map, the delay of the whole picture |
+| `blend` | bool | `true` |  | Mixes the two frames around a map value between them; off takes the nearer one (sharper, but a smooth map shows steps) |
+| `scale` | float | `1` | 0.1 to 1 (soft) | Resolution of the kept frames relative to the input; 0.5 needs a quarter of the memory |
+| `precision` | 16bit \| 8bit | `"16bit"` |  | How the kept frames are stored: 16bit as they come, 8bit in half the memory with values above 1 clipped |
+| `step` | int | `1` | 1 to 8 (soft) | Keeps only every n-th input frame, for n times the length in the same memory; between kept frames the picture is blended, which smears fast motion |
+| `record` | bool | `true` |  | Take new frames; off holds what is kept |
+| `budget` *(more)* | float | `4` | 0.5 to 20 (soft) | Most GPU memory the kept frames take, in GiB; past it fewer are kept, with a warning |
 
 ### tex.transform
 

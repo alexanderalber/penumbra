@@ -23,6 +23,7 @@ pub mod projection;
 pub mod readback;
 pub mod render;
 pub mod shapes;
+pub mod stack;
 pub mod tex;
 pub mod video;
 
@@ -38,6 +39,7 @@ pub use projection::{MeshVertex, Projection};
 pub use readback::{PendingRead, Pixels, ReadPool, ReadState, RowsError, encode_png_rgba8};
 pub use render::Lights;
 pub use shapes::{ShapeMode, ShapePoly, Shapes};
+pub use stack::Stack;
 pub use tex::{Tex, TexRing};
 
 /// The format of every texture flowing between nodes.
@@ -93,6 +95,7 @@ struct Inner {
     bc: Mutex<Option<Arc<bc::Pipeline>>>,
     render: Mutex<Option<Arc<render::Pipelines>>>,
     environment: Mutex<Option<Arc<environment::Pipelines>>>,
+    stack: Mutex<Option<Arc<stack::Pipelines>>>,
     /// Submissions and presents share it, surface configuration takes it alone (see
     /// [`Gpu::configure_surface`]).
     submit_lock: RwLock<()>,
@@ -140,6 +143,7 @@ impl Gpu {
                 bc: Mutex::new(None),
                 render: Mutex::new(None),
                 environment: Mutex::new(None),
+                stack: Mutex::new(None),
                 submit_lock: RwLock::new(()),
                 held_until: Mutex::new(None),
             }),
