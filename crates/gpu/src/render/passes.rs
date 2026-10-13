@@ -12,7 +12,7 @@ use super::{
     DEPTH, Light, Look, MAX_DRAWS, MAX_PROJECTORS, MEASURE, Measurement, OPAQUE, Pass, Pipelines, Pipes,
     Placed, Renderer, Stage, Surface, View, draw_slot, measure_size,
 };
-use crate::geo::{Faces, Geo, Material, Shading, normal_matrix};
+use crate::geo::{Faces, Geo, Instances, Material, Shading, normal_matrix};
 use crate::{Gpu, Tex};
 
 /// One run of a part and material, with its uniforms.
@@ -22,6 +22,8 @@ pub(super) struct DrawCall {
     count: u32,
     slot: u32,
     texture: Option<Tex>,
+    /// Drawn once per instance; `None`: once.
+    instances: Option<Arc<Instances>>,
     /// Can show see-through pixels: drawn again, sorted, after the opaque ones.
     clear: bool,
     /// Drawn as the edges of its triangles, from the model's wireframe vertices.
@@ -120,13 +122,22 @@ impl Calls {
                 let depth = z[0] * cx + z[1] * cy + z[2] * cz + z[3];
                 let slot = calls.len() as u32;
                 bytes.resize(slot as usize * align as usize, 0);
-                bytes.extend(draw_slot(&item.world, &normals, color, m, occluder, item.part_offset + r.part));
+                bytes.extend(draw_slot(
+                    &item.world,
+                    &normals,
+                    color,
+                    m,
+                    occluder,
+                    item.part_offset + r.part,
+                    item.instances.as_deref(),
+                ));
                 calls.push(DrawCall {
                     model: index,
                     first: r.first,
                     count: r.count,
                     slot,
                     texture: tex,
+                    instances: item.instances.clone(),
                     clear,
                     wire,
                     occluder,
@@ -388,27 +399,51 @@ pub(super) fn frame_group(
     })
 }
 
-/// One texture group per draw (white without a texture), made once per distinct texture.
+/// One texture group per draw (white without a texture, white for missing instance
+/// textures), made once per distinct texture and instances.
 pub(super) fn texture_groups(
     device: &wgpu::Device,
     pipelines: &Pipelines,
     calls: &Calls,
     white: &Tex,
 ) -> Vec<wgpu::BindGroup> {
-    let mut made: Vec<(Tex, wgpu::BindGroup)> = Vec::new();
-    let mut group_of = |t: &Tex| -> wgpu::BindGroup {
-        if let Some((_, g)) = made.iter().find(|(x, _)| x.same(t)) {
+    type Key = (Tex, Option<Arc<Instances>>);
+    let same = |a: &Key, b: &Key| {
+        a.0.same(&b.0)
+            && match (&a.1, &b.1) {
+                (Some(x), Some(y)) => Arc::ptr_eq(x, y),
+                (None, None) => true,
+                _ => false,
+            }
+    };
+    let mut made: Vec<(Key, wgpu::BindGroup)> = Vec::new();
+    let mut group_of = |key: Key| -> wgpu::BindGroup {
+        if let Some((_, g)) = made.iter().find(|(x, _)| same(x, &key)) {
             return g.clone();
+        }
+        let inst = key.1.as_deref();
+        fn or<'a>(t: Option<&'a Tex>, white: &'a Tex) -> &'a wgpu::TextureView {
+            t.unwrap_or(white).view()
         }
         let g = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("render texture"),
             layout: &pipelines.tex_layout,
-            entries: &[view_entry(0, t.view())],
+            entries: &[
+                view_entry(0, key.0.view()),
+                view_entry(1, or(inst.map(|i| &i.position), white)),
+                view_entry(2, or(inst.and_then(|i| i.aim.as_ref()), white)),
+                view_entry(3, or(inst.and_then(|i| i.scale.as_ref()), white)),
+                view_entry(4, or(inst.and_then(|i| i.color.as_ref()), white)),
+            ],
         });
-        made.push((t.clone(), g.clone()));
+        made.push((key, g.clone()));
         g
     };
-    calls.calls.iter().map(|c| group_of(c.texture.as_ref().unwrap_or(white))).collect()
+    calls
+        .calls
+        .iter()
+        .map(|c| group_of((c.texture.clone().unwrap_or_else(|| white.clone()), c.instances.clone())))
+        .collect()
 }
 
 impl Encoding<'_> {
@@ -439,11 +474,12 @@ impl Encoding<'_> {
             }
             rp.set_bind_group(1, draw_group, &[(u64::from(call.slot) * self.calls.align) as u32]);
             rp.set_bind_group(2, tg, &[]);
+            let copies = call.instances.as_ref().map_or(1, |i| i.count());
             if call.wire {
                 // The wireframe's corners lie in index order, three per triangle.
-                rp.draw(call.first..call.first + call.count, 0..1);
+                rp.draw(call.first..call.first + call.count, 0..copies);
             } else {
-                rp.draw_indexed(call.first..call.first + call.count, 0, 0..1);
+                rp.draw_indexed(call.first..call.first + call.count, 0, 0..copies);
             }
         }
     }

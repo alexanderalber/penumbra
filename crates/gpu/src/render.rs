@@ -48,7 +48,7 @@ use penumbra_core::{Error, lock};
 use penumbra_mesh::Bounds;
 
 use crate::environment::EnvironmentMaps;
-use crate::geo::{Faces, Geo, Mat4, Material, Shading, VERTEX_BYTES, WIRE_BYTES};
+use crate::geo::{Faces, Geo, Instances, Mat4, Material, Shading, VERTEX_BYTES, WIRE_BYTES};
 use crate::projection::Overlay;
 use crate::{FORMAT, Gpu, Tex};
 
@@ -70,7 +70,7 @@ pub const MAX_SHADOWS: usize = 8;
 pub const MAX_PROJECTORS: usize = 4;
 const LIGHT_BYTES: u64 = 128;
 const FRAME_BYTES: u64 = 144 + MAX_LIGHTS as u64 * LIGHT_BYTES;
-const DRAW_BYTES: u64 = 208;
+const DRAW_BYTES: u64 = 224;
 const AO_BYTES: u64 = 96;
 /// Most draws (runs of one part and material, over all models) in one render.
 pub const MAX_DRAWS: usize = 1 << 16;
@@ -441,7 +441,13 @@ impl Layouts {
         });
         let tex = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("render texture"),
-            entries: &[picture_entry(0)],
+            entries: &[
+                picture_entry(0),
+                instance_entry(1),
+                instance_entry(2),
+                instance_entry(3),
+                instance_entry(4),
+            ],
         });
         let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("render lights"),
@@ -522,6 +528,11 @@ fn loaded_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
         },
         count: None,
     }
+}
+
+/// An instance texture, read by the vertex stage with textureLoad (any float format).
+fn instance_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry { visibility: wgpu::ShaderStages::VERTEX, ..loaded_entry(binding) }
 }
 
 fn sampler_entry(binding: u32, ty: wgpu::SamplerBindingType) -> wgpu::BindGroupLayoutEntry {
@@ -1444,6 +1455,7 @@ fn draw_slot(
     m: &Material,
     occluder: bool,
     part: u32,
+    instances: Option<&Instances>,
 ) -> Vec<u8> {
     let mut b = Vec::with_capacity(DRAW_BYTES as usize);
     let mut f = |v: f32| b.extend_from_slice(&(if v.is_finite() { v } else { 0.0 }).to_le_bytes());
@@ -1497,6 +1509,13 @@ fn draw_slot(
     }
     for v in fill {
         let v = if v.is_finite() { v.clamp(0.0, 1e4) } else { 0.0 };
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    // Drawn per instance, and which of their textures are there.
+    let has = instances.map_or(0u32, |i| {
+        u32::from(i.aim.is_some()) | u32::from(i.scale.is_some()) << 1 | u32::from(i.color.is_some()) << 2
+    });
+    for v in [u32::from(instances.is_some()), has, 0, 0] {
         b.extend_from_slice(&v.to_le_bytes());
     }
     b.resize(DRAW_BYTES as usize, 0);

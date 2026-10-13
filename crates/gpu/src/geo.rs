@@ -274,6 +274,51 @@ pub struct Item {
     pub part_offset: u32,
     /// Replaces the shading of the file's materials; `None`: they show as they are.
     pub material: Option<Arc<Material>>,
+    /// Drawn once per instance, each placed by texels; `None`: once.
+    pub instances: Option<Arc<Instances>>,
+}
+
+impl Item {
+    /// How often it is drawn.
+    pub fn copies(&self) -> usize {
+        self.instances.as_ref().map_or(1, |i| i.count() as usize)
+    }
+
+    /// The model's box in the item's space; with instances, the extent grown by the model's
+    /// reach from its origin in any direction (a copy may be turned and scaled).
+    pub fn bounds(&self) -> Option<Bounds> {
+        let b = self.model.bounds?;
+        let Some(inst) = &self.instances else { return Some(b) };
+        let reach =
+            b.corners().iter().map(|c| c.iter().map(|x| x * x).sum::<f32>().sqrt()).fold(0.0, f32::max);
+        let e = if inst.extent.is_finite() { inst.extent.max(0.0) } else { 0.0 } + reach;
+        Some(Bounds { min: [-e; 3], max: [e; 3] })
+    }
+}
+
+/// Copies of a model placed by textures on the GPU, one per texel of `position`: instance `i`
+/// reads texel `(i % width, i / width)` of each texture. Each is scaled, then turned, then
+/// moved, inside the item's own placement.
+#[derive(Clone)]
+pub struct Instances {
+    /// rgb: where each copy goes.
+    pub position: Tex,
+    /// rgb: the direction the model's +y turns to, its +z kept up as far as it can be; none,
+    /// a texel past the end, or a zero direction: not turned.
+    pub aim: Option<Tex>,
+    /// rgb: the scale along x, y, z; none or a texel past the end: 1.
+    pub scale: Option<Tex>,
+    /// rgb: multiplies the surface's colour; none or a texel past the end: white.
+    pub color: Option<Tex>,
+    /// Half the side of a box around the item's origin that holds every copy, since the
+    /// positions stay on the GPU: framing, shadow maps.
+    pub extent: f32,
+}
+
+impl Instances {
+    pub fn count(&self) -> u32 {
+        self.position.width().saturating_mul(self.position.height())
+    }
 }
 
 /// How a material answers light.
@@ -378,7 +423,10 @@ pub struct Geo {
 
 impl Geo {
     pub fn single(model: Arc<Model>) -> Self {
-        Self { items: vec![Item { model, world: IDENTITY, part_offset: 0, material: None }], preview: None }
+        Self {
+            items: vec![Item { model, world: IDENTITY, part_offset: 0, material: None, instances: None }],
+            preview: None,
+        }
     }
 
     /// Number of part ids: one past the highest.
@@ -399,8 +447,9 @@ impl Geo {
         names
     }
 
+    /// Every copy's.
     pub fn triangle_count(&self) -> usize {
-        self.items.iter().map(|i| i.model.mesh.triangle_count()).sum()
+        self.items.iter().map(|i| i.model.mesh.triangle_count() * i.copies()).sum()
     }
 
     pub fn vertex_count(&self) -> usize {
@@ -411,7 +460,7 @@ impl Geo {
     pub fn bounds(&self) -> Option<Bounds> {
         let mut out: Option<Bounds> = None;
         for item in &self.items {
-            let Some(b) = item.model.bounds else { continue };
+            let Some(b) = item.bounds() else { continue };
             for c in b.corners() {
                 let p = transform(&item.world, c.map(f64::from)).map(|x| x as f32);
                 out = Some(out.map_or(Bounds { min: p, max: p }, |o| o.with(p)));

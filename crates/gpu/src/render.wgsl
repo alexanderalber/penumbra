@@ -73,12 +73,20 @@ struct Draw {
     wire: vec4f,
     // The filled faces' colour, straight alpha.
     fill: vec4f,
+    // x: 1 where drawn once per instance (geo::Instances); y: which instance textures are
+    // there, bit 0 aim, 1 scale, 2 colour.
+    inst: vec4u,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var samp: sampler;
 @group(1) @binding(0) var<uniform> draw: Draw;
 @group(2) @binding(0) var tex: texture_2d<f32>;
+// Instances: texel i % width, i / width of each is instance i's (geo::Instances).
+@group(2) @binding(1) var inst_position: texture_2d<f32>;
+@group(2) @binding(2) var inst_aim: texture_2d<f32>;
+@group(2) @binding(3) var inst_scale: texture_2d<f32>;
+@group(2) @binding(4) var inst_color: texture_2d<f32>;
 // The colour pass only.
 @group(3) @binding(0) var shadow_maps: texture_depth_2d_array;
 @group(3) @binding(1) var shadow_samp: sampler_comparison;
@@ -107,21 +115,75 @@ struct VOut {
     // Wireframes: barycentric coordinates, and in w the bits of the edges inside flat polygons
     // (bit k: the edge opposite corner k).
     @location(3) edge: vec4f,
+    // An instance's colour, multiplying the surface's; white without instances.
+    @location(4) tint: vec3f,
 };
 
 @vertex
-fn vs(@location(0) p: vec3f, @location(1) n: vec3f, @location(2) uv: vec2f) -> VOut {
-    return place(p, n, uv);
+fn vs(
+    @location(0) p: vec3f,
+    @location(1) n: vec3f,
+    @location(2) uv: vec2f,
+    @builtin(instance_index) i: u32,
+) -> VOut {
+    return place(p, n, uv, i);
 }
 
-fn place(p: vec3f, n: vec3f, uv: vec2f) -> VOut {
-    let w = draw.world * vec4f(p, 1.0);
+// Instance i's texel of t; `fallback` past the texture's end.
+fn instance_texel(t: texture_2d<f32>, i: u32, fallback: vec4f) -> vec4f {
+    let size = textureDimensions(t);
+    let at = vec2u(i % max(size.x, 1u), i / max(size.x, 1u));
+    if at.y >= size.y {
+        return fallback;
+    }
+    return textureLoad(t, at, 0);
+}
+
+// A turn taking +y to `aim` with +z kept up as far as it can be: columns right, forward, up.
+fn aim_turn(aim: vec3f) -> mat3x3f {
+    let len = length(aim);
+    if !(len > 1e-12) || !(len < 1e30) {
+        return mat3x3f(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), vec3f(0.0, 0.0, 1.0));
+    }
+    let f = aim / len;
+    var r = cross(f, vec3f(0.0, 0.0, 1.0));
+    if dot(r, r) < 1e-12 {
+        r = vec3f(1.0, 0.0, 0.0);
+    }
+    r = normalize(r);
+    return mat3x3f(r, f, cross(r, f));
+}
+
+fn place(p: vec3f, n: vec3f, uv: vec2f, i: u32) -> VOut {
+    var model = p;
+    var normal = n;
+    var tint = vec3f(1.0);
+    if draw.inst.x == 1u {
+        let has = draw.inst.y;
+        var turn = mat3x3f(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), vec3f(0.0, 0.0, 1.0));
+        var scale = vec3f(1.0);
+        if (has & 1u) != 0u {
+            turn = aim_turn(instance_texel(inst_aim, i, vec4f(0.0)).xyz);
+        }
+        if (has & 2u) != 0u {
+            scale = instance_texel(inst_scale, i, vec4f(1.0)).xyz;
+        }
+        if (has & 4u) != 0u {
+            tint = max(instance_texel(inst_color, i, vec4f(1.0)).rgb, vec3f(0.0));
+        }
+        model = turn * (p * scale) + instance_texel(inst_position, i, vec4f(0.0)).xyz;
+        // A flat scale squashes the normal to zero; the fragment stages then face the viewer.
+        let inverse = select(vec3f(0.0), 1.0 / scale, abs(scale) > vec3f(1e-12));
+        normal = turn * (n * inverse);
+    }
+    let w = draw.world * vec4f(model, 1.0);
     var o: VOut;
     o.pos = frame.clip * w;
     o.world = w.xyz;
-    o.normal = mat3x3f(draw.n0.xyz, draw.n1.xyz, draw.n2.xyz) * n;
+    o.normal = mat3x3f(draw.n0.xyz, draw.n1.xyz, draw.n2.xyz) * normal;
     o.uv = uv;
     o.edge = vec4f(1.0, 1.0, 1.0, 0.0);
+    o.tint = tint;
     return o;
 }
 
@@ -131,10 +193,16 @@ fn vs_wire(
     @location(1) n: vec3f,
     @location(2) uv: vec2f,
     @location(3) edge: vec4f,
+    @builtin(instance_index) i: u32,
 ) -> VOut {
-    var o = place(p, n, uv);
+    var o = place(p, n, uv, i);
     o.edge = edge;
     return o;
+}
+
+// The surface's texture at the fragment, times its instance's colour.
+fn texel(v: VOut) -> vec4f {
+    return textureSample(tex, samp, v.uv) * vec4f(v.tint, 1.0);
 }
 
 // How much of the pixel a wireframe's lines cover; 1 on a whole surface. Uses derivatives:
@@ -492,7 +560,7 @@ fn fs_blend(v: VOut) -> @location(0) vec4f {
 
 // `open`: what ambient occlusion leaves of ambient and environment light.
 fn shade(v: VOut, open: f32) -> vec4f {
-    let t = textureSample(tex, samp, v.uv);
+    let t = texel(v);
     // Derivatives in uniform control flow, before any branch.
     let r = density(v.uv);
     let line = lines(v);
@@ -562,7 +630,7 @@ struct Prepass {
 
 @fragment
 fn fs_prepass(v: VOut) -> Prepass {
-    if surface(textureSample(tex, samp, v.uv), lines(v)).a < OPAQUE {
+    if surface(texel(v), lines(v)).a < OPAQUE {
         discard;
     }
     var n = v.normal;
@@ -580,7 +648,7 @@ fn fs_prepass(v: VOut) -> Prepass {
 // shadow; the tint pass takes the rest.
 @fragment
 fn fs_shadow(v: VOut) {
-    if surface(textureSample(tex, samp, v.uv), lines(v)).a < OPAQUE {
+    if surface(texel(v), lines(v)).a < OPAQUE {
         discard;
     }
 }
@@ -592,7 +660,7 @@ fn fs_shadow(v: VOut) {
 // all, and a cut-out's colourless clear texels tint nothing.
 @fragment
 fn fs_tint(v: VOut) -> @location(0) vec4f {
-    let c = surface(textureSample(tex, samp, v.uv), lines(v));
+    let c = surface(texel(v), lines(v));
     if c.a >= OPAQUE || c.a < 0.002 {
         discard;
     }
