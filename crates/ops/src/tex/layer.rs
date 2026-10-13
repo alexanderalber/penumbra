@@ -57,6 +57,9 @@ struct Layer {
 impl Operator for Layer {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let fresh = self.slot.poll();
+        // Before anything is remembered: a cook before the GPU arrives must not count as the
+        // load started, or the file never loads once it is there.
+        let gpu = super::gpu(cx)?;
         let path = cx.resolve_path(cx.text("file")?)?;
         let layer = cx.text("layer")?.trim().to_string();
         let placed = cx.bool("placed")?;
@@ -68,7 +71,7 @@ impl Operator for Layer {
         let key = (path.clone(), layer.clone(), placed);
         if moved || changed || self.asked.as_ref() != Some(&key) {
             self.asked = Some(key);
-            let gpu = super::gpu(cx)?.clone();
+            let gpu = gpu.clone();
             // The parsed file is reused unless the file changed or another one is named.
             let keep = self.slot.latest().filter(|r| !changed && r.path == path).map(|r| r.source.clone());
             let p = path.clone();

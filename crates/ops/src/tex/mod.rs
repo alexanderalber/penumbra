@@ -61,7 +61,9 @@ type SizeFn = fn(&CookContext<'_>, (u32, u32)) -> Result<(u32, u32), CookError>;
 /// Edge modes of `extend` params, in the order `pn_extend` numbers them.
 const EXTEND: [&str; 4] = ["hold", "zero", "repeat", "mirror"];
 
-/// A built-in pass node.
+/// A built-in pass node. One with more inputs than a pass binds ([`penumbra_gpu::pass::INPUTS`])
+/// is a fold: its first two inputs go through the shader, then the result and each further
+/// connected input in turn (`tex.composite`'s layers).
 struct Builtin {
     desc: NodeDesc,
     source: &'static str,
@@ -225,7 +227,7 @@ fn core_builtins() -> Vec<Builtin> {
         Builtin {
             desc: NodeDesc::new(
                 "tex.composite",
-                "Top onto bottom; resolution of the bottom (or the top when only it is connected)",
+                "Top onto bottom, then top2 onto that, and so on up to top7; resolution of the first connected input",
             )
             .param(ParamSpec::choice(
                 "op",
@@ -253,6 +255,12 @@ fn core_builtins() -> Vec<Builtin> {
             )
             .input("bottom", DataKind::Tex)
             .input("top", DataKind::Tex)
+            .input("top2", DataKind::Tex)
+            .input("top3", DataKind::Tex)
+            .input("top4", DataKind::Tex)
+            .input("top5", DataKind::Tex)
+            .input("top6", DataKind::Tex)
+            .input("top7", DataKind::Tex)
             .output("out", DataKind::Tex),
             source: include_str!("composite.wgsl"),
             size: Size::Input,
@@ -401,9 +409,20 @@ impl Operator for BuiltinOp {
         } else {
             (0.0, 0)
         };
-        let target = self.ring.next(gpu, w, h, &b.desc.kind)?;
+        let mut target = self.ring.next(gpu, w, h, &b.desc.kind)?;
         let param = |name: &str| cx.param(name).cloned();
-        pass.render(gpu, &target, &PassInput { inputs: &inputs, seconds, frame, param: &param });
+        let fold = cx.def().inputs.len() > penumbra_gpu::pass::INPUTS;
+        let first = if fold { inputs.get(..2).unwrap_or(&inputs) } else { &inputs };
+        pass.render(gpu, &target, &PassInput { inputs: first, seconds, frame, param: &param });
+        if fold {
+            for k in 2..cx.def().inputs.len() {
+                let Some(layer) = cx.input_as::<Tex>(k) else { continue };
+                let next = self.ring.next(gpu, w, h, &b.desc.kind)?;
+                let pair = [Some(&target), Some(layer)];
+                pass.render(gpu, &next, &PassInput { inputs: &pair, seconds, frame, param: &param });
+                target = next;
+            }
+        }
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))
     }
 

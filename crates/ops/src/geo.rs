@@ -110,6 +110,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .input("in1", DataKind::Geo)
             .input("in2", DataKind::Geo)
             .input("in3", DataKind::Geo)
+            .input("in4", DataKind::Geo)
+            .input("in5", DataKind::Geo)
+            .input("in6", DataKind::Geo)
+            .input("in7", DataKind::Geo)
             .output("out", DataKind::Geo),
         || Box::new(Merge) as Box<dyn Operator>,
     ))?;
@@ -284,6 +288,9 @@ struct GeoFile {
 impl Operator for GeoFile {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let fresh = self.slot.poll();
+        // Before anything is remembered: a cook before the GPU arrives must not count as the
+        // load started, or the file never loads once it is there.
+        let gpu = gpu(cx)?.clone();
         let path = cx.resolve_path(cx.text("file")?)?;
         let moved = self.watch.as_ref().is_none_or(|w| w.path() != path);
         let up_param = cx.text("up")?.to_string();
@@ -301,7 +308,6 @@ impl Operator for GeoFile {
                 self.watch = Some(cx.watch_file(&path));
             }
             self.how = Some(how);
-            let gpu = gpu(cx)?.clone();
             let p = path.clone();
             let up = match up_param.as_str() {
                 "y" => Up::Y,

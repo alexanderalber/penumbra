@@ -109,12 +109,18 @@ Outputs: `out` (tex).
 
 ### tex.composite
 
-Top onto bottom; resolution of the bottom (or the top when only it is connected)
+Top onto bottom, then top2 onto that, and so on up to top7; resolution of the first connected input
 
 Inputs:
 
 - `bottom` (tex)
 - `top` (tex)
+- `top2` (tex)
+- `top3` (tex)
+- `top4` (tex)
+- `top5` (tex)
+- `top6` (tex)
+- `top7` (tex)
 
 Outputs: `out` (tex).
 
@@ -1242,6 +1248,10 @@ Inputs:
 - `in1` (geo)
 - `in2` (geo)
 - `in3` (geo)
+- `in4` (geo)
+- `in5` (geo)
+- `in6` (geo)
+- `in7` (geo)
 
 Outputs: `out` (geo).
 
@@ -1523,7 +1533,24 @@ Outputs: `out` (chan), `table` (table).
 
 ## out
 
-[out.projector](#outprojector)
+[out.pacer](#outpacer), [out.projector](#outprojector)
+
+### out.pacer
+
+A projector that shows nothing: ticks like a projector's vsync and paces the show clock, for timing as at the show without one
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `in` (tex)
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `active` | bool | `true` |  | Tick; off, the show clock runs on its timer again |
+| `refresh` | float | `60` | 23 to 240 Hz (soft) | The projector's refresh rate; as with a real one, the show clock counts one frame per tick |
 
 ### out.projector
 

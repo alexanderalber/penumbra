@@ -19,6 +19,7 @@ pub mod pictures;
 pub mod projects;
 pub mod state;
 pub mod state_commands;
+pub mod ticker;
 pub mod videoin;
 
 #[cfg(test)]

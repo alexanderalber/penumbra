@@ -91,6 +91,7 @@ use serde::Serialize;
 use crate::osc::OscShared;
 use crate::pictures::GeoPictures;
 use crate::state::{RestoreReport, SaveReport, StateKeeper, StateShared};
+use crate::ticker::Ticker;
 
 /// How often the project thread looks at the file and autosaves.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -107,6 +108,8 @@ enum CookMsg {
     Run(CookTask),
     /// The pacing output presented a frame at this moment.
     Vsync(Instant),
+    /// The `out.pacer` ticker ticked; ignored while a real output paces.
+    SimulatedVsync(Instant),
     Stop,
 }
 
@@ -251,6 +254,10 @@ pub struct CookState {
     free_views: Vec<freeview::FreeView>,
     /// Pictures of the geometry the UI shows.
     pictures: GeoPictures,
+    /// Ticks for an `out.pacer`; told its rate when the network changes.
+    ticker: Arc<Ticker>,
+    /// When a real output's vsync last arrived; the ticker's are ignored while it is recent.
+    real_vsync: Option<Instant>,
     /// The resolution overlay is on (`res.overlay`).
     overlay: bool,
     /// The latest analysis with the network and pass it was made for.
@@ -286,7 +293,7 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 impl CookState {
     /// What drives the show clock now.
     pub fn pace(&self) -> PaceSource {
-        self.pacer.source(Instant::now())
+        self.pace_at(Instant::now())
     }
 
     /// What the projectors need of every node they show, after the last pass.
@@ -363,6 +370,7 @@ impl CookState {
             self.osc.set_wanted(&penumbra_ops::osc::wants(&net, types));
             self.audio.set_wanted(&penumbra_ops::audio::wants(&net, types));
             self.camera.set_wanted(&penumbra_ops::tex::videoin::wants(&net, types));
+            self.ticker.set(penumbra_ops::out::pacer_refresh(&net, types));
         }
         let mut wanted: Vec<NodeId> = self.sinks.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
         self.watched.retain(|id| net.node(*id).is_some());
@@ -412,6 +420,19 @@ impl CookState {
             .collect()
     }
 
+    /// What paces the show clock: a vsync is a real output's while one arrived recently.
+    fn pace_at(&self, now: Instant) -> PaceSource {
+        match self.pacer.source(now) {
+            PaceSource::Vsync if !self.real_vsync_recent(now) => PaceSource::Simulated,
+            s => s,
+        }
+    }
+
+    fn real_vsync_recent(&self, now: Instant) -> bool {
+        let fallback = self.clock.now().rate.period().saturating_mul(Pacer::FALLBACK_PERIODS);
+        self.real_vsync.is_some_and(|v| now.saturating_duration_since(v) < fallback)
+    }
+
     fn publish(
         &mut self,
         net: &Network,
@@ -424,7 +445,7 @@ impl CookState {
             pass: self.pass_base + self.last.pass,
             time: Some(self.clock.now()),
             playing: self.clock.is_playing(),
-            pace: Some(self.pacer.source(wall)),
+            pace: Some(self.pace_at(wall)),
             thumbnails: self.cooker.thumbnail_policy().mode,
             thumbnail_every: self.cooker.thumbnail_policy().min_interval,
             elapsed: self.last.elapsed,
@@ -506,6 +527,8 @@ pub struct Engine {
     camera: CameraHub,
     /// The 3D mouse; its reader starts when the UI first asks for it.
     spacenav: SpaceNav,
+    /// The `out.pacer` ticker, one thread per open project.
+    ticker: Arc<Ticker>,
     shut: AtomicBool,
 }
 
@@ -536,6 +559,7 @@ impl Engine {
             audio: AudioHub::new(),
             camera: CameraHub::new(),
             spacenav: SpaceNav::new(),
+            ticker: Arc::new(Ticker::default()),
             shut: AtomicBool::new(false),
         });
         engine.launch(&session, 0)?;
@@ -574,6 +598,8 @@ impl Engine {
             renders,
             free_views: Vec::new(),
             pictures: GeoPictures::default(),
+            ticker: self.ticker.clone(),
+            real_vsync: None,
             overlay: false,
             resolution: None,
             state: StateKeeper::new(self.state.clone(), session.dir()),
@@ -596,8 +622,15 @@ impl Engine {
             .name("cook".into())
             .spawn(move || cook_loop(&cook_session, state, &cook_rx))
             .map_err(spawn_error)?;
+        self.ticker.stop(false);
+        let (ticker, tick_tx) = (self.ticker.clone(), cook_tx.clone());
+        let tick = std::thread::Builder::new()
+            .name("pacer".into())
+            .spawn(move || ticker.run(|at| tick_tx.send(CookMsg::SimulatedVsync(at)).is_ok()))
+            .map_err(spawn_error)?;
         *lock(&self.cook) = cook_tx;
         lock(&self.threads).push(cook);
+        lock(&self.threads).push(tick);
 
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let project_session = session.clone();
@@ -635,6 +668,7 @@ impl Engine {
             log::warn!("state at closing: {e}");
         }
         lock(&self.cook).send(CookMsg::Stop).ok();
+        self.ticker.stop(true);
         self.osc.stop();
         if let Some(stop) = lock(&self.stop_project).take() {
             drop(stop);
@@ -1030,8 +1064,16 @@ fn handle(msg: CookMsg, session: &Session, state: &mut CookState) -> bool {
             true
         }
         CookMsg::Vsync(at) => {
+            state.real_vsync = Some(at);
             let due = state.pacer.vsync(at);
             run_frame(session, state, due, Instant::now());
+            true
+        }
+        CookMsg::SimulatedVsync(at) => {
+            if !state.real_vsync_recent(at) {
+                let due = state.pacer.vsync(at);
+                run_frame(session, state, due, Instant::now());
+            }
             true
         }
         CookMsg::Stop => false,

@@ -309,6 +309,8 @@ pub enum PaceSource {
     Vsync,
     /// The [`TimerPacer`]: no output paces, or its vsync stopped arriving.
     Timer,
+    /// An `out.pacer` node: a projector that shows nothing, ticking like one's vsync.
+    Simulated,
 }
 
 /// Paces the show clock from a projector output's vsync, falling back to a [`TimerPacer`] when no

@@ -32,13 +32,16 @@ struct Image {
 impl Operator for Image {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let fresh = self.slot.poll();
+        // Before anything is remembered: a cook before the GPU arrives must not count as the
+        // load started, or the file never loads once it is there.
+        let gpu = super::gpu(cx)?;
         let path = cx.resolve_path(cx.text("file")?)?;
         let moved = self.watch.as_ref().is_none_or(|w| w.path() != path);
         if moved || self.watch.as_ref().is_some_and(FileWatch::take_changed) {
             if moved {
                 self.watch = Some(cx.watch_file(&path));
             }
-            let gpu = super::gpu(cx)?.clone();
+            let gpu = gpu.clone();
             let label = path.display().to_string();
             let p = path.clone();
             self.slot.start(cx.spawn(move |_job| {
