@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::{ClipInfo, Decoder, Frame, Limits, open};
+use penumbra_core::lock;
 
 /// Bytes of decoded frames one thread may queue.
 const QUEUE_BYTES: usize = 192 << 20;
@@ -81,7 +82,7 @@ pub type OnFrame = Arc<dyn Fn() + Send + Sync>;
 
 impl Shared {
     fn lock(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.state)
     }
 }
 

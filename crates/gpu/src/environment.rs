@@ -8,10 +8,10 @@
 //! plain mip chain of the picture) for reflections, and a 32 x 16 irradiance map (the cosine
 //! weighted sum over a small mip) for diffuse light.
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, PoisonError};
 
-use penumbra_core::Error;
+use penumbra_core::{Error, lock};
 
 use crate::{FORMAT, Gpu, Tex};
 
@@ -309,7 +309,7 @@ impl Pipelines {
 impl Gpu {
     /// The environment baking pipelines, built once per device.
     pub fn environment_pipelines(&self) -> Result<Arc<Pipelines>, Error> {
-        let mut slot = self.inner.environment.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut slot = lock(&self.inner.environment);
         if let Some(p) = slot.as_ref() {
             return Ok(p.clone());
         }

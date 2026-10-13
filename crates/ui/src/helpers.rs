@@ -7,12 +7,12 @@
 //! `project.settings`, `osc.status`, `osc.config` and `osc.learn` on the control channel.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use egui::{RichText, Ui};
-use penumbra_core::PaceSource;
 use penumbra_core::{Name, Value};
+use penumbra_core::{PaceSource, lock};
 use penumbra_engine::{Engine, ViewFrame};
 use penumbra_graph::{Network, Op, PERSIST_STATE};
 use penumbra_ops::out::BoardState;
@@ -304,7 +304,7 @@ impl Helpers {
                         }
                         Err(e) => (false, e.0),
                     };
-                    *out.lock().unwrap_or_else(PoisonError::into_inner) = Some(m);
+                    *lock(&out) = Some(m);
                 });
             }
             let r = ui.button("Restore").on_hover_text(
@@ -319,7 +319,7 @@ impl Helpers {
                         Ok(r) => (false, r.note.unwrap_or_else(|| "nothing restored".into())),
                         Err(e) => (false, e.0),
                     };
-                    *out.lock().unwrap_or_else(PoisonError::into_inner) = Some(m);
+                    *lock(&out) = Some(m);
                 });
             }
             let r = ui.button("Start fresh").on_hover_text(
@@ -334,11 +334,11 @@ impl Helpers {
                         Ok(m) => (true, m),
                         Err(e) => (false, e.0),
                     };
-                    *out.lock().unwrap_or_else(PoisonError::into_inner) = Some(m);
+                    *lock(&out) = Some(m);
                 });
             }
         });
-        if let Some((ok, m)) = self.state_message.lock().unwrap_or_else(PoisonError::into_inner).as_ref() {
+        if let Some((ok, m)) = lock(&self.state_message).as_ref() {
             ui.colored_label(if *ok { weak } else { theme::WARNING }, m);
         }
     }

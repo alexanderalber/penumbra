@@ -9,11 +9,11 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
-use penumbra_core::NodeId;
+use penumbra_core::{NodeId, lock};
 
 /// How often watched files are looked at.
 pub const WATCH_INTERVAL: Duration = Duration::from_millis(250);
@@ -68,7 +68,7 @@ impl Watcher {
 
     /// Starts watching `path` for `node` until the returned handle is dropped.
     pub(crate) fn watch(&self, path: &Path, node: NodeId) -> FileWatch {
-        let mut shared = self.shared.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut shared = lock(&self.shared);
         let key = shared.next_key;
         shared.next_key += 1;
         let changed = Arc::new(AtomicBool::new(false));
@@ -99,11 +99,11 @@ fn poll(shared: &Weak<Mutex<Shared>>, changed: &Sender<NodeId>) -> bool {
     let Some(shared) = shared.upgrade() else { return false };
     // Stat outside the lock, so `watch` and dropping handles never wait for the disk.
     let paths: Vec<(u64, PathBuf)> = {
-        let s = shared.lock().unwrap_or_else(PoisonError::into_inner);
+        let s = lock(&shared);
         s.entries.iter().map(|e| (e.key, e.path.clone())).collect()
     };
     let stamps: Vec<(u64, Stamp)> = paths.into_iter().map(|(k, p)| (k, stamp(&p))).collect();
-    let mut s = shared.lock().unwrap_or_else(PoisonError::into_inner);
+    let mut s = lock(&shared);
     for (key, now) in stamps {
         if let Some(e) = s.entries.iter_mut().find(|e| e.key == key)
             && e.stamp != now
@@ -146,7 +146,7 @@ impl FileWatch {
 impl Drop for FileWatch {
     fn drop(&mut self) {
         if let Some(shared) = self.shared.upgrade() {
-            shared.lock().unwrap_or_else(PoisonError::into_inner).entries.retain(|e| e.key != self.key);
+            lock(&shared).entries.retain(|e| e.key != self.key);
         }
     }
 }

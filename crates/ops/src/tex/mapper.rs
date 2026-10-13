@@ -9,9 +9,9 @@
 //! wakes the others on its surface, so their soft edges follow the next frame.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
-use penumbra_core::{Error, NodeId, ParamSpec, Value};
+use penumbra_core::{Error, NodeId, ParamSpec, Value, lock};
 use penumbra_gpu::projection::Overlay;
 use penumbra_gpu::{Projection, TexRing};
 use penumbra_graph::{
@@ -124,14 +124,14 @@ impl Mappers {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<NodeId, Entry>> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.0)
     }
 
     /// Shows the resolution overlay (`res.overlay`) on the mappers in `overlays` and on no
     /// other; wakes those whose overlay changed.
     pub fn set_overlays(&self, overlays: BTreeMap<NodeId, Overlay>) {
         let changed: Vec<NodeId> = {
-            let mut current = self.1.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut current = lock(&self.1);
             let changed = current
                 .keys()
                 .chain(overlays.keys())
@@ -150,7 +150,7 @@ impl Mappers {
     }
 
     fn overlay(&self, id: NodeId) -> Option<Overlay> {
-        self.1.lock().unwrap_or_else(PoisonError::into_inner).get(&id).copied()
+        lock(&self.1).get(&id).copied()
     }
 
     /// The mapping node `id` drew last.

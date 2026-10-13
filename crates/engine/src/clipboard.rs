@@ -4,9 +4,9 @@
 //! cooking a new one.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
 
-use penumbra_core::{NodeId, NodePath};
+use penumbra_core::{NodeId, NodePath, lock};
 use penumbra_graph::{Data, EditOutcome, Kept, Op};
 use penumbra_project::clipboard;
 use penumbra_project::{Actor, Content, diff};
@@ -26,10 +26,6 @@ pub struct Clipboard {
     pub text: String,
     /// The outputs locked nodes held when they were copied, by the path they had.
     held: Vec<(NodePath, Vec<Data>)>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {

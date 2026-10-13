@@ -17,10 +17,10 @@
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use penumbra_core::{Error, GroupId};
+use penumbra_core::{Error, GroupId, lock};
 use penumbra_graph::{Document, EditOutcome, Network, NodeTypes, Op, Params, Source};
 use serde::Serialize;
 
@@ -82,10 +82,6 @@ pub struct Session {
     /// Held for a whole poll or save, so file reads and writes never interleave.
     io: Mutex<()>,
     state: Mutex<State>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// The network with `content`, built from scratch.

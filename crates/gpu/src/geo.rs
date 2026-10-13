@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use penumbra_core::Error;
+use penumbra_core::{Error, lock};
 use penumbra_mesh::{Bounds, Mesh};
 
 use crate::{Gpu, Tex};
@@ -160,7 +160,7 @@ impl Model {
     /// fourth float, a bit per edge that lies inside a flat polygon (bit k: the edge opposite
     /// corner k). Made once, on first use.
     pub(crate) fn wire(&self, gpu: &Gpu) -> Result<wgpu::Buffer, Error> {
-        let mut slot = self.wire.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut slot = lock(&self.wire);
         if let Some(b) = slot.as_ref() {
             return Ok(b.clone());
         }
@@ -208,12 +208,7 @@ impl Model {
         self.vertices.size()
             + self.indices.size()
             + self.textures.iter().flatten().map(Tex::bytes).sum::<u64>()
-            + self
-                .wire
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .as_ref()
-                .map_or(0, wgpu::Buffer::size)
+            + lock(&self.wire).as_ref().map_or(0, wgpu::Buffer::size)
     }
 }
 

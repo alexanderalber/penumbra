@@ -17,10 +17,10 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use penumbra_core::{Name, NodeId, NodePath, ParamKind, ParamPath, ParamSpec, Value};
+use penumbra_core::{Name, NodeId, NodePath, ParamKind, ParamPath, ParamSpec, Value, lock};
 use penumbra_graph::{Network, NodeDef, NodeTypes, Op};
 use penumbra_ops::osc::{Filter, OSC_IN, channels_of};
 use penumbra_osc::codec::{self, Arg, Message};
@@ -43,10 +43,6 @@ pub const MAX_TARGETS: usize = 64;
 pub const MAX_VISITS: usize = 20_000;
 /// Default and longest wait of `osc.learn`.
 pub const LEARN_TIMEOUT: Duration = Duration::from_secs(30);
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// What OSC did to params, for `osc.status` and the Helpers window.
 #[derive(Clone, Debug, Default, Serialize)]

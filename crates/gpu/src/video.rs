@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use penumbra_core::Error;
+use penumbra_core::{Error, lock};
 
 use crate::{FORMAT, Gpu, Tex};
 
@@ -354,7 +354,7 @@ impl Converter {
 impl Gpu {
     /// The video conversion pipeline, compiled on first use and shared.
     pub fn video_pipeline(&self) -> Result<Arc<Pipeline>, Error> {
-        let mut slot = self.inner.video.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut slot = lock(&self.inner.video);
         if let Some(p) = slot.as_ref() {
             return Ok(p.clone());
         }

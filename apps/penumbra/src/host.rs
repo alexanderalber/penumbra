@@ -2,9 +2,10 @@
 //! output windows next to it (own winit windows, created on the event loop thread, presented from
 //! their own threads).
 
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use penumbra_core::lock;
 use penumbra_engine::Engine;
 use penumbra_output::Outputs;
 use winit::application::ApplicationHandler;
@@ -42,7 +43,7 @@ impl<'a> Host<'a> {
         if self.attached {
             return;
         }
-        let instance = self.instance.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let instance = lock(&self.instance).clone();
         if let (Some(instance), Some(gpu)) = (instance, self.engine.gpu()) {
             self.outputs.attach_gpu(instance, gpu.clone());
             self.attached = true;

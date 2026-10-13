@@ -72,7 +72,9 @@ use std::time::{Duration, Instant};
 
 use penumbra_audio::Hub as AudioHub;
 use penumbra_camera::Hub as CameraHub;
-use penumbra_core::{Error, FrameTime, LatePolicy, NodeId, PaceSource, Pacer, ParamSpec, Rate, ShowClock};
+use penumbra_core::{
+    Error, FrameTime, LatePolicy, NodeId, PaceSource, Pacer, ParamSpec, Rate, ShowClock, lock,
+};
 use penumbra_gpu::Gpu;
 use penumbra_graph::{
     CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, PERSIST_STATE, ThumbnailMode,
@@ -288,10 +290,6 @@ struct ViewShared {
     output_ready: Condvar,
     /// The pass times of the last seconds.
     meter: Mutex<CookMeter>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl CookState {
@@ -760,7 +758,7 @@ impl Engine {
     /// [`Engine::set_library`], else `PENUMBRA_LIBRARY`, else `components` beside the demo
     /// project (`%LOCALAPPDATA%\penumbra\components`, `$XDG_DATA_HOME/penumbra/components`).
     pub fn library(&self) -> Option<std::path::PathBuf> {
-        let set = self.library.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        let set = lock(&self.library).clone();
         set.or_else(crate::components::default_library)
     }
 
@@ -771,7 +769,7 @@ impl Engine {
 
     /// Points the component library somewhere else (tests, a project that brings its own).
     pub fn set_library(&self, dir: Option<std::path::PathBuf>) {
-        *self.library.lock().unwrap_or_else(PoisonError::into_inner) = dir;
+        *lock(&self.library) = dir;
     }
 
     /// Hands the GPU to the cook thread. Only the first call counts. Then reads the saved state

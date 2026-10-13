@@ -31,7 +31,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
-use penumbra_core::Error;
+use penumbra_core::{Error, lock};
 
 pub use geo::{Geo, Mat};
 pub use pass::{Batch, Pass, PassInput};
@@ -121,7 +121,7 @@ impl Gpu {
         device.on_uncaptured_error(Arc::new(move |e: wgpu::Error| {
             let message = e.to_string();
             log::error!("GPU error: {message}");
-            let mut log = sink.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut log = lock(&sink);
             log.count += 1;
             if is_surface_wait_failure(&message) {
                 log.surface_configure_failures += 1;
@@ -211,7 +211,7 @@ impl Gpu {
 
     /// Errors wgpu raised outside an error scope since the device was opened.
     pub fn errors(&self) -> ErrorLog {
-        self.inner.errors.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        lock(&self.inner.errors).clone()
     }
 
     /// Lets wgpu finish callbacks and free resources without waiting. The cook thread calls it
@@ -232,12 +232,12 @@ impl Gpu {
         params: &[penumbra_core::ParamSpec],
     ) -> Result<Arc<Pass>, Error> {
         let key = pass::cache_key(source, params);
-        if let Some(p) = self.inner.passes.lock().unwrap_or_else(PoisonError::into_inner).get(&key) {
+        if let Some(p) = lock(&self.inner.passes).get(&key) {
             return Ok(p.clone());
         }
         // Compiled outside the lock; two threads racing compile twice, which is harmless.
         let compiled = Arc::new(Pass::compile(self, label, source, params)?);
-        self.inner.passes.lock().unwrap_or_else(PoisonError::into_inner).insert(key, compiled.clone());
+        lock(&self.inner.passes).insert(key, compiled.clone());
         Ok(compiled)
     }
 
@@ -255,7 +255,7 @@ impl Gpu {
     /// when another thread submits while it waits for an idle GPU; with a heavy render cooking
     /// every frame that was nearly every resize. Outputs pause for as long.
     pub fn hold(&self, until: Instant) {
-        let mut held = self.inner.held_until.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut held = lock(&self.inner.held_until);
         if held.is_none_or(|h| h < until) {
             *held = Some(until);
         }
@@ -285,14 +285,14 @@ impl Gpu {
     }
 
     fn held(&self) -> bool {
-        let until = *self.inner.held_until.lock().unwrap_or_else(PoisonError::into_inner);
+        let until = *lock(&self.inner.held_until);
         until.is_some_and(|u| u > Instant::now())
     }
 
     fn wait_for_hold(&self) {
         let start = Instant::now();
         loop {
-            let until = *self.inner.held_until.lock().unwrap_or_else(PoisonError::into_inner);
+            let until = *lock(&self.inner.held_until);
             let now = Instant::now();
             let Some(until) = until.filter(|u| *u > now) else { return };
             let left = MAX_HOLD.saturating_sub(now.saturating_duration_since(start));

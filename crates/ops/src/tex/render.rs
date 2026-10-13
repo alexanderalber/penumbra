@@ -16,10 +16,10 @@
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use penumbra_core::{Error, NodeId, ParamSpec, Unit, Value};
+use penumbra_core::{Error, NodeId, ParamSpec, Unit, Value, lock};
 use penumbra_gpu::projection::Overlay;
 use penumbra_gpu::render::{
     Ao, Derivatives, LightKind, Look, MAX_LIGHTS, MAX_PROJECTORS, MAX_SHADOWS, Measurement, Renderer,
@@ -163,7 +163,7 @@ impl Renders {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.0)
     }
 
     /// While on, render nodes showing their texture measure their field when it is missing or

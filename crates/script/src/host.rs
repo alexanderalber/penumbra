@@ -21,9 +21,10 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use penumbra_core::lock;
 use serde::Serialize;
 
 use crate::ffi::Library;
@@ -188,10 +189,6 @@ pub struct Host {
     install: Result<Install, String>,
     shared: Arc<Shared>,
     next_key: AtomicU64,
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 impl Host {

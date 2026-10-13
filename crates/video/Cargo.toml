@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+penumbra-core.workspace = true
 filmcraft-codecs.workspace = true
 filmcraft-media.workspace = true
 filmcraft-frame.workspace = true

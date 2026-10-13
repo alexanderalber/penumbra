@@ -16,9 +16,10 @@
 mod host;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
+use penumbra_core::lock;
 use penumbra_engine::{Engine, control, projects};
 use penumbra_project::{Content, Session};
 use penumbra_ui::{AppOptions, Bridge, PenumbraApp};
@@ -165,7 +166,7 @@ fn run_window(
         options,
         Box::new(move |cc| {
             if let Some(rs) = &cc.wgpu_render_state {
-                *slot.lock().unwrap_or_else(PoisonError::into_inner) = Some(rs.instance.clone());
+                *lock(&slot) = Some(rs.instance.clone());
             }
             let app_options =
                 AppOptions { control, requests: Some(requests), bridge: Some(bridge), spacenav: true };
