@@ -531,7 +531,9 @@ fn every_builtin_cooks_without_warnings() {
                 penumbra_graph::DataKind::View => Some("/view_feed"),
                 // Component ports and nulls pass on what they get and complain about nothing wired.
                 penumbra_graph::DataKind::Chan if kind == "chan.audioanalysis" => Some("/audio_feed"),
-                penumbra_graph::DataKind::Chan if desc.port.is_some() || passes_on(kind) => {
+                penumbra_graph::DataKind::Chan
+                    if desc.port.is_some() || passes_on(kind) || kind == "tex.fromchan" =>
+                {
                     Some("/chan_feed")
                 }
                 penumbra_graph::DataKind::Table if desc.port.is_some() || passes_on(kind) => {
@@ -1620,4 +1622,109 @@ fn opticalflow_fills_in_plain_parts_of_a_moving_thing() {
     let filled = interior_error(4);
     assert!(raw.1 > 0.8, "{raw:?}");
     assert!(filled.0 < raw.0 * 0.6 && filled.1 < 0.5, "{raw:?} -> {filled:?}");
+}
+
+/// Cooks until `path` has channels.
+fn chans_of(rig: &mut Rig, path: &str) -> penumbra_core::Chans {
+    let id = rig.id(path);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        rig.cook(path);
+        if let Some(c) = rig
+            .cooker
+            .output(Port { node: id, output: 0 })
+            .and_then(|d| d.get::<penumbra_core::Chans>().cloned())
+        {
+            return c;
+        }
+        let s = rig.cooker.status(id).unwrap();
+        assert!(s.error.is_none() && Instant::now() < deadline, "{path} produced nothing: {s:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A shader node writing its texture coordinates, u in red and v in green, at 1000 x 600.
+fn uv_picture(dir: &Path) -> Op {
+    let uv = "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(v.uv, 0.0, 1.0); }";
+    std::fs::write(dir.join("uv.wgsl"), uv).unwrap();
+    create(
+        "/uv",
+        "tex.shader",
+        &[
+            ("file", "uv.wgsl".into()),
+            ("resolution", "custom".into()),
+            ("width", Value::Int(1000)),
+            ("height", Value::Int(600)),
+        ],
+    )
+}
+
+#[test]
+fn a_picture_becomes_channels_of_its_mean_per_cell() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("fromtex");
+    let ops = [
+        uv_picture(&dir),
+        create("/c", "chan.fromtex", &[("columns", Value::Int(4)), ("rows", Value::Int(2))]),
+        connect("/uv", "/c", 0),
+        create("/k", "tex.constant", &[("color", Value::Vec4([0.25, 0.5, 0.75, 1.0]))]),
+        create("/mean", "chan.fromtex", &[("components", "luminance".into())]),
+        connect("/k", "/mean", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let c = chans_of(&mut rig, "/c");
+    let names: Vec<&str> = c.names().map(|n| n.as_str()).collect();
+    assert_eq!(names, ["r0", "g0", "b0", "a0", "r1", "g1", "b1", "a1"]);
+    assert_eq!(c.len(), 4);
+    let near = |a: f64, b: f64| (a - b).abs() < 0.01;
+    for (x, r) in c.get("r1").unwrap().samples.iter().enumerate() {
+        assert!(near(*r, (x as f64 + 0.5) / 4.0), "column {x}: {r}");
+    }
+    assert!(c.get("g0").unwrap().samples.iter().all(|g| near(*g, 0.25)), "{c:?}");
+    assert!(c.get("g1").unwrap().samples.iter().all(|g| near(*g, 0.75)), "{c:?}");
+    assert!(c.get("a0").unwrap().samples.iter().all(|a| near(*a, 1.0)));
+    let mean = chans_of(&mut rig, "/mean");
+    let lum = 0.2126 * 0.25 + 0.7152 * 0.5 + 0.0722 * 0.75;
+    assert!(near(mean.value(Some("lum")).unwrap(), lum), "{mean:?}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn channels_become_a_picture_and_back() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("fromchan");
+    let ops = [
+        create(
+            "/k",
+            "chan.constant",
+            &[
+                ("rows", Value::Int(2)),
+                ("value0", Value::Float(0.5)),
+                ("name1", "b".into()),
+                ("value1", Value::Float(3.0)),
+            ],
+        ),
+        create("/t", "tex.fromchan", &[("high", Value::Float(2.0))]),
+        connect("/k", "/t", 0),
+        // Round trip: the u ramp read as 8 samples of red, drawn as a row again.
+        uv_picture(&dir),
+        create("/c", "chan.fromtex", &[("columns", Value::Int(8)), ("components", "red".into())]),
+        connect("/uv", "/c", 0),
+        create("/back", "tex.fromchan", &[]),
+        connect("/c", "/back", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let px = rig.pixels("/t");
+    assert_eq!((px.width, px.height), (1, 2));
+    assert_eq!(px.get(0, 0), Some([0.25, 0.25, 0.25, 1.0]));
+    assert_eq!(px.get(0, 1), Some([1.5, 1.5, 1.5, 1.0]));
+    chans_of(&mut rig, "/c");
+    let px = rig.pixels("/back");
+    assert_eq!((px.width, px.height), (8, 1));
+    for x in 0..8 {
+        let [r, g, b, a] = px.get(x, 0).unwrap();
+        let want = (x as f32 + 0.5) / 8.0;
+        assert!((r - want).abs() < 0.01 && r == g && g == b && a == 1.0, "pixel {x}: {r}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
 }
