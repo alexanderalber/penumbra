@@ -109,25 +109,21 @@ Outputs: `out` (tex).
 
 ### tex.composite
 
-Top onto bottom, then top2 onto that, and so on up to top7; resolution of the first connected input
+layer2 onto layer1, then layer3 onto that, then layer4; resolution of the first connected input
 
 Inputs:
 
-- `bottom` (tex)
-- `top` (tex)
-- `top2` (tex)
-- `top3` (tex)
-- `top4` (tex)
-- `top5` (tex)
-- `top6` (tex)
-- `top7` (tex)
+- `layer1` (tex)
+- `layer2` (tex)
+- `layer3` (tex)
+- `layer4` (tex)
 
 Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average \| inside \| outside \| atop \| overlay \| color \| luminosity | `"over"` |  | inside, outside: the top only where the bottom is, or is not; atop: the top over the bottom, only where the bottom is; overlay: darkens the dark and brightens the bright parts of the bottom by the top; color: the top's hue and saturation at the bottom's brightness (tinting a grey picture); luminosity: the other way round |
-| `swap` | bool | `false` |  | Swap the inputs: bottom onto top (TouchDesigner's Swap Operation Order) |
+| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average \| inside \| outside \| atop \| overlay \| color \| luminosity | `"over"` |  | Each layer goes onto what lies below it. inside, outside: the layer only where the picture below is, or is not; atop: the layer over the picture below, only where that is; overlay: darkens the dark and brightens the bright parts of the picture below by the layer; color: the layer's hue and saturation at the brightness below (tinting a grey picture); luminosity: the other way round |
+| `swap` | bool | `false` |  | Swap the order of each step: the picture below onto the layer (TouchDesigner's Swap Operation Order) |
 
 ### tex.constant
 

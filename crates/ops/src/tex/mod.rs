@@ -61,9 +61,7 @@ type SizeFn = fn(&CookContext<'_>, (u32, u32)) -> Result<(u32, u32), CookError>;
 /// Edge modes of `extend` params, in the order `pn_extend` numbers them.
 const EXTEND: [&str; 4] = ["hold", "zero", "repeat", "mirror"];
 
-/// A built-in pass node. One with more inputs than a pass binds ([`penumbra_gpu::pass::INPUTS`])
-/// is a fold: its first two inputs go through the shader, then the result and each further
-/// connected input in turn (`tex.composite`'s layers).
+/// A built-in pass node.
 struct Builtin {
     desc: NodeDesc,
     source: &'static str,
@@ -72,6 +70,9 @@ struct Builtin {
     animated: Option<fn(&CookContext<'_>) -> bool>,
     /// How the inputs relate to the output ([`Operator::density`]).
     density: DensityFn,
+    /// A fold: the first two inputs go through the shader, then the result and each further
+    /// connected input in turn (`tex.composite`'s layers).
+    fold: bool,
 }
 
 /// [`Operator::density`] of a built-in: from the params, the input's index and the sizes of
@@ -105,6 +106,7 @@ fn core_builtins() -> Vec<Builtin> {
             size: Size::Params,
             animated: None,
             density: same,
+            fold: false,
         },
         Builtin {
             desc: sized(NodeDesc::new(
@@ -148,6 +150,7 @@ fn core_builtins() -> Vec<Builtin> {
             size: Size::Params,
             animated: Some(|cx| cx.float("speed").is_ok_and(|s| s != 0.0)),
             density: same,
+            fold: false,
         },
         Builtin {
             desc: NodeDesc::new(
@@ -172,6 +175,7 @@ fn core_builtins() -> Vec<Builtin> {
             size: Size::Input,
             animated: None,
             density: transform_density,
+            fold: false,
         },
         Builtin {
             desc: NodeDesc::new("tex.level", "Levels, gamma, contrast, brightness, invert, opacity")
@@ -188,6 +192,7 @@ fn core_builtins() -> Vec<Builtin> {
             size: Size::Input,
             animated: None,
             density: same,
+            fold: false,
         },
         Builtin {
             desc: NodeDesc::new(
@@ -223,11 +228,12 @@ fn core_builtins() -> Vec<Builtin> {
             size: Size::Input,
             animated: None,
             density: same,
+            fold: false,
         },
         Builtin {
             desc: NodeDesc::new(
                 "tex.composite",
-                "Top onto bottom, then top2 onto that, and so on up to top7; resolution of the first connected input",
+                "layer2 onto layer1, then layer3 onto that, then layer4; resolution of the first connected input",
             )
             .param(ParamSpec::choice(
                 "op",
@@ -248,24 +254,21 @@ fn core_builtins() -> Vec<Builtin> {
                     "color",
                     "luminosity",
                 ],
-            ).doc("inside, outside: the top only where the bottom is, or is not; atop: the top over the bottom, only where the bottom is; overlay: darkens the dark and brightens the bright parts of the bottom by the top; color: the top's hue and saturation at the bottom's brightness (tinting a grey picture); luminosity: the other way round"))
+            ).doc("Each layer goes onto what lies below it. inside, outside: the layer only where the picture below is, or is not; atop: the layer over the picture below, only where that is; overlay: darkens the dark and brightens the bright parts of the picture below by the layer; color: the layer's hue and saturation at the brightness below (tinting a grey picture); luminosity: the other way round"))
             .param(
                 ParamSpec::bool("swap", false)
-                    .doc("Swap the inputs: bottom onto top (TouchDesigner's Swap Operation Order)"),
+                    .doc("Swap the order of each step: the picture below onto the layer (TouchDesigner's Swap Operation Order)"),
             )
-            .input("bottom", DataKind::Tex)
-            .input("top", DataKind::Tex)
-            .input("top2", DataKind::Tex)
-            .input("top3", DataKind::Tex)
-            .input("top4", DataKind::Tex)
-            .input("top5", DataKind::Tex)
-            .input("top6", DataKind::Tex)
-            .input("top7", DataKind::Tex)
+            .input("layer1", DataKind::Tex)
+            .input("layer2", DataKind::Tex)
+            .input("layer3", DataKind::Tex)
+            .input("layer4", DataKind::Tex)
             .output("out", DataKind::Tex),
             source: include_str!("composite.wgsl"),
             size: Size::Input,
             animated: None,
             density: same,
+            fold: true,
         },
     ]
 }
@@ -411,7 +414,7 @@ impl Operator for BuiltinOp {
         };
         let mut target = self.ring.next(gpu, w, h, &b.desc.kind)?;
         let param = |name: &str| cx.param(name).cloned();
-        let fold = cx.def().inputs.len() > penumbra_gpu::pass::INPUTS;
+        let fold = b.fold;
         let first = if fold { inputs.get(..2).unwrap_or(&inputs) } else { &inputs };
         pass.render(gpu, &target, &PassInput { inputs: first, seconds, frame, param: &param });
         if fold {

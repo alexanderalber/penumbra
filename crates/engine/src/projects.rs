@@ -42,7 +42,7 @@ pub const DEMO: &str = r#"(
         "/rings1": (kind: "tex.shader", params: {"file": "rings.wgsl"}, inputs: {"in0": "noise1"}),
         "/level1": (kind: "tex.level", params: {"contrast": 1.5}, inputs: {"in": "rings1"}, binds: {"brightness": "pulse"}),
         "/title": (kind: "tex.text", params: {"text": "penumbra", "size": 140.0}, binds: {"position.1": "drift"}),
-        "/comp1": (kind: "tex.composite", inputs: {"bottom": "level1", "top": "title"}),
+        "/comp1": (kind: "tex.composite", inputs: {"layer1": "level1", "layer2": "title"}),
     },
 )"#;
 

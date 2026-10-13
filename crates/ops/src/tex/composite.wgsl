@@ -1,5 +1,5 @@
-// tex.composite: `top` (in1) onto `bottom` (in0), premultiplied; `swap` exchanges them. Fading
-// the top is tex.level's opacity, not a param here.
+// tex.composite: `layer2` (in1) onto `layer1` (in0), premultiplied; `swap` exchanges them; the
+// fold lays `layer3` and `layer4` on in turn. Fading a layer is tex.level's opacity, not a param here.
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {

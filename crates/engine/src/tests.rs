@@ -638,8 +638,8 @@ fn feedback_and_locked_textures_survive_a_restart() {
         ok(&r, "node.create", json!({"path": "/fb", "kind": "tex.feedback"}));
         ok(&r, "node.create", json!({"path": "/add", "kind": "tex.composite", "params": {"op": "add"}}));
         ok(&r, "node.connect", json!({"from": "/black", "to": "/fb", "input": "initial"}));
-        ok(&r, "node.connect", json!({"from": "/fb", "to": "/add", "input": "bottom"}));
-        ok(&r, "node.connect", json!({"from": "/step", "to": "/add", "input": "top"}));
+        ok(&r, "node.connect", json!({"from": "/fb", "to": "/add", "input": "layer1"}));
+        ok(&r, "node.connect", json!({"from": "/step", "to": "/add", "input": "layer2"}));
         ok(&r, "node.connect", json!({"from": "/add", "to": "/fb", "input": "previous"}));
         ok(&r, "node.watch", json!({"path": "/add"}));
         // The startup restore found nothing; saving is allowed from then on.

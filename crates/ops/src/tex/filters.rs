@@ -16,7 +16,7 @@ fn filter(kind: &str, summary: &str) -> NodeDesc {
 }
 
 fn pass(desc: NodeDesc, source: &'static str) -> Builtin {
-    Builtin { desc, source, size: Size::Input, animated: None, density: super::same }
+    Builtin { desc, source, size: Size::Input, animated: None, density: super::same, fold: false }
 }
 
 /// `width` x `height` of a node that sets its own frame, input or not.
@@ -188,6 +188,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
         Builtin {
             size: Size::Own,
             density: fit_density,
+            fold: false,
             ..pass(
                 size_params(
                     filter("tex.fit", "The input fitted into a frame of its own size, aspect kept or not"),

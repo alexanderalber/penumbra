@@ -396,12 +396,12 @@ fn build(rig: &Rig, o: &Options) -> Result<(), String> {
     connect("/noise", "/fb", json!("initial"))?;
     connect("/fb", "/turn", json!(0))?;
     connect("/turn", "/blur", json!(0))?;
-    connect("/blur", "/mix", json!("bottom"))?;
-    connect("/text", "/mix", json!("top"))?;
+    connect("/blur", "/mix", json!("layer1"))?;
+    connect("/text", "/mix", json!("layer2"))?;
     connect("/mix", "/end", json!(0))?;
     connect("/end", "/fb", json!("previous"))?;
-    connect("/end", "/fresh", json!("bottom"))?;
-    connect("/noise", "/fresh", json!("top"))?;
+    connect("/end", "/fresh", json!("layer1"))?;
+    connect("/noise", "/fresh", json!("layer2"))?;
     connect("/fresh", "/cache", json!(0))?;
     connect("/end", "/ripple", json!(0))?;
     connect("/geo", "/render", json!("geo"))?;

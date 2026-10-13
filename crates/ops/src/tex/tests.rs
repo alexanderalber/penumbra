@@ -996,7 +996,7 @@ fn color_and_luminosity_trade_hue_and_brightness() {
 }
 
 #[test]
-fn composite_layers_further_tops_in_turn() {
+fn composite_lays_further_layers_on_in_turn() {
     let Some(gpu) = gpu() else { return };
     let ops = [
         constant("/a", 0.1),
@@ -1006,16 +1006,21 @@ fn composite_layers_further_tops_in_turn() {
         create("/sum", "tex.composite", &[("op", "add".into())]),
         connect("/a", "/sum", 0),
         connect("/b", "/sum", 1),
-        // top3 left out, top7 the last slot.
         connect("/c", "/sum", 2),
-        connect("/d", "/sum", 7),
+        connect("/d", "/sum", 3),
+        create("/gap", "tex.composite", &[("op", "add".into())]),
+        connect("/a", "/gap", 0),
+        connect("/b", "/gap", 1),
+        // layer3 left out.
+        connect("/d", "/gap", 3),
         create("/over", "tex.composite", &[]),
         connect("/a", "/over", 0),
-        connect("/c", "/over", 4),
+        connect("/c", "/over", 2),
     ];
     let mut rig = Rig::new(gpu, None, &ops);
     assert!((red(&mut rig, "/sum") - 1.0).abs() < 0.01, "0.1 + 0.2 + 0.3 + 0.4");
-    // Without a top, the layer goes onto the bottom; opaque, it covers it.
+    assert!((red(&mut rig, "/gap") - 0.7).abs() < 0.01, "0.1 + 0.2 + 0.4");
+    // Without layer2, layer3 goes onto layer1; opaque, it covers it.
     assert!((red(&mut rig, "/over") - 0.3).abs() < 0.01);
 }
 
