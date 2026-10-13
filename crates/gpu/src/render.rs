@@ -225,7 +225,8 @@ pub struct Look {
 pub struct Ao {
     /// How far around a point geometry counts, in metres.
     pub radius: f32,
-    /// 1 as estimated; more darkens, less lightens.
+    /// How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %
+    /// even where everything around is hidden; above 1 darker, down to black.
     pub strength: f32,
 }
 

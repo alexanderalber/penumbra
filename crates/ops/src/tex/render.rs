@@ -339,7 +339,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "Ambient occlusion: less ambient and environment light in creases and where objects meet; direct light and unlit surfaces stay as they are",
         ))
         .param(
-            ParamSpec::float("ao_radius", 0.3)
+            ParamSpec::float("ao_radius", 0.5)
                 .clamp(0.001, 1000.0)
                 .range(0.01, 2.0)
                 .unit(Unit::Metres)
@@ -351,7 +351,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(0.0, 8.0)
                 .range(0.0, 3.0)
                 .group("occlusion")
-                .doc("1 as estimated; more darkens, less lightens"),
+                .doc("How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker"),
         );
     types.register(FnNodeType::new(desc, || Box::new(Render::default()) as Box<dyn Operator>))
 }

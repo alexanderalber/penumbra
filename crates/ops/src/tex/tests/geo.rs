@@ -1136,6 +1136,17 @@ fn ambient_occlusion_darkens_creases_in_the_ambient_light() {
             ],
         )
     };
+    // Wide and weak: nothing may go darker than the strength allows.
+    let weak = render(
+        "/weak",
+        &[
+            ("position", Value::Vec3([0.0, -4.0, 0.0])),
+            ("fov", Value::Float(40.0)),
+            ("ao", Value::Bool(true)),
+            ("ao_radius", Value::Float(1.0)),
+            ("ao_strength", Value::Float(0.3)),
+        ],
+    );
     let mut ops = vec![
         // A white wall at y = 0 facing the camera, and a 0.3 m box standing out of it.
         create(
@@ -1176,6 +1187,7 @@ fn ambient_occlusion_darkens_creases_in_the_ambient_light() {
         ops.push(connect("/scene", path, 0));
         ops.push(connect(lights, path, 2));
     }
+    ops.extend([weak, connect("/scene", "/weak", 0), connect("/lights", "/weak", 2)]);
     let mut rig = Rig::new(gpu, None, &ops);
     // Where a point (x, z) of the wall shows in the picture, from y = -4 with fov 40.
     let px_of = |px: &Pixels, x: f64, z: f64| {
@@ -1196,7 +1208,7 @@ fn ambient_occlusion_darkens_creases_in_the_ambient_light() {
     // Beside the box: darker, but never below the direct half; alike on all four sides.
     let sides = [(-0.2, 0.0), (0.2, 0.0), (0.0, 0.2), (0.0, -0.2)].map(|(x, z)| px_of(&ao, x, z)[0]);
     for v in sides {
-        assert!((0.5..0.92).contains(&v), "beside the box: {sides:?}");
+        assert!((0.5..0.95).contains(&v), "beside the box: {sides:?}");
     }
     let (lo, hi) = sides.iter().fold((f32::MAX, 0f32), |(a, b), v| (a.min(*v), b.max(*v)));
     assert!(hi - lo < 0.03, "uneven around the box: {sides:?}");
@@ -1205,6 +1217,10 @@ fn ambient_occlusion_darkens_creases_in_the_ambient_light() {
         let (a, b) = (px_of(&ao, x, z)[0], px_of(&plain, x, z)[0]);
         assert!((a - b).abs() < 0.03, "{what} at {x} {z}: {a} with, {b} without");
     }
+    // Strength 0.3 takes at most 30 % of the ambient half, wherever the radius reaches.
+    let px = rig.pixels("/weak");
+    let darkest = px.data.iter().filter(|c| c[3] > 0.99).map(|c| c[0]).fold(f32::MAX, f32::min);
+    assert!((0.85 - 1e-3..0.99).contains(&darkest), "weak: darkest {darkest}");
     // Direct light alone: nothing to dim, and a warning.
     let (sun_plain, sun_ao) = (rig.pixels("/sun_plain"), rig.pixels("/sun_ao"));
     let (a, b) = (px_of(&sun_ao, 0.2, 0.0)[0], px_of(&sun_plain, 0.2, 0.0)[0]);

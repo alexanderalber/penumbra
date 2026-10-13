@@ -3,10 +3,12 @@
 // blur that removes the sampling pattern's noise.
 //
 // The estimate: points within `radius` above the surface, spread over the hemisphere by the
-// cosine (as ambient light arrives), each projected into the picture; whatever surface is seen
-// there, if it rises above the pixel's own tangent plane, hides that direction by the sine of how
-// high it rises, fading out from one to two radii away (a wall far in front hides nothing). A flat
-// surface therefore hides nothing of itself, wherever the camera is, and convex edges stay bright.
+// cosine (as ambient light arrives), each projected into the picture. A point hides its direction
+// when the surface seen there lies in front of it (the point is inside or behind something) and
+// rises above the pixel's own tangent plane (so a flat surface, seen at however steep an angle,
+// never hides itself), fading out from one to two radii away (a wall far in front hides nothing).
+// The share of hidden points is the share of ambient light that does not arrive: a point in a
+// right-angled crease loses about half.
 // The pattern turns from pixel to pixel over a 4x4 cell, which the blur averages over, keeping to
 // pixels of about the same distance and facing so edges stay sharp.
 
@@ -85,19 +87,22 @@ fn fs_estimate(@builtin(position) pos: vec4f) -> @location(0) vec4f {
         if seen.w <= 0.0 {
             continue;
         }
-        let v = seen.xyz - p;
-        let dist = length(v);
-        if dist < 1e-6 * r {
+        // In front of the point by more than a sliver of the radius.
+        let depth = dot(ao.view_z, vec4f(q, 1.0));
+        if seen.w >= depth - 0.02 * r {
             continue;
         }
+        let v = seen.xyz - p;
+        let dist = length(v);
         // Rising less than about six degrees counts as flat (a sphere's facets, rounding).
-        let rise = max(dot(v, n) / dist - 0.1, 0.0) / 0.9;
-        hidden += rise * (1.0 - smoothstep(r, 2.0 * r, dist));
+        if dist < 1e-6 * r || dot(v, n) < 0.1 * dist {
+            continue;
+        }
+        hidden += 1.0 - smoothstep(r, 2.0 * r, dist);
     }
-    // Twice the mean: a point in a right-angled crease, half of whose hemisphere a wall hides,
-    // comes out at about a half, as the cosine-weighted share of open sky there is.
-    let open = clamp(1.0 - 2.0 * hidden / f32(SAMPLES), 0.0, 1.0);
-    return vec4f(pow(open, max(ao.strength, 0.0)), here.w, 0.0, 1.0);
+    // The strength scales what is hidden, so below 1 nothing goes fully dark.
+    let lost = hidden / f32(SAMPLES) * max(ao.strength, 0.0);
+    return vec4f(clamp(1.0 - lost, 0.0, 1.0), here.w, 0.0, 1.0);
 }
 
 // The estimate averaged over the 4x4 cell around the pixel, from pixels of about the same
