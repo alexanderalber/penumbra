@@ -1262,3 +1262,95 @@ fn resolution_analysis_walks_back_from_the_projectors() {
 
 mod geo;
 mod layers;
+
+/// A grey camera frame of 32 x 16 pixels, luma `y` give or take `noise` codes at random.
+fn noisy_frame(y: u8, noise: u8, seed: u32) -> penumbra_camera::CameraFrame {
+    let mut state = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    let luma = (0..32 * 16)
+        .map(|_| {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let n = i32::from(noise);
+            let offset = ((state >> 16) % (2 * n as u32 + 1)) as i32 - n;
+            (i32::from(y) + offset).clamp(0, 255) as u8
+        })
+        .collect();
+    penumbra_camera::CameraFrame {
+        width: 32,
+        height: 16,
+        y: luma,
+        cb: vec![128; 128],
+        cr: vec![128; 128],
+        ..camera_frame(y, 128, 128)
+    }
+}
+
+/// Feeds a frame and cooks `/dn` until it has made something from it.
+fn denoise_frame(rig: &mut Rig, frame: penumbra_camera::CameraFrame) -> penumbra_gpu::Pixels {
+    let v = rig.cooker.status(rig.id("/dn")).map_or(0, |s| s.version);
+    rig.camera.feed(&penumbra_camera::Key::new("test", ""), frame);
+    let tex = rig.cook_until_new("/dn", v);
+    rig.gpu.read(&tex).unwrap()
+}
+
+/// Mean and standard deviation of the red channel.
+fn red_stats(px: &penumbra_gpu::Pixels) -> (f64, f64) {
+    let values: Vec<f64> = (0..px.height)
+        .flat_map(|y| (0..px.width).map(move |x| (x, y)))
+        .map(|(x, y)| f64::from(px.get(x, y).unwrap()[0]))
+        .collect();
+    let mean = values.iter().sum::<f64>() / values.len() as f64;
+    let var = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / values.len() as f64;
+    (mean, var.sqrt())
+}
+
+#[test]
+fn denoise_calms_noise_follows_motion_and_reaches_small_changes() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/cam", "tex.videoin", &[("device", "test".into())]),
+        create("/dn", "tex.denoise", &[]),
+        connect("/cam", "/dn", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+
+    // Noise in a still picture is averaged away.
+    let mut out = None;
+    for i in 0..30 {
+        out = Some(denoise_frame(&mut rig, noisy_frame(128, 8, i)));
+    }
+    let out = out.unwrap();
+    let raw = red_stats(&rig.pixels("/cam"));
+    let calm = red_stats(&out);
+    assert!(calm.1 < raw.1 * 0.5, "noise {raw:?} -> {calm:?}");
+    assert!((calm.0 - raw.0).abs() < 0.01, "{raw:?} -> {calm:?}");
+
+    // A real change shows at once.
+    for i in 0..10 {
+        denoise_frame(&mut rig, noisy_frame(60, 0, i));
+    }
+    let bright = denoise_frame(&mut rig, noisy_frame(200, 0, 0));
+    let want = red_stats(&rig.pixels("/cam")).0;
+    let got = red_stats(&bright);
+    assert!((got.0 - want).abs() < 0.01 && got.1 < 0.01, "{got:?}, want {want}");
+    // Smoothed where it moved, and still opaque: written as it is, the smoothing's 0.99999994
+    // would become the 16-bit float below 1 on a GPU that rounds toward zero.
+    let opaque = (0..32).all(|x| (0..16).all(|y| bright.get(x, y).unwrap()[3] == 1.0));
+    assert!(opaque);
+
+    // A change of one code, far below `motion`, is averaged in over many frames, and all the
+    // way: rounded to the nearest 16-bit float, the average would stop well short of it.
+    rig.edit(&[set("/dn.frames", Value::Float(64.0)), set("/dn.spatial", Value::Float(0.0))]);
+    for i in 0..10 {
+        denoise_frame(&mut rig, noisy_frame(126, 0, i));
+    }
+    let low = red_stats(&rig.pixels("/cam")).0;
+    let mut last = None;
+    for i in 0..400 {
+        last = Some(denoise_frame(&mut rig, noisy_frame(127, 0, i)));
+    }
+    let want = red_stats(&rig.pixels("/cam")).0;
+    let got = red_stats(&last.unwrap()).0;
+    let step = want - low;
+    assert!(step > 0.002, "one code is {step}");
+    assert!((got - want).abs() < step * 0.1, "{got}, want {want}");
+}
