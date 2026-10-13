@@ -190,10 +190,10 @@ fn thumbnail_switch() {
     f.call("cook.thumbnails", json!({"mode": "when_free"}));
     assert_eq!(f.call("cook.status", json!({}))["thumbnails"]["mode"], "when_free");
     assert!(f.fail("cook.thumbnails", json!({"enabled": false})).contains("mode"));
-    assert_eq!(f.call("cook.status", json!({}))["thumbnails"]["min_interval"], 6);
-    let r = f.call("cook.thumbnails", json!({"every": 1}));
-    assert_eq!((r["mode"].as_str(), r["every"].as_u64()), (Some("when_free"), Some(1)));
     assert_eq!(f.call("cook.status", json!({}))["thumbnails"]["min_interval"], 1);
+    let r = f.call("cook.thumbnails", json!({"every": 6}));
+    assert_eq!((r["mode"].as_str(), r["every"].as_u64()), (Some("when_free"), Some(6)));
+    assert_eq!(f.call("cook.status", json!({}))["thumbnails"]["min_interval"], 6);
     for bad in [json!({}), json!({"every": 0}), json!({"every": 61})] {
         assert!(!f.fail("cook.thumbnails", bad).is_empty());
     }
