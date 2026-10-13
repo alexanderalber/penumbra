@@ -1,17 +1,17 @@
 //! The editor window: node editor, param panel, viewer, change log, status bar, and the UI side of
 //! the `ui.*` commands.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use egui::{Color32, Key, Modifiers, PointerButton, Pos2, RichText, Sense, Ui, pos2, vec2};
-use penumbra_core::{NodeId, NodePath};
+use egui::{Color32, Key, Modifiers, RichText, Sense, Ui, vec2};
+use penumbra_core::NodeId;
 use penumbra_engine::{Engine, ViewFrame, ViewRequest};
 use penumbra_project::{Actor, Session, SessionStatus};
-use serde_json::{Value as Json, json};
+use serde_json::json;
 
 use crate::changes::Changes;
 use crate::control::{Reply, UiRequest};
@@ -23,6 +23,8 @@ use crate::params::{self, ParamPanel};
 use crate::textures::Textures;
 use crate::viewer::Viewer;
 use crate::{Action, automation, theme};
+
+mod commands;
 
 /// How long a screenshot may take to arrive.
 const SHOT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1025,346 +1027,6 @@ impl PenumbraApp {
         self.requests = Some(rx);
     }
 
-    fn element_pos(&self, p: &Json) -> Result<Pos2, String> {
-        if let Some(id) = p.get("id").and_then(Json::as_str) {
-            return self
-                .auto
-                .find(id)
-                .map(|e| e.rect().center())
-                .ok_or_else(|| format!("no element `{id}` on screen; `ui.elements` lists them"));
-        }
-        match (p.get("x").and_then(Json::as_f64), p.get("y").and_then(Json::as_f64)) {
-            (Some(x), Some(y)) if x.is_finite() && y.is_finite() => Ok(pos2(x as f32, y as f32)),
-            _ => Err("give `id` or `x` and `y`".into()),
-        }
-    }
-
-    fn handle(&mut self, ctx: &egui::Context, req: &UiRequest) -> Outcome {
-        match self.handle_inner(ctx, req) {
-            Ok(o) => o,
-            Err(e) => Outcome::Done(Err(e)),
-        }
-    }
-
-    fn handle_inner(&mut self, ctx: &egui::Context, req: &UiRequest) -> Result<Outcome, String> {
-        let p = &req.params;
-        let session = self.engine.session().clone();
-        let net = session.doc().snapshot();
-        let now = Instant::now();
-        let path_of = |id: NodeId| net.path_of(id).map(|p| p.to_string());
-        let resolve = |s: &str| -> Result<NodeId, String> {
-            let path: NodePath = s.parse().map_err(|e| format!("{e}"))?;
-            net.resolve(&path).ok_or_else(|| format!("no node at {path}"))
-        };
-        let modifiers = Modifiers {
-            ctrl: p.get("ctrl").and_then(Json::as_bool).unwrap_or(false),
-            command: p.get("ctrl").and_then(Json::as_bool).unwrap_or(false),
-            shift: p.get("shift").and_then(Json::as_bool).unwrap_or(false),
-            alt: p.get("alt").and_then(Json::as_bool).unwrap_or(false),
-            mac_cmd: false,
-        };
-        let button = match p.get("button").and_then(Json::as_str) {
-            None | Some("left") => PointerButton::Primary,
-            Some("right") => PointerButton::Secondary,
-            Some("middle") => PointerButton::Middle,
-            Some(other) => return Err(format!("unknown button `{other}`; left, right or middle")),
-        };
-        let done = |v: Json| Ok(Outcome::Done(Ok(v)));
-        match req.method.as_str() {
-            "ui.state" => {
-                let selection: Vec<Option<String>> =
-                    self.editor.selection.iter().map(|id| path_of(*id)).collect();
-                let selected = self.selected();
-                let mut state = json!({
-                    "selection": selection,
-                    "viewer": self.viewer.target(&net, selected).and_then(path_of),
-                    "pinned": self.viewer.pinned.and_then(path_of),
-                    "view": {"origin": [self.layout.view.origin.x, self.layout.view.origin.y], "zoom": self.layout.view.zoom},
-                    "canvas": rect_json(self.editor.canvas),
-                    "window": rect_json(ctx.content_rect()),
-                    "editing": session.status(now).edit,
-                    "thumbnails_paused": self.editor.paused.iter().filter_map(|id| path_of(*id)).collect::<Vec<_>>(),
-                    "level": editor::level_path(&net, self.editor.level),
-                });
-                if let Some(id) = selected
-                    && let Some(o) = state.as_object_mut()
-                {
-                    o.insert("params".into(), json!(params::values(&net, session.types(), id)));
-                }
-                if p.get("positions").and_then(Json::as_bool).unwrap_or(false)
-                    && let Some(o) = state.as_object_mut()
-                {
-                    o.insert("positions".into(), json!(self.layout.positions(&net)));
-                }
-                done(state)
-            }
-            "ui.elements" => {
-                let prefix = p.get("prefix").and_then(Json::as_str).unwrap_or("");
-                done(json!({"elements": self.auto.query(prefix)}))
-            }
-            "ui.click" => {
-                let at = self.element_pos(p)?;
-                let count = if p.get("double").and_then(Json::as_bool).unwrap_or(false) { 2 } else { 1 };
-                self.synthetic.push_back(egui::Event::PointerMoved(at));
-                for _ in 0..count {
-                    self.synthetic.push_back(egui::Event::PointerButton {
-                        pos: at,
-                        button,
-                        pressed: true,
-                        modifiers,
-                    });
-                    self.synthetic.push_back(egui::Event::PointerButton {
-                        pos: at,
-                        button,
-                        pressed: false,
-                        modifiers,
-                    });
-                }
-                Ok(Outcome::AfterInput)
-            }
-            "ui.drag" => {
-                let from = self.element_pos(p.get("from").unwrap_or(&Json::Null))?;
-                let to = self.element_pos(p.get("to").unwrap_or(&Json::Null))?;
-                let steps = p.get("steps").and_then(Json::as_u64).unwrap_or(8).clamp(2, 200);
-                self.synthetic.push_back(egui::Event::PointerMoved(from));
-                self.synthetic.push_back(egui::Event::PointerButton {
-                    pos: from,
-                    button,
-                    pressed: true,
-                    modifiers,
-                });
-                for i in 1..=steps {
-                    let t = i as f32 / steps as f32;
-                    self.synthetic.push_back(egui::Event::PointerMoved(from + (to - from) * t));
-                }
-                self.synthetic.push_back(egui::Event::PointerButton {
-                    pos: to,
-                    button,
-                    pressed: false,
-                    modifiers,
-                });
-                Ok(Outcome::AfterInput)
-            }
-            "ui.scroll" => {
-                let at = self.element_pos(p)?;
-                let dy = p.get("dy").and_then(Json::as_f64).filter(|d| d.is_finite()).unwrap_or(0.0) as f32;
-                self.synthetic.push_back(egui::Event::PointerMoved(at));
-                self.synthetic.push_back(egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Point,
-                    delta: vec2(0.0, dy),
-                    phase: egui::TouchPhase::Move,
-                    modifiers,
-                });
-                Ok(Outcome::AfterInput)
-            }
-            "ui.key" => {
-                let name = p.get("key").and_then(Json::as_str).ok_or("`key` is missing")?;
-                let key = Key::from_name(name).ok_or_else(|| format!("unknown key `{name}`"))?;
-                // As the window's integration does: Ctrl+C, X, V become clipboard events, the
-                // paste with what was copied last (the system clipboard is not read here).
-                if modifiers.command {
-                    let event = match key {
-                        Key::C => Some(egui::Event::Copy),
-                        Key::X => Some(egui::Event::Cut),
-                        Key::V => {
-                            penumbra_engine::clipboard::copied_text(&self.engine).map(egui::Event::Paste)
-                        }
-                        _ => None,
-                    };
-                    if let Some(event) = event {
-                        self.synthetic.push_back(event);
-                        return Ok(Outcome::AfterInput);
-                    }
-                }
-                for pressed in [true, false] {
-                    self.synthetic.push_back(egui::Event::Key {
-                        key,
-                        physical_key: None,
-                        pressed,
-                        repeat: false,
-                        modifiers,
-                    });
-                }
-                Ok(Outcome::AfterInput)
-            }
-            "ui.type" => {
-                let text = p.get("text").and_then(Json::as_str).ok_or("`text` is missing")?;
-                self.synthetic.push_back(egui::Event::Text(text.to_string()));
-                Ok(Outcome::AfterInput)
-            }
-            "ui.select" => {
-                let paths = p.get("paths").and_then(Json::as_array).ok_or("`paths` must be a list")?;
-                let mut set = BTreeSet::new();
-                for path in paths {
-                    set.insert(resolve(path.as_str().ok_or("paths are strings")?)?);
-                }
-                // The editor shows one component's inside at a time: the one holding the nodes.
-                let level = set.iter().next().and_then(|id| net.node(*id)).and_then(|n| n.parent);
-                if set.iter().any(|id| net.node(*id).is_some_and(|n| n.parent != level)) {
-                    return Err("the nodes must sit side by side (in the same component)".into());
-                }
-                if !set.is_empty() {
-                    self.editor.enter(level, &mut self.layout, now);
-                }
-                self.editor.selection = set;
-                done(json!({"selected": paths}))
-            }
-            "ui.enter" => {
-                let level = match p.get("path").and_then(Json::as_str).filter(|s| *s != "/") {
-                    Some(path) => {
-                        let id = resolve(path)?;
-                        let container = net
-                            .node(id)
-                            .and_then(|n| session.types().desc(&n.kind))
-                            .is_some_and(|d| d.container);
-                        if !container {
-                            return Err(format!("{path} is not a component"));
-                        }
-                        Some(id)
-                    }
-                    None => None,
-                };
-                self.editor.enter(level, &mut self.layout, now);
-                done(json!({"level": editor::level_path(&net, level)}))
-            }
-            "ui.view" => {
-                let pinned = match p.get("path").and_then(Json::as_str) {
-                    Some(path) => Some(resolve(path)?),
-                    None => None,
-                };
-                self.viewer.pinned = pinned;
-                done(json!({"pinned": pinned.and_then(path_of)}))
-            }
-            "ui.camera" => {
-                let selected = self.selected();
-                let id = self.viewer.target(&net, selected).ok_or("the viewer shows nothing")?;
-                let types = session.types();
-                let scene = navigate::scene(&net, types, id, self.viewer.output)
-                    .ok_or("the viewer does not show a render or geometry")?;
-                let nav = &mut self.viewer.nav;
-                if let Some(mode) = p.get("mode") {
-                    let mode: navigate::Mode = serde_json::from_value(mode.clone())
-                        .map_err(|_| "`mode` is picture, free or steer")?;
-                    if mode == navigate::Mode::Steer
-                        && let Err(why) = &scene.steer
-                    {
-                        return Err(why.clone());
-                    }
-                    nav.set_mode(id, mode);
-                }
-                if p.get("home").and_then(Json::as_bool).unwrap_or(false) {
-                    nav.home(id);
-                }
-                if let Some(c) = p.get("camera") {
-                    let o: penumbra_ops::view::Orbit = serde_json::from_value(c.clone())
-                        .map_err(|e| format!("`camera` needs eye, target, roll, fov: {e}"))?;
-                    if !o.is_valid() {
-                        return Err("`camera` needs finite numbers and an eye apart from the target".into());
-                    }
-                    nav.set_camera(id, o);
-                }
-                let mut m = Move::none();
-                if let Some([y, x]) = numbers::<2>(p, "orbit")? {
-                    m.orbit = [y, x];
-                }
-                if let Some(v) = numbers::<2>(p, "pan")? {
-                    m.pan = v;
-                }
-                if let Some([d]) = numbers::<1>(p, "dolly")? {
-                    m.dolly = d;
-                }
-                if let Some(v) = numbers::<3>(p, "travel")? {
-                    m.travel = v;
-                }
-                if let Some(v) = numbers::<2>(p, "look")? {
-                    m.look = v;
-                }
-                if let Some([r]) = numbers::<1>(p, "roll")? {
-                    m.roll = r;
-                }
-                // The command is who steers, whoever holds the editing mode.
-                let can_edit = true;
-                let doc = session.doc();
-                let new_group = || doc.new_group();
-                let mut actions = Vec::new();
-                if !m.is_none() {
-                    if nav.mode(&scene) == navigate::Mode::Free && nav.camera(id).is_none() {
-                        return Err("the free view has no camera yet (its first picture brings it)".into());
-                    }
-                    nav.apply(&m, &scene, &net, types, can_edit, &new_group, now, &mut actions)?;
-                    // A command's move is a movement of its own.
-                    nav.settle(now + Duration::from_secs(1), false);
-                }
-                if p.get("take").and_then(Json::as_bool).unwrap_or(false) {
-                    let ops = nav.take_view(&scene, &net)?;
-                    actions.push(Action::Edit {
-                        ops,
-                        label: "take the view".into(),
-                        group: None,
-                        place: None,
-                    });
-                }
-                let mode = nav.mode(&scene);
-                let camera = nav.camera(id);
-                let locked = nav.horizon_locked;
-                let steer = scene.steer.clone().ok().and_then(path_of);
-                self.apply(actions, now);
-                let net = session.doc().snapshot();
-                done(json!({
-                    "mode": mode,
-                    "camera": camera,
-                    "steers": steer,
-                    "steered": scene.steer.ok().and_then(|c| navigate::stored_orbit(&net, types, c)),
-                    "horizon_locked": locked,
-                }))
-            }
-            "ui.place" => {
-                let nodes = p.get("nodes").and_then(Json::as_object).ok_or("`nodes` must be an object")?;
-                for (path, at) in nodes {
-                    let id = resolve(path)?;
-                    let xy = at.as_array().and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
-                    let Some((x, y)) = xy.filter(|(x, y)| x.is_finite() && y.is_finite()) else {
-                        return Err(format!("{path}: position must be [x, y]"));
-                    };
-                    self.layout.set(id, pos2(x as f32, y as f32), now);
-                }
-                done(json!({"placed": nodes.len()}))
-            }
-            "ui.options" => {
-                let mut options = self.layout.options;
-                if let Some(v) = p.get("chan_bars") {
-                    options.chan_bars = v.as_bool().ok_or("`chan_bars` must be true or false")?;
-                }
-                if let Some(v) = p.get("viewer_background") {
-                    options.viewer_background =
-                        v.as_bool().ok_or("`viewer_background` must be true or false")?;
-                }
-                self.layout.set_options(options, now);
-                done(json!({"chan_bars": options.chan_bars, "viewer_background": options.viewer_background}))
-            }
-            "ui.arrange" => {
-                self.layout.arrange(&net, now);
-                self.editor.frame_all();
-                done(json!({"arranged": net.len()}))
-            }
-            "ui.frame" => {
-                self.editor.frame_all();
-                done(json!({}))
-            }
-            "ui.screenshot" => {
-                let file = match p.get("file").and_then(Json::as_str) {
-                    Some(f) => PathBuf::from(f),
-                    None => std::env::temp_dir().join("penumbra").join("ui.png"),
-                };
-                if ctx.input(|i| i.viewport().minimized == Some(true)) {
-                    return Err("the window is minimised; nothing is drawn".into());
-                }
-                Ok(Outcome::Screenshot(file))
-            }
-            other => Err(format!("unknown ui command `{other}`")),
-        }
-    }
-
     /// Notes a window's size (`id`: the editor's or the viewer's). While it changes, the GPU
     /// work is held back so egui's configures succeed, and no healing happens.
     fn note_size(&mut self, id: egui::ViewportId, size: Option<egui::Vec2>) {
@@ -1493,22 +1155,6 @@ impl PenumbraApp {
     }
 }
 
-/// The header of a collapsible section of the right column: a triangle and the title (both
-/// toggle it, automation id `section.<id>`), then `extra` (buttons that stay usable while the
-/// section is collapsed).
-/// `p[name]`: `N` finite numbers (one may come bare); `None` when absent.
-fn numbers<const N: usize>(p: &Json, name: &str) -> Result<Option<[f64; N]>, String> {
-    let Some(v) = p.get(name) else { return Ok(None) };
-    let list: Option<Vec<f64>> = match v {
-        Json::Array(a) => a.iter().map(Json::as_f64).collect(),
-        other => other.as_f64().map(|x| vec![x]),
-    };
-    list.filter(|l| l.iter().all(|x| x.is_finite()))
-        .and_then(|l| <[f64; N]>::try_from(l).ok())
-        .map(Some)
-        .ok_or_else(|| format!("`{name}` must be {N} number(s)"))
-}
-
 /// The free view the engine drew for `node` at `output`: the main viewer's request comes
 /// first, the viewer window's after it.
 fn free_picture(
@@ -1521,6 +1167,9 @@ fn free_picture(
     if window { matching.next_back() } else { matching.next() }
 }
 
+/// The header of a collapsible section of the right column: a triangle and the title (both
+/// toggle it, automation id `section.<id>`), then `extra` (buttons that stay usable while the
+/// section is collapsed).
 fn section(
     ui: &mut Ui,
     auto: &mut automation::Registry,
@@ -1554,10 +1203,6 @@ enum Outcome {
     /// Reply once the queued synthetic input has been processed.
     AfterInput,
     Screenshot(PathBuf),
-}
-
-fn rect_json(r: egui::Rect) -> Json {
-    json!([r.min.x, r.min.y, r.width(), r.height()])
 }
 
 fn save_png(file: &std::path::Path, image: &egui::ColorImage) -> Reply {
