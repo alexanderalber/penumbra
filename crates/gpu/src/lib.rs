@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 use penumbra_core::Error;
 
 pub use geo::{Geo, Mat};
-pub use pass::{Pass, PassInput};
+pub use pass::{Batch, Pass, PassInput};
 pub use projection::{MeshVertex, Projection};
 pub use readback::{PendingRead, Pixels, ReadPool, ReadState, RowsError, encode_png_rgba8};
 pub use render::Lights;

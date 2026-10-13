@@ -15,6 +15,7 @@ mod flow;
 mod image;
 mod layer;
 pub mod mapper;
+mod opticalflow;
 mod ramp;
 pub mod render;
 mod shader;
@@ -311,6 +312,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     image::register(types)?;
     layer::register(types)?;
     mapper::register(types)?;
+    opticalflow::register(types)?;
     ramp::register(types)?;
     render::register(types)?;
     shader::register(types)?;
@@ -338,6 +340,9 @@ pub fn warm_up(gpu: &Gpu) {
     }
     if let Err(e) = denoise::warm_up(gpu) {
         log::error!("built-in shader tex.denoise does not compile: {e}");
+    }
+    if let Err(e) = opticalflow::warm_up(gpu) {
+        log::error!("built-in shader tex.opticalflow does not compile: {e}");
     }
     if let Err(e) = ramp::warm_up(gpu) {
         log::error!("built-in shader tex.ramp does not compile: {e}");

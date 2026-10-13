@@ -165,6 +165,24 @@ fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f
 }
 "#;
 
+/// Passes recorded to go out in one submission, for a node that runs many passes per cook.
+pub struct Batch<'a> {
+    gpu: &'a Gpu,
+    encoder: wgpu::CommandEncoder,
+}
+
+impl<'a> Batch<'a> {
+    pub fn new(gpu: &'a Gpu, label: &str) -> Self {
+        let encoder =
+            gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+        Self { gpu, encoder }
+    }
+
+    pub fn submit(self) {
+        self.gpu.submit([self.encoder.finish()]);
+    }
+}
+
 /// The bind group and pipeline layouts every pass shares, plus samplers and a stand-in for
 /// unconnected inputs.
 pub(crate) struct Layouts {
@@ -368,6 +386,15 @@ impl Pass {
 
     /// Renders into `target` (cleared first) and submits.
     pub fn render(&self, gpu: &Gpu, target: &Tex, input: &PassInput<'_>) {
+        let mut batch = Batch::new(gpu, &self.label);
+        self.encode(&mut batch, target, input);
+        batch.submit();
+    }
+
+    /// Records rendering into `target` (cleared first) into `batch`, submitted with it.
+    pub fn encode(&self, batch: &mut Batch<'_>, target: &Tex, input: &PassInput<'_>) {
+        let gpu = batch.gpu;
+        let encoder = &mut batch.encoder;
         let device = gpu.device();
         let layouts = gpu.layouts();
         let (w, h) = target.size();
@@ -380,15 +407,35 @@ impl Pass {
             .flat_map(|x| x.to_le_bytes())
             .collect();
         let params = self.pack(input.param);
-        let buffer = |label, contents: &[u8]| gpu.uniform_buffer(label, contents);
-        let buffers = [buffer("pn", &frame), buffer("pn_time", &time), buffer("params", &params)];
+        // One buffer for the three uniforms, each at an aligned offset: creating a buffer costs
+        // more than anything else a pass does on the CPU.
+        let align = device.limits().min_uniform_buffer_offset_alignment.max(16) as usize;
+        let parts = [&frame, &time, &params];
+        let mut offsets = [0usize; 3];
+        let mut contents = Vec::new();
+        for (offset, part) in offsets.iter_mut().zip(parts) {
+            *offset = contents.len().next_multiple_of(align);
+            contents.resize(*offset, 0);
+            contents.extend_from_slice(part);
+            contents.resize(*offset + part.len().max(16).next_multiple_of(16), 0);
+        }
+        let buffer = gpu.uniform_buffer("pass uniforms", &contents);
+        let binding = |i: usize| {
+            let offset = offsets.get(i).copied().unwrap_or(0);
+            let size = parts.get(i).map_or(16, |p| p.len().max(16).next_multiple_of(16));
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: &buffer,
+                offset: offset as u64,
+                size: wgpu::BufferSize::new(size as u64),
+            })
+        };
         let group0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("pass globals"),
             layout: &layouts.group0,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: buffers[0].as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: buffers[1].as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: buffers[2].as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 0, resource: binding(0) },
+                wgpu::BindGroupEntry { binding: 1, resource: binding(1) },
+                wgpu::BindGroupEntry { binding: 2, resource: binding(2) },
             ],
         });
         let view = |i: usize| match input.inputs.get(i).copied().flatten() {
@@ -409,8 +456,6 @@ impl Pass {
                 wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(mirror) },
             ],
         });
-        let mut encoder =
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(&self.label) });
         {
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(&self.label),
@@ -433,7 +478,6 @@ impl Pass {
             rp.set_bind_group(1, &group1, &[]);
             rp.draw(0..3, 0..1);
         }
-        gpu.submit([encoder.finish()]);
     }
 
     /// The `params` uniform: every declared value at its offset.

@@ -804,7 +804,13 @@ fn a_camera_frame_becomes_a_texture_and_every_new_one_a_new_result() {
     rig.camera.feed(&key, camera_frame(16, 128, 128));
     let tex = rig.cook_until_new("/cam", v);
     assert!(rig.gpu.read(&tex).unwrap().get(0, 0).unwrap()[0].abs() < 0.01);
+    // A repeat of the picture (a capture card doubling a 30p source) is no new result either.
     let v = rig.version("/cam");
+    rig.camera.feed(&key, camera_frame(16, 128, 128));
+    for _ in 0..5 {
+        rig.cook("/cam");
+    }
+    assert_eq!(rig.version("/cam"), v);
     rig.edit(&[set("/cam.range", "full".into())]);
     let tex = rig.cook_until_new("/cam", v);
     let grey = rig.gpu.read(&tex).unwrap().get(0, 0).unwrap()[0];
@@ -1263,7 +1269,9 @@ fn resolution_analysis_walks_back_from_the_projectors() {
 mod geo;
 mod layers;
 
-/// A grey camera frame of 32 x 16 pixels, luma `y` give or take `noise` codes at random.
+/// A grey camera frame of 32 x 16 pixels, luma `y` give or take `noise` codes at random. One
+/// blue-difference sample follows the seed's parity, so consecutive seeds never make identical
+/// frames (which `tex.videoin` skips as repeats); red does not see it.
 fn noisy_frame(y: u8, noise: u8, seed: u32) -> penumbra_camera::CameraFrame {
     let mut state = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
     let luma = (0..32 * 16)
@@ -1278,7 +1286,7 @@ fn noisy_frame(y: u8, noise: u8, seed: u32) -> penumbra_camera::CameraFrame {
         width: 32,
         height: 16,
         y: luma,
-        cb: vec![128; 128],
+        cb: std::iter::once(128 + (seed % 2) as u8).chain(std::iter::repeat_n(128, 127)).collect(),
         cr: vec![128; 128],
         ..camera_frame(y, 128, 128)
     }
@@ -1408,4 +1416,98 @@ fn denoise_treats_brightness_and_colour_noise_apart() {
     let (raw, only_colour) = run(&[off("frames"), off("spatial")]);
     assert!(only_colour.0 > raw.0 * 0.8, "luma {raw:?} -> {only_colour:?}");
     assert!(only_colour.1 < raw.1 * 0.5, "colour {raw:?} -> {only_colour:?}");
+}
+
+/// A textured grey camera frame of 160 x 96 pixels, the pattern moved by `shift` pixels.
+fn moved_frame(shift: [f64; 2]) -> penumbra_camera::CameraFrame {
+    lit_frame(shift, 0.0)
+}
+
+/// [`moved_frame`], `brighter` codes brighter.
+fn lit_frame(shift: [f64; 2], brighter: f64) -> penumbra_camera::CameraFrame {
+    let (w, h) = (160u32, 96u32);
+    let luma = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (f64::from(x) - shift[0], f64::from(y) - shift[1])))
+        .map(|(x, y)| {
+            let v = 128.0
+                + brighter
+                + 45.0 * (x * 0.23 + 0.7).sin() * (y * 0.19).cos()
+                + 30.0 * ((x + 1.7 * y) * 0.09).sin()
+                + 20.0 * ((x * 0.05).cos() * (y * 0.07 + 1.0).sin() * 3.0).sin();
+            v.round().clamp(16.0, 235.0) as u8
+        })
+        .collect();
+    penumbra_camera::CameraFrame {
+        width: w,
+        height: h,
+        y: luma,
+        cb: vec![128; (w * h / 4) as usize],
+        cr: vec![128; (w * h / 4) as usize],
+        ..camera_frame(128, 128, 128)
+    }
+}
+
+/// Feeds a frame and returns `/of`'s motion once it has measured it: the median over the
+/// inner part (away from the edges, where content enters and leaves), in input pixels.
+fn flow_of(rig: &mut Rig, frame: penumbra_camera::CameraFrame) -> ([f64; 2], penumbra_gpu::Pixels) {
+    let v = rig.cooker.status(rig.id("/of")).map_or(0, |s| s.version);
+    rig.camera.feed(&penumbra_camera::Key::new("test", ""), frame);
+    let tex = rig.cook_until_new("/of", v);
+    let px = rig.gpu.read(&tex).unwrap();
+    let (w, h) = (px.width, px.height);
+    let median = |c: usize, scale: f64| {
+        let mut v: Vec<f64> = (12..h - 12)
+            .flat_map(|y| (12..w - 12).map(move |x| (x, y)))
+            .map(|(x, y)| f64::from(px.get(x, y).unwrap()[c]) * scale)
+            .collect();
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    ([median(0, 160.0), median(1, 96.0)], px)
+}
+
+#[test]
+fn opticalflow_finds_known_motion() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/cam", "tex.videoin", &[("device", "test".into())]),
+        create("/of", "tex.opticalflow", &[("size", Value::Int(160))]),
+        connect("/cam", "/of", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+
+    // The first frame has nothing to compare with; a still picture does not move.
+    let (first, px) = flow_of(&mut rig, moved_frame([0.0, 0.0]));
+    assert_eq!((px.width, px.height), (160, 96));
+    assert_eq!(first, [0.0, 0.0]);
+    // (Not byte for byte the same frame, which the camera node skips.)
+    let (still, _) = flow_of(&mut rig, lit_frame([0.0, 0.0], 0.4));
+    assert_eq!(still, [0.0, 0.0]);
+
+    // Slow, sub-pixel and fast motion (the last only through the pyramid), right and down
+    // positive; also in the opposite direction.
+    let mut at = [0.0, 0.0];
+    for step in [[1.5, 0.75], [0.6, -0.4], [7.0, 3.0], [-5.0, 4.0]] {
+        at = [at[0] + step[0], at[1] + step[1]];
+        let (got, px) = flow_of(&mut rig, moved_frame(at));
+        let err = ((got[0] - step[0]).powi(2) + (got[1] - step[1]).powi(2)).sqrt();
+        assert!(err < 0.15, "moved {step:?}, measured {got:?}");
+        let confident = f64::from(px.get(80, 48).unwrap()[2]);
+        assert!(confident > 0.5, "confidence {confident}");
+        assert_eq!(px.get(80, 48).unwrap()[3], 1.0);
+    }
+
+    // A flicker of the light is not motion, and does not throw off motion.
+    let (flicker, _) = flow_of(&mut rig, lit_frame(at, 12.0));
+    assert!(flicker[0].abs() < 0.1 && flicker[1].abs() < 0.1, "{flicker:?}");
+    at[1] += 2.0;
+    let (got, _) = flow_of(&mut rig, moved_frame(at));
+    assert!((got[0]).abs() < 0.15 && (got[1] - 2.0).abs() < 0.15, "{got:?}");
+
+    // As colours: moving right is mostly red, and bright.
+    rig.edit(&[set("/of.colors", Value::Bool(true))]);
+    at[0] += 3.0;
+    let (_, px) = flow_of(&mut rig, moved_frame(at));
+    let [r, g, b, a] = px.get(80, 48).unwrap();
+    assert!(r > 0.9 && g < 0.3 && b < 0.3 && a == 1.0, "{:?}", [r, g, b, a]);
 }
