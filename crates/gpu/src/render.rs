@@ -48,7 +48,7 @@ use penumbra_core::Error;
 use penumbra_mesh::Bounds;
 
 use crate::environment::EnvironmentMaps;
-use crate::geo::{Geo, Mat4, Material, Shading, VERTEX_BYTES, WIRE_BYTES, normal_matrix};
+use crate::geo::{Faces, Geo, Mat4, Material, Shading, VERTEX_BYTES, WIRE_BYTES, normal_matrix};
 use crate::projection::Overlay;
 use crate::{FORMAT, Gpu, Tex};
 
@@ -66,7 +66,7 @@ pub const MAX_SHADOWS: usize = 8;
 pub const MAX_PROJECTORS: usize = 4;
 const LIGHT_BYTES: u64 = 128;
 const FRAME_BYTES: u64 = 144 + MAX_LIGHTS as u64 * LIGHT_BYTES;
-const DRAW_BYTES: u64 = 192;
+const DRAW_BYTES: u64 = 208;
 const AO_BYTES: u64 = 96;
 /// Most draws (runs of one part and material, over all models) in one render.
 pub const MAX_DRAWS: usize = 1 << 16;
@@ -253,6 +253,10 @@ enum Pass {
     Tint,
     /// For ambient occlusion: the opaque pixels' positions and normals.
     Prepass,
+    /// The colour pass, first: depth only, of wireframes whose faces hide what is behind them.
+    Hide,
+    /// The colour pass, next: those wireframes' lines, where their depth is the nearest.
+    Over,
 }
 
 impl Pass {
@@ -269,16 +273,18 @@ impl Pass {
             Pass::Shadow => "fs_shadow",
             Pass::Tint => "fs_tint",
             Pass::Prepass => "fs_prepass",
+            Pass::Hide => "fs_hide",
+            Pass::Over => "fs_over",
         }
     }
 
     fn colour(self) -> bool {
-        matches!(self, Pass::Solid | Pass::Blend)
+        matches!(self, Pass::Solid | Pass::Blend | Pass::Hide | Pass::Over)
     }
 
     fn blend(self) -> Option<wgpu::BlendState> {
         match self {
-            Pass::Solid | Pass::Blend => Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            Pass::Solid | Pass::Blend | Pass::Over => Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             // Colour: what is there times what this surface lets through; alpha: the nearest
             // depth.
             Pass::Tint => Some(wgpu::BlendState {
@@ -615,7 +621,10 @@ impl Pipelines {
             ("vs", VERTEX_BYTES, &attributes[..3])
         };
         let target = |format: wgpu::TextureFormat| {
-            Some(wgpu::ColorTargetState { format, blend: pass.blend(), write_mask: wgpu::ColorWrites::ALL })
+            // Hiding faces write depth only.
+            let write_mask =
+                if pass == Pass::Hide { wgpu::ColorWrites::empty() } else { wgpu::ColorWrites::ALL };
+            Some(wgpu::ColorTargetState { format, blend: pass.blend(), write_mask })
         };
         let shadow = pass == Pass::Shadow;
         let targets = match pass {
@@ -643,7 +652,12 @@ impl Pipelines {
                 depth_stencil: (pass != Pass::Tint).then_some(wgpu::DepthStencilState {
                     format: DEPTH,
                     depth_write_enabled: Some(pass != Pass::Blend),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    // The lines over hiding faces pass where the faces' own depth is.
+                    depth_compare: Some(if pass == Pass::Over {
+                        wgpu::CompareFunction::LessEqual
+                    } else {
+                        wgpu::CompareFunction::Less
+                    }),
                     stencil: wgpu::StencilState::default(),
                     // Against acne where a surface is seen at a slant from the light; the rest is
                     // the colour pass's normal offset.
@@ -1109,6 +1123,9 @@ impl Renderer {
             wire: bool,
             /// Shows nothing but hides what is behind it: drawn before everything else.
             occluder: bool,
+            /// A wireframe whose faces hide what is behind them: their depth first, then its
+            /// lines, before everything else in the colour pass.
+            hides: bool,
             /// Distance of its middle along the view, for the sorting.
             depth: f64,
         }
@@ -1133,6 +1150,9 @@ impl Renderer {
                 };
                 let wire = m.wire.is_some();
                 let occluder = m.shading == Shading::Occluder && !look.shade_all;
+                let hides = m.wire.is_some_and(|w| w.faces == Faces::Hidden);
+                // Filled faces are see-through where their colour is.
+                let fill_clear = m.wire.is_some_and(|w| w.faces == Faces::Open || w.fill[3] < OPAQUE);
                 // A geometry's material replaces the file's colour and textures; without one
                 // the file's show as they are.
                 let tex = match (look.surface, item.material.as_deref()) {
@@ -1150,7 +1170,8 @@ impl Renderer {
                 // A texture may hold see-through texels anywhere; a colour says so itself. A
                 // wireframe is mostly see-through, an occluder never.
                 let clear = !occluder
-                    && (wire
+                    && !hides
+                    && (fill_clear
                         || match look.surface {
                             Surface::Material => color[3] < OPAQUE || tex.is_some(),
                             Surface::Texture => tex.is_some(),
@@ -1179,6 +1200,7 @@ impl Renderer {
                     clear,
                     wire,
                     occluder,
+                    hides,
                     depth: if depth.is_finite() { depth } else { 0.0 },
                 });
             }
@@ -1187,6 +1209,14 @@ impl Renderer {
         // show through.
         let mut order: Vec<usize> = (0..calls.len()).collect();
         order.sort_by_key(|k| calls.get(*k).is_none_or(|c| !c.occluder));
+        // Wireframes with hiding faces, which the colour pass draws on their own.
+        let hiding: Vec<usize> =
+            (0..calls.len()).filter(|k| calls.get(*k).is_some_and(|c| c.hides)).collect();
+        let hide_pipelines = if hiding.is_empty() {
+            None
+        } else {
+            Some((pipes(samples, Pass::Hide, cull)?, pipes(samples, Pass::Over, cull)?))
+        };
         // The wireframe vertices of every model drawn as one.
         let mut wires: HashMap<usize, wgpu::Buffer> = HashMap::new();
         for c in calls.iter().filter(|c| c.wire) {
@@ -1641,7 +1671,20 @@ impl Renderer {
                 if pass.colour() {
                     rp.set_bind_group(3, &light_group, &[]);
                 }
-                draw_some(&mut rp, draw_group, pipeline, &mut order.iter().copied());
+                if pass == Pass::Solid
+                    && let Some((hide, over)) = &hide_pipelines
+                {
+                    // The hiding faces' depth, then their lines where it is the nearest: the
+                    // faces behind (their own back included) fail, and so does whatever is
+                    // drawn behind them later.
+                    draw_some(&mut rp, draw_group, hide, &mut hiding.iter().copied());
+                    draw_some(&mut rp, draw_group, over, &mut hiding.iter().copied());
+                    rp.set_pipeline(&pipeline.plain);
+                    let rest: Vec<usize> = order.iter().copied().filter(|k| !hiding.contains(k)).collect();
+                    draw_some(&mut rp, draw_group, pipeline, &mut rest.into_iter());
+                } else {
+                    draw_some(&mut rp, draw_group, pipeline, &mut order.iter().copied());
+                }
                 // The see-through pixels over the opaque ones, farthest first.
                 if pass == Pass::Solid {
                     for k in &behind {
@@ -1856,11 +1899,21 @@ fn draw_slot(
     for v in [m.metallic.clamp(0.0, 1.0), m.roughness.clamp(0.0, 1.0)] {
         b.extend_from_slice(&(if v.is_finite() { v } else { 0.0 }).to_le_bytes());
     }
-    // The wireframe's width in pixels (0: the whole surface) and whether it leaves out the edges
-    // inside flat polygons.
-    let (width, polygons) = m.wire.map_or((0.0, false), |w| (w.width, w.polygons));
+    // The wireframe's width in pixels (0: the whole surface), whether it leaves out the edges
+    // inside flat polygons, what its faces show; then their colour.
+    let (width, polygons, faces, fill) =
+        m.wire.map_or((0.0, false, Faces::Open, [0.0; 4]), |w| (w.width, w.polygons, w.faces, w.fill));
     let width = if width.is_finite() { width.clamp(0.0, 256.0) } else { 1.0 };
-    for v in [width, if polygons { 1.0 } else { 0.0 }] {
+    let faces = match faces {
+        Faces::Open => 0.0,
+        Faces::Filled => 1.0,
+        Faces::Hidden => 2.0,
+    };
+    for v in [width, if polygons { 1.0 } else { 0.0 }, faces, 0.0] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in fill {
+        let v = if v.is_finite() { v.clamp(0.0, 1e4) } else { 0.0 };
         b.extend_from_slice(&v.to_le_bytes());
     }
     b.resize(DRAW_BYTES as usize, 0);

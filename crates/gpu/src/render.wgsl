@@ -10,7 +10,9 @@
 //
 // Wireframes draw every triangle's corners on their own (vs_wire), with barycentric
 // coordinates: a pixel's distance to the nearest edge, in pixels, gives the line's coverage in
-// every pass. Occluders draw first, write depth and leave the colour as it is.
+// every pass; the faces between them show nothing, a fill colour, or nothing while hiding what
+// is behind them (fs_hide writes their depth first, fs_over the lines where it is the nearest).
+// Occluders draw first, write depth and leave the colour as it is.
 
 // Alpha from which a pixel is opaque (render::OPAQUE).
 const OPAQUE: f32 = 0.998;
@@ -66,8 +68,10 @@ struct Draw {
     metallic: f32,
     roughness: f32,
     // x: a wireframe's line width in pixels, 0 for a whole surface; y: 1 where the edges inside
-    // flat polygons are left out.
+    // flat polygons are left out; z: its faces, 0 open, 1 filled, 2 hiding.
     wire: vec4f,
+    // The filled faces' colour, straight alpha.
+    fill: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -94,7 +98,8 @@ struct Draw {
 const PI: f32 = 3.14159265;
 
 struct VOut {
-    @builtin(position) pos: vec4f,
+    // Invariant: hiding faces and their lines must reach the same depth in two pipelines.
+    @builtin(position) @invariant pos: vec4f,
     @location(0) world: vec3f,
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
@@ -402,6 +407,27 @@ fn pbr(p: vec3f, n: vec3f, albedo: vec3f, a: f32, open: f32) -> vec3f {
     return albedo * a * diffuse + reflected;
 }
 
+// A wireframe's faces: 0 open, 1 filled, 2 hiding; 0 for a whole surface.
+fn faces() -> u32 {
+    return select(0u, u32(draw.wire.z + 0.5), draw.wire.x > 0.0);
+}
+
+// What the surface shows before any light, a wireframe's lines (`line`: their coverage) over its
+// faces: premultiplied.
+fn surface(t: vec4f, line: f32) -> vec4f {
+    let c = cover(t) * line;
+    if faces() != 1u {
+        return c;
+    }
+    let f = vec4f(draw.fill.rgb * draw.fill.a, draw.fill.a);
+    return c + f * (1.0 - c.a);
+}
+
+// How much the surface blocks light and view: its alpha, but hiding faces block all.
+fn opacity(t: vec4f, line: f32) -> f32 {
+    return select(surface(t, line).a, 1.0, faces() == 2u);
+}
+
 // What the surface shows before any light: premultiplied, as the colour pass starts from.
 fn cover(t: vec4f) -> vec4f {
     switch frame.mode {
@@ -482,7 +508,7 @@ fn shade(v: VOut, open: f32) -> vec4f {
     var base: vec4f;
     switch frame.mode {
         case 0u, 1u: {
-            base = cover(t) * line;
+            base = surface(t, line);
         }
         case 2u: {
             base = vec4f(palette(draw.part), 1.0);
@@ -519,6 +545,18 @@ fn shade(v: VOut, open: f32) -> vec4f {
     return base;
 }
 
+// Wireframes with hiding faces: their depth, no colour (the pipeline writes none).
+@fragment
+fn fs_hide(v: VOut) -> @location(0) vec4f {
+    return vec4f(0.0);
+}
+
+// ... then their lines where that depth is the nearest; the faces between leave the colour.
+@fragment
+fn fs_over(v: VOut) -> @location(0) vec4f {
+    return shade(v, 1.0);
+}
+
 // For ambient occlusion, the opaque pixels as fs_solid draws them: the position and the distance
 // along the view (0: nothing), and the normal turned to the viewer.
 struct Prepass {
@@ -528,7 +566,7 @@ struct Prepass {
 
 @fragment
 fn fs_prepass(v: VOut) -> Prepass {
-    if cover(textureSample(tex, samp, v.uv)).a * lines(v) < OPAQUE {
+    if opacity(textureSample(tex, samp, v.uv), lines(v)) < OPAQUE {
         discard;
     }
     var n = v.normal;
@@ -546,7 +584,7 @@ fn fs_prepass(v: VOut) -> Prepass {
 // shadow; the tint pass takes the rest.
 @fragment
 fn fs_shadow(v: VOut) {
-    if cover(textureSample(tex, samp, v.uv)).a * lines(v) < OPAQUE {
+    if opacity(textureSample(tex, samp, v.uv), lines(v)) < OPAQUE {
         discard;
     }
 }
@@ -558,7 +596,7 @@ fn fs_shadow(v: VOut) {
 // all, and a cut-out's colourless clear texels tint nothing.
 @fragment
 fn fs_tint(v: VOut) -> @location(0) vec4f {
-    let c = cover(textureSample(tex, samp, v.uv)) * lines(v);
+    let c = surface(textureSample(tex, samp, v.uv), lines(v));
     if c.a >= OPAQUE || c.a < 0.002 {
         discard;
     }
@@ -568,7 +606,8 @@ fn fs_tint(v: VOut) -> @location(0) vec4f {
 }
 
 // The measuring and data passes: an occluder writes nothing (as the cleared target) but hides
-// what is behind it; a wireframe only where its lines cover at least half the pixel.
+// what is behind it; a wireframe with open faces only where its lines cover at least half the
+// pixel, one with filled or hiding faces as a whole surface.
 @fragment
 fn fs_measure(v: VOut) -> @location(0) vec4f {
     let d = vec4f(dpdx(v.uv), dpdy(v.uv));
@@ -576,7 +615,7 @@ fn fs_measure(v: VOut) -> @location(0) vec4f {
     if draw.shading == 3u {
         return vec4f(0.0);
     }
-    if line < 0.5 {
+    if line < 0.5 && faces() == 0u {
         discard;
     }
     return d;
@@ -588,7 +627,7 @@ fn fs_data(v: VOut) -> @location(0) vec4f {
     if draw.shading == 3u {
         return vec4f(0.0);
     }
-    if line < 0.5 {
+    if line < 0.5 && faces() == 0u {
         discard;
     }
     return vec4f(v.uv, f32(draw.part + 1u), dot(frame.view_z, vec4f(v.world, 1.0)));

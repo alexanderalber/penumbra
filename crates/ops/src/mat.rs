@@ -12,7 +12,7 @@ use std::sync::Arc;
 use half::f16;
 use penumbra_core::{Curve, Error, ParamSpec, Unit};
 use penumbra_gpu::environment::EnvironmentMaps;
-use penumbra_gpu::geo::{Material, Model, Shading, Wire};
+use penumbra_gpu::geo::{Faces, Material, Model, Shading, Wire};
 use penumbra_gpu::image::Decoded;
 use penumbra_gpu::render::{Environment, Light, LightKind, Renderer};
 use penumbra_gpu::{Geo, Gpu, Mat, Tex};
@@ -66,7 +66,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(MatNode::new(Shading::Phong)) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("mat.wireframe", "Only the edges, as lines of a width in pixels, unlit")
+        NodeDesc::new("mat.wireframe", "The edges as lines of a width in pixels, the faces open, filled or hiding; unlit")
             .param(
                 ParamSpec::color("color", [1.0; 4])
                     .doc("The lines' colour: linear RGBA, straight alpha; times the texture input"),
@@ -81,6 +81,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(ParamSpec::choice("edges", &["polygons", "triangles"]).doc(
                 "polygons: leave out edges inside flat faces (a quad's diagonal); triangles: every edge",
             ))
+            .param(ParamSpec::choice("faces", &["open", "filled", "hidden"]).doc(
+                "open: nothing, the lines behind show through; filled: the fill colour; hidden: nothing, but they hide what is behind them, so only the lines in front show",
+            ))
+            .param(
+                ParamSpec::color("fill", [0.0, 0.0, 0.0, 1.0])
+                    .doc("The faces' colour where `faces` is filled: linear RGBA, straight alpha"),
+            )
             .input("texture", DataKind::Tex)
             .output("out", DataKind::Mat),
         || Box::new(MatNode::wire()) as Box<dyn Operator>,
@@ -183,7 +190,14 @@ impl Operator for MatNode {
                 "triangles" => false,
                 other => return Err(CookError::failed(format!("unknown edges `{other}`"))),
             };
-            material.wire = Some(Wire { width: cx.float("line_width")? as f32, polygons });
+            let faces = match cx.text("faces")? {
+                "open" => Faces::Open,
+                "filled" => Faces::Filled,
+                "hidden" => Faces::Hidden,
+                other => return Err(CookError::failed(format!("unknown faces `{other}`"))),
+            };
+            let fill = rgba(cx, "fill")?;
+            material.wire = Some(Wire { width: cx.float("line_width")? as f32, polygons, faces, fill });
         }
         if self.shading == Shading::Phong {
             let [r, g, b, _] = rgba(cx, "specular")?;

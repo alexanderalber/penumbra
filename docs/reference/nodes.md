@@ -1327,7 +1327,7 @@ Outputs: `out` (mat).
 
 ### mat.wireframe
 
-Only the edges, as lines of a width in pixels, unlit
+The edges as lines of a width in pixels, the faces open, filled or hiding; unlit
 
 Inputs:
 
@@ -1340,6 +1340,8 @@ Outputs: `out` (mat).
 | `color` | colour | `[1, 1, 1, 1]` |  | The lines' colour: linear RGBA, straight alpha; times the texture input |
 | `line_width` | float | `1.5` | 0.5 to 8 px (soft) | The lines' width in pixels of the render |
 | `edges` | polygons \| triangles | `"polygons"` |  | polygons: leave out edges inside flat faces (a quad's diagonal); triangles: every edge |
+| `faces` | open \| filled \| hidden | `"open"` |  | open: nothing, the lines behind show through; filled: the fill colour; hidden: nothing, but they hide what is behind them, so only the lines in front show |
+| `fill` | colour | `[0, 0, 0, 1]` |  | The faces' colour where `faces` is filled: linear RGBA, straight alpha |
 
 ## light
 
