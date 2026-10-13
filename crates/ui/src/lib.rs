@@ -11,6 +11,7 @@ pub mod changes;
 mod clipboard;
 mod components;
 pub mod control;
+mod cook_meter;
 pub mod editor;
 pub mod headless;
 pub mod helpers;

@@ -13,6 +13,7 @@ pub mod commands;
 pub mod components;
 pub mod control;
 pub mod engine;
+pub mod meter;
 pub mod navigation;
 pub mod osc;
 pub mod pictures;

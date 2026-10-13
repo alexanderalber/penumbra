@@ -523,13 +523,7 @@ impl PenumbraApp {
                 if let Some(t) = view.time {
                     ui.monospace(format!("{:>7}  {:>8.2} s", t.frame, t.seconds()));
                 }
-                ui.label(
-                    // Monospace and padded, so a cook time growing a digit does not shift
-                    // everything to its right.
-                    RichText::new(format!("cook {:>6.2} ms", view.elapsed.as_secs_f64() * 1000.0))
-                        .monospace()
-                        .color(theme::TEXT_WEAK),
-                );
+                crate::cook_meter::status(ui, &self.engine, &mut self.auto);
                 ui.separator();
                 self.helpers.status(ui, board, view.pace, &mut self.auto);
                 ui.separator();

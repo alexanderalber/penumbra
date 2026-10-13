@@ -782,6 +782,9 @@ fn nothing_is_saved_before_the_saved_state_was_read() {
     assert!(stats["passes"].as_u64().unwrap() > 0, "{stats}");
     let p = f.call("system.process", json!({}));
     assert!(p["process"]["private_bytes"].as_u64().unwrap() > 0, "{p}");
+    let m = f.call("cook.meter", json!({"samples": true}));
+    assert!(m["passes"].as_u64().unwrap() > 0 && m["smoothed_ms"].as_f64().unwrap() > 0.0, "{m}");
+    assert_eq!(m["passes"].as_u64(), m["samples"].as_array().map(|s| s.len() as u64), "{m}");
 }
 
 #[path = "osc_tests.rs"]

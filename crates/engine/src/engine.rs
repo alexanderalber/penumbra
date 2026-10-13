@@ -86,8 +86,10 @@ use penumbra_ops::tex::render::Renders;
 use penumbra_osc::Hub;
 use penumbra_project::Session;
 use penumbra_spacenav::SpaceNav;
+use penumbra_system::LoadMeter;
 use serde::Serialize;
 
+use crate::meter::CookMeter;
 use crate::osc::OscShared;
 use crate::pictures::GeoPictures;
 use crate::state::{RestoreReport, SaveReport, StateKeeper, StateShared};
@@ -284,6 +286,8 @@ struct ViewShared {
     frame: Mutex<Arc<ViewFrame>>,
     output: Mutex<Arc<OutputFrame>>,
     output_ready: Condvar,
+    /// The pass times of the last seconds.
+    meter: Mutex<CookMeter>,
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -398,6 +402,9 @@ impl CookState {
         let free = self.draw_free_views(&net, &request.free);
         self.publish(&net, &request, now, free);
         self.stats.add(started, self.last.elapsed, due, self.clock.now().rate.period());
+        // The whole pass, not only the cooking: outputs, free views and publishing take from
+        // the same frame.
+        lock(&self.view.meter).add(started, started.elapsed());
     }
 
     /// The free views the UI asks for, drawn from this pass's results.
@@ -529,6 +536,8 @@ pub struct Engine {
     spacenav: SpaceNav,
     /// The `out.pacer` ticker, one thread per open project.
     ticker: Arc<Ticker>,
+    /// CPU and GPU load, sampled while asked for.
+    load: LoadMeter,
     shut: AtomicBool,
 }
 
@@ -560,6 +569,7 @@ impl Engine {
             camera: CameraHub::new(),
             spacenav: SpaceNav::new(),
             ticker: Arc::new(Ticker::default()),
+            load: LoadMeter::new(),
             shut: AtomicBool::new(false),
         });
         engine.launch(&session, 0)?;
@@ -842,12 +852,27 @@ impl Engine {
         &self.camera
     }
 
-    /// The project's state directory.
     /// The 3D mouse; [`SpaceNav::start`] opens it.
     pub fn spacenav(&self) -> &SpaceNav {
         &self.spacenav
     }
 
+    /// CPU and GPU load; sampled on a thread of its own while asked for.
+    pub fn load(&self) -> &LoadMeter {
+        &self.load
+    }
+
+    /// The pass times of the last seconds ([`crate::meter`]).
+    pub fn cook_meter(&self) -> CookMeter {
+        lock(&self.view.meter).clone()
+    }
+
+    /// The smoothed pass time in milliseconds, `None` before the first pass.
+    pub fn cook_smoothed(&self) -> Option<f64> {
+        lock(&self.view.meter).smoothed()
+    }
+
+    /// The project's state directory.
     pub fn state_dir(&self) -> std::path::PathBuf {
         crate::state::dir_of(self.session().dir())
     }
@@ -1017,6 +1042,7 @@ impl Engine {
         self.audio.shutdown();
         self.camera.shutdown();
         self.spacenav.shutdown();
+        self.load.shutdown();
     }
 }
 
