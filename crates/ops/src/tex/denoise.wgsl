@@ -1,6 +1,8 @@
 // tex.denoise: a running average over the frames (in0 the new frame, in1 the node's last
 // result) that lets go wherever the picture moves, plus an edge-keeping smoothing within the
-// frame for what moves, where the average cannot help. Differences are judged on the square
+// frame for what moves, where the average cannot help. Brightness (luma) and colour (the rest)
+// get their own strengths: the pass runs the filters once and mixes each part by its own
+// amounts. Differences are judged on the square
 // root of the values, near enough to the eye's response that `motion` means about the same in
 // dark and bright parts. `history` (set by the node, not a user param) is 0 when there is no
 // last result yet.
@@ -50,15 +52,19 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     }
     mean /= 9.0;
     let hist = pn_at(in1, p, size);
+    // Brightness counts fully, a single channel half: colour noise is often stronger than
+    // brightness noise, and a real movement changes the brightness too.
     let d = abs(pn_perc(mean) - pn_perc(hist));
-    let diff = max(max(d.r, d.g), max(d.b, d.a));
+    let dl = abs(sqrt(max(pn_luma(mean.rgb), 0.0)) - sqrt(max(pn_luma(hist.rgb), 0.0)));
+    let diff = max(max(dl, d.a), 0.5 * max(d.r, max(d.g, d.b)));
     let history = clamp(params.history, 0.0, 1.0);
     let still = (1.0 - smoothstep(0.5 * tol, tol, diff)) * history;
 
     // Moving parts: a 5 x 5 bilateral filter, which leaves edges stronger than `motion` alone.
-    var fresh = cur;
-    let amount = clamp(params.spatial, 0.0, 1.0) * (1.0 - still);
-    if (amount > 0.0) {
+    let moving = 1.0 - still;
+    let amount = clamp(vec2f(params.spatial, params.color_spatial), vec2f(0.0), vec2f(1.0)) * moving;
+    var soft = cur;
+    if (max(amount.x, amount.y) > 0.0) {
         let pc = pn_perc(cur);
         var sum = vec4f(0.0);
         var total = 0.0;
@@ -72,11 +78,16 @@ fn main(v: PnVertex) -> @location(0) vec4f {
                 total += w;
             }
         }
-        fresh = mix(cur, sum / total, amount);
+        soft = sum / total;
     }
 
-    let keep = clamp(1.0 - 1.0 / max(params.frames, 1.0), 0.0, 1.0) * still;
-    let out = mix(fresh, hist, keep);
+    let frames = max(vec2f(params.frames, params.color_frames), vec2f(1.0));
+    let keep = clamp(1.0 - 1.0 / frames, vec2f(0.0), vec2f(1.0)) * still;
+    // The whole picture filtered with the brightness amounts and with the colour amounts; the
+    // result takes its luma from the first and the rest from the second.
+    let bright = mix(mix(cur, soft, amount.x), hist, keep.x);
+    let colour = mix(mix(cur, soft, amount.y), hist, keep.y);
+    let out = vec4f(colour.rgb + (pn_luma(bright.rgb) - pn_luma(colour.rgb)), bright.a);
     let h = pn_hash(vec3u(vec2u(p), u32(pn_time.frame)));
     return vec4f(
         pn_round(out.r, pn_unit(h.x)),

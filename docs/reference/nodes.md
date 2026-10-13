@@ -165,9 +165,11 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `frames` | float | `8` | 1 to 64 (soft) | About how many frames are averaged where the picture is still; more is calmer; 1: off |
+| `frames` | float | `8` | 1 to 64 (soft) | About how many frames are averaged where the picture is still, for brightness noise; more is calmer; 1: off |
+| `color_frames` | float | `8` | 1 to 64 (soft) | The same for colour noise (coloured speckles) |
 | `motion` | float | `0.06` | 0 to 0.3 (soft) | A change from which a pixel counts as moving and shows the new frame at once (on the square root of the values, so it means about the same in dark and bright parts). Raise it when the noise still flickers, lower it when moving things leave trails |
-| `spatial` | float | `0.5` | 0 to 1 (soft) | Smooths what moves, where the average cannot help, keeping edges stronger than `motion`; 0: off |
+| `spatial` | float | `0.5` | 0 to 1 (soft) | Smooths the brightness of what moves, where the average cannot help, keeping edges stronger than `motion`; 0: off |
+| `color_spatial` | float | `0.5` | 0 to 1 (soft) | The same for the colour; the eye forgives soft colour more than soft brightness |
 | `reset` *(more)* | bool | `false` |  | Forget the average, while on |
 
 ### tex.displace

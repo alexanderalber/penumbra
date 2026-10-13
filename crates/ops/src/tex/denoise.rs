@@ -1,6 +1,7 @@
 //! `tex.denoise`: calms a noisy camera picture. A running average over the frames where the
 //! picture is still, the new frame at once where it moves, and there an edge-keeping smoothing
-//! within the frame instead (`denoise.wgsl`). One pass per new input frame; the node's last
+//! within the frame instead (`denoise.wgsl`), each with its own strength for brightness and for
+//! colour. One pass per new input frame; the node's last
 //! result is the average so far.
 
 use std::sync::Arc;
@@ -26,7 +27,16 @@ fn desc() -> NodeDesc {
             .clamp(1.0, 256.0)
             .range(1.0, 64.0)
             .curve(Curve::Log)
-            .doc("About how many frames are averaged where the picture is still; more is calmer; 1: off"),
+            .doc(
+                "About how many frames are averaged where the picture is still, for brightness noise; more                  is calmer; 1: off",
+            ),
+    )
+    .param(
+        ParamSpec::float("color_frames", 8.0)
+            .clamp(1.0, 256.0)
+            .range(1.0, 64.0)
+            .curve(Curve::Log)
+            .doc("The same for colour noise (coloured speckles)"),
     )
     .param(ParamSpec::float("motion", 0.06).clamp(0.0, 1.0).range(0.0, 0.3).curve(Curve::Power(2.0)).doc(
         "A change from which a pixel counts as moving and shows the new frame at once (on the \
@@ -34,8 +44,14 @@ fn desc() -> NodeDesc {
                      it when the noise still flickers, lower it when moving things leave trails",
     ))
     .param(ParamSpec::float("spatial", 0.5).clamp(0.0, 1.0).range(0.0, 1.0).doc(
-        "Smooths what moves, where the average cannot help, keeping edges stronger than `motion`; 0: off",
+        "Smooths the brightness of what moves, where the average cannot help, keeping edges stronger          than `motion`; 0: off",
     ))
+    .param(
+        ParamSpec::float("color_spatial", 0.5)
+            .clamp(0.0, 1.0)
+            .range(0.0, 1.0)
+            .doc("The same for the colour; the eye forgives soft colour more than soft brightness"),
+    )
     .param(ParamSpec::bool("reset", false).more().doc("Forget the average, while on"))
     .input("in", DataKind::Tex)
     .output("out", DataKind::Tex)

@@ -69,3 +69,9 @@ where it moves (a change beyond `motion`) it shows the new frame at once and smo
 within the frame instead (`spatial`), keeping edges. Raise `motion` when the noise still
 flickers; lower it, or lower `frames`, when moving things leave trails. It costs about half a
 millisecond per 1080p frame.
+
+Brightness noise (grain) and colour noise (coloured speckles) have their own strengths:
+`frames` and `spatial` for the brightness, `color_frames` and `color_spatial` for the colour.
+Colour can usually take more than brightness before the picture looks soft. `frames` is not a
+count of frames kept but how fast the average follows (each new frame weighs `1 / frames`), so
+fractions such as 2.5 are meaningful, and a channel can drive it smoothly.
