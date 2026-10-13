@@ -166,7 +166,7 @@ fn nodes_md(types: &NodeTypes) -> String {
 
 fn commands_md(registry: &Registry) -> String {
     let mut out = format!(
-        "{HEADER}\n\n# Command reference\n\nEvery command of the running app, as `pn ctl <command>` \
+        "{HEADER}\n\n# Command reference\n\nEvery command of the running app, as `penumbra-cli ctl <command>` \
          or a control-channel request sends it (see [Control](../control.md)). `{{a, b?}}` lists \
          the params, `?` marks optional ones.\n\n"
     );

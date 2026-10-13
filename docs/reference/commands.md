@@ -2,7 +2,7 @@
 
 # Command reference
 
-Every command of the running app, as `pn ctl <command>` or a control-channel request sends it (see [Control](../control.md)). `{a, b?}` lists the params, `?` marks optional ones.
+Every command of the running app, as `penumbra-cli ctl <command>` or a control-channel request sends it (see [Control](../control.md)). `{a, b?}` lists the params, `?` marks optional ones.
 
 
 ## general

@@ -1,4 +1,4 @@
-//! `pn soak`: runs the engine headless on a generated network for a while and watches it for
+//! `penumbra-cli soak`: runs the engine headless on a generated network for a while and watches it for
 //! leaks and stalls.
 //!
 //! The network has what a long installation has: a feedback loop (with its state saved to disk
@@ -26,7 +26,7 @@ use penumbra_project::{Content, Session};
 use serde::Serialize;
 use serde_json::{Value as Json, json};
 
-pub const USAGE: &str = "pn soak [--minutes N | --seconds N] [--out DIR] [--sample S] [--state-interval S] \
+pub const USAGE: &str = "penumbra-cli soak [--minutes N | --seconds N] [--out DIR] [--sample S] [--state-interval S] \
 [--restore-every S] [--size WxH] [--software] [--mem-cap-mb M]";
 
 const SHADER: &str = "// Soak test shader: ripples over the input.
@@ -257,7 +257,7 @@ pub fn run(args: &[String]) -> Result<ExitCode, String> {
 fn soak(rig: &Rig, o: &Options) -> Result<ExitCode, String> {
     let choice = if o.software { AdapterChoice::Software } else { AdapterChoice::Hardware };
     let gpu = Gpu::headless(choice).map_err(|e| e.0)?;
-    eprintln!("pn soak: {} for {:.0} s, output in {}", gpu.name(), o.seconds, o.out.display());
+    eprintln!("penumbra-cli soak: {} for {:.0} s, output in {}", gpu.name(), o.seconds, o.out.display());
     rig.engine.attach_gpu(gpu).map_err(|e| e.0)?;
     wait_until(Duration::from_secs(10), || !rig.engine.state().holding());
     rig.call("state.config", json!({"interval": o.state_interval}))?;

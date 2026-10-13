@@ -1,8 +1,8 @@
-//! A counting global allocator for `pn`: how many bytes the Rust heap holds right now, so the
+//! A counting global allocator for `penumbra-cli`: how many bytes the Rust heap holds right now, so the
 //! soak test can tell a leak in our code (the Rust heap grows) from memory the GPU driver or the
 //! operating system holds for the process (private bytes grow, the Rust heap does not).
 //!
-//! The only `unsafe` in `pn`: `GlobalAlloc` is an unsafe trait. Every method forwards to the
+//! The only `unsafe` in `penumbra-cli`: `GlobalAlloc` is an unsafe trait. Every method forwards to the
 //! system allocator unchanged and only counts.
 #![allow(unsafe_code)]
 

@@ -19,7 +19,7 @@ use serde_json::{Value, json};
 
 /// Port used when neither `--port` nor [`PORT_ENV`] says otherwise.
 pub const DEFAULT_PORT: u16 = 9880;
-/// Environment variable that overrides [`DEFAULT_PORT`] for both the app and `pn`.
+/// Environment variable that overrides [`DEFAULT_PORT`] for both the app and `penumbra-cli`.
 pub const PORT_ENV: &str = "PENUMBRA_PORT";
 /// Longest accepted request line in bytes, without the newline.
 pub const MAX_LINE: usize = 4 * 1024 * 1024;

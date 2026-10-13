@@ -239,6 +239,18 @@ fn thread_count() -> Result<u64, Error> {
     Ok(n)
 }
 
+/// Whether this process is the only one attached to its console. A terminal attaches itself (or
+/// its shell) too, so a count of one means the console was created for this process alone.
+pub fn own_console() -> bool {
+    use windows_sys::Win32::System::Console::GetConsoleProcessList;
+
+    let mut ids = [0u32; 2];
+    // SAFETY: a buffer of `ids.len()` process ids; the call writes at most that many and returns
+    // the total count (0 on failure or without a console).
+    let n = unsafe { GetConsoleProcessList(ids.as_mut_ptr(), ids.len() as u32) };
+    n == 1
+}
+
 /// Puts this process into a new job object that limits its committed memory to `bytes`: an
 /// allocation beyond fails instead of taking the machine down (for measurement runs).
 pub fn cap_memory(bytes: u64) -> Result<(), Error> {
