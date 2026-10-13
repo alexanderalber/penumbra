@@ -1151,6 +1151,8 @@ impl Renderer {
             /// measuring passes, its faces' depth first, then its lines where that is the
             /// nearest.
             hides: bool,
+            /// Drawn in the shadow and tint passes.
+            shadows: bool,
             /// Distance of its middle along the view, for the sorting.
             depth: f64,
         }
@@ -1226,6 +1228,7 @@ impl Renderer {
                     wire,
                     occluder,
                     hides,
+                    shadows: m.shadows,
                     depth: if depth.is_finite() { depth } else { 0.0 },
                 });
             }
@@ -1270,7 +1273,12 @@ impl Renderer {
                 pipes(samples, Pass::Blend, Some(wgpu::Face::Back))?,
             ]
         };
-        let tinted = layers > 0 && !behind.is_empty();
+        // What casts shadows: whole, and the see-through draws among it tinting the light.
+        let casting: Vec<usize> =
+            (0..calls.len()).filter(|k| calls.get(*k).is_some_and(|c| c.shadows)).collect();
+        let tinting: Vec<usize> =
+            behind.iter().copied().filter(|k| calls.get(*k).is_some_and(|c| c.shadows)).collect();
+        let tinted = layers > 0 && !tinting.is_empty();
         let tint_pipeline = if tinted { Some(pipes(1, Pass::Tint, None)?) } else { None };
         if !draw_bytes.is_empty() {
             let need = draw_bytes.len() as u64;
@@ -1546,7 +1554,7 @@ impl Renderer {
                         });
                         rp.set_pipeline(&pipeline.plain);
                         rp.set_bind_group(0, &from, &[]);
-                        draw_some(&mut rp, draw_group, pipeline, &mut (0..calls.len()));
+                        draw_some(&mut rp, draw_group, pipeline, &mut casting.iter().copied());
                     }
                     if let (Some(tint), Some(layer)) = (&tint_pipeline, tints.layer_views.get(k)) {
                         // Everything passes, nothing is near (half float's largest).
@@ -1569,7 +1577,7 @@ impl Renderer {
                         });
                         rp.set_pipeline(&tint.plain);
                         rp.set_bind_group(0, &from, &[]);
-                        draw_some(&mut rp, draw_group, tint, &mut behind.iter().copied());
+                        draw_some(&mut rp, draw_group, tint, &mut tinting.iter().copied());
                     }
                 }
             }

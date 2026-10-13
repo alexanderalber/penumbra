@@ -714,7 +714,7 @@ fn a_material_replaces_the_files_colour() {
 }
 
 /// A projector light throws its texture where its camera looks; directional, spot and projector
-/// lights cast shadows, and what is transparent casts none.
+/// lights cast shadows, and what is transparent, or its material says so, casts none.
 #[test]
 fn projectors_throw_their_picture_and_lights_cast_shadows() {
     let Some(gpu) = gpu() else { return };
@@ -794,6 +794,19 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
         connect("/lit_wall", "/with_glass", 0),
         connect("/glass_at", "/with_glass", 1),
     ]);
+    // The box as a wireframe with filled faces, casting shadows and not.
+    for (name, shadows) in [("wire_casting", true), ("wire_casting_none", false)] {
+        let (mat, on, merged) = (format!("/{name}_mat"), format!("/{name}_on"), format!("/{name}"));
+        ops.extend([
+            create(&mat, "mat.wireframe", &[("faces", "filled".into()), ("shadows", Value::Bool(shadows))]),
+            create(&on, "geo.material", &[]),
+            connect("/box_at", &on, 0),
+            connect(&mat, &on, 1),
+            create(&merged, "geo.merge", &[]),
+            connect("/lit_wall", &merged, 0),
+            connect(&on, &merged, 1),
+        ]);
+    }
     // (render, geo, light)
     let cases = [
         ("/thrown", "/lit_wall", "/projector"),
@@ -802,6 +815,8 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
         ("/spot_shadow", "/with_box", "/spot"),
         ("/side_shadow", "/with_box", "/side"),
         ("/glass_shadow", "/with_glass", "/sun"),
+        ("/wire_shadow", "/wire_casting", "/sun"),
+        ("/wire_shadow_none", "/wire_casting_none", "/sun"),
     ];
     for (path, geo, light) in cases {
         ops.push(cam(path));
@@ -850,6 +865,8 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
         ("/spot_shadow", true),
         ("/side_shadow", true),
         ("/glass_shadow", false),
+        ("/wire_shadow", true),
+        ("/wire_shadow_none", false),
     ] {
         let px = wait(&mut rig, path);
         let open = px_of(&px, -1.2, 0.0);
@@ -869,6 +886,8 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
     look(&mut rig, "/sun_shadow", "shadow_sun", (96, 64));
     look(&mut rig, "/spot_shadow", "shadow_spot", (96, 64));
     look(&mut rig, "/side_shadow", "shadow_projector", (96, 64));
+    look(&mut rig, "/wire_shadow", "shadow_wireframe", (96, 64));
+    look(&mut rig, "/wire_shadow_none", "shadow_wireframe_none", (96, 64));
     // A projector needs a camera.
     rig.edit(&[create("/lonely", "light.projector", &[])]);
     rig.cook("/lonely");
