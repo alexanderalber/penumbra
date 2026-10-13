@@ -1,7 +1,7 @@
-//! The ticker behind `out.pacer`: a thread that sends the cook thread a vsync at a projector's
-//! refresh rate, as a real output window does, so the show clock is paced as it will be at the
-//! show. Without it the cook thread waits for the next frame on a channel timeout, which runs on
-//! the system's coarse timer and starts some frames late. The ticker sleeps (a high-resolution
+//! The ticker: a thread that sends the cook thread a tick at the show rate, as a real output
+//! window sends its vsync, so the show clock runs as evenly without a projector as with one. The
+//! cook thread's own wait for the next frame is a channel timeout, which runs on the system's
+//! coarse timer and starts some frames late on Windows. The ticker sleeps (a high-resolution
 //! wait) until just before each tick and yields the rest of the way.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -14,15 +14,15 @@ const IDLE: Duration = Duration::from_millis(20);
 
 #[derive(Default)]
 pub struct Ticker {
-    /// Nanoseconds between ticks; 0 while no `out.pacer` is active.
+    /// Nanoseconds between ticks; 0 while off.
     period_ns: AtomicU64,
     stop: AtomicBool,
 }
 
 impl Ticker {
-    /// Ticks at `hz`, or not at all.
-    pub fn set(&self, hz: Option<f64>) {
-        let ns = hz.filter(|h| h.is_finite() && *h > 0.0).map_or(0, |h| (1e9 / h).round() as u64);
+    /// Ticks every `period`, or not at all.
+    pub fn set(&self, period: Option<Duration>) {
+        let ns = period.map_or(0, |p| u64::try_from(p.as_nanos()).unwrap_or(u64::MAX));
         self.period_ns.store(ns, Ordering::Relaxed);
     }
 
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn ticks_at_the_rate_until_stopped() {
         let ticker = Arc::new(Ticker::default());
-        ticker.set(Some(100.0));
+        ticker.set(Some(Duration::from_millis(10)));
         let ticks = Arc::new(Mutex::new(Vec::new()));
         let (t, seen) = (ticker.clone(), ticks.clone());
         let thread = std::thread::spawn(move || {

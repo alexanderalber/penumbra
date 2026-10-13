@@ -1,7 +1,8 @@
 //! The engine: an open project session plus the threads that keep it alive.
 //!
 //! - The **cook thread** owns the [`Cooker`] and the show clock. It is paced by the vsync of
-//!   one projector output ([`Engine::vsync`]) or, without one, by a timer ([`Pacer`]), takes a
+//!   one projector output ([`Engine::vsync`]) or, without one, by a timer thread
+//!   ([`crate::ticker`], with the [`Pacer`]'s own timer behind it), takes a
 //!   snapshot of the document per frame and cooks the sinks and the nodes watched over the
 //!   control channel. Anything that
 //!   needs the cooker (node status, the thumbnail switch) is sent to it as a task and runs
@@ -112,8 +113,8 @@ enum CookMsg {
     Run(CookTask),
     /// The pacing output presented a frame at this moment.
     Vsync(Instant),
-    /// The `out.pacer` ticker ticked; ignored while a real output paces.
-    SimulatedVsync(Instant),
+    /// The ticker ticked; ignored while a real output paces.
+    Tick(Instant),
     Stop,
 }
 
@@ -258,8 +259,6 @@ pub struct CookState {
     free_views: Vec<freeview::FreeView>,
     /// Pictures of the geometry the UI shows.
     pictures: GeoPictures,
-    /// Ticks for an `out.pacer`; told its rate when the network changes.
-    ticker: Arc<Ticker>,
     /// When a real output's vsync last arrived; the ticker's are ignored while it is recent.
     real_vsync: Option<Instant>,
     /// The resolution overlay is on (`res.overlay`).
@@ -372,7 +371,6 @@ impl CookState {
             self.osc.set_wanted(&penumbra_ops::osc::wants(&net, types));
             self.audio.set_wanted(&penumbra_ops::audio::wants(&net, types));
             self.camera.set_wanted(&penumbra_ops::tex::videoin::wants(&net, types));
-            self.ticker.set(penumbra_ops::out::pacer_refresh(&net, types));
         }
         let mut wanted: Vec<NodeId> = self.sinks.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
         self.watched.retain(|id| net.node(*id).is_some());
@@ -425,10 +423,11 @@ impl CookState {
             .collect()
     }
 
-    /// What paces the show clock: a vsync is a real output's while one arrived recently.
+    /// What paces the show clock: a vsync is a real output's while one arrived recently, else
+    /// the ticker's, which is the timer.
     fn pace_at(&self, now: Instant) -> PaceSource {
         match self.pacer.source(now) {
-            PaceSource::Vsync if !self.real_vsync_recent(now) => PaceSource::Simulated,
+            PaceSource::Vsync if !self.real_vsync_recent(now) => PaceSource::Timer,
             s => s,
         }
     }
@@ -532,7 +531,7 @@ pub struct Engine {
     camera: CameraHub,
     /// The 3D mouse; its reader starts when the UI first asks for it.
     spacenav: SpaceNav,
-    /// The `out.pacer` ticker, one thread per open project.
+    /// The timer pacing the show clock while no output does, one thread per open project.
     ticker: Arc<Ticker>,
     /// CPU and GPU load, sampled while asked for.
     load: LoadMeter,
@@ -606,7 +605,6 @@ impl Engine {
             renders,
             free_views: Vec::new(),
             pictures: GeoPictures::default(),
-            ticker: self.ticker.clone(),
             real_vsync: None,
             overlay: false,
             resolution: None,
@@ -622,6 +620,7 @@ impl Engine {
     /// Starts the cook, project and osc threads for `session`.
     fn launch(&self, session: &Arc<Session>, pass_base: u64) -> Result<(), Error> {
         let state = self.cook_state(session, pass_base);
+        let period = state.clock.rate().period();
         let spawn_error = |e: std::io::Error| Error::new(format!("cannot start a thread: {e}"));
 
         let (cook_tx, cook_rx) = mpsc::channel();
@@ -630,11 +629,12 @@ impl Engine {
             .name("cook".into())
             .spawn(move || cook_loop(&cook_session, state, &cook_rx))
             .map_err(spawn_error)?;
+        self.ticker.set(Some(period));
         self.ticker.stop(false);
         let (ticker, tick_tx) = (self.ticker.clone(), cook_tx.clone());
         let tick = std::thread::Builder::new()
             .name("pacer".into())
-            .spawn(move || ticker.run(|at| tick_tx.send(CookMsg::SimulatedVsync(at)).is_ok()))
+            .spawn(move || ticker.run(|at| tick_tx.send(CookMsg::Tick(at)).is_ok()))
             .map_err(spawn_error)?;
         *lock(&self.cook) = cook_tx;
         lock(&self.threads).push(cook);
@@ -1082,7 +1082,7 @@ fn run_frame(session: &Session, state: &mut CookState, due: u64, now: Instant) {
 /// queue grow without end and keep tasks waiting behind it. The newest one alone tells the
 /// pacer how many frames passed. `false` means stop.
 fn handle(msgs: impl Iterator<Item = CookMsg>, session: &Session, state: &mut CookState) -> bool {
-    let (mut real, mut simulated) = (None, None);
+    let (mut real, mut tick) = (None, None);
     for msg in msgs {
         match msg {
             CookMsg::Run(task) => {
@@ -1091,7 +1091,7 @@ fn handle(msgs: impl Iterator<Item = CookMsg>, session: &Session, state: &mut Co
                 }
             }
             CookMsg::Vsync(at) => real = Some(at),
-            CookMsg::SimulatedVsync(at) => simulated = Some(at),
+            CookMsg::Tick(at) => tick = Some(at),
             CookMsg::Stop => return false,
         }
     }
@@ -1099,7 +1099,7 @@ fn handle(msgs: impl Iterator<Item = CookMsg>, session: &Session, state: &mut Co
         state.real_vsync = Some(at);
         let due = state.pacer.vsync(at);
         run_frame(session, state, due, Instant::now());
-    } else if let Some(at) = simulated
+    } else if let Some(at) = tick
         && !state.real_vsync_recent(at)
     {
         let due = state.pacer.vsync(at);

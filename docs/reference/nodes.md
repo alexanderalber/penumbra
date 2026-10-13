@@ -1530,24 +1530,7 @@ Outputs: `out` (chan), `table` (table).
 
 ## out
 
-[out.pacer](#outpacer), [out.projector](#outprojector)
-
-### out.pacer
-
-A projector that shows nothing: ticks like a projector's vsync and paces the show clock, for timing as at the show without one
-
-Follows the show clock: cooks again whenever time moves.
-
-Inputs:
-
-- `in` (tex)
-
-Outputs: none.
-
-| param | type | default | range | meaning |
-|---|---|---|---|---|
-| `active` | bool | `true` |  | Tick; off, the show clock runs on its timer again |
-| `refresh` | float | `60` | 23 to 240 Hz (soft) | The projector's refresh rate; as with a real one, the show clock counts one frame per tick |
+[out.projector](#outprojector)
 
 ### out.projector
 
