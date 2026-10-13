@@ -6,6 +6,9 @@
 //   2 solve  one Lucas-Kanade step at a level: in0 this frame's level, in1 the previous
 //            frame's, in2 the motion so far (unconnected: none)
 //   3 out    the finest motion with small motions faded out, or shown as colours
+//   4 smooth one round of filling in: in0 the motion, in1 this frame's finest level; the
+//            motion is averaged over neighbours `spread` pixels apart, weighted by their
+//            confidence and by how alike their brightness is to the pixel's
 //
 // Motion is kept in image sizes throughout (x in widths, y in heights, y down), so a coarser
 // level's result is the next finer level's start as it is. It means: what is at a pixel now was
@@ -15,6 +18,9 @@ const PN_FLOW_SOLVE_RIDGE: f32 = 1e-4;
 // The structure (smaller eigenvalue) at which the confidence is one half: a little above what
 // camera noise alone makes at the analysed size.
 const PN_FLOW_TEXTURE: f32 = 1e-5;
+// The brightness difference (square root of luma) at which a neighbour counts a little over
+// half when smoothing: across an edge between things it counts for almost nothing.
+const PN_FLOW_EDGE: f32 = 0.05;
 
 fn pn_flow_load(t: texture_2d<f32>, p: vec2i) -> vec4f {
     let last = vec2i(textureDimensions(t)) - 1;
@@ -125,12 +131,47 @@ fn pn_flow_out(v: PnVertex) -> vec4f {
     return vec4f(pn_flow_hue(hue) * bright, 1.0);
 }
 
+// B3 spline taps (1, 4, 6, 4, 1) / 16, as weights relative to the centre.
+fn pn_flow_spline(i: i32) -> f32 {
+    return select(select(1.0 / 6.0, 2.0 / 3.0, abs(i) == 1), 1.0, i == 0);
+}
+
+// Edge-avoiding a-trous filter: 5 x 5 taps `spread` apart; the node runs it with spreads 1,
+// 2, 4, ... so a few rounds reach far. Where the motion is well measured (edges, texture) it
+// counts most and spreads into the plain parts of the same thing, which Lucas-Kanade alone
+// leaves noisy. The confidence written is the neighbours' mean, weighted as above but not by
+// confidence, so a plain part next to well measured ones counts as fairly sure in the next round.
+fn pn_flow_smooth(v: PnVertex) -> vec4f {
+    let p = vec2i(v.pos.xy);
+    let spread = max(params.spread, 1);
+    let centre = pn_flow_load(in1, p).r;
+    var sum = vec3f(0.0);
+    var total = 0.0;
+    var plain = 0.0;
+    for (var y = -2; y <= 2; y++) {
+        for (var x = -2; x <= 2; x++) {
+            let q = p + vec2i(x, y) * spread;
+            let f = pn_flow_load(in0, q);
+            let b = pn_flow_load(in1, q).r - centre;
+            let k = pn_flow_spline(x) * pn_flow_spline(y);
+            let w = k * exp(-b * b / (PN_FLOW_EDGE * PN_FLOW_EDGE));
+            let c = w * (f.z + 1e-3);
+            sum += c * vec3f(f.xy, f.z);
+            total += c;
+            plain += w;
+        }
+    }
+    let mean = sum / max(total, 1e-12);
+    return vec4f(mean.xy, total / max(plain, 1e-12) - 1e-3, 1.0);
+}
+
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
     switch params.stage {
         case 0: { return pn_flow_prep(v); }
         case 1: { return pn_flow_down(v); }
         case 2: { return pn_flow_solve(v); }
+        case 4: { return pn_flow_smooth(v); }
         default: { return pn_flow_out(v); }
     }
 }

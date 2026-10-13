@@ -94,7 +94,13 @@ across itself.
 The numbers are not for looking at; turn on `colors` to see the motion as colours, direction as
 hue and speed as brightness (full at 1/80 of the width per frame). `threshold` fades out motion
 slower than that, in pixels at the analysed size per frame, so camera noise does not shimmer;
-a still camera picture moves by 0.1 to 0.3 of those pixels by noise alone.
+a still camera picture moves by 0.05 to 0.15 of those pixels by noise alone.
+
+Motion can only be measured where the picture has something to follow: edges and texture. On
+plain parts (skin, a shirt, a wall) the raw measurement is unsure and noisy. `fill` spreads the
+motion found at the edges into the plain parts of the same thing, not across edges into the
+background; each round reaches twice as far (4 rounds: about 30 pixels at the analysed size).
+More rounds make a large plain thing move as one; 0 shows the raw measurement.
 
 Where a pixel's content was in the previous frame is its position minus the motion, so a
 `tex.displace` with `midpoint` 0 and `weight` -1, -1 pulls the previous frame onto the current
@@ -103,5 +109,5 @@ one, and a positive weight pushes the picture along with the motion.
 Under "more": `levels` (each doubles the fastest motion it follows), `iterations` (refining steps per level) and
 `window` (the neighbourhood each pixel is judged from: larger is smoother, smaller keeps small
 moving things apart). With the defaults it costs about 3 ms per new frame on the CPU, most of it
-handing its passes (two per level plus one per iteration and level) to the GPU; the GPU's part
+handing its passes (two per level, one per iteration and level, one per `fill` round) to the GPU; the GPU's part
 is small.
