@@ -12,7 +12,20 @@ a local JSON control channel.
 
 **Status:** personal project, work in progress.
 
-## Running
+## Download (Windows)
+
+No command line needed:
+
+1. Download the zip from the [latest release](https://github.com/alexanderalber/penumbra/releases/latest)
+   (under "Assets", `penumbra-...-windows-x64.zip`).
+2. Unpack it anywhere and double-click `penumbra.exe`. It opens a demo project.
+
+Windows may warn "Windows protected your PC", because the program is not signed: click
+"More info", then "Run anyway". You need Windows 10 or 11 (64-bit) and a graphics card with
+DirectX 12 or Vulkan. The zip also holds the [examples](examples/README.md) and the
+documentation.
+
+## Building from source
 
 ```
 cargo run -p penumbra
