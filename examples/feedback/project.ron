@@ -1,0 +1,17 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 1,
+    nodes: {
+        "/black": (kind: "tex.constant"),
+        "/drift": (kind: "tex.transform", params: {"extend": "zero", "rotate": 0.6, "scale": [1.012, 1.012]}, inputs: {"in": "loop"}),
+        "/fade": (kind: "tex.level", params: {"brightness": 0.96}, inputs: {"in": "drift"}),
+        "/loop": (kind: "tex.feedback", inputs: {"initial": "black", "previous": "mix"}),
+        "/mix": (kind: "tex.composite", inputs: {"bottom": "shift", "top": "seed"}),
+        "/seed": (kind: "tex.text", params: {"color": [1.0, 0.45, 0.1, 1.0], "size": 90.0, "text": "penumbra"}, binds: {"position.0": "x", "position.1": "y"}),
+        "/shift": (kind: "tex.hsv", params: {"hue": 4.0}, inputs: {"in": "fade"}),
+        "/show": (kind: "tex.composite", inputs: {"bottom": "black", "top": "mix"}),
+        "/x": (kind: "chan.lfo", params: {"amplitude": 0.3, "name": "x", "offset": 0.5, "rate": 0.17}),
+        "/y": (kind: "chan.lfo", params: {"amplitude": 0.25, "name": "y", "offset": 0.5, "phase": 0.25, "rate": 0.23}),
+    },
+)

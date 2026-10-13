@@ -1,0 +1,15 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 1,
+    nodes: {
+        "/brightness": (kind: "chan.fromtex", params: {"columns": 128, "components": "luminance"}, inputs: {"in": "picture"}),
+        "/columns": (kind: "chan.fromtex", params: {"columns": 64, "components": "rgb"}, inputs: {"in": "picture"}),
+        "/curve": (kind: "tex.fromchan", inputs: {"in": "brightness"}),
+        "/mean": (kind: "chan.fromtex", params: {"components": "rgb"}, inputs: {"in": "picture"}),
+        "/picture": (kind: "tex.noise", params: {"amplitude": 0.6, "color": true, "frequency": 2.0, "height": 720, "speed": 0.25, "width": 1280}),
+        "/strip": (kind: "tex.fromchan", params: {"layout": "rgba"}, inputs: {"in": "columns"}),
+        "/swatch": (kind: "tex.constant", params: {"height": 64, "width": 64}, binds: {"color.0": "mean:r", "color.1": "mean:g", "color.2": "mean:b"}),
+        "/view": (kind: "tex.shader", params: {"file": "view.wgsl"}, inputs: {"in0": "picture", "in1": "curve", "in2": "strip", "in3": "swatch"}),
+    },
+)

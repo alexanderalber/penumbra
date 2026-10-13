@@ -1,0 +1,23 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 1,
+    nodes: {
+        "/analysis": (kind: "chan.audioanalysis", inputs: {"audio": "mic"}),
+        "/bands": (kind: "chan.select", params: {"channels": "level low high"}, inputs: {"in": "analysis"}),
+        "/bar": (kind: "chan.select", params: {"channels": "bar"}, inputs: {"in": "analysis"}),
+        "/bright": (kind: "tex.level", inputs: {"in": "tint"}, binds: {"brightness": "punch:kick"}),
+        "/cloud": (kind: "tex.noise", params: {"amplitude": 0.6, "color": true, "frequency": 3.0, "offset": 0.12, "speed": 0.3}),
+        "/kick": (kind: "chan.select", params: {"channels": "kick"}, inputs: {"in": "analysis"}),
+        "/kick_fade": (kind: "chan.filter", params: {"fall": 0.25, "rise": 0.0}, inputs: {"in": "kick"}),
+        "/label": (kind: "tex.text", params: {"position": [0.5, 0.88], "size": 90.0, "style": "Bold", "text": "make some noise"}),
+        "/mic": (kind: "chan.audioin"),
+        "/pump": (kind: "tex.transform", params: {"extend": "mirror"}, inputs: {"in": "cloud"}, binds: {"scale.0": "zoom:low", "scale.1": "zoom:low"}),
+        "/punch": (kind: "chan.math", params: {"b": 0.7}, inputs: {"a": "kick_fade"}),
+        "/show": (kind: "tex.composite", inputs: {"bottom": "bright", "top": "label"}),
+        "/smooth": (kind: "chan.filter", params: {"fall": 0.4, "rise": 0.03}, inputs: {"in": "bands"}),
+        "/tint": (kind: "tex.hsv", inputs: {"in": "pump"}, binds: {"hue": "turn:bar", "saturation": "zoom:high"}),
+        "/turn": (kind: "chan.math", params: {"b": 360.0, "op": "multiply"}, inputs: {"a": "bar"}),
+        "/zoom": (kind: "chan.math", params: {"b": 1.0}, inputs: {"a": "smooth"}),
+    },
+)

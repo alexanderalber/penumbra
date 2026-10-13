@@ -1,0 +1,25 @@
+// penumbra editor layout: node positions, pan and zoom. Not part of the project content.
+(
+    version: 1,
+    view: Some((
+        pan: (-32.758606, -270.06464),
+        zoom: 1.2210526,
+    )),
+    nodes: {
+        "/first": (600.0, 0.0),
+        "/labels": (800.0, 0.0),
+        "/second": (600.0, 142.0),
+        "/slots": (400.0, 0.0),
+        "/spots": (0.0, 0.0),
+        "/track": (200.0, 0.0),
+        "/view": (200.0, 142.0),
+    },
+    sections: Some((
+        params: true,
+        viewer: true,
+        changes: true,
+    )),
+    options: Some((
+        chan_bars: true,
+    )),
+)

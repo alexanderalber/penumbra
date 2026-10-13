@@ -1,0 +1,14 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 1,
+    nodes: {
+        "/first": (kind: "tex.text", params: {"color": [1.0, 0.25, 0.05, 1.0], "height": 720, "size": 70.0, "text": "1", "width": 1280}, binds: {"position.0": "slots:x1", "position.1": "slots:y1"}),
+        "/labels": (kind: "tex.composite", inputs: {"bottom": "first", "top": "second"}),
+        "/second": (kind: "tex.text", params: {"color": [0.1, 0.5, 1.0, 1.0], "height": 720, "size": 70.0, "text": "2", "width": 1280}, binds: {"position.0": "slots:x2", "position.1": "slots:y2"}),
+        "/slots": (kind: "chan.null", inputs: {"in": "track:chans"}),
+        "/spots": (kind: "tex.shader", params: {"file": "spots.wgsl", "height": 720, "width": 1280}),
+        "/track": (kind: "tex.blobtrack", params: {"detect": "bright", "threshold": 0.5}, inputs: {"in": "spots"}),
+        "/view": (kind: "tex.composite", inputs: {"bottom": "spots", "top": "labels"}),
+    },
+)
