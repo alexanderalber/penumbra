@@ -120,7 +120,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average \| inside \| outside \| atop \| overlay | `"over"` |  | inside, outside: the top only where the bottom is, or is not; atop: the top over the bottom, only where the bottom is; overlay: darkens the dark and brightens the bright parts of the bottom by the top |
+| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average \| inside \| outside \| atop \| overlay \| color \| luminosity | `"over"` |  | inside, outside: the top only where the bottom is, or is not; atop: the top over the bottom, only where the bottom is; overlay: darkens the dark and brightens the bright parts of the bottom by the top; color: the top's hue and saturation at the bottom's brightness (tinting a grey picture); luminosity: the other way round |
 | `swap` | bool | `false` |  | Swap the inputs: bottom onto top (TouchDesigner's Swap Operation Order) |
 
 ### tex.constant
@@ -1192,7 +1192,7 @@ Outputs: `out` (table).
 
 ## geo
 
-[geo.file](#geofile), [geo.material](#geomaterial), [geo.merge](#geomerge), [geo.primitive](#geoprimitive), [geo.transform](#geotransform)
+[geo.file](#geofile), [geo.instance](#geoinstance), [geo.material](#geomaterial), [geo.merge](#geomerge), [geo.primitive](#geoprimitive), [geo.transform](#geotransform)
 
 ### geo.file
 
@@ -1209,6 +1209,17 @@ Outputs: `out` (geo), `parts` (table).
 | `normals` | file \| smooth | `"file"` |  | file: as the file has them (flat where it has none, as STL); smooth: averaged over each corner's faces, for faceted or voxel meshes |
 | `rings` *(more)* | int | `1` | 1 to 16 | smooth: rings of faces averaged around each corner; 3 to 6 for voxel or marching-cubes meshes |
 | `crease` *(more)* | float | `180` | 0 to 180 ° | smooth: edges sharper than this stay hard; 180 smooths everything |
+
+### geo.instance
+
+A copy of the input per table row, placed by the columns the first row names: tx ty tz, rx ry rz (degrees), sx sy sz; part ids continue from copy to copy
+
+Inputs:
+
+- `in` (geo)
+- `table` (table)
+
+Outputs: `out` (geo).
 
 ### geo.material
 
@@ -1339,7 +1350,7 @@ Outputs: `out` (mat).
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | The lines' colour: linear RGBA, straight alpha; times the texture input |
 | `line_width` | float | `1.5` | 0.5 to 8 px (soft) | The lines' width in pixels of the render |
-| `edges` | polygons \| triangles | `"polygons"` |  | polygons: leave out edges inside flat faces (a quad's diagonal); triangles: every edge |
+| `edges` | polygons \| triangles | `"polygons"` |  | polygons: leave out edges inside the file's polygons (OBJ faces), or inside flat faces where it has only triangles (a quad's diagonal); triangles: every edge |
 | `faces` | open \| filled \| hidden | `"open"` |  | open: nothing, the lines behind show through; filled: the fill colour; hidden: only the lines filled faces would leave, the faces see-through |
 | `fill` | colour | `[0, 0, 0, 1]` |  | The faces' colour where `faces` is filled: linear RGBA, straight alpha |
 

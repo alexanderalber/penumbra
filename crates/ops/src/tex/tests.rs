@@ -536,7 +536,9 @@ fn every_builtin_cooks_without_warnings() {
                 {
                     Some("/chan_feed")
                 }
-                penumbra_graph::DataKind::Table if desc.port.is_some() || passes_on(kind) => {
+                penumbra_graph::DataKind::Table
+                    if desc.port.is_some() || passes_on(kind) || kind == "geo.instance" =>
+                {
                     Some("/table_feed")
                 }
                 _ => None,
@@ -559,6 +561,9 @@ fn every_builtin_cooks_without_warnings() {
             rig.clock.advance(1);
             // A frame of audio for the audio nodes.
             rig.audio.feed("test", 48_000, 2, &[0.1; 1600]).unwrap();
+            // As the engine does every frame: a readback's waker (tex.blobtrack's) only fires
+            // when the device is polled.
+            rig.gpu.poll();
             rig.cook(&path);
             let s = rig.cooker.status(rig.id(&path)).unwrap();
             if s.has_output {
@@ -910,6 +915,42 @@ fn feedback_keeps_a_restored_frame_until_the_loop_moves_on() {
     assert!((red(&mut again, "/acc") - (saved + 0.1)).abs() < 0.01);
     again.clock.advance(1);
     assert!((red(&mut again, "/acc") - (saved + 0.2)).abs() < 0.01);
+}
+
+#[test]
+fn color_and_luminosity_trade_hue_and_brightness() {
+    let Some(gpu) = gpu() else { return };
+    let rgba = |path: &str, c: [f64; 4]| {
+        create(
+            path,
+            "tex.constant",
+            &[("width", Value::Int(8)), ("height", Value::Int(4)), ("color", Value::Vec4(c))],
+        )
+    };
+    let ops = [
+        rgba("/grey", [0.4, 0.4, 0.4, 1.0]),
+        rgba("/orange", [0.8, 0.4, 0.1, 1.0]),
+        create("/color", "tex.composite", &[("op", "color".into())]),
+        connect("/grey", "/color", 0),
+        connect("/orange", "/color", 1),
+        create("/luminosity", "tex.composite", &[("op", "luminosity".into())]),
+        connect("/grey", "/luminosity", 0),
+        connect("/orange", "/luminosity", 1),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let lum = |c: [f32; 4]| 0.3 * c[0] + 0.59 * c[1] + 0.11 * c[2];
+    let mut pixel = |path: &str| {
+        rig.cook(path);
+        let tex = rig.tex(path).unwrap();
+        rig.gpu.read(&tex).unwrap().get(0, 0).unwrap()
+    };
+    let c = pixel("/color");
+    assert!((lum(c) - 0.4).abs() < 0.01, "the grey's brightness: {c:?}");
+    assert!(c[0] > c[1] && c[1] > c[2], "the orange's hue: {c:?}");
+    assert!(((c[0] - c[2]) - 0.7).abs() < 0.01, "and its saturation: {c:?}");
+    let l = pixel("/luminosity");
+    let orange = 0.3 * 0.8 + 0.59 * 0.4 + 0.11 * 0.1;
+    assert!(l.iter().take(3).all(|v| (v - orange).abs() < 0.01), "grey at the orange's brightness: {l:?}");
 }
 
 #[test]

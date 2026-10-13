@@ -1,6 +1,7 @@
-//! `geo` nodes: a mesh file, a primitive, a transform, a merge, and a material. The data on a `geo`
-//! connection is a [`Geo`]: models uploaded once, placed by matrices, with part ids; plus a small
-//! picture of them for the editor, the viewer and `node.snapshot`.
+//! `geo` nodes: a mesh file, a primitive, a transform, a merge, copies placed by a table, and a
+//! material. The data on a `geo` connection is a [`Geo`]: models uploaded once, placed by
+//! matrices, with part ids; plus a small picture of them for the editor, the viewer and
+//! `node.snapshot`.
 //!
 //! Files are hostile input: they are read and uploaded in a job (inside `catch_unwind`), under
 //! the budgets of [`penumbra_mesh::Limits`] and the image limits for their textures.
@@ -111,6 +112,16 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .input("in3", DataKind::Geo)
             .output("out", DataKind::Geo),
         || Box::new(Merge::default()) as Box<dyn Operator>,
+    ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            "geo.instance",
+            "A copy of the input per table row, placed by the columns the first row names: tx ty tz, rx ry rz (degrees), sx sy sz; part ids continue from copy to copy",
+        )
+        .input("in", DataKind::Geo)
+        .input("table", DataKind::Table)
+        .output("out", DataKind::Geo),
+        || Box::new(Instance::default()) as Box<dyn Operator>,
     ))?;
     Ok(())
 }
@@ -432,6 +443,88 @@ impl Operator for Merge {
         }
         if !any {
             return Err(waiting(cx));
+        }
+        let geo = with_preview(gpu, &mut self.renderer, Geo { items, preview: None });
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
+    }
+}
+
+/// Most copies `geo.instance` makes; the renderer's draw limit is shared with the rest.
+pub const MAX_INSTANCES: usize = 10_000;
+
+/// The columns `geo.instance` reads, by header name: translate, rotate (degrees, about x, then
+/// y, then z) and scale, as `geo.transform` applies them.
+pub const INSTANCE_COLUMNS: [&str; 9] = ["tx", "ty", "tz", "rx", "ry", "rz", "sx", "sy", "sz"];
+
+/// Placements from `table`: its first row names the columns (any of [`INSTANCE_COLUMNS`], in
+/// any order, others ignored), every further row is one copy. A missing column or an empty
+/// cell is 0 (1 for scale). Returns the matrices and a warning, if any.
+pub fn placements(table: &Table) -> (Vec<Mat4>, Option<String>) {
+    let Some(header) = table.rows().first() else { return (Vec::new(), None) };
+    let index: Vec<Option<usize>> =
+        INSTANCE_COLUMNS.iter().map(|name| header.iter().position(|h| h.trim() == *name)).collect();
+    if index.iter().all(Option::is_none) {
+        return (
+            Vec::new(),
+            Some(format!("the first row names the columns: {}", INSTANCE_COLUMNS.join(", "))),
+        );
+    }
+    let mut warning = None;
+    let mut out = Vec::new();
+    for (r, row) in table.rows().iter().enumerate().skip(1) {
+        if out.len() >= MAX_INSTANCES {
+            warning = Some(format!("more than {MAX_INSTANCES} rows: the rest are left out"));
+            break;
+        }
+        let mut v = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0];
+        let mut bad = false;
+        for (slot, col) in v.iter_mut().zip(&index) {
+            let Some(cell) = col.and_then(|c| row.get(c)).map(|c| c.trim()).filter(|c| !c.is_empty()) else {
+                continue;
+            };
+            match cell.parse::<f64>() {
+                Ok(x) if x.is_finite() => *slot = x,
+                _ => bad = true,
+            }
+        }
+        if bad {
+            warning.get_or_insert_with(|| format!("row {r} holds a cell that is not a number: left out"));
+            continue;
+        }
+        out.push(trs([v[0], v[1], v[2]], [v[3], v[4], v[5]], [v[6], v[7], v[8]]));
+    }
+    (out, warning)
+}
+
+#[derive(Default)]
+struct Instance {
+    renderer: Renderer,
+}
+
+impl Operator for Instance {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let gpu = gpu(cx)?;
+        let (Some(input), Some(table)) = (cx.input_as::<Geo>(0), cx.input_as::<Table>(1)) else {
+            let wired = |k: usize| cx.def().inputs.get(k).is_some_and(Option::is_some);
+            return Err(if wired(0) && wired(1) {
+                CookError::Pending
+            } else {
+                CookError::failed("connect a geometry and a table of placements")
+            });
+        };
+        let (places, warning) = placements(table);
+        if let Some(w) = warning {
+            cx.warn(w);
+        }
+        let parts = input.part_count();
+        let mut items = Vec::with_capacity(places.len() * input.items.len());
+        for (k, m) in places.iter().enumerate() {
+            let offset = u32::try_from(k).unwrap_or(u32::MAX).saturating_mul(parts);
+            items.extend(input.items.iter().map(|i| Item {
+                world: mul(m, &i.world),
+                part_offset: i.part_offset.saturating_add(offset),
+                ..i.clone()
+            }));
         }
         let geo = with_preview(gpu, &mut self.renderer, Geo { items, preview: None });
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))

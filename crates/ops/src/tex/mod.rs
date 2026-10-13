@@ -243,8 +243,10 @@ fn core_builtins() -> Vec<Builtin> {
                     "outside",
                     "atop",
                     "overlay",
+                    "color",
+                    "luminosity",
                 ],
-            ).doc("inside, outside: the top only where the bottom is, or is not; atop: the top over the bottom, only where the bottom is; overlay: darkens the dark and brightens the bright parts of the bottom by the top"))
+            ).doc("inside, outside: the top only where the bottom is, or is not; atop: the top over the bottom, only where the bottom is; overlay: darkens the dark and brightens the bright parts of the bottom by the top; color: the top's hue and saturation at the bottom's brightness (tinting a grey picture); luminosity: the other way round"))
             .param(
                 ParamSpec::bool("swap", false)
                     .doc("Swap the inputs: bottom onto top (TouchDesigner's Swap Operation Order)"),
