@@ -12,6 +12,16 @@ a local JSON control channel.
 
 **Status:** personal project, work in progress.
 
+## Arranging a network
+
+Press L over the node editor and penumbra lays the network out by itself: columns follow the
+flow of data, the order within each column keeps wires from crossing, and long wires get a free
+lane so they run straight instead of through other nodes. With two or more nodes selected, only
+the selection moves. Ctrl+Z puts everything back. Parameter bindings stay quiet until you point
+at a node, so one channel driving many parameters does not cover the network in lines.
+
+![The projection-room example before and after arranging: a tangle of crossing wires becomes a left-to-right flow](assets/arrange.png)
+
 ## Download (Windows)
 
 No command line needed:

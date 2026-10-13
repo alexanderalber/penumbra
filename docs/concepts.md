@@ -69,7 +69,9 @@ specific channel by name. A vector or colour binds per component: drop the wire 
 A bound row shows its name in the channel colour, the live value, and the source. The stored
 value stays and comes back when the binding is removed; it is also used, with a warning, while
 the channel is missing. Integers round, booleans are on from 0.5, hard ranges clamp. The editor
-draws a binding as a dashed green line into the top of the node.
+draws a binding as a dashed green line into the top of the node while the source or the bound
+node is selected or under the pointer, otherwise as a short stub on the bound node ("All binding
+lines" in the editor's right-click menu draws every line).
 
 ## Paths
 
