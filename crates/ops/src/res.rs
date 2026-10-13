@@ -34,7 +34,7 @@ use crate::tex::render::{RENDER, Renders};
 /// Below this many actual pixels per needed one a node is too coarse...
 pub const COARSE: f64 = 0.9;
 /// ...and above this many it is finer than anything shown (projection.wgsl and render.wgsl
-/// colour the overlay with the same limits; the user's band, 2026-10-11).
+/// colour the overlay with the same limits).
 pub const WASTED: f64 = 1.3;
 
 /// Sizes `res.optimize` prefers for the longer side: numbers people recognise. Where the next

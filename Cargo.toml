@@ -58,10 +58,10 @@ photocraft-codecs = { git = "https://github.com/storytold/photocraft", rev = "27
 # PSD and PSB layers (checks lengths before allocating).
 photocraft-psd = { git = "https://github.com/storytold/photocraft", rev = "273ff014e3d21882b3959959eb7da00a42290e56" }
 # Text shaping, bidi, line breaking, bundled OFL fonts, glyph outlines (the text node; measured at
-# 0946660, raised 2026-10-11). Glyph outlines are filled by tiny-skia, the rasteriser effectcraft
+# 0946660, later raised). Glyph outlines are filled by tiny-skia, the rasteriser effectcraft
 # itself uses.
 effectcraft-text = { git = "https://github.com/storytold/effectcraft", rev = "9a7d3e76991d5372448033b473dc12c2480a6a04" }
-# Video files. Measured at 771b614; raised 2026-10-11 for the open-GOP seek fix.
+# Video files. Measured at 771b614; raised for the open-GOP seek fix.
 filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
 filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
 filmcraft-frame = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }

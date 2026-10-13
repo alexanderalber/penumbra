@@ -1239,8 +1239,8 @@ impl Editor {
     }
 
     /// Names next to the ports: always for the inputs of a node with several (which one is
-    /// which, user 2026-10-09), for the unconnected outputs of a node with several (user,
-    /// 2026-10-10), and for the port under the pointer. `connected`: outputs read by a wire.
+    /// which), for the unconnected outputs of a node with several, and for the port under the
+    /// pointer. `connected`: outputs read by a wire.
     fn port_labels(
         &self,
         painter: &egui::Painter,

@@ -8,8 +8,8 @@
 //!
 //! Ports are numbered among all connectors the graphics adapter has, connected or not, so a
 //! number does not change when something is plugged in elsewhere. The connector type the OS
-//! reports is shown but not part of the id: it is not reliable (the desktop's Epson on HDMI
-//! reports DVI, seen 2026-10-09).
+//! reports is shown but not part of the id: it is not reliable (an Epson projector on HDMI
+//! has been reported as DVI).
 
 use penumbra_core::Error;
 use serde::Serialize;
