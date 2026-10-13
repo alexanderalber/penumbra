@@ -1279,7 +1279,8 @@ fn wireframes_show_edges_and_occluders_hide() {
         connect("/hidden", "/both", 1),
         cam("/occluded"),
         connect("/both", "/occluded", 0),
-        // Faces filled in blue, and faces hiding what is behind them (the wall, too).
+        // Faces filled in blue, and hidden faces before the wall: only the lines filled faces
+        // would leave, the wall showing through.
         create(
             "/filled_mat",
             "mat.wireframe",
@@ -1343,11 +1344,10 @@ fn wireframes_show_edges_and_occluders_hide() {
     assert!(mid[2] > 0.99 && mid[0] < 0.01 && mid[3] > 0.99, "{mid:?}");
     let row: Vec<f32> = (0..filled.width).map(|x| at(&filled, x, cy)[0]).collect();
     assert_eq!(row.windows(2).filter(|w| w[0] < 0.5 && w[1] >= 0.5).count(), 2, "{row:?}");
-    // Hidden: only the front face's lines, nothing between them, the wall behind hidden.
+    // Hidden: only the front face's lines, the wall behind showing through between them.
     let front = rig.pixels("/front_seen");
-    assert_eq!(at(&front, cx, cy), [0.0; 4], "nothing in the middle, not even the wall");
-    let side = at(&front, 4, cy);
-    assert!(side[0] > 0.99 && side[3] > 0.99, "the wall beside it: {side:?}");
+    let mid = at(&front, cx, cy);
+    assert!(mid[0] > 0.99 && mid[1] < 0.01 && mid[3] > 0.99, "the wall through the middle: {mid:?}");
     let row: Vec<f32> = (0..front.width).map(|x| at(&front, x, cy)[1]).collect();
     assert_eq!(row.windows(2).filter(|w| w[0] < 0.5 && w[1] >= 0.5).count(), 2, "{row:?}");
     let tris = rig.pixels("/tris_seen");

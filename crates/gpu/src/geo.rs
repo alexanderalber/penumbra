@@ -313,7 +313,8 @@ pub enum Faces {
     Open,
     /// The fill colour; opaque, it hides the lines behind.
     Filled,
-    /// Nothing, but they hide what is behind them: only the lines in front show.
+    /// Nothing, but they hide the wireframe's lines behind them, as filled faces would; what
+    /// else is behind shows through.
     Hidden,
 }
 
