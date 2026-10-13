@@ -11,6 +11,7 @@ and penumbra then saves into it.)
 
 | example | shows | look at | needs |
 |---|---|---|---|
+| [curl-noise](curl-noise/README.md) | 65 536 sticks drifting through a flow field, simulated on the GPU and drawn instanced | `/out` | |
 | [feedback](feedback/README.md) | a loop that feeds each frame back into the next: trails, zoom, drifting colour | `/show` | |
 | [audio-reactive](audio-reactive/README.md) | sound turned into channels that move the picture: level, kick, bar | `/show` | a microphone |
 | [blob-tracking](blob-tracking/README.md) | finding and following spots of light, with ids that stay | `/view`, `/track` | |
