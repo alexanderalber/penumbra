@@ -198,9 +198,7 @@ impl AddDialog {
         }
 
         let columns = cells.iter().map(|c| c.col + 1).max().unwrap_or(1);
-        let rows = cells.iter().map(|c| c.row + 1).max().unwrap_or(1);
         let width = (columns as f32 * CELL.x).max(MIN_WIDTH);
-        let mut hovered: Option<&str> = None;
         let area = egui::Area::new(ui.id().with("add_dialog"))
             .order(egui::Order::Foreground)
             .fixed_pos(self.screen)
@@ -208,261 +206,24 @@ impl AddDialog {
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.set_width(width);
-                    ui.horizontal(|ui| {
-                        let edit = ui.add(
-                            egui::TextEdit::singleline(&mut self.filter)
-                                .hint_text("search")
-                                .desired_width(220.0),
-                        );
-                        auto.add("add.filter", edit.rect, "search");
-                        if self.focus {
-                            edit.request_focus();
-                            self.focus = false;
-                        }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let r = icons::small_button(ui, Icon::Remove).on_hover_text("Close (Esc)");
-                            auto.add("add.close", r.rect, "close");
-                            if r.clicked() {
-                                outcome = Outcome::Close;
-                            }
-                        });
-                    });
+                    self.search_row(ui, auto, &mut outcome);
                     ui.add_space(2.0);
-
-                    // One tab per group, a segment per family coloured like its node headers; a
-                    // named tab writes its name across them.
-                    ui.horizontal(|ui| {
-                        // Wider than a seam, so a tab of several families reads as one.
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        for (g, families) in groups.iter().enumerate() {
-                            // While searching: which families have a match?
-                            let name = tab_name(families);
-                            let named = families.len() > 1;
-                            let segments: Vec<(&String, bool, Option<Arc<egui::Galley>>)> = families
-                                .iter()
-                                .map(|f| {
-                                    let kinds = kinds_of(types, f, library);
-                                    let hit = !filter.is_empty() && kinds.iter().any(|k| matches(k, &filter));
-                                    let bright = if filter.is_empty() { !kinds.is_empty() } else { hit };
-                                    let text = if bright { Color32::WHITE } else { theme::TEXT_WEAK };
-                                    let galley = (!named).then(|| {
-                                        ui.painter().layout_no_wrap(f.clone(), FontId::proportional(14.0), text)
-                                    });
-                                    (f, hit, galley)
-                                })
-                                .collect();
-                            let title = named.then(|| {
-                                ui.painter().layout_no_wrap(name.clone(), FontId::proportional(14.0), Color32::WHITE)
-                            });
-                            // A named tab shares its width out evenly among its families.
-                            let even = title.as_ref().map_or(0.0, |t| (t.size().x + 24.0) / segments.len() as f32);
-                            let widths: Vec<f32> = segments
-                                .iter()
-                                .map(|(_, _, t)| t.as_ref().map_or(even.max(28.0), |t| (t.size().x + 16.0).max(64.0)))
-                                .collect();
-                            let (rect, r) =
-                                ui.allocate_exact_size(vec2(widths.iter().sum(), 22.0), Sense::click());
-                            let mut x = rect.min.x;
-                            for ((f, hit, galley), w) in segments.iter().zip(&widths) {
-                                let seg = Rect::from_min_size(pos2(x, rect.min.y), vec2(*w, rect.height()));
-                                x += w;
-                                let color = theme::family_color(f);
-                                let fill = match (g == active, r.hovered()) {
-                                    (true, _) => color,
-                                    (false, true) => color.gamma_multiply(0.55),
-                                    (false, false) => color.gamma_multiply(0.35),
-                                };
-                                ui.painter().rect_filled(seg, CornerRadius::ZERO, fill);
-                                if let Some(galley) = galley {
-                                    let at = seg.center() - galley.size() / 2.0;
-                                    ui.painter().galley(at, galley.clone(), Color32::WHITE);
-                                }
-                                if *hit {
-                                    let bar = Rect::from_min_max(
-                                        seg.left_bottom() + vec2(4.0, -3.0),
-                                        seg.right_bottom() + vec2(-4.0, -1.0),
-                                    );
-                                    ui.painter().rect_filled(bar, CornerRadius::ZERO, Color32::WHITE);
-                                }
-                            }
-                            if let Some(title) = title {
-                                let at = rect.center() - title.size() / 2.0;
-                                ui.painter().galley(at, title, Color32::WHITE);
-                            }
-                            let hit = segments.iter().any(|(_, hit, _)| *hit);
-                            let label = if hit { format!("{name} (match)") } else { name };
-                            let first_family = families.first().map_or("", String::as_str);
-                            auto.add(format!("add.tab.{first_family}"), rect, label);
-                            if r.clicked() {
-                                self.family = first_family.to_string();
-                                self.focus = true;
-                            }
-                        }
-                    });
+                    self.tabs(ui, &groups, active, types, library, &filter, auto);
                     ui.separator();
-
-                    // A tab of several families: a heading over each, with a line in its colour
-                    // across its columns.
-                    if group.len() > 1 {
-                        let (row, _) = ui.allocate_exact_size(vec2(width, HEADING), Sense::hover());
-                        let painter = ui.painter_at(row);
-                        for family in group {
-                            let columns: Vec<usize> =
-                                cells.iter().filter(|c| &c.family == family).map(|c| c.col).collect();
-                            let (Some(first), Some(last)) = (columns.iter().min(), columns.iter().max()) else {
-                                continue;
-                            };
-                            let left = row.min.x + *first as f32 * CELL.x + 1.0;
-                            let right = row.min.x + (*last + 1) as f32 * CELL.x - 1.0;
-                            let heading = HEADINGS
-                                .iter()
-                                .find(|(f, _)| f == family)
-                                .map_or(family.as_str(), |(_, h)| *h);
-                            let r = painter.text(
-                                pos2(left + 5.0, row.center().y - 1.0),
-                                Align2::LEFT_CENTER,
-                                heading,
-                                FontId::proportional(13.0),
-                                theme::TEXT,
-                            );
-                            auto.add(format!("add.heading.{family}"), r, heading);
-                            painter.line_segment(
-                                [pos2(left, row.max.y - 1.0), pos2(right, row.max.y - 1.0)],
-                                Stroke::new(2.0, theme::family_color(family)),
-                            );
-                        }
-                    }
-
-                    // The grid: columns of ROWS, top to bottom.
-                    let (grid, _) = ui.allocate_exact_size(vec2(width, rows as f32 * CELL.y), Sense::hover());
-                    let painter = ui.painter_at(grid);
-                    if cells.is_empty() {
-                        painter.text(
-                            grid.left_top() + vec2(6.0, CELL.y / 2.0),
-                            Align2::LEFT_CENTER,
-                            format!("no {} node types yet", group.join(" or ")),
-                            FontId::proportional(14.0),
-                            theme::TEXT_WEAK,
-                        );
-                    }
-                    for Cell { col, row, kind, family } in &cells {
-                        let (col, row) = (*col, *row);
-                        let color = theme::family_color(family);
-                        let cell = Rect::from_min_size(
-                            grid.min + vec2(col as f32 * CELL.x, row as f32 * CELL.y),
-                            CELL,
-                        )
-                        .shrink2(vec2(1.0, 0.5));
-                        if kind == GAP {
-                            let y = cell.center().y;
-                            painter.line_segment(
-                                [pos2(cell.min.x + 6.0, y), pos2(cell.max.x - 6.0, y)],
-                                Stroke::new(1.0, theme::TEXT_WEAK),
-                            );
-                            continue;
-                        }
-                        let r = ui.interact(cell, ui.id().with(("add", kind.as_str())), Sense::click());
-                        auto.add(format!("add.{kind}"), cell, kind.as_str());
-                        let hit = matches(kind, &filter);
-                        let fill = match (hit, r.hovered()) {
-                            (_, true) => color.gamma_multiply(1.4),
-                            (true, false) => color.gamma_multiply(if row % 2 == 0 { 0.8 } else { 0.65 }),
-                            (false, false) => color.gamma_multiply(0.2),
-                        };
-                        painter.rect_filled(cell, CornerRadius::ZERO, fill);
-                        if first.as_deref() == Some(kind.as_str()) && !filter.is_empty() {
-                            painter.rect_stroke(
-                                cell,
-                                CornerRadius::ZERO,
-                                Stroke::new(1.0, Color32::WHITE),
-                                StrokeKind::Inside,
-                            );
-                        }
-                        painter.text(
-                            cell.left_center() + vec2(6.0, 0.0),
-                            Align2::LEFT_CENTER,
-                            short(kind),
-                            FontId::proportional(14.0),
-                            if hit { theme::TEXT } else { Color32::from_gray(95) },
-                        );
-                        let mut removing = false;
-                        if let Some(name) = kind.strip_prefix(LIBRARY_MARK) {
-                            // A component file rather than a node type: where it comes from, at
-                            // the right, and under the pointer a button that takes it out of the
-                            // library (there was no way to).
-                            let place = library.iter().find(|o| o.name == name).map_or("", |o| o.place);
-                            let cross = Rect::from_center_size(
-                                cell.right_center() - vec2(4.0 + CELL.y / 2.0, 0.0),
-                                vec2(CELL.y - 4.0, CELL.y - 4.0),
-                            );
-                            let x = ui.interact(cross, ui.id().with(("remove", name)), Sense::click());
-                            auto.add(format!("add.remove.{name}"), cross, name);
-                            if r.hovered() || x.hovered() {
-                                if x.hovered() {
-                                    painter.rect_filled(cross, CornerRadius::same(3), theme::NEGATIVE);
-                                }
-                                painter.text(
-                                    cross.center(),
-                                    Align2::CENTER_CENTER,
-                                    "×",
-                                    FontId::proportional(15.0),
-                                    theme::TEXT,
-                                );
-                                let from = if place == "project" { "the project's components" } else { "the library" };
-                                x.clone().on_hover_text(format!(
-                                    "Take `{name}` out of {from}; the file moves into a `removed` folder beside it"
-                                ));
-                            } else {
-                                painter.text(
-                                    cell.right_center() - vec2(6.0, 0.0),
-                                    Align2::RIGHT_CENTER,
-                                    place,
-                                    FontId::proportional(11.0),
-                                    theme::TEXT_WEAK,
-                                );
-                            }
-                            if x.clicked() {
-                                outcome = Outcome::Remove(name.to_string());
-                                removing = true;
-                            }
-                        }
-                        if r.hovered() {
-                            hovered = Some(kind.as_str());
-                        }
-                        if r.clicked() && !removing {
-                            outcome = Outcome::Chosen(kind.clone());
-                        }
-                    }
+                    headings(ui, group, &cells, width, auto);
+                    let grid = Grid {
+                        cells: &cells,
+                        group,
+                        width,
+                        filter: &filter,
+                        first: first.as_deref(),
+                        library,
+                    };
+                    let hovered = grid.show(ui, auto, &mut outcome);
                     ui.separator();
-
                     // The summary of the type under the pointer (or of Enter's choice).
-                    let about = hovered.map(str::to_string).or_else(|| first.clone());
-                    let text = about
-                        .as_deref()
-                        .and_then(|k| match k.strip_prefix(LIBRARY_MARK) {
-                            Some(name) => {
-                                let place = library.iter().find(|o| o.name == name).map_or("", |o| o.place);
-                                let place = if place == "project" {
-                                    "the project's components/"
-                                } else {
-                                    "the library"
-                                };
-                                Some(format!("{name}: a component file from {place} (comp.load)"))
-                            }
-
-                            None => types.desc(k).map(|d| format!("{k}: {}", d.summary)),
-                        })
-                        .unwrap_or_default();
-                    ui.allocate_ui_with_layout(
-                        vec2(width, 20.0),
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(text).color(theme::TEXT_WEAK))
-                                    .truncate(),
-                            )
-                        },
-                    );
+                    let about = hovered.or(first.as_deref());
+                    summary(ui, about, types, library, width);
                 });
             });
         let outside = ui.input(|i| i.pointer.any_pressed())
@@ -472,4 +233,289 @@ impl AddDialog {
         }
         outcome
     }
+
+    /// The search field and the close button.
+    fn search_row(&mut self, ui: &mut Ui, auto: &mut automation::Registry, outcome: &mut Outcome) {
+        ui.horizontal(|ui| {
+            let edit =
+                ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("search").desired_width(220.0));
+            auto.add("add.filter", edit.rect, "search");
+            if self.focus {
+                edit.request_focus();
+                self.focus = false;
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let r = icons::small_button(ui, Icon::Remove).on_hover_text("Close (Esc)");
+                auto.add("add.close", r.rect, "close");
+                if r.clicked() {
+                    *outcome = Outcome::Close;
+                }
+            });
+        });
+    }
+
+    /// One tab per group, a segment per family coloured like its node headers; a named tab
+    /// writes its name across them.
+    #[allow(clippy::too_many_arguments)]
+    fn tabs(
+        &mut self,
+        ui: &mut Ui,
+        groups: &[Vec<String>],
+        active: usize,
+        types: &NodeTypes,
+        library: &[Offered],
+        filter: &str,
+        auto: &mut automation::Registry,
+    ) {
+        ui.horizontal(|ui| {
+            // Wider than a seam, so a tab of several families reads as one.
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (g, families) in groups.iter().enumerate() {
+                let r = tab(ui, families, g == active, types, library, filter, auto);
+                if r.clicked() {
+                    self.family = families.first().cloned().unwrap_or_default();
+                    self.focus = true;
+                }
+            }
+        });
+    }
+}
+
+/// One tab of the dialog; `families` its families, `filter` the search text.
+fn tab(
+    ui: &mut Ui,
+    families: &[String],
+    active: bool,
+    types: &NodeTypes,
+    library: &[Offered],
+    filter: &str,
+    auto: &mut automation::Registry,
+) -> egui::Response {
+    let name = tab_name(families);
+    let named = families.len() > 1;
+    // While searching: which families have a match?
+    let segments: Vec<(&String, bool, Option<Arc<egui::Galley>>)> = families
+        .iter()
+        .map(|f| {
+            let kinds = kinds_of(types, f, library);
+            let hit = !filter.is_empty() && kinds.iter().any(|k| matches(k, filter));
+            let bright = if filter.is_empty() { !kinds.is_empty() } else { hit };
+            let text = if bright { Color32::WHITE } else { theme::TEXT_WEAK };
+            let galley =
+                (!named).then(|| ui.painter().layout_no_wrap(f.clone(), FontId::proportional(14.0), text));
+            (f, hit, galley)
+        })
+        .collect();
+    let title =
+        named.then(|| ui.painter().layout_no_wrap(name.clone(), FontId::proportional(14.0), Color32::WHITE));
+    // A named tab shares its width out evenly among its families.
+    let even = title.as_ref().map_or(0.0, |t| (t.size().x + 24.0) / segments.len() as f32);
+    let widths: Vec<f32> = segments
+        .iter()
+        .map(|(_, _, t)| t.as_ref().map_or(even.max(28.0), |t| (t.size().x + 16.0).max(64.0)))
+        .collect();
+    let (rect, r) = ui.allocate_exact_size(vec2(widths.iter().sum(), 22.0), Sense::click());
+    let mut x = rect.min.x;
+    for ((f, hit, galley), w) in segments.iter().zip(&widths) {
+        let seg = Rect::from_min_size(pos2(x, rect.min.y), vec2(*w, rect.height()));
+        x += w;
+        let color = theme::family_color(f);
+        let fill = match (active, r.hovered()) {
+            (true, _) => color,
+            (false, true) => color.gamma_multiply(0.55),
+            (false, false) => color.gamma_multiply(0.35),
+        };
+        ui.painter().rect_filled(seg, CornerRadius::ZERO, fill);
+        if let Some(galley) = galley {
+            let at = seg.center() - galley.size() / 2.0;
+            ui.painter().galley(at, galley.clone(), Color32::WHITE);
+        }
+        if *hit {
+            let bar = Rect::from_min_max(
+                seg.left_bottom() + vec2(4.0, -3.0),
+                seg.right_bottom() + vec2(-4.0, -1.0),
+            );
+            ui.painter().rect_filled(bar, CornerRadius::ZERO, Color32::WHITE);
+        }
+    }
+    if let Some(title) = title {
+        let at = rect.center() - title.size() / 2.0;
+        ui.painter().galley(at, title, Color32::WHITE);
+    }
+    let hit = segments.iter().any(|(_, hit, _)| *hit);
+    let label = if hit { format!("{name} (match)") } else { name };
+    let first_family = families.first().map_or("", String::as_str);
+    auto.add(format!("add.tab.{first_family}"), rect, label);
+    r
+}
+
+/// A tab of several families: a heading over each, with a line in its colour across its
+/// columns.
+fn headings(ui: &mut Ui, group: &[String], cells: &[Cell], width: f32, auto: &mut automation::Registry) {
+    if group.len() <= 1 {
+        return;
+    }
+    let (row, _) = ui.allocate_exact_size(vec2(width, HEADING), Sense::hover());
+    let painter = ui.painter_at(row);
+    for family in group {
+        let columns: Vec<usize> = cells.iter().filter(|c| &c.family == family).map(|c| c.col).collect();
+        let (Some(first), Some(last)) = (columns.iter().min(), columns.iter().max()) else {
+            continue;
+        };
+        let left = row.min.x + *first as f32 * CELL.x + 1.0;
+        let right = row.min.x + (*last + 1) as f32 * CELL.x - 1.0;
+        let heading = HEADINGS.iter().find(|(f, _)| f == family).map_or(family.as_str(), |(_, h)| *h);
+        let r = painter.text(
+            pos2(left + 5.0, row.center().y - 1.0),
+            Align2::LEFT_CENTER,
+            heading,
+            FontId::proportional(13.0),
+            theme::TEXT,
+        );
+        auto.add(format!("add.heading.{family}"), r, heading);
+        painter.line_segment(
+            [pos2(left, row.max.y - 1.0), pos2(right, row.max.y - 1.0)],
+            Stroke::new(2.0, theme::family_color(family)),
+        );
+    }
+}
+
+/// The grid of the active tab: columns of [`ROWS`], top to bottom.
+struct Grid<'a> {
+    cells: &'a [Cell],
+    group: &'a [String],
+    width: f32,
+    /// The search text, trimmed and lower case.
+    filter: &'a str,
+    /// The first match, Enter's choice.
+    first: Option<&'a str>,
+    library: &'a [Offered],
+}
+
+impl<'a> Grid<'a> {
+    /// Draws the grid; a click on a type chooses it. Returns the type under the pointer.
+    fn show(&self, ui: &mut Ui, auto: &mut automation::Registry, outcome: &mut Outcome) -> Option<&'a str> {
+        let rows = self.cells.iter().map(|c| c.row + 1).max().unwrap_or(1);
+        let (grid, _) = ui.allocate_exact_size(vec2(self.width, rows as f32 * CELL.y), Sense::hover());
+        let painter = ui.painter_at(grid);
+        if self.cells.is_empty() {
+            painter.text(
+                grid.left_top() + vec2(6.0, CELL.y / 2.0),
+                Align2::LEFT_CENTER,
+                format!("no {} node types yet", self.group.join(" or ")),
+                FontId::proportional(14.0),
+                theme::TEXT_WEAK,
+            );
+        }
+        let mut hovered = None;
+        for Cell { col, row, kind, family } in self.cells {
+            let (col, row) = (*col, *row);
+            let color = theme::family_color(family);
+            let cell = Rect::from_min_size(grid.min + vec2(col as f32 * CELL.x, row as f32 * CELL.y), CELL)
+                .shrink2(vec2(1.0, 0.5));
+            if kind == GAP {
+                let y = cell.center().y;
+                painter.line_segment(
+                    [pos2(cell.min.x + 6.0, y), pos2(cell.max.x - 6.0, y)],
+                    Stroke::new(1.0, theme::TEXT_WEAK),
+                );
+                continue;
+            }
+            let r = ui.interact(cell, ui.id().with(("add", kind.as_str())), Sense::click());
+            auto.add(format!("add.{kind}"), cell, kind.as_str());
+            let hit = matches(kind, self.filter);
+            let fill = match (hit, r.hovered()) {
+                (_, true) => color.gamma_multiply(1.4),
+                (true, false) => color.gamma_multiply(if row % 2 == 0 { 0.8 } else { 0.65 }),
+                (false, false) => color.gamma_multiply(0.2),
+            };
+            painter.rect_filled(cell, CornerRadius::ZERO, fill);
+            if self.first == Some(kind.as_str()) && !self.filter.is_empty() {
+                painter.rect_stroke(
+                    cell,
+                    CornerRadius::ZERO,
+                    Stroke::new(1.0, Color32::WHITE),
+                    StrokeKind::Inside,
+                );
+            }
+            painter.text(
+                cell.left_center() + vec2(6.0, 0.0),
+                Align2::LEFT_CENTER,
+                short(kind),
+                FontId::proportional(14.0),
+                if hit { theme::TEXT } else { Color32::from_gray(95) },
+            );
+            let mut removing = false;
+            if let Some(name) = kind.strip_prefix(LIBRARY_MARK)
+                && self.library_file(ui, &painter, cell, &r, name, auto)
+            {
+                *outcome = Outcome::Remove(name.to_string());
+                removing = true;
+            }
+            if r.hovered() {
+                hovered = Some(kind.as_str());
+            }
+            if r.clicked() && !removing {
+                *outcome = Outcome::Chosen(kind.clone());
+            }
+        }
+        hovered
+    }
+
+    /// A component file rather than a node type: where it comes from, at the right, and under
+    /// the pointer a button that takes it out of the library (there was no way to). True when
+    /// that button was clicked.
+    fn library_file(
+        &self,
+        ui: &Ui,
+        painter: &egui::Painter,
+        cell: Rect,
+        r: &egui::Response,
+        name: &str,
+        auto: &mut automation::Registry,
+    ) -> bool {
+        let place = self.library.iter().find(|o| o.name == name).map_or("", |o| o.place);
+        let cross = Rect::from_center_size(
+            cell.right_center() - vec2(4.0 + CELL.y / 2.0, 0.0),
+            vec2(CELL.y - 4.0, CELL.y - 4.0),
+        );
+        let x = ui.interact(cross, ui.id().with(("remove", name)), Sense::click());
+        auto.add(format!("add.remove.{name}"), cross, name);
+        if r.hovered() || x.hovered() {
+            if x.hovered() {
+                painter.rect_filled(cross, CornerRadius::same(3), theme::NEGATIVE);
+            }
+            painter.text(cross.center(), Align2::CENTER_CENTER, "×", FontId::proportional(15.0), theme::TEXT);
+            let from = if place == "project" { "the project's components" } else { "the library" };
+            x.clone().on_hover_text(format!(
+                "Take `{name}` out of {from}; the file moves into a `removed` folder beside it"
+            ));
+        } else {
+            painter.text(
+                cell.right_center() - vec2(6.0, 0.0),
+                Align2::RIGHT_CENTER,
+                place,
+                FontId::proportional(11.0),
+                theme::TEXT_WEAK,
+            );
+        }
+        x.clicked()
+    }
+}
+
+/// The summary of the type or component file `about`, in one line.
+fn summary(ui: &mut Ui, about: Option<&str>, types: &NodeTypes, library: &[Offered], width: f32) {
+    let text = about
+        .and_then(|k| match k.strip_prefix(LIBRARY_MARK) {
+            Some(name) => {
+                let place = library.iter().find(|o| o.name == name).map_or("", |o| o.place);
+                let place = if place == "project" { "the project's components/" } else { "the library" };
+                Some(format!("{name}: a component file from {place} (comp.load)"))
+            }
+            None => types.desc(k).map(|d| format!("{k}: {}", d.summary)),
+        })
+        .unwrap_or_default();
+    ui.allocate_ui_with_layout(vec2(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.add(egui::Label::new(egui::RichText::new(text).color(theme::TEXT_WEAK)).truncate())
+    });
 }
