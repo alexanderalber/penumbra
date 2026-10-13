@@ -1048,12 +1048,21 @@ fn node_snapshot(e: &Engine, p: &Json) -> Result<Json> {
     let warning = status.as_ref().and_then(|s| s.warning.clone());
     let data = result_of(&a.path, data, error.clone())?;
     let tex = match data.get::<Geo>() {
-        Some(geo) => {
-            geo.preview.as_ref().ok_or_else(|| format!("{} has no picture of its geometry", a.path))?
+        Some(geo) => match &geo.preview {
+            Some(t) => t.clone(),
+            None => penumbra_ops::geo::preview(
+                &gpu,
+                &mut penumbra_gpu::render::Renderer::new(),
+                geo,
+                penumbra_ops::geo::Preview::Geometry,
+            )
+            .map_err(|e| format!("{}: no picture of its geometry: {e}", a.path))?,
+        },
+        None => {
+            data.get::<Tex>().ok_or_else(|| format!("{} output {output} is not a texture", a.path))?.clone()
         }
-        None => data.get::<Tex>().ok_or_else(|| format!("{} output {output} is not a texture", a.path))?,
     };
-    let pixels = gpu.read(tex)?;
+    let pixels = gpu.read(&tex)?;
     let png = pixels.to_png()?;
     let file = match a.file {
         Some(f) => f,

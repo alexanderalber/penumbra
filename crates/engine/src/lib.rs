@@ -15,6 +15,7 @@ pub mod control;
 pub mod engine;
 pub mod navigation;
 pub mod osc;
+pub mod pictures;
 pub mod projects;
 pub mod state;
 pub mod state_commands;
