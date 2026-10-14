@@ -85,7 +85,6 @@ impl Helpers {
         };
         text.push_str(match pace {
             Some(PaceSource::Vsync) => " \u{b7} vsync",
-            Some(PaceSource::Simulated) => " \u{b7} simulated",
             _ => " \u{b7} timer",
         });
         let problems = self.problems(Instant::now());
@@ -149,9 +148,6 @@ impl Helpers {
         ui.label(
             RichText::new(match pace {
                 Some(PaceSource::Vsync) => "The show clock follows the vsync of the window marked \u{2022}.",
-                Some(PaceSource::Simulated) => {
-                    "The show clock follows an out.pacer node: a projector that shows nothing."
-                }
                 _ => "The show clock runs on a timer (no output window at the show rate).",
             })
             .color(theme::TEXT_WEAK),

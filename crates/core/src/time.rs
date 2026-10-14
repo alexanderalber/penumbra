@@ -307,15 +307,16 @@ impl TimerPacer {
 pub enum PaceSource {
     /// A projector output's vsync.
     Vsync,
-    /// The [`TimerPacer`]: no output paces, or its vsync stopped arriving.
+    /// A timer: no output paces, or its vsync stopped arriving.
     Timer,
-    /// An `out.pacer` node: a projector that shows nothing, ticking like one's vsync.
-    Simulated,
 }
 
 /// Paces the show clock from a projector output's vsync, falling back to a [`TimerPacer`] when no
 /// vsync has arrived for [`Pacer::FALLBACK_PERIODS`] frame periods (no output open, window hidden,
 /// display unplugged).
+///
+/// A precise timer thread may stand in for the output, feeding [`Pacer::vsync`] at the show
+/// rate; the [`TimerPacer`] then only takes over if its ticks stop too.
 ///
 /// One vsync is one frame; a gap of several periods (a stall) counts as that many, so the
 /// `realtime` policy still skips ahead. A display whose refresh differs slightly from the show

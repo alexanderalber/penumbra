@@ -13,12 +13,8 @@ active `out.projector` with the display it is on, and its colour in the test pat
 The show clock follows the vsync of one output window (marked with a dot), or a timer when no
 window runs at the show rate. The status bar repeats this in short ("no outputs · timer").
 
-The timer starts some frames late on Windows (a frame shows twice now and then), so timing
-while developing without a projector is not quite what it will be at the show. An `out.pacer`
-node fixes that: a projector that shows nothing and only ticks like one's vsync, at its
-`refresh` rate ("simulated" in the status bar). Wire the show's last node into it, so it is
-cooked as a projector's input would be. A real output window at the show rate takes over while
-it is open.
+The timer ticks as evenly as a projector's vsync, so timing while developing without a
+projector is what it will be at the show. It costs a few percent of one CPU core.
 
 The display ids listed here (`EPSON PJ @ port 4`) are what an `out.projector`'s `display`
 takes; the monitor name alone is enough when it is unique. The `test` param of a projector
