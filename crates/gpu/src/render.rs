@@ -48,9 +48,13 @@ use penumbra_core::Error;
 use penumbra_mesh::Bounds;
 
 use crate::environment::EnvironmentMaps;
-use crate::geo::{Faces, Geo, Mat4, Material, Shading, VERTEX_BYTES, WIRE_BYTES, normal_matrix};
+use crate::geo::{Faces, Geo, Mat4, Material, Shading, VERTEX_BYTES, WIRE_BYTES};
 use crate::projection::Overlay;
 use crate::{FORMAT, Gpu, Tex};
+
+mod passes;
+
+use passes::{Calls, Encoding, MeasureTargets, RenderPipes, Shared, Wanted};
 
 const DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// The measuring pass's format: four derivatives at full precision.
@@ -1018,88 +1022,102 @@ impl Renderer {
         if data.is_some_and(|d| d.size() != size) {
             return Err(Error::new("the data texture must have the colour texture's size"));
         }
-        let samples = if look.antialias && pipelines.msaa { 4 } else { 1 };
-        let cull = look.cull.then_some(wgpu::Face::Back);
-        // Materials show only where the surface is theirs; parts, uv and normals are whole.
-        let shows_material = matches!(look.surface, Surface::Material | Surface::Texture);
-        let any_wire =
-            shows_material && geo.items.iter().any(|i| i.material.as_ref().is_some_and(|m| m.wire.is_some()));
-        let pipes = |samples: u32, pass: Pass, cull: Option<wgpu::Face>| -> Result<Pipes, Error> {
-            Ok(Pipes {
-                plain: pipelines.pipeline(gpu, samples, pass, cull, false, Stage::Draw)?,
-                wire: if any_wire {
-                    Some(pipelines.pipeline(gpu, samples, pass, cull, true, Stage::Draw)?)
-                } else {
-                    None
-                },
-            })
-        };
-        // Hidden faces' two steps; only wireframes draw them.
-        let stages = |samples: u32, pass: Pass| -> Result<(Pipes, Pipes), Error> {
-            let wire = |stage| -> Result<Pipes, Error> {
-                let p = pipelines.pipeline(gpu, samples, pass, cull, true, stage)?;
-                Ok(Pipes { plain: p.clone(), wire: Some(p) })
-            };
-            Ok((wire(Stage::Hide)?, wire(Stage::Over)?))
-        };
-        let color_pipeline = pipes(samples, Pass::Solid, cull)?;
-        let data_pipeline = match data {
-            Some(_) => Some(pipes(1, Pass::Data, cull)?),
-            None => None,
-        };
-        let measure_pipeline = if measure { Some(pipes(1, Pass::Measure, cull)?) } else { None };
         let lights = lights.get(..MAX_LIGHTS).unwrap_or(lights);
         let placed = place_lights(lights, geo.bounds().as_ref(), look.shadow_size > 0);
         let layers = placed.iter().filter(|p| p.layer.is_some()).count() as u32;
-        // Both faces cast shadows, whatever the colour pass culls.
-        let shadow_pipeline = if layers > 0 { Some(pipes(1, Pass::Shadow, None)?) } else { None };
-        // Ambient occlusion only where it can show: on lit surfaces, with ambient or environment
-        // light to dim.
-        let ambient = lights
-            .iter()
-            .zip(&placed)
-            .any(|(l, p)| !p.dropped && matches!(l.kind, LightKind::Ambient | LightKind::Environment));
-        let ao = look.ao.filter(|a| {
-            ambient
-                && !look.shade_all
-                && matches!(look.surface, Surface::Material | Surface::Texture)
-                && a.radius.is_finite()
-                && a.radius > 0.0
-                && a.strength.is_finite()
-                && a.strength > 0.0
-        });
-        let prepass_pipeline = if ao.is_some() { Some(pipes(1, Pass::Prepass, cull)?) } else { None };
-        // The measuring pass's targets and the buffer it is read back through: made anew each
-        // time (measurements are rare, at most one per node in flight).
-        let msize = measure_size(size);
-        let mrow = u64::from(msize.0) * 16;
-        let mpadded = mrow.div_ceil(256) * 256;
-        let (measuring, error) = gpu.scoped(|| {
-            measure_pipeline.as_ref().map(|_| {
-                let target = gpu.device().create_texture(&wgpu::TextureDescriptor {
-                    label: Some("render measure"),
-                    size: wgpu::Extent3d { width: msize.0, height: msize.1, depth_or_array_layers: 1 },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: MEASURE,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-                    view_formats: &[],
-                });
-                let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-                let depth = Self::attachment(gpu, msize, DEPTH, 1);
-                let buffer = gpu.device().create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("render measure"),
-                    size: mpadded * u64::from(msize.1),
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    mapped_at_creation: false,
-                });
-                (target, view, depth, buffer)
-            })
+        let ao = ambient_occlusion(look, lights, &placed);
+        let align = u64::from(gpu.device().limits().min_uniform_buffer_offset_alignment).max(DRAW_BYTES);
+        let calls = Calls::new(geo, view, look, texture, align.div_ceil(256).max(1) * 256)?;
+        let tinted = layers > 0 && !calls.tinting.is_empty();
+        let wanted = Wanted {
+            samples: if look.antialias && pipelines.msaa { 4 } else { 1 },
+            data: data.is_some(),
+            measure,
+            shadows: layers > 0,
+            tinted,
+            ao: ao.is_some(),
+        };
+        let pipes = RenderPipes::new(gpu, &pipelines, look, &calls, wanted)?;
+        let measuring = if measure { Some(MeasureTargets::new(gpu, size)?) } else { None };
+        self.ensure_targets(gpu, size, wanted)?;
+        let wires = calls.wires(gpu, geo)?;
+        self.ensure_draws(gpu, calls.bytes.len() as u64);
+        // Shadow maps: a 1x1 layer stands in while no light casts a shadow. Tint maps at half
+        // their size (what passes through glass is soft anyway), 1x1 while nothing is
+        // see-through.
+        let shadow_size = if layers > 0 { look.shadow_size.clamp(1, gpu.max_texture_size()) } else { 1 };
+        let tint_size = if tinted { (shadow_size / 2).max(1) } else { 1 };
+        self.ensure_maps(gpu, shadow_size, tint_size, layers, tinted)?;
+        let shared = self.shared(gpu)?;
+
+        let maps = Maps { shadow: shadow_size, tint: tint_size, tinted, ao: ao.is_some() };
+        for (p, buffer) in placed.iter().filter_map(|p| p.layer.map(|_| p)).zip(&self.shadow_frames) {
+            let from = View { clip_from_world: p.clip, view_z: [0.0; 4], eye: [0.0; 3] };
+            gpu.queue().write_buffer(buffer, 0, &frame_bytes(&from, look, maps, &[], &[]));
+        }
+        gpu.queue().write_buffer(&shared.frame, 0, &frame_bytes(view, look, maps, lights, &placed));
+        if let (Some(a), Some(buffer)) = (ao, &self.ao_uniforms) {
+            gpu.queue().write_buffer(buffer, 0, &ao_bytes(view, size, a));
+        }
+
+        let [r, g, b, a] = look.background.map(|c| if c.is_finite() { f64::from(c) } else { 0.0 });
+        let (result, error) = gpu.scoped(|| -> Result<(), Error> {
+            let device = gpu.device();
+            let draw_group = self.draws.as_ref().map(|b| {
+                gpu.queue().write_buffer(b, 0, &calls.bytes);
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("render draws"),
+                    layout: &pipelines.draw_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: b,
+                            offset: 0,
+                            size: wgpu::BufferSize::new(DRAW_BYTES),
+                        }),
+                    }],
+                })
+            });
+            let enc = Encoding {
+                device,
+                pipelines: &pipelines,
+                geo,
+                calls: &calls,
+                wires: &wires,
+                shared: &shared,
+                groups: passes::texture_groups(device, &pipelines, &calls, &shared.white),
+                draw_group,
+                frame_group: passes::frame_group(
+                    device,
+                    &pipelines,
+                    &shared.frame,
+                    &shared.sampler,
+                    "render frame",
+                ),
+                light_group: self.light_group(device, &pipelines, &shared, lights, &placed, ao.is_some())?,
+                background: wgpu::Color { r, g, b, a },
+            };
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("render") });
+            self.encode_shadows(&mut encoder, &enc, &pipes, layers);
+            self.encode_ao(&mut encoder, &enc, &pipes);
+            self.encode_passes(&mut encoder, &enc, &pipes, color, data, measuring.as_ref());
+            if let Some(m) = &measuring {
+                m.copy(&mut encoder);
+            }
+            gpu.submit([encoder.finish()]);
+            Ok(())
         });
         if let Some(e) = error {
-            return Err(Error::new(format!("cannot create the measuring targets: {e}")));
+            return Err(Error::new(format!("render failed: {e}")));
         }
+        result?;
+        Ok(measuring.map(MeasureTargets::read_back))
+    }
+
+    /// The attachments of a render of `size`, made again when the size changes.
+    fn ensure_targets(&mut self, gpu: &Gpu, size: (u32, u32), wanted: Wanted) -> Result<(), Error> {
+        let samples = wanted.samples;
         let ((), error) = gpu.scoped(|| {
             if self.size != size {
                 self.size = size;
@@ -1115,13 +1133,13 @@ impl Renderer {
                 self.depth = Some((samples, Self::attachment(gpu, size, DEPTH, samples)));
             }
             // One depth without multisampling for the data pass and the prepass alike.
-            if (data.is_some() || ao.is_some()) && self.depth_data.is_none() {
+            if (wanted.data || wanted.ao) && self.depth_data.is_none() {
                 self.depth_data = Some(Self::attachment(gpu, size, DEPTH, 1));
             }
-            if ao.is_some() && self.ao.is_none() {
+            if wanted.ao && self.ao.is_none() {
                 self.ao = Some(AoTargets::new(gpu, size));
             }
-            if ao.is_some() && self.ao_uniforms.is_none() {
+            if wanted.ao && self.ao_uniforms.is_none() {
                 self.ao_uniforms = Some(gpu.device().create_buffer(&wgpu::BufferDescriptor {
                     label: Some("render ao"),
                     size: AO_BYTES,
@@ -1130,173 +1148,34 @@ impl Renderer {
                 }));
             }
         });
-        if let Some(e) = error {
-            return Err(Error::new(format!("cannot create the render targets: {e}")));
+        match error {
+            Some(e) => Err(Error::new(format!("cannot create the render targets: {e}"))),
+            None => Ok(()),
         }
+    }
 
-        // The draws: one per run of a part and material, with its uniforms.
-        struct DrawCall {
-            model: usize,
-            first: u32,
-            count: u32,
-            slot: u32,
-            texture: Option<Tex>,
-            /// Can show see-through pixels: drawn again, sorted, after the opaque ones.
-            clear: bool,
-            /// Drawn as the edges of its triangles, from the model's wireframe vertices.
-            wire: bool,
-            /// Shows nothing but hides what is behind it: drawn before everything else.
-            occluder: bool,
-            /// A wireframe with hidden faces: drawn after everything else in the colour, data and
-            /// measuring passes, its faces' depth first, then its lines where that is the
-            /// nearest.
-            hides: bool,
-            /// Drawn in the shadow and tint passes.
-            shadows: bool,
-            /// Distance of its middle along the view, for the sorting.
-            depth: f64,
+    /// Room for `need` bytes of draw uniforms.
+    fn ensure_draws(&mut self, gpu: &Gpu, need: u64) {
+        if need > 0 && self.draws.as_ref().is_none_or(|b| b.size() < need) {
+            self.draws = Some(gpu.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some("render draws"),
+                size: need.next_power_of_two().max(4096),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
         }
-        let align = u64::from(gpu.device().limits().min_uniform_buffer_offset_alignment).max(DRAW_BYTES);
-        let align = align.div_ceil(256).max(1) * 256;
-        let mut calls = Vec::new();
-        let mut draw_bytes: Vec<u8> = Vec::new();
-        for (index, item) in geo.items.iter().enumerate() {
-            let model = &item.model;
-            let normals = normal_matrix(&item.world);
-            for (k, r) in model.mesh.ranges.iter().enumerate() {
-                if calls.len() >= MAX_DRAWS {
-                    return Err(Error::new(format!("more than {MAX_DRAWS} draws")));
-                }
-                let file = model.mesh.materials.get(r.material as usize);
-                let plain = Material::constant();
-                // The geometry's material where the surface shows one; parts, uv and normals
-                // are flat.
-                let m = match item.material.as_deref() {
-                    Some(m) if shows_material => m,
-                    _ => &plain,
-                };
-                let wire = m.wire.is_some();
-                let occluder = m.shading == Shading::Occluder && !look.shade_all;
-                let hides = m.wire.is_some_and(|w| w.faces == Faces::Hidden);
-                // Filled faces are see-through where their colour is.
-                let fill_clear = m.wire.is_some_and(|w| w.faces == Faces::Open || w.fill[3] < OPAQUE);
-                // A geometry's material replaces the file's colour and textures; without one
-                // the file's show as they are.
-                let tex = match (look.surface, item.material.as_deref()) {
-                    (Surface::Material, Some(m)) => m.texture.clone(),
-                    (Surface::Material, None) => file
-                        .and_then(|mat| mat.texture)
-                        .and_then(|t| model.textures.get(t as usize).cloned().flatten()),
-                    (Surface::Texture, _) => texture.cloned(),
-                    _ => None,
-                };
-                let color = match (look.surface, item.material.as_deref()) {
-                    (Surface::Material, None) => file.map_or([1.0; 4], |mat| mat.color),
-                    _ => m.color,
-                };
-                // A texture may hold see-through texels anywhere; a colour says so itself. A
-                // wireframe is mostly see-through, an occluder never.
-                let clear = !occluder
-                    && !hides
-                    && (fill_clear
-                        || match look.surface {
-                            Surface::Material => color[3] < OPAQUE || tex.is_some(),
-                            Surface::Texture => tex.is_some(),
-                            _ => false,
-                        });
-                let center = model.centers.get(k).copied().unwrap_or_default().map(f64::from);
-                let [cx, cy, cz] = crate::geo::transform(&item.world, center);
-                let z = view.view_z;
-                let depth = z[0] * cx + z[1] * cy + z[2] * cz + z[3];
-                let slot = calls.len() as u32;
-                draw_bytes.resize(slot as usize * align as usize, 0);
-                draw_bytes.extend(draw_slot(
-                    &item.world,
-                    &normals,
-                    color,
-                    m,
-                    occluder,
-                    item.part_offset + r.part,
-                ));
-                calls.push(DrawCall {
-                    model: index,
-                    first: r.first,
-                    count: r.count,
-                    slot,
-                    texture: tex,
-                    clear,
-                    wire,
-                    occluder,
-                    hides,
-                    shadows: m.shadows,
-                    depth: if depth.is_finite() { depth } else { 0.0 },
-                });
-            }
-        }
-        // Occluders first: they leave the colour as it is, so what was drawn before them would
-        // show through.
-        let mut order: Vec<usize> = (0..calls.len()).collect();
-        order.sort_by_key(|k| calls.get(*k).is_none_or(|c| !c.occluder));
-        // Wireframes with hidden faces, which the colour, data and measuring passes draw last.
-        let hiding: Vec<usize> =
-            (0..calls.len()).filter(|k| calls.get(*k).is_some_and(|c| c.hides)).collect();
-        let rest: Vec<usize> = order.iter().copied().filter(|k| !hiding.contains(k)).collect();
-        let hide_stages = |samples: u32, pass: Pass, on: bool| -> Result<Option<(Pipes, Pipes)>, Error> {
-            if on && !hiding.is_empty() { Ok(Some(stages(samples, pass)?)) } else { Ok(None) }
-        };
-        let solid_stages = hide_stages(samples, Pass::Solid, true)?;
-        let data_stages = hide_stages(1, Pass::Data, data.is_some())?;
-        let measure_stages = hide_stages(1, Pass::Measure, measure)?;
-        // The wireframe vertices of every model drawn as one.
-        let mut wires: HashMap<usize, wgpu::Buffer> = HashMap::new();
-        for c in calls.iter().filter(|c| c.wire) {
-            if let (false, Some(item)) = (wires.contains_key(&c.model), geo.items.get(c.model)) {
-                wires.insert(c.model, item.model.wire(gpu)?);
-            }
-        }
-        // See-through draws, farthest first.
-        let mut behind: Vec<usize> =
-            calls.iter().enumerate().filter(|(_, c)| c.clear).map(|(k, _)| k).collect();
-        behind.sort_by(|a, b| {
-            let depth = |k: &usize| calls.get(*k).map_or(0.0, |c| c.depth);
-            depth(b).total_cmp(&depth(a))
-        });
-        // Without culling, each see-through draw twice: its back faces, then its front faces
-        // (a closed glass body shows its far side through its near one).
-        let blend_pipelines = if behind.is_empty() {
-            Vec::new()
-        } else if look.cull {
-            vec![pipes(samples, Pass::Blend, cull)?]
-        } else {
-            vec![
-                pipes(samples, Pass::Blend, Some(wgpu::Face::Front))?,
-                pipes(samples, Pass::Blend, Some(wgpu::Face::Back))?,
-            ]
-        };
-        // What casts shadows: whole, and the see-through draws among it tinting the light.
-        let casting: Vec<usize> =
-            (0..calls.len()).filter(|k| calls.get(*k).is_some_and(|c| c.shadows)).collect();
-        let tinting: Vec<usize> =
-            behind.iter().copied().filter(|k| calls.get(*k).is_some_and(|c| c.shadows)).collect();
-        let tinted = layers > 0 && !tinting.is_empty();
-        let tint_pipeline = if tinted { Some(pipes(1, Pass::Tint, None)?) } else { None };
-        if !draw_bytes.is_empty() {
-            let need = draw_bytes.len() as u64;
-            if self.draws.as_ref().is_none_or(|b| b.size() < need) {
-                self.draws = Some(gpu.device().create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("render draws"),
-                    size: need.next_power_of_two().max(4096),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                }));
-            }
-        }
+    }
 
-        // Shadow maps: a 1x1 layer stands in while no light casts a shadow. Tint maps at half
-        // their size (what passes through glass is soft anyway), 1x1 while nothing is
-        // see-through.
-        let shadow_size = if layers > 0 { look.shadow_size.clamp(1, gpu.max_texture_size()) } else { 1 };
-        let tint_size = if tinted { (shadow_size / 2).max(1) } else { 1 };
+    /// Shadow and tint maps of these sizes with at least `layers` layers, and a frame uniform
+    /// buffer per layer.
+    fn ensure_maps(
+        &mut self,
+        gpu: &Gpu,
+        shadow_size: u32,
+        tint_size: u32,
+        layers: u32,
+        tinted: bool,
+    ) -> Result<(), Error> {
         let ((), error) = gpu.scoped(|| {
             let fits = |m: &Option<ShadowMaps>, size: u32, layers: u32| {
                 m.as_ref().is_some_and(|m| m.size == size && m.layers >= layers.max(1))
@@ -1317,17 +1196,14 @@ impl Renderer {
                 }));
             }
         });
-        if let Some(e) = error {
-            return Err(Error::new(format!("cannot create the shadow maps: {e}")));
+        match error {
+            Some(e) => Err(Error::new(format!("cannot create the shadow maps: {e}"))),
+            None => Ok(()),
         }
-        let (Some(shadows), Some(tints)) = (self.shadows.as_ref(), self.tints.as_ref()) else {
-            return Err(Error::new("no shadow maps"));
-        };
-        let maps = Maps { shadow: shadow_size, tint: tint_size, tinted, ao: ao.is_some() };
-        for (p, buffer) in placed.iter().filter_map(|p| p.layer.map(|_| p)).zip(&self.shadow_frames) {
-            let from = View { clip_from_world: p.clip, view_z: [0.0; 4], eye: [0.0; 3] };
-            gpu.queue().write_buffer(buffer, 0, &frame_bytes(&from, look, maps, &[], &[]));
-        }
+    }
+
+    /// The samplers, the white texture and the frame buffer, made on first use.
+    fn shared(&mut self, gpu: &Gpu) -> Result<Shared, Error> {
         let (compare, clamp, around) = self
             .light_samplers
             .get_or_insert_with(|| {
@@ -1374,8 +1250,6 @@ impl Renderer {
                 })
             })
             .clone();
-
-        // Uniforms: the frame, then one slot per draw.
         let frame = self
             .frame
             .get_or_insert_with(|| {
@@ -1387,391 +1261,26 @@ impl Renderer {
                 })
             })
             .clone();
-        gpu.queue().write_buffer(&frame, 0, &frame_bytes(view, look, maps, lights, &placed));
-        if let (Some(a), Some(buffer)) = (ao, &self.ao_uniforms) {
-            gpu.queue().write_buffer(buffer, 0, &ao_bytes(view, size, a));
-        }
-
-        let ((), error) = gpu.scoped(|| {
-            let device = gpu.device();
-            let frame_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("render frame"),
-                layout: &pipelines.frame_layout,
-                entries: &[
-                    wgpu::BindGroupEntry { binding: 0, resource: frame.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
-                ],
-            });
-            let draw_group = self.draws.as_ref().map(|b| {
-                gpu.queue().write_buffer(b, 0, &draw_bytes);
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("render draws"),
-                    layout: &pipelines.draw_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: b,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(DRAW_BYTES),
-                        }),
-                    }],
-                })
-            });
-            // One texture group per distinct texture.
-            let mut tex_groups: Vec<(Tex, wgpu::BindGroup)> = Vec::new();
-            let mut group_of = |t: &Tex| -> wgpu::BindGroup {
-                if let Some((_, g)) = tex_groups.iter().find(|(x, _)| x.same(t)) {
-                    return g.clone();
-                }
-                let g = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("render texture"),
-                    layout: &pipelines.tex_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(t.view()),
-                    }],
-                });
-                tex_groups.push((t.clone(), g.clone()));
-                g
-            };
-            let call_groups: Vec<wgpu::BindGroup> =
-                calls.iter().map(|c| group_of(c.texture.as_ref().unwrap_or(&white))).collect();
-            // The shadow maps and projector pictures, white where a slot is free.
-            let mut pictures = [white.view(); MAX_PROJECTORS];
-            for (p, l) in placed.iter().zip(lights) {
-                let picture = l.projector.as_ref().and_then(|j| j.texture.as_ref());
-                if let (Some(slot), Some(t)) = (p.slot.and_then(|k| pictures.get_mut(k as usize)), picture) {
-                    *slot = t.view();
-                }
-            }
-            let [p0, p1, p2, p3] = pictures;
-            // The first environment light's maps, white without one.
-            let environment = placed
-                .iter()
-                .zip(lights)
-                .find(|(p, l)| !p.dropped && l.environment.is_some())
-                .and_then(|(_, l)| l.environment.as_ref());
-            let (specular, irradiance) = match environment {
-                Some(e) => (&e.maps.specular, &e.maps.irradiance),
-                None => (white.view(), white.view()),
-            };
-            // Ambient occlusion's result; white without it (the shader then does not read it).
-            let occlusion = match (&self.ao, ao) {
-                (Some(t), Some(_)) => &t.blurred,
-                _ => white.view(),
-            };
-            fn view_entry(binding: u32, v: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
-                wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(v) }
-            }
-            let light_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("render lights"),
-                layout: &pipelines.light_layout,
-                entries: &[
-                    view_entry(0, &shadows.array),
-                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&compare) },
-                    view_entry(2, p0),
-                    view_entry(3, p1),
-                    view_entry(4, p2),
-                    view_entry(5, p3),
-                    wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(&clamp) },
-                    view_entry(7, &tints.array),
-                    view_entry(8, specular),
-                    view_entry(9, irradiance),
-                    wgpu::BindGroupEntry { binding: 10, resource: wgpu::BindingResource::Sampler(&around) },
-                    view_entry(11, occlusion),
-                ],
-            });
-            // Draws `calls[k]` for each k with `pipes`, binding a model's buffers and switching
-            // between surfaces and wireframes only when that changes.
-            let draw_some = |rp: &mut wgpu::RenderPass<'_>,
-                             draw_group: &wgpu::BindGroup,
-                             pipes: &Pipes,
-                             which: &mut dyn Iterator<Item = usize>| {
-                let mut bound: Option<(usize, bool)> = None;
-                let mut set: Option<bool> = None;
-                for k in which {
-                    let (Some(call), Some(tg)) = (calls.get(k), call_groups.get(k)) else { continue };
-                    let Some(item) = geo.items.get(call.model) else { continue };
-                    if set != Some(call.wire) {
-                        let pipeline = if call.wire { pipes.wire.as_ref() } else { Some(&pipes.plain) };
-                        let Some(pipeline) = pipeline else { continue };
-                        rp.set_pipeline(pipeline);
-                        set = Some(call.wire);
-                    }
-                    if bound != Some((call.model, call.wire)) {
-                        if call.wire {
-                            let Some(b) = wires.get(&call.model) else { continue };
-                            rp.set_vertex_buffer(0, b.slice(..));
-                        } else {
-                            rp.set_vertex_buffer(0, item.model.vertices.slice(..));
-                            rp.set_index_buffer(item.model.indices.slice(..), wgpu::IndexFormat::Uint32);
-                        }
-                        bound = Some((call.model, call.wire));
-                    }
-                    rp.set_bind_group(1, draw_group, &[(u64::from(call.slot) * align) as u32]);
-                    rp.set_bind_group(2, tg, &[]);
-                    if call.wire {
-                        // The wireframe's corners lie in index order, three per triangle.
-                        rp.draw(call.first..call.first + call.count, 0..1);
-                    } else {
-                        rp.draw_indexed(call.first..call.first + call.count, 0, 0..1);
-                    }
-                }
-            };
-            let [r, g, b, a] = look.background.map(|c| if c.is_finite() { f64::from(c) } else { 0.0 });
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("render") });
-            // The shadow maps first, one layer per light casting shadows; then, where something
-            // is see-through, what it lets through.
-            if let (Some(pipeline), Some(draw_group)) = (&shadow_pipeline, &draw_group) {
-                for (k, buffer) in self.shadow_frames.iter().take(layers as usize).enumerate() {
-                    let from = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("shadow frame"),
-                        layout: &pipelines.frame_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Sampler(&sampler),
-                            },
-                        ],
-                    });
-                    if let Some(layer) = shadows.layer_views.get(k) {
-                        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("shadow"),
-                            color_attachments: &[],
-                            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                                view: layer,
-                                depth_ops: Some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(1.0),
-                                    store: wgpu::StoreOp::Store,
-                                }),
-                                stencil_ops: None,
-                            }),
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                            multiview_mask: None,
-                        });
-                        rp.set_pipeline(&pipeline.plain);
-                        rp.set_bind_group(0, &from, &[]);
-                        draw_some(&mut rp, draw_group, pipeline, &mut casting.iter().copied());
-                    }
-                    if let (Some(tint), Some(layer)) = (&tint_pipeline, tints.layer_views.get(k)) {
-                        // Everything passes, nothing is near (half float's largest).
-                        let open = wgpu::Color { r: 1.0, g: 1.0, b: 1.0, a: 65504.0 };
-                        let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("tint"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: layer,
-                                depth_slice: None,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(open),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            })],
-                            depth_stencil_attachment: None,
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                            multiview_mask: None,
-                        });
-                        rp.set_pipeline(&tint.plain);
-                        rp.set_bind_group(0, &from, &[]);
-                        draw_some(&mut rp, draw_group, tint, &mut tinting.iter().copied());
-                    }
-                }
-            }
-            // Ambient occlusion: the opaque surfaces' positions and normals, the estimate from
-            // them, and its blur.
-            if let (Some(prepass), Some(t), Some(depth), Some(uniforms)) =
-                (&prepass_pipeline, &self.ao, &self.depth_data, &self.ao_uniforms)
-            {
-                let clear = |view| {
-                    Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })
-                };
-                {
-                    let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("ao prepass"),
-                        color_attachments: &[clear(&t.positions), clear(&t.normals)],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: depth,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Discard,
-                            }),
-                            stencil_ops: None,
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    if let Some(draw_group) = &draw_group {
-                        rp.set_pipeline(&prepass.plain);
-                        rp.set_bind_group(0, &frame_group, &[]);
-                        draw_some(&mut rp, draw_group, prepass, &mut (0..calls.len()));
-                    }
-                }
-                // The estimate reads positions and normals (its fourth binding is unused), the
-                // blur also the estimate.
-                for (pipeline, target, read) in [
-                    (&pipelines.ao_estimate, &t.estimate, &t.normals),
-                    (&pipelines.ao_blur, &t.blurred, &t.estimate),
-                ] {
-                    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("render ao"),
-                        layout: &pipelines.ao_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: uniforms.as_entire_binding() },
-                            view_entry(1, &t.positions),
-                            view_entry(2, &t.normals),
-                            view_entry(3, read),
-                        ],
-                    });
-                    let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("ao"),
-                        color_attachments: &[clear(target)],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    rp.set_pipeline(pipeline);
-                    rp.set_bind_group(0, &group, &[]);
-                    rp.draw(0..3, 0..1);
-                }
-            }
-            // (pass, target, resolve target, depth, pipeline)
-            type Target<'a> = (
-                Pass,
-                &'a wgpu::TextureView,
-                Option<&'a wgpu::TextureView>,
-                &'a wgpu::TextureView,
-                &'a Pipes,
-                Option<&'a (Pipes, Pipes)>,
-            );
-            let mut passes: Vec<Target<'_>> = Vec::new();
-            if let Some(depth) = self.depth.as_ref().map(|(_, v)| v) {
-                match (&self.msaa_color, samples) {
-                    (Some(m), 4) => passes.push((
-                        Pass::Solid,
-                        m,
-                        Some(color.view()),
-                        depth,
-                        &color_pipeline,
-                        solid_stages.as_ref(),
-                    )),
-                    _ => passes.push((
-                        Pass::Solid,
-                        color.view(),
-                        None,
-                        depth,
-                        &color_pipeline,
-                        solid_stages.as_ref(),
-                    )),
-                }
-            }
-            if let (Some(t), Some(p), Some(depth)) = (data, data_pipeline.as_ref(), self.depth_data.as_ref())
-            {
-                passes.push((Pass::Data, t.view(), None, depth, p, data_stages.as_ref()));
-            }
-            if let (Some((_, view, depth, _)), Some(p)) = (&measuring, measure_pipeline.as_ref()) {
-                passes.push((Pass::Measure, view, None, depth, p, measure_stages.as_ref()));
-            }
-            for (pass, view, resolve, depth_view, pipeline, hidden) in passes {
-                let clear =
-                    if pass == Pass::Solid { wgpu::Color { r, g, b, a } } else { wgpu::Color::TRANSPARENT };
-                let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("render"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: resolve,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(clear),
-                            store: if resolve.is_some() {
-                                wgpu::StoreOp::Discard
-                            } else {
-                                wgpu::StoreOp::Store
-                            },
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Discard,
-                        }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                let Some(draw_group) = &draw_group else { continue };
-                rp.set_pipeline(&pipeline.plain);
-                rp.set_bind_group(0, &frame_group, &[]);
-                if pass.colour() {
-                    rp.set_bind_group(3, &light_group, &[]);
-                }
-                draw_some(&mut rp, draw_group, pipeline, &mut rest.iter().copied());
-                // The see-through pixels over the opaque ones, farthest first.
-                if pass == Pass::Solid {
-                    for k in &behind {
-                        for p in &blend_pipelines {
-                            draw_some(&mut rp, draw_group, p, &mut std::iter::once(*k));
-                        }
-                    }
-                }
-                // Wireframes with hidden faces last: the faces' depth, then the lines where it
-                // is the nearest. Their own lines behind fail, and so do other wireframes'
-                // behind them; what was drawn before shows through the faces. (Lines behind a
-                // see-through surface come out in front of it.)
-                if let Some((hide, over)) = hidden {
-                    draw_some(&mut rp, draw_group, hide, &mut hiding.iter().copied());
-                    draw_some(&mut rp, draw_group, over, &mut hiding.iter().copied());
-                }
-            }
-            if let Some((target, _, _, buffer)) = &measuring {
-                encoder.copy_texture_to_buffer(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: target,
-                        mip_level: 0,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
-                    },
-                    wgpu::TexelCopyBufferInfo {
-                        buffer,
-                        layout: wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(u32::try_from(mpadded).unwrap_or(u32::MAX)),
-                            rows_per_image: Some(msize.1),
-                        },
-                    },
-                    wgpu::Extent3d { width: msize.0, height: msize.1, depth_or_array_layers: 1 },
-                );
-            }
-            gpu.submit([encoder.finish()]);
-        });
-        if let Some(e) = error {
-            return Err(Error::new(format!("render failed: {e}")));
-        }
-        Ok(measuring.map(|(_, _, _, buffer)| {
-            let state = Arc::new(AtomicU8::new(0));
-            let done = state.clone();
-            buffer.map_async(wgpu::MapMode::Read, .., move |r| {
-                done.store(if r.is_ok() { 1 } else { 2 }, Ordering::Release);
-            });
-            Measurement { buffer, size: msize, padded: mpadded, state }
-        }))
+        Ok(Shared { compare, clamp, around, sampler, white, frame })
     }
+}
+
+/// Ambient occlusion, only where it can show: on lit surfaces, with ambient or environment light
+/// to dim.
+fn ambient_occlusion(look: &Look, lights: &[Light], placed: &[Placed]) -> Option<Ao> {
+    let ambient = lights
+        .iter()
+        .zip(placed)
+        .any(|(l, p)| !p.dropped && matches!(l.kind, LightKind::Ambient | LightKind::Environment));
+    look.ao.filter(|a| {
+        ambient
+            && !look.shade_all
+            && matches!(look.surface, Surface::Material | Surface::Texture)
+            && a.radius.is_finite()
+            && a.radius > 0.0
+            && a.strength.is_finite()
+            && a.strength > 0.0
+    })
 }
 
 /// The sizes of the shadow and tint maps, whether the tint maps hold anything, and whether
