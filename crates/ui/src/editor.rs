@@ -1638,7 +1638,7 @@ fn options_menu(
             ui.close();
         }
     }
-    // How often a live thumbnail cooks: every frame is smooth, every 6th (the default) spares the
+    // How often a live thumbnail cooks: every frame (the default) is smooth, every 6th spares the
     // GPU in large networks.
     ui.add_enabled_ui(current == ThumbnailMode::Always, |ui| {
         ui.label(egui::RichText::new("Thumbnail rate").color(theme::TEXT_WEAK));

@@ -265,7 +265,7 @@ pub struct ThumbnailPolicy {
     /// The global switch. Only [`ThumbnailMode::Always`] cooks for thumbnails; in the other
     /// modes thumbnails of nodes that cook for an output anyway are still reported.
     pub mode: ThumbnailMode,
-    /// Cook passes between two thumbnail cooks of the same node (6 is 10 Hz at 60 fps).
+    /// Cook passes between two thumbnail cooks of the same node (1 is every pass, 6 is 10 Hz at 60 fps).
     pub min_interval: u32,
     /// Time per pass for thumbnail cooks, after the outputs.
     pub budget: Duration,
@@ -273,7 +273,7 @@ pub struct ThumbnailPolicy {
 
 impl Default for ThumbnailPolicy {
     fn default() -> Self {
-        Self { mode: ThumbnailMode::Always, min_interval: 6, budget: Duration::from_millis(2) }
+        Self { mode: ThumbnailMode::Always, min_interval: 1, budget: Duration::from_millis(2) }
     }
 }
 

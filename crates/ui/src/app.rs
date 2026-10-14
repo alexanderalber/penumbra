@@ -35,6 +35,8 @@ const MESSAGE_SECONDS: u64 = 8;
 /// nudge caused the next failure: a resize about once a minute for as long as it lasted.
 const MAX_HEALS: u32 = 3;
 const HEAL_WINDOW: Duration = Duration::from_secs(300);
+/// How long after the start a window resize still counts as the window settling.
+const SETTLE: Duration = Duration::from_secs(3);
 /// How long penumbra's GPU work waits after a window's size changed, so egui's configures
 /// of the following sizes find the GPU idle (see [`penumbra_gpu::Gpu::hold`]).
 const RESIZE_HOLD: Duration = Duration::from_millis(250);
@@ -98,6 +100,8 @@ pub struct PenumbraApp {
     nudge: Option<(egui::ViewportId, Nudge)>,
     /// A failed configure not answered yet: no window was resized since.
     heal_pending: bool,
+    /// When the app started: the editor is framed again while the window settles after that.
+    started: Instant,
     /// The sizes of the editor's and the viewer's window last seen, and when and which one
     /// last changed.
     sizes: [Option<egui::Vec2>; 2],
@@ -132,6 +136,9 @@ enum Nudge {
 
 impl PenumbraApp {
     pub fn new(cc: &eframe::CreationContext<'_>, engine: Arc<Engine>, options: AppOptions) -> Self {
+        // Maximized by command once the window exists: as a creation flag, Windows left the
+        // window at its inner size, in the corner and without a frame.
+        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         let mut shared_gpu = None;
         let adapter = match cc.wgpu_render_state.as_ref() {
             Some(rs) => {
@@ -186,6 +193,7 @@ impl PenumbraApp {
             surface_failures: 0,
             nudge: None,
             heal_pending: false,
+            started: Instant::now(),
             sizes: [None; 2],
             resized: None,
             heals: (0, None),
@@ -596,7 +604,12 @@ impl PenumbraApp {
         let target = self.viewer.target(&net, selected);
         // One right column: params on top, then viewer and changes, each collapsible; the
         // editor gets everything else.
-        egui::Panel::right("column").resizable(true).default_size(360.0).min_size(260.0).show(ui, |ui| {
+        // Three tenths of the window to start with.
+        // The window is still opening at its unmaximized size on the first frame, so the monitor
+        // gives the width it is about to have.
+        let screen = ui.ctx().input(|i| i.viewport().monitor_size.map(|m| m.x));
+        let column_width = (screen.unwrap_or_else(|| ui.available_width()) * 0.3).max(260.0);
+        egui::Panel::right("column").resizable(true).default_size(column_width).min_size(260.0).show(ui, |ui| {
             // The column is as wide as the user dragged it, never as its content: egui widens a
             // panel to whatever was drawn into it, so a node with a long row made the column
             // jump when selected. The content goes into a child that does not report its size back;
@@ -1042,6 +1055,10 @@ impl PenumbraApp {
             return;
         }
         let now = Instant::now();
+        // The window maximizes just after it opens; the network should fill the final canvas.
+        if id == egui::ViewportId::ROOT && now.duration_since(self.started) < SETTLE {
+            self.editor.frame_all();
+        }
         self.resized = Some((now, id));
         // Egui configures again for the new size: a failure before is answered by that one.
         self.heal_pending = false;
