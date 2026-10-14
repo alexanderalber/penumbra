@@ -417,182 +417,211 @@ pub struct Pipelines {
     ao_blur: wgpu::RenderPipeline,
 }
 
+/// The bind group layouts of the render shader: frame, draw, texture, and the colour pass's
+/// lights.
+struct Layouts {
+    frame: wgpu::BindGroupLayout,
+    draw: wgpu::BindGroupLayout,
+    tex: wgpu::BindGroupLayout,
+    light: wgpu::BindGroupLayout,
+}
+
+impl Layouts {
+    fn new(device: &wgpu::Device) -> Self {
+        let frame = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("render frame"),
+            entries: &[
+                uniform_entry(false, FRAME_BYTES),
+                sampler_entry(1, wgpu::SamplerBindingType::Filtering),
+            ],
+        });
+        let draw = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("render draw"),
+            entries: &[uniform_entry(true, DRAW_BYTES)],
+        });
+        let tex = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("render texture"),
+            entries: &[picture_entry(0)],
+        });
+        let light = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("render lights"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                sampler_entry(1, wgpu::SamplerBindingType::Comparison),
+                picture_entry(2),
+                picture_entry(3),
+                picture_entry(4),
+                picture_entry(5),
+                sampler_entry(6, wgpu::SamplerBindingType::Filtering),
+                picture_entry(8),
+                picture_entry(9),
+                sampler_entry(10, wgpu::SamplerBindingType::Filtering),
+                loaded_entry(11),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 7,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        Self { frame, draw, tex, light }
+    }
+}
+
+/// A uniform buffer at binding 0, for both stages.
+fn uniform_entry(dynamic: bool, size: u64) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: dynamic,
+            min_binding_size: wgpu::BufferSize::new(size),
+        },
+        count: None,
+    }
+}
+
+/// A sampled picture for the fragment stage.
+fn picture_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+/// A texture read with textureLoad only, so any float format fits (the positions are 32-bit).
+fn loaded_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: false,
+        },
+        count: None,
+    }
+}
+
+fn sampler_entry(binding: u32, ty: wgpu::SamplerBindingType) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(ty),
+        count: None,
+    }
+}
+
+/// Ambient occlusion's estimate and blur, full-screen passes over `ao_layout`.
+fn ao_pipelines(
+    device: &wgpu::Device,
+    ao_layout: &wgpu::BindGroupLayout,
+) -> (wgpu::RenderPipeline, wgpu::RenderPipeline) {
+    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("render ao"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("ao.wgsl").into()),
+    });
+    let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("render ao"),
+        bind_group_layouts: &[Some(ao_layout)],
+        immediate_size: 0,
+    });
+    let pipeline = |entry: &str| {
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(entry),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &module,
+                entry_point: Some("vs"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState::default(),
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            fragment: Some(wgpu::FragmentState {
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    (pipeline("fs_estimate"), pipeline("fs_blur"))
+}
+
 impl Pipelines {
     pub(crate) fn new(gpu: &Gpu) -> Result<Self, Error> {
         let device = gpu.device();
-        let (
-            (frame_layout, draw_layout, tex_layout, light_layout, module, layout, color_layout, ao_layout),
-            error,
-        ) = gpu.scoped(|| {
-            let uniform = |dynamic: bool, size: u64| wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: dynamic,
-                    min_binding_size: wgpu::BufferSize::new(size),
-                },
-                count: None,
-            };
-            let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("render frame"),
-                entries: &[
-                    uniform(false, FRAME_BYTES),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                ],
-            });
-            let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("render draw"),
-                entries: &[uniform(true, DRAW_BYTES)],
-            });
-            let picture = |binding: u32| wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            };
-            // Read with textureLoad only, so any float format fits (the positions are 32-bit).
-            let loaded = |binding: u32| wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            };
-            let tex_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("render texture"),
-                entries: &[picture(0)],
-            });
-            let sampler = |binding: u32, ty: wgpu::SamplerBindingType| wgpu::BindGroupLayoutEntry {
-                binding,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(ty),
-                count: None,
-            };
-            let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("render lights"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    sampler(1, wgpu::SamplerBindingType::Comparison),
-                    picture(2),
-                    picture(3),
-                    picture(4),
-                    picture(5),
-                    sampler(6, wgpu::SamplerBindingType::Filtering),
-                    picture(8),
-                    picture(9),
-                    sampler(10, wgpu::SamplerBindingType::Filtering),
-                    loaded(11),
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 7,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+        let ((layouts, module, layout, color_layout, ao_layout), error) = gpu.scoped(|| {
+            let layouts = Layouts::new(device);
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("render"),
                 source: wgpu::ShaderSource::Wgsl(include_str!("render.wgsl").into()),
             });
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("render"),
-                bind_group_layouts: &[Some(&frame_layout), Some(&draw_layout), Some(&tex_layout)],
+                bind_group_layouts: &[Some(&layouts.frame), Some(&layouts.draw), Some(&layouts.tex)],
                 immediate_size: 0,
             });
             let color_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("render colour"),
                 bind_group_layouts: &[
-                    Some(&frame_layout),
-                    Some(&draw_layout),
-                    Some(&tex_layout),
-                    Some(&light_layout),
+                    Some(&layouts.frame),
+                    Some(&layouts.draw),
+                    Some(&layouts.tex),
+                    Some(&layouts.light),
                 ],
                 immediate_size: 0,
             });
             let ao_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("render ao"),
-                entries: &[uniform(false, AO_BYTES), loaded(1), loaded(2), loaded(3)],
+                entries: &[uniform_entry(false, AO_BYTES), loaded_entry(1), loaded_entry(2), loaded_entry(3)],
             });
-            (frame_layout, draw_layout, tex_layout, light_layout, module, layout, color_layout, ao_layout)
+            (layouts, module, layout, color_layout, ao_layout)
         });
         if let Some(e) = error {
             return Err(Error::new(format!("cannot build the render shader: {e}")));
         }
-        let ((ao_estimate, ao_blur), error) = gpu.scoped(|| {
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("render ao"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("ao.wgsl").into()),
-            });
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("render ao"),
-                bind_group_layouts: &[Some(&ao_layout)],
-                immediate_size: 0,
-            });
-            let pipeline = |entry: &str| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(&layout),
-                    vertex: wgpu::VertexState {
-                        module: &module,
-                        entry_point: Some("vs"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
-                    },
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some(entry),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: FORMAT,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            };
-            (pipeline("fs_estimate"), pipeline("fs_blur"))
-        });
+        let ((ao_estimate, ao_blur), error) = gpu.scoped(|| ao_pipelines(device, &ao_layout));
         if let Some(e) = error {
             return Err(Error::new(format!("cannot build the ambient occlusion shader: {e}")));
         }
         let msaa = gpu.adapter().get_texture_format_features(FORMAT).flags.sample_count_supported(4)
             && gpu.adapter().get_texture_format_features(DEPTH).flags.sample_count_supported(4);
+        let Layouts { frame, draw, tex, light } = layouts;
         Ok(Self {
-            frame_layout,
-            draw_layout,
-            tex_layout,
-            light_layout,
+            frame_layout: frame,
+            draw_layout: draw,
+            tex_layout: tex,
+            light_layout: light,
             module,
             layout,
             color_layout,
