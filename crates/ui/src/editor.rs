@@ -227,6 +227,147 @@ fn ports_of(
     (ins, outs)
 }
 
+/// A port under the pointer: (input?, node, slot, kind).
+type PortHit = (bool, NodeId, u32, DataKind);
+
+/// The nodes of the level shown, placed on the canvas, with what wires and stubs look up.
+struct Placed<'a> {
+    net: &'a Network,
+    level: Option<NodeId>,
+    /// The path of `level`, which stubs name nodes outside from.
+    here: NodePath,
+    view: View,
+    /// Every node on this level, in network order.
+    geos: Vec<Geo>,
+    geo_of: HashMap<NodeId, usize>,
+    /// Where each output shown on this level sits, by the node and slot it really is.
+    out_at: HashMap<(NodeId, u32), (usize, usize)>,
+}
+
+/// Bindings by where they show.
+struct Bindings {
+    /// (source, reader), both on this level (or inside a component on it).
+    pairs: BTreeSet<(NodeId, NodeId)>,
+    /// (source outside, reader): a stub above the reader.
+    from_outside: BTreeSet<(NodeId, NodeId)>,
+    /// The readers outside by their source: a stub below the source.
+    to_outside: BTreeMap<NodeId, BTreeSet<NodeId>>,
+}
+
+impl<'a> Placed<'a> {
+    fn new(
+        net: &'a Network,
+        types: &NodeTypes,
+        level: Option<NodeId>,
+        layout: &Layout,
+        canvas: Rect,
+    ) -> Self {
+        let view = layout.view;
+        let mut geos: Vec<Geo> = Vec::new();
+        for node in net.children(level) {
+            let Some(p) = layout.get(node.id) else { continue };
+            let desc = types.desc(&node.kind);
+            let (mut ins, mut outs) = ports_of(net, types, node);
+            let size = vec2(NODE_SIZE.x, HEADER + body_height(desc, ins.len().max(outs.len())));
+            let rect = Rect::from_min_size(to_screen(canvas, view, p), size * view.zoom);
+            let body_top = rect.min.y + HEADER * view.zoom;
+            let body_h = rect.max.y - body_top;
+            let (n_in, n_out) = (ins.len(), outs.len());
+            for (i, port) in ins.iter_mut().enumerate() {
+                port.pos = pos2(rect.min.x, port_y(body_top, body_h, i, n_in));
+            }
+            for (i, port) in outs.iter_mut().enumerate() {
+                port.pos = pos2(rect.max.x, port_y(body_top, body_h, i, n_out));
+            }
+            let comp = desc.is_some_and(|d| d.container);
+            geos.push(Geo { id: node.id, rect, inputs: ins, outputs: outs, comp });
+        }
+        let geo_of = geos.iter().enumerate().map(|(i, g)| (g.id, i)).collect();
+        let out_at = geos
+            .iter()
+            .enumerate()
+            .flat_map(|(gi, g)| g.outputs.iter().enumerate().map(move |(oi, o)| (o.target, (gi, oi))))
+            .collect();
+        Self { net, level, here: level_path(net, level), view, geos, geo_of, out_at }
+    }
+
+    fn geo(&self, id: NodeId) -> Option<&Geo> {
+        self.geo_of.get(&id).and_then(|i| self.geos.get(*i))
+    }
+
+    /// The node on this level that `id` is or sits in; `None` for nodes outside it.
+    fn shown(&self, id: NodeId) -> Option<NodeId> {
+        let mut current = id;
+        for _ in 0..=NodePath::MAX_DEPTH {
+            let node = self.net.node(current)?;
+            if node.parent == self.level {
+                return Some(current);
+            }
+            current = node.parent?;
+        }
+        None
+    }
+
+    /// How a stub names a node outside: as the project file would, from this level.
+    fn stub_text(&self, ids: &[NodeId]) -> String {
+        let first = ids.first().and_then(|id| self.net.path_of(*id)).map(|p| self.here.write_ref(&p));
+        match (first, ids.len()) {
+            (None, _) => String::new(),
+            (Some(t), 0 | 1) => t,
+            (Some(t), n) => format!("{t} +{}", n - 1),
+        }
+    }
+
+    fn stub_font(&self) -> FontId {
+        FontId::proportional(11.0 * self.view.zoom.clamp(0.6, 1.2))
+    }
+
+    /// Outputs read by a wire anywhere, and the readers outside this level of each output.
+    #[allow(clippy::type_complexity)]
+    fn connections(&self) -> (BTreeSet<(NodeId, u32)>, BTreeMap<(NodeId, u32), Vec<NodeId>>) {
+        let mut connected: BTreeSet<(NodeId, u32)> = BTreeSet::new();
+        let mut outside_readers: BTreeMap<(NodeId, u32), Vec<NodeId>> = BTreeMap::new();
+        for n in self.net.nodes() {
+            for src in n.inputs.iter().flatten() {
+                connected.insert((src.node, src.output));
+                if self.shown(n.id).is_none() && self.shown(src.node).is_some() {
+                    outside_readers.entry((src.node, src.output)).or_default().push(n.id);
+                }
+            }
+        }
+        (connected, outside_readers)
+    }
+
+    /// The bindings that touch this level. A binding into or out of a component shows on the
+    /// component.
+    fn bindings(&self) -> Bindings {
+        let mut b =
+            Bindings { pairs: BTreeSet::new(), from_outside: BTreeSet::new(), to_outside: BTreeMap::new() };
+        for node in self.net.nodes().filter(|n| !n.binds.is_empty()) {
+            let Some(reader) = self.shown(node.id) else {
+                for bind in node.binds.values() {
+                    if let Some(src) = self.shown(bind.node) {
+                        b.to_outside.entry(src).or_default().insert(node.id);
+                    }
+                }
+                continue;
+            };
+            for bind in node.binds.values() {
+                match self.shown(bind.node) {
+                    Some(src) if src != reader => {
+                        b.pairs.insert((src, reader));
+                    }
+                    Some(_) => {}
+                    None => {
+                        b.from_outside.insert((bind.node, reader));
+                    }
+                }
+            }
+        }
+        b
+    }
+}
+
 impl Editor {
     /// The output a wire is being dragged from, if any (the param panel binds a chan wire
     /// dropped onto a param).
@@ -359,14 +500,66 @@ impl Editor {
         let (canvas, canvas_resp) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         self.canvas = canvas;
         auto.add("canvas", canvas, "node editor");
-        // The component shown went away (deleted, dissolved, undone): back to the top.
+        self.follow_network(net, canvas, layout, input.now);
+        self.pan_and_zoom(ui, &canvas_resp, canvas, layout, input.now);
+        let view = layout.view;
+        let painter = ui.painter_at(canvas);
+        painter.rect_filled(canvas, CornerRadius::ZERO, background);
+        if let Some(key) = input.backdrop {
+            draw_backdrop(&painter, canvas, key, input, textures);
+        }
+        draw_grid(&painter, canvas, view);
+
+        let placed = Placed::new(net, input.types, self.level, layout, canvas);
+        let pointer = ui.input(|i| i.pointer.hover_pos());
+        let (connected, outside_readers) = placed.connections();
+        // Wires, bindings and references, under the nodes.
+        self.draw_wires(&painter, input, &placed);
+        draw_outside_readers(&painter, &placed, &outside_readers);
+        draw_bindings(&painter, input, &placed);
+        draw_references(&painter, input, &placed);
+
+        let geos = &placed.geos;
+        let (clicked_node, hovered_port) =
+            self.nodes(ui, &painter, geos, canvas, input, layout, textures, auto, actions, pointer);
+        self.draw_ports(&painter, geos, hovered_port, view.zoom, &connected);
+        self.start_port_drag(ui, canvas, net, geos, input.can_edit);
+        self.draw_dragged_wire(&painter, geos, pointer, view.zoom);
+        let released = ui.input(|i| i.pointer.primary_released());
+        if released {
+            self.finish_wire(net, input.types, geos, pointer, actions);
+        }
+
+        // Empty canvas: box selection, clicks, menus.
+        self.box_select(ui, &painter, &canvas_resp, geos, pointer, released, actions);
+        self.canvas_clicks(&canvas_resp, canvas, view, clicked_node, input, layout, auto, actions);
+        if released || !ui.input(|i| i.pointer.any_down()) {
+            if matches!(self.drag, Drag::Nodes) {
+                layout.end_move();
+            }
+            self.drag = Drag::None;
+        }
+        if hovered_port.is_some() && input.can_edit {
+            ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
+        }
+
+        self.keys(ui, input, canvas, layout, actions);
+        self.breadcrumb(ui, net, canvas, layout, auto, input.now);
+        self.add_menu(ui, input, auto, actions);
+        self.visible(net, input.types, layout, canvas)
+    }
+
+    /// Keeps up with the network: back to the top when the component shown went away (deleted,
+    /// dissolved, undone), the layout synced, the selection and paused thumbnails without nodes
+    /// that are gone, and a requested framing done once the canvas has a size.
+    fn follow_network(&mut self, net: &Network, canvas: Rect, layout: &mut Layout, now: Instant) {
         if self.level.is_some_and(|l| net.node(l).is_none()) {
-            self.enter(None, layout, input.now);
+            self.enter(None, layout, now);
         }
         layout.level = self.level;
         let shown = layout.view;
         layout.visible = Some(Rect::from_min_size(shown.origin.to_pos2(), canvas.size() / shown.zoom));
-        layout.sync(net, input.now);
+        layout.sync(net, now);
         let level = self.level;
         self.selection.retain(|id| net.node(*id).is_some_and(|n| n.parent == level));
         self.paused.retain(|id| net.node(*id).is_some());
@@ -379,86 +572,18 @@ impl Editor {
                     .min((canvas.height() - margin * 2.0) / b.height())
                     .clamp(0.25, 1.25);
                 let origin = b.center().to_vec2() - canvas.size() / zoom / 2.0;
-                layout.set_view(View { origin, zoom }, input.now);
+                layout.set_view(View { origin, zoom }, now);
             }
         }
+    }
 
-        self.pan_and_zoom(ui, &canvas_resp, canvas, layout, input.now);
-        let view = layout.view;
-        let painter = ui.painter_at(canvas);
-        painter.rect_filled(canvas, CornerRadius::ZERO, background);
-        if let Some(key) = input.backdrop {
-            draw_backdrop(&painter, canvas, key, input, textures);
-        }
-        draw_grid(&painter, canvas, view);
-
-        // Geometry of every node on this level, in network order.
-        let mut geos: Vec<Geo> = Vec::new();
-        for node in net.children(self.level) {
-            let Some(p) = layout.get(node.id) else { continue };
-            let desc = input.types.desc(&node.kind);
-            let (mut ins, mut outs) = ports_of(net, input.types, node);
-            let size = vec2(NODE_SIZE.x, HEADER + body_height(desc, ins.len().max(outs.len())));
-            let rect = Rect::from_min_size(to_screen(canvas, view, p), size * view.zoom);
-            let body_top = rect.min.y + HEADER * view.zoom;
-            let body_h = rect.max.y - body_top;
-            let (n_in, n_out) = (ins.len(), outs.len());
-            for (i, port) in ins.iter_mut().enumerate() {
-                port.pos = pos2(rect.min.x, port_y(body_top, body_h, i, n_in));
-            }
-            for (i, port) in outs.iter_mut().enumerate() {
-                port.pos = pos2(rect.max.x, port_y(body_top, body_h, i, n_out));
-            }
-            let comp = desc.is_some_and(|d| d.container);
-            geos.push(Geo { id: node.id, rect, inputs: ins, outputs: outs, comp });
-        }
-        let geo_of: HashMap<NodeId, usize> = geos.iter().enumerate().map(|(i, g)| (g.id, i)).collect();
-        // Where each output shown on this level sits, by the node and slot it really is.
-        let out_at: HashMap<(NodeId, u32), (usize, usize)> = geos
-            .iter()
-            .enumerate()
-            .flat_map(|(gi, g)| g.outputs.iter().enumerate().map(move |(oi, o)| (o.target, (gi, oi))))
-            .collect();
-        let pointer = ui.input(|i| i.pointer.hover_pos());
-        let level = self.level;
-        let here = level_path(net, level);
-        // The node on this level that `id` is or sits in; `None` for nodes outside it.
-        let shown = |id: NodeId| -> Option<NodeId> {
-            let mut current = id;
-            for _ in 0..=NodePath::MAX_DEPTH {
-                let node = net.node(current)?;
-                if node.parent == level {
-                    return Some(current);
-                }
-                current = node.parent?;
-            }
-            None
-        };
-        // How a stub names a node outside: as the project file would, from this level.
-        let stub_text = |ids: &[NodeId]| -> String {
-            let first = ids.first().and_then(|id| net.path_of(*id)).map(|p| here.write_ref(&p));
-            match (first, ids.len()) {
-                (None, _) => String::new(),
-                (Some(t), 0 | 1) => t,
-                (Some(t), n) => format!("{t} +{}", n - 1),
-            }
-        };
-        let stub_font = FontId::proportional(11.0 * view.zoom.clamp(0.6, 1.2));
-        // Outputs read by a wire anywhere, and the readers outside this level of each output.
-        let mut connected: BTreeSet<(NodeId, u32)> = BTreeSet::new();
-        let mut outside_readers: BTreeMap<(NodeId, u32), Vec<NodeId>> = BTreeMap::new();
-        for n in net.nodes() {
-            for src in n.inputs.iter().flatten() {
-                connected.insert((src.node, src.output));
-                if shown(n.id).is_none() && shown(src.node).is_some() {
-                    outside_readers.entry((src.node, src.output)).or_default().push(n.id);
-                }
-            }
-        }
-
-        // Wires, under the nodes.
+    /// The wires into the inputs on this level, routed around the nodes. A wire from outside
+    /// the component shown (an input node's source) is a stub from the left with the source's
+    /// path. The wire being picked up from an input is left out.
+    fn draw_wires(&self, painter: &egui::Painter, input: &Inputs<'_>, placed: &Placed<'_>) {
+        let (net, geos, zoom) = (placed.net, &placed.geos, placed.view.zoom);
         let node_rects: Vec<Rect> = geos.iter().map(|g| g.rect).collect();
-        for to in &geos {
+        for to in geos {
             for port_in in &to.inputs {
                 let (reader, slot) = port_in.target;
                 let Some(source) =
@@ -472,206 +597,59 @@ impl Editor {
                     continue;
                 }
                 let b = port_in.pos;
-                let Some((from, out)) = out_at
+                let Some((from, out)) = placed
+                    .out_at
                     .get(&(source.node, source.output))
                     .and_then(|(gi, oi)| Some((geos.get(*gi)?, geos.get(*gi)?.outputs.get(*oi)?)))
                 else {
-                    // From outside the component shown (an input node's source): a stub from
-                    // the left with the source's path.
-                    let a = b - vec2(36.0 * view.zoom, 0.0);
+                    let a = b - vec2(36.0 * zoom, 0.0);
                     let color = theme::kind_color(port_in.kind);
-                    wire(&painter, &[wire_points(a, b, view.zoom)], color, view.zoom, false);
-                    if view.zoom > 0.45 {
-                        let text = stub_text(&[source.node]);
+                    wire(painter, &[wire_points(a, b, zoom)], color, zoom, false);
+                    if zoom > 0.45 {
+                        let text = placed.stub_text(&[source.node]);
                         painter.text(
                             a - vec2(3.0, 0.0),
                             Align2::RIGHT_CENTER,
                             text,
-                            stub_font.clone(),
+                            placed.stub_font(),
                             theme::TEXT_WEAK,
                         );
                     }
                     continue;
                 };
                 let hot = input.highlight.contains(&reader) && input.highlight.contains(&source.node);
-                let route = wire_route(out.pos, b, from.rect, to.rect, &node_rects, view.zoom);
+                let route = wire_route(out.pos, b, from.rect, to.rect, &node_rects, zoom);
                 if port_in.previous {
                     // Last frame's result, usually wired back from the end of a loop: dashed.
-                    wire_previous(&painter, &route, theme::kind_color(out.kind), view.zoom, hot);
+                    wire_previous(painter, &route, theme::kind_color(out.kind), zoom, hot);
                 } else {
-                    wire(&painter, &route, theme::kind_color(out.kind), view.zoom, hot);
+                    wire(painter, &route, theme::kind_color(out.kind), zoom, hot);
                 }
             }
         }
-        // Outputs read outside the component shown (an output node's readers): a stub to the
-        // right with the first reader's path.
-        for g in &geos {
-            for port in &g.outputs {
-                let Some(readers) = outside_readers.get(&port.target) else { continue };
-                let a = port.pos;
-                let b = a + vec2(36.0 * view.zoom, 0.0);
-                wire(
-                    &painter,
-                    &[wire_points(a, b, view.zoom)],
-                    theme::kind_color(port.kind),
-                    view.zoom,
-                    false,
-                );
-                if view.zoom > 0.45 {
-                    let text = stub_text(readers);
-                    painter.text(
-                        b + vec2(3.0, 0.0),
-                        Align2::LEFT_CENTER,
-                        text,
-                        stub_font.clone(),
-                        theme::TEXT_WEAK,
-                    );
-                }
-            }
-        }
+    }
 
-        // Bindings: a dashed line from the source's first chan output to the top of the node
-        // whose param it drives, one per pair of nodes.
-        // A binding into or out of a component shows on the component; one from outside the
-        // component shown is a stub above the node, with the source's path; one to a node
-        // outside a stub below the source, with the reader's path.
-        let mut pairs: BTreeSet<(NodeId, NodeId)> = BTreeSet::new();
-        let mut stubs: BTreeSet<(NodeId, NodeId)> = BTreeSet::new();
-        let mut out_stubs: BTreeMap<NodeId, BTreeSet<NodeId>> = BTreeMap::new();
-        for node in net.nodes().filter(|n| !n.binds.is_empty()) {
-            let Some(reader) = shown(node.id) else {
-                for b in node.binds.values() {
-                    if let Some(src) = shown(b.node) {
-                        out_stubs.entry(src).or_default().insert(node.id);
-                    }
-                }
-                continue;
-            };
-            for b in node.binds.values() {
-                match shown(b.node) {
-                    Some(src) if src != reader => {
-                        pairs.insert((src, reader));
-                    }
-                    Some(_) => {}
-                    None => {
-                        stubs.insert((b.node, reader));
-                    }
-                }
-            }
-        }
-        for (src, readers) in &out_stubs {
-            let Some(from) = geo_of.get(src).and_then(|i| geos.get(*i)) else { continue };
-            // Out of the bottom (bindings into a node come in at the top), clear of the
-            // neighbours to the right.
-            let a = from.rect.center_bottom();
-            let b = a + vec2(0.0, 28.0 * view.zoom);
-            let color = theme::kind_color(DataKind::Chan).gamma_multiply(0.7);
-            let width = 1.5 * view.zoom.clamp(0.5, 1.5);
-            painter.extend(egui::Shape::dashed_line(
-                &[a, b],
-                Stroke::new(width, color),
-                6.0 * view.zoom,
-                4.0 * view.zoom,
-            ));
-            painter.circle_filled(a, 3.0 * view.zoom, color);
-            if view.zoom > 0.45 {
-                let readers: Vec<NodeId> = readers.iter().copied().collect();
-                let text = stub_text(&readers);
-                painter.text(
-                    b + vec2(0.0, 2.0),
-                    Align2::CENTER_TOP,
-                    text,
-                    stub_font.clone(),
-                    theme::TEXT_WEAK,
-                );
-            }
-        }
-        for (src, reader) in &stubs {
-            let Some(to) = geo_of.get(reader).and_then(|i| geos.get(*i)) else { continue };
-            let b = pos2(to.rect.center().x, to.rect.min.y);
-            let a = b - vec2(0.0, 28.0 * view.zoom);
-            let color = theme::kind_color(DataKind::Chan).gamma_multiply(0.7);
-            let width = 1.5 * view.zoom.clamp(0.5, 1.5);
-            painter.extend(egui::Shape::dashed_line(
-                &[a, b],
-                Stroke::new(width, color),
-                6.0 * view.zoom,
-                4.0 * view.zoom,
-            ));
-            painter.circle_filled(b, 3.0 * view.zoom, color);
-            if view.zoom > 0.45 {
-                let text = stub_text(&[*src]);
-                painter.text(
-                    a - vec2(0.0, 2.0),
-                    Align2::CENTER_BOTTOM,
-                    text,
-                    stub_font.clone(),
-                    theme::TEXT_WEAK,
-                );
-            }
-        }
-        for (src, reader) in pairs {
-            let Some(to) = geo_of.get(&reader).and_then(|i| geos.get(*i)) else { continue };
-            {
-                let Some(from) = geo_of.get(&src).and_then(|g| geos.get(*g)) else { continue };
-                // A component holding the channel has no chan port: from its right edge.
-                let chan_out = from.outputs.iter().find(|o| o.kind == DataKind::Chan).map(|o| o.pos);
-                let Some(a) = chan_out.or_else(|| from.comp.then(|| from.rect.right_center())) else {
-                    continue;
-                };
-                // Into the top of the node, or its bottom when the source lies below it.
-                let b = if from.rect.center().y > to.rect.max.y {
-                    pos2(to.rect.center().x, to.rect.max.y)
-                } else {
-                    pos2(to.rect.center().x, to.rect.min.y)
-                };
-                let hot = input.highlight.contains(&reader) && input.highlight.contains(&src);
-                let color = theme::kind_color(DataKind::Chan).gamma_multiply(if hot { 1.0 } else { 0.7 });
-                let width = 1.5 * view.zoom.clamp(0.5, 1.5);
-                painter.extend(egui::Shape::dashed_line(
-                    &[a, b],
-                    Stroke::new(width, color),
-                    6.0 * view.zoom,
-                    4.0 * view.zoom,
-                ));
-                painter.circle_filled(b, 3.0 * view.zoom, color);
-            }
-        }
-
-        // Node references (tex.select, tex.feedback): a dashed line in the data kind's colour
-        // from the named node's first output to the top of the node that names it.
-        for node in net.children(self.level) {
-            let Some(to) = geo_of.get(&node.id).and_then(|i| geos.get(*i)) else { continue };
-            let Some(desc) = input.types.desc(&node.kind) else { continue };
-            for spec in desc.params.iter().filter(|s| s.node_ref) {
-                let Some(text) = node.param(desc, &spec.name).and_then(|v| v.as_str()) else { continue };
-                if text.trim().is_empty() {
-                    continue;
-                }
-                let Ok(src) = net.resolve_from(node.id, text) else { continue };
-                let Some(from) = geo_of.get(&src).and_then(|g| geos.get(*g)) else { continue };
-                let Some((a, kind)) = from.outputs.first().map(|o| (o.pos, o.kind)) else { continue };
-                let b = if from.rect.center().y > to.rect.max.y {
-                    pos2(to.rect.center().x, to.rect.max.y)
-                } else {
-                    pos2(to.rect.center().x, to.rect.min.y)
-                };
-                let color = theme::kind_color(kind).gamma_multiply(0.7);
-                let width = 1.5 * view.zoom.clamp(0.5, 1.5);
-                painter.extend(egui::Shape::dashed_line(
-                    &[a, b],
-                    Stroke::new(width, color),
-                    6.0 * view.zoom,
-                    4.0 * view.zoom,
-                ));
-                painter.circle_filled(b, 3.0 * view.zoom, color);
-            }
-        }
-
-        // Nodes.
+    /// The nodes on this level that reach into the canvas: their interaction, their drawing
+    /// and the automation ids of them and their ports. Returns whether a node was clicked and
+    /// the port under the pointer.
+    #[allow(clippy::too_many_arguments)]
+    fn nodes(
+        &mut self,
+        ui: &Ui,
+        painter: &egui::Painter,
+        geos: &[Geo],
+        canvas: Rect,
+        input: &Inputs<'_>,
+        layout: &mut Layout,
+        textures: &mut Textures,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+        pointer: Option<Pos2>,
+    ) -> (bool, Option<PortHit>) {
+        let net = input.net;
         let mut clicked_node = false;
-        let mut hovered_port: Option<(bool, NodeId, u32, DataKind)> = None;
-        for g in &geos {
+        let mut hovered_port: Option<PortHit> = None;
+        for g in geos {
             if !g.rect.expand(PORT_PICK).intersects(canvas) {
                 continue;
             }
@@ -680,7 +658,7 @@ impl Editor {
             let resp = ui.interact(g.rect, ui.id().with(("node", g.id)), Sense::click_and_drag());
             auto.add(format!("node.{path}"), g.rect, node.kind.clone());
             self.node_interaction(ui, &resp, g.id, input, layout, actions, &mut clicked_node);
-            self.draw_node(ui, &painter, g, input, textures, &path, &resp);
+            self.draw_node(ui, painter, g, input, textures, &path, &resp);
             for (i, port) in g.inputs.iter().enumerate() {
                 let r = Rect::from_center_size(port.pos, Vec2::splat(PORT_PICK * 2.0));
                 auto.add(format!("port.in.{path}.{i}"), r, format!("{:?}", port.kind));
@@ -696,35 +674,48 @@ impl Editor {
                 }
             }
         }
+        (clicked_node, hovered_port)
+    }
 
-        // Ports draw over nodes; the one under the pointer and compatible targets light up.
+    /// Ports draw over nodes; the one under the pointer and compatible targets light up.
+    fn draw_ports(
+        &self,
+        painter: &egui::Painter,
+        geos: &[Geo],
+        hovered_port: Option<PortHit>,
+        zoom: f32,
+        connected: &BTreeSet<(NodeId, u32)>,
+    ) {
         let dragging_kind = match self.drag {
-            Drag::FromOutput { from, .. } => find_port(&geos, false, from).map(|o| (true, o.kind)),
-            Drag::FromInput { to } => find_port(&geos, true, to).map(|o| (false, o.kind)),
+            Drag::FromOutput { from, .. } => find_port(geos, false, from).map(|o| (true, o.kind)),
+            Drag::FromInput { to } => find_port(geos, true, to).map(|o| (false, o.kind)),
             _ => None,
         };
-        for g in &geos {
+        for g in geos {
             for (is_input, ports) in [(true, &g.inputs), (false, &g.outputs)] {
                 for port in ports {
                     let hovered = hovered_port.is_some_and(|h| h.0 == is_input && (h.1, h.2) == port.target);
                     let target = dragging_kind
                         .is_some_and(|(wants_input, k)| wants_input == is_input && k == port.kind);
-                    let r = PORT_R * view.zoom.clamp(0.6, 1.4) * if hovered || target { 1.4 } else { 1.0 };
+                    let r = PORT_R * zoom.clamp(0.6, 1.4) * if hovered || target { 1.4 } else { 1.0 };
                     painter.circle_filled(port.pos, r, theme::kind_color(port.kind));
                     painter.circle_stroke(port.pos, r, Stroke::new(1.0, Color32::from_gray(20)));
                 }
             }
-            self.port_labels(&painter, g, hovered_port, view.zoom, &connected);
+            self.port_labels(painter, g, hovered_port, zoom, connected);
         }
+    }
 
-        // Port drags start where the pointer pressed, before node drags see it.
+    /// Port drags start where the pointer pressed, before node drags see it. Pressing a
+    /// connected input picks its wire up.
+    fn start_port_drag(&mut self, ui: &Ui, canvas: Rect, net: &Network, geos: &[Geo], can_edit: bool) {
         let pressed_at = ui.input(|i| {
             if i.pointer.button_pressed(PointerButton::Primary) { i.pointer.press_origin() } else { None }
         });
         if let Some(at) = pressed_at
             && canvas.contains(at)
-            && let Some(port) = nearest_port(&geos, at)
-            && input.can_edit
+            && let Some(port) = nearest_port(geos, at)
+            && can_edit
         {
             let (is_input, id, index) = port;
             self.drag = if is_input {
@@ -738,34 +729,43 @@ impl Editor {
                 Drag::FromOutput { from: (id, index), detached: None }
             };
         }
+    }
 
-        // The wire being dragged.
-        if let Some(q) = pointer {
-            match self.drag {
-                Drag::FromOutput { from, .. } => {
-                    if let Some(o) = find_port(&geos, false, from) {
-                        let color = theme::kind_color(o.kind);
-                        wire(&painter, &[wire_points(o.pos, q, view.zoom)], color, view.zoom, true);
-                    }
+    /// The wire being dragged, from its port to the pointer.
+    fn draw_dragged_wire(&self, painter: &egui::Painter, geos: &[Geo], pointer: Option<Pos2>, zoom: f32) {
+        let Some(q) = pointer else { return };
+        match self.drag {
+            Drag::FromOutput { from, .. } => {
+                if let Some(o) = find_port(geos, false, from) {
+                    let color = theme::kind_color(o.kind);
+                    wire(painter, &[wire_points(o.pos, q, zoom)], color, zoom, true);
                 }
-                Drag::FromInput { to } => {
-                    if let Some(i) = find_port(&geos, true, to) {
-                        let color = theme::kind_color(i.kind);
-                        wire(&painter, &[wire_points(q, i.pos, view.zoom)], color, view.zoom, true);
-                    }
-                }
-                _ => {}
             }
+            Drag::FromInput { to } => {
+                if let Some(i) = find_port(geos, true, to) {
+                    let color = theme::kind_color(i.kind);
+                    wire(painter, &[wire_points(q, i.pos, zoom)], color, zoom, true);
+                }
+            }
+            _ => {}
         }
-        let released = ui.input(|i| i.pointer.primary_released());
-        if released {
-            self.finish_wire(net, input.types, &geos, pointer, actions);
-        }
+    }
 
-        // Empty canvas: box selection, clicks, menus.
-        if canvas_resp.drag_started_by(PointerButton::Primary)
+    /// Selecting by a box dragged on empty canvas; Shift or Ctrl adds to the selection.
+    #[allow(clippy::too_many_arguments)]
+    fn box_select(
+        &mut self,
+        ui: &Ui,
+        painter: &egui::Painter,
+        resp: &egui::Response,
+        geos: &[Geo],
+        pointer: Option<Pos2>,
+        released: bool,
+        actions: &mut Vec<Action>,
+    ) {
+        if resp.drag_started_by(PointerButton::Primary)
             && matches!(self.drag, Drag::None)
-            && let Some(p) = canvas_resp.interact_pointer_pos()
+            && let Some(p) = resp.interact_pointer_pos()
         {
             self.drag = Drag::Box { start: p };
         }
@@ -785,7 +785,7 @@ impl Editor {
                 if !add {
                     self.selection.clear();
                 }
-                for g in &geos {
+                for g in geos {
                     if r.intersects(g.rect) {
                         self.selection.insert(g.id);
                     }
@@ -794,35 +794,37 @@ impl Editor {
                 actions.push(Action::Selected);
             }
         }
-        if canvas_resp.clicked() && !clicked_node {
+    }
+
+    /// Clicks on empty canvas: a click clears the selection, a double-click opens the add
+    /// dialog, a right-click the editor's options.
+    #[allow(clippy::too_many_arguments)]
+    fn canvas_clicks(
+        &mut self,
+        resp: &egui::Response,
+        canvas: Rect,
+        view: View,
+        clicked_node: bool,
+        input: &Inputs<'_>,
+        layout: &mut Layout,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        if resp.clicked() && !clicked_node {
             self.selection.clear();
             actions.push(Action::Selected);
         }
         // A fast double-click right after another click counts as a triple in egui.
-        let double = canvas_resp.double_clicked() || canvas_resp.triple_clicked();
+        let double = resp.double_clicked() || resp.triple_clicked();
         if double
-            && let Some(p) = canvas_resp.interact_pointer_pos()
+            && let Some(p) = resp.interact_pointer_pos()
             && input.can_edit
         {
             self.open_add_menu(input, p, to_graph(canvas, view, p));
         }
         // A right-click on empty space: the editor's options (it did nothing before, and the
         // thumbnail switch sat in the status bar).
-        canvas_resp.context_menu(|ui| options_menu(ui, input, layout, auto, actions));
-        if released || !ui.input(|i| i.pointer.any_down()) {
-            if matches!(self.drag, Drag::Nodes) {
-                layout.end_move();
-            }
-            self.drag = Drag::None;
-        }
-        if hovered_port.is_some() && input.can_edit {
-            ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
-        }
-
-        self.keys(ui, input, canvas, layout, actions);
-        self.breadcrumb(ui, net, canvas, layout, auto, input.now);
-        self.add_menu(ui, input, auto, actions);
-        self.visible(net, input.types, layout, canvas)
+        resp.context_menu(|ui| options_menu(ui, input, layout, auto, actions));
     }
 
     fn open_add_menu(&mut self, input: &Inputs<'_>, screen: Pos2, at: Pos2) {
@@ -877,7 +879,7 @@ impl Editor {
         actions: &mut Vec<Action>,
         clicked_node: &mut bool,
     ) {
-        // A press on a port has already started a wire drag (see `show`), so this only
+        // A press on a port has already started a wire drag (see `start_port_drag`), so this only
         // starts for presses elsewhere on the node.
         if resp.drag_started_by(PointerButton::Primary) && matches!(self.drag, Drag::None) {
             if !self.selection.contains(&id) {
@@ -1245,7 +1247,7 @@ impl Editor {
         &self,
         painter: &egui::Painter,
         g: &Geo,
-        hovered: Option<(bool, NodeId, u32, DataKind)>,
+        hovered: Option<PortHit>,
         zoom: f32,
         connected: &BTreeSet<(NodeId, u32)>,
     ) {
@@ -1925,6 +1927,125 @@ fn wire_previous(painter: &egui::Painter, route: &[[Pos2; 4]], color: Color32, z
     let width = if hot { 3.0 } else { 2.0 } * zoom.clamp(0.5, 1.5);
     let stroke = Stroke::new(width, if hot { color } else { color.gamma_multiply(0.8) });
     painter.extend(Shape::dashed_line(&flatten(route), stroke, 7.0 * zoom, 5.0 * zoom));
+}
+
+/// Outputs read outside the component shown (an output node's readers): a stub to the right
+/// with the first reader's path.
+fn draw_outside_readers(
+    painter: &egui::Painter,
+    placed: &Placed<'_>,
+    outside_readers: &BTreeMap<(NodeId, u32), Vec<NodeId>>,
+) {
+    let zoom = placed.view.zoom;
+    for g in &placed.geos {
+        for port in &g.outputs {
+            let Some(readers) = outside_readers.get(&port.target) else { continue };
+            let a = port.pos;
+            let b = a + vec2(36.0 * zoom, 0.0);
+            wire(painter, &[wire_points(a, b, zoom)], theme::kind_color(port.kind), zoom, false);
+            if zoom > 0.45 {
+                let text = placed.stub_text(readers);
+                painter.text(
+                    b + vec2(3.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    text,
+                    placed.stub_font(),
+                    theme::TEXT_WEAK,
+                );
+            }
+        }
+    }
+}
+
+/// A dashed line as bindings and node references draw it.
+fn dashed(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, zoom: f32) {
+    let width = 1.5 * zoom.clamp(0.5, 1.5);
+    painter.extend(egui::Shape::dashed_line(&[a, b], Stroke::new(width, color), 6.0 * zoom, 4.0 * zoom));
+}
+
+/// Bindings: a dashed line from the source's first chan output to the top of the node whose
+/// param it drives, one per pair of nodes. One from outside the component shown is a stub above
+/// the node, with the source's path; one to a node outside a stub below the source, with the
+/// reader's path.
+fn draw_bindings(painter: &egui::Painter, input: &Inputs<'_>, placed: &Placed<'_>) {
+    let zoom = placed.view.zoom;
+    let bindings = placed.bindings();
+    for (src, readers) in &bindings.to_outside {
+        let Some(from) = placed.geo(*src) else { continue };
+        // Out of the bottom (bindings into a node come in at the top), clear of the
+        // neighbours to the right.
+        let a = from.rect.center_bottom();
+        let b = a + vec2(0.0, 28.0 * zoom);
+        let color = theme::kind_color(DataKind::Chan).gamma_multiply(0.7);
+        dashed(painter, a, b, color, zoom);
+        painter.circle_filled(a, 3.0 * zoom, color);
+        if zoom > 0.45 {
+            let readers: Vec<NodeId> = readers.iter().copied().collect();
+            let text = placed.stub_text(&readers);
+            painter.text(b + vec2(0.0, 2.0), Align2::CENTER_TOP, text, placed.stub_font(), theme::TEXT_WEAK);
+        }
+    }
+    for (src, reader) in &bindings.from_outside {
+        let Some(to) = placed.geo(*reader) else { continue };
+        let b = pos2(to.rect.center().x, to.rect.min.y);
+        let a = b - vec2(0.0, 28.0 * zoom);
+        let color = theme::kind_color(DataKind::Chan).gamma_multiply(0.7);
+        dashed(painter, a, b, color, zoom);
+        painter.circle_filled(b, 3.0 * zoom, color);
+        if zoom > 0.45 {
+            let text = placed.stub_text(&[*src]);
+            painter.text(
+                a - vec2(0.0, 2.0),
+                Align2::CENTER_BOTTOM,
+                text,
+                placed.stub_font(),
+                theme::TEXT_WEAK,
+            );
+        }
+    }
+    for (src, reader) in bindings.pairs {
+        let Some(to) = placed.geo(reader) else { continue };
+        let Some(from) = placed.geo(src) else { continue };
+        // A component holding the channel has no chan port: from its right edge.
+        let chan_out = from.outputs.iter().find(|o| o.kind == DataKind::Chan).map(|o| o.pos);
+        let Some(a) = chan_out.or_else(|| from.comp.then(|| from.rect.right_center())) else {
+            continue;
+        };
+        let b = top_or_bottom(from.rect, to.rect);
+        let hot = input.highlight.contains(&reader) && input.highlight.contains(&src);
+        let color = theme::kind_color(DataKind::Chan).gamma_multiply(if hot { 1.0 } else { 0.7 });
+        dashed(painter, a, b, color, zoom);
+        painter.circle_filled(b, 3.0 * zoom, color);
+    }
+}
+
+/// Where a dashed line from `from` enters `to`: the middle of its top, or of its bottom when
+/// the source lies below it.
+fn top_or_bottom(from: Rect, to: Rect) -> Pos2 {
+    if from.center().y > to.max.y { pos2(to.center().x, to.max.y) } else { pos2(to.center().x, to.min.y) }
+}
+
+/// Node references (tex.select, tex.feedback): a dashed line in the data kind's colour from the
+/// named node's first output to the top of the node that names it.
+fn draw_references(painter: &egui::Painter, input: &Inputs<'_>, placed: &Placed<'_>) {
+    let (net, zoom) = (placed.net, placed.view.zoom);
+    for node in net.children(placed.level) {
+        let Some(to) = placed.geo(node.id) else { continue };
+        let Some(desc) = input.types.desc(&node.kind) else { continue };
+        for spec in desc.params.iter().filter(|s| s.node_ref) {
+            let Some(text) = node.param(desc, &spec.name).and_then(|v| v.as_str()) else { continue };
+            if text.trim().is_empty() {
+                continue;
+            }
+            let Ok(src) = net.resolve_from(node.id, text) else { continue };
+            let Some(from) = placed.geo(src) else { continue };
+            let Some((a, kind)) = from.outputs.first().map(|o| (o.pos, o.kind)) else { continue };
+            let b = top_or_bottom(from.rect, to.rect);
+            let color = theme::kind_color(kind).gamma_multiply(0.7);
+            dashed(painter, a, b, color, zoom);
+            painter.circle_filled(b, 3.0 * zoom, color);
+        }
+    }
 }
 
 fn draw_grid(painter: &egui::Painter, canvas: Rect, view: View) {
