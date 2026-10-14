@@ -81,9 +81,12 @@ fn osc_in_becomes_channels_that_bind_and_osc_out_sends_them() {
     let p = penumbra_osc::codec::parse(&buf[..n], &penumbra_osc::Limits::default()).unwrap();
     assert_eq!(p.bundles, 1);
     assert_eq!(p.messages[0].1, penumbra_osc::Message::new("/show/chan0", vec![Arg::Float(2.0)]));
+    // The sender counts a packet after sending it, so the socket can have it first.
+    eventually("the sender to count the packet", || {
+        f.call("osc.status", json!({}))["senders"][0]["packets"].as_u64().unwrap_or(0) >= 1
+    });
     let status = f.call("osc.status", json!({}));
     assert_eq!(status["senders"][0]["label"], "/out", "{status}");
-    assert!(status["senders"][0]["packets"].as_u64().unwrap() >= 1);
     assert_eq!(status["listeners"][0]["messages"], 4, "{status}");
 
     // osc.send reaches the listener too.
