@@ -56,6 +56,8 @@ pub enum Action {
     Pin(Option<NodeId>),
     Play(bool),
     Thumbnails(ThumbnailMode),
+    /// Cook passes between two thumbnail cooks of a node.
+    ThumbnailEvery(u32),
     /// Open the Helpers window.
     OpenHelpers,
     /// Show a message in the status bar.

@@ -23,7 +23,7 @@ use penumbra_graph::{Data, DataKind, Network, NodeDesc, NodeStatus, NodeTypes, O
 
 use crate::add_dialog::{AddDialog, Outcome};
 use crate::automation;
-use crate::layout::{Layout, NODE_SIZE, View};
+use crate::layout::{Layout, NODE_SIZE, View, ZOOM};
 use crate::textures::Textures;
 use crate::{Action, theme};
 
@@ -42,8 +42,14 @@ pub struct Inputs<'a> {
     /// none rather than an outdated one.
     pub pictures: &'a BTreeSet<NodeId>,
     pub thumbnail_mode: penumbra_graph::ThumbnailMode,
+    /// Cook passes between two thumbnail cooks of a node (`ViewFrame::thumbnail_every`).
+    pub thumbnail_every: u32,
+    /// The show clock's frame rate, to name thumbnail rates in Hz.
+    pub fps: f64,
     /// The bar under a single channel's value (`EditorOptions::chan_bars`).
     pub chan_bars: bool,
+    /// The viewer's node and output, drawn behind the network (`EditorOptions::viewer_background`).
+    pub backdrop: Option<(NodeId, u32)>,
     /// Frame period in seconds, for the cook-time tint.
     pub period: f64,
     pub can_edit: bool,
@@ -381,6 +387,9 @@ impl Editor {
         let view = layout.view;
         let painter = ui.painter_at(canvas);
         painter.rect_filled(canvas, CornerRadius::ZERO, background);
+        if let Some(key) = input.backdrop {
+            draw_backdrop(&painter, canvas, key, input, textures);
+        }
         draw_grid(&painter, canvas, view);
 
         // Geometry of every node on this level, in network order.
@@ -849,7 +858,7 @@ impl Editor {
             let factor = pinch * (scroll * 0.0015).exp();
             if (factor - 1.0).abs() > 1e-4 {
                 let before = to_graph(canvas, view, p);
-                view.zoom = (view.zoom * factor).clamp(0.15, 3.0);
+                view.zoom = (view.zoom * factor).clamp(ZOOM.0, ZOOM.1);
                 // Keep the graph point under the pointer in place.
                 view.origin = before.to_vec2() - (p - canvas.min) / view.zoom;
             }
@@ -1531,6 +1540,10 @@ fn options_menu(
         .checkbox(&mut options.chan_bars, "Channel bars")
         .on_hover_text("The bar under a single channel's value: green, red while negative");
     auto.add("options.chan_bars", r.rect, "Channel bars");
+    let r = ui
+        .checkbox(&mut options.viewer_background, "Viewer as background")
+        .on_hover_text("The viewer's picture behind the network, dimmed so nodes and wires stay readable");
+    auto.add("options.viewer_background", r.rect, "Viewer as background");
     layout.set_options(options, input.now);
     let r = ui.button("Helpers").on_hover_text(
         "Displays, output windows, what paces the show clock, resolution, state, OSC, audio, show-machine checks",
@@ -1561,6 +1574,57 @@ fn options_menu(
             ui.close();
         }
     }
+    // How often a live thumbnail cooks: every frame is smooth, every 6th (the default) spares the
+    // GPU in large networks.
+    ui.add_enabled_ui(current == ThumbnailMode::Always, |ui| {
+        ui.label(egui::RichText::new("Thumbnail rate").color(theme::TEXT_WEAK));
+        for every in THUMBNAIL_EVERY {
+            let hz = input.fps / f64::from(every);
+            let label = if every == 1 { format!("{hz:.0} Hz, every frame") } else { format!("{hz:.0} Hz") };
+            let r = ui.radio(every == input.thumbnail_every, label).on_hover_text(if every == 1 {
+                "a live thumbnail cooks every frame".to_string()
+            } else {
+                format!("a live thumbnail cooks once in {every} frames at most")
+            });
+            auto.add(format!("thumbnails.every_{every}"), r.rect, format!("{hz:.0} Hz"));
+            if r.clicked() {
+                if every != input.thumbnail_every {
+                    actions.push(Action::ThumbnailEvery(every));
+                }
+                ui.close();
+            }
+        }
+    });
+}
+
+/// The thumbnail rates the options menu offers, as frames between two cooks of a node.
+const THUMBNAIL_EVERY: [u32; 4] = [1, 2, 3, 6];
+
+/// How bright the viewer's picture behind the network is drawn: dimmed, or bright pictures
+/// would swallow the wires.
+const BACKDROP_TINT: Color32 = Color32::from_gray(150);
+
+/// The viewer's picture (a texture, a geometry's or material's preview) behind the network,
+/// as large as fits the canvas. Draws nothing for other data or before the first cook.
+fn draw_backdrop(
+    painter: &egui::Painter,
+    canvas: Rect,
+    (id, output): (NodeId, u32),
+    input: &Inputs<'_>,
+    textures: &mut Textures,
+) {
+    let Some(outputs) = input.outputs.get(&id) else { return };
+    let Some(data) = outputs.get(output as usize).or_else(|| outputs.first()) else { return };
+    let tex = match data.kind() {
+        DataKind::Tex => data.get::<penumbra_gpu::Tex>(),
+        _ => crate::viewer::preview_of(data),
+    };
+    // The viewer's key: the same picture shares one display copy.
+    let Some(tex) = tex else { return };
+    let Some(tid) = textures.show((id, output), tex) else { return };
+    let aspect = tex.width() as f32 / tex.height().max(1) as f32;
+    let fit = fit_rect(canvas, aspect).round_to_pixels(painter.pixels_per_point());
+    painter.image(tid, fit, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), BACKDROP_TINT);
 }
 
 /// How many lines of 12 graph units fit into `body` below a margin of 4. Counted in graph

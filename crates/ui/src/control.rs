@@ -94,7 +94,7 @@ const COMMANDS: &[(&str, &str)] = &[
          moves go to the free view's camera, or in steer mode to the camera node; take puts the free view into it",
     ),
     ("ui.place", "Move nodes in the editor; {nodes: {path: [x, y]}}"),
-    ("ui.options", "The editor's options (right-click on empty space); {chan_bars?}"),
+    ("ui.options", "The editor's options (right-click on empty space); {chan_bars?, viewer_background?}"),
     ("ui.arrange", "Lay out all nodes again by depth and frame them"),
     ("ui.frame", "Fit all nodes into the editor"),
     ("ui.screenshot", "PNG of the window; {file?} (default %TEMP%/penumbra/ui.png)"),

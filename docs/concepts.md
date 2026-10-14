@@ -142,9 +142,10 @@ file that does not load) shows the error and keeps putting out what it made last
 during a show does not black out a projector.
 
 **Thumbnails** follow the editor's options (right-click on empty canvas): always live, only
-when free (nothing is cooked just for a thumbnail), or never. A picture is only shown while it
-is up to date; an outdated one would be misleading. "Pause thumbnail" in a node's menu does the
-same for one node.
+when free (nothing is cooked just for a thumbnail), or never. A live thumbnail cooks at most
+every 6th frame by default (10 Hz at 60 fps); the same menu raises that up to every frame. A
+picture is only shown while it is up to date; an outdated one would be misleading. "Pause
+thumbnail" in a node's menu does the same for one node.
 
 **Locking** a node (node menu, or the lock in the param panel) holds its current outputs: it no
 longer cooks, whatever happens upstream, and its inputs may even be removed. Locked outputs are

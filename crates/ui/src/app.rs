@@ -287,6 +287,14 @@ impl PenumbraApp {
                     });
                     Ok(())
                 }
+                Action::ThumbnailEvery(every) => {
+                    self.engine.post_cook(move |st| {
+                        let mut policy = st.cooker.thumbnail_policy();
+                        policy.min_interval = every;
+                        st.cooker.set_thumbnail_policy(policy);
+                    });
+                    Ok(())
+                }
                 Action::Message(m) => Err(penumbra_core::Error::new(m)),
                 Action::Group(ids) => {
                     crate::components::group(&self.engine, &mut self.editor, &mut self.layout, &ids, now)
@@ -731,7 +739,12 @@ impl PenumbraApp {
                     outputs: &view.outputs,
                     pictures: &view.pictures,
                     thumbnail_mode: view.thumbnails,
+                    thumbnail_every: view.thumbnail_every,
+                    fps: view.time.map_or(60.0, |t| t.rate.as_f64()),
                     chan_bars: self.layout.options.chan_bars,
+                    backdrop: target
+                        .filter(|_| self.layout.options.viewer_background)
+                        .map(|id| (id, self.viewer.output)),
                     period,
                     can_edit,
                     viewer: target,
@@ -1328,8 +1341,12 @@ impl PenumbraApp {
                 if let Some(v) = p.get("chan_bars") {
                     options.chan_bars = v.as_bool().ok_or("`chan_bars` must be true or false")?;
                 }
+                if let Some(v) = p.get("viewer_background") {
+                    options.viewer_background =
+                        v.as_bool().ok_or("`viewer_background` must be true or false")?;
+                }
                 self.layout.set_options(options, now);
-                done(json!({"chan_bars": options.chan_bars}))
+                done(json!({"chan_bars": options.chan_bars, "viewer_background": options.viewer_background}))
             }
             "ui.arrange" => {
                 self.layout.arrange(&net, now);

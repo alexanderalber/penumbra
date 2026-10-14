@@ -1,11 +1,13 @@
 # Examples
 
 Small projects, each showing one side of penumbra. Open one with the folder button at the left
-end of the status bar: **Open project**, then pick the example's folder. Then click the node
-named below to see its picture in the viewer.
+end of the status bar: **Examples**, then the example's name. Then click the node named below
+to see its picture in the viewer.
 
-penumbra saves into the project you open, so an example changes as you work in it. To start
-over, unpack the zip again (or check the folder out again).
+The menu opens a copy of the example in penumbra's data folder (`%LOCALAPPDATA%\penumbra\examples`),
+made the first time, so this folder stays as it is and your changes are kept in the copy. To
+start over, delete the copy. (**Open project** on the example's folder here opens it in place,
+and penumbra then saves into it.)
 
 | example | shows | look at | needs |
 |---|---|---|---|

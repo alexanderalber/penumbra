@@ -27,6 +27,9 @@ const SAVE_DELAY: Duration = Duration::from_secs(1);
 
 /// Space a node takes in the editor, in graph units, for placing and overlap checks.
 pub const NODE_SIZE: Vec2 = vec2(150.0, 118.0);
+/// The editor's zoom range: far enough out for a large network, far enough in to read a
+/// thumbnail closely.
+pub const ZOOM: (f32, f32) = (0.15, 6.0);
 const GAP: Vec2 = vec2(50.0, 24.0);
 
 #[derive(Serialize, Deserialize, Default)]
@@ -65,11 +68,13 @@ impl Default for Sections {
 pub struct EditorOptions {
     /// The bar under a single channel's value (green, red while negative).
     pub chan_bars: bool,
+    /// The viewer's picture behind the network, filling the editor.
+    pub viewer_background: bool,
 }
 
 impl Default for EditorOptions {
     fn default() -> Self {
-        Self { chan_bars: true }
+        Self { chan_bars: true, viewer_background: false }
     }
 }
 
@@ -168,7 +173,8 @@ impl Layout {
                     && v.pan.iter().all(|c| c.is_finite())
                     && v.zoom.is_finite()
                 {
-                    layout.view = View { origin: vec2(v.pan[0], v.pan[1]), zoom: v.zoom.clamp(0.1, 4.0) };
+                    layout.view =
+                        View { origin: vec2(v.pan[0], v.pan[1]), zoom: v.zoom.clamp(ZOOM.0, ZOOM.1) };
                 }
                 if let Some(sections) = repr.sections {
                     layout.sections = sections;
