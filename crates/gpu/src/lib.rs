@@ -362,7 +362,7 @@ impl Gpu {
 
     /// A uniform buffer holding `contents`, padded to wgpu's copy alignment. Not
     /// `DeviceExt::create_buffer_init`: that maps the buffer at creation and panics when the
-    /// device cannot create it (out of GPU memory, 2026-10-11 with ComfyUI holding the VRAM);
+    /// device cannot create it (out of GPU memory, as when another program holds the VRAM);
     /// here a failure goes to the error scope like any other.
     pub(crate) fn uniform_buffer(&self, label: &str, contents: &[u8]) -> wgpu::Buffer {
         let align = wgpu::COPY_BUFFER_ALIGNMENT as usize;
@@ -464,7 +464,7 @@ pub(crate) mod testing {
 mod tests {
     #[test]
     fn the_surface_wait_failure_is_recognised() {
-        // As wgpu 30 formats it (seen 2026-10-08 after snapping the window with Win+Left).
+        // As wgpu 30 formats it (after snapping the window with Win+Left).
         let message = "Validation Error\n\nCaused by:\n  In Surface::configure\n    \
                        Failed to wait for GPU to come idle before reconfiguring the Surface\n";
         assert!(super::is_surface_wait_failure(message));

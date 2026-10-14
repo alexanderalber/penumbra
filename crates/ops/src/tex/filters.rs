@@ -1,7 +1,7 @@
-//! Single-pass `tex` filters after TouchDesigner's TOPs of the same names (user's list,
-//! 2026-10-09): flip, channel mix, chroma key, cross, displace, edge, fit, lens distort, limit,
-//! lookup, matte, monochrome, remap, resolution, slope, threshold, tile. Each is a WGSL file in
-//! this directory with its params declared here; behaviour is ours where TD's differs.
+//! Single-pass `tex` filters after TouchDesigner's TOPs of the same names: flip, channel mix,
+//! chroma key, cross, displace, edge, fit, lens distort, limit, lookup, matte, monochrome, remap,
+//! resolution, slope, threshold, tile. Each is a WGSL file in this directory with its params
+//! declared here; behaviour is ours where TD's differs.
 
 use penumbra_core::{Curve, ParamSpec, Unit, Value};
 use penumbra_graph::{CookContext, CookError, DataKind, Density, NodeDef, NodeDesc};

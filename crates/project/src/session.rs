@@ -587,8 +587,8 @@ mod tests {
 
     #[test]
     fn a_param_a_node_type_lost_does_not_block_the_project() {
-        // A built-in that dropped a param (tex.composite's opacity, 2026-10-08) must not keep
-        // the project from opening or merging; the value stays until it is removed.
+        // A built-in that dropped a param (tex.composite's opacity) must not keep the project
+        // from opening or merging; the value stays until it is removed.
         let dir = TempDir::new("stray");
         std::fs::create_dir_all(&dir.0).unwrap();
         let text = "(version: 1, nodes: {\"/a\": (kind: \"test.const\", params: {\"opacity\": 0.7})})";

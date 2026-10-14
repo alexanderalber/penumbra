@@ -29,7 +29,7 @@ const SHOT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long an edit error stays in the status bar.
 const MESSAGE_SECONDS: u64 = 8;
 /// Resizes [`PenumbraApp::heal_surface`] tries within [`HEAL_WINDOW`] before it gives up. A GPU
-/// kept busy or full by another program (ComfyUI, 2026-10-11) fails every reconfigure, and each
+/// kept busy or full by another program (ComfyUI, for one) fails every reconfigure, and each
 /// nudge caused the next failure: a resize about once a minute for as long as it lasted.
 const MAX_HEALS: u32 = 3;
 const HEAL_WINDOW: Duration = Duration::from_secs(300);
@@ -798,8 +798,8 @@ impl PenumbraApp {
         });
         self.textures.end_frame();
         self.layout.save_if_due(&net, now, false);
-        // A line under the title bar, like the one the status bar draws above itself (user,
-        // 2026-10-09). Painted last, over whatever panel sits at the top.
+        // A line under the title bar, like the one the status bar draws above itself. Painted last,
+        // over whatever panel sits at the top.
         let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
         ui.painter().hline(window.x_range(), window.top() + stroke.width / 2.0, stroke);
     }

@@ -2,8 +2,8 @@
 //! TGA, GIF, QOI, PNM; 8-bit, 16-bit and float.
 //!
 //! Integer samples are taken as sRGB-encoded and linearised; float samples (EXR, HDR, PFM) as
-//! linear already. Alpha is premultiplied on the way in. ICC profiles are ignored (decided
-//! 2026-10-08: no colour management).
+//! linear already. Alpha is premultiplied on the way in. ICC profiles are ignored
+//! (no colour management).
 //!
 //! Decoding runs off the cook thread (the image node's job). Memory is the real risk with
 //! hostile files, not panics: [`limits`] rejects anything too large from the header before a

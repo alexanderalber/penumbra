@@ -16,9 +16,9 @@
 //! the last working frame while the error is shown in the editor. A panicking operator is caught,
 //! reported, and replaced by a fresh one the next time it cooks.
 //!
-//! Thumbnails (decided 2026-10-08): a thumbnail of a node that cooked for an output this frame
-//! costs nothing extra. Otherwise it is cooked only when dirty, at most once every
-//! [`ThumbnailPolicy::min_interval`] cook passes per node, and only while the frame's
+//! Thumbnails: a thumbnail of a node that cooked for an output this frame costs nothing extra.
+//! Otherwise it is cooked only when dirty, at most once every [`ThumbnailPolicy::min_interval`]
+//! cook passes per node, and only while the frame's
 //! [`ThumbnailPolicy::budget`] lasts (round robin, so every thumbnail gets its turn). Pausing a
 //! node's thumbnail means the caller stops requesting it; the global switch is
 //! [`ThumbnailPolicy::mode`]; which pictures are still up to date without cooking is
@@ -432,7 +432,7 @@ impl Cooker {
     /// Makes `value` available to every operator through [`CookContext::resource`], replacing
     /// an earlier value of the same type. Nodes that failed are tried again, since the failure
     /// may have been the missing resource (a `tex` node cooked for a projector before the GPU
-    /// arrived, seen 2026-10-09).
+    /// arrived).
     pub fn provide<T: Any + Send + Sync>(&mut self, value: T) {
         self.services.resources.insert(TypeId::of::<T>(), Box::new(value));
         for rt in self.runtimes.values_mut().filter(|rt| rt.error.is_some()) {

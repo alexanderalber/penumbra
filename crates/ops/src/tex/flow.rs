@@ -151,7 +151,7 @@ impl Operator for Select {
 /// `state.restore`, passes the saved frame instead of `initial` or `previous` until the end of
 /// the loop has made something new from it, and the loop carries on from there. (Passing it only
 /// once lost it when the end of the loop was not cooked in the same pass: the next frame fell
-/// back to `initial`, seen in the app on 2026-10-10.)
+/// back to `initial`.)
 struct Feedback {
     last: Option<Data>,
     /// A frame from a state snapshot, passed until `previous` moves on.
