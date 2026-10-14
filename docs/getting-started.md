@@ -94,10 +94,11 @@ command. Close the app (or open another project) and come back to it, and the ne
 | right- or middle-drag | pan |
 | mouse wheel | zoom around the pointer |
 | right-click a node | its menu: view (pin), pause thumbnail, lock, delete, cut, copy, group |
-| right-click empty canvas | the editor's options: channel bars, the viewer as background, thumbnails and their rate, Helpers |
+| right-click empty canvas | the editor's options: arrange, channel bars, the viewer as background, all binding lines, thumbnails and their rate, Helpers |
 | Tab, double-click on canvas | add a node |
 | Delete or Backspace | delete the selection |
 | F | frame all nodes |
+| L | arrange the nodes (the selection when two or more are selected) |
 | Ctrl+A | select all |
 | Ctrl+C, Ctrl+X, Ctrl+V | copy, cut, paste (the nodes travel as text on the system clipboard) |
 | Ctrl+G | group the selection into a component |

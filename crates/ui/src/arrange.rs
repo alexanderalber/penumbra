@@ -311,8 +311,8 @@ impl Part {
         let count = columns.iter().copied().max().map_or(0, |m| m + 1);
         let graph = Layered::new(items, pieces, count, &self.binds);
 
-        // Two starting orders, the old heights and the order of a walk along the wires; the
-        // better result wins.
+        // Three starting orders, the old heights and walks along the wires from the sources and
+        // from the ends; the best result wins.
         let old_center =
             |i: usize| self.old.get(i).copied().flatten().map(|p| p.y + get(&self.heights, i) / 2.0);
         let by_old = |item: usize| -> f32 {
@@ -331,8 +331,9 @@ impl Part {
                 },
             }
         };
-        let walk = graph.walk_order();
-        let starts = [graph.start(by_old), graph.start(|item| get(&walk, item))];
+        let (walk, back) = (graph.walk_order(false), graph.walk_order(true));
+        let starts =
+            [graph.start(by_old), graph.start(|item| get(&walk, item)), graph.start(|item| get(&back, item))];
         let order = starts
             .into_iter()
             .map(|o| graph.order(o))
@@ -481,12 +482,14 @@ impl Layered {
     }
 
     /// A rank per item from a depth-first walk along the wires in both directions, so that what
-    /// hangs together starts out together.
-    fn walk_order(&self) -> Vec<f32> {
+    /// hangs together starts out together. The walk starts at the sources, or with `from_ends`
+    /// at the items nothing reads and goes upstream first, input by input.
+    fn walk_order(&self, from_ends: bool) -> Vec<f32> {
         let mut rank: Vec<Option<f32>> = vec![None; self.items.len()];
         let mut next = 0.0;
         for start in 0..self.items.len() {
-            if rank.get(start).copied().flatten().is_some() || !list(&self.left, start).is_empty() {
+            let entry = list(if from_ends { &self.right } else { &self.left }, start);
+            if rank.get(start).copied().flatten().is_some() || !entry.is_empty() {
                 continue;
             }
             let mut stack = vec![start];
@@ -496,7 +499,10 @@ impl Layered {
                 }
                 put(&mut rank, v, Some(next));
                 next += 1.0;
-                let neighbours = self.side(v, false).map(|p| p.2).chain(self.side(v, true).map(|p| p.0));
+                let ahead: Vec<usize> = self.side(v, false).map(|p| p.2).collect();
+                let behind: Vec<usize> = self.side(v, true).map(|p| p.0).collect();
+                let neighbours =
+                    if from_ends { behind.into_iter().chain(ahead) } else { ahead.into_iter().chain(behind) };
                 let mut more: Vec<usize> =
                     neighbours.filter(|w| rank.get(*w).copied().flatten().is_none()).collect();
                 more.reverse();
