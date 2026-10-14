@@ -66,7 +66,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(MatNode::new(Shading::Phong)) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("mat.wireframe", "The edges as lines of a width in pixels, the faces open, filled or hiding; unlit")
+        NodeDesc::new("mat.wireframe", "The edges as lines of a width in pixels, the faces open, filled or hidden; unlit")
             .param(
                 ParamSpec::color("color", [1.0; 4])
                     .doc("The lines' colour: linear RGBA, straight alpha; times the texture input"),
@@ -82,7 +82,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 "polygons: leave out edges inside flat faces (a quad's diagonal); triangles: every edge",
             ))
             .param(ParamSpec::choice("faces", &["open", "filled", "hidden"]).doc(
-                "open: nothing, the lines behind show through; filled: the fill colour; hidden: nothing, but they hide what is behind them, so only the lines in front show",
+                "open: nothing, the lines behind show through; filled: the fill colour; hidden: only the lines filled faces would leave, the faces see-through",
             ))
             .param(
                 ParamSpec::color("fill", [0.0, 0.0, 0.0, 1.0])

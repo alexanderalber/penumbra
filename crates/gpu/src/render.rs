@@ -253,9 +253,16 @@ enum Pass {
     Tint,
     /// For ambient occlusion: the opaque pixels' positions and normals.
     Prepass,
-    /// The colour pass, first: depth only, of wireframes whose faces hide what is behind them.
+}
+
+/// How a pipeline draws within its pass: as usual, or the two steps that draw wireframes with
+/// hidden faces last, so that only the lines a filled face would leave show.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Stage {
+    Draw,
+    /// The faces' depth only.
     Hide,
-    /// The colour pass, next: those wireframes' lines, where their depth is the nearest.
+    /// The lines where that depth is the nearest.
     Over,
 }
 
@@ -273,18 +280,16 @@ impl Pass {
             Pass::Shadow => "fs_shadow",
             Pass::Tint => "fs_tint",
             Pass::Prepass => "fs_prepass",
-            Pass::Hide => "fs_hide",
-            Pass::Over => "fs_over",
         }
     }
 
     fn colour(self) -> bool {
-        matches!(self, Pass::Solid | Pass::Blend | Pass::Hide | Pass::Over)
+        matches!(self, Pass::Solid | Pass::Blend)
     }
 
     fn blend(self) -> Option<wgpu::BlendState> {
         match self {
-            Pass::Solid | Pass::Blend | Pass::Over => Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+            Pass::Solid | Pass::Blend => Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             // Colour: what is there times what this surface lets through; alpha: the nearest
             // depth.
             Pass::Tint => Some(wgpu::BlendState {
@@ -377,8 +382,8 @@ impl Measurement {
     }
 }
 
-/// Samples, pass, faces left out, wireframe.
-type PipelineKey = (u32, Pass, Option<wgpu::Face>, bool);
+/// Samples, pass, faces left out, wireframe, stage.
+type PipelineKey = (u32, Pass, Option<wgpu::Face>, bool, Stage);
 
 /// A pass's pipeline for whole surfaces, and for wireframes where the render draws any.
 struct Pipes {
@@ -398,7 +403,7 @@ pub struct Pipelines {
     layout: wgpu::PipelineLayout,
     /// ... and the light group: the colour pass.
     color_layout: wgpu::PipelineLayout,
-    /// By (samples, pass, faces left out, wireframe).
+    /// By (samples, pass, faces left out, wireframe, stage).
     built: std::sync::Mutex<HashMap<PipelineKey, wgpu::RenderPipeline>>,
     /// Whether the texture format allows four samples.
     msaa: bool,
@@ -602,8 +607,9 @@ impl Pipelines {
         pass: Pass,
         cull: Option<wgpu::Face>,
         wire: bool,
+        stage: Stage,
     ) -> Result<wgpu::RenderPipeline, Error> {
-        let key = (samples, pass, cull, wire);
+        let key = (samples, pass, cull, wire, stage);
         let mut built = self.built.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(p) = built.get(&key) {
             return Ok(p.clone());
@@ -621,10 +627,16 @@ impl Pipelines {
             ("vs", VERTEX_BYTES, &attributes[..3])
         };
         let target = |format: wgpu::TextureFormat| {
-            // Hiding faces write depth only.
+            // Hidden faces write depth only.
             let write_mask =
-                if pass == Pass::Hide { wgpu::ColorWrites::empty() } else { wgpu::ColorWrites::ALL };
+                if stage == Stage::Hide { wgpu::ColorWrites::empty() } else { wgpu::ColorWrites::ALL };
             Some(wgpu::ColorTargetState { format, blend: pass.blend(), write_mask })
+        };
+        let fragment = match (stage, pass) {
+            (Stage::Hide, _) => "fs_hide",
+            // The colour pass's lines keep nothing back: the faces between give alpha 0.
+            (Stage::Over, Pass::Solid) => "fs_over",
+            _ => pass.entry(),
         };
         let shadow = pass == Pass::Shadow;
         let targets = match pass {
@@ -652,8 +664,8 @@ impl Pipelines {
                 depth_stencil: (pass != Pass::Tint).then_some(wgpu::DepthStencilState {
                     format: DEPTH,
                     depth_write_enabled: Some(pass != Pass::Blend),
-                    // The lines over hiding faces pass where the faces' own depth is.
-                    depth_compare: Some(if pass == Pass::Over {
+                    // The lines over hidden faces pass where the faces' own depth is.
+                    depth_compare: Some(if stage == Stage::Over {
                         wgpu::CompareFunction::LessEqual
                     } else {
                         wgpu::CompareFunction::Less
@@ -670,7 +682,7 @@ impl Pipelines {
                 multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
                 fragment: Some(wgpu::FragmentState {
                     module: &self.module,
-                    entry_point: Some(pass.entry()),
+                    entry_point: Some(fragment),
                     compilation_options: Default::default(),
                     targets: &targets,
                 }),
@@ -1014,9 +1026,21 @@ impl Renderer {
             shows_material && geo.items.iter().any(|i| i.material.as_ref().is_some_and(|m| m.wire.is_some()));
         let pipes = |samples: u32, pass: Pass, cull: Option<wgpu::Face>| -> Result<Pipes, Error> {
             Ok(Pipes {
-                plain: pipelines.pipeline(gpu, samples, pass, cull, false)?,
-                wire: if any_wire { Some(pipelines.pipeline(gpu, samples, pass, cull, true)?) } else { None },
+                plain: pipelines.pipeline(gpu, samples, pass, cull, false, Stage::Draw)?,
+                wire: if any_wire {
+                    Some(pipelines.pipeline(gpu, samples, pass, cull, true, Stage::Draw)?)
+                } else {
+                    None
+                },
             })
+        };
+        // Hidden faces' two steps; only wireframes draw them.
+        let stages = |samples: u32, pass: Pass| -> Result<(Pipes, Pipes), Error> {
+            let wire = |stage| -> Result<Pipes, Error> {
+                let p = pipelines.pipeline(gpu, samples, pass, cull, true, stage)?;
+                Ok(Pipes { plain: p.clone(), wire: Some(p) })
+            };
+            Ok((wire(Stage::Hide)?, wire(Stage::Over)?))
         };
         let color_pipeline = pipes(samples, Pass::Solid, cull)?;
         let data_pipeline = match data {
@@ -1123,8 +1147,9 @@ impl Renderer {
             wire: bool,
             /// Shows nothing but hides what is behind it: drawn before everything else.
             occluder: bool,
-            /// A wireframe whose faces hide what is behind them: their depth first, then its
-            /// lines, before everything else in the colour pass.
+            /// A wireframe with hidden faces: drawn after everything else in the colour, data and
+            /// measuring passes, its faces' depth first, then its lines where that is the
+            /// nearest.
             hides: bool,
             /// Distance of its middle along the view, for the sorting.
             depth: f64,
@@ -1209,14 +1234,16 @@ impl Renderer {
         // show through.
         let mut order: Vec<usize> = (0..calls.len()).collect();
         order.sort_by_key(|k| calls.get(*k).is_none_or(|c| !c.occluder));
-        // Wireframes with hiding faces, which the colour pass draws on their own.
+        // Wireframes with hidden faces, which the colour, data and measuring passes draw last.
         let hiding: Vec<usize> =
             (0..calls.len()).filter(|k| calls.get(*k).is_some_and(|c| c.hides)).collect();
-        let hide_pipelines = if hiding.is_empty() {
-            None
-        } else {
-            Some((pipes(samples, Pass::Hide, cull)?, pipes(samples, Pass::Over, cull)?))
+        let rest: Vec<usize> = order.iter().copied().filter(|k| !hiding.contains(k)).collect();
+        let hide_stages = |samples: u32, pass: Pass, on: bool| -> Result<Option<(Pipes, Pipes)>, Error> {
+            if on && !hiding.is_empty() { Ok(Some(stages(samples, pass)?)) } else { Ok(None) }
         };
+        let solid_stages = hide_stages(samples, Pass::Solid, true)?;
+        let data_stages = hide_stages(1, Pass::Data, data.is_some())?;
+        let measure_stages = hide_stages(1, Pass::Measure, measure)?;
         // The wireframe vertices of every model drawn as one.
         let mut wires: HashMap<usize, wgpu::Buffer> = HashMap::new();
         for c in calls.iter().filter(|c| c.wire) {
@@ -1620,22 +1647,37 @@ impl Renderer {
                 Option<&'a wgpu::TextureView>,
                 &'a wgpu::TextureView,
                 &'a Pipes,
+                Option<&'a (Pipes, Pipes)>,
             );
             let mut passes: Vec<Target<'_>> = Vec::new();
             if let Some(depth) = self.depth.as_ref().map(|(_, v)| v) {
                 match (&self.msaa_color, samples) {
-                    (Some(m), 4) => passes.push((Pass::Solid, m, Some(color.view()), depth, &color_pipeline)),
-                    _ => passes.push((Pass::Solid, color.view(), None, depth, &color_pipeline)),
+                    (Some(m), 4) => passes.push((
+                        Pass::Solid,
+                        m,
+                        Some(color.view()),
+                        depth,
+                        &color_pipeline,
+                        solid_stages.as_ref(),
+                    )),
+                    _ => passes.push((
+                        Pass::Solid,
+                        color.view(),
+                        None,
+                        depth,
+                        &color_pipeline,
+                        solid_stages.as_ref(),
+                    )),
                 }
             }
             if let (Some(t), Some(p), Some(depth)) = (data, data_pipeline.as_ref(), self.depth_data.as_ref())
             {
-                passes.push((Pass::Data, t.view(), None, depth, p));
+                passes.push((Pass::Data, t.view(), None, depth, p, data_stages.as_ref()));
             }
             if let (Some((_, view, depth, _)), Some(p)) = (&measuring, measure_pipeline.as_ref()) {
-                passes.push((Pass::Measure, view, None, depth, p));
+                passes.push((Pass::Measure, view, None, depth, p, measure_stages.as_ref()));
             }
-            for (pass, view, resolve, depth_view, pipeline) in passes {
+            for (pass, view, resolve, depth_view, pipeline, hidden) in passes {
                 let clear =
                     if pass == Pass::Solid { wgpu::Color { r, g, b, a } } else { wgpu::Color::TRANSPARENT };
                 let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1671,20 +1713,7 @@ impl Renderer {
                 if pass.colour() {
                     rp.set_bind_group(3, &light_group, &[]);
                 }
-                if pass == Pass::Solid
-                    && let Some((hide, over)) = &hide_pipelines
-                {
-                    // The hiding faces' depth, then their lines where it is the nearest: the
-                    // faces behind (their own back included) fail, and so does whatever is
-                    // drawn behind them later.
-                    draw_some(&mut rp, draw_group, hide, &mut hiding.iter().copied());
-                    draw_some(&mut rp, draw_group, over, &mut hiding.iter().copied());
-                    rp.set_pipeline(&pipeline.plain);
-                    let rest: Vec<usize> = order.iter().copied().filter(|k| !hiding.contains(k)).collect();
-                    draw_some(&mut rp, draw_group, pipeline, &mut rest.into_iter());
-                } else {
-                    draw_some(&mut rp, draw_group, pipeline, &mut order.iter().copied());
-                }
+                draw_some(&mut rp, draw_group, pipeline, &mut rest.iter().copied());
                 // The see-through pixels over the opaque ones, farthest first.
                 if pass == Pass::Solid {
                     for k in &behind {
@@ -1692,6 +1721,14 @@ impl Renderer {
                             draw_some(&mut rp, draw_group, p, &mut std::iter::once(*k));
                         }
                     }
+                }
+                // Wireframes with hidden faces last: the faces' depth, then the lines where it
+                // is the nearest. Their own lines behind fail, and so do other wireframes'
+                // behind them; what was drawn before shows through the faces. (Lines behind a
+                // see-through surface come out in front of it.)
+                if let Some((hide, over)) = hidden {
+                    draw_some(&mut rp, draw_group, hide, &mut hiding.iter().copied());
+                    draw_some(&mut rp, draw_group, over, &mut hiding.iter().copied());
                 }
             }
             if let Some((target, _, _, buffer)) = &measuring {
