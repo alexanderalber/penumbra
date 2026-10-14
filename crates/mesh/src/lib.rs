@@ -77,6 +77,10 @@ pub struct Mesh {
     /// Never empty after [`Builder::finish`]: material 0 is the default (white).
     pub materials: Vec<Material>,
     pub images: Vec<Image>,
+    /// Per triangle, which of its edges lie inside a polygon of the file it was split from (bit
+    /// k: the edge opposite corner k). Empty when the file had no polygons of more than three
+    /// corners, or for a mesh made otherwise; a wireframe then guesses from flat neighbours.
+    pub inner_edges: Vec<u8>,
 }
 
 /// Per-part numbers, e.g. for the `parts` table of `geo.file`.
@@ -682,7 +686,16 @@ impl<'l> Builder<'l> {
             }
         }
         self.mesh.indices.extend(t);
+        self.mesh.inner_edges.push(0);
         Ok(())
+    }
+
+    /// Marks edges of the last triangle as inside the polygon it was split from (bit k: the
+    /// edge opposite corner k).
+    pub fn inner_edges(&mut self, mask: u8) {
+        if let Some(m) = self.mesh.inner_edges.last_mut() {
+            *m = mask & 0b111;
+        }
     }
 
     /// Three new vertices with the triangle's own normal (flat shading), for files without
@@ -706,7 +719,10 @@ impl<'l> Builder<'l> {
     }
 
     /// The mesh; parts without triangles are kept (their ids stay as in the file).
-    pub fn finish(self) -> Mesh {
+    pub fn finish(mut self) -> Mesh {
+        if self.mesh.inner_edges.iter().all(|m| *m == 0) {
+            self.mesh.inner_edges = Vec::new();
+        }
         self.mesh
     }
 }

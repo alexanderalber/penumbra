@@ -79,7 +79,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .doc("The lines' width in pixels of the render"),
             )
             .param(ParamSpec::choice("edges", &["polygons", "triangles"]).doc(
-                "polygons: leave out edges inside flat faces (a quad's diagonal); triangles: every edge",
+                "polygons: leave out edges inside the file's polygons (OBJ faces), or inside flat faces where it has only triangles (a quad's diagonal); triangles: every edge",
             ))
             .param(ParamSpec::choice("faces", &["open", "filled", "hidden"]).doc(
                 "open: nothing, the lines behind show through; filled: the fill colour; hidden: only the lines filled faces would leave, the faces see-through",

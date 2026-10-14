@@ -217,13 +217,17 @@ impl Model {
     }
 }
 
-/// Per triangle, a bit per edge (bit k: the edge opposite corner k) shared with exactly one
-/// other triangle that lies in the same plane: the diagonal of a quad, the fan inside an
-/// n-gon. Edges are matched by their corners' positions, so vertices split at a seam still
-/// meet.
+/// Per triangle, a bit per edge (bit k: the edge opposite corner k) inside a polygon: the
+/// file's polygons where it has them (a flat grid of quads keeps its cell edges), else every
+/// edge shared with exactly one other triangle that lies in the same plane: the diagonal of a
+/// quad, the fan inside an n-gon. Edges are matched by their corners' positions, so vertices
+/// split at a seam still meet.
 pub(crate) fn inner_edges(mesh: &Mesh) -> Vec<u8> {
-    let position = |i: u32| mesh.vertices.get(i as usize).map(|v| v.position);
     let triangles = mesh.indices.as_chunks::<3>().0;
+    if !mesh.inner_edges.is_empty() && mesh.inner_edges.len() == triangles.len() {
+        return mesh.inner_edges.clone();
+    }
+    let position = |i: u32| mesh.vertices.get(i as usize).map(|v| v.position);
     let normals: Vec<Option<[f32; 3]>> = triangles
         .iter()
         .map(|t| {
@@ -491,6 +495,28 @@ mod tests {
         // The diagonal 0-2 is opposite the first triangle's second corner and the second
         // triangle's third; the fold 1-2 stays.
         assert_eq!(inner_edges(&mesh), vec![0b010, 0b100, 0]);
+    }
+
+    #[test]
+    fn inner_edges_follow_the_files_polygons() {
+        // Two flat quads side by side and a pentagon: the shared edge between the quads stays,
+        // only the fans' own edges are inside.
+        let obj = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 2 0 0\nv 2 1 0\nf 1 2 3 4\nf 2 5 6 3\n\
+                   v 0 0 1\nv 1 0 1\nv 2 1 1\nv 1 2 1\nv 0 1 1\nf 7 8 9 10 11\n";
+        let parse = |text: &str| {
+            let none = |_: &str| Err(penumbra_mesh::Error::new("no sidecar"));
+            penumbra_mesh::parse("t.obj", text.as_bytes(), &none, &penumbra_mesh::Limits::default()).unwrap()
+        };
+        let loaded = parse(obj);
+        // Quads: (1 2 3) and (1 3 4); the pentagon: (7 8 9), (7 9 10), (7 10 11).
+        let fans = vec![0b010, 0b100, 0b010, 0b100, 0b010, 0b110, 0b100];
+        assert_eq!(loaded.mesh.inner_edges, fans);
+        assert_eq!(inner_edges(&loaded.mesh), fans);
+        // A file of triangles only says nothing; flat neighbours are guessed again.
+        let tris = "v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nf 1 2 3\nf 1 3 4\n";
+        let loaded = parse(tris);
+        assert!(loaded.mesh.inner_edges.is_empty());
+        assert_eq!(inner_edges(&loaded.mesh), vec![0b010, 0b100]);
     }
 
     #[test]

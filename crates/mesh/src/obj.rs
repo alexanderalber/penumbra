@@ -110,7 +110,11 @@ pub fn parse(
                 b.reserve_triangles(corners.len() - 2)?;
                 let flat = corners.iter().any(|c| c.2 == NONE);
                 let first = corners.first().copied().unwrap_or((0, NONE, NONE));
-                for pair in corners.windows(2).skip(1) {
+                let fans = corners.len().saturating_sub(2);
+                for (k, pair) in corners.windows(2).skip(1).enumerate() {
+                    // The fan's own edges (to the first corner) are inside the polygon, all but
+                    // the outermost two.
+                    let inner = (if k + 1 < fans { 0b010 } else { 0 }) | (if k > 0 { 0b100 } else { 0 });
                     let tri = [
                         first,
                         pair.first().copied().unwrap_or(first),
@@ -124,6 +128,7 @@ pub fn parse(
                             continue;
                         }
                         b.flat_triangle(pos, uv, p, material)?;
+                        b.inner_edges(inner);
                     } else {
                         let mut ids = [0u32; 3];
                         for (slot, c) in ids.iter_mut().zip(tri) {
@@ -142,6 +147,7 @@ pub fn parse(
                             };
                         }
                         b.triangle(ids, p, material)?;
+                        b.inner_edges(inner);
                     }
                 }
             }

@@ -1362,3 +1362,46 @@ fn wireframes_show_edges_and_occluders_hide() {
     assert_eq!(at(&d, cx, cy), [0.0; 4], "nothing in the data pass either");
     assert_eq!(at(&d, 4, cy)[2].round(), 1.0, "the wall is part 0");
 }
+
+#[test]
+fn instance_places_a_copy_per_row() {
+    let (places, warning) = crate::geo::placements(
+        &Table::new(vec![
+            ["ty", "sz", "colour", "tx", "rz"].map(str::to_string).to_vec(),
+            ["2", "3", "red", "", "90"].map(str::to_string).to_vec(),
+            ["0", "x", "", "1", ""].map(str::to_string).to_vec(),
+            ["-1"].map(str::to_string).to_vec(),
+        ])
+        .unwrap(),
+    );
+    assert_eq!(places.len(), 2, "the row with a word in a number column is left out");
+    assert!(warning.is_some_and(|w| w.contains("row 2")));
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    // Turned 90° about z: x becomes y; scaled 3 in z; at y 2 (tx empty: 0).
+    let [r0, r1, r2, _] = places[0];
+    assert!(near(r0[0], 0.0) && near(r1[0], 1.0) && near(r2[2], 3.0), "{:?}", places[0]);
+    assert!(near(r0[3], 0.0) && near(r1[3], 2.0) && near(r2[3], 0.0));
+    // A short row: the rest of its columns as if empty.
+    assert!(near(places[1][1][3], -1.0) && near(places[1][0][0], 1.0));
+    let (none, warning) =
+        crate::geo::placements(&Table::new(vec![vec!["1".to_string(), "2".to_string()]]).unwrap());
+    assert!(none.is_empty() && warning.is_some_and(|w| w.contains("first row")));
+
+    let Some(gpu) = gpu() else { return };
+    let ops = vec![
+        create("/box", "geo.primitive", &[]),
+        create("/places", "table.text", &[("format", "csv".into()), ("text", "tx,sz\n-1,1\n1,2\n".into())]),
+        create("/copies", "geo.instance", &[]),
+        connect("/box", "/copies", 0),
+        connect("/places", "/copies", 1),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.cook("/copies");
+    let geo =
+        rig.cooker.output(Port { node: rig.id("/copies"), output: 0 }).unwrap().get::<Geo>().unwrap().clone();
+    assert_eq!(geo.items.len(), 2);
+    assert_eq!(geo.part_count(), 2, "part ids continue from copy to copy");
+    let b = geo.bounds().unwrap();
+    assert!((b.min[0] + 1.5).abs() < 1e-5 && (b.max[0] - 1.5).abs() < 1e-5, "{b:?}");
+    assert!((b.max[2] - 1.0).abs() < 1e-5, "the taller copy reaches z 1: {b:?}");
+}
