@@ -343,6 +343,8 @@ pub struct Material {
     pub texture: Option<Tex>,
     /// Only the triangles' edges show; `None`: the whole surface.
     pub wire: Option<Wire>,
+    /// Casts shadows from the lights that cast them, and tints their light where see-through.
+    pub shadows: bool,
 }
 
 impl Material {
@@ -358,6 +360,7 @@ impl Material {
             roughness: 0.5,
             texture: None,
             wire: None,
+            shadows: true,
         }
     }
 }

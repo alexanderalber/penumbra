@@ -1363,6 +1363,7 @@ Outputs: `out` (mat).
 | `edges` | polygons \| triangles | `"polygons"` |  | polygons: leave out edges inside the file's polygons (OBJ faces), or inside flat faces where it has only triangles (a quad's diagonal); triangles: every edge |
 | `faces` | open \| filled \| hidden | `"open"` |  | open: nothing, the lines behind show through; filled: the fill colour; hidden: only the lines filled faces would leave, the faces see-through |
 | `fill` | colour | `[0, 0, 0, 1]` |  | The faces' colour where `faces` is filled: linear RGBA, straight alpha |
+| `shadows` | bool | `true` |  | Lines and filled faces cast shadows from the lights that cast them; off: none |
 
 ## light
 

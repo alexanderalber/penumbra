@@ -88,6 +88,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 ParamSpec::color("fill", [0.0, 0.0, 0.0, 1.0])
                     .doc("The faces' colour where `faces` is filled: linear RGBA, straight alpha"),
             )
+            .param(
+                ParamSpec::bool("shadows", true)
+                    .doc("Lines and filled faces cast shadows from the lights that cast them; off: none"),
+            )
             .input("texture", DataKind::Tex)
             .output("out", DataKind::Mat),
         || Box::new(MatNode::wire()) as Box<dyn Operator>,
@@ -198,6 +202,7 @@ impl Operator for MatNode {
             };
             let fill = rgba(cx, "fill")?;
             material.wire = Some(Wire { width: cx.float("line_width")? as f32, polygons, faces, fill });
+            material.shadows = cx.bool("shadows")?;
         }
         if self.shading == Shading::Phong {
             let [r, g, b, _] = rgba(cx, "specular")?;
