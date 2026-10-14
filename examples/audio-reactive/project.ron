@@ -14,7 +14,7 @@
         "/mic": (kind: "chan.audioin"),
         "/pump": (kind: "tex.transform", params: {"extend": "mirror"}, inputs: {"in": "cloud"}, binds: {"scale.0": "zoom:low", "scale.1": "zoom:low"}),
         "/punch": (kind: "chan.math", params: {"b": 0.7}, inputs: {"a": "kick_fade"}),
-        "/show": (kind: "tex.composite", inputs: {"bottom": "bright", "top": "label"}),
+        "/show": (kind: "tex.composite", inputs: {"layer1": "bright", "layer2": "label"}),
         "/smooth": (kind: "chan.filter", params: {"fall": 0.4, "rise": 0.03}, inputs: {"in": "bands"}),
         "/tint": (kind: "tex.hsv", inputs: {"in": "pump"}, binds: {"hue": "turn:bar", "saturation": "zoom:high"}),
         "/turn": (kind: "chan.math", params: {"b": 360.0, "op": "multiply"}, inputs: {"a": "bar"}),

@@ -14,7 +14,7 @@
         "/canopy_at": (kind: "geo.transform", params: {"rotate": [90.0, 0.0, 0.0], "translate": [-1.2, 0.3, 2.3]}, inputs: {"in": "canopy"}),
         "/canopy_lit": (kind: "geo.material", inputs: {"in": "canopy_at", "mat": "leaves_mat"}),
         "/chrome": (kind: "mat.pbr", params: {"color": [0.95, 0.95, 0.95, 1.0], "metallic": 1.0, "roughness": 0.05}),
-        "/content": (kind: "tex.composite", inputs: {"bottom": "content_bg", "top": "content_title"}),
+        "/content": (kind: "tex.composite", inputs: {"layer1": "content_bg", "layer2": "content_title"}),
         "/content_bg": (kind: "tex.noise", params: {"color": true, "frequency": 2.0, "height": 720, "speed": 0.15, "width": 1280}),
         "/content_title": (kind: "tex.text", params: {"height": 720, "size": 140.0, "text": "penumbra", "width": 1280}),
         "/cube": (kind: "geo.primitive", params: {"size": [0.6, 0.6, 0.6]}),
