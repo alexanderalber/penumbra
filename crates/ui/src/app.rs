@@ -609,128 +609,133 @@ impl PenumbraApp {
         // gives the width it is about to have.
         let screen = ui.ctx().input(|i| i.viewport().monitor_size.map(|m| m.x));
         let column_width = (screen.unwrap_or_else(|| ui.available_width()) * 0.3).max(260.0);
-        egui::Panel::right("column").resizable(true).default_size(column_width).min_size(260.0).show(ui, |ui| {
-            // The column is as wide as the user dragged it, never as its content: egui widens a
-            // panel to whatever was drawn into it, so a node with a long row made the column
-            // jump when selected. The content goes into a child that does not report its size back;
-            // what does not fit is clipped.
-            let rect = ui.max_rect();
-            ui.expand_to_include_rect(rect);
-            let mut column = ui.new_child(egui::UiBuilder::new().id_salt("column_content").max_rect(rect));
-            column.set_clip_rect(rect.intersect(ui.clip_rect()));
-            let ui = &mut column;
-            let mut sections = self.layout.sections;
-            let changes_open = sections.changes;
-            let panel = if changes_open {
-                egui::Panel::bottom("changes").resizable(true).default_size(200.0).min_size(90.0)
-            } else {
-                egui::Panel::bottom("changes_closed").resizable(false).exact_size(SECTION_HEADER)
-            };
-            panel.show(ui, |ui| {
-                let undo = (status.can_undo && can_edit) || self.layout.last_move().is_some();
-                let redo = (status.can_redo && can_edit) || self.layout.next_redo().is_some();
-                section(ui, &mut self.auto, "changes", "Changes", &mut sections.changes, |ui, auto| {
-                    crate::changes::buttons(ui, undo, redo, auto, &mut actions);
-                });
-                if changes_open {
-                    self.changes.show(ui, &mut self.auto, &mut actions);
-                }
-            });
-
-            let viewer_open = sections.viewer;
-            let width = ui.available_width();
-            let panel = if viewer_open {
-                egui::Panel::bottom("viewer")
-                    .resizable(true)
-                    .default_size(width * 9.0 / 16.0 + SECTION_HEADER + 8.0)
-                    .min_size(100.0)
-            } else {
-                egui::Panel::bottom("viewer_closed").resizable(false).exact_size(SECTION_HEADER)
-            };
-            panel.show(ui, |ui| {
-                let outputs = target.and_then(|id| view.outputs.get(&id));
-                let doc = session.doc();
-                let new_group = || doc.new_group();
-                let (map, shapes, output_names) =
-                    node_editors(&net, session.types(), &view, target, can_edit, &new_group);
-                let viewer = &mut self.viewer;
-                let scene = target.and_then(|id| navigate::scene(&net, session.types(), id, viewer.output));
-                section(ui, &mut self.auto, "viewer", "Viewer", &mut sections.viewer, |ui, auto| {
-                    viewer.header(
-                        ui,
-                        &net,
-                        target,
-                        outputs,
-                        &output_names,
-                        false,
-                        scene.as_ref(),
-                        auto,
-                        &mut actions,
-                    );
-                });
-                if viewer_open {
-                    let nav = scene.as_ref().map(|scene| crate::viewer::NavInputs {
-                        scene,
-                        free: free_picture(&view, scene.node, self.viewer.output, false),
-                        net: &net,
-                        types: session.types(),
-                        can_edit,
-                        new_group: &new_group,
+        egui::Panel::right("column").resizable(true).default_size(column_width).min_size(260.0).show(
+            ui,
+            |ui| {
+                // The column is as wide as the user dragged it, never as its content: egui widens a
+                // panel to whatever was drawn into it, so a node with a long row made the column
+                // jump when selected. The content goes into a child that does not report its size back;
+                // what does not fit is clipped.
+                let rect = ui.max_rect();
+                ui.expand_to_include_rect(rect);
+                let mut column =
+                    ui.new_child(egui::UiBuilder::new().id_salt("column_content").max_rect(rect));
+                column.set_clip_rect(rect.intersect(ui.clip_rect()));
+                let ui = &mut column;
+                let mut sections = self.layout.sections;
+                let changes_open = sections.changes;
+                let panel = if changes_open {
+                    egui::Panel::bottom("changes").resizable(true).default_size(200.0).min_size(90.0)
+                } else {
+                    egui::Panel::bottom("changes_closed").resizable(false).exact_size(SECTION_HEADER)
+                };
+                panel.show(ui, |ui| {
+                    let undo = (status.can_undo && can_edit) || self.layout.last_move().is_some();
+                    let redo = (status.can_redo && can_edit) || self.layout.next_redo().is_some();
+                    section(ui, &mut self.auto, "changes", "Changes", &mut sections.changes, |ui, auto| {
+                        crate::changes::buttons(ui, undo, redo, auto, &mut actions);
                     });
-                    self.viewer.show(
-                        ui,
-                        target,
-                        outputs,
-                        view.time.map(|t| t.frame),
-                        theme::picture_bg(!can_edit),
-                        &mut self.textures,
-                        map.as_ref(),
-                        shapes.as_ref(),
-                        nav.as_ref(),
-                        &mut self.auto,
-                        &mut actions,
-                    );
-                }
-            });
+                    if changes_open {
+                        self.changes.show(ui, &mut self.auto, &mut actions);
+                    }
+                });
 
-            egui::CentralPanel::default().show(ui, |ui| {
-                section(ui, &mut self.auto, "params", "Parameters", &mut sections.params, |_, _| {});
-                if !sections.params {
-                    return;
-                }
-                match selected {
-                    Some(id) => {
-                        let doc = session.doc();
-                        let new_group = || doc.new_group();
-                        let input = params::Inputs {
+                let viewer_open = sections.viewer;
+                let width = ui.available_width();
+                let panel = if viewer_open {
+                    egui::Panel::bottom("viewer")
+                        .resizable(true)
+                        .default_size(width * 9.0 / 16.0 + SECTION_HEADER + 8.0)
+                        .min_size(100.0)
+                } else {
+                    egui::Panel::bottom("viewer_closed").resizable(false).exact_size(SECTION_HEADER)
+                };
+                panel.show(ui, |ui| {
+                    let outputs = target.and_then(|id| view.outputs.get(&id));
+                    let doc = session.doc();
+                    let new_group = || doc.new_group();
+                    let (map, shapes, output_names) =
+                        node_editors(&net, session.types(), &view, target, can_edit, &new_group);
+                    let viewer = &mut self.viewer;
+                    let scene =
+                        target.and_then(|id| navigate::scene(&net, session.types(), id, viewer.output));
+                    section(ui, &mut self.auto, "viewer", "Viewer", &mut sections.viewer, |ui, auto| {
+                        viewer.header(
+                            ui,
+                            &net,
+                            target,
+                            outputs,
+                            &output_names,
+                            false,
+                            scene.as_ref(),
+                            auto,
+                            &mut actions,
+                        );
+                    });
+                    if viewer_open {
+                        let nav = scene.as_ref().map(|scene| crate::viewer::NavInputs {
+                            scene,
+                            free: free_picture(&view, scene.node, self.viewer.output, false),
                             net: &net,
                             types: session.types(),
-                            node: id,
-                            status: view.status.get(&id),
-                            instance: detail.map(Vec::as_slice),
                             can_edit,
-                            project_dir: Some(session.dir()),
                             new_group: &new_group,
-                            displays: &board.displays,
-                            outputs: &view.outputs,
-                            chan_drag,
-                            cameras: self.engine.camera(),
-                        };
-                        self.params.show(ui, &input, &mut self.auto, &mut actions);
+                        });
+                        self.viewer.show(
+                            ui,
+                            target,
+                            outputs,
+                            view.time.map(|t| t.frame),
+                            theme::picture_bg(!can_edit),
+                            &mut self.textures,
+                            map.as_ref(),
+                            shapes.as_ref(),
+                            nav.as_ref(),
+                            &mut self.auto,
+                            &mut actions,
+                        );
                     }
-                    None => {
-                        let n = self.editor.selection.len();
-                        let text = if n == 0 {
-                            "Select a node to edit its parameters.".to_string()
-                        } else {
-                            format!("{n} nodes selected")
-                        };
-                        ui.label(RichText::new(text).color(theme::TEXT_WEAK));
+                });
+
+                egui::CentralPanel::default().show(ui, |ui| {
+                    section(ui, &mut self.auto, "params", "Parameters", &mut sections.params, |_, _| {});
+                    if !sections.params {
+                        return;
                     }
-                }
-            });
-            self.layout.set_sections(sections, now);
-        });
+                    match selected {
+                        Some(id) => {
+                            let doc = session.doc();
+                            let new_group = || doc.new_group();
+                            let input = params::Inputs {
+                                net: &net,
+                                types: session.types(),
+                                node: id,
+                                status: view.status.get(&id),
+                                instance: detail.map(Vec::as_slice),
+                                can_edit,
+                                project_dir: Some(session.dir()),
+                                new_group: &new_group,
+                                displays: &board.displays,
+                                outputs: &view.outputs,
+                                chan_drag,
+                                cameras: self.engine.camera(),
+                            };
+                            self.params.show(ui, &input, &mut self.auto, &mut actions);
+                        }
+                        None => {
+                            let n = self.editor.selection.len();
+                            let text = if n == 0 {
+                                "Select a node to edit its parameters.".to_string()
+                            } else {
+                                format!("{n} nodes selected")
+                            };
+                            ui.label(RichText::new(text).color(theme::TEXT_WEAK));
+                        }
+                    }
+                });
+                self.layout.set_sections(sections, now);
+            },
+        );
 
         // The library is listed again every few seconds (two small directories).
         if self.library.1.is_none_or(|t| now.saturating_duration_since(t) > Duration::from_secs(3)) {
