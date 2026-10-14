@@ -220,3 +220,21 @@ fn osc_is_refused_while_claude_edits_and_learn_binds_the_next_address() {
     });
     f.call("osc.config", json!({"enabled": true}));
 }
+
+#[test]
+fn osc_does_not_set_a_scripts_code() {
+    let f = Fixture::new("osc_code");
+    f.call(
+        "node.create",
+        json!({"path": "/in", "kind": "chan.oscin", "params": {"port": 0, "params": true}}),
+    );
+    f.call("node.create", json!({"path": "/py", "kind": "script.python"}));
+    let code = param_value(&f, "/py", "code");
+    let port = osc_port(&f, 0);
+
+    send(port, "/py/code", vec![Arg::Str("import os".into())]);
+    eventually("the refusal", || f.call("osc.status", json!({}))["params"]["refused"] == 1);
+    assert_eq!(param_value(&f, "/py", "code"), code);
+    let why = f.call("osc.status", json!({}))["params"]["last_refused"].clone();
+    assert!(why.as_str().is_some_and(|w| w.contains("is code")), "{why}");
+}

@@ -120,6 +120,10 @@ pub struct ParamSpec {
     /// operator sees its outputs (TouchDesigner's Select TOP).
     #[serde(default)]
     pub node_ref: bool,
+    /// A program the node runs (a script's source). Only the user and the control channel set
+    /// it, never a message from the network: whoever can send OSC must not run code here.
+    #[serde(default)]
+    pub code: bool,
     pub doc: String,
 }
 
@@ -136,6 +140,7 @@ impl ParamSpec {
             multiline: false,
             lines: 0,
             node_ref: false,
+            code: false,
             doc: String::new(),
         }
     }
@@ -238,6 +243,12 @@ impl ParamSpec {
     pub fn lines(mut self, lines: u8) -> Self {
         self.multiline = true;
         self.lines = lines;
+        self
+    }
+
+    /// A program the node runs ([`ParamSpec::code`]).
+    pub fn code(mut self) -> Self {
+        self.code = true;
         self
     }
 

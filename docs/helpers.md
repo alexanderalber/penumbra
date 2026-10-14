@@ -88,7 +88,8 @@ Two ways to control a param from OSC:
   is the better way for continuous control.
 - **By address:** with `params` on, a `chan.oscin` also sets the params its addresses name:
   `/scene/speed 0.5` sets `/scene.speed`, `/n/translate/0 0.5` one component. These values are
-  live: they do not enter the undo history.
+  live: they do not enter the undo history. File params and a script's code are never set
+  this way, so whoever can send OSC cannot make penumbra load a file or run a program.
 
 ## Audio
 

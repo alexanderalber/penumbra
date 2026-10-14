@@ -64,7 +64,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .unit(Unit::Seconds)
                 .doc("A call running longer is stopped, and the node with it until the script changes"),
         )
-        .param(ParamSpec::text("code", DEFAULT_CODE).lines(14).doc("The script while `file` is empty"))
+        .param(ParamSpec::text("code", DEFAULT_CODE).lines(14).code().doc("The script while `file` is empty"))
         .input("chan0", DataKind::Chan)
         .input("chan1", DataKind::Chan)
         .input("table0", DataKind::Table)
