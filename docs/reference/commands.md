@@ -203,7 +203,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `ui.arrange` | Lay out all nodes again by depth and frame them |
+| `ui.arrange` | Arrange the nodes so wires cross little and run straight: {nodes?: [path]}, else every level (one undo step per level) |
 | `ui.camera` | The viewer's 3D view of a render or geometry: {mode?: picture\|free\|steer, home?, camera?: {eye, target, roll, fov}, orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; moves go to the free view's camera, or in steer mode to the camera node; take puts the free view into it |
 | `ui.click` | Click an element or a point; {id \| x, y, button?, double?, ctrl?, shift?, alt?} |
 | `ui.drag` | Drag between elements or points; {from: {id \| x, y}, to: {id \| x, y}, button?, steps?} |
@@ -211,7 +211,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.enter` | Show the inside of a component in the editor, the top level without a path; {path?} |
 | `ui.frame` | Fit all nodes into the editor |
 | `ui.key` | Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?} |
-| `ui.options` | The editor's options (right-click on empty space); {chan_bars?, viewer_background?} |
+| `ui.options` | The editor's options (right-click on empty space); {chan_bars?, viewer_background?, binding_lines?} |
 | `ui.place` | Move nodes in the editor; {nodes: {path: [x, y]}} |
 | `ui.screenshot` | PNG of the window; {file?} (default %TEMP%/penumbra/ui.png) |
 | `ui.scroll` | Mouse wheel over an element or point; {id \| x, y, dy} |

@@ -2,7 +2,7 @@
 //! the UI thread, between frames. Input commands queue synthetic events and reply once a frame
 //! has processed them; `ui.screenshot` replies once a frame has been drawn.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -61,12 +61,7 @@ impl PenumbraApp {
             "ui.camera" => done(self.camera(p, now)?),
             "ui.place" => done(self.place(p, now)?),
             "ui.options" => done(self.options(p, now)?),
-            "ui.arrange" => {
-                let net = self.engine.session().doc().snapshot();
-                self.layout.arrange(&net, now);
-                self.editor.frame_all();
-                done(json!({"arranged": net.len()}))
-            }
+            "ui.arrange" => done(self.arrange(p, now)?),
             "ui.frame" => {
                 self.editor.frame_all();
                 done(json!({}))
@@ -321,6 +316,36 @@ impl PenumbraApp {
         Ok(json!({"placed": nodes.len()}))
     }
 
+    /// Arranges the nodes named in `nodes` (grouped by the level they are on), or every level.
+    fn arrange(&mut self, p: &Json, now: Instant) -> Result<Json, String> {
+        let session = self.engine.session();
+        let net = session.doc().snapshot();
+        let types = session.types();
+        let moved = match p.get("nodes") {
+            None => {
+                self.editor.frame_all();
+                crate::arrange::everything(&net, types, &mut self.layout, now)
+            }
+            Some(list) => {
+                let list = list.as_array().ok_or("`nodes` must be a list of paths")?;
+                let mut levels: BTreeMap<Option<NodeId>, BTreeSet<NodeId>> = BTreeMap::new();
+                for path in list {
+                    let path = path.as_str().ok_or("`nodes` must be a list of paths")?;
+                    let id = resolve(&net, path)?;
+                    let parent = net.node(id).and_then(|n| n.parent);
+                    levels.entry(parent).or_default().insert(id);
+                }
+                levels
+                    .iter()
+                    .map(|(level, only)| {
+                        crate::arrange::level(&net, types, &mut self.layout, *level, Some(only), now)
+                    })
+                    .sum()
+            }
+        };
+        Ok(json!({"moved": moved}))
+    }
+
     fn options(&mut self, p: &Json, now: Instant) -> Result<Json, String> {
         let mut options = self.layout.options;
         if let Some(v) = p.get("chan_bars") {
@@ -329,8 +354,15 @@ impl PenumbraApp {
         if let Some(v) = p.get("viewer_background") {
             options.viewer_background = v.as_bool().ok_or("`viewer_background` must be true or false")?;
         }
+        if let Some(v) = p.get("binding_lines") {
+            options.binding_lines = v.as_bool().ok_or("`binding_lines` must be true or false")?;
+        }
         self.layout.set_options(options, now);
-        Ok(json!({"chan_bars": options.chan_bars, "viewer_background": options.viewer_background}))
+        Ok(json!({
+            "chan_bars": options.chan_bars,
+            "viewer_background": options.viewer_background,
+            "binding_lines": options.binding_lines,
+        }))
     }
 }
 
