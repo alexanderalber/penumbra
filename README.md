@@ -12,6 +12,25 @@ a local JSON control channel.
 
 **Status:** personal project, work in progress.
 
+## What it makes
+
+65 536 sticks drifting through a curl-noise flow, simulated on the GPU and drawn instanced
+([example](examples/curl-noise/README.md)); beside it the network that does it, seventeen nodes:
+
+![The curl-noise example: red sticks swirling in a flow field](assets/gallery/curl-noise.jpg)
+
+![The curl-noise example's node network in penumbra](assets/gallery/curl-noise-network.jpg)
+
+More pictures, each from a project that ships with penumbra: the default demo, a reaction-diffusion
+that grows around a title, and the [projection-room](examples/projection-room/README.md) example,
+a 3D room lit by a projector, lamps and its surroundings.
+
+![The demo: reaction-diffusion stripes and spots around the title](assets/gallery/demo.jpg)
+
+![The projection-room example: a room with a stained-glass panel, a cube and a chrome ball](assets/gallery/projection-room.jpg)
+
+`python tools/gallery.py` makes these pictures again (Python with Pillow, and a release build).
+
 ## Arranging a network
 
 Press L over the node editor and penumbra lays the network out by itself: columns follow the
