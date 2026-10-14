@@ -12,6 +12,10 @@ cargo run -p penumbra
 
 With no arguments the app opens a demo project, kept in `%LOCALAPPDATA%\penumbra\demo` on
 Windows (`$XDG_DATA_HOME/penumbra/demo` or `~/.local/share/penumbra/demo` elsewhere).
+It grows reaction-diffusion patterns around the title: click `/show` to see them in the
+viewer. `/sharpen` runs the shader `sharpen.wgsl` in the demo's folder; edit and save it and
+the node reloads. `/palettes` `index` picks one of four colourings, `/title` `text` the word
+the pattern keeps clear of.
 
 A project is a directory with a `project.ron`. The folder button at the left end of the status
 bar opens the project menu: **New project** (pick or make an empty folder), **Open project**,

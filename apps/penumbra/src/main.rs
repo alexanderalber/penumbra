@@ -270,7 +270,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("penumbra-app-demo-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let session = Session::open(&dir, types, &demo).unwrap();
-        assert_eq!(session.doc().snapshot().len(), 7);
+        assert_eq!(session.doc().snapshot().len(), 21);
         assert_eq!(session.status(Instant::now()).file_error, None);
         drop(session);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -299,6 +299,6 @@ mod tests {
             }
             count += 1;
         }
-        assert!(count >= 6, "only {count} examples found");
+        assert!(count >= 7, "only {count} examples found");
     }
 }

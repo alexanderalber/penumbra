@@ -32,30 +32,62 @@ pub const RECENT_MAX: usize = 12;
 /// A larger recent file is not read (it is a few hundred bytes when penumbra wrote it).
 const RECENT_MAX_BYTES: u64 = 256 * 1024;
 
-/// Content of a new demo project.
+/// Content of a new demo project: reaction-diffusion growing around the title. Noise seeds a
+/// feedback loop of blur and sharpen, which grows spots and stripes; the title, blurred into a
+/// shield, keeps the pattern out of the letters.
 pub const DEMO: &str = r#"(
     version: 1,
     nodes: {
-        "/pulse": (kind: "chan.lfo", params: {"rate": 0.25, "amplitude": 0.4, "offset": 1.0}),
-        "/drift": (kind: "chan.noise", params: {"frequency": 0.3, "amplitude": 0.08, "offset": 0.5}),
-        "/noise1": (kind: "tex.noise", params: {"color": true, "speed": 0.2}),
-        "/rings1": (kind: "tex.shader", params: {"file": "rings.wgsl"}, inputs: {"in0": "noise1"}),
-        "/level1": (kind: "tex.level", params: {"contrast": 1.5}, inputs: {"in": "rings1"}, binds: {"brightness": "pulse"}),
-        "/title": (kind: "tex.text", params: {"text": "penumbra", "size": 140.0}, binds: {"position.1": "drift"}),
-        "/comp1": (kind: "tex.composite", inputs: {"layer1": "level1", "layer2": "title"}),
+        "/noise": (kind: "tex.noise", params: {"width": 640, "height": 360, "keep_size": true, "frequency": 1.27, "octaves": 1, "speed": 0.05}),
+        "/paper": (kind: "tex.constant", params: {"width": 640, "height": 360, "keep_size": true, "color": [1.0, 1.0, 1.0, 1.0]}),
+        "/title": (kind: "tex.text", params: {"text": "penumbra", "size": 110.0, "style": "Bold", "color": [0.0, 0.0, 0.0, 1.0], "width": 640, "height": 360, "keep_size": true}),
+        "/stencil": (kind: "tex.composite", inputs: {"layer1": "paper", "layer2": "title"}),
+        "/soften": (kind: "tex.blur", params: {"size": 8.0}, inputs: {"in": "stencil"}),
+        "/shield": (kind: "tex.level", params: {"gamma": 0.1}, inputs: {"in": "soften"}),
+        "/seed": (kind: "tex.composite", params: {"op": "multiply"}, inputs: {"layer1": "noise", "layer2": "shield"}),
+        "/loop": (kind: "tex.feedback", inputs: {"initial": "seed", "previous": "drift"}),
+        "/mix": (kind: "tex.cross", params: {"cross": 0.529}, inputs: {"a": "loop", "b": "seed"}),
+        "/blur": (kind: "tex.blur", params: {"size": 6.0}, inputs: {"in": "mix"}),
+        "/sharpen": (kind: "tex.shader", params: {"file": "sharpen.wgsl", "amount": 0.99}, inputs: {"in0": "blur"}),
+        "/keep": (kind: "tex.composite", params: {"op": "multiply"}, inputs: {"layer1": "sharpen", "layer2": "shield"}),
+        "/drift": (kind: "tex.transform", inputs: {"in": "keep"}, binds: {"rotate": "wobble"}),
+        "/wobble": (kind: "chan.noise", params: {"frequency": 0.01, "amplitude": 0.04}),
+        "/full": (kind: "tex.fit", params: {"fit": "stretch"}, inputs: {"in": "drift"}),
+        "/palette0": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.8308 0.624 0.1878\n0.1 0.8308 0.624 0.1878\n0.3 0.6867 0.1046 0.0561\n0.5 0.521 0.0222 0.0545\n0.7 0.0887 0.0176 0.0382\n0.9 0.0865 0.1845 0.1946\n1 0.0865 0.1845 0.1946"}),
+        "/palette1": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0529 0.0482 0.0685\n0.1 0.0529 0.0482 0.0685\n0.3 0.1714 0.1221 0.1559\n0.5 0.4452 0.2159 0.227\n0.7 0.8632 0.4508 0.3372\n0.9 0.9216 0.7682 0.5089\n1 0.9216 0.7682 0.5089"}),
+        "/palette2": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0343 0.0395 0.0395\n0.1 0.0343 0.0395 0.0395\n0.3 0.0 0.1144 0.147\n0.5 0.0 0.2582 0.3372\n0.7 0.0 0.4508 0.5972\n0.9 0.0 0.7305 0.9647\n1 0.0 0.7305 0.9647"}),
+        "/palette3": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0296 0.0 0.0296\n0.1 0.0296 0.0 0.0296\n0.3 0.0648 0.0 0.0648\n0.5 0.117 0.0091 0.0648\n0.7 0.521 0.0648 0.0648\n0.9 0.8632 0.1683 0.0529\n1 0.8632 0.1683 0.0529"}),
+        "/palettes": (kind: "tex.switch", params: {"blend": true}, inputs: {"in0": "palette0", "in1": "palette1", "in2": "palette2", "in3": "palette3"}),
+        "/show": (kind: "tex.lookup", inputs: {"in": "full", "lut": "palettes"}),
     },
 )"#;
 
 /// The demo's shader, written next to the project when missing.
-pub const DEMO_SHADER: &str = "// Rings over the input, moving outwards. Edit and save: the node reloads.
-// @param rings float = 6 1..30 -- rings across the image height
-// @param tint color = [1, 0.8, 0.6, 1]
+pub const DEMO_SHADER: &str =
+    "// A strong 5 x 5 sharpen, clamped to 0..1. With a blur before it in a feedback loop, the pair
+// grows reaction-diffusion patterns: spots and stripes. Edit and save: the node reloads.
+// The kernel is binomial with its centre replaced, divided by its sum. The pattern only forms
+// near a threshold of blur against sharpen: try amount 1, or 0.97.
+// @param amount float = 1 0..1.3 -- 1: centre -225 (sum -5), 0: centre -840
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
-    let src = textureSampleLevel(in0, pn_clamp, v.uv, 0.0);
-    let p = (v.uv - 0.5) * vec2f(pn.resolution.x / pn.resolution.y, 1.0);
-    let ring = 0.5 + 0.5 * cos(length(p) * params.rings * 6.2831853 - pn_time.seconds * 2.0);
-    return vec4f(src.rgb * params.tint.rgb * ring, src.a);
+    var b = array<f32, 5>(1.0, 4.0, 6.0, 4.0, 1.0);
+    let centre = -840.0 + params.amount * 615.0;
+    var sum = vec4f(0.0);
+    var total = 0.0;
+    for (var j = 0; j < 5; j++) {
+        for (var i = 0; i < 5; i++) {
+            var w = b[i] * b[j];
+            if (i == 2 && j == 2) {
+                w = centre;
+            }
+            let uv = v.uv + vec2f(f32(i - 2), f32(j - 2)) * pn.texel;
+            sum += w * textureSampleLevel(in0, pn_clamp, uv, 0.0);
+            total += w;
+        }
+    }
+    let s = select(sum, sum / total, abs(total) > 1e-3);
+    return clamp(s, vec4f(0.0), vec4f(1.0));
 }
 ";
 
@@ -162,7 +194,7 @@ pub fn default_recent_file() -> Result<PathBuf, Error> {
 /// Writes the demo's shader into `dir` if it is missing; returns the demo content, the
 /// template for a demo project without a project file.
 pub fn prepare_demo(dir: &Path, types: &NodeTypes) -> Result<Content, Error> {
-    let shader = dir.join("rings.wgsl");
+    let shader = dir.join("sharpen.wgsl");
     if !shader.exists() {
         std::fs::create_dir_all(dir).map_err(|e| Error::new(format!("{}: {e}", dir.display())))?;
         std::fs::write(&shader, DEMO_SHADER).map_err(|e| Error::new(format!("{}: {e}", shader.display())))?;

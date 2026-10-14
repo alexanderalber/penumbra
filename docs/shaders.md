@@ -7,7 +7,7 @@ during a show costs no frames.
 
 ## A first shader
 
-The demo project's `rings.wgsl`:
+Rings over the input, `rings.wgsl`:
 
 ```wgsl
 // Rings over the input, moving outwards. Edit and save: the node reloads.
