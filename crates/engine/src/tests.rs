@@ -884,3 +884,18 @@ fn another_project_opens_while_the_engine_keeps_running() {
     // No recent file is set in tests, so nothing is listed.
     assert_eq!(f.call("project.recent", json!({}))["recent"], json!([]));
 }
+
+#[test]
+fn vsyncs_that_pile_up_during_a_slow_pass_cook_once() {
+    let f = Fixture::new("vsync-backlog");
+    let before = f.engine.on_cook(|st| st.last.pass).unwrap();
+    // The cook thread is busy for a while (a slow pass) while an output keeps presenting.
+    f.engine.post_cook(|_| std::thread::sleep(Duration::from_millis(300)));
+    let t0 = Instant::now();
+    for k in 0..100 {
+        f.engine.vsync(t0 + Duration::from_secs_f64(f64::from(k) / 60.0));
+    }
+    // A task sent after them is answered after one pass for all of them, not a hundred.
+    let after = f.engine.on_cook(|st| st.last.pass).unwrap();
+    assert!(after - before < 5, "{} passes for one backlog", after - before);
+}

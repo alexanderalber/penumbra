@@ -1054,16 +1054,14 @@ fn cook_loop(session: &Session, mut state: CookState, rx: &Receiver<CookMsg>) {
             let due = state.pacer.due(now);
             run_frame(session, &mut state, due, now);
             // Tasks run between frames even when every frame is late.
-            while let Ok(msg) = rx.try_recv() {
-                if !handle(msg, session, &mut state) {
-                    return;
-                }
+            if !handle(rx.try_iter(), session, &mut state) {
+                return;
             }
             continue;
         }
         match rx.recv_timeout(deadline.saturating_duration_since(now)) {
             Ok(msg) => {
-                if !handle(msg, session, &mut state) {
+                if !handle(std::iter::once(msg).chain(rx.try_iter()), session, &mut state) {
                     return;
                 }
             }
@@ -1080,28 +1078,34 @@ fn run_frame(session: &Session, state: &mut CookState, due: u64, now: Instant) {
     }
 }
 
-/// Runs one message; `false` means stop.
-fn handle(msg: CookMsg, session: &Session, state: &mut CookState) -> bool {
-    match msg {
-        CookMsg::Run(task) => {
-            if catch_unwind(AssertUnwindSafe(|| task(state))).is_err() {
-                log::error!("a cook-thread task panicked");
+/// Runs the messages waiting for the cook thread: the tasks in order, then one pass for the
+/// newest vsync among them. Outputs and the ticker keep sending vsyncs while a pass runs, so
+/// when passes take longer than a frame, several are waiting; a pass for each would let the
+/// queue grow without end and keep tasks waiting behind it. The newest one alone tells the
+/// pacer how many frames passed. `false` means stop.
+fn handle(msgs: impl Iterator<Item = CookMsg>, session: &Session, state: &mut CookState) -> bool {
+    let (mut real, mut simulated) = (None, None);
+    for msg in msgs {
+        match msg {
+            CookMsg::Run(task) => {
+                if catch_unwind(AssertUnwindSafe(|| task(state))).is_err() {
+                    log::error!("a cook-thread task panicked");
+                }
             }
-            true
+            CookMsg::Vsync(at) => real = Some(at),
+            CookMsg::SimulatedVsync(at) => simulated = Some(at),
+            CookMsg::Stop => return false,
         }
-        CookMsg::Vsync(at) => {
-            state.real_vsync = Some(at);
-            let due = state.pacer.vsync(at);
-            run_frame(session, state, due, Instant::now());
-            true
-        }
-        CookMsg::SimulatedVsync(at) => {
-            if !state.real_vsync_recent(at) {
-                let due = state.pacer.vsync(at);
-                run_frame(session, state, due, Instant::now());
-            }
-            true
-        }
-        CookMsg::Stop => false,
     }
+    if let Some(at) = real {
+        state.real_vsync = Some(at);
+        let due = state.pacer.vsync(at);
+        run_frame(session, state, due, Instant::now());
+    } else if let Some(at) = simulated
+        && !state.real_vsync_recent(at)
+    {
+        let due = state.pacer.vsync(at);
+        run_frame(session, state, due, Instant::now());
+    }
+    true
 }
