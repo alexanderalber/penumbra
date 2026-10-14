@@ -289,3 +289,131 @@ pub fn cap_memory(bytes: u64) -> Result<(), Error> {
     }
     Ok(())
 }
+
+/// Performance counters for [`crate::load`]: CPU over all cores and the GPU engines. Counter
+/// paths are added by their English names, which work on every display language.
+pub struct Pdh {
+    query: windows_sys::Win32::System::Performance::PDH_HQUERY,
+    cpu: windows_sys::Win32::System::Performance::PDH_HCOUNTER,
+    /// `None` where the system has no GPU counters (older Windows, some drivers).
+    gpu: Option<windows_sys::Win32::System::Performance::PDH_HCOUNTER>,
+}
+
+impl Pdh {
+    pub fn open() -> Result<Pdh, Error> {
+        use windows_sys::Win32::System::Performance::{
+            PdhAddEnglishCounterW, PdhCollectQueryData, PdhOpenQueryW,
+        };
+
+        let mut query = std::ptr::null_mut();
+        // SAFETY: no data source (live counters), a valid out pointer.
+        let status = unsafe { PdhOpenQueryW(std::ptr::null(), 0, &mut query) };
+        if status != 0 {
+            return Err(Error::new(format!("PdhOpenQuery failed (0x{status:08X})")));
+        }
+        // From here the query is closed by Drop, also on the error paths.
+        let mut pdh = Pdh { query, cpu: std::ptr::null_mut(), gpu: None };
+        let add = |path: &str| {
+            let path = to_wide(path);
+            let mut counter = std::ptr::null_mut();
+            // SAFETY: an open query, a NUL-terminated path, a valid out pointer.
+            let status = unsafe { PdhAddEnglishCounterW(pdh.query, path.as_ptr(), 0, &mut counter) };
+            (status == 0).then_some(counter).ok_or(status)
+        };
+        pdh.cpu = add(r"\Processor(_Total)\% Processor Time")
+            .map_err(|s| Error::new(format!("no CPU counter (0x{s:08X})")))?;
+        pdh.gpu = add(r"\GPU Engine(*)\Utilization Percentage").ok();
+        // SAFETY: an open query. The first collection is only the baseline for the rates.
+        unsafe { PdhCollectQueryData(pdh.query) };
+        Ok(pdh)
+    }
+
+    /// CPU and GPU in percent since the previous call (or since [`Pdh::open`]).
+    pub fn sample(&mut self) -> (Result<f64, Error>, Result<f64, Error>) {
+        use windows_sys::Win32::System::Performance::{
+            PDH_FMT_COUNTERVALUE, PDH_FMT_DOUBLE, PdhCollectQueryData, PdhGetFormattedCounterValue,
+        };
+
+        // SAFETY: an open query.
+        let status = unsafe { PdhCollectQueryData(self.query) };
+        if status != 0 {
+            let e = || Err(Error::new(format!("PdhCollectQueryData failed (0x{status:08X})")));
+            return (e(), e());
+        }
+        let mut value = PDH_FMT_COUNTERVALUE::default();
+        // SAFETY: a counter of this query and a valid out pointer; the type is optional.
+        let status = unsafe {
+            PdhGetFormattedCounterValue(self.cpu, PDH_FMT_DOUBLE, std::ptr::null_mut(), &mut value)
+        };
+        let cpu = if status == 0 && value.CStatus <= 1 {
+            // SAFETY: PDH_FMT_DOUBLE fills the double.
+            Ok(unsafe { value.Anonymous.doubleValue }.clamp(0.0, 100.0))
+        } else {
+            Err(Error::new(format!("no CPU value (0x{status:08X}, status {})", value.CStatus)))
+        };
+        let gpu = match self.gpu {
+            Some(counter) => gpu_engines(counter).and_then(|items| {
+                crate::load::busiest_engine(items.iter().map(|(n, v)| (n.as_str(), *v)))
+                    .ok_or_else(|| Error::new("no GPU engine reported"))
+            }),
+            None => Err(Error::new("no GPU counters on this system")),
+        };
+        (cpu, gpu)
+    }
+}
+
+/// Every instance of a wildcard counter with a valid value. Instances come and go with the
+/// processes, so the buffer can be too small again on the second call; then it is retried.
+fn gpu_engines(
+    counter: windows_sys::Win32::System::Performance::PDH_HCOUNTER,
+) -> Result<Vec<(String, f64)>, Error> {
+    use windows_sys::Win32::System::Performance::{
+        PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_MORE_DATA, PdhGetFormattedCounterArrayW,
+    };
+
+    let item = std::mem::size_of::<PDH_FMT_COUNTERVALUE_ITEM_W>();
+    let mut buffer: Vec<PDH_FMT_COUNTERVALUE_ITEM_W> = Vec::new();
+    for _ in 0..4 {
+        let mut bytes = u32::try_from(buffer.len() * item).unwrap_or(u32::MAX);
+        let mut count = 0u32;
+        let ptr = if buffer.is_empty() { std::ptr::null_mut() } else { buffer.as_mut_ptr() };
+        // SAFETY: `ptr` is null with a size of 0, or a buffer of `bytes` bytes aligned for the
+        // items; PDH writes the items first and the names behind them, within `bytes`.
+        let status =
+            unsafe { PdhGetFormattedCounterArrayW(counter, PDH_FMT_DOUBLE, &mut bytes, &mut count, ptr) };
+        if status == PDH_MORE_DATA {
+            // Items and their names; one item more so the names fit after rounding up.
+            buffer = vec![PDH_FMT_COUNTERVALUE_ITEM_W::default(); (bytes as usize).div_ceil(item) + 1];
+            continue;
+        }
+        if status != 0 {
+            return Err(Error::new(format!("no GPU values (0x{status:08X})")));
+        }
+        let items = buffer.get(..count as usize).unwrap_or_default();
+        let mut out = Vec::with_capacity(items.len());
+        for i in items {
+            if i.FmtValue.CStatus > 1 || i.szName.is_null() {
+                continue;
+            }
+            // SAFETY: PDH points the name into the buffer, NUL-terminated.
+            let name = unsafe {
+                let mut len = 0usize;
+                while *i.szName.add(len) != 0 {
+                    len += 1;
+                }
+                String::from_utf16_lossy(std::slice::from_raw_parts(i.szName, len))
+            };
+            // SAFETY: PDH_FMT_DOUBLE fills the double.
+            out.push((name, unsafe { i.FmtValue.Anonymous.doubleValue }));
+        }
+        return Ok(out);
+    }
+    Err(Error::new("the GPU engines kept changing while being read"))
+}
+
+impl Drop for Pdh {
+    fn drop(&mut self) {
+        // SAFETY: the query from PdhOpenQueryW, closed once; it closes its counters too.
+        unsafe { windows_sys::Win32::System::Performance::PdhCloseQuery(self.query) };
+    }
+}

@@ -54,6 +54,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
+| `cook.meter` | Pass times of the last 8 s: last, smoothed (1 s lag), median, 1 % high, max, cook thread busy; {samples?: [seconds ago, ms] per pass} |
 | `cook.play` | Run or stop the show clock; {playing?} (default true) |
 | `cook.stats` | Cook pass timings since the last reset: passes, slowest pass, longest gap, late frames, stalls; {reset?} |
 | `cook.status` | Show clock, last cook pass, watched nodes, thumbnail policy |
@@ -182,6 +183,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `system.check` | Show-machine settings that can ruin a show (gaming overlay, notifications) |
 | `system.fix` | Apply one check's fix; replies with what it replaced; {id} |
+| `system.load` | CPU over all cores and the busiest GPU engine in percent, sampled once a second while asked for (the first call waits for a sample) |
 | `system.process` | This process: working set, private bytes, handles, threads; GPU memory through wgpu's allocator |
 | `system.restore` | Write back what system.fix replaced; {previous} as system.fix returned it |
 
