@@ -13,12 +13,12 @@
 //! free slot, so a binding to `x1` follows one person rather than whoever is first in the list.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use half::f16;
 use half::slice::HalfFloatSliceExt;
-use penumbra_core::{Channel, Chans, Curve, Error, Name, NodeId, ParamSpec, Table, Unit};
+use penumbra_core::{Channel, Chans, Curve, Error, Name, NodeId, ParamSpec, Table, Unit, lock};
 use penumbra_gpu::{Gpu, PassInput, PendingRead, ReadPool, ReadState, Tex, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator, Waker,
@@ -163,7 +163,7 @@ impl BlobTracks {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<NodeId, Entry>> {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.0)
     }
 
     /// The node takes the first frame after `delay` as the background (a delay gives whoever

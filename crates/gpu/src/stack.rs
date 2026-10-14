@@ -5,9 +5,9 @@
 //! layers), at most [`CHUNKS`] of them, so one stack holds up to [`MAX_FRAMES`]. In practice
 //! memory runs out first: a 1080p frame is 16 MB at 16 bits, 8 MB at 8 bits.
 
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 
-use penumbra_core::Error;
+use penumbra_core::{Error, lock};
 
 use crate::{FORMAT, Gpu, Tex};
 
@@ -446,7 +446,7 @@ impl Pipelines {
 impl Gpu {
     /// The frame stack pipelines, built once per device.
     pub fn stack_pipelines(&self) -> Result<Arc<Pipelines>, Error> {
-        let mut slot = self.inner.stack.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut slot = lock(&self.inner.stack);
         if let Some(p) = slot.as_ref() {
             return Ok(p.clone());
         }

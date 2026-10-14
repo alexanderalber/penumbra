@@ -19,9 +19,10 @@
 //! - `ui.screenshot {file?}`: PNG of the window
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use penumbra_core::lock;
 use penumbra_engine::{CommandError, FnCommand, Registry};
 use serde_json::Value as Json;
 
@@ -57,11 +58,7 @@ impl Bridge {
     pub fn call(&self, method: &str, params: &Json) -> Result<Json, CommandError> {
         let (reply, answer) = mpsc::channel();
         let request = UiRequest { method: method.to_string(), params: params.clone(), reply };
-        self.tx
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .send(request)
-            .map_err(|_| CommandError("the UI has closed".into()))?;
+        lock(&self.tx).send(request).map_err(|_| CommandError("the UI has closed".into()))?;
         if let Some(ctx) = self.ctx.get() {
             ctx.request_repaint();
         }

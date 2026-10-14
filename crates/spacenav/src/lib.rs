@@ -30,10 +30,11 @@ mod backend;
 mod backend;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use penumbra_core::lock;
 use serde::Serialize;
 
 pub use report::{Update, parse};
@@ -245,7 +246,7 @@ struct Shared {
 
 impl Shared {
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.inner.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.inner)
     }
 
     fn set_state(&self, state: State, product: Option<String>, message: Option<String>) {
@@ -336,7 +337,7 @@ impl SpaceNav {
         }
         let shared = self.0.clone();
         match std::thread::Builder::new().name("spacenav".into()).spawn(move || backend::run(&shared)) {
-            Ok(t) => *self.0.thread.lock().unwrap_or_else(PoisonError::into_inner) = Some(t),
+            Ok(t) => *lock(&self.0.thread) = Some(t),
             Err(e) => self.0.set_state(State::Failed, None, Some(format!("cannot start a thread: {e}"))),
         }
     }
@@ -368,7 +369,7 @@ impl SpaceNav {
     /// Stops the reader thread and waits for it (at most one read timeout).
     pub fn shutdown(&self) {
         self.0.stop.store(true, Ordering::Release);
-        let thread = self.0.thread.lock().unwrap_or_else(PoisonError::into_inner).take();
+        let thread = lock(&self.0.thread).take();
         if let Some(t) = thread
             && t.join().is_err()
         {

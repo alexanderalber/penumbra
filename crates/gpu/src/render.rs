@@ -44,7 +44,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use penumbra_core::Error;
+use penumbra_core::{Error, lock};
 use penumbra_mesh::Bounds;
 
 use crate::environment::EnvironmentMaps;
@@ -614,7 +614,7 @@ impl Pipelines {
         stage: Stage,
     ) -> Result<wgpu::RenderPipeline, Error> {
         let key = (samples, pass, cull, wire, stage);
-        let mut built = self.built.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut built = lock(&self.built);
         if let Some(p) = built.get(&key) {
             return Ok(p.clone());
         }
@@ -705,7 +705,7 @@ impl Pipelines {
 impl Gpu {
     /// The render pipelines, built once per device.
     pub fn render_pipelines(&self) -> Result<Arc<Pipelines>, Error> {
-        let mut slot = self.inner.render.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut slot = lock(&self.inner.render);
         if let Some(p) = slot.as_ref() {
             return Ok(p.clone());
         }

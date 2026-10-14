@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use penumbra_core::Error;
+use penumbra_core::{Error, lock};
 
 use crate::{FORMAT, Gpu, Tex};
 
@@ -315,7 +315,7 @@ impl BcConverter {
 impl Gpu {
     /// The BC conversion pipeline, compiled on first use and shared.
     pub fn bc_pipeline(&self) -> Result<Arc<Pipeline>, Error> {
-        let mut slot = self.inner.bc.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut slot = lock(&self.inner.bc);
         if let Some(p) = slot.as_ref() {
             return Ok(p.clone());
         }

@@ -6,10 +6,10 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use arc_swap::ArcSwap;
-use penumbra_core::{Error, GroupId, NodeId};
+use penumbra_core::{Error, GroupId, NodeId, lock};
 
 use crate::history::{History, Recorded, Source};
 use crate::network::{Network, Op, Params};
@@ -56,7 +56,7 @@ impl Document {
     }
 
     fn lock(&self) -> MutexGuard<'_, History> {
-        self.history.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.history)
     }
 
     /// Applies `ops` as one batch. An empty `label` is derived from the ops. Edits from the

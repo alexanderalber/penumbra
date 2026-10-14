@@ -5,9 +5,10 @@
 //! thread of its own samples them, once a second and only while someone asks: it starts with
 //! the first [`LoadMeter::latest`] and goes to sleep a few seconds after the last.
 
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use penumbra_core::lock;
 use serde::Serialize;
 
 /// Time between two samples.
@@ -47,10 +48,6 @@ struct State {
     wanted: Option<Instant>,
     started: bool,
     stop: bool,
-}
-
-fn lock(m: &Mutex<State>) -> MutexGuard<'_, State> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl Default for LoadMeter {

@@ -14,10 +14,11 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use penumbra_core::lock;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::{self, Capture};
@@ -31,10 +32,6 @@ const SHUTDOWN_WAIT: Duration = Duration::from_secs(1);
 const TICK: Duration = Duration::from_millis(50);
 /// The window the frame rate is measured over.
 const RATE_WINDOW: Duration = Duration::from_secs(2);
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// What a node asks for: a camera by part of its name (empty: the first) and a mode text
 /// (see [`Wanted::parse`]; empty: the largest, fastest).

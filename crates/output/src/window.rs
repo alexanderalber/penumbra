@@ -9,11 +9,11 @@
 //! picture is one frame old; the others take the latest frame without waiting.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use penumbra_core::NodeId;
+use penumbra_core::{NodeId, lock};
 use penumbra_engine::Engine;
 use penumbra_gpu::{Gpu, Projection};
 use penumbra_ops::out::{WindowInfo, item};
@@ -70,10 +70,6 @@ struct Shared {
     /// The projector nodes shown in this window.
     nodes: Mutex<Vec<NodeId>>,
     stats: Mutex<Stats>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn pack(w: u32, h: u32) -> u64 {

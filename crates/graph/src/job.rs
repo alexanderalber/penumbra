@@ -13,9 +13,9 @@ use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
-use penumbra_core::Error;
+use penumbra_core::{Error, lock};
 use serde::Serialize;
 
 /// What a node's job is doing, reported in `node.info` and (later) as channels.
@@ -103,7 +103,7 @@ impl JobPool {
 
 fn worker(rx: &Mutex<Receiver<Task>>) {
     loop {
-        let task = rx.lock().unwrap_or_else(PoisonError::into_inner).recv();
+        let task = lock(rx).recv();
         match task {
             Ok(task) => task(),
             Err(_) => return,
@@ -141,7 +141,7 @@ enum State<T> {
 }
 
 fn set<T>(state: &Mutex<State<T>>, value: State<T>) {
-    *state.lock().unwrap_or_else(PoisonError::into_inner) = value;
+    *lock(state) = value;
 }
 
 /// Handed to the running job.
@@ -171,7 +171,7 @@ pub struct Job<T> {
 
 impl<T> Job<T> {
     pub fn status(&self) -> JobStatus {
-        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let state = lock(&self.state);
         match &*state {
             State::Queued => JobStatus::Queued,
             State::Running => {
@@ -185,7 +185,7 @@ impl<T> Job<T> {
 
     /// The result, once, when the job has finished.
     pub fn take(&self) -> Option<Result<T, String>> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut state = lock(&self.state);
         if !matches!(*state, State::Finished(_)) {
             return None;
         }

@@ -29,10 +29,11 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use penumbra_core::lock;
 use serde::Serialize;
 
 use crate::codec::{self, Arg, Limits, Message};
@@ -54,10 +55,6 @@ pub const BUSY: Duration = Duration::from_millis(1500);
 const RECV_TIMEOUT: Duration = Duration::from_millis(100);
 /// How often a listener retries a port it could not bind.
 const RETRY: Duration = Duration::from_secs(1);
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// Settings for all listeners. Not stored: every start has the defaults (`osc.config`).
 #[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]

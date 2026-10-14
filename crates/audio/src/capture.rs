@@ -19,12 +19,13 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
+use penumbra_core::lock;
 use serde::{Deserialize, Serialize};
 
 /// Seconds of samples kept per stream.
@@ -39,10 +40,6 @@ const TICK: Duration = Duration::from_millis(100);
 pub const MAX_CHANNELS: usize = 64;
 /// How fast the level meters fall, per second (as a factor).
 const METER_FALL: f32 = 0.05;
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
-}
 
 /// Settings for all streams. Not stored: every start has the defaults (`audio.config`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

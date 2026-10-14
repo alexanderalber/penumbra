@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+penumbra-core.workspace = true
 cpal.workspace = true
 log.workspace = true
 serde.workspace = true

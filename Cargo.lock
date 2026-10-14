@@ -3099,6 +3099,7 @@ dependencies = [
  "egui",
  "env_logger",
  "log",
+ "penumbra-core",
  "penumbra-engine",
  "penumbra-gpu",
  "penumbra-graph",
@@ -3119,6 +3120,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "log",
+ "penumbra-core",
  "serde",
 ]
 
@@ -3137,6 +3139,7 @@ name = "penumbra-camera"
 version = "0.1.0"
 dependencies = [
  "log",
+ "penumbra-core",
  "serde",
  "windows",
 ]
@@ -3250,6 +3253,7 @@ name = "penumbra-osc"
 version = "0.1.0"
 dependencies = [
  "log",
+ "penumbra-core",
  "serde",
 ]
 
@@ -3306,6 +3310,7 @@ version = "0.1.0"
 dependencies = [
  "hidapi",
  "log",
+ "penumbra-core",
  "serde",
 ]
 
@@ -3366,6 +3371,7 @@ dependencies = [
  "gif",
  "image",
  "log",
+ "penumbra-core",
  "snap",
 ]
 

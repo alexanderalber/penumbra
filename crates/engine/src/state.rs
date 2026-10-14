@@ -37,11 +37,11 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use penumbra_core::{Channel, Chans, Error, Name, NodeId, Table};
+use penumbra_core::{Channel, Chans, Error, Name, NodeId, Table, lock};
 use penumbra_gpu::{Gpu, PendingRead, ReadPool, ReadState, RowsError, Tex};
 use penumbra_graph::{Cooker, Data, DataKind, Kept, Network, PERSIST_STATE, StateItem};
 use serde::{Deserialize, Serialize};
@@ -168,10 +168,6 @@ pub struct StateShared {
     changed: Condvar,
     /// The start restore leaves the operators' state out (`--fresh`).
     fresh: AtomicBool,
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl StateShared {

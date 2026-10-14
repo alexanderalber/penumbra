@@ -18,9 +18,9 @@
 pub mod place;
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
-use penumbra_core::{Error, NodeId, ParamSpec, Value};
+use penumbra_core::{Error, NodeId, ParamSpec, Value, lock};
 use penumbra_gpu::Tex;
 use penumbra_graph::{
     CookContext, CookError, Cooked, Cooker, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes,
@@ -149,15 +149,15 @@ impl OutputBoard {
     }
 
     pub fn state(&self) -> BoardState {
-        self.0.lock().unwrap_or_else(PoisonError::into_inner).clone()
+        lock(&self.0).clone()
     }
 
     pub fn update(&self, f: impl FnOnce(&mut BoardState)) {
-        f(&mut self.0.lock().unwrap_or_else(PoisonError::into_inner));
+        f(&mut lock(&self.0));
     }
 
     fn projector(&self, id: NodeId) -> (bool, Option<ProjectorState>) {
-        let s = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let s = lock(&self.0);
         (s.managed, s.projectors.get(&id).cloned())
     }
 }
