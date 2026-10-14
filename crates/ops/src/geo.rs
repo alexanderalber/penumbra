@@ -1,7 +1,7 @@
 //! `geo` nodes: a mesh file, a primitive, a transform, a merge, copies placed by a table, and a
 //! material. The data on a `geo` connection is a [`Geo`]: models uploaded once, placed by
-//! matrices, with part ids; plus a small picture of them for the editor, the viewer and
-//! `node.snapshot`.
+//! matrices, with part ids. The picture of them the editor, the viewer and `node.snapshot` show
+//! is made by whoever shows it ([`preview`]), not by the nodes on every cook.
 //!
 //! Files are hostile input: they are read and uploaded in a job (inside `catch_unwind`), under
 //! the budgets of [`penumbra_mesh::Limits`] and the image limits for their textures.
@@ -75,7 +75,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .doc("Around the sphere"),
             )
             .output("out", DataKind::Geo),
-        || Box::new(Primitive::default()) as Box<dyn Operator>,
+        || Box::new(Primitive) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("geo.transform", "Scale, rotate, then translate")
@@ -95,14 +95,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             )
             .input("in", DataKind::Geo)
             .output("out", DataKind::Geo),
-        || Box::new(Transform::default()) as Box<dyn Operator>,
+        || Box::new(Transform) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("geo.material", "Puts a material on every model of the input")
             .input("in", DataKind::Geo)
             .input("mat", DataKind::Mat)
             .output("out", DataKind::Geo),
-        || Box::new(PutMaterial::default()) as Box<dyn Operator>,
+        || Box::new(PutMaterial) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("geo.merge", "Several inputs as one; part ids continue from input to input")
@@ -111,7 +111,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .input("in2", DataKind::Geo)
             .input("in3", DataKind::Geo)
             .output("out", DataKind::Geo),
-        || Box::new(Merge::default()) as Box<dyn Operator>,
+        || Box::new(Merge) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new(
@@ -121,7 +121,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .input("in", DataKind::Geo)
         .input("table", DataKind::Table)
         .output("out", DataKind::Geo),
-        || Box::new(Instance::default()) as Box<dyn Operator>,
+        || Box::new(Instance) as Box<dyn Operator>,
     ))?;
     Ok(())
 }
@@ -250,14 +250,6 @@ pub fn preview_lit(
     Ok(tex)
 }
 
-fn with_preview(gpu: &Gpu, renderer: &mut Renderer, mut geo: Geo) -> Geo {
-    match preview(gpu, renderer, &geo, Preview::Geometry) {
-        Ok(t) => geo.preview = Some(t),
-        Err(e) => log::warn!("geo preview: {e}"),
-    }
-    geo
-}
-
 /// The `parts` table: a header, then one row per part.
 fn parts_table(mesh: &Mesh) -> Result<Table, Error> {
     let mut rows = vec![
@@ -330,7 +322,7 @@ impl Operator for GeoFile {
                     p.file_name().map_or_else(|| "mesh".to_string(), |n| n.to_string_lossy().to_string());
                 let (model, mut warnings) = Model::upload(&gpu, loaded.mesh, &label).map_err(|e| e.0)?;
                 warnings.splice(0..0, loaded.warnings);
-                let geo = with_preview(&gpu, &mut Renderer::new(), Geo::single(Arc::new(model)));
+                let geo = Geo::single(Arc::new(model));
                 Ok(Arc::new(Loaded { geo, parts, warnings }))
             }));
         }
@@ -357,9 +349,7 @@ impl Operator for GeoFile {
 }
 
 #[derive(Default)]
-struct Primitive {
-    renderer: Renderer,
-}
+struct Primitive;
 
 impl Operator for Primitive {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
@@ -371,7 +361,7 @@ impl Operator for Primitive {
             _ => prim::cuboid(size)?,
         };
         let (model, _) = Model::upload(gpu, mesh, "primitive")?;
-        let geo = with_preview(gpu, &mut self.renderer, Geo::single(Arc::new(model)));
+        let geo = Geo::single(Arc::new(model));
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
     }
 }
@@ -404,13 +394,11 @@ pub fn trs(translate: [f64; 3], rotate_degrees: [f64; 3], scale: [f64; 3]) -> Ma
 }
 
 #[derive(Default)]
-struct Transform {
-    renderer: Renderer,
-}
+struct Transform;
 
 impl Operator for Transform {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let gpu = gpu(cx)?;
+        gpu(cx)?;
         let Some(input) = cx.input_as::<Geo>(0) else { return Err(waiting(cx)) };
         let u = cx.float("uniform")?;
         let scale = vec3(cx, "scale")?.map(|s| s * u);
@@ -419,19 +407,17 @@ impl Operator for Transform {
             return Err(CookError::failed("the transform is not finite"));
         }
         let items = input.items.iter().map(|i| Item { world: mul(&m, &i.world), ..i.clone() }).collect();
-        let geo = with_preview(gpu, &mut self.renderer, Geo { items, preview: None });
+        let geo = Geo { items, preview: None };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
     }
 }
 
 #[derive(Default)]
-struct Merge {
-    renderer: Renderer,
-}
+struct Merge;
 
 impl Operator for Merge {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let gpu = gpu(cx)?;
+        gpu(cx)?;
         let mut items = Vec::new();
         let mut offset = 0u32;
         let mut any = false;
@@ -444,7 +430,7 @@ impl Operator for Merge {
         if !any {
             return Err(waiting(cx));
         }
-        let geo = with_preview(gpu, &mut self.renderer, Geo { items, preview: None });
+        let geo = Geo { items, preview: None };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
     }
 }
@@ -497,13 +483,11 @@ pub fn placements(table: &Table) -> (Vec<Mat4>, Option<String>) {
 }
 
 #[derive(Default)]
-struct Instance {
-    renderer: Renderer,
-}
+struct Instance;
 
 impl Operator for Instance {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let gpu = gpu(cx)?;
+        gpu(cx)?;
         let (Some(input), Some(table)) = (cx.input_as::<Geo>(0), cx.input_as::<Table>(1)) else {
             let wired = |k: usize| cx.def().inputs.get(k).is_some_and(Option::is_some);
             return Err(if wired(0) && wired(1) {
@@ -526,19 +510,17 @@ impl Operator for Instance {
                 ..i.clone()
             }));
         }
-        let geo = with_preview(gpu, &mut self.renderer, Geo { items, preview: None });
+        let geo = Geo { items, preview: None };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
     }
 }
 
 #[derive(Default)]
-struct PutMaterial {
-    renderer: Renderer,
-}
+struct PutMaterial;
 
 impl Operator for PutMaterial {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let gpu = gpu(cx)?;
+        gpu(cx)?;
         let Some(input) = cx.input_as::<Geo>(0) else { return Err(waiting(cx)) };
         let Some(mat) = cx.input_as::<Mat>(1) else {
             return Err(if cx.def().inputs.get(1).is_some_and(Option::is_some) {
@@ -549,7 +531,7 @@ impl Operator for PutMaterial {
         };
         let items =
             input.items.iter().map(|i| Item { material: Some(mat.material.clone()), ..i.clone() }).collect();
-        let geo = with_preview(gpu, &mut self.renderer, Geo { items, preview: None });
+        let geo = Geo { items, preview: None };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
     }
 }

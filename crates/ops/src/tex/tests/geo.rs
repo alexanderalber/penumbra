@@ -127,7 +127,12 @@ fn a_scene_of_parts_renders_with_depth_and_a_data_pass() {
     let scene =
         rig.cooker.output(Port { node: rig.id("/scene"), output: 0 }).unwrap().get::<Geo>().unwrap().clone();
     assert_eq!(scene.part_names(), ["box", "sphere", "plane"]);
-    assert!(scene.preview.is_some());
+    // The picture is made by whoever shows it (the cook thread, node.snapshot), not on every cook.
+    assert!(scene.preview.is_none());
+    let mut renderer = penumbra_gpu::render::Renderer::new();
+    let picture =
+        crate::geo::preview(&rig.gpu, &mut renderer, &scene, crate::geo::Preview::Geometry).unwrap();
+    assert_eq!(picture.size(), crate::geo::PREVIEW);
     // The data pass: the box (part id 0, stored as 1) in front of the wall, nothing in the top
     // corner? The wall covers it; the bottom left corner sees nothing.
     rig.cook("/parts");
@@ -310,7 +315,9 @@ fn mesh_files_load_with_their_parts_and_reload() {
     golden("render_glb_material", &px);
     look(&mut rig, "/view", "render_glb_material", (super::W, super::H));
     if let Some(dir) = std::env::var_os("PENUMBRA_LOOK") {
-        let prev = geo(&mut rig, "/glb").0.preview.unwrap();
+        let g = geo(&mut rig, "/glb").0;
+        let mut renderer = penumbra_gpu::render::Renderer::new();
+        let prev = crate::geo::preview(&rig.gpu, &mut renderer, &g, crate::geo::Preview::Geometry).unwrap();
         std::fs::write(
             Path::new(&dir).join("geo_preview.png"),
             rig.gpu.read(&prev).unwrap().to_png().unwrap(),

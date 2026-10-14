@@ -89,6 +89,7 @@ use penumbra_spacenav::SpaceNav;
 use serde::Serialize;
 
 use crate::osc::OscShared;
+use crate::pictures::GeoPictures;
 use crate::state::{RestoreReport, SaveReport, StateKeeper, StateShared};
 
 /// How often the project thread looks at the file and autosaves.
@@ -248,6 +249,8 @@ pub struct CookState {
     pub renders: Renders,
     /// What draws the free views, one per request.
     free_views: Vec<freeview::FreeView>,
+    /// Pictures of the geometry the UI shows.
+    pictures: GeoPictures,
     /// The resolution overlay is on (`res.overlay`).
     overlay: bool,
     /// The latest analysis with the network and pass it was made for.
@@ -410,7 +413,7 @@ impl CookState {
     }
 
     fn publish(
-        &self,
+        &mut self,
         net: &Network,
         request: &ViewRequest,
         wall: Instant,
@@ -448,9 +451,20 @@ impl CookState {
             }
             ThumbnailMode::Never => BTreeSet::new(),
         };
+        self.pictures.prune(|id| net.node(id).is_some());
+        let pass = self.last.pass;
+        let every = u64::from(frame.thumbnail_every.max(1));
         for &id in request.viewers.iter().chain(&frame.pictures) {
+            if frame.outputs.contains_key(&id) {
+                continue;
+            }
             if let Some(outputs) = self.cooker.outputs(id) {
-                frame.outputs.insert(id, outputs.to_vec());
+                let mut outputs = outputs.to_vec();
+                if let Some(gpu) = &self.gpu {
+                    let every = if request.viewers.contains(&id) { 1 } else { every };
+                    self.pictures.attach(gpu, id, &mut outputs, pass, every);
+                }
+                frame.outputs.insert(id, outputs);
             }
         }
         for &id in &request.viewers {
@@ -559,6 +573,7 @@ impl Engine {
             mappers,
             renders,
             free_views: Vec::new(),
+            pictures: GeoPictures::default(),
             overlay: false,
             resolution: None,
             state: StateKeeper::new(self.state.clone(), session.dir()),

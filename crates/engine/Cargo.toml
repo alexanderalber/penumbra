@@ -29,3 +29,4 @@ workspace = true
 
 [dev-dependencies]
 half.workspace = true
+penumbra-mesh.workspace = true
