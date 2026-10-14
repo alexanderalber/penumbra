@@ -751,6 +751,48 @@ fn without_a_gpu_tex_nodes_fail_cleanly() {
 }
 
 #[test]
+fn files_load_once_the_gpu_arrives() {
+    // A file node cooked before the GPU is there (the editor asks for thumbnails at once) must
+    // still load once it is.
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("late_gpu");
+    write_png16(&dir.join("ramp.png"));
+    let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
+    std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
+    let types = Arc::new(builtin_types().unwrap());
+    let ops = [
+        create("/img", "tex.image", &[("file", "ramp.png".into())]),
+        create("/obj", "geo.file", &[("file", "box.obj".into())]),
+    ];
+    let net = Arc::new(Network::new().apply(&types, &ops).unwrap().network);
+    let mut cooker = Cooker::new(types, Arc::new(JobPool::new(2).unwrap()));
+    cooker.set_base_dir(Some(dir.clone()));
+    let ids: Vec<NodeId> =
+        ["/img", "/obj"].iter().map(|p| net.resolve(&p.parse().unwrap()).unwrap()).collect();
+    let mut clock = ShowClock::new(Rate::FPS_60, LatePolicy::Realtime);
+    cooker.cook(&net, clock.now(), &ids, &[]);
+    for id in &ids {
+        assert!(cooker.status(*id).unwrap().error.unwrap().contains("no GPU"));
+    }
+    cooker.provide(gpu);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        clock.advance(1);
+        cooker.cook(&net, clock.now(), &ids, &[]);
+        if ids.iter().all(|id| cooker.status(*id).unwrap().has_output) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{:?}",
+            ids.iter().map(|id| cooker.status(*id)).collect::<Vec<_>>()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn transform_density_follows_scale() {
     let Some(gpu) = gpu() else { return };
     let ops = [
@@ -951,6 +993,30 @@ fn color_and_luminosity_trade_hue_and_brightness() {
     let l = pixel("/luminosity");
     let orange = 0.3 * 0.8 + 0.59 * 0.4 + 0.11 * 0.1;
     assert!(l.iter().take(3).all(|v| (v - orange).abs() < 0.01), "grey at the orange's brightness: {l:?}");
+}
+
+#[test]
+fn composite_layers_further_tops_in_turn() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        constant("/a", 0.1),
+        constant("/b", 0.2),
+        constant("/c", 0.3),
+        constant("/d", 0.4),
+        create("/sum", "tex.composite", &[("op", "add".into())]),
+        connect("/a", "/sum", 0),
+        connect("/b", "/sum", 1),
+        // top3 left out, top7 the last slot.
+        connect("/c", "/sum", 2),
+        connect("/d", "/sum", 7),
+        create("/over", "tex.composite", &[]),
+        connect("/a", "/over", 0),
+        connect("/c", "/over", 4),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    assert!((red(&mut rig, "/sum") - 1.0).abs() < 0.01, "0.1 + 0.2 + 0.3 + 0.4");
+    // Without a top, the layer goes onto the bottom; opaque, it covers it.
+    assert!((red(&mut rig, "/over") - 0.3).abs() < 0.01);
 }
 
 #[test]

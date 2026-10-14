@@ -35,6 +35,12 @@ pub const DEFAULT_RASTER: (u32, u32) = (1920, 1080);
 
 pub const PROJECTOR: &str = "out.projector";
 
+/// The projector that shows nothing, only paces.
+pub const PACER: &str = "out.pacer";
+
+/// Refresh rates `out.pacer` accepts, in Hz.
+pub const PACER_RANGE: (f64, f64) = (10.0, 500.0);
+
 /// How a projector's texture fills its viewport.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -181,7 +187,48 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         // Not reading the clock; declared so the node picks up what the output side reports
         // (a display plugged in or out) every frame. Cooking it costs nothing.
         .time_dependent();
-    types.register(FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>))
+    types.register(FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>))?;
+    let desc = NodeDesc::new(
+        PACER,
+        "A projector that shows nothing: ticks like a projector's vsync and paces the show clock, for timing as at the show without one",
+    )
+    .param(ParamSpec::bool("active", true).doc("Tick; off, the show clock runs on its timer again"))
+    .param(
+        ParamSpec::float("refresh", 60.0)
+            .clamp(PACER_RANGE.0, PACER_RANGE.1)
+            .range(23.0, 240.0)
+            .unit(penumbra_core::Unit::Hertz)
+            .doc("The projector's refresh rate; as with a real one, the show clock counts one frame per tick"),
+    )
+    .input("in", DataKind::Tex)
+    // As a projector: cooked every frame, so its input costs what it would at the show, and
+    // the note about a real output pacing instead stays current.
+    .time_dependent();
+    types.register(FnNodeType::new(desc, || Box::new(SimulatedProjector) as Box<dyn Operator>))
+}
+
+/// The refresh rate of the first active `out.pacer` in `net`, if any.
+pub fn pacer_refresh(net: &Network, types: &NodeTypes) -> Option<f64> {
+    let desc = types.desc(PACER)?;
+    net.nodes().filter(|n| n.kind == PACER).find_map(|n| {
+        let active = n.param(desc, "active").and_then(|v| v.as_bool()).unwrap_or(true);
+        let hz = n.param(desc, "refresh").and_then(|v| v.as_f64())?;
+        (active && hz.is_finite()).then(|| hz.clamp(PACER_RANGE.0, PACER_RANGE.1))
+    })
+}
+
+struct SimulatedProjector;
+
+impl Operator for SimulatedProjector {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        if cx.bool("active")?
+            && let Some(board) = cx.resource::<OutputBoard>()
+            && let Some(w) = board.state().windows.iter().find(|w| w.paces)
+        {
+            cx.warn(format!("the output on {} paces the show clock; this one waits", w.display));
+        }
+        Ok(Cooked::Outputs(Vec::new()))
+    }
 }
 
 /// The size of a projector's image: its viewport of the display it is shown on, as the
