@@ -1,5 +1,5 @@
-//! `geo` nodes: a mesh file, a primitive, a transform, a merge, copies placed by a table, and a
-//! material. The data on a `geo` connection is a [`Geo`]: models uploaded once, placed by
+//! `geo` nodes: a mesh file, a primitive, a transform, a merge, copies placed by a table or by
+//! textures, and a material. The data on a `geo` connection is a [`Geo`]: models uploaded once, placed by
 //! matrices, with part ids. The picture of them the editor, the viewer and `node.snapshot` show
 //! is made by whoever shows it ([`preview`]), not by the nodes on every cook.
 //!
@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use penumbra_calib::{Camera, Intrinsics, Pose};
 use penumbra_core::{Curve, Error, ParamSpec, Table, Unit};
-use penumbra_gpu::geo::{Item, Mat4, Model, mul};
+use penumbra_gpu::geo::{Instances, Item, Mat4, Model, mul};
 use penumbra_gpu::render::{Light, Look, Renderer, Surface, View};
 use penumbra_gpu::{Geo, Gpu, Mat, Tex};
 use penumbra_graph::{
@@ -126,6 +126,27 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .input("table", DataKind::Table)
         .output("out", DataKind::Geo),
         || Box::new(Instance) as Box<dyn Operator>,
+    ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            "geo.texinstance",
+            "A copy of the input per texel of position, drawn on the GPU: scaled by scale's rgb, its +y turned to aim's rgb (+z kept up), moved to position's rgb, its colour times color's rgb; texel i % width, i / width of each texture is copy i's",
+        )
+        .param(
+            ParamSpec::float("extent", 10.0)
+                .clamp(0.0, 1e6)
+                .range(0.1, 1000.0)
+                .curve(Curve::Log)
+                .more()
+                .doc("Half the side of a box around the origin that holds every copy (the positions stay on the GPU): framing and shadow maps"),
+        )
+        .input("in", DataKind::Geo)
+        .input("position", DataKind::Tex)
+        .input("aim", DataKind::Tex)
+        .input("scale", DataKind::Tex)
+        .input("color", DataKind::Tex)
+        .output("out", DataKind::Geo),
+        || Box::new(TexInstance) as Box<dyn Operator>,
     ))?;
     Ok(())
 }
@@ -516,6 +537,45 @@ impl Operator for Instance {
                 ..i.clone()
             }));
         }
+        let geo = Geo { items, preview: None };
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
+    }
+}
+
+#[derive(Default)]
+struct TexInstance;
+
+impl Operator for TexInstance {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        gpu(cx)?;
+        let wired = |k: usize| cx.def().inputs.get(k).is_some_and(Option::is_some);
+        let (Some(input), Some(position)) = (cx.input_as::<Geo>(0), cx.input_as::<Tex>(1)) else {
+            return Err(if wired(0) && wired(1) {
+                CookError::Pending
+            } else {
+                CookError::failed("connect a geometry and a texture of positions")
+            });
+        };
+        // Wired but not cooked yet: wait rather than draw a frame without them.
+        let optional = |k: usize| -> Result<Option<Tex>, CookError> {
+            match cx.input_as::<Tex>(k) {
+                Some(t) => Ok(Some(t.clone())),
+                None if wired(k) => Err(CookError::Pending),
+                None => Ok(None),
+            }
+        };
+        let instances = Arc::new(Instances {
+            position: position.clone(),
+            aim: optional(2)?,
+            scale: optional(3)?,
+            color: optional(4)?,
+            extent: cx.float("extent")? as f32,
+        });
+        if input.items.iter().any(|i| i.instances.is_some()) {
+            cx.warn("the input is instanced already: its instances are replaced");
+        }
+        let items =
+            input.items.iter().map(|i| Item { instances: Some(instances.clone()), ..i.clone() }).collect();
         let geo = Geo { items, preview: None };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
     }

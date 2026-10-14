@@ -1194,7 +1194,7 @@ Outputs: `out` (table).
 
 ## geo
 
-[geo.file](#geofile), [geo.instance](#geoinstance), [geo.material](#geomaterial), [geo.merge](#geomerge), [geo.primitive](#geoprimitive), [geo.transform](#geotransform)
+[geo.file](#geofile), [geo.instance](#geoinstance), [geo.material](#geomaterial), [geo.merge](#geomerge), [geo.primitive](#geoprimitive), [geo.texinstance](#geotexinstance), [geo.transform](#geotransform)
 
 ### geo.file
 
@@ -1264,6 +1264,24 @@ Outputs: `out` (geo).
 | `shape` | box \| sphere \| plane | `"box"` |  |  |
 | `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | Box: x, y, z; sphere: the diameter is x; plane (upright, facing -y): x wide, z high |
 | `segments` *(more)* | int | `48` | 3 to 128 (soft) | Around the sphere |
+
+### geo.texinstance
+
+A copy of the input per texel of position, drawn on the GPU: scaled by scale's rgb, its +y turned to aim's rgb (+z kept up), moved to position's rgb, its colour times color's rgb; texel i % width, i / width of each texture is copy i's
+
+Inputs:
+
+- `in` (geo)
+- `position` (tex)
+- `aim` (tex)
+- `scale` (tex)
+- `color` (tex)
+
+Outputs: `out` (geo).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `extent` *(more)* | float | `10` | 0.1 to 1000 (soft) | Half the side of a box around the origin that holds every copy (the positions stay on the GPU): framing and shadow maps |
 
 ### geo.transform
 

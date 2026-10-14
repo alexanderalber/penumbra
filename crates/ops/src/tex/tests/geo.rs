@@ -1431,3 +1431,96 @@ fn instance_places_a_copy_per_row() {
     assert!((b.min[0] + 1.5).abs() < 1e-5 && (b.max[0] - 1.5).abs() < 1e-5, "{b:?}");
     assert!((b.max[2] - 1.0).abs() < 1e-5, "the taller copy reaches z 1: {b:?}");
 }
+
+/// Two copies placed, turned, scaled and coloured by texels, seen from the front: the left one
+/// as it is but twice as tall, green; the right one turned to lie along x, red.
+#[test]
+fn texinstance_places_a_copy_per_texel() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("geo-texinstance");
+    let shader = |name: &str, left: &str, right: &str| {
+        let src = format!(
+            "@fragment\nfn main(v: PnVertex) -> @location(0) vec4f {{\n    return select(vec4f({right}), vec4f({left}), v.uv.x < 0.5);\n}}\n"
+        );
+        std::fs::write(dir.join(name), src).unwrap();
+    };
+    shader("position.wgsl", "-1.5, 0.0, 0.0, 1.0", "1.5, 0.0, 0.0, 1.0");
+    shader("aim.wgsl", "0.0, 1.0, 0.0, 1.0", "1.0, 0.0, 0.0, 1.0");
+    shader("scale.wgsl", "1.0, 1.0, 2.0, 1.0", "1.0, 1.0, 1.0, 1.0");
+    shader("color.wgsl", "0.0, 1.0, 0.0, 1.0", "1.0, 0.0, 0.0, 1.0");
+    let texels = |path: &str, file: &str| {
+        create(
+            path,
+            "tex.shader",
+            &[
+                ("file", file.into()),
+                ("resolution", "custom".into()),
+                ("width", Value::Int(2)),
+                ("height", Value::Int(1)),
+            ],
+        )
+    };
+    let ops = vec![
+        create("/stick", "geo.primitive", &[("size", Value::Vec3([0.4, 1.2, 0.4]))]),
+        create("/white", "mat.constant", &[]),
+        create("/plain", "geo.material", &[]),
+        connect("/stick", "/plain", 0),
+        connect("/white", "/plain", 1),
+        texels("/position", "position.wgsl"),
+        texels("/aim", "aim.wgsl"),
+        texels("/scale", "scale.wgsl"),
+        texels("/color", "color.wgsl"),
+        create("/copies", "geo.texinstance", &[]),
+        connect("/plain", "/copies", 0),
+        connect("/position", "/copies", 1),
+        connect("/aim", "/copies", 2),
+        connect("/scale", "/copies", 3),
+        connect("/color", "/copies", 4),
+        render("/front", &[("position", Value::Vec3([0.0, -8.0, 0.0])), ("antialias", Value::Bool(false))]),
+        connect("/copies", "/front", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let px = loop {
+        let px = rig.pixels("/front");
+        if px.data.iter().any(|p| p[3] > 0.5) || Instant::now() > deadline {
+            break px;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    let geo =
+        rig.cooker.output(Port { node: rig.id("/copies"), output: 0 }).unwrap().get::<Geo>().unwrap().clone();
+    assert_eq!(geo.triangle_count(), 24, "two copies of a box's 12 triangles");
+    // Width, height and mean colour of what covers each half.
+    let half = |right: bool| {
+        let (mut x0, mut x1, mut y0, mut y1, mut n) = (u32::MAX, 0, u32::MAX, 0, 0.0f32);
+        let mut sum = [0.0f32; 3];
+        for y in 0..px.height {
+            for x in 0..px.width {
+                let p = at(&px, x, y);
+                if p[3] < 0.5 || (x >= px.width / 2) != right {
+                    continue;
+                }
+                (x0, x1, y0, y1) = (x0.min(x), x1.max(x), y0.min(y), y1.max(y));
+                n += 1.0;
+                for (s, c) in sum.iter_mut().zip(p) {
+                    *s += c;
+                }
+            }
+        }
+        assert!(n > 0.0, "nothing on the {} half", if right { "right" } else { "left" });
+        (x1 - x0 + 1, y1 - y0 + 1, sum.map(|s| s / n))
+    };
+    let (lw, lh, lc) = half(false);
+    let (rw, rh, rc) = half(true);
+    assert!(
+        lh > lw && lh >= 2 * rh - 1,
+        "left: twice as tall as wide and as the right: {lw}x{lh}, {rw}x{rh}"
+    );
+    assert!(rw > 2 * rh && rw > lw + 3, "right: turned to lie along x: {rw}x{rh}, left {lw}x{lh}");
+    assert!(lc[1] > 0.9 && lc[0] < 0.1 && lc[2] < 0.1, "left green: {lc:?}");
+    assert!(rc[0] > 0.9 && rc[1] < 0.1 && rc[2] < 0.1, "right red: {rc:?}");
+    // The box around the copies comes from the extent.
+    let b = geo.bounds().unwrap();
+    assert!(b.max[0] >= 10.0 && b.min[2] <= -10.0, "{b:?}");
+}
