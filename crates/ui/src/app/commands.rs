@@ -383,6 +383,12 @@ impl PenumbraApp {
                 .and_then(crate::layout::ChanScale::parse)
                 .ok_or("`chan_scale` must be auto, shared or per_channel")?;
         }
+        if let Some(v) = p.get("audio_view") {
+            options.audio_view = v
+                .as_str()
+                .and_then(crate::layout::AudioView::parse)
+                .ok_or("`audio_view` must be meters or plot")?;
+        }
         let aspect = match p.get("viewer_aspect") {
             None => self.layout.viewer_aspect,
             Some(Json::String(s)) if s == "auto" => None,
@@ -397,11 +403,14 @@ impl PenumbraApp {
         self.layout.set_viewer_aspect(aspect, now);
         self.viewer.chan_scale = options.chan_scale;
         self.window_viewer.chan_scale = options.chan_scale;
+        self.viewer.audio_view = options.audio_view;
+        self.window_viewer.audio_view = options.audio_view;
         Ok(json!({
             "chan_bars": options.chan_bars,
             "viewer_background": options.viewer_background,
             "binding_lines": options.binding_lines,
             "chan_scale": options.chan_scale.name(),
+            "audio_view": options.audio_view.name(),
             "viewer_aspect": self.layout.viewer_aspect.map_or(json!("auto"), |a| json!(a)),
         }))
     }

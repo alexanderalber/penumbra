@@ -153,6 +153,43 @@ pub struct EditorOptions {
     pub thumbnail_every: u32,
     /// How the viewer scales several channels.
     pub chan_scale: ChanScale,
+    /// What the viewer shows of a `chan.audio_analysis`: its meters or the channel plot.
+    pub audio_view: AudioView,
+}
+
+/// What the viewer shows of an audio analysis.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioView {
+    /// Level and band meters, beat and bar, tempo, hits and the spectrum, to read at a glance.
+    #[default]
+    Meters,
+    /// The channel plot, as for any chan node.
+    Plot,
+}
+
+impl AudioView {
+    pub const ALL: [AudioView; 2] = [AudioView::Meters, AudioView::Plot];
+
+    /// The name in `layout.ron` and in `ui.options`.
+    pub fn name(self) -> &'static str {
+        match self {
+            AudioView::Meters => "meters",
+            AudioView::Plot => "plot",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<AudioView> {
+        Self::ALL.into_iter().find(|c| c.name() == s)
+    }
+
+    /// The other one, for the header's toggle.
+    pub fn next(self) -> AudioView {
+        match self {
+            AudioView::Meters => AudioView::Plot,
+            AudioView::Plot => AudioView::Meters,
+        }
+    }
 }
 
 /// How the viewer scales the curves of several channels.
@@ -204,6 +241,7 @@ impl Default for EditorOptions {
             thumbnails: policy.mode,
             thumbnail_every: policy.min_interval,
             chan_scale: ChanScale::Auto,
+            audio_view: AudioView::Meters,
         }
     }
 }
@@ -993,6 +1031,7 @@ mod tests {
             thumbnails: ThumbnailMode::WhenFree,
             thumbnail_every: 3,
             chan_scale: ChanScale::PerChannel,
+            audio_view: AudioView::Plot,
             ..EditorOptions::default()
         };
         layout.set_options(options, now);
@@ -1016,6 +1055,9 @@ mod tests {
         // A file from before the channel scale existed still loads, with the default.
         std::fs::write(dir.join(FILE_NAME), text.replace("chan_scale: per_channel,", "")).unwrap();
         assert_eq!(Layout::load(Some(&dir)).options.chan_scale, ChanScale::Auto);
+        assert!(text.contains("audio_view: plot"), "{text}");
+        std::fs::write(dir.join(FILE_NAME), text.replace("audio_view: plot,", "")).unwrap();
+        assert_eq!(Layout::load(Some(&dir)).options.audio_view, AudioView::Meters);
         // One from before the viewer kept a dragged height loads with the automatic 16:9.
         assert!(text.contains("viewer_aspect: Some(2.5)"), "{text}");
         std::fs::write(dir.join(FILE_NAME), text.replace("viewer_aspect: Some(2.5),", "")).unwrap();

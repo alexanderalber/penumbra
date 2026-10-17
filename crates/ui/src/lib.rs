@@ -19,6 +19,7 @@ pub mod helpers;
 pub mod icons;
 pub mod layout;
 mod mapping;
+pub mod meters;
 pub mod navigate;
 pub mod params;
 pub mod plot;

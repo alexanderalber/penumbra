@@ -88,7 +88,9 @@ press play once the cause is fixed. The record of that lives in
   `scale` button switches between one shared scale for all channels, a lane per channel with
   its own scale, and auto, which takes lanes when a channel that moves would be flat on the
   shared scale (`bpm` next to levels of 0 to 1). The choice is kept with the project
-  (`ui.options {chan_scale}`).
+  (`ui.options {chan_scale}`). A `chan.audio_analysis` shows its meters instead (see
+  [Audio](audio.md#the-meters-in-the-viewer)); `view: meters` in the header switches to the
+  plot and back, kept with the project as well (`ui.options {audio_view}`).
 - **Changes** (bottom right): every edit, newest first, with who made it (you, Claude, the
   project file). Hover an entry to outline the nodes it touched, click it to select them.
   Undo and Redo sit in its header.

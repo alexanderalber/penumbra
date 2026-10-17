@@ -1305,11 +1305,11 @@ impl Editor {
                     if let Some(chans) = first.get::<penumbra_core::Chans>()
                         && zoom > 0.4
                     {
+                        let after_labels = input_labels_width(painter, g, zoom);
                         if chans.window() > 1 {
-                            let after_labels = input_labels_width(painter, g, zoom);
                             crate::plot::body(painter, body_rect, chans, zoom, after_labels);
                         } else {
-                            chan_body(painter, body_rect, chans, zoom, input.chan_bars);
+                            chan_body(painter, body_rect, chans, zoom, input.chan_bars, after_labels);
                         }
                     }
                 }
@@ -2046,9 +2046,20 @@ fn input_labels_width(painter: &egui::Painter, g: &Geo, zoom: f32) -> f32 {
 
 /// A chan node's body with one sample per channel: one channel as its value with a bar (red
 /// while negative), several as a short list. Channels with many samples get a plot instead
-/// ([`crate::plot::body`]).
-fn chan_body(painter: &egui::Painter, body: Rect, chans: &penumbra_core::Chans, zoom: f32, bars: bool) {
+/// ([`crate::plot::body`]). The text starts `text_left` points in from the left edge, past the
+/// input labels.
+fn chan_body(
+    painter: &egui::Painter,
+    body: Rect,
+    chans: &penumbra_core::Chans,
+    zoom: f32,
+    bars: bool,
+    text_left: f32,
+) {
     let channels = chans.channels();
+    // The part of the body clear of the input labels.
+    let clear =
+        Rect::from_min_max(pos2((body.min.x + text_left.max(0.0)).min(body.max.x), body.min.y), body.max);
     if let [only] = channels {
         let v = only.value();
         if bars {
@@ -2065,7 +2076,7 @@ fn chan_body(painter: &egui::Painter, body: Rect, chans: &penumbra_core::Chans, 
             format!("{} {}", only.name, format_value(v))
         };
         painter.text(
-            pos2(body.center().x, body.min.y + 11.0 * zoom),
+            pos2(clear.center().x, body.min.y + 11.0 * zoom),
             Align2::CENTER_CENTER,
             text,
             FontId::monospace(12.0 * zoom),
@@ -2079,7 +2090,7 @@ fn chan_body(painter: &egui::Painter, body: Rect, chans: &penumbra_core::Chans, 
     let shown = if more > 0 { fit.saturating_sub(1) } else { fit };
     for (i, c) in channels.iter().take(shown).enumerate() {
         painter.text(
-            pos2(body.min.x + 6.0 * zoom, body.min.y + 3.0 * zoom + i as f32 * line),
+            pos2(clear.min.x + 6.0 * zoom, body.min.y + 3.0 * zoom + i as f32 * line),
             Align2::LEFT_TOP,
             format!("{} {}", c.name, format_value(c.value())),
             FontId::monospace(10.0 * zoom),
@@ -2095,7 +2106,7 @@ fn chan_body(painter: &egui::Painter, body: Rect, chans: &penumbra_core::Chans, 
     };
     if !footer.is_empty() {
         painter.text(
-            pos2(body.min.x + 6.0 * zoom, body.min.y + 3.0 * zoom + shown as f32 * line),
+            pos2(clear.min.x + 6.0 * zoom, body.min.y + 3.0 * zoom + shown as f32 * line),
             Align2::LEFT_TOP,
             footer,
             FontId::monospace(10.0 * zoom),

@@ -1,7 +1,8 @@
 //! The viewer: the output of the selected node, or of a pinned one, at full rate. Textures fit
 //! the panel; channels show their values and a short history (or all samples when a channel
 //! carries many) on labelled axes, on one scale or a lane each ([`crate::plot`]); tables show
-//! their first rows; geometry and materials their pictures, lights a line each.
+//! their first rows; geometry and materials their pictures, lights a line each. An audio
+//! analysis shows its meters ([`crate::meters`]) unless the plot is chosen.
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -14,8 +15,9 @@ use penumbra_ops::view::{Lens, Viewpoint};
 
 use crate::automation;
 use crate::editor::format_value;
-use crate::layout::ChanScale;
+use crate::layout::{AudioView, ChanScale};
 use crate::mapping::{MapEditor, MapInputs};
+use crate::meters::{AudioMeters, AudioNode};
 use crate::navigate::{Mode, Move, Navigation, Scene};
 use crate::plot::{self, Scale, Series, XAxis};
 use crate::shapes::{ShapeEditor, ShapeInputs};
@@ -52,6 +54,12 @@ pub struct Viewer {
     auto_lanes: bool,
     /// The picture area drawn last, below the header rows.
     pub picture: Option<Rect>,
+    /// What an audio analysis shows; kept in the layout, set by the app before drawing.
+    pub audio_view: AudioView,
+    /// The audio analysis shown, as the header found it (it has the network; the picture
+    /// below does not).
+    audio: Option<AudioNode>,
+    meters: AudioMeters,
 }
 
 /// What the viewer needs to look around in a 3D node.
@@ -123,8 +131,28 @@ impl Viewer {
                     }
                 }
             }
+            self.audio = target.and_then(|id| AudioNode::of(net, id));
+            let meters = self.audio.is_some() && self.audio_view == AudioView::Meters;
+            if self.audio.is_some() {
+                let short = ui.available_width() < 150.0;
+                let text = match (self.audio_view, short) {
+                    (AudioView::Meters, false) => "view: meters",
+                    (AudioView::Plot, false) => "view: plot",
+                    (AudioView::Meters, true) => "meters",
+                    (AudioView::Plot, true) => "plot",
+                };
+                let r = ui.button(text).on_hover_text(
+                    "What the analysis shows; click for the other. meters: levels, beat and bar, \
+                     tempo, hits and spectrum at a glance; plot: its channels as curves",
+                );
+                auto.add("viewer.audio_view", r.rect, text);
+                if r.clicked() {
+                    self.audio_view = self.audio_view.next();
+                }
+            }
             let count = outputs.map_or(0, Vec::len);
-            if count > 1 && !scene.is_some_and(|sc| self.nav.mode(sc) == Mode::Free) {
+            // The meters show both outputs at once.
+            if count > 1 && !meters && !scene.is_some_and(|sc| self.nav.mode(sc) == Mode::Free) {
                 for o in 0..count {
                     let name = names.get(o).cloned().unwrap_or_else(|| format!("out {o}"));
                     let o = o as u32;
@@ -136,7 +164,7 @@ impl Viewer {
                 }
             }
             let data = outputs.and_then(|o| o.get(self.output as usize));
-            if data.is_some_and(|d| d.kind() == DataKind::Chan) {
+            if data.is_some_and(|d| d.kind() == DataKind::Chan) && !meters {
                 // Short words where the header is about to run out of room (a narrow column).
                 let short = ui.available_width() < 150.0;
                 let text = match (self.chan_scale, short) {
@@ -324,7 +352,13 @@ impl Viewer {
                 }
             }
             DataKind::Chan => {
-                if let Some(chans) = data.get::<Chans>() {
+                if self.audio_view == AudioView::Meters
+                    && let Some(node) = self.audio.filter(|a| a.id == id)
+                {
+                    let now = ui.input(|i| i.time);
+                    let outputs = outputs.map(Vec::as_slice).unwrap_or_default();
+                    self.meters.draw(&painter, rect, &node, outputs.first(), outputs.get(1), now);
+                } else if let Some(chans) = data.get::<Chans>() {
                     self.channels(&painter, rect, id, chans, time);
                 }
             }
