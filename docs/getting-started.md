@@ -74,7 +74,13 @@ press play once the cause is fixed. The record of that lives in
 - **Viewer** (middle right): the selected node's output, or the node pinned with `pin`.
   `window` shows it in a window of its own (on a second monitor, say). A node with several
   outputs gets a button per output. For geometry and renders it can also look around in the
-  scene ([Looking around in 3D](navigation.md)).
+  scene ([Looking around in 3D](navigation.md)). Channels are drawn as curves with a value axis
+  and, along the bottom, seconds before now (the last 240 frames of a channel with one value,
+  all samples of one with many; a spectrum or a picture's row is counted by sample instead). The
+  `scale` button switches between one shared scale for all channels, a lane per channel with
+  its own scale, and auto, which takes lanes when a channel that moves would be flat on the
+  shared scale (`bpm` next to levels of 0 to 1). The choice is kept with the project
+  (`ui.options {chan_scale}`).
 - **Changes** (bottom right): every edit, newest first, with who made it (you, Claude, the
   project file). Hover an entry to outline the nodes it touched, click it to select them.
   Undo and Redo sit in its header.

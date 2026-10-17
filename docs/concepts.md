@@ -22,7 +22,8 @@ The families:
   (level, blur, transform, ...), compositing, a shader node for anything else, `tex.mapper`
   for projection mapping, `tex.render` for 3D.
 - **`chan`**: numbers that change over time. Generators (`lfo`, `noise`, `constant`), `math`,
-  `filter`, and OSC in and out. Channels drive params through [bindings](#bindings).
+  `filter`, `trail` (the last seconds of a channel as samples, to plot or to feed on), and OSC
+  in and out. Channels drive params through [bindings](#bindings).
   A channel holds one or many samples, so a set of channels is a small grid of numbers:
   `tex.from_chan` turns it into a picture (a row per channel, a pixel per sample) for shaders to
   look values up in, and `chan.from_tex` averages a picture down to a few pixels and turns them

@@ -622,6 +622,10 @@ impl PenumbraApp {
         if self.engine.generation() != self.shown.0 {
             self.project_switched(now);
         }
+        // The viewers' channel scale lives in the layout; a click in either viewer's header
+        // changes it there at the end of the frame.
+        self.viewer.chan_scale = self.layout.options.chan_scale;
+        self.window_viewer.chan_scale = self.layout.options.chan_scale;
         let session = self.engine.session();
         let status = session.status(now);
         let net = session.doc().snapshot();
@@ -750,7 +754,7 @@ impl PenumbraApp {
                             ui,
                             target,
                             outputs,
-                            view.time.map(|t| t.frame),
+                            view.time,
                             theme::picture_bg(!can_edit),
                             &mut self.textures,
                             map.as_ref(),
@@ -859,6 +863,13 @@ impl PenumbraApp {
         self.helpers.show(&ctx, &helpers, &mut self.auto, &mut actions);
         self.viewer_window(&ctx, &net, &view, can_edit, &mut actions);
         self.fly(&ctx, &net, &view, can_edit, now, &mut actions);
+        let scale = self.layout.options.chan_scale;
+        if let Some(changed) =
+            [self.viewer.chan_scale, self.window_viewer.chan_scale].into_iter().find(|s| *s != scale)
+        {
+            let options = crate::layout::EditorOptions { chan_scale: changed, ..self.layout.options };
+            self.layout.set_options(options, now);
+        }
         self.apply(actions, now);
         if let Some(text) = self.to_clipboard.take() {
             ctx.copy_text(text);
@@ -921,7 +932,7 @@ impl PenumbraApp {
         let (window, textures, auto) = (&mut self.window_viewer, &mut self.textures, &mut self.auto);
         let mut close = false;
         let background = theme::picture_bg(!can_edit);
-        let frame = view.time.map(|t| t.frame);
+        let frame = view.time;
         let mut content = |ui: &mut Ui| {
             let (map, shapes, names) =
                 node_editors(net, session.types(), view, Some(id), can_edit, &new_group);

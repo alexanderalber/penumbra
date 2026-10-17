@@ -21,6 +21,7 @@ pub mod layout;
 mod mapping;
 pub mod navigate;
 pub mod params;
+pub mod plot;
 pub mod projects;
 mod shapes;
 pub mod textures;
