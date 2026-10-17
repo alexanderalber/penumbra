@@ -64,7 +64,7 @@ another beat; `bar_beat` and `bar` are then counted from there.
 
 - Analyse one channel with `channel` (e.g. `ch1`) when the others carry something else.
 - `chan.filter` smooths a channel; `chan.math` scales it.
-- `chan.trail` after the analysis keeps its last seconds as samples; the viewer plots them
-  with a lane per channel, so `bpm` does not flatten the levels.
+- `chan.trail` after the analysis keeps its last seconds as samples; the viewer and the
+  trail's own body plot them with a lane per channel, so `bpm` does not flatten the levels.
 - The level meters in Helpers should stay out of the red. A microphone close to the speakers
   clips; turn down its gain.

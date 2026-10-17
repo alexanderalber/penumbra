@@ -44,6 +44,8 @@ pub struct Chans {
     rate: f64,
     channels: Vec<Channel>,
     axis: SampleAxis,
+    /// The samples are the newest of a window this long ([`Chans::window`]); 0 for none.
+    window: usize,
 }
 
 impl Chans {
@@ -82,7 +84,7 @@ impl Chans {
                 return Err(Error::new(format!("channel `{}` appears twice", c.name)));
             }
         }
-        Ok(Self { rate, channels, axis: SampleAxis::Time })
+        Ok(Self { rate, channels, axis: SampleAxis::Time, window: 0 })
     }
 
     /// One channel with one sample.
@@ -103,6 +105,26 @@ impl Chans {
 
     pub fn axis(&self) -> SampleAxis {
         self.axis
+    }
+
+    /// The same channels as the newest `window` samples of a window that is not full yet (a
+    /// `chan.trail` still growing), for showing them at their place in it.
+    pub fn with_window(mut self, window: usize) -> Self {
+        self.window = window;
+        self
+    }
+
+    /// How many samples the window the samples sit at the end of holds: [`Chans::len`] unless
+    /// [`Chans::with_window`] made it longer.
+    pub fn window(&self) -> usize {
+        self.window.max(self.len())
+    }
+
+    /// The same channels, their samples spread over the axis and window of `other`; for a node
+    /// whose output has the shape of its input.
+    pub fn shaped_like(self, other: &Chans) -> Self {
+        let window = if self.len() == other.len() { other.window } else { 0 };
+        self.with_axis(other.axis).with_window(window)
     }
 
     /// Samples per second.
@@ -167,6 +189,14 @@ mod tests {
         assert_eq!(e.value(None), None);
         assert!(Chans::new(1.0, vec![ch("x", &vec![0.0; MAX_SAMPLES + 1])]).is_err());
         assert_eq!(c.axis(), SampleAxis::Time);
+        // A window is never shorter than the samples, and passes on only to the same length.
+        assert_eq!(c.window(), 2);
+        let c = c.with_window(10);
+        assert_eq!(c.window(), 10);
+        let same = Chans::new(60.0, vec![ch("z", &[0.0, 1.0])]).unwrap();
+        assert_eq!(same.shaped_like(&c).window(), 10);
+        let shorter = Chans::single(Name::new("z").unwrap(), 1.0, 60.0).unwrap();
+        assert_eq!(shorter.shaped_like(&c).window(), 1);
         assert_eq!(c.with_axis(SampleAxis::Index).axis(), SampleAxis::Index);
     }
 }

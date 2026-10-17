@@ -139,6 +139,9 @@ pub struct NodeDesc {
     /// time machine's frames, a learned background, a running sum. `node.reset` starts such a
     /// node over ([`Cooker::reset`](crate::Cooker::reset)), and the editor offers a reset button.
     pub stateful: bool,
+    /// Its first output's channels usually carry many samples each (a trail, an audio block):
+    /// the editor gives it a taller body with a plot.
+    pub sampled: bool,
 }
 
 impl NodeDesc {
@@ -154,6 +157,7 @@ impl NodeDesc {
             port: None,
             extra_params: false,
             stateful: false,
+            sampled: false,
         }
     }
 
@@ -220,6 +224,12 @@ impl NodeDesc {
     /// Declares [`NodeDesc::stateful`].
     pub fn stateful(mut self) -> Self {
         self.stateful = true;
+        self
+    }
+
+    /// Declares [`NodeDesc::sampled`].
+    pub fn sampled(mut self) -> Self {
+        self.sampled = true;
         self
     }
 

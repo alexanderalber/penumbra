@@ -2,10 +2,14 @@
 //! seconds before now (or the sample index, for samples that are not moments), either on one
 //! shared scale or as stacked lanes, each channel on a scale of its own.
 //!
+//! [`body`] is the small plot in a chan node's body: curves only, downsampled to its width.
+//!
 //! Everything here takes data as it comes: non-finite values are skipped, a flat channel gets a
 //! range around its value, and a plot too small for labels draws the curves alone.
 
 use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, Stroke, pos2, vec2};
+
+use penumbra_core::Chans;
 
 use crate::editor::format_value;
 use crate::theme;
@@ -165,6 +169,11 @@ pub fn auto_lanes(series: &[Series<'_>], before: bool) -> bool {
         return false;
     }
     let ranges: Vec<(f64, f64)> = series.iter().filter_map(|s| range_of(s.points.iter())).collect();
+    lanes_for(&ranges, before)
+}
+
+/// [`auto_lanes`] on the channels' ranges (lowest and highest value of each).
+fn lanes_for(ranges: &[(f64, f64)], before: bool) -> bool {
     let (Some(lo), Some(hi)) =
         (ranges.iter().map(|r| r.0).reduce(f64::min), ranges.iter().map(|r| r.1).reduce(f64::max))
     else {
@@ -390,6 +399,145 @@ fn list(painter: &Painter, at: Pos2, series: &[Series<'_>]) {
     }
 }
 
+/// Most curves a node body draws; the rest are left out.
+const BODY_CURVES: usize = 8;
+/// A lane in a node body is at least this tall (graph units), else the channels share a scale.
+const BODY_MIN_LANE: f32 = 12.0;
+
+/// The small plot in a chan node's body at `zoom`: each channel's samples as a curve, the
+/// newest at the right edge and a window that is not full yet (a growing `chan.trail`) growing
+/// in from there; stacked lanes when a moving channel would be flat on the shared scale (as the
+/// viewer's `auto`), a faint zero line where the range crosses 0, and the first channel's value
+/// now at the top left, `text_left` points further right (past the input labels). Costs one
+/// pass over the samples and a few points per pixel of width.
+pub fn body(painter: &Painter, rect: Rect, chans: &Chans, zoom: f32, text_left: f32) {
+    let channels = chans.channels();
+    let channels = channels.get(..channels.len().min(BODY_CURVES)).unwrap_or_default();
+    let area = rect.shrink2(vec2(5.0, 4.0) * zoom);
+    if channels.is_empty() || area.width() < 4.0 || area.height() < 4.0 {
+        return;
+    }
+    let ranges: Vec<Option<(f64, f64)>> = channels.iter().map(|c| range_of_samples(&c.samples)).collect();
+    let found: Vec<(f64, f64)> = ranges.iter().flatten().copied().collect();
+    let lanes = channels.len() >= 2
+        && area.height() / channels.len() as f32 >= BODY_MIN_LANE * zoom
+        && lanes_for(&found, false);
+    let all = found.iter().copied().reduce(|a, b| (a.0.min(b.0), a.1.max(b.1))).unwrap_or((0.0, 1.0));
+    let lane_h = if lanes { area.height() / channels.len() as f32 } else { area.height() };
+    let span = (chans.window().max(2) - 1) as f32;
+    let offset = chans.window().saturating_sub(chans.len());
+    let stroke = (1.2 * zoom).clamp(1.0, 2.0);
+    let faint = Stroke::new(1.0, Color32::from_white_alpha(28));
+    for (i, c) in channels.iter().enumerate() {
+        let lane = if lanes {
+            let top = area.min.y + lane_h * i as f32;
+            Rect::from_min_max(pos2(area.min.x, top), pos2(area.max.x, top + lane_h))
+        } else {
+            area
+        };
+        let range = if lanes { ranges.get(i).copied().flatten().unwrap_or(all) } else { all };
+        let (lo, hi) = padded(range.0, range.1);
+        let to_y = |v: f64| lane.max.y - ((v - lo) / (hi - lo)) as f32 * lane.height();
+        // Once per lane (once in all on a shared scale): the zero line and the lane border.
+        if lanes || i == 0 {
+            if lo < 0.0 && hi > 0.0 {
+                let y = to_y(0.0);
+                painter.line_segment([pos2(lane.min.x, y), pos2(lane.max.x, y)], faint);
+            }
+            if lanes && i > 0 {
+                painter.line_segment([pos2(rect.min.x, lane.min.y), pos2(rect.max.x, lane.min.y)], faint);
+            }
+        }
+        let to_x = |k: usize| lane.min.x + (offset + k) as f32 / span * lane.width();
+        let points = envelope(&c.samples, lane.width(), to_x, to_y);
+        if points.len() >= 2 {
+            painter.add(egui::Shape::line(points, Stroke::new(stroke, theme::channel_color(i))));
+        }
+    }
+    if zoom > 0.6
+        && let Some(first) = channels.first()
+    {
+        let text = if channels.len() == 1 && first.name.as_str() == "value" {
+            format_value(first.value())
+        } else {
+            format!("{} {}", first.name, format_value(first.value()))
+        };
+        let color = if channels.len() == 1 { theme::TEXT } else { theme::channel_color(0) };
+        let galley = painter.layout_no_wrap(text, FontId::monospace(10.0 * zoom), color);
+        let at = pos2(rect.min.x + text_left.max(0.0) + 4.0 * zoom, rect.min.y + 2.0 * zoom);
+        if at.x + galley.size().x < rect.max.x - 4.0 * zoom {
+            painter.rect_filled(
+                Rect::from_min_size(at, galley.size()).expand2(vec2(2.0, 0.0) * zoom),
+                2.0 * zoom,
+                Color32::from_black_alpha(140),
+            );
+            painter.galley(at, galley, color);
+        }
+    }
+}
+
+/// The lowest and highest finite sample.
+fn range_of_samples(samples: &[f64]) -> Option<(f64, f64)> {
+    let (lo, hi) = samples
+        .iter()
+        .filter(|v| v.is_finite())
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+    (lo.is_finite() && hi.is_finite()).then_some((lo, hi))
+}
+
+/// A pixel column of a body curve being gathered: its column, its x, and the (index, value) of
+/// its lowest and highest sample.
+type Bucket = (i64, f32, (usize, f64), (usize, f64));
+
+/// The points of a curve through `samples` with at most two per pixel of `width`: a pixel that
+/// covers several samples gets their lowest and highest, in the order they came, so a dense
+/// signal (an audio block) keeps its swing instead of aliasing.
+fn envelope(
+    samples: &[f64],
+    width: f32,
+    to_x: impl Fn(usize) -> f32,
+    to_y: impl Fn(f64) -> f32,
+) -> Vec<Pos2> {
+    let mut points = Vec::with_capacity(samples.len().min((width.max(1.0) as usize + 1) * 2));
+    let flush = |points: &mut Vec<Pos2>, (_, x, lo, hi): Bucket| {
+        if lo.0 == hi.0 {
+            points.push(pos2(x, to_y(lo.1)));
+        } else {
+            let (a, b) = if lo.0 < hi.0 { (lo, hi) } else { (hi, lo) };
+            points.push(pos2(x, to_y(a.1)));
+            points.push(pos2(x, to_y(b.1)));
+        }
+    };
+    let mut bucket: Option<Bucket> = None;
+    for (k, v) in samples.iter().enumerate() {
+        if !v.is_finite() {
+            continue;
+        }
+        let x = to_x(k);
+        let col = x.floor() as i64;
+        match &mut bucket {
+            Some((c, _, lo, hi)) if *c == col => {
+                if *v < lo.1 {
+                    *lo = (k, *v);
+                }
+                if *v > hi.1 {
+                    *hi = (k, *v);
+                }
+            }
+            _ => {
+                if let Some(b) = bucket.take() {
+                    flush(&mut points, b);
+                }
+                bucket = Some((col, x, (k, *v), (k, *v)));
+            }
+        }
+    }
+    if let Some(b) = bucket {
+        flush(&mut points, b);
+    }
+    points
+}
+
 /// A dark patch behind text drawn over curves, so both stay readable.
 fn backdrop(painter: &Painter, around: Rect) {
     painter.rect_filled(around.expand2(vec2(4.0, 1.0)), 3.0, Color32::from_black_alpha(150));
@@ -459,6 +607,20 @@ mod tests {
         assert!(!auto_lanes(&[s(&[0.0, 100.0])], true));
         assert!(!auto_lanes(&[], true));
         assert!(auto_lanes(&[s(&[f64::NAN]), s(&[f64::INFINITY])], true));
+    }
+
+    #[test]
+    fn the_body_curve_has_at_most_two_points_per_pixel() {
+        let samples: Vec<f64> = (0..10_000).map(|i| (i as f64 * 0.37).sin()).collect();
+        let n = samples.len();
+        let pts = envelope(&samples, 100.0, |k| k as f32 / (n - 1) as f32 * 100.0, |v| v as f32);
+        assert!(pts.len() <= 202, "{}", pts.len());
+        // The swing survives.
+        assert!(pts.iter().any(|p| p.y > 0.99) && pts.iter().any(|p| p.y < -0.99));
+        // Few samples keep every one, at its own place; non-finite ones are skipped.
+        let pts = envelope(&[0.0, f64::NAN, 2.0], 100.0, |k| k as f32 * 50.0, |v| v as f32);
+        assert_eq!(pts, [pos2(0.0, 0.0), pos2(100.0, 2.0)]);
+        assert!(envelope(&[], 100.0, |k| k as f32, |v| v as f32).is_empty());
     }
 
     #[test]

@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use penumbra_core::{Channel, Chans, Curve, Error, Name, ParamSpec, SampleAxis, Tick, Unit, Value};
+use penumbra_core::{Channel, Chans, Curve, Error, Name, ParamSpec, Tick, Unit, Value};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
@@ -222,13 +222,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
              at or to feed on",
         )
         .stateful()
+        .sampled()
         .param(
             ParamSpec::float("length", 5.0)
                 .clamp(TRAIL_MIN_LENGTH, TRAIL_MAX_LENGTH)
                 .range(0.1, 60.0)
                 .curve(Curve::Log)
                 .unit(Unit::Seconds)
-                .doc("How far back the trail reaches; older values drop off its start"),
+                .doc("How far back the trail reaches once it is full; older values drop off its start"),
         )
         .param(
             ParamSpec::float("rate", 60.0)
@@ -238,7 +239,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .unit(Unit::Hertz)
                 .doc(
                     "Samples taken per second of show time, whatever the frame rate; length times \
-                     rate is the number of samples",
+                     rate is the number of samples of a full trail",
                 ),
         )
         .param(ParamSpec::bool("active", true).doc(
@@ -250,8 +251,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .describe_input("in", "The channels to record; of each, its value now (its last sample) is taken")
         .describe_output(
             "out",
-            "The input's channels by name, each with length times rate samples, the newest last; \
-             before the trail is full, the first value fills its start",
+            "The input's channels by name, the newest sample last: one sample when the trail starts \
+             (made, reset or sought back), one more per sample taken, up to length times rate",
         )
         .time_dependent(),
         || Box::new(Trail::default()) as Box<dyn Operator>,
@@ -508,7 +509,7 @@ impl Operator for Select {
         if !warnings.is_empty() {
             cx.warn(warnings.join("; "));
         }
-        out(Chans::new(input.rate(), channels)?.with_axis(input.axis()))
+        out(Chans::new(input.rate(), channels)?.shaped_like(input))
     }
 }
 
@@ -557,7 +558,7 @@ impl Operator for Rename {
         if !warnings.is_empty() {
             cx.warn(warnings.join("; "));
         }
-        out(Chans::new(input.rate(), channels)?.with_axis(input.axis()))
+        out(Chans::new(input.rate(), channels)?.shaped_like(input))
     }
 }
 
@@ -649,13 +650,12 @@ impl Operator for Math {
             _ => |a, b| a + b,
         };
         // The layout (names, length, rate) comes from a, else from b.
-        let (layout, rate, axis) = match (a, b) {
-            (Some(c), _) | (None, Some(c)) => (
-                c.channels().iter().map(|ch| (ch.name.clone(), ch.samples.len())).collect(),
-                c.rate(),
-                c.axis(),
-            ),
-            (None, None) => (vec![(Name::new("value")?, 1)], cx.rate().as_f64(), SampleAxis::Time),
+        let shape = a.or(b);
+        let (layout, rate) = match shape {
+            Some(c) => {
+                (c.channels().iter().map(|ch| (ch.name.clone(), ch.samples.len())).collect(), c.rate())
+            }
+            None => (vec![(Name::new("value")?, 1)], cx.rate().as_f64()),
         };
         let channels = layout
             .into_iter()
@@ -676,7 +676,11 @@ impl Operator for Math {
                 Channel { name, samples }
             })
             .collect();
-        out(Chans::new(rate, channels)?.with_axis(axis))
+        let made = Chans::new(rate, channels)?;
+        out(match shape {
+            Some(c) => made.shaped_like(c),
+            None => made,
+        })
     }
 }
 
@@ -736,7 +740,7 @@ impl Operator for Filter {
             channels.push(Channel { name: ch.name.clone(), samples });
         }
         self.state = state;
-        out(Chans::new(input.rate(), channels)?.with_axis(input.axis()))
+        out(Chans::new(input.rate(), channels)?.shaped_like(input))
     }
 }
 
@@ -798,7 +802,7 @@ impl Operator for Speed {
             channels.push(Channel { name: ch.name.clone(), samples });
         }
         self.state = state;
-        out(Chans::new(input.rate(), channels)?.with_axis(input.axis()))
+        out(Chans::new(input.rate(), channels)?.shaped_like(input))
     }
 }
 
@@ -815,7 +819,10 @@ const TRAIL_MAX_SAMPLES: usize = 1 << 17;
 /// `chan.trail`: per channel a ring of samples on a grid of show time. A cook takes as many
 /// samples as grid points have passed since the last one, all holding the input's value now, so
 /// a late frame or a node that was not asked for a while leaves a step rather than squeezing
-/// time; the show's frame rate and the trail's rate need not match.
+/// time; the show's frame rate and the trail's rate need not match. A new trail (and one reset
+/// or sought back) starts with one sample and grows until it holds `length` times `rate`, then
+/// drops its oldest sample for each new one. Its output names the full length as its window
+/// ([`Chans::with_window`]), so a plot puts a growing trail at its place in time.
 #[derive(Default)]
 struct Trail {
     /// In the input's order.
@@ -859,8 +866,9 @@ impl Operator for Trail {
                 input.channels().len()
             ));
         }
-        // The channels as the input has them now: known ones keep their history, new ones
-        // start flat at their value, gone ones are dropped.
+        // The channels as the input has them now: known ones keep their history, a new one
+        // starts flat at its value as far back as the others reach, gone ones are dropped.
+        let filled = self.channels.first().map_or(0, |(_, h)| h.len()).min(len);
         let mut known = std::mem::take(&mut self.channels);
         self.channels = input
             .channels()
@@ -868,18 +876,15 @@ impl Operator for Trail {
             .map(|ch| {
                 let history = match known.iter().position(|(n, _)| *n == ch.name) {
                     Some(i) => known.swap_remove(i).1,
-                    None => VecDeque::from(vec![ch.value(); len]),
+                    None => VecDeque::from(vec![ch.value(); filled]),
                 };
                 (ch.name.clone(), history)
             })
             .collect();
+        // A shorter trail drops its oldest samples; a longer one grows into the room.
         for (_, h) in &mut self.channels {
             while h.len() > len {
                 h.pop_front();
-            }
-            let oldest = h.front().copied().unwrap_or(0.0);
-            while h.len() < len {
-                h.push_front(oldest);
             }
         }
         let period = Tick::from_seconds(1.0 / rate).0.max(1);
@@ -899,14 +904,16 @@ impl Operator for Trail {
             }
             (true, Some(_)) => 0,
         };
-        let due = usize::try_from(due).unwrap_or(0).min(len);
-        if due > 0 {
-            for ((_, h), ch) in self.channels.iter_mut().zip(input.channels()) {
-                let v = ch.value();
-                for _ in 0..due {
+        // A trail with nothing yet (just made, reset, or paused before its first sample) still
+        // says its input's value now.
+        let due = usize::try_from(due).unwrap_or(0).min(len).max(usize::from(filled == 0));
+        for ((_, h), ch) in self.channels.iter_mut().zip(input.channels()) {
+            let v = ch.value();
+            for _ in 0..due {
+                if h.len() >= len {
                     h.pop_front();
-                    h.push_back(v);
                 }
+                h.push_back(v);
             }
         }
         let channels = self
@@ -914,7 +921,7 @@ impl Operator for Trail {
             .iter()
             .map(|(name, h)| Channel { name: name.clone(), samples: h.iter().copied().collect() })
             .collect();
-        out(Chans::new(rate, channels)?)
+        out(Chans::new(rate, channels)?.with_window(len))
     }
 }
 
@@ -943,7 +950,7 @@ impl Operator for Merge {
         if !dropped.is_empty() {
             cx.warn(format!("names taken by an earlier input, left out: {}", dropped.join(", ")));
         }
-        out(Chans::new(first.rate(), channels)?.with_axis(first.axis()))
+        out(Chans::new(first.rate(), channels)?.shaped_like(first))
     }
 }
 
@@ -1259,13 +1266,14 @@ mod tests {
         ]);
         let t = f.chans("/t");
         assert_eq!(t.rate(), 10.0);
-        assert_eq!(samples(&t, "chan0"), vec![1.0; 10], "the first value fills the trail");
+        assert_eq!(samples(&t, "chan0"), [1.0], "a new trail starts with one sample");
+        assert_eq!(t.window(), 10, "and says how long it grows");
         // Half a second in one jump (nobody asked meanwhile) is five samples, all holding the
         // value now.
         apply(&mut f, &[set("/c.value0", 2.0)]);
         f.clock.advance(30);
         let s = samples(&f.chans("/t"), "chan0");
-        assert_eq!(s, [vec![1.0; 5], vec![2.0; 5]].concat());
+        assert_eq!(s, [vec![1.0], vec![2.0; 5]].concat());
         // Frame by frame: one sample every six frames at 60 fps, none in between.
         apply(&mut f, &[set("/c.value0", 3.0)]);
         for _ in 0..5 {
@@ -1283,6 +1291,12 @@ mod tests {
         f.clock.advance(60);
         let s = samples(&f.chans("/t"), "chan0");
         assert_eq!(s.iter().filter(|v| **v == 4.0).count(), 1, "{s:?}");
+        assert_eq!(s.len(), 8);
+        // Full: from then on the oldest drop off.
+        f.clock.advance(60);
+        let t = f.chans("/t");
+        assert_eq!((t.len(), t.window()), (10, 10));
+        assert_eq!(samples(&t, "chan0"), [4.0; 10]);
     }
 
     #[test]
@@ -1299,7 +1313,7 @@ mod tests {
         ]);
         let t = f.chans("/t");
         assert_eq!(t.names().map(|n| n.as_str()).collect::<Vec<_>>(), ["chan0", "chan1"]);
-        assert_eq!(t.len(), 2);
+        assert_eq!(t.len(), 1);
         // A channel goes away, another is renamed: the kept one keeps its history, the new one
         // starts flat.
         apply(&mut f, &[set("/c.value0", 2.0)]);
@@ -1314,8 +1328,10 @@ mod tests {
         let t = f.chans("/t");
         assert_eq!(samples(&t, "chan0"), [2.0, 2.0]);
         assert_eq!(samples(&t, "other"), [7.0, 7.0]);
-        // Longer: the oldest value fills the new start; shorter: the oldest drop off.
+        // Longer: grows into the room; shorter: the oldest drop off.
         apply(&mut f, &[set("/t.length", 1.0)]);
+        f.clock.advance(15);
+        assert_eq!((f.chans("/t").len(), f.chans("/t").window()), (3, 4));
         f.clock.advance(15);
         assert_eq!(f.chans("/t").len(), 4);
         apply(&mut f, &[set("/t.length", 0.25)]);
@@ -1324,7 +1340,7 @@ mod tests {
         // Capped memory.
         apply(&mut f, &[set("/t.length", 3600.0), set("/t.rate", 1000.0)]);
         f.clock.advance(1);
-        assert_eq!(f.chans("/t").len(), super::TRAIL_MAX_SAMPLES);
+        assert_eq!(f.chans("/t").window(), super::TRAIL_MAX_SAMPLES);
         assert_eq!(super::trail_len(f64::NAN, 10.0, 1), (1, false));
         assert_eq!(super::trail_len(1.0, 10.0, 0), (10, false));
         assert!(super::trail_len(1e9, 1e9, 3).0 * 3 <= penumbra_core::chan::MAX_SAMPLES);
@@ -1347,16 +1363,16 @@ mod tests {
             f.chans("/t");
         }
         let s = samples(&f.chans("/t"), "value");
-        assert_eq!(s.len(), 60);
-        assert!(s.windows(2).skip(30).all(|w| w[1] > w[0]), "the saw rises: {s:?}");
+        assert_eq!(s.len(), 30, "one sample per frame since the first cook");
+        assert!(s.windows(2).all(|w| w[1] > w[0]), "the saw rises: {s:?}");
         let id = f.net.resolve(&"/t".parse().unwrap()).unwrap();
         assert_eq!(f.cooker.reset(id), penumbra_graph::ResetOutcome::Reset);
         let now = f.chans("/t").value(None).unwrap();
-        assert_eq!(samples(&f.chans("/t"), "value"), vec![now; 60]);
+        assert_eq!(samples(&f.chans("/t"), "value"), [now]);
         f.clock.advance(30);
         f.chans("/t");
         f.clock.seek(0);
         let s = samples(&f.chans("/t"), "value");
-        assert!(s.iter().all(|v| *v == s[0]), "a seek back starts over: {s:?}");
+        assert_eq!(s.len(), 1, "a seek back starts over: {s:?}");
     }
 }

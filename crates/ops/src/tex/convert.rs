@@ -2,7 +2,9 @@
 //!
 //! `tex.from_chan` uploads a [`Chans`] as a picture: one row per channel (samples across), or up
 //! to four channels as the red, green, blue and alpha of one row. With many samples per channel
-//! (an audio spectrum) that is a texture a shader can look values up in. Its default layout,
+//! (an audio spectrum) that is a texture a shader can look values up in. A `chan.trail` that is
+//! still filling up gives a picture as wide as a full one, black where it has no samples yet,
+//! so the texture keeps its size. Its default layout,
 //! `auto`, takes channels named exactly `r`, `g`, `b` (and `a`), as `chan.from_tex` names them,
 //! as a colour, so a mean colour read at 1 x 1 comes back as a colour swatch.
 //!
@@ -163,7 +165,8 @@ struct Picture {
 }
 
 /// The channels as a picture at most `max` pixels on a side; the newest samples and the first
-/// channels are kept where they do not fit.
+/// channels are kept where they do not fit. The picture is as wide as the input's window, so a
+/// `chan.trail` that is still growing keeps its size and fills in from the right, black before.
 fn picture(chans: &Chans, layout: Layout, low: f64, high: f64, max: usize) -> Picture {
     let channels = chans.channels();
     let len = chans.len();
@@ -171,7 +174,7 @@ fn picture(chans: &Chans, layout: Layout, low: f64, high: f64, max: usize) -> Pi
     if channels.is_empty() {
         warning.push("the input has no channels".to_string());
     }
-    let width = len.min(max);
+    let width = chans.window().min(max);
     if width < len {
         warning.push(format!("{len} samples, the newest {width} shown (the widest texture)"));
     }
@@ -194,10 +197,12 @@ fn picture(chans: &Chans, layout: Layout, low: f64, high: f64, max: usize) -> Pi
         let t = if span.abs() > f64::EPSILON { (v - low) / span } else { 0.0 };
         t.clamp(-HALF_MAX, HALF_MAX) as f32
     };
-    // Sample `x` of the picture is sample `skip + x` of the channel.
-    let skip = len - width;
-    let sample =
-        |c: usize, x: usize| channels.get(c).and_then(|ch| ch.samples.get(skip + x)).map(|v| map(*v));
+    // Pixel `x` is sample `x + len - width` of the channel: the newest sample at the right edge,
+    // nothing left of the oldest.
+    let sample = |c: usize, x: usize| {
+        let i = (x + len).checked_sub(width)?;
+        channels.get(c).and_then(|ch| ch.samples.get(i)).map(|v| map(*v))
+    };
     let mut floats = Vec::with_capacity(width * rows * 4);
     for y in 0..rows {
         for x in 0..width {
@@ -427,6 +432,21 @@ mod tests {
             [0.0, 0.0, 0.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 1.0]
         );
         assert!(p.warning.is_none());
+    }
+
+    #[test]
+    fn a_window_not_yet_full_fills_in_from_the_right() {
+        let c = chans(&[("a", &[0.5, 1.0])]).with_window(4);
+        let p = picture(&c, Layout::Rows, 0.0, 1.0, 64);
+        assert_eq!((p.width, p.height), (4, 1));
+        assert_eq!(
+            floats(&p),
+            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0]
+        );
+        assert!(p.warning.is_none());
+        // A window wider than the widest texture keeps its newest samples.
+        let p = picture(&c, Layout::Rows, 0.0, 1.0, 3);
+        assert_eq!(floats(&p)[4..], [0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0, 1.0]);
     }
 
     #[test]

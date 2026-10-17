@@ -67,7 +67,11 @@ press play once the cause is fixed. The record of that lives in
 
 - **The node editor** (left) shows the network: nodes with live thumbnails, wired output to
   input. The colour of a node's header is its family, the colour of a wire the kind of data it
-  carries (see [Concepts](concepts.md)).
+  carries (see [Concepts](concepts.md)). A channel node shows its values (with a bar, when the
+  editor's "channel bars" are on); one whose channels hold many samples (`chan.trail`,
+  `chan.audio_in`, a spectrum) shows them as a small plot instead, the newest at the right and
+  the first channel's value at the top left. `chan.trail` and `chan.audio_in` get a taller body
+  for it, as tall as a picture's.
 - **Parameters** (top right): the selected node's name, kind, a one-line summary, the lock, its
   cook time, and its params. Params that belong together sit in folded sections, the rarely
   used ones under "more".
@@ -79,7 +83,8 @@ press play once the cause is fixed. The record of that lives in
   node with several outputs gets a button per output. For geometry and renders it can also look around in the
   scene ([Looking around in 3D](navigation.md)). Channels are drawn as curves with a value axis
   and, along the bottom, seconds before now (the last 240 frames of a channel with one value,
-  all samples of one with many; a spectrum or a picture's row is counted by sample instead). The
+  all samples of one with many; a spectrum or a picture's row is counted by sample instead). A
+  `chan.trail` that is still filling spans its full `length` and grows in from the right. The
   `scale` button switches between one shared scale for all channels, a lane per channel with
   its own scale, and auto, which takes lanes when a channel that moves would be flat on the
   shared scale (`bpm` next to levels of 0 to 1). The choice is kept with the project
