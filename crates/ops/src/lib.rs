@@ -1,9 +1,10 @@
 //! Built-in node types: `chan` and `table` nodes on the CPU, `tex` nodes on the GPU, the projector
-//! output and the Python script node.
+//! and DMX outputs and the Python script node.
 
 pub mod audio;
 pub mod chan;
 pub mod comp;
+pub mod dmx;
 pub mod freeview;
 pub mod geo;
 pub mod light;
@@ -28,6 +29,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     audio::register(types)?;
     chan::register(types)?;
     comp::register(types)?;
+    dmx::register(types)?;
     geo::register(types)?;
     light::register(types)?;
     mat::register(types)?;
@@ -38,6 +40,16 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     tex::register(types)?;
     view::register(types)?;
     Ok(())
+}
+
+/// Why param `name` of `node` does not count with its other params as they are (the param panel
+/// greys it and says why); `None` while it counts.
+pub fn inactive(
+    node: &penumbra_graph::NodeDef,
+    desc: &penumbra_graph::NodeDesc,
+    name: &str,
+) -> Option<&'static str> {
+    view::inactive(node, desc, name).or_else(|| dmx::inactive(node, desc, name))
 }
 
 /// All built-in node types.

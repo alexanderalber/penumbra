@@ -448,10 +448,8 @@ impl ParamPanel {
         let removable = self.removable;
         let mut remove_clicked = false;
         let mut label = RichText::new(self.label.as_deref().unwrap_or(&spec.name));
-        let inactive = input
-            .types
-            .desc(&node.kind)
-            .and_then(|desc| penumbra_ops::view::inactive(node, desc, &spec.name));
+        let inactive =
+            input.types.desc(&node.kind).and_then(|desc| penumbra_ops::inactive(node, desc, &spec.name));
         let replaced = inactive.is_some();
         if replaced {
             label = label.color(theme::TEXT_WEAK).italics();

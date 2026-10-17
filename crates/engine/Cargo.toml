@@ -12,6 +12,7 @@ penumbra-audio.workspace = true
 penumbra-camera.workspace = true
 penumbra-calib.workspace = true
 penumbra-core.workspace = true
+penumbra-dmx.workspace = true
 penumbra-graph.workspace = true
 penumbra-project.workspace = true
 penumbra-gpu.workspace = true

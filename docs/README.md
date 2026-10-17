@@ -10,6 +10,7 @@ explained here.
 - [The Helpers window](helpers.md): outputs, resolution, show-machine checks, persistent state,
   OSC, audio.
 - [Audio](audio.md): reacting to sound: levels, onsets, tempo, beat and bar.
+- [DMX](dmx.md): driving lights through the Enttec Open DMX USB, Art-Net, sACN or DDP.
 - [Camera](camera.md): a live camera or capture card with `tex.video_in`, calmed with `tex.denoise`, its motion with `tex.optical_flow`.
 - [Tracking](tracking.md): blobs with ids that stay, from a camera, with `tex.blob_track`.
 - [Looking around in 3D](navigation.md): the viewer's free view, steering a camera, the 3D mouse.

@@ -113,6 +113,7 @@ impl Rig {
         let camera = penumbra_camera::Hub::new();
         camera.feed(&penumbra_camera::Key::new("test", ""), camera_frame(126, 128, 128));
         cooker.provide(camera.clone());
+        cooker.provide(penumbra_dmx::Hub::new());
         cooker.set_base_dir(dir.map(Path::to_path_buf));
         Self {
             types,
@@ -495,8 +496,14 @@ fn every_builtin_cooks_without_warnings() {
     std::fs::write(dir.join("poster.psd"), layers::psd()).unwrap();
     let kinds: Vec<String> = types.kinds().map(str::to_string).collect();
     let passes_on = |kind: &str| {
-        matches!(kind, "chan.null" | "chan.select" | "chan.rename" | "table.null" | "chan.osc_out")
+        matches!(
+            kind,
+            "chan.null" | "chan.select" | "chan.rename" | "table.null" | "chan.osc_out" | "out.dmx"
+        )
     };
+    // out.dmx sends here rather than to an Open DMX USB that may be plugged in.
+    let dmx_rx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let dmx_host = dmx_rx.local_addr().unwrap().to_string();
     for (i, kind) in kinds.iter().enumerate() {
         let path = format!("/n{i}");
         let mut params: Vec<(&str, Value)> = Vec::new();
@@ -518,6 +525,7 @@ fn every_builtin_cooks_without_warnings() {
             "chan.osc_in" => params.push(("port", Value::Int(0))),
             "light.environment" => params.push(("size", Value::Int(64))),
             "chan.audio_in" => params.push(("device", "test".into())),
+            "out.dmx" => params.extend([("protocol", "art_net".into()), ("host", dmx_host.as_str().into())]),
             "tex.video_in" => params.push(("device", "test".into())),
             _ => {}
         }

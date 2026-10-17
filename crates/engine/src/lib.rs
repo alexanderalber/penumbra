@@ -13,6 +13,7 @@ pub mod commands;
 pub mod components;
 pub mod control;
 pub mod crash;
+pub mod dmx;
 pub mod engine;
 pub mod meter;
 pub mod navigation;
@@ -52,6 +53,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
     audio::register(&mut registry, engine);
+    dmx::register(&mut registry, engine);
     video_in::register(&mut registry, engine);
     blob_track::register(&mut registry, engine);
     projects::register(&mut registry, engine);
