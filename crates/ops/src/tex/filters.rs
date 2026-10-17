@@ -6,10 +6,38 @@
 use penumbra_core::{Curve, ParamSpec, Unit, Value};
 use penumbra_graph::{CookContext, CookError, DataKind, Density, NodeDef, NodeDesc};
 
-use super::{Builtin, EXTEND, MAX_SIDE, Size, Sizes, side};
+use super::{Builtin, MAX_SIDE, Size, Sizes, extend, side};
 
 /// Channels a filter can read one of.
 const CHANNEL: [&str; 5] = ["luminance", "red", "green", "blue", "alpha"];
+
+/// Channels of `tex.displace`'s map, in the order displace.wgsl numbers them.
+const PUSH: [&str; 6] = ["red", "green", "blue", "alpha", "luminance", "none"];
+
+/// One of `tex.displace`'s push channels, `default` chosen.
+fn push(name: &str, default: &str, doc: &str) -> ParamSpec {
+    let mut spec = ParamSpec::choice(name, &PUSH)
+        .doc(doc)
+        .choice_doc("red", "the map's red channel")
+        .choice_doc("green", "the map's green channel")
+        .choice_doc("blue", "the map's blue channel")
+        .choice_doc("alpha", "the map's opacity")
+        .choice_doc("luminance", "the map's brightness (Rec. 709)")
+        .choice_doc("none", "no push this way");
+    spec.default = Value::Text(default.to_string());
+    spec
+}
+
+/// A `channel` param ([`CHANNEL`]): which value of the picture a filter reads.
+fn channel(doc: &str) -> ParamSpec {
+    ParamSpec::choice("channel", &CHANNEL)
+        .doc(doc)
+        .choice_doc("luminance", "the brightness as the eye weighs it (Rec. 709)")
+        .choice_doc("red", "the red channel only")
+        .choice_doc("green", "the green channel only")
+        .choice_doc("blue", "the blue channel only")
+        .choice_doc("alpha", "the opacity")
+}
 
 fn filter(kind: &str, summary: &str) -> NodeDesc {
     NodeDesc::new(kind, summary).input("in", DataKind::Tex).output("out", DataKind::Tex)
@@ -24,18 +52,18 @@ fn own_size(cx: &CookContext<'_>, _input: (u32, u32)) -> Result<(u32, u32), Cook
     Ok((side(cx, "width")?, side(cx, "height")?))
 }
 
-fn size_params(desc: NodeDesc, more: bool) -> NodeDesc {
-    let w = ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels);
-    let h = ParamSpec::int("height", 1080).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels);
+/// `width`, `height` and `keep_size` of a node whose output size they set; `when` says when
+/// they count (empty: always).
+fn size_params(desc: NodeDesc, more: bool, when: &str) -> NodeDesc {
+    let doc = |side: &str| {
+        format!(
+            "{side} of the output in pixels{when}; res.optimize may change it to what the projectors need, unless keep_size is on"
+        )
+    };
+    let w = super::width_param().doc(&doc("Width"));
+    let h = super::height_param().doc(&doc("Height"));
     let desc = if more { desc.param(w.more()).param(h.more()) } else { desc.param(w).param(h) };
     desc.param(super::keep_size())
-}
-
-/// A choice whose default is not its first entry (the shader numbers the entries in order).
-fn choice_default(name: &str, choices: &[&str], default: &str) -> ParamSpec {
-    let mut spec = ParamSpec::choice(name, choices);
-    spec.default = Value::Text(default.to_string());
-    spec
 }
 
 fn float_of(def: &NodeDef, desc: &NodeDesc, name: &str) -> Option<f64> {
@@ -71,8 +99,8 @@ pub(super) fn builtins() -> Vec<Builtin> {
             },
             ..pass(
                 filter("tex.flip", "Mirror left to right or top to bottom; flop swaps the axes")
-                    .param(ParamSpec::bool("flip_x", false).doc("Left becomes right"))
-                    .param(ParamSpec::bool("flip_y", false).doc("Top becomes bottom"))
+                    .param(ParamSpec::bool("flip_x", false).doc("Mirror left to right: the left edge becomes the right"))
+                    .param(ParamSpec::bool("flip_y", false).doc("Mirror top to bottom: the top edge becomes the bottom"))
                     .param(
                         ParamSpec::bool("flop", false)
                             .doc("Swap the axes (transpose); the output is as wide as the input is high"),
@@ -85,22 +113,22 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 .param(
                     ParamSpec::vec4("red", [1.0, 0.0, 0.0, 0.0])
                         .range(-2.0, 2.0)
-                        .doc("Weights of r, g, b, a"),
+                        .doc("How much of the input's r, g, b and a makes the output's red"),
                 )
                 .param(
                     ParamSpec::vec4("green", [0.0, 1.0, 0.0, 0.0])
                         .range(-2.0, 2.0)
-                        .doc("Weights of r, g, b, a"),
+                        .doc("How much of the input's r, g, b and a makes the output's green"),
                 )
                 .param(
                     ParamSpec::vec4("blue", [0.0, 0.0, 1.0, 0.0])
                         .range(-2.0, 2.0)
-                        .doc("Weights of r, g, b, a"),
+                        .doc("How much of the input's r, g, b and a makes the output's blue"),
                 )
                 .param(
                     ParamSpec::vec4("alpha", [0.0, 0.0, 0.0, 1.0])
                         .range(-2.0, 2.0)
-                        .doc("Weights of r, g, b, a"),
+                        .doc("How much of the input's r, g, b and a makes the output's alpha"),
                 )
                 .param(
                     ParamSpec::vec4("bias", [0.0; 4])
@@ -112,7 +140,10 @@ pub(super) fn builtins() -> Vec<Builtin> {
         ),
         pass(
             filter("tex.chroma_key", "Make pixels near a key colour transparent (green or blue screen)")
-                .param(ParamSpec::color("key", [0.0, 1.0, 0.0, 1.0]).doc("The screen's colour"))
+                .param(
+                    ParamSpec::color("key", [0.0, 1.0, 0.0, 1.0])
+                        .doc("The screen's colour; only its hue and saturation count, so shadows on the screen key too"),
+                )
                 .param(
                     ParamSpec::float("tolerance", 0.1)
                         .range(0.0, 0.5)
@@ -121,7 +152,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 .param(
                     ParamSpec::float("softness", 0.08)
                         .range(0.0, 0.5)
-                        .doc("Width of the soft edge beyond it"),
+                        .doc("Width of the partly transparent edge beyond tolerance, in the same chroma distance"),
                 )
                 .param(
                     ParamSpec::float("spill", 0.5)
@@ -131,13 +162,19 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 .param(ParamSpec::bool("invert", false).doc("Keep the key colour, drop the rest"))
                 .param(
                     ParamSpec::choice("output", &["keyed", "matte"])
-                        .doc("The keyed image, or its alpha as white on black"),
+                        .doc("What the node puts out")
+                        .choice_doc("keyed", "the input with the key colour transparent and its spill removed")
+                        .choice_doc("matte", "the alpha it would get, as white (kept) on black (keyed out)"),
                 ),
             include_str!("chroma_key.wgsl"),
         ),
         pass(
             NodeDesc::new("tex.cross", "Mix of two inputs; resolution of a")
-                .param(ParamSpec::float("cross", 0.5).range(0.0, 1.0).doc("0 is all a, 1 all b"))
+                .param(
+                    ParamSpec::float("cross", 0.5)
+                        .range(0.0, 1.0)
+                        .doc("Mix between the inputs: 0 is all a, 1 all b, 0.5 half each"),
+                )
                 .input("a", DataKind::Tex)
                 .input("b", DataKind::Tex)
                 .output("out", DataKind::Tex),
@@ -145,25 +182,23 @@ pub(super) fn builtins() -> Vec<Builtin> {
         ),
         pass(
             NodeDesc::new("tex.displace", "Push each pixel of the input by the values of a map")
-                .param(
-                    ParamSpec::choice("horizontal", &["red", "green", "blue", "alpha", "luminance", "none"])
-                        .doc("Map channel that pushes left and right"),
-                )
-                .param(
-                    choice_default(
-                        "vertical",
-                        &["red", "green", "blue", "alpha", "luminance", "none"],
-                        "green",
-                    )
-                    .doc("Map channel that pushes up and down"),
-                )
+                .param(push(
+                    "horizontal",
+                    "red",
+                    "Channel of the map that shifts the picture across, by weight x per unit away from midpoint",
+                ))
+                .param(push(
+                    "vertical",
+                    "green",
+                    "Channel of the map that shifts the picture up and down, by weight y per unit away from midpoint",
+                ))
                 .param(
                     ParamSpec::vec2("weight", [0.1, 0.1])
                         .range(-1.0, 1.0)
                         .doc("Push for a map value 1 above the midpoint, in image sizes"),
                 )
                 .param(ParamSpec::float("midpoint", 0.5).range(0.0, 1.0).doc("Map value that does not push"))
-                .param(ParamSpec::choice("extend", &EXTEND).more().doc("Outside the input"))
+                .param(extend("hold").more())
                 .input("in", DataKind::Tex)
                 .input("map", DataKind::Tex)
                 .output("out", DataKind::Tex),
@@ -171,17 +206,24 @@ pub(super) fn builtins() -> Vec<Builtin> {
         ),
         pass(
             filter("tex.edge", "Edges of the luminance (Sobel)")
-                .param(ParamSpec::float("strength", 2.0).range(0.0, 10.0))
+                .param(
+                    ParamSpec::float("strength", 2.0)
+                        .range(0.0, 10.0)
+                        .doc("Gain on the edge: higher makes faint edges visible and strong ones solid (clipped at 1)"),
+                )
                 .param(
                     ParamSpec::float("distance", 1.0)
                         .range(0.5, 8.0)
                         .unit(Unit::Pixels)
-                        .doc("Distance of the neighbours compared"),
+                        .doc("Distance of the neighbours compared; larger finds broader, softer edges"),
                 )
                 .param(ParamSpec::color("color", [1.0; 4]).doc("Colour of the edges"))
                 .param(
                     ParamSpec::choice("mode", &["edges", "alpha", "over"])
-                        .doc("On black, on transparent, or over the input"),
+                        .doc("What the edges are drawn on")
+                        .choice_doc("edges", "on opaque black")
+                        .choice_doc("alpha", "on transparent, to lay over something else")
+                        .choice_doc("over", "over the input"),
                 ),
             include_str!("edge.wgsl"),
         ),
@@ -193,11 +235,15 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 size_params(
                     filter("tex.fit", "The input fitted into a frame of its own size, aspect kept or not"),
                     false,
+                    "",
                 )
                 .param(
-                    ParamSpec::choice("fit", &["fit", "fill", "stretch", "native"]).doc(
-                        "Whole and as large as fits, covering and cropped, stretched, or pixel for pixel",
-                    ),
+                    ParamSpec::choice("fit", &["fit", "fill", "stretch", "native"])
+                        .doc("How the input sits in the frame")
+                        .choice_doc("fit", "whole and as large as fits, aspect kept; bars where it does not fill")
+                        .choice_doc("fill", "covering the frame, aspect kept; what sticks out is cropped")
+                        .choice_doc("stretch", "covering the frame, distorted to its aspect")
+                        .choice_doc("native", "pixel for pixel, unscaled"),
                 )
                 .param(
                     ParamSpec::vec2("justify", [0.5, 0.5])
@@ -206,7 +252,11 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 )
                 .param(
                     ParamSpec::choice("extend", &["zero", "hold", "repeat", "mirror"])
-                        .doc("Outside the image"),
+                        .doc("What fills the frame where the input does not reach (the bars of fit or native)")
+                        .choice_doc("zero", "transparent black")
+                        .choice_doc("hold", "the input's edge pixels continue outwards")
+                        .choice_doc("repeat", "the input again, tiled")
+                        .choice_doc("mirror", "the input again, mirrored, so the copies meet at the edges"),
                 ),
                 include_str!("fit.wgsl"),
             )
@@ -222,7 +272,10 @@ pub(super) fn builtins() -> Vec<Builtin> {
                     ParamSpec::float("k2", 0.0).range(-1.0, 1.0).doc("Fourth-order term, for the far edges"),
                 )
                 .param(
-                    ParamSpec::float("scale", 1.0).range(0.25, 4.0).curve(Curve::Log).doc("Zoom afterwards"),
+                    ParamSpec::float("scale", 1.0)
+                        .range(0.25, 4.0)
+                        .curve(Curve::Log)
+                        .doc("Zoom after the distortion: above 1 enlarges, to hide the edges barrel distortion pulls in"),
                 )
                 .param(
                     ParamSpec::vec2("center", [0.5, 0.5])
@@ -230,18 +283,32 @@ pub(super) fn builtins() -> Vec<Builtin> {
                         .more()
                         .doc("Optical centre; 0, 0 is the top left"),
                 )
-                .param(choice_default("extend", &EXTEND, "zero").doc("Outside the input")),
+                .param(extend("zero")),
             include_str!("lens_distort.wgsl"),
         ),
         pass(
             filter("tex.limit", "Keep values within a range: clamp, wrap around or mirror")
-                .param(ParamSpec::float("min", 0.0).range(-1.0, 2.0))
-                .param(ParamSpec::float("max", 1.0).range(-1.0, 2.0))
+                .param(
+                    ParamSpec::float("min", 0.0)
+                        .range(-1.0, 2.0)
+                        .doc("Lowest value kept, per channel of the straight colour"),
+                )
+                .param(
+                    ParamSpec::float("max", 1.0)
+                        .range(-1.0, 2.0)
+                        .doc("Highest value kept; at or below min everything becomes min"),
+                )
                 .param(
                     ParamSpec::choice("mode", &["clamp", "wrap", "mirror"])
-                        .doc("Clamp, start again from min (sawtooth), or turn back (triangle)"),
+                        .doc("What happens to values outside min to max")
+                        .choice_doc("clamp", "they stop at min or max")
+                        .choice_doc("wrap", "they start again from min: a ramp becomes a sawtooth")
+                        .choice_doc("mirror", "they turn back: a ramp becomes a triangle wave"),
                 )
-                .param(ParamSpec::bool("alpha", false).doc("Limit alpha too")),
+                .param(
+                    ParamSpec::bool("alpha", false)
+                        .doc("Limit alpha the same way; off keeps the input's alpha"),
+                ),
             include_str!("limit.wgsl"),
         ),
         Builtin {
@@ -251,7 +318,9 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 NodeDesc::new("tex.lookup", "Colours from a lookup texture, indexed by the input's values")
                     .param(
                         ParamSpec::choice("index", &["luminance", "channels"])
-                            .doc("One colour per pixel by luminance, or each channel through its own curve"),
+                            .doc("Which input values pick the place in the lookup row (0 its left end, 1 its right)")
+                            .choice_doc("luminance", "the brightness picks one colour of the row (a gradient map)")
+                            .choice_doc("channels", "red, green and blue each through the row's own channel (a curve per channel)"),
                     )
                     .param(
                         ParamSpec::float("row", 0.5)
@@ -270,8 +339,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 "Where the matte is white a shows, where it is black b; resolution of a",
             )
             .param(
-                ParamSpec::choice("channel", &CHANNEL)
-                    .doc("Channel of the matte that chooses; colour is read on black (premultiplied)"),
+                channel("Channel of the matte that chooses; colour is read on black (premultiplied)"),
             )
             .param(ParamSpec::bool("invert", false).doc("Black shows a, white b"))
             .input("a", DataKind::Tex)
@@ -282,10 +350,17 @@ pub(super) fn builtins() -> Vec<Builtin> {
         ),
         pass(
             filter("tex.monochrome", "Grey from luminance, average, maximum or one channel")
-                .param(ParamSpec::choice(
-                    "method",
-                    &["luminance", "average", "maximum", "red", "green", "blue", "alpha"],
-                ))
+                .param(
+                    ParamSpec::choice("method", &["luminance", "average", "maximum", "red", "green", "blue", "alpha"])
+                        .doc("How the grey is made from the colour")
+                        .choice_doc("luminance", "brightness as the eye weighs it (Rec. 709): green counts most, blue least")
+                        .choice_doc("average", "red, green and blue equally")
+                        .choice_doc("maximum", "the brightest of red, green and blue")
+                        .choice_doc("red", "the red channel only")
+                        .choice_doc("green", "the green channel only")
+                        .choice_doc("blue", "the blue channel only")
+                        .choice_doc("alpha", "the opacity, as grey"),
+                )
                 .param(ParamSpec::bool("opaque", false).doc("Alpha 1 instead of the input's")),
             include_str!("monochrome.wgsl"),
         ),
@@ -297,17 +372,21 @@ pub(super) fn builtins() -> Vec<Builtin> {
                         .unit(Unit::Degrees)
                         .doc("Added to the hue: 120 turns red into green; any angle, it wraps"),
                 )
-                .param(ParamSpec::float("saturation", 1.0).range(0.0, 2.0).doc("Times the saturation"))
+                .param(
+                    ParamSpec::float("saturation", 1.0)
+                        .range(0.0, 2.0)
+                        .doc("Multiplies the saturation: 0 is grey, 1 unchanged, 2 more vivid (clipped at full)"),
+                )
                 .param(
                     ParamSpec::float("value", 1.0)
                         .range(0.0, 2.0)
-                        .doc("Times the value (the brightest channel)"),
+                        .doc("Multiplies the value (the brightest channel): 0 is black, 2 twice as bright"),
                 ),
             include_str!("hsv.wgsl"),
         ),
         pass(
             NodeDesc::new("tex.remap", "Fetch the input where a map's red and green point")
-                .param(ParamSpec::choice("extend", &EXTEND).doc("Outside the input"))
+                .param(extend("hold").doc("What shows where the map points outside 0 to 1"))
                 .input("in", DataKind::Tex)
                 .input("map", DataKind::Tex)
                 .output("out", DataKind::Tex),
@@ -347,25 +426,37 @@ pub(super) fn builtins() -> Vec<Builtin> {
                     )
                     .param(
                         ParamSpec::choice("mode", &["multiply", "custom"])
-                            .doc("A multiple of the input's size, or width and height"),
+                            .doc("How the output size is set")
+                            .choice_doc("multiply", "the input's size times multiply")
+                            .choice_doc("custom", "width and height (under more), whatever the input"),
                     )
                     .param(
                         ParamSpec::float("multiply", 0.5)
                             .clamp(0.001, 16.0)
                             .range(0.125, 4.0)
                             .curve(Curve::Log)
-                            .doc("Of the input's width and height"),
+                            .doc("Factor on the input's width and height (mode multiply): 0.5 halves both"),
                     ),
                     true,
+                    " (mode custom)",
                 ),
                 include_str!("resolution.wgsl"),
             )
         },
         pass(
             filter("tex.slope", "How steeply a channel rises: left to right in red, top to bottom in green")
-                .param(ParamSpec::choice("channel", &CHANNEL))
-                .param(ParamSpec::float("strength", 4.0).range(0.0, 50.0).curve(Curve::Power(2.0)))
-                .param(ParamSpec::float("offset", 0.5).range(0.0, 1.0).doc("Value of a flat area")),
+                .param(channel("Channel whose slope is measured"))
+                .param(
+                    ParamSpec::float("strength", 4.0)
+                        .range(0.0, 50.0)
+                        .curve(Curve::Power(2.0))
+                        .doc("Gain on the slope (value change per pixel); higher makes gentle slopes visible"),
+                )
+                .param(
+                    ParamSpec::float("offset", 0.5)
+                        .range(0.0, 1.0)
+                        .doc("Value of a flat area; rising slopes lie above it, falling below. 0.5 suits tex.displace's midpoint"),
+                ),
             include_str!("slope.wgsl"),
         ),
         pass(
@@ -373,15 +464,21 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 "tex.threshold",
                 "White where a channel is above a threshold, black (or transparent) elsewhere",
             )
-            .param(ParamSpec::float("threshold", 0.5).range(0.0, 1.0))
+            .param(
+                ParamSpec::float("threshold", 0.5)
+                    .range(0.0, 1.0)
+                    .doc("Value of the channel from which a pixel passes (on straight colour)"),
+            )
             .param(
                 ParamSpec::float("soft", 0.0).range(0.0, 0.5).doc("Width of a soft ramp above the threshold"),
             )
-            .param(ParamSpec::choice("channel", &CHANNEL))
-            .param(ParamSpec::bool("invert", false))
+            .param(channel("Channel compared with the threshold"))
+            .param(ParamSpec::bool("invert", false).doc("Pass what lies below the threshold instead"))
             .param(
                 ParamSpec::choice("output", &["mask", "alpha"])
-                    .doc("White on black, or the input where it passes and transparent elsewhere"),
+                    .doc("What the node puts out")
+                    .choice_doc("mask", "white where a pixel passes, black elsewhere")
+                    .choice_doc("alpha", "the input where it passes, transparent elsewhere"),
             ),
             include_str!("threshold.wgsl"),
         ),
@@ -396,10 +493,17 @@ pub(super) fn builtins() -> Vec<Builtin> {
             ..pass(
                 filter("tex.tile", "The input repeated across and down, at its own resolution")
                     .param(
-                        ParamSpec::vec2("repeat", [2.0, 2.0]).range(1.0, 16.0).doc("Copies across and down"),
+                        ParamSpec::vec2("repeat", [2.0, 2.0])
+                            .range(1.0, 16.0)
+                            .doc("Copies across and down, each shrunk to fit; fractions show part of a copy"),
                     )
                     .param(ParamSpec::bool("mirror", false).doc("Every other copy mirrored, so edges meet"))
-                    .param(ParamSpec::vec2("offset", [0.0, 0.0]).range(-1.0, 1.0).more().doc("In tiles")),
+                    .param(
+                        ParamSpec::vec2("offset", [0.0, 0.0])
+                            .range(-1.0, 1.0)
+                            .more()
+                            .doc("Shifts the pattern, in tiles: 0.5 moves it by half a copy"),
+                    ),
                 include_str!("tile.wgsl"),
             )
         },

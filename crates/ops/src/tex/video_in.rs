@@ -37,10 +37,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 "Size, rate and pixel format, each optional, e.g. `1920x1080@60 NV12` or `@30`; empty: the \
                  largest, fastest the camera offers",
             ))
-            .param(ParamSpec::choice("range", &["auto", "limited", "full"]).more().doc(
-                "Whether black is 16 or 0 in the camera's Y'CbCr; auto believes the camera (limited when it \
-                 does not say). Raised blacks mean the camera sends full range while limited is assumed",
-            ))
+            .param(
+                ParamSpec::choice("range", &["auto", "limited", "full"])
+                    .more()
+                    .doc("Whether black is 16 or 0 in the camera's Y'CbCr. Raised blacks mean the camera sends full range while limited is assumed")
+                    .choice_doc("auto", "believe the camera (limited when it does not say)")
+                    .choice_doc("limited", "black is 16, white 235 (video range)")
+                    .choice_doc("full", "black is 0, white 255"),
+            )
             .output("out", DataKind::Tex)
             .output("info", DataKind::Chan)
             .describe_output("out", "The camera's picture")

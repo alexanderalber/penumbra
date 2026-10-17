@@ -78,12 +78,22 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .unit(Unit::Pixels)
                     .doc("The lines' width in pixels of the render"),
             )
-            .param(ParamSpec::choice("edges", &["polygons", "triangles"]).doc(
-                "polygons: leave out edges inside the file's polygons (OBJ faces), or inside flat faces where it has only triangles (a quad's diagonal); triangles: every edge",
-            ))
-            .param(ParamSpec::choice("faces", &["open", "filled", "hidden"]).doc(
-                "open: nothing, the lines behind show through; filled: the fill colour; hidden: only the lines filled faces would leave, the faces see-through",
-            ))
+            .param(
+                ParamSpec::choice("edges", &["polygons", "triangles"])
+                    .doc("Which edges get a line")
+                    .choice_doc(
+                        "polygons",
+                        "leave out edges inside the file's polygons (OBJ faces), or inside flat faces where it has only triangles (a quad's diagonal)",
+                    )
+                    .choice_doc("triangles", "every edge"),
+            )
+            .param(
+                ParamSpec::choice("faces", &["open", "filled", "hidden"])
+                    .doc("What the faces between the lines show")
+                    .choice_doc("open", "nothing: the lines behind show through")
+                    .choice_doc("filled", "the fill colour, hiding what lies behind")
+                    .choice_doc("hidden", "only the lines filled faces would leave, the faces see-through"),
+            )
             .param(
                 ParamSpec::color("fill", [0.0, 0.0, 0.0, 1.0])
                     .doc("The faces' colour where `faces` is filled: linear RGBA, straight alpha"),

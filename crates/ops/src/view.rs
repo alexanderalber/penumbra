@@ -217,18 +217,25 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         "A camera: where it is, what it looks at, its lens; for tex.render's camera input and light.projector",
     )
     .param(
-        ParamSpec::vec3("position", [2.4, -3.2, 1.6]).range(-10.0, 10.0).doc("Where the camera is (z up)"),
+        ParamSpec::vec3("position", [2.4, -3.2, 1.6]).range(-10.0, 10.0).doc("Where the camera is, in metres (z up)"),
     )
-    .param(ParamSpec::vec3("target", [0.0; 3]).range(-10.0, 10.0).doc("What it looks at"))
-    .param(ParamSpec::choice("projection", &PROJECTIONS).doc(
-        "perspective: rays from one point, farther things smaller (fov); orthographic: parallel rays, sizes kept at any distance (size). A calibration is always perspective",
-    ))
+    .param(
+        ParamSpec::vec3("target", [0.0; 3])
+            .range(-10.0, 10.0)
+            .doc("The point it looks at, in metres; it stays in the picture's centre (unless shift moves it)"),
+    )
+    .param(
+        ParamSpec::choice("projection", &PROJECTIONS)
+            .doc("How the scene is flattened into the picture; a calibration is always perspective")
+            .choice_doc("perspective", "rays from one point, farther things smaller (fov sets the angle)")
+            .choice_doc("orthographic", "parallel rays, sizes kept at any distance (size sets the height seen)"),
+    )
     .param(
         ParamSpec::float("fov", 40.0)
             .clamp(1.0, 170.0)
             .range(5.0, 120.0)
             .unit(Unit::Degrees)
-            .doc("Vertical field of view (perspective)"),
+            .doc("Vertical field of view (perspective): smaller zooms in, larger sees more"),
     )
     .param(
         ParamSpec::float("size", 2.0)
@@ -259,14 +266,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .clamp(1e-4, 1e4)
             .curve(Curve::Log)
             .group(more)
-            .doc("Nearest distance drawn (orthographic too: nothing behind the camera is drawn)"),
+            .doc("Nearest distance drawn, in metres from the camera; anything closer is cut away (orthographic too: nothing behind the camera is drawn)"),
     )
     .param(
         ParamSpec::float("far", 100.0)
             .clamp(1e-3, 1e6)
             .curve(Curve::Log)
             .group(more)
-            .doc("Farthest distance drawn"),
+            .doc("Farthest distance drawn, in metres from the camera; anything beyond is left out"),
     )
     .output("out", DataKind::View);
     types.register(FnNodeType::new(desc, || Box::new(CameraNode) as Box<dyn Operator>))

@@ -133,19 +133,23 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 }
 
 fn position(default: [f64; 3]) -> ParamSpec {
-    ParamSpec::vec3("position", default).range(-10.0, 10.0).doc("Where the light is (z up)")
+    ParamSpec::vec3("position", default).range(-10.0, 10.0).doc("Where the light is, in metres (z up)")
 }
 
 fn target() -> ParamSpec {
-    ParamSpec::vec3("target", [0.0; 3]).range(-10.0, 10.0).doc("What it shines at")
+    ParamSpec::vec3("target", [0.0; 3]).range(-10.0, 10.0).doc("The point it shines at, in metres (z up)")
 }
 
 fn color() -> ParamSpec {
-    ParamSpec::color("color", [1.0; 4]).doc("Linear; alpha is unused")
+    ParamSpec::color("color", [1.0; 4])
+        .doc("Colour of the light, linear; intensity scales it, alpha is unused")
 }
 
 fn intensity(default: f64) -> ParamSpec {
-    ParamSpec::float("intensity", default).clamp(0.0, 1e4).range(0.0, 4.0).doc("Times the colour")
+    ParamSpec::float("intensity", default)
+        .clamp(0.0, 1e4)
+        .range(0.0, 4.0)
+        .doc("Brightness: multiplies the colour; 0 is off, 2 twice as bright")
 }
 
 fn shadows(default: bool) -> ParamSpec {
@@ -163,7 +167,12 @@ fn bias() -> ParamSpec {
 fn falloff() -> ParamSpec {
     ParamSpec::choice("falloff", &FALLOFF)
         .more()
-        .doc("none: as bright at any distance; inverse square: as bright as the colour at 1 m, fading with distance")
+        .doc("How the light weakens with distance from it")
+        .choice_doc("none", "as bright at any distance")
+        .choice_doc(
+            "inverse square",
+            "as bright as colour and intensity say at 1 m, a quarter of that at 2 m",
+        )
 }
 
 fn vec3(cx: &CookContext<'_>, name: &str) -> Result<[f64; 3], CookError> {

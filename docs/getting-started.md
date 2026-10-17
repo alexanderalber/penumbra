@@ -99,7 +99,7 @@ change the share (also kept with the project).
    a connected input away to pick its wire up; drop it on nothing to disconnect.
 4. **Change params:** select the level node and drag `contrast`, or type a number into the
    field beside the slider. One drag is one undo step. A param away from its default gets a
-   reset button.
+   reset button. The circled "i" before a param's name explains it.
 5. **Make it move:** add `chan` > `lfo`, then drag a wire from its output onto the level's
    `brightness` row. The param is now bound: it follows the channel and shows the live value
    (see [bindings](concepts.md#bindings)).

@@ -15,8 +15,8 @@ use penumbra_graph::{
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new("chan.constant", "Fixed numbers: one channel per row of name and value")
-            .param(ParamSpec::float("value0", 0.0).range(-1.0, 1.0))
-            .param(ParamSpec::text("name0", "chan0").doc("Name of the channel"))
+            .param(constant_value("value0"))
+            .param(ParamSpec::text("name0", "chan0").doc(CONSTANT_NAME_DOC))
             .param(
                 ParamSpec::int("rows", 1)
                     .clamp(1.0, CONSTANT_MAX_ROWS as f64)
@@ -31,16 +31,34 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         types,
         NodeDesc::new("chan.lfo", "Low-frequency oscillator: offset + amplitude * wave(time * rate + phase)")
             .param(
-                ParamSpec::float("rate", 1.0)
-                    .range(0.01, 100.0)
-                    .curve(Curve::Log)
-                    .unit(Unit::Hertz)
-                    .doc("Cycles per second"),
+                ParamSpec::float("rate", 1.0).range(0.01, 100.0).curve(Curve::Log).unit(Unit::Hertz).doc(
+                    "Full waves per second: 1 Hz is one up and down each second, 0.1 one every ten seconds",
+                ),
             )
-            .param(ParamSpec::choice("shape", &["sine", "triangle", "square", "saw"]).doc("Wave form"))
-            .param(ParamSpec::float("amplitude", 1.0).range(0.0, 2.0))
-            .param(ParamSpec::float("offset", 0.0).range(-1.0, 1.0))
-            .param(ParamSpec::float("phase", 0.0).range(0.0, 1.0).more().doc("In cycles"))
+            .param(
+                ParamSpec::choice("shape", &["sine", "triangle", "square", "saw"])
+                    .doc("The form of one wave, from -1 to 1 before amplitude and offset")
+                    .choice_doc("sine", "smoothly up and down, slow at the turns")
+                    .choice_doc("triangle", "straight up and straight down at an even speed")
+                    .choice_doc(
+                        "square",
+                        "1 for the first half of each wave, -1 for the second, jumping between",
+                    )
+                    .choice_doc("saw", "rising evenly from -1 to 1, then jumping back"),
+            )
+            .param(
+                ParamSpec::float("amplitude", 1.0)
+                    .range(0.0, 2.0)
+                    .doc("Half the swing: the value goes from offset - amplitude to offset + amplitude"),
+            )
+            .param(
+                ParamSpec::float("offset", 0.0)
+                    .range(-1.0, 1.0)
+                    .doc("The centre the wave swings around; 0.5 with amplitude 0.5 gives 0 to 1"),
+            )
+            .param(ParamSpec::float("phase", 0.0).range(0.0, 1.0).more().doc(
+                "Shift along the wave, in waves: 0.25 is a quarter wave ahead. Sets lfos of one rate apart",
+            ))
             .time_dependent(),
         |cx| {
             let cycles = cx.time().seconds() * cx.float("rate")? + cx.float("phase")?;
@@ -71,17 +89,34 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(0.01, 50.0)
                 .curve(Curve::Log)
                 .unit(Unit::Hertz)
-                .doc("Bumps per second"),
+                .doc("How fast it wanders: about this many rises and falls per second"),
         )
-        .param(ParamSpec::float("amplitude", 1.0).range(0.0, 2.0))
-        .param(ParamSpec::float("offset", 0.0).range(-1.0, 1.0))
-        .param(ParamSpec::int("seed", 0).range(0.0, 100.0))
-        .param(ParamSpec::int("octaves", 2).clamp(1.0, 8.0).more())
+        .param(
+            ParamSpec::float("amplitude", 1.0)
+                .range(0.0, 2.0)
+                .doc("Half the swing: the value stays within about offset - amplitude to offset + amplitude"),
+        )
+        .param(
+            ParamSpec::float("offset", 0.0)
+                .range(-1.0, 1.0)
+                .doc("The centre the noise wanders around"),
+        )
+        .param(
+            ParamSpec::int("seed", 0)
+                .range(0.0, 100.0)
+                .doc("Picks another motion of the same character; one seed always gives the same motion"),
+        )
+        .param(
+            ParamSpec::int("octaves", 2)
+                .clamp(1.0, 8.0)
+                .more()
+                .doc("Layers of ever faster wiggle added up, each twice the frequency of the one before; 1 is smoothest"),
+        )
         .param(
             ParamSpec::float("roughness", 0.5)
                 .range(0.0, 1.0)
                 .more()
-                .doc("Amplitude from one octave to the next"),
+                .doc("Strength of each octave relative to the one before; higher is more jittery"),
         )
         .time_dependent(),
         |cx| {
@@ -102,9 +137,22 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 "op",
                 &["add", "subtract", "multiply", "divide", "min", "max", "power", "modulo", "floor"],
             )
-            .doc("modulo: a wrapped into 0 to b; floor: a down to a multiple of b (b = 1: whole numbers)"),
+            .doc("What is done with a and b, sample by sample")
+            .choice_doc("add", "a + b")
+            .choice_doc("subtract", "a - b")
+            .choice_doc("multiply", "a times b: b scales a")
+            .choice_doc("divide", "a divided by b")
+            .choice_doc("min", "the smaller of a and b: b is a ceiling")
+            .choice_doc("max", "the larger of a and b: b is a floor")
+            .choice_doc("power", "a to the power b")
+            .choice_doc("modulo", "a wrapped into 0 to b (b = 0 leaves a)")
+            .choice_doc("floor", "a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a)"),
         )
-        .param(ParamSpec::float("b", 0.0).range(-1.0, 1.0).doc("Used while input b is unconnected"))
+        .param(
+            ParamSpec::float("b", 0.0)
+                .range(-1.0, 1.0)
+                .doc("The b side as a number, used while input b is unconnected"),
+        )
         .input("a", DataKind::Chan)
         .input("b", DataKind::Chan)
         .output("out", DataKind::Chan),
@@ -142,10 +190,24 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .stateful()
         .param(
             ParamSpec::choice("limit", &["none", "loop", "clamp"])
-                .doc("Keep the sum within min and max: start again from min (loop) or stop there (clamp)"),
+                .doc("Whether the sum is kept within min and max")
+                .choice_doc("none", "it grows without end")
+                .choice_doc(
+                    "loop",
+                    "past max it starts again from min (and the other way round): an angle, a scroll",
+                )
+                .choice_doc("clamp", "it stops at min and max"),
         )
-        .param(ParamSpec::float("min", 0.0).range(-10.0, 10.0))
-        .param(ParamSpec::float("max", 1.0).range(-10.0, 10.0))
+        .param(
+            ParamSpec::float("min", 0.0)
+                .range(-10.0, 10.0)
+                .doc("Lower end of the range the sum stays in (limit loop or clamp)"),
+        )
+        .param(
+            ParamSpec::float("max", 1.0)
+                .range(-10.0, 10.0)
+                .doc("Upper end of the range the sum stays in (limit loop or clamp)"),
+        )
         .param(ParamSpec::bool("reset", false).doc("Hold the sum at 0 (or min) while on"))
         .input("in", DataKind::Chan)
         .output("out", DataKind::Chan)
@@ -195,6 +257,15 @@ pub const CONSTANT: &str = "chan.constant";
 /// Most rows of a `chan.constant`.
 pub const CONSTANT_MAX_ROWS: usize = 64;
 
+const CONSTANT_NAME_DOC: &str = "Name of the channel this row makes, as other nodes and bindings see it";
+
+/// The value of a `chan.constant` row.
+fn constant_value(name: &str) -> ParamSpec {
+    ParamSpec::float(name, 0.0)
+        .range(-1.0, 1.0)
+        .doc("The channel's value; the slider spans -1 to 1, any number can be typed")
+}
+
 /// The params of row `k` (from 0) of a `chan.constant`: `name0` and `value0`, `name1` and
 /// `value1`, ... Row 0's are the type's own; the others are declared by the node
 /// ([`NodeDesc::extra_params`]).
@@ -205,10 +276,7 @@ pub fn constant_row(k: usize) -> (String, String) {
 /// The specs of row `k` of a `chan.constant`: the channel named `chan<k>` by default.
 pub fn constant_row_specs(k: usize) -> [ParamSpec; 2] {
     let (name, value) = constant_row(k);
-    [
-        ParamSpec::text(&name, &format!("chan{k}")).doc("Name of the channel"),
-        ParamSpec::float(&value, 0.0).range(-1.0, 1.0),
-    ]
+    [ParamSpec::text(&name, &format!("chan{k}")).doc(CONSTANT_NAME_DOC), constant_value(&value)]
 }
 
 /// `chan.constant`: one channel per row. `rows` is the count the node last cooked with (the
@@ -453,7 +521,7 @@ impl Operator for Rename {
 
 /// The channel name every generator declares last.
 fn name_param() -> ParamSpec {
-    ParamSpec::text("name", "value").doc("Name of the channel")
+    ParamSpec::text("name", "value").doc("Name of the channel it makes, as bindings and other nodes see it")
 }
 
 fn out(chans: Chans) -> Result<Cooked, CookError> {

@@ -16,17 +16,35 @@ const EXTENSIONS: &[&str] = &["csv", "tsv", "tab", "txt"];
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new("table.text", "A table typed in: one row per line, cells by tab or comma")
-            .param(ParamSpec::text("text", "").multiline().doc("The rows"))
-            .param(ParamSpec::choice("format", &Format::NAMES).doc("lines: one cell per row"))
+            .param(
+                ParamSpec::text("text", "")
+                    .multiline()
+                    .doc("The table as text: one row per line, cells split as format says"),
+            )
+            .param(
+                ParamSpec::choice("format", &Format::NAMES)
+                    .doc("How a line is split into cells")
+                    .choice_doc("lines", "not at all: one cell per row")
+                    .choice_doc("tsv", "at tabs")
+                    .choice_doc("csv", "at commas; \"a, b\" in quotes is one cell, \"\" a quote"),
+            )
             .output("out", DataKind::Table),
         || Box::new(Text) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("table.file", "A text, TSV or CSV file; reloads when the file changes")
-            .param(ParamSpec::file("file", EXTENSIONS).doc("Relative to the project directory"))
+            .param(
+                ParamSpec::file("file", EXTENSIONS).doc(
+                    "The text file, relative to the project directory; saving it again reloads the node",
+                ),
+            )
             .param(
                 ParamSpec::choice("format", &["auto", "lines", "tsv", "csv"])
-                    .doc("auto: by extension (csv, tsv, else lines)"),
+                    .doc("How a line of the file is split into cells")
+                    .choice_doc("auto", "by extension: csv, tsv (or tab), else lines")
+                    .choice_doc("lines", "not at all: one cell per row")
+                    .choice_doc("tsv", "at tabs")
+                    .choice_doc("csv", "at commas; \"a, b\" in quotes is one cell, \"\" a quote"),
             )
             .output("out", DataKind::Table),
         || Box::new(File::default()) as Box<dyn Operator>,

@@ -4,7 +4,7 @@
 //! stay bare, removal is an X. The path data is the website's where it has the icon (`play`,
 //! `pause`, `remove`, `reset`), so both read as one family; `undo`, `redo` and `take_over` are
 //! drawn here in the same style, `bind` is Feather's `link` (MIT), which the website's set
-//! lacks.
+//! lacks, and `info` is Feather's `info` (MIT), a circled "i".
 //!
 //! The painter understands the SVG path subset the icons use (`M L H V Z A`, absolute and
 //! relative); anything else ends the path, it never panics.
@@ -22,10 +22,11 @@ pub enum Icon {
     TakeOver,
     Bind,
     Folder,
+    Info,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 9] = [
+    pub const ALL: [Icon; 10] = [
         Icon::Play,
         Icon::Pause,
         Icon::Remove,
@@ -35,6 +36,7 @@ impl Icon {
         Icon::TakeOver,
         Icon::Bind,
         Icon::Folder,
+        Icon::Info,
     ];
 
     /// The `d` attributes of the icon's paths.
@@ -56,6 +58,8 @@ impl Icon {
             ],
             // A folder with a tab: the project menu.
             Icon::Folder => &["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
+            // A circled "i": what a param means.
+            Icon::Info => &["M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0", "M12 16v-4", "M12 8h.01"],
         }
     }
 }
@@ -122,6 +126,29 @@ pub fn small_button(ui: &mut Ui, icon: Icon) -> Response {
         paint(ui.painter(), rect.shrink(2.0), icon, color);
     }
     r
+}
+
+/// The circled "i" that opens a param's help: smaller than [`small_button`] and weak, so a
+/// column of them beside the param names stays quiet; strong when hovered, in the accent colour
+/// while its help is `open`. Clickable even in a disabled `ui` (the param panel while Claude
+/// edits): reading the help changes nothing, so `clicked` comes from the pointer then.
+pub fn info_button(ui: &mut Ui, open: bool) -> (Response, bool) {
+    let side = SIZE - 1.0;
+    let (rect, r) = ui.allocate_exact_size(vec2(side, side), egui::Sense::click());
+    let hovered = ui.rect_contains_pointer(rect);
+    let clicked =
+        if r.enabled() { r.clicked() } else { hovered && ui.input(|i| i.pointer.primary_clicked()) };
+    if ui.is_rect_visible(rect) {
+        let color = if open {
+            crate::theme::ACCENT
+        } else if hovered {
+            ui.visuals().strong_text_color()
+        } else {
+            crate::theme::TEXT_WEAK.gamma_multiply(0.8)
+        };
+        paint(ui.painter(), rect.shrink(0.5), Icon::Info, color);
+    }
+    (r, clicked)
 }
 
 /// The path as polylines in icon units, with whether each is closed.

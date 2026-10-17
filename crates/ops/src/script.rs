@@ -52,10 +52,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::file("file", &["py"])
                 .doc("A .py file used instead of `code`, relative to the project; reloads when saved"),
         )
-        .param(ParamSpec::choice("cook", &COOK_MODES).doc(
-            "When cook(cx) runs: auto = every frame if the code mentions `time` or `frame`, else when \
-             an input or a param changes",
-        ))
+        .param(
+            ParamSpec::choice("cook", &COOK_MODES)
+                .doc("When cook(cx) runs")
+                .choice_doc("auto", "every frame if the code mentions `time` or `frame`, else as on change")
+                .choice_doc("every frame", "every frame, for scripts that keep changing on their own")
+                .choice_doc("on change", "only when an input or a param changes"),
+        )
         .param(
             ParamSpec::float("timeout", 0.1)
                 .clamp(0.001, 10.0)

@@ -17,7 +17,11 @@ const EXTENSIONS: &[&str] = &[
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new("tex.image", "An image file (8-bit, 16-bit or float); reloads when the file changes")
-            .param(ParamSpec::file("file", EXTENSIONS).doc("Relative to the project directory"))
+            .param(
+                ParamSpec::file("file", EXTENSIONS).doc(
+                    "The picture file, relative to the project directory; saving it again reloads the node",
+                ),
+            )
             .output("out", DataKind::Tex),
         || Box::new(Image::default()) as Box<dyn Operator>,
     ))

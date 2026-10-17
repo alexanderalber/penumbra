@@ -331,11 +331,27 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     .describe_input("lights", "Without lights, phong materials are black")
     .describe_input("camera", "A view.camera; needed");
     let desc = desc
-        .param(ParamSpec::choice("surface", &SURFACES).doc(
-            "auto: the texture input where connected, else the file's materials; parts: a colour per part id",
-        ))
-        .param(ParamSpec::color("background", [0.0; 4]).doc("Where no geometry is drawn"))
-        .param(ParamSpec::bool("antialias", true).doc("Four samples per pixel"))
+        .param(
+            ParamSpec::choice("surface", &SURFACES)
+                .doc("What the geometry is coloured with")
+                .choice_doc("auto", "the texture input where connected, else material")
+                .choice_doc(
+                    "material",
+                    "the material put on by geo.assign_material; without one, each part's from the file (colour times texture), unlit",
+                )
+                .choice_doc("texture", "the texture input, by the mesh's texture coordinates, shaded by the material")
+                .choice_doc("parts", "a colour per part id, to tell the parts apart")
+                .choice_doc("uv", "the texture coordinates as red and green, to check an unwrap")
+                .choice_doc("normals", "which way each point faces, as a colour"),
+        )
+        .param(
+            ParamSpec::color("background", [0.0; 4])
+                .doc("Colour where no geometry is drawn; the default is transparent black"),
+        )
+        .param(
+            ParamSpec::bool("antialias", true)
+                .doc("Four samples per pixel for smooth edges; off is faster and shows stair steps"),
+        )
         .param(
             ParamSpec::bool("cull", false)
                 .more()

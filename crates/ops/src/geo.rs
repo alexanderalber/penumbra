@@ -34,19 +34,27 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "geo.file",
             "A mesh file (OBJ, STL, glTF/GLB) with its parts; reloads when the file changes",
         )
-        .param(ParamSpec::file("file", penumbra_mesh::EXTENSIONS).doc("Relative to the project directory"))
-        .param(ParamSpec::choice("up", &UP).more().doc(
-            "Which axis is up in the file, turned into penumbra's z up; auto: y for glTF and OBJ, z for STL",
-        ))
-        .param(ParamSpec::choice("normals", &NORMALS).doc(
-            "file: as the file has them (flat where it has none, as STL); smooth: averaged over each corner's faces, for faceted or voxel meshes",
-        ))
         .param(
-            ParamSpec::int("rings", 1)
-                .clamp(1.0, f64::from(penumbra_mesh::MAX_RINGS))
-                .more()
-                .doc("smooth: rings of faces averaged around each corner; 3 to 6 for voxel or marching-cubes meshes"),
+            ParamSpec::file("file", penumbra_mesh::EXTENSIONS)
+                .doc("The mesh file, relative to the project directory; saving it again reloads the node"),
         )
+        .param(
+            ParamSpec::choice("up", &UP)
+                .more()
+                .doc("Which axis is up in the file, turned into penumbra's z up")
+                .choice_doc("auto", "y for glTF and OBJ, z for STL")
+                .choice_doc("y", "the file's y is up (most modelling tools, glTF)")
+                .choice_doc("z", "the file's z is up already, as STL from CAD usually is"),
+        )
+        .param(
+            ParamSpec::choice("normals", &NORMALS)
+                .doc("Which way each corner faces, for the shading")
+                .choice_doc("file", "as the file has them (flat where it has none, as STL)")
+                .choice_doc("smooth", "averaged over each corner's faces, for faceted or voxel meshes"),
+        )
+        .param(ParamSpec::int("rings", 1).clamp(1.0, f64::from(penumbra_mesh::MAX_RINGS)).more().doc(
+            "smooth: rings of faces averaged around each corner; 3 to 6 for voxel or marching-cubes meshes",
+        ))
         .param(
             ParamSpec::float("crease", 180.0)
                 .clamp(0.0, 180.0)
@@ -62,7 +70,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("geo.primitive", "A box, a sphere or a plane, centred on the origin")
-            .param(ParamSpec::choice("shape", &["box", "sphere", "plane"]))
+            .param(
+                ParamSpec::choice("shape", &["box", "sphere", "plane"])
+                    .doc("Which shape, centred on the origin; size sets its measures")
+                    .choice_doc("box", "a cuboid of size x by y by z")
+                    .choice_doc("sphere", "a ball as wide as size x")
+                    .choice_doc("plane", "an upright rectangle facing -y, size x wide and size z high"),
+            )
             .param(
                 ParamSpec::vec3("size", [1.0; 3]).range(0.0, 10.0).doc(
                     "Box: x, y, z; sphere: the diameter is x; plane (upright, facing -y): x wide, z high",
@@ -74,21 +88,27 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .range(3.0, 128.0)
                     .curve(Curve::Log)
                     .more()
-                    .doc("Around the sphere"),
+                    .doc("Steps around the sphere (half as many from pole to pole); more is rounder and costs more"),
             )
             .output("out", DataKind::Geo),
         || Box::new(Primitive) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("geo.transform", "Scale, rotate, then translate")
-            .param(ParamSpec::vec3("translate", [0.0; 3]).range(-10.0, 10.0))
+            .param(
+                ParamSpec::vec3("translate", [0.0; 3])
+                    .range(-10.0, 10.0)
+                    .doc("Move along x, y, z (z up), in scene units (metres), after scale and rotate"),
+            )
             .param(
                 ParamSpec::vec3("rotate", [0.0; 3])
                     .range(-180.0, 180.0)
                     .unit(Unit::Degrees)
-                    .doc("About x, then y, then z"),
+                    .doc("Turn about x, then y, then z, after scale and before translate"),
             )
-            .param(ParamSpec::vec3("scale", [1.0; 3]).range(0.0, 4.0))
+            .param(ParamSpec::vec3("scale", [1.0; 3]).range(0.0, 4.0).doc(
+                "Size along x, y, z around the origin, first of the steps: 1 keeps it, negative mirrors",
+            ))
             .param(
                 ParamSpec::float("uniform", 1.0)
                     .range(0.001, 1000.0)

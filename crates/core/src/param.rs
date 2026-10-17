@@ -1,9 +1,10 @@
 //! Parameter metadata.
 //!
 //! Every node declares its parameters as [`ParamSpec`]s: type, default, range, unit, slider curve,
-//! the group the UI shows it in (main rows, or a section folded away), and a one-line doc. The spec is the
-//! single source for validation (every edit passes [`ParamSpec::check`]), for the param panel and
-//! for what `node.info` reports.
+//! the group the UI shows it in (main rows, or a section folded away), a one-line doc and, for a
+//! choice, what each value does. The spec is the single source for validation (every edit passes
+//! [`ParamSpec::check`]), for the param panel, its help overlay ([`ParamSpec::help`]) and for what
+//! `node.kinds` and `node.info` report.
 
 use serde::{Deserialize, Serialize};
 
@@ -125,6 +126,54 @@ pub struct ParamSpec {
     #[serde(default)]
     pub code: bool,
     pub doc: String,
+    /// What some or all values of a choice do, in any order; shown after [`ParamSpec::doc`]
+    /// ([`ParamSpec::full_doc`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub choice_docs: Vec<ChoiceDoc>,
+}
+
+/// What one value of a choice param does.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChoiceDoc {
+    pub value: String,
+    pub doc: String,
+}
+
+/// Everything the help overlay of a param shows, in words: [`ParamSpec::help`]. The editor
+/// draws it, `node.kinds {kind, param}` returns it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ParamHelp {
+    pub name: String,
+    /// What the param does; empty when nobody wrote it down yet.
+    pub doc: String,
+    /// `float`, `vec3`, `colour`, `choice`, `text`, `node`, `file (png, jpg)`, ...
+    #[serde(rename = "type")]
+    pub type_label: String,
+    /// The default as typed, e.g. `0.5`, `[0, 0, 1]`, `over`; empty for empty text.
+    pub default: String,
+    /// The range with its unit, e.g. `0 to 10 s`; empty without a range.
+    pub range: String,
+    /// Whether values outside the range are clamped (else the range is only the slider's).
+    pub clamped: bool,
+    /// The unit's symbol (`s`, `px`, `%`, ...); empty for plain numbers.
+    pub unit: String,
+    /// How the slider maps to values: `linear`, `log` (equal steps are equal ratios) or `power`
+    /// (finer near the minimum).
+    pub curve: String,
+    /// The section of the param panel; empty for the main rows.
+    pub group: String,
+    /// Whether a channel can drive it (numbers, vectors, colours).
+    pub bindable: bool,
+    /// For a choice: every value, with what it does where that is written down.
+    pub choices: Vec<ChoiceHelp>,
+}
+
+/// One value of a choice in [`ParamHelp`].
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ChoiceHelp {
+    pub value: String,
+    pub doc: String,
+    pub default: bool,
 }
 
 impl ParamSpec {
@@ -142,6 +191,7 @@ impl ParamSpec {
             node_ref: false,
             code: false,
             doc: String::new(),
+            choice_docs: Vec::new(),
         }
     }
 
@@ -232,6 +282,113 @@ impl ParamSpec {
     pub fn doc(mut self, doc: &str) -> Self {
         self.doc = doc.to_string();
         self
+    }
+
+    /// What the choice `value` does ([`ParamSpec::choice_docs`]); a value that is not among the
+    /// choices fails [`ParamSpec::validate_spec`].
+    pub fn choice_doc(mut self, value: &str, doc: &str) -> Self {
+        self.choice_docs.push(ChoiceDoc { value: value.to_string(), doc: doc.to_string() });
+        self
+    }
+
+    /// What the choice `value` does, when written down.
+    pub fn doc_of_choice(&self, value: &str) -> Option<&str> {
+        self.choice_docs.iter().find(|c| c.value == value).map(|c| c.doc.as_str())
+    }
+
+    /// The doc with what each choice does after it, in the order of the choices, as one line:
+    /// `doc; a: ...; b: ...`.
+    pub fn full_doc(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if !self.doc.is_empty() {
+            parts.push(self.doc.clone());
+        }
+        if let ParamKind::Choice(choices) = &self.kind {
+            for c in choices {
+                if let Some(d) = self.doc_of_choice(c) {
+                    parts.push(format!("{c}: {d}"));
+                }
+            }
+        }
+        parts.join("; ")
+    }
+
+    /// The type in a word or two: `float`, `vec3`, `colour`, `a | b | c` for a choice, `node`
+    /// for a node reference, `file (png, jpg)`.
+    pub fn type_label(&self) -> String {
+        match &self.kind {
+            ParamKind::Bool => "bool".into(),
+            ParamKind::Int => "int".into(),
+            ParamKind::Float => "float".into(),
+            ParamKind::Vec(n) => format!("vec{n}"),
+            ParamKind::Color => "colour".into(),
+            ParamKind::Choice(words) => words.join(" | "),
+            ParamKind::Text if self.node_ref => "node".into(),
+            ParamKind::Text => "text".into(),
+            ParamKind::File { extensions } if extensions.is_empty() => "file".into(),
+            ParamKind::File { extensions } => format!("file ({})", extensions.join(", ")),
+        }
+    }
+
+    /// The range with its unit, `0 to 10 s` (degrees without the space); just the unit without
+    /// a range; empty for neither.
+    pub fn range_label(&self) -> String {
+        let unit = self.unit.symbol();
+        let gap = if self.unit == Unit::Degrees { "" } else { " " };
+        match self.range {
+            Some(r) if unit.is_empty() => format!("{} to {}", r.min, r.max),
+            Some(r) => format!("{} to {}{gap}{unit}", r.min, r.max),
+            None => unit.to_string(),
+        }
+    }
+
+    /// The default as one would type it: `0.5`, `[0, 0, 1]`, `over`; `None` for empty text and
+    /// `several lines` for a text of several lines (a script's example).
+    pub fn default_label(&self) -> Option<String> {
+        match &self.default {
+            Value::Text(t) if t.is_empty() => None,
+            Value::Text(t) if t.contains('\n') => Some("several lines".into()),
+            Value::Text(t) => Some(t.clone()),
+            v => Some(v.to_string()),
+        }
+    }
+
+    /// What the help overlay shows ([`ParamHelp`]).
+    pub fn help(&self) -> ParamHelp {
+        let default = self.default.as_str().unwrap_or_default();
+        let choices = match &self.kind {
+            ParamKind::Choice(words) => words
+                .iter()
+                .map(|w| ChoiceHelp {
+                    value: w.clone(),
+                    doc: self.doc_of_choice(w).unwrap_or_default().to_string(),
+                    default: w == default,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let type_label = match &self.kind {
+            ParamKind::Choice(_) => "choice".to_string(),
+            _ => self.type_label(),
+        };
+        ParamHelp {
+            name: self.name.clone(),
+            doc: self.doc.clone(),
+            type_label,
+            default: self.default_label().unwrap_or_default(),
+            range: if self.range.is_some() { self.range_label() } else { String::new() },
+            clamped: self.range.is_some_and(|r| r.hard),
+            unit: self.unit.symbol().to_string(),
+            curve: match self.curve {
+                Curve::Linear => "linear",
+                Curve::Log => "log",
+                Curve::Power(_) => "power",
+            }
+            .to_string(),
+            group: self.group.clone(),
+            bindable: self.bind_components() > 0,
+            choices,
+        }
     }
 
     pub fn multiline(mut self) -> Self {
@@ -347,7 +504,8 @@ impl ParamSpec {
             || self.group.chars().any(char::is_control)
         {
             return Err(Error::new(format!(
-                "group `{}` must be at most {MAX_GROUP} bytes, without control characters or                  surrounding spaces",
+                "group `{}` must be at most {MAX_GROUP} bytes, without control characters or \
+                 surrounding spaces",
                 self.group.escape_debug()
             ))
             .context(ctx()));
@@ -360,6 +518,16 @@ impl ParamSpec {
                 return Err(Error::new("a choice needs at least one entry").context(ctx()));
             }
             _ => {}
+        }
+        for (i, d) in self.choice_docs.iter().enumerate() {
+            let known = matches!(&self.kind, ParamKind::Choice(c) if c.contains(&d.value));
+            if !known {
+                return Err(Error::new(format!("doc for `{}`, which is not one of its choices", d.value))
+                    .context(ctx()));
+            }
+            if self.choice_docs.iter().take(i).any(|e| e.value == d.value) {
+                return Err(Error::new(format!("choice `{}` described twice", d.value)).context(ctx()));
+            }
         }
         let checked = self.check(&self.default).map_err(|e| e.context(format!("{}: default", ctx())))?;
         if checked != self.default {
@@ -547,6 +715,32 @@ mod tests {
 
         let t = ParamSpec::text("t", "");
         assert!(t.check(&Value::Text("x".repeat(MAX_TEXT + 1))).is_err());
+    }
+
+    #[test]
+    fn help_and_choice_docs() {
+        let ch = ParamSpec::choice("mode", &["add", "over"])
+            .doc("How layers mix")
+            .choice_doc("over", "the layer in front")
+            .choice_doc("add", "summed");
+        ch.validate_spec().unwrap();
+        assert_eq!(ch.full_doc(), "How layers mix; add: summed; over: the layer in front");
+        let h = ch.help();
+        assert_eq!(h.type_label, "choice");
+        assert_eq!(h.default, "add");
+        assert_eq!(h.choices.len(), 2);
+        assert!(h.choices[0].default && h.choices[0].doc == "summed");
+        assert!(ParamSpec::choice("m", &["a"]).choice_doc("b", "x").validate_spec().is_err());
+        let twice = ParamSpec::choice("m", &["a"]).choice_doc("a", "x").choice_doc("a", "y");
+        assert!(twice.validate_spec().is_err());
+        assert!(ParamSpec::float("x", 0.0).choice_doc("a", "x").validate_spec().is_err());
+
+        let f = ParamSpec::float("t", 1.0).range(0.0, 10.0).unit(Unit::Seconds).doc("Fade time");
+        let h = f.help();
+        assert_eq!(h.range, "0 to 10 s");
+        assert_eq!((h.clamped, h.unit.as_str(), h.default.as_str()), (false, "s", "1"));
+        assert!(h.bindable && h.choices.is_empty());
+        assert_eq!(ParamSpec::text("t", "").help().default, "");
     }
 
     #[test]

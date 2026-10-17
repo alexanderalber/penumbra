@@ -7,7 +7,7 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use penumbra_core::{ParamKind, ParamSpec, Unit};
+use penumbra_core::ParamSpec;
 use penumbra_engine::{Engine, Registry};
 use penumbra_graph::{NodeDesc, NodeTypes, PortRole};
 use penumbra_project::{Content, Session};
@@ -38,29 +38,10 @@ fn cell(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").replace('|', "\\|")
 }
 
-fn param_type(spec: &ParamSpec) -> String {
-    match &spec.kind {
-        ParamKind::Bool => "bool".into(),
-        ParamKind::Int => "int".into(),
-        ParamKind::Float => "float".into(),
-        ParamKind::Vec(n) => format!("vec{n}"),
-        ParamKind::Color => "colour".into(),
-        ParamKind::Choice(words) => words.join(" | "),
-        ParamKind::Text if spec.node_ref => "node".into(),
-        ParamKind::Text => "text".into(),
-        ParamKind::File { extensions } if extensions.is_empty() => "file".into(),
-        ParamKind::File { extensions } => format!("file ({})", extensions.join(", ")),
-    }
-}
-
 fn param_range(spec: &ParamSpec) -> String {
-    let unit = match spec.unit {
-        Unit::None => String::new(),
-        u => format!(" {}", u.symbol()),
-    };
     match spec.range {
-        Some(r) => format!("{} to {}{unit}{}", r.min, r.max, if r.hard { "" } else { " (soft)" }),
-        None => unit.trim().to_string(),
+        Some(r) if !r.hard => format!("{} (soft)", spec.range_label()),
+        _ => spec.range_label(),
     }
 }
 
@@ -133,10 +114,10 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
             out,
             "| `{}`{group} | {} | {} | {} | {} |",
             p.name,
-            cell(&param_type(p)),
+            cell(&p.type_label()),
             cell(&param_default(p)),
             cell(&param_range(p)),
-            cell(&p.doc)
+            cell(&p.full_doc())
         );
     }
     out.push('\n');
@@ -145,7 +126,7 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
 fn nodes_md(types: &NodeTypes) -> String {
     let mut out = format!(
         "{HEADER}\n\n# Node reference\n\nEvery built-in node type with its inputs, outputs and params, by family. \
-         A param marked with a group, like *(more)*, sits in that folded section of the param          panel. A soft range is only the \
+         A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range is only the \
          slider's; typed values outside it are kept. For what the families are for, see \
          [Concepts](../concepts.md).\n\n"
     );

@@ -45,13 +45,29 @@ const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(FROM_CHAN, "Channels as a picture: a row per channel, a pixel per sample; r, g, b as a colour")
-            .param(ParamSpec::choice("layout", &["auto", "rows", "rgba"]).doc(
-                "auto: rgba when the channels are exactly r, g, b (and a), as chan.from_tex names them, \
-                 else rows; rows: one grey row per channel, as many pixels wide as there are samples; \
-                 rgba: the first four channels as red, green, blue and alpha of one row (alpha 1 where missing)",
-            ))
-            .param(ParamSpec::float("low", 0.0).range(-1.0, 1.0).doc("Channel value that becomes 0"))
-            .param(ParamSpec::float("high", 1.0).range(0.0, 2.0).doc("Channel value that becomes 1"))
+            .param(
+                ParamSpec::choice("layout", &["auto", "rows", "rgba"])
+                    .doc("How the channels become pixels")
+                    .choice_doc(
+                        "auto",
+                        "rgba when the channels are exactly r, g, b (and a), as chan.from_tex names them, else rows",
+                    )
+                    .choice_doc("rows", "one grey row per channel, as many pixels wide as there are samples")
+                    .choice_doc(
+                        "rgba",
+                        "the first four channels as red, green, blue and alpha of one row (alpha 1 where missing)",
+                    ),
+            )
+            .param(
+                ParamSpec::float("low", 0.0)
+                    .range(-1.0, 1.0)
+                    .doc("Channel value that becomes black (0); lower values go below 0"),
+            )
+            .param(
+                ParamSpec::float("high", 1.0)
+                    .range(0.0, 2.0)
+                    .doc("Channel value that becomes white (1); higher values go above 1"),
+            )
             .input("in", DataKind::Chan)
             .output("out", DataKind::Tex),
         || Box::new(FromChan::default()) as Box<dyn Operator>,
@@ -73,10 +89,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(1.0, 64.0)
                 .doc("Rows averaged to; more than one numbers the channels by row from the top (r0, r1, ..)"),
         )
-        .param(ParamSpec::choice("components", &["rgba", "rgb", "red", "luminance"]).doc(
-            "Which channels a row gives: r, g, b, a; r, g, b; r; or lum (the brightness, Rec. 709). \
-                 Values are linear and premultiplied, as the picture holds them",
-        ))
+        .param(
+            ParamSpec::choice("components", &["rgba", "rgb", "red", "luminance"])
+                .doc("Which channels a row gives; values are linear and premultiplied, as the picture holds them")
+                .choice_doc("rgba", "r, g, b and a")
+                .choice_doc("rgb", "r, g and b")
+                .choice_doc("red", "r only")
+                .choice_doc("luminance", "lum, the brightness as the eye weighs it (Rec. 709)"),
+        )
         .input("in", DataKind::Tex)
         .output("out", DataKind::Chan),
         || Box::new(FromTex::default()) as Box<dyn Operator>,

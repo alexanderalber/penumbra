@@ -2,7 +2,7 @@
 
 # Node reference
 
-Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param          panel. A soft range is only the slider's; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
+Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range is only the slider's; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
 
 Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp)
 
@@ -29,13 +29,13 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `detect` | background \| bright | `"background"` |  | background: what differs from the empty scene (the `background` input where connected, else learned: `blob_track.learn`); bright: whatever is brighter than `threshold` |
+| `detect` | background \| bright | `"background"` |  | What counts as part of a blob; background: what differs from the empty scene (the `background` input where connected, else learned: `blob_track.learn`); bright: whatever is brighter than `threshold` |
 | `threshold` | float | `0.1` | 0 to 0.5 (soft) | Difference to the background (in any channel), or brightness, from which a pixel counts |
 | `adapt` | float | `30` | 0 to 300 s (soft) | How soon a lasting change (light, a moved chair) becomes background; someone standing still fades ten times slower. 0: never |
 | `min_area` | float | `0.1` | 0 to 5 % (soft) | Smaller blobs are ignored (of the picture's area) |
 | `max_area` | float | `50` | 1 to 100 % (soft) | Larger blobs are ignored (the whole room changing is not a blob) |
-| `max_blobs` | int | `16` | 1 to 32 (soft) | Most blobs, the largest |
-| `show` | overlay \| mask \| difference \| background | `"overlay"` |  | What `out` shows: the picture with the blobs marked, the pixels counted, the difference (the threshold is mid grey) or the learned background |
+| `max_blobs` | int | `16` | 1 to 32 (soft) | Most blobs reported; with more found, the largest are kept |
+| `show` | overlay \| mask \| difference \| background | `"overlay"` |  | What `out` shows; overlay: the picture with the blobs marked; mask: the pixels counted, white on black; difference: the difference to the background (the threshold is mid grey); background: the learned background |
 | `size` *(more)* | int | `320` | 64 to 960 px (soft) | Width the input is analysed at; more finds smaller things and costs more |
 | `open` *(more)* | int | `1` | 0 to 6 px (soft) | Removes specks and lines thinner than twice this (at the analysed size) |
 | `close` *(more)* | int | `2` | 0 to 6 px (soft) | Fills holes and joins parts closer than twice this |
@@ -55,9 +55,9 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `size` | float | `8` | 0 to 100 px (soft) | Radius: three standard deviations |
-| `direction` | both \| horizontal \| vertical | `"both"` |  |  |
-| `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What lies beyond the edges |
+| `size` | float | `8` | 0 to 100 px (soft) | Blur radius in pixels (three standard deviations of the Gaussian); below 0.5 leaves the input as it is |
+| `direction` | both \| horizontal \| vertical | `"both"` |  | Which way the picture is smeared; both: in every direction, a round blur; horizontal: only left and right, as motion across; vertical: only up and down |
+| `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What the blur reads beyond the input's edges; hold keeps the edges from darkening; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.cache
 
@@ -90,10 +90,10 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `red` | vec4 | `[1, 0, 0, 0]` | -2 to 2 (soft) | Weights of r, g, b, a |
-| `green` | vec4 | `[0, 1, 0, 0]` | -2 to 2 (soft) | Weights of r, g, b, a |
-| `blue` | vec4 | `[0, 0, 1, 0]` | -2 to 2 (soft) | Weights of r, g, b, a |
-| `alpha` | vec4 | `[0, 0, 0, 1]` | -2 to 2 (soft) | Weights of r, g, b, a |
+| `red` | vec4 | `[1, 0, 0, 0]` | -2 to 2 (soft) | How much of the input's r, g, b and a makes the output's red |
+| `green` | vec4 | `[0, 1, 0, 0]` | -2 to 2 (soft) | How much of the input's r, g, b and a makes the output's green |
+| `blue` | vec4 | `[0, 0, 1, 0]` | -2 to 2 (soft) | How much of the input's r, g, b and a makes the output's blue |
+| `alpha` | vec4 | `[0, 0, 0, 1]` | -2 to 2 (soft) | How much of the input's r, g, b and a makes the output's alpha |
 | `bias` *(more)* | vec4 | `[0, 0, 0, 0]` | -1 to 1 (soft) | Added to r, g, b, a afterwards |
 
 ### tex.chroma_key
@@ -108,12 +108,12 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `key` | colour | `[0, 1, 0, 1]` |  | The screen's colour |
+| `key` | colour | `[0, 1, 0, 1]` |  | The screen's colour; only its hue and saturation count, so shadows on the screen key too |
 | `tolerance` | float | `0.1` | 0 to 0.5 (soft) | Chroma distance from the key that is fully transparent |
-| `softness` | float | `0.08` | 0 to 0.5 (soft) | Width of the soft edge beyond it |
+| `softness` | float | `0.08` | 0 to 0.5 (soft) | Width of the partly transparent edge beyond tolerance, in the same chroma distance |
 | `spill` | float | `0.5` | 0 to 1 (soft) | How much of the key's tint is removed from what stays |
 | `invert` | bool | `false` |  | Keep the key colour, drop the rest |
-| `output` | keyed \| matte | `"keyed"` |  | The keyed image, or its alpha as white on black |
+| `output` | keyed \| matte | `"keyed"` |  | What the node puts out; keyed: the input with the key colour transparent and its spill removed; matte: the alpha it would get, as white (kept) on black (keyed out) |
 
 ### tex.composite
 
@@ -130,7 +130,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average \| inside \| outside \| atop \| overlay \| color \| luminosity | `"over"` |  | Each layer goes onto what lies below it. inside, outside: the layer only where the picture below is, or is not; atop: the layer over the picture below, only where that is; overlay: darkens the dark and brightens the bright parts of the picture below by the layer; color: the layer's hue and saturation at the brightness below (tinting a grey picture); luminosity: the other way round |
+| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average \| inside \| outside \| atop \| overlay \| color \| luminosity | `"over"` |  | How each layer goes onto what lies below it: layer2 onto layer1, then layer3 onto that, ...; over: the layer in front, covering by its alpha; add: both summed: brighter, black adds nothing; multiply: both multiplied: darker, white changes nothing; screen: the opposite of multiply: lighter, black changes nothing; subtract: the picture below minus the layer's colour; difference: how far the colours differ, per channel; maximum: the brighter of both, per channel; minimum: the darker of both, per channel; average: half of each; inside: the layer only where the picture below is (its alpha); outside: the layer only where the picture below is not; atop: the layer over the picture below, only where that is; overlay: darkens the dark and brightens the bright parts of the picture below by the layer; color: the layer's hue and saturation at the brightness below (tinting a grey picture); luminosity: the layer's brightness with the hue and saturation below |
 | `swap` | bool | `false` |  | Swap the order of each step: the picture below onto the layer (TouchDesigner's Swap Operation Order) |
 
 ### tex.constant
@@ -143,10 +143,10 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `width` | int | `1920` | 1 to 16384 px |  |
-| `height` | int | `1080` | 1 to 16384 px |  |
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
-| `color` | colour | `[0, 0, 0, 1]` |  | Linear RGBA, straight alpha |
+| `color` | colour | `[0, 0, 0, 1]` |  | The colour, linear RGBA with straight alpha; above 1 is brighter than white |
 
 ### tex.cross
 
@@ -161,7 +161,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `cross` | float | `0.5` | 0 to 1 (soft) | 0 is all a, 1 all b |
+| `cross` | float | `0.5` | 0 to 1 (soft) | Mix between the inputs: 0 is all a, 1 all b, 0.5 half each |
 
 ### tex.denoise
 
@@ -197,11 +197,11 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `horizontal` | red \| green \| blue \| alpha \| luminance \| none | `"red"` |  | Map channel that pushes left and right |
-| `vertical` | red \| green \| blue \| alpha \| luminance \| none | `"green"` |  | Map channel that pushes up and down |
+| `horizontal` | red \| green \| blue \| alpha \| luminance \| none | `"red"` |  | Channel of the map that shifts the picture across, by weight x per unit away from midpoint; red: the map's red channel; green: the map's green channel; blue: the map's blue channel; alpha: the map's opacity; luminance: the map's brightness (Rec. 709); none: no push this way |
+| `vertical` | red \| green \| blue \| alpha \| luminance \| none | `"green"` |  | Channel of the map that shifts the picture up and down, by weight y per unit away from midpoint; red: the map's red channel; green: the map's green channel; blue: the map's blue channel; alpha: the map's opacity; luminance: the map's brightness (Rec. 709); none: no push this way |
 | `weight` | vec2 | `[0.1, 0.1]` | -1 to 1 (soft) | Push for a map value 1 above the midpoint, in image sizes |
 | `midpoint` | float | `0.5` | 0 to 1 (soft) | Map value that does not push |
-| `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | Outside the input |
+| `extend` *(more)* | hold \| zero \| repeat \| mirror | `"hold"` |  | What shows where the picture is fetched from beyond the input's edges; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.edge
 
@@ -215,10 +215,10 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `strength` | float | `2` | 0 to 10 (soft) |  |
-| `distance` | float | `1` | 0.5 to 8 px (soft) | Distance of the neighbours compared |
+| `strength` | float | `2` | 0 to 10 (soft) | Gain on the edge: higher makes faint edges visible and strong ones solid (clipped at 1) |
+| `distance` | float | `1` | 0.5 to 8 px (soft) | Distance of the neighbours compared; larger finds broader, softer edges |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the edges |
-| `mode` | edges \| alpha \| over | `"edges"` |  | On black, on transparent, or over the input |
+| `mode` | edges \| alpha \| over | `"edges"` |  | What the edges are drawn on; edges: on opaque black; alpha: on transparent, to lay over something else; over: over the input |
 
 ### tex.feedback
 
@@ -250,12 +250,12 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `width` | int | `1920` | 1 to 16384 px |  |
-| `height` | int | `1080` | 1 to 16384 px |  |
+| `width` | int | `1920` | 1 to 16384 px | Width of the output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
-| `fit` | fit \| fill \| stretch \| native | `"fit"` |  | Whole and as large as fits, covering and cropped, stretched, or pixel for pixel |
+| `fit` | fit \| fill \| stretch \| native | `"fit"` |  | How the input sits in the frame; fit: whole and as large as fits, aspect kept; bars where it does not fill; fill: covering the frame, aspect kept; what sticks out is cropped; stretch: covering the frame, distorted to its aspect; native: pixel for pixel, unscaled |
 | `justify` | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Where the image sits in the frame: 0 left or top, 1 right or bottom |
-| `extend` | zero \| hold \| repeat \| mirror | `"zero"` |  | Outside the image |
+| `extend` | zero \| hold \| repeat \| mirror | `"zero"` |  | What fills the frame where the input does not reach (the bars of fit or native); zero: transparent black; hold: the input's edge pixels continue outwards; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.flip
 
@@ -269,8 +269,8 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `flip_x` | bool | `false` |  | Left becomes right |
-| `flip_y` | bool | `false` |  | Top becomes bottom |
+| `flip_x` | bool | `false` |  | Mirror left to right: the left edge becomes the right |
+| `flip_y` | bool | `false` |  | Mirror top to bottom: the top edge becomes the bottom |
 | `flop` | bool | `false` |  | Swap the axes (transpose); the output is as wide as the input is high |
 
 ### tex.from_chan
@@ -285,9 +285,9 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `layout` | auto \| rows \| rgba | `"auto"` |  | auto: rgba when the channels are exactly r, g, b (and a), as chan.from_tex names them, else rows; rows: one grey row per channel, as many pixels wide as there are samples; rgba: the first four channels as red, green, blue and alpha of one row (alpha 1 where missing) |
-| `low` | float | `0` | -1 to 1 (soft) | Channel value that becomes 0 |
-| `high` | float | `1` | 0 to 2 (soft) | Channel value that becomes 1 |
+| `layout` | auto \| rows \| rgba | `"auto"` |  | How the channels become pixels; auto: rgba when the channels are exactly r, g, b (and a), as chan.from_tex names them, else rows; rows: one grey row per channel, as many pixels wide as there are samples; rgba: the first four channels as red, green, blue and alpha of one row (alpha 1 where missing) |
+| `low` | float | `0` | -1 to 1 (soft) | Channel value that becomes black (0); lower values go below 0 |
+| `high` | float | `1` | 0 to 2 (soft) | Channel value that becomes white (1); higher values go above 1 |
 
 ### tex.hsv
 
@@ -301,9 +301,9 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `hue` | float | `0` | -180 to 180 ° (soft) | Added to the hue: 120 turns red into green; any angle, it wraps |
-| `saturation` | float | `1` | 0 to 2 (soft) | Times the saturation |
-| `value` | float | `1` | 0 to 2 (soft) | Times the value (the brightest channel) |
+| `hue` | float | `0` | -180 to 180° (soft) | Added to the hue: 120 turns red into green; any angle, it wraps |
+| `saturation` | float | `1` | 0 to 2 (soft) | Multiplies the saturation: 0 is grey, 1 unchanged, 2 more vivid (clipped at full) |
+| `value` | float | `1` | 0 to 2 (soft) | Multiplies the value (the brightest channel): 0 is black, 2 twice as bright |
 
 ### tex.image
 
@@ -315,7 +315,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `file` | file (png, jpg, jpeg, tif, tiff, exr, hdr, webp, bmp, tga, gif, qoi, pfm, ppm, pgm) |  |  | Relative to the project directory |
+| `file` | file (png, jpg, jpeg, tif, tiff, exr, hdr, webp, bmp, tga, gif, qoi, pfm, ppm, pgm) |  |  | The picture file, relative to the project directory; saving it again reloads the node |
 
 ### tex.in
 
@@ -360,9 +360,9 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `k1` | float | `0.1` | -1 to 1 (soft) | Main term; positive pulls the edges in (barrel), negative pushes them out |
 | `k2` | float | `0` | -1 to 1 (soft) | Fourth-order term, for the far edges |
-| `scale` | float | `1` | 0.25 to 4 (soft) | Zoom afterwards |
+| `scale` | float | `1` | 0.25 to 4 (soft) | Zoom after the distortion: above 1 enlarges, to hide the edges barrel distortion pulls in |
 | `center` *(more)* | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Optical centre; 0, 0 is the top left |
-| `extend` | hold \| zero \| repeat \| mirror | `"zero"` |  | Outside the input |
+| `extend` | hold \| zero \| repeat \| mirror | `"zero"` |  | What shows where the picture is fetched from beyond the input's edges; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.level
 
@@ -376,13 +376,13 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `black` | float | `0` | 0 to 1 (soft) | Input value that becomes 0 |
-| `white` | float | `1` | 0 to 1 (soft) | Input value that becomes 1 |
-| `gamma` | float | `1` | 0.01 to 10 |  |
-| `contrast` | float | `1` | 0 to 4 (soft) |  |
-| `brightness` | float | `1` | 0 to 4 (soft) |  |
-| `invert` | bool | `false` |  |  |
-| `opacity` | float | `1` | 0 to 1 (soft) |  |
+| `black` | float | `0` | 0 to 1 (soft) | Input value that becomes 0, per channel; darker goes below 0. The first step |
+| `white` | float | `1` | 0 to 1 (soft) | Input value that becomes 1, per channel; brighter goes above 1 (not clipped) |
+| `gamma` | float | `1` | 0.01 to 10 | Bends the midtones after black and white: above 1 brightens them, below 1 darkens; 0 and 1 stay |
+| `contrast` | float | `1` | 0 to 4 (soft) | Spreads values away from mid grey (0.5) after gamma: 0 is flat grey, 2 doubles the distance |
+| `brightness` | float | `1` | 0 to 4 (soft) | Multiplies the colour after contrast: 0 is black, 2 twice as bright |
+| `invert` | bool | `false` |  | 1 minus the colour, after all the steps above; alpha stays |
+| `opacity` | float | `1` | 0 to 1 (soft) | Multiplies alpha: 0 transparent, 1 as the input; fades a layer in a composite |
 
 ### tex.limit
 
@@ -396,10 +396,10 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `min` | float | `0` | -1 to 2 (soft) |  |
-| `max` | float | `1` | -1 to 2 (soft) |  |
-| `mode` | clamp \| wrap \| mirror | `"clamp"` |  | Clamp, start again from min (sawtooth), or turn back (triangle) |
-| `alpha` | bool | `false` |  | Limit alpha too |
+| `min` | float | `0` | -1 to 2 (soft) | Lowest value kept, per channel of the straight colour |
+| `max` | float | `1` | -1 to 2 (soft) | Highest value kept; at or below min everything becomes min |
+| `mode` | clamp \| wrap \| mirror | `"clamp"` |  | What happens to values outside min to max; clamp: they stop at min or max; wrap: they start again from min: a ramp becomes a sawtooth; mirror: they turn back: a ramp becomes a triangle wave |
+| `alpha` | bool | `false` |  | Limit alpha the same way; off keeps the input's alpha |
 
 ### tex.lookup
 
@@ -414,7 +414,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `index` | luminance \| channels | `"luminance"` |  | One colour per pixel by luminance, or each channel through its own curve |
+| `index` | luminance \| channels | `"luminance"` |  | Which input values pick the place in the lookup row (0 its left end, 1 its right); luminance: the brightness picks one colour of the row (a gradient map); channels: red, green and blue each through the row's own channel (a curve per channel) |
 | `row` | float | `0.5` | 0 to 1 (soft) | Height in the lookup texture that is read; 0 is the top |
 
 ### tex.mapper
@@ -429,11 +429,11 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `width` | int | `1920` | 1 to 16384 px |  |
-| `height` | int | `1080` | 1 to 16384 px |  |
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
 | `region` | vec4 | `[0, 0, 1, 1]` | 0 to 1 | The part of the input (the surface) shown: x, y, width, height in input sizes |
-| `fit` | fit \| fill \| stretch | `"fit"` |  | How the region sits in the picture before the corners move: fit (bars), fill (cropped), stretch |
+| `fit` | fit \| fill \| stretch | `"fit"` |  | How the region sits in the picture before the corners move; fit: whole, aspect kept, with bars; fill: covering the picture, aspect kept, cropped; stretch: covering the picture, distorted to its aspect |
 | `blend` | bool | `true` |  | Soft edges where other mappers of the same input overlap this one (off for stacked projectors) |
 | `pattern` | bool | `false` |  | An alignment grid of the input instead of the picture |
 | `corner_tl` *(warp)* | vec2 | `[0, 0]` | -0.5 to 0.5 (soft) | Top left corner, moved from its fitted place, in picture sizes (drag it in the viewer) |
@@ -457,7 +457,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | Channel of the matte that chooses; colour is read on black (premultiplied) |
+| `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | Channel of the matte that chooses; colour is read on black (premultiplied); luminance: the brightness as the eye weighs it (Rec. 709); red: the red channel only; green: the green channel only; blue: the blue channel only; alpha: the opacity |
 | `invert` | bool | `false` |  | Black shows a, white b |
 
 ### tex.monochrome
@@ -472,7 +472,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `method` | luminance \| average \| maximum \| red \| green \| blue \| alpha | `"luminance"` |  |  |
+| `method` | luminance \| average \| maximum \| red \| green \| blue \| alpha | `"luminance"` |  | How the grey is made from the colour; luminance: brightness as the eye weighs it (Rec. 709): green counts most, blue least; average: red, green and blue equally; maximum: the brightest of red, green and blue; red: the red channel only; green: the green channel only; blue: the blue channel only; alpha: the opacity, as grey |
 | `opaque` | bool | `false` |  | Alpha 1 instead of the input's |
 
 ### tex.noise
@@ -485,21 +485,21 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `width` | int | `1920` | 1 to 16384 px |  |
-| `height` | int | `1080` | 1 to 16384 px |  |
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
-| `basis` | gradient \| value | `"gradient"` |  | Smooth gradient noise or blockier value noise |
-| `seed` | int | `0` | 0 to 100 (soft) |  |
-| `frequency` | float | `4` | 0.1 to 100 (soft) | Cells per image height |
-| `octaves` | int | `3` | 1 to 8 |  |
-| `roughness` | float | `0.5` | 0 to 1 (soft) | Amplitude from one octave to the next |
-| `lacunarity` *(more)* | float | `2` | 1 to 4 (soft) | Frequency from one octave to the next |
-| `amplitude` | float | `0.5` | 0 to 2 (soft) |  |
-| `offset` | float | `0.5` | -1 to 1 (soft) |  |
-| `speed` | float | `0` | 0 to 4 (soft) | Movement through the noise per second; 0 is still |
-| `translate` *(more)* | vec3 | `[0, 0, 0]` |  | Position in the noise |
+| `basis` | gradient \| value | `"gradient"` |  | The kind of noise each octave is made of; gradient: smooth, round blobs (Perlin-like); value: blockier, with a visible grid of cells |
+| `seed` | int | `0` | 0 to 100 (soft) | Picks another noise of the same look; each number gives the same picture every time |
+| `frequency` | float | `4` | 0.1 to 100 (soft) | Size of the pattern: noise cells per image height; higher is finer |
+| `octaves` | int | `3` | 1 to 8 | Layers of ever finer noise added up (fractal detail); 1 is smooth blobs only |
+| `roughness` | float | `0.5` | 0 to 1 (soft) | Strength of each octave relative to the one before; higher gives more fine grain |
+| `lacunarity` *(more)* | float | `2` | 1 to 4 (soft) | How much finer each octave is than the one before (2: twice the cells) |
+| `amplitude` | float | `0.5` | 0 to 2 (soft) | Contrast: the noise (about -1 to 1) is multiplied by this, then offset is added |
+| `offset` | float | `0.5` | -1 to 1 (soft) | Added after amplitude: the mean grey. With 0.5 and 0.5 the values span about 0 to 1 |
+| `speed` | float | `0` | 0 to 4 (soft) | How fast the pattern changes, in cells per second; it moves through a third dimension, so it morphs rather than slides. 0 is still |
+| `translate` *(more)* | vec3 | `[0, 0, 0]` |  | Position in the noise, in cells: x and y slide the picture, z morphs it as speed does |
 | `color` | bool | `false` |  | Three independent channels instead of grey |
-| `alpha` *(more)* | float | `1` | 0 to 1 |  |
+| `alpha` *(more)* | float | `1` | 0 to 1 | Opacity of the whole picture; below 1, what lies under it in a composite shows through |
 
 ### tex.null
 
@@ -560,9 +560,9 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `levels` | int | `4` | 2 to 32 (soft) | Values per channel, black and white included |
 | `block` | int | `1` | 1 to 64 px (soft) | Side of the square blocks that take one colour; 1 keeps every pixel |
-| `dither` | none \| ordered | `"none"` |  | Ordered: a 4 x 4 Bayer pattern per block, so gradients survive few levels |
-| `space` *(more)* | perceptual \| linear | `"perceptual"` |  | Where the levels are evenly spaced: to the eye (sRGB curve) or in linear light |
-| `alpha` *(more)* | bool | `false` |  | Quantize alpha too |
+| `dither` | none \| ordered | `"none"` |  | How values between two levels are shown; none: each snaps to the nearest level: hard bands; ordered: a 4 x 4 Bayer pattern per block mixes the two levels, so gradients survive few levels |
+| `space` *(more)* | perceptual \| linear | `"perceptual"` |  | Where the levels are evenly spaced; perceptual: to the eye (on the sRGB curve): even steps from black to white; linear: in linear light: most levels look bright, few dark |
+| `alpha` *(more)* | bool | `false` |  | Snap alpha to the levels too; off keeps the input's alpha, so soft edges stay soft |
 
 ### tex.ramp
 
@@ -574,11 +574,11 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `width` | int | `1920` | 1 to 16384 px |  |
-| `height` | int | `1080` | 1 to 16384 px |  |
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
 | `keys` | text | an example script |  | One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; 1 when left out) |
-| `shape` | horizontal \| vertical \| radial \| circular | `"horizontal"` |  | Where 0 and 1 are: left to right, bottom to top, centre to the middle of the top edge, once around the centre counter-clockwise from the right |
+| `shape` | horizontal \| vertical \| radial \| circular | `"horizontal"` |  | How the key positions 0 to 1 lie on the picture; horizontal: left (0) to right (1); vertical: bottom (0) to top (1); radial: the centre (0) out to the middle of the top edge (1), in rings; circular: once around the centre, counter-clockwise from the right (0) |
 
 ### tex.remap
 
@@ -593,7 +593,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `extend` | hold \| zero \| repeat \| mirror | `"hold"` |  | Outside the input |
+| `extend` | hold \| zero \| repeat \| mirror | `"hold"` |  | What shows where the map points outside 0 to 1; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.render
 
@@ -613,12 +613,12 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `width` | int | `1920` | 1 to 16384 px |  |
-| `height` | int | `1080` | 1 to 16384 px |  |
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
-| `surface` | auto \| material \| texture \| parts \| uv \| normals | `"auto"` |  | auto: the texture input where connected, else the file's materials; parts: a colour per part id |
-| `background` | colour | `[0, 0, 0, 0]` |  | Where no geometry is drawn |
-| `antialias` | bool | `true` |  | Four samples per pixel |
+| `surface` | auto \| material \| texture \| parts \| uv \| normals | `"auto"` |  | What the geometry is coloured with; auto: the texture input where connected, else material; material: the material put on by geo.assign_material; without one, each part's from the file (colour times texture), unlit; texture: the texture input, by the mesh's texture coordinates, shaded by the material; parts: a colour per part id, to tell the parts apart; uv: the texture coordinates as red and green, to check an unwrap; normals: which way each point faces, as a colour |
+| `background` | colour | `[0, 0, 0, 0]` |  | Colour where no geometry is drawn; the default is transparent black |
+| `antialias` | bool | `true` |  | Four samples per pixel for smooth edges; off is faster and shows stair steps |
 | `cull` *(more)* | bool | `false` |  | Leave out faces turned away (counter-clockwise is the front) |
 | `shadow_size` *(more)* | int | `2048` | 256 to 4096 (soft) | Texels across each light's shadow map: sharper shadows, more memory |
 | `ao` *(occlusion)* | bool | `false` |  | Ambient occlusion: less ambient and environment light in creases and where objects meet; direct light and unlit surfaces stay as they are |
@@ -637,10 +637,10 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `mode` | multiply \| custom | `"multiply"` |  | A multiple of the input's size, or width and height |
-| `multiply` | float | `0.5` | 0.125 to 4 (soft) | Of the input's width and height |
-| `width` *(more)* | int | `1920` | 1 to 16384 px |  |
-| `height` *(more)* | int | `1080` | 1 to 16384 px |  |
+| `mode` | multiply \| custom | `"multiply"` |  | How the output size is set; multiply: the input's size times multiply; custom: width and height (under more), whatever the input |
+| `multiply` | float | `0.5` | 0.125 to 4 (soft) | Factor on the input's width and height (mode multiply): 0.5 halves both |
+| `width` *(more)* | int | `1920` | 1 to 16384 px | Width of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` *(more)* | int | `1080` | 1 to 16384 px | Height of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
 
 ### tex.select
@@ -654,7 +654,7 @@ Outputs: `out` (tex).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `node` | node |  |  | Path of the node (/name), or the name of a node beside this one |
-| `output` *(more)* | int | `0` | 0 to 63 | Which of its outputs |
+| `output` *(more)* | int | `0` | 0 to 63 | Which output of that node, counted from 0 (tex.render's data is 1) |
 
 ### tex.shader
 
@@ -673,10 +673,10 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `file` | file (wgsl) |  |  | Relative to the project directory |
-| `resolution` | input \| custom | `"input"` |  | From in0 (custom size while in0 is unconnected) or width and height |
-| `width` | int | `1920` | 1 to 16384 px |  |
-| `height` | int | `1080` | 1 to 16384 px |  |
+| `file` | file (wgsl) |  |  | The WGSL file, relative to the project directory; saving it reloads the node |
+| `resolution` | input \| custom | `"input"` |  | Where the output's size comes from; input: in0's size; width and height while in0 is unconnected; custom: width and height, whatever is wired |
+| `width` | int | `1920` | 1 to 16384 px | Width of the output in pixels, for resolution custom or without in0; res.optimize may change it unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the output in pixels, for resolution custom or without in0; res.optimize may change it unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
 
 ### tex.shapes
@@ -696,12 +696,12 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `width` | int | `1920` | 1 to 16384 px | The surface's resolution (the mappers' input) |
-| `height` | int | `1080` | 1 to 16384 px |  |
+| `width` | int | `1920` | 1 to 16384 px | Width of the surface in pixels (the mappers' input); shape coordinates are in these pixels |
+| `height` | int | `1080` | 1 to 16384 px | Height of the surface in pixels; shape coordinates are in these pixels |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
 | `shapes` | text |  |  | One per line: `tag rect x,y w,h`, `tag ellipse x,y w,h` or `tag poly x,y x,y ...`, optionally `repeat CxR dx,dy`; surface coordinates (draw them in the viewer) |
 | `tag` | text |  |  | Tags in the mask and the distance field, separated by spaces; empty: all |
-| `outline` *(more)* | float | `2` | 0.5 to 8 px (soft) | Width of the outlines |
+| `outline` *(more)* | float | `2` | 0.5 to 8 px (soft) | Width of the lines in the outline output, in surface pixels |
 
 ### tex.slope
 
@@ -715,9 +715,9 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  |  |
-| `strength` | float | `4` | 0 to 50 (soft) |  |
-| `offset` | float | `0.5` | 0 to 1 (soft) | Value of a flat area |
+| `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | Channel whose slope is measured; luminance: the brightness as the eye weighs it (Rec. 709); red: the red channel only; green: the green channel only; blue: the blue channel only; alpha: the opacity |
+| `strength` | float | `4` | 0 to 50 (soft) | Gain on the slope (value change per pixel); higher makes gentle slopes visible |
+| `offset` | float | `0.5` | 0 to 1 (soft) | Value of a flat area; rising slopes lie above it, falling below. 0.5 suits tex.displace's midpoint |
 
 ### tex.switch
 
@@ -740,7 +740,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `index` | float | `0` | 0 to 7 (soft) | Which connected input, counted from 0; past the last, the last |
 | `blend` | bool | `false` |  | A fractional index mixes the two inputs either side |
-| `inactive` | cook \| skip | `"cook"` |  | The inputs not shown: cook keeps their chains cooking as if shown; skip cooks only the shown input's chain, the others stand still and cost nothing. Switching to a skipped input cooks its chain in that frame (a slow chain makes the frame late, a video may need a moment to catch up), and a feedback loop, cache or time machine in it carries on from where it stopped. With skip an input counts as connected as soon as it is wired |
+| `inactive` | cook \| skip | `"cook"` |  | What the inputs not shown do; cook: their chains keep cooking as if shown; skip: only the shown input's chain cooks, the others stand still and cost nothing. Switching to a skipped input cooks its chain in that frame (a slow chain makes the frame late, a video may need a moment to catch up), and a feedback loop, cache or time machine in it carries on from where it stopped. An input counts as connected as soon as it is wired |
 
 ### tex.text
 
@@ -752,15 +752,15 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `text` | text | `"Text"` |  |  |
-| `size` | float | `100` | 4 to 500 px (soft) | Font size |
-| `color` | colour | `[1, 1, 1, 1]` |  | Linear RGBA, straight alpha |
+| `text` | text | `"Text"` |  | What is written; line breaks are kept, align lines the lines up |
+| `size` | float | `100` | 4 to 500 px (soft) | Font size in pixels of the output picture (the font's em, a little more than a capital's height) |
+| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the text, linear RGBA with straight alpha; the rest is transparent |
 | `position` | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Where the text's anchor sits, in image sizes; 0, 0 is the top left |
-| `align` | center \| left \| right | `"center"` |  | Lines aligned to each other and the anchor: the block's centre, left or right edge |
+| `align` | center \| left \| right | `"center"` |  | How the lines line up with each other, and which point of the block sits at position; center: centred; the block's centre at position; left: flush left; the block's left edge at position; right: flush right; the block's right edge at position |
 | `font` | text | `"Inter"` |  | Family name; Inter, JetBrains Mono, Noto Serif are bundled |
-| `style` | text | `"Regular"` |  | Regular, Bold, Italic, Light, ... |
-| `width` *(more)* | int | `1920` | 1 to 16384 px |  |
-| `height` *(more)* | int | `1080` | 1 to 16384 px |  |
+| `style` | text | `"Regular"` |  | Style within the family: Regular, Bold, Italic, Light, ...; the menu lists the family's |
+| `width` *(more)* | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` *(more)* | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
 
 ### tex.threshold
@@ -775,11 +775,11 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `threshold` | float | `0.5` | 0 to 1 (soft) |  |
+| `threshold` | float | `0.5` | 0 to 1 (soft) | Value of the channel from which a pixel passes (on straight colour) |
 | `soft` | float | `0` | 0 to 0.5 (soft) | Width of a soft ramp above the threshold |
-| `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  |  |
-| `invert` | bool | `false` |  |  |
-| `output` | mask \| alpha | `"mask"` |  | White on black, or the input where it passes and transparent elsewhere |
+| `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | Channel compared with the threshold; luminance: the brightness as the eye weighs it (Rec. 709); red: the red channel only; green: the green channel only; blue: the blue channel only; alpha: the opacity |
+| `invert` | bool | `false` |  | Pass what lies below the threshold instead |
+| `output` | mask \| alpha | `"mask"` |  | What the node puts out; mask: white where a pixel passes, black elsewhere; alpha: the input where it passes, transparent elsewhere |
 
 ### tex.tile
 
@@ -793,9 +793,9 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `repeat` | vec2 | `[2, 2]` | 1 to 16 (soft) | Copies across and down |
+| `repeat` | vec2 | `[2, 2]` | 1 to 16 (soft) | Copies across and down, each shrunk to fit; fractions show part of a copy |
 | `mirror` | bool | `false` |  | Every other copy mirrored, so edges meet |
-| `offset` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | In tiles |
+| `offset` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Shifts the pattern, in tiles: 0.5 moves it by half a copy |
 
 ### tex.time_machine
 
@@ -816,7 +816,7 @@ Outputs: `out` (tex).
 | `offset` | float | `0` | 0 to 600 f (soft) | Frames back added everywhere; without a map, the delay of the whole picture |
 | `blend` | bool | `true` |  | Mixes the two frames around a map value between them; off takes the nearer one (sharper, but a smooth map shows steps) |
 | `scale` | float | `1` | 0.1 to 1 (soft) | Resolution of the kept frames relative to the input; 0.5 needs a quarter of the memory |
-| `precision` | 16bit \| 8bit | `"16bit"` |  | How the kept frames are stored: 16bit as they come, 8bit in half the memory with values above 1 clipped |
+| `precision` | 16bit \| 8bit | `"16bit"` |  | How the kept frames are stored; 16bit: as they come; 8bit: in half the memory, with values above 1 clipped |
 | `step` | int | `1` | 1 to 8 (soft) | Keeps only every n-th input frame, for n times the length in the same memory; between kept frames the picture is blended, which smears fast motion |
 | `record` | bool | `true` |  | Take new frames; off holds what is kept |
 | `budget` *(more)* | float | `0` | 0 to 20 (soft) | Most GPU memory the kept frames take, in GiB; 0: automatic, half of what the GPU grants penumbra. Never more than the GPU has free; past either, fewer frames are kept, with a warning |
@@ -833,11 +833,11 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `translate` | vec2 | `[0, 0]` | -1 to 1 (soft) | In image sizes; y points down |
-| `rotate` | float | `0` | -180 to 180 ° (soft) | Counter-clockwise |
-| `scale` | vec2 | `[1, 1]` | 0 to 4 (soft) |  |
-| `pivot` *(more)* | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | 0, 0 is the top left |
-| `extend` | hold \| zero \| repeat \| mirror | `"hold"` |  | Outside the input |
+| `translate` | vec2 | `[0, 0]` | -1 to 1 (soft) | Shift in image sizes: 1 moves by the whole width or height; positive y moves down |
+| `rotate` | float | `0` | -180 to 180° (soft) | Turn around the pivot, counter-clockwise on screen |
+| `scale` | vec2 | `[1, 1]` | 0 to 4 (soft) | Size across and down, around the pivot: 1 keeps it, 2 doubles it, negative mirrors |
+| `pivot` *(more)* | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | The point rotate and scale turn and grow around, in image sizes: 0, 0 is the top left, 0.5, 0.5 the centre |
+| `extend` | hold \| zero \| repeat \| mirror | `"hold"` |  | What shows where the picture is fetched from beyond the input's edges; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.video
 
@@ -875,7 +875,7 @@ Outputs:
 |---|---|---|---|---|
 | `device` | text |  |  | Part of the camera's name (the ... menu lists them), e.g. `Cam Link`; empty: the first camera |
 | `mode` | text |  |  | Size, rate and pixel format, each optional, e.g. `1920x1080@60 NV12` or `@30`; empty: the largest, fastest the camera offers |
-| `range` *(more)* | auto \| limited \| full | `"auto"` |  | Whether black is 16 or 0 in the camera's Y'CbCr; auto believes the camera (limited when it does not say). Raised blacks mean the camera sends full range while limited is assumed |
+| `range` *(more)* | auto \| limited \| full | `"auto"` |  | Whether black is 16 or 0 in the camera's Y'CbCr. Raised blacks mean the camera sends full range while limited is assumed; auto: believe the camera (limited when it does not say); limited: black is 16, white 235 (video range); full: black is 0, white 255 |
 
 ## chan
 
@@ -900,15 +900,15 @@ Outputs:
 |---|---|---|---|---|
 | `channel` | text |  |  | The channel to analyse, e.g. `ch1`; empty: all mixed |
 | `offset` | float | `0` | -200 to 200 (soft) | Milliseconds to move beat and bar ahead by, to make up for the projector's delay |
-| `beats_per_bar` | int | `4` | 2 to 8 (soft) |  |
+| `beats_per_bar` | int | `4` | 2 to 8 (soft) | Beats in one bar (4 for 4/4, 3 for a waltz): how often bar and bar_beat come round |
 | `sensitivity` | float | `0.5` | 0 to 1 | How readily an onset or kick counts: higher finds quieter ones |
 | `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered; with max_bpm less than an octave apart, so a half or double tempo is not taken |
-| `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered |
+| `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered, in beats per minute; see min_bpm |
 | `normalize` | bool | `true` |  | Levels and spectrum relative to the loudest of the last seconds, so a quiet input still spans 0 to 1 |
 | `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence and is not raised by normalize |
-| `low` *(levels)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends |
-| `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts |
-| `bands` *(levels)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output |
+| `low` *(levels)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends: the low channel is the level below this frequency |
+| `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts: the high channel is the level above this; mid lies between low and high |
+| `bands` *(levels)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame |
 
 ### chan.audio_in
 
@@ -934,8 +934,8 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `value0` | float | `0` | -1 to 1 (soft) |  |
-| `name0` | text | `"chan0"` |  | Name of the channel |
+| `value0` | float | `0` | -1 to 1 (soft) | The channel's value; the slider spans -1 to 1, any number can be typed |
+| `name0` | text | `"chan0"` |  | Name of the channel this row makes, as other nodes and bindings see it |
 | `rows` *(more)* | int | `1` | 1 to 64 | How many rows; row k is the params `name<k>` and `value<k>`, counted from 0 |
 
 ### chan.filter
@@ -969,7 +969,7 @@ Outputs: `out` (chan).
 |---|---|---|---|---|
 | `columns` | int | `1` | 1 to 256 (soft) | Samples per channel: the picture is averaged down to this many columns |
 | `rows` | int | `1` | 1 to 64 (soft) | Rows averaged to; more than one numbers the channels by row from the top (r0, r1, ..) |
-| `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives: r, g, b, a; r, g, b; r; or lum (the brightness, Rec. 709). Values are linear and premultiplied, as the picture holds them |
+| `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives; values are linear and premultiplied, as the picture holds them; rgba: r, g, b and a; rgb: r, g and b; red: r only; luminance: lum, the brightness as the eye weighs it (Rec. 709) |
 
 ### chan.in
 
@@ -995,12 +995,12 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `rate` | float | `1` | 0.01 to 100 Hz (soft) | Cycles per second |
-| `shape` | sine \| triangle \| square \| saw | `"sine"` |  | Wave form |
-| `amplitude` | float | `1` | 0 to 2 (soft) |  |
-| `offset` | float | `0` | -1 to 1 (soft) |  |
-| `phase` *(more)* | float | `0` | 0 to 1 (soft) | In cycles |
-| `name` | text | `"value"` |  | Name of the channel |
+| `rate` | float | `1` | 0.01 to 100 Hz (soft) | Full waves per second: 1 Hz is one up and down each second, 0.1 one every ten seconds |
+| `shape` | sine \| triangle \| square \| saw | `"sine"` |  | The form of one wave, from -1 to 1 before amplitude and offset; sine: smoothly up and down, slow at the turns; triangle: straight up and straight down at an even speed; square: 1 for the first half of each wave, -1 for the second, jumping between; saw: rising evenly from -1 to 1, then jumping back |
+| `amplitude` | float | `1` | 0 to 2 (soft) | Half the swing: the value goes from offset - amplitude to offset + amplitude |
+| `offset` | float | `0` | -1 to 1 (soft) | The centre the wave swings around; 0.5 with amplitude 0.5 gives 0 to 1 |
+| `phase` *(more)* | float | `0` | 0 to 1 (soft) | Shift along the wave, in waves: 0.25 is a quarter wave ahead. Sets lfos of one rate apart |
+| `name` | text | `"value"` |  | Name of the channel it makes, as bindings and other nodes see it |
 
 ### chan.math
 
@@ -1015,8 +1015,8 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | add \| subtract \| multiply \| divide \| min \| max \| power \| modulo \| floor | `"add"` |  | modulo: a wrapped into 0 to b; floor: a down to a multiple of b (b = 1: whole numbers) |
-| `b` | float | `0` | -1 to 1 (soft) | Used while input b is unconnected |
+| `op` | add \| subtract \| multiply \| divide \| min \| max \| power \| modulo \| floor | `"add"` |  | What is done with a and b, sample by sample; add: a + b; subtract: a - b; multiply: a times b: b scales a; divide: a divided by b; min: the smaller of a and b: b is a ceiling; max: the larger of a and b: b is a floor; power: a to the power b; modulo: a wrapped into 0 to b (b = 0 leaves a); floor: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a) |
+| `b` | float | `0` | -1 to 1 (soft) | The b side as a number, used while input b is unconnected |
 
 ### chan.merge
 
@@ -1043,13 +1043,13 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `frequency` | float | `1` | 0.01 to 50 Hz (soft) | Bumps per second |
-| `amplitude` | float | `1` | 0 to 2 (soft) |  |
-| `offset` | float | `0` | -1 to 1 (soft) |  |
-| `seed` | int | `0` | 0 to 100 (soft) |  |
-| `octaves` *(more)* | int | `2` | 1 to 8 |  |
-| `roughness` *(more)* | float | `0.5` | 0 to 1 (soft) | Amplitude from one octave to the next |
-| `name` | text | `"value"` |  | Name of the channel |
+| `frequency` | float | `1` | 0.01 to 50 Hz (soft) | How fast it wanders: about this many rises and falls per second |
+| `amplitude` | float | `1` | 0 to 2 (soft) | Half the swing: the value stays within about offset - amplitude to offset + amplitude |
+| `offset` | float | `0` | -1 to 1 (soft) | The centre the noise wanders around |
+| `seed` | int | `0` | 0 to 100 (soft) | Picks another motion of the same character; one seed always gives the same motion |
+| `octaves` *(more)* | int | `2` | 1 to 8 | Layers of ever faster wiggle added up, each twice the frequency of the one before; 1 is smoothest |
+| `roughness` *(more)* | float | `0.5` | 0 to 1 (soft) | Strength of each octave relative to the one before; higher is more jittery |
+| `name` | text | `"value"` |  | Name of the channel it makes, as bindings and other nodes see it |
 
 ### chan.null
 
@@ -1095,9 +1095,9 @@ Outputs: none.
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `host` | text | `"127.0.0.1"` |  | IP address to send to, or localhost; names are not looked up |
-| `port` | int | `9000` | 1024 to 65535 (soft) |  |
+| `port` | int | `9000` | 1024 to 65535 (soft) | UDP port the receiver listens on (TouchOSC and many apps use 9000) |
 | `rate` | float | `30` | 1 to 120 Hz (soft) | Sends per second at most |
-| `send` | changes \| always | `"changes"` |  | changes: only what changed, plus everything once a second; always: everything each time |
+| `send` | changes \| always | `"changes"` |  | Which channels each send carries; changes: only what changed, plus everything once a second; always: everything, each time |
 | `prefix` | text |  |  | Put before every channel's address: `/show` sends /show/x |
 | `bundle` *(more)* | bool | `true` |  | Several messages per packet as a bundle; off sends one packet per message |
 
@@ -1155,9 +1155,9 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `limit` | none \| loop \| clamp | `"none"` |  | Keep the sum within min and max: start again from min (loop) or stop there (clamp) |
-| `min` | float | `0` | -10 to 10 (soft) |  |
-| `max` | float | `1` | -10 to 10 (soft) |  |
+| `limit` | none \| loop \| clamp | `"none"` |  | Whether the sum is kept within min and max; none: it grows without end; loop: past max it starts again from min (and the other way round): an angle, a scroll; clamp: it stops at min and max |
+| `min` | float | `0` | -10 to 10 (soft) | Lower end of the range the sum stays in (limit loop or clamp) |
+| `max` | float | `1` | -10 to 10 (soft) | Upper end of the range the sum stays in (limit loop or clamp) |
 | `reset` | bool | `false` |  | Hold the sum at 0 (or min) while on |
 
 ## table
@@ -1174,8 +1174,8 @@ Outputs: `out` (table).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `file` | file (csv, tsv, tab, txt) |  |  | Relative to the project directory |
-| `format` | auto \| lines \| tsv \| csv | `"auto"` |  | auto: by extension (csv, tsv, else lines) |
+| `file` | file (csv, tsv, tab, txt) |  |  | The text file, relative to the project directory; saving it again reloads the node |
+| `format` | auto \| lines \| tsv \| csv | `"auto"` |  | How a line of the file is split into cells; auto: by extension: csv, tsv (or tab), else lines; lines: not at all: one cell per row; tsv: at tabs; csv: at commas; "a, b" in quotes is one cell, "" a quote |
 
 ### table.in
 
@@ -1221,8 +1221,8 @@ Outputs: `out` (table).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `text` | text |  |  | The rows |
-| `format` | lines \| tsv \| csv | `"lines"` |  | lines: one cell per row |
+| `text` | text |  |  | The table as text: one row per line, cells split as format says |
+| `format` | lines \| tsv \| csv | `"lines"` |  | How a line is split into cells; lines: not at all: one cell per row; tsv: at tabs; csv: at commas; "a, b" in quotes is one cell, "" a quote |
 
 ## geo
 
@@ -1252,11 +1252,11 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `file` | file (obj, stl, gltf, glb) |  |  | Relative to the project directory |
-| `up` *(more)* | auto \| y \| z | `"auto"` |  | Which axis is up in the file, turned into penumbra's z up; auto: y for glTF and OBJ, z for STL |
-| `normals` | file \| smooth | `"file"` |  | file: as the file has them (flat where it has none, as STL); smooth: averaged over each corner's faces, for faceted or voxel meshes |
+| `file` | file (obj, stl, gltf, glb) |  |  | The mesh file, relative to the project directory; saving it again reloads the node |
+| `up` *(more)* | auto \| y \| z | `"auto"` |  | Which axis is up in the file, turned into penumbra's z up; auto: y for glTF and OBJ, z for STL; y: the file's y is up (most modelling tools, glTF); z: the file's z is up already, as STL from CAD usually is |
+| `normals` | file \| smooth | `"file"` |  | Which way each corner faces, for the shading; file: as the file has them (flat where it has none, as STL); smooth: averaged over each corner's faces, for faceted or voxel meshes |
 | `rings` *(more)* | int | `1` | 1 to 16 | smooth: rings of faces averaged around each corner; 3 to 6 for voxel or marching-cubes meshes |
-| `crease` *(more)* | float | `180` | 0 to 180 ° | smooth: edges sharper than this stay hard; 180 smooths everything |
+| `crease` *(more)* | float | `180` | 0 to 180° | smooth: edges sharper than this stay hard; 180 smooths everything |
 
 ### geo.instance
 
@@ -1296,9 +1296,9 @@ Outputs: `out` (geo).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `shape` | box \| sphere \| plane | `"box"` |  |  |
+| `shape` | box \| sphere \| plane | `"box"` |  | Which shape, centred on the origin; size sets its measures; box: a cuboid of size x by y by z; sphere: a ball as wide as size x; plane: an upright rectangle facing -y, size x wide and size z high |
 | `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | Box: x, y, z; sphere: the diameter is x; plane (upright, facing -y): x wide, z high |
-| `segments` *(more)* | int | `48` | 3 to 128 (soft) | Around the sphere |
+| `segments` *(more)* | int | `48` | 3 to 128 (soft) | Steps around the sphere (half as many from pole to pole); more is rounder and costs more |
 
 ### geo.tex_instance
 
@@ -1330,9 +1330,9 @@ Outputs: `out` (geo).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `translate` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) |  |
-| `rotate` | vec3 | `[0, 0, 0]` | -180 to 180 ° (soft) | About x, then y, then z |
-| `scale` | vec3 | `[1, 1, 1]` | 0 to 4 (soft) |  |
+| `translate` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | Move along x, y, z (z up), in scene units (metres), after scale and rotate |
+| `rotate` | vec3 | `[0, 0, 0]` | -180 to 180° (soft) | Turn about x, then y, then z, after scale and before translate |
+| `scale` | vec3 | `[1, 1, 1]` | 0 to 4 (soft) | Size along x, y, z around the origin, first of the steps: 1 keeps it, negative mirrors |
 | `uniform` | float | `1` | 0.001 to 1000 (soft) | Times the scale: 0.001 turns millimetres into metres |
 
 ## mat
@@ -1409,8 +1409,8 @@ Outputs: `out` (mat).
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | The lines' colour: linear RGBA, straight alpha; times the texture input |
 | `line_width` | float | `1.5` | 0.5 to 8 px (soft) | The lines' width in pixels of the render |
-| `edges` | polygons \| triangles | `"polygons"` |  | polygons: leave out edges inside the file's polygons (OBJ faces), or inside flat faces where it has only triangles (a quad's diagonal); triangles: every edge |
-| `faces` | open \| filled \| hidden | `"open"` |  | open: nothing, the lines behind show through; filled: the fill colour; hidden: only the lines filled faces would leave, the faces see-through |
+| `edges` | polygons \| triangles | `"polygons"` |  | Which edges get a line; polygons: leave out edges inside the file's polygons (OBJ faces), or inside flat faces where it has only triangles (a quad's diagonal); triangles: every edge |
+| `faces` | open \| filled \| hidden | `"open"` |  | What the faces between the lines show; open: nothing: the lines behind show through; filled: the fill colour, hiding what lies behind; hidden: only the lines filled faces would leave, the faces see-through |
 | `fill` | colour | `[0, 0, 0, 1]` |  | The faces' colour where `faces` is filled: linear RGBA, straight alpha |
 | `shadows` | bool | `true` |  | Lines and filled faces cast shadows from the lights that cast them; off: none |
 
@@ -1428,8 +1428,8 @@ Outputs: `out` (light).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `color` | colour | `[1, 1, 1, 1]` |  | Linear; alpha is unused |
-| `intensity` | float | `0.2` | 0 to 4 (soft) | Times the colour |
+| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
+| `intensity` | float | `0.2` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 
 ### light.directional
 
@@ -1442,9 +1442,9 @@ Outputs: `out` (light).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `position` | vec3 | `[-2, -3, 4]` | -10 to 10 (soft) | Where it shines from; only the direction to the target counts |
-| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | What it shines at |
-| `color` | colour | `[1, 1, 1, 1]` |  | Linear; alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Times the colour |
+| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point it shines at, in metres (z up) |
+| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
+| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 | `shadows` | bool | `false` |  | What stands in its way casts a shadow |
 | `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual: more against stripes on lit surfaces, less against light leaking where objects touch |
 
@@ -1460,9 +1460,9 @@ Outputs: `out` (light).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `color` | colour | `[1, 1, 1, 1]` |  | Linear; alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Times the colour |
-| `turn` | float | `0` | -180 to 180 ° (soft) | About z, counter-clockwise seen from above; at 0 the picture's middle looks along +x, as in Blender |
+| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
+| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
+| `turn` | float | `0` | -180 to 180° (soft) | About z, counter-clockwise seen from above; at 0 the picture's middle looks along +x, as in Blender |
 | `size` *(more)* | int | `1024` | 128 to 2048 (soft) | Texels across the baked reflections: sharper mirrors, more memory and a longer bake |
 
 ### light.merge
@@ -1488,10 +1488,10 @@ Outputs: `out` (light).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `position` | vec3 | `[1.5, -2.5, 2.5]` | -10 to 10 (soft) | Where the light is (z up) |
-| `color` | colour | `[1, 1, 1, 1]` |  | Linear; alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Times the colour |
-| `falloff` *(more)* | none \| inverse square | `"none"` |  | none: as bright at any distance; inverse square: as bright as the colour at 1 m, fading with distance |
+| `position` | vec3 | `[1.5, -2.5, 2.5]` | -10 to 10 (soft) | Where the light is, in metres (z up) |
+| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
+| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
+| `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance from it; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
 
 ### light.projector
 
@@ -1506,10 +1506,10 @@ Outputs: `out` (light).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `color` | colour | `[1, 1, 1, 1]` |  | Linear; alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Times the colour |
+| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
+| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 | `shadows` | bool | `true` |  | What stands in its way casts a shadow |
-| `falloff` *(more)* | none \| inverse square | `"none"` |  | none: as bright at any distance; inverse square: as bright as the colour at 1 m, fading with distance |
+| `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance from it; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
 | `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual: more against stripes on lit surfaces, less against light leaking where objects touch |
 
 ### light.spot
@@ -1522,14 +1522,14 @@ Outputs: `out` (light).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `position` | vec3 | `[0, -3, 3]` | -10 to 10 (soft) | Where the light is (z up) |
-| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | What it shines at |
-| `angle` | float | `45` | 5 to 120 ° (soft) | The whole cone, edge to edge |
+| `position` | vec3 | `[0, -3, 3]` | -10 to 10 (soft) | Where the light is, in metres (z up) |
+| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point it shines at, in metres (z up) |
+| `angle` | float | `45` | 5 to 120° (soft) | The whole cone, edge to edge |
 | `softness` | float | `0.2` | 0 to 1 | How much of the cone fades towards its edge; 0 is a hard edge |
-| `color` | colour | `[1, 1, 1, 1]` |  | Linear; alpha is unused |
-| `intensity` | float | `1` | 0 to 4 (soft) | Times the colour |
+| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
+| `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
 | `shadows` | bool | `false` |  | What stands in its way casts a shadow |
-| `falloff` *(more)* | none \| inverse square | `"none"` |  | none: as bright at any distance; inverse square: as bright as the colour at 1 m, fading with distance |
+| `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance from it; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
 | `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual: more against stripes on lit surfaces, less against light leaking where objects touch |
 
 ## view
@@ -1546,16 +1546,16 @@ Outputs: `out` (view).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `position` | vec3 | `[2.4, -3.2, 1.6]` | -10 to 10 (soft) | Where the camera is (z up) |
-| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | What it looks at |
-| `projection` | perspective \| orthographic | `"perspective"` |  | perspective: rays from one point, farther things smaller (fov); orthographic: parallel rays, sizes kept at any distance (size). A calibration is always perspective |
-| `fov` | float | `40` | 5 to 120 ° (soft) | Vertical field of view (perspective) |
+| `position` | vec3 | `[2.4, -3.2, 1.6]` | -10 to 10 (soft) | Where the camera is, in metres (z up) |
+| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point it looks at, in metres; it stays in the picture's centre (unless shift moves it) |
+| `projection` | perspective \| orthographic | `"perspective"` |  | How the scene is flattened into the picture; a calibration is always perspective; perspective: rays from one point, farther things smaller (fov sets the angle); orthographic: parallel rays, sizes kept at any distance (size sets the height seen) |
+| `fov` | float | `40` | 5 to 120° (soft) | Vertical field of view (perspective): smaller zooms in, larger sees more |
 | `size` | float | `2` | 0.1 to 20 m (soft) | How much the picture sees from bottom to top (orthographic); the width follows the picture's aspect |
-| `roll` | float | `0` | -180 to 180 ° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
+| `roll` | float | `0` | -180 to 180° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
 | `shift` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
 | `calibration` *(more)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, projection, fov, size, roll and shift |
-| `near` *(more)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn (orthographic too: nothing behind the camera is drawn) |
-| `far` *(more)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn |
+| `near` *(more)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn, in metres from the camera; anything closer is cut away (orthographic too: nothing behind the camera is drawn) |
+| `far` *(more)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn, in metres from the camera; anything beyond is left out |
 
 ## script
 
@@ -1582,7 +1582,7 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `file` | file (py) |  |  | A .py file used instead of `code`, relative to the project; reloads when saved |
-| `cook` | auto \| every frame \| on change | `"auto"` |  | When cook(cx) runs: auto = every frame if the code mentions `time` or `frame`, else when an input or a param changes |
+| `cook` | auto \| every frame \| on change | `"auto"` |  | When cook(cx) runs; auto: every frame if the code mentions `time` or `frame`, else as on change; every frame: every frame, for scripts that keep changing on their own; on change: only when an input or a param changes |
 | `timeout` | float | `0.1` | 0.01 to 1 s (soft) | A call running longer is stopped, and the node with it until the script changes |
 | `code` | text | an example script |  | The script while `file` is empty |
 
@@ -1605,8 +1605,8 @@ Outputs: none.
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `display` | text |  |  | Display id from output.list, e.g. `EPSON PJ @ port 4`; the monitor name alone works when unique |
-| `active` | bool | `true` |  | Open the output window |
-| `fit` | fit \| fill \| stretch | `"fit"` |  | fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted |
+| `active` | bool | `true` |  | Open the output window on its display; off closes it and the node does nothing |
+| `fit` | fit \| fill \| stretch | `"fit"` |  | How the picture sits in the viewport when their aspects differ; fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted |
 | `viewport` *(more)* | vec4 | `[0, 0, 1, 1]` | 0 to 1 | x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5) |
 | `test` | bool | `false` |  | A test pattern in the projector's own pixels instead of the input: square cells, centre, circle, and the image's edge in this projector's colour |
 

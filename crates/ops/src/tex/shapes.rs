@@ -23,13 +23,17 @@ fn desc() -> NodeDesc {
         "Tagged shapes on the surface: a mask and a distance field per tag, outlines, a table",
     )
     .param(
-        ParamSpec::int("width", 1920)
+        ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).doc(
+            "Width of the surface in pixels (the mappers' input); shape coordinates are in these pixels",
+        ),
+    )
+    .param(
+        ParamSpec::int("height", 1080)
             .clamp(1.0, MAX_SIDE)
             .curve(Curve::Log)
             .unit(Unit::Pixels)
-            .doc("The surface's resolution (the mappers' input)"),
+            .doc("Height of the surface in pixels; shape coordinates are in these pixels"),
     )
-    .param(ParamSpec::int("height", 1080).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels))
     .param(super::keep_size())
     .param(ParamSpec::text("shapes", "").multiline().doc(
         "One per line: `tag rect x,y w,h`, `tag ellipse x,y w,h` or `tag poly x,y x,y ...`, \
@@ -45,7 +49,7 @@ fn desc() -> NodeDesc {
             .range(0.5, 8.0)
             .unit(Unit::Pixels)
             .more()
-            .doc("Width of the outlines"),
+            .doc("Width of the lines in the outline output, in surface pixels"),
     )
     .input("table", DataKind::Table)
     .output("mask", DataKind::Tex)
