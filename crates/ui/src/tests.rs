@@ -519,7 +519,7 @@ fn any_node_opens_in_the_viewer_window() {
 fn backward_wires_go_around_nodes() {
     use egui::{Rect, pos2};
 
-    use crate::editor::{route_cost, wire_route};
+    use crate::wires::{route_cost, wire_route};
     // A mapper below a projector, its output wired back up into the projector's input: the
     // case that used to swing below and cut through the mapper.
     let projector = Rect::from_min_max(pos2(170.0, 100.0), pos2(465.0, 195.0));

@@ -27,6 +27,7 @@ pub mod textures;
 pub mod theme;
 pub mod titlebar;
 pub mod viewer;
+mod wires;
 
 use std::collections::BTreeSet;
 

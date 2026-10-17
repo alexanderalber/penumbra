@@ -62,6 +62,25 @@ impl PenumbraApp {
             "ui.place" => done(self.place(p, now)?),
             "ui.options" => done(self.options(p, now)?),
             "ui.arrange" => done(self.arrange(p, now)?),
+            "ui.measure" => {
+                let session = self.engine.session();
+                let net = session.doc().snapshot();
+                let m = editor::measure(&net, session.types(), self.editor.level, &self.layout);
+                let round = |v: f32| (v * 10.0).round() / 10.0;
+                done(json!({
+                    "nodes": m.nodes,
+                    "wires": m.wires,
+                    "width": round(m.width),
+                    "height": round(m.height),
+                    "wire_length": round(m.wire_length),
+                    "longest_wire": round(m.longest),
+                    "crossings": m.crossings,
+                    "crossings_at": m.crossings_at.iter().map(|p| [round(p.x), round(p.y)]).collect::<Vec<_>>(),
+                    "overlap": round(m.overlap),
+                    "overlaps": m.overlaps.iter().map(|p| [round(p.x), round(p.y)]).collect::<Vec<_>>(),
+                    "through_nodes": round(m.through_nodes),
+                }))
+            }
             "ui.frame" => {
                 self.editor.frame_all();
                 done(json!({}))
