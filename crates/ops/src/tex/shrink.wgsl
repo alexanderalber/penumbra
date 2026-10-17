@@ -1,4 +1,4 @@
-// chan.fromtex: one step of averaging the input down, the mean over each output pixel's
+// chan.from_tex: one step of averaging the input down, the mean over each output pixel's
 // footprint, as stored (premultiplied, alpha kept).
 
 @fragment

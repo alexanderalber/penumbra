@@ -369,7 +369,7 @@ impl PenumbraApp {
                     let wait = Duration::from_secs_f64(delay);
                     let learned = self.engine.on_cook(move |st| {
                         st.cooker
-                            .resource::<penumbra_ops::tex::blobtrack::BlobTracks>()
+                            .resource::<penumbra_ops::tex::blob_track::BlobTracks>()
                             .is_some_and(|t| t.learn(node, wait))
                     });
                     match learned {

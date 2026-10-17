@@ -167,12 +167,13 @@ fn steer_target(net: &Network, types: &NodeTypes, render: NodeId) -> Result<Node
     };
     let calibrated = net
         .node(camera)
-        .and_then(|c| c.param(types.desc(&c.kind)?, "camera"))
+        .and_then(|c| c.param(types.desc(&c.kind)?, "calibration"))
         .and_then(Value::as_str)
         .is_some_and(|s| !s.trim().is_empty());
     if calibrated {
         return Err(
-            "the camera is calibrated (its `camera` param); steering would replace the calibration".into()
+            "the camera is calibrated (its `calibration` param); steering would replace the calibration"
+                .into(),
         );
     }
     Ok(camera)

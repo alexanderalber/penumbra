@@ -1,4 +1,4 @@
-//! `tex.videoin`: a live camera (a capture card such as a Cam Link, a webcam), read by the
+//! `tex.video_in`: a live camera (a capture card such as a Cam Link, a webcam), read by the
 //! engine's camera [`Hub`] on a thread of its own; the newest frame's planes are converted to a
 //! texture on the GPU, as video files are.
 //!
@@ -25,7 +25,7 @@ use penumbra_graph::{
 };
 
 /// The node kind.
-pub const VIDEO_IN: &str = "tex.videoin";
+pub const VIDEO_IN: &str = "tex.video_in";
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -47,7 +47,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))
 }
 
-/// The streams the network's `tex.videoin` nodes want (stored params).
+/// The streams the network's `tex.video_in` nodes want (stored params).
 pub fn wants(net: &Network, types: &NodeTypes) -> Vec<Key> {
     let Some(desc) = types.desc(VIDEO_IN) else { return Vec::new() };
     let text = |n: &penumbra_graph::NodeDef, p: &str| {
@@ -120,7 +120,7 @@ impl VideoIn {
             return Err(if hub.config().enabled {
                 CookError::Pending
             } else {
-                CookError::failed("camera input is switched off (videoin.config enabled)")
+                CookError::failed("camera input is switched off (video_in.config enabled)")
             });
         };
         let frame = hub.latest(&key);

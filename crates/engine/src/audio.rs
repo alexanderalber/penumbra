@@ -1,4 +1,4 @@
-//! Audio in the engine: the hub's streams follow the network's `chan.audioin` nodes (the cook
+//! Audio in the engine: the hub's streams follow the network's `chan.audio_in` nodes (the cook
 //! thread calls [`penumbra_ops::audio::wants`] when the network changes).
 //!
 //! Commands: `audio.devices`, `audio.status`, `audio.config`.

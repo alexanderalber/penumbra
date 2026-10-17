@@ -49,14 +49,14 @@
 //! so a start without a GPU cannot overwrite it. [`Engine::shutdown`] saves once more.
 //!
 //! **OSC** ([`crate::osc`]): the cook thread tells the [`Hub`] which ports the network's
-//! `chan.oscin` nodes want whenever the network changes; the hub is a resource of the cooker
+//! `chan.osc_in` nodes want whenever the network changes; the hub is a resource of the cooker
 //! (the nodes read what arrived); the **osc thread** turns messages into param edits and ends
 //! learns.
 //!
 //! **Audio:** likewise, the cook thread tells the audio [`AudioHub`] which input devices the
-//! network's `chan.audioin` nodes want; the hub keeps a stream thread per device, and the
+//! network's `chan.audio_in` nodes want; the hub keeps a stream thread per device, and the
 //! nodes read what arrived. **Cameras** the same way: the [`CameraHub`] opens what the
-//! `tex.videoin` nodes want, a capture thread per camera, and keeps each one's newest frame.
+//! `tex.video_in` nodes want, a capture thread per camera, and keeps each one's newest frame.
 //!
 //! **Another project** ([`Engine::open_project`]): the threads above stop (state saved and
 //! changes written as at closing) and start again for the new session with a fresh cook state.
@@ -375,7 +375,7 @@ impl CookState {
             self.sinks = Some((net.clone(), sinks));
             self.osc.set_wanted(&penumbra_ops::osc::wants(&net, types));
             self.audio.set_wanted(&penumbra_ops::audio::wants(&net, types));
-            self.camera.set_wanted(&penumbra_ops::tex::videoin::wants(&net, types));
+            self.camera.set_wanted(&penumbra_ops::tex::video_in::wants(&net, types));
         }
         let mut wanted: Vec<NodeId> = self.sinks.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
         self.watched.retain(|id| net.node(*id).is_some());
@@ -392,7 +392,7 @@ impl CookState {
         self.view.output_ready.notify_all();
         self.mappers.prune(&net);
         self.renders.prune(&net);
-        if let Some(t) = self.cooker.resource::<penumbra_ops::tex::blobtrack::BlobTracks>() {
+        if let Some(t) = self.cooker.resource::<penumbra_ops::tex::blob_track::BlobTracks>() {
             t.prune(|id| net.node(id).is_some());
         }
         self.refresh_resolution(&net, session.types(), request.resolution);
@@ -646,7 +646,7 @@ impl Engine {
         cooker.provide(self.osc.hub().clone());
         cooker.provide(self.audio.clone());
         cooker.provide(self.camera.clone());
-        cooker.provide(penumbra_ops::tex::blobtrack::BlobTracks::new());
+        cooker.provide(penumbra_ops::tex::blob_track::BlobTracks::new());
         let gpu = self.gpu.get().cloned();
         if let Some(gpu) = &gpu {
             cooker.provide(gpu.clone());

@@ -8,9 +8,9 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blobtrack](#texblobtrack), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channelmix](#texchannelmix), [tex.chromakey](#texchromakey), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fromchan](#texfromchan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lensdistort](#texlensdistort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.opticalflow](#texopticalflow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.timemachine](#textimemachine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.videoin](#texvideoin)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
 
-### tex.blobtrack
+### tex.blob_track
 
 Finds blobs (people, hands, spots of light) and follows them with ids that stay
 
@@ -25,7 +25,7 @@ Outputs: `out` (tex), `blobs` (table), `chans` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `detect` | background \| bright | `"background"` |  | background: what differs from the empty scene (the `background` input where connected, else learned: `blobtrack.learn`); bright: whatever is brighter than `threshold` |
+| `detect` | background \| bright | `"background"` |  | background: what differs from the empty scene (the `background` input where connected, else learned: `blob_track.learn`); bright: whatever is brighter than `threshold` |
 | `threshold` | float | `0.1` | 0 to 0.5 (soft) | Difference to the background (in any channel), or brightness, from which a pixel counts |
 | `adapt` | float | `30` | 0 to 300 s (soft) | How soon a lasting change (light, a moved chair) becomes background; someone standing still fades ten times slower. 0: never |
 | `min_area` | float | `0.1` | 0 to 5 % (soft) | Smaller blobs are ignored (of the picture's area) |
@@ -74,7 +74,7 @@ Outputs: `out` (tex).
 | `record` | bool | `true` |  | Take new frames; off holds what is kept |
 | `persist` *(more)* | bool | `true` |  | While not recording, keep the held frames in the state snapshots, so they survive a restart |
 
-### tex.channelmix
+### tex.channel_mix
 
 Each output channel a weighted sum of the input's channels
 
@@ -92,7 +92,7 @@ Outputs: `out` (tex).
 | `alpha` | vec4 | `[0, 0, 0, 1]` | -2 to 2 (soft) | Weights of r, g, b, a |
 | `bias` *(more)* | vec4 | `[0, 0, 0, 0]` | -1 to 1 (soft) | Added to r, g, b, a afterwards |
 
-### tex.chromakey
+### tex.chroma_key
 
 Make pixels near a key colour transparent (green or blue screen)
 
@@ -269,7 +269,7 @@ Outputs: `out` (tex).
 | `flip_y` | bool | `false` |  | Top becomes bottom |
 | `flop` | bool | `false` |  | Swap the axes (transpose); the output is as wide as the input is high |
 
-### tex.fromchan
+### tex.from_chan
 
 Channels as a picture: a row per channel, a pixel per sample
 
@@ -339,7 +339,7 @@ Outputs: `out` (tex), `layers` (table).
 | `layer` | text |  |  | A layer's name, its path (Group/Layer) or #index from the layers table; empty: the whole picture |
 | `placed` *(more)* | bool | `true` |  | The layer where it sits on the canvas (the canvas's size); off: only its own rectangle |
 
-### tex.lensdistort
+### tex.lens_distort
 
 Radial lens distortion (barrel or pincushion) around a centre
 
@@ -504,7 +504,7 @@ Inputs:
 
 Outputs: `out` (tex).
 
-### tex.opticalflow
+### tex.optical_flow
 
 How far each part of the picture moved since the previous frame (optical flow)
 
@@ -612,7 +612,7 @@ Outputs: `out` (tex), `data` (tex).
 | `roll` | float | `0` | -180 to 180 ° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
 | `surface` | auto \| material \| texture \| parts \| uv \| normals | `"auto"` |  | auto: the texture input where connected, else the file's materials; parts: a colour per part id |
 | `shift` *(camera)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
-| `camera` *(camera)* | text |  |  | A calibrated camera as JSON (calib.solve's `camera`); replaces position, target, fov, roll and shift |
+| `calibration` *(camera)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, fov, roll and shift |
 | `near` *(camera)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn |
 | `far` *(camera)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn |
 | `background` *(more)* | colour | `[0, 0, 0, 0]` |  |  |
@@ -789,7 +789,7 @@ Outputs: `out` (tex).
 | `mirror` | bool | `false` |  | Every other copy mirrored, so edges meet |
 | `offset` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | In tiles |
 
-### tex.timemachine
+### tex.time_machine
 
 Per pixel, a frame from the past: the map says how far back (black now, white oldest)
 
@@ -849,7 +849,7 @@ Outputs: `out` (tex), `info` (chan).
 | `loop` | bool | `true` |  | Off stops on the last frame |
 | `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is (re)loaded |
 
-### tex.videoin
+### tex.video_in
 
 A live camera or capture card; resolution of the camera's mode
 
@@ -865,11 +865,11 @@ Outputs: `out` (tex), `info` (chan).
 
 ## chan
 
-[chan.audioanalysis](#chanaudioanalysis), [chan.audioin](#chanaudioin), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.fromtex](#chanfromtex), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.oscin](#chanoscin), [chan.oscout](#chanoscout), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed)
 
-### chan.audioanalysis
+### chan.audio_analysis
 
-Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audioin)
+Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audio_in)
 
 Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
 
@@ -893,7 +893,7 @@ Outputs: `out` (chan), `spectrum` (chan).
 | `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts |
 | `bands` *(levels)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output |
 
-### chan.audioin
+### chan.audio_in
 
 Audio from an input device: one channel per device channel, at its sample rate
 
@@ -938,7 +938,7 @@ Outputs: `out` (chan).
 | `rise` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step up; 0 follows at once |
 | `fall` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step down |
 
-### chan.fromtex
+### chan.from_tex
 
 A picture as channels: averaged down to a few pixels, one channel per row and colour
 
@@ -1044,7 +1044,7 @@ Inputs:
 
 Outputs: `out` (chan).
 
-### chan.oscin
+### chan.osc_in
 
 OSC from the network: every address a channel with its latest number
 
@@ -1059,7 +1059,7 @@ Outputs: `out` (chan), `messages` (table).
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
 | `params` | bool | `false` |  | Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, outside the undo history). Binding to the channels is the better way for continuous control |
 
-### chan.oscout
+### chan.osc_out
 
 Sends channels (and table rows: address, values) as OSC to a host and port
 
@@ -1206,7 +1206,18 @@ Outputs: `out` (table).
 
 ## geo
 
-[geo.file](#geofile), [geo.instance](#geoinstance), [geo.material](#geomaterial), [geo.merge](#geomerge), [geo.primitive](#geoprimitive), [geo.texinstance](#geotexinstance), [geo.transform](#geotransform)
+[geo.assign_material](#geoassign_material), [geo.file](#geofile), [geo.instance](#geoinstance), [geo.merge](#geomerge), [geo.primitive](#geoprimitive), [geo.tex_instance](#geotex_instance), [geo.transform](#geotransform)
+
+### geo.assign_material
+
+Puts a material on every model of the input
+
+Inputs:
+
+- `in` (geo)
+- `mat` (mat)
+
+Outputs: `out` (geo).
 
 ### geo.file
 
@@ -1232,17 +1243,6 @@ Inputs:
 
 - `in` (geo)
 - `table` (table)
-
-Outputs: `out` (geo).
-
-### geo.material
-
-Puts a material on every model of the input
-
-Inputs:
-
-- `in` (geo)
-- `mat` (mat)
 
 Outputs: `out` (geo).
 
@@ -1277,7 +1277,7 @@ Outputs: `out` (geo).
 | `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | Box: x, y, z; sphere: the diameter is x; plane (upright, facing -y): x wide, z high |
 | `segments` *(more)* | int | `48` | 3 to 128 (soft) | Around the sphere |
 
-### geo.texinstance
+### geo.tex_instance
 
 A copy of the input per texel of position, drawn on the GPU: scaled by scale's rgb, its +y turned to aim's rgb (+z kept up), moved to position's rgb, its colour times color's rgb; texel i % width, i / width of each texture is copy i's
 
@@ -1528,7 +1528,7 @@ Outputs: `out` (view).
 | `fov` | float | `40` | 5 to 120 ° (soft) | Vertical field of view |
 | `roll` | float | `0` | -180 to 180 ° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
 | `shift` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
-| `camera` *(more)* | text |  |  | A calibrated camera as JSON (calib.solve's `camera`); replaces position, target, fov, roll and shift |
+| `calibration` *(more)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, fov, roll and shift |
 | `near` *(more)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn |
 | `far` *(more)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn |
 

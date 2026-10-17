@@ -1,10 +1,10 @@
-//! Channels to a texture and back: `tex.fromchan` and `chan.fromtex`.
+//! Channels to a texture and back: `tex.from_chan` and `chan.from_tex`.
 //!
-//! `tex.fromchan` uploads a [`Chans`] as a picture: one row per channel (samples across), or up
+//! `tex.from_chan` uploads a [`Chans`] as a picture: one row per channel (samples across), or up
 //! to four channels as the red, green, blue and alpha of one row. With many samples per channel
 //! (an audio spectrum) that is a texture a shader can look values up in.
 //!
-//! `chan.fromtex` averages its input down to `columns` x `rows` pixels on the GPU, reads that
+//! `chan.from_tex` averages its input down to `columns` x `rows` pixels on the GPU, reads that
 //! small picture back and hands it out as channels: one per row and colour component, a sample
 //! per column. At 1 x 1 it is the mean colour of the picture, ready to be bound to a parameter.
 //! The readback waits up to [`WAIT`] within the cook, so with a quick GPU the channels belong to
@@ -25,8 +25,8 @@ use penumbra_graph::{
 
 use super::{gpu, waiting};
 
-pub const FROM_CHAN: &str = "tex.fromchan";
-pub const FROM_TEX: &str = "chan.fromtex";
+pub const FROM_CHAN: &str = "tex.from_chan";
+pub const FROM_TEX: &str = "chan.from_tex";
 const SHRINK: &str = include_str!("shrink.wgsl");
 /// How long a cook waits for the readback it just started.
 const WAIT: Duration = Duration::from_millis(4);

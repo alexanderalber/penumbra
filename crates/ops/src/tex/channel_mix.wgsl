@@ -1,4 +1,4 @@
-// tex.channelmix: each output channel is a weighted sum of the input's red, green, blue and
+// tex.channel_mix: each output channel is a weighted sum of the input's red, green, blue and
 // alpha plus a bias, on straight colour.
 
 @fragment

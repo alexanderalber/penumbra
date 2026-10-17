@@ -2,7 +2,7 @@
 //! of each, and the hand-over to whoever shows it.
 //!
 //! - **Streams** are wanted by the network ([`Hub::set_wanted`]: a device pattern and a mode
-//!   text per `tex.videoin` node). Each gets a thread that opens the camera, reads frames as
+//!   text per `tex.video_in` node). Each gets a thread that opens the camera, reads frames as
 //!   they come, and after an error reopens it two seconds later. Reading blocks until the camera
 //!   delivers; a stream that is no longer wanted ends after its next frame and is never waited
 //!   for, except briefly at shutdown.
@@ -52,7 +52,7 @@ impl Key {
     }
 }
 
-/// Settings for all streams. Not stored: every start has the defaults (`videoin.config`).
+/// Settings for all streams. Not stored: every start has the defaults (`video_in.config`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {

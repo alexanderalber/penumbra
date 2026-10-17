@@ -1,4 +1,4 @@
-// tex.blobtrack: the input shrunk to the size the tracker reads back (the mean over each output
+// tex.blob_track: the input shrunk to the size the tracker reads back (the mean over each output
 // pixel's footprint), straight colour, opaque.
 
 @fragment

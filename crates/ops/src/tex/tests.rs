@@ -319,13 +319,13 @@ lumen"
         // The filters after the M2 polish, on the colour noise or the ramp image.
         create("/flip", "tex.flip", &[("flip_x", Value::Bool(true)), ("flop", Value::Bool(true))]),
         create(
-            "/channelmix",
-            "tex.channelmix",
+            "/channel_mix",
+            "tex.channel_mix",
             &[("red", Value::Vec4([0.0, 0.0, 1.0, 0.0])), ("blue", Value::Vec4([0.5, 0.5, 0.0, 0.0]))],
         ),
         create(
-            "/chromakey",
-            "tex.chromakey",
+            "/chroma_key",
+            "tex.chroma_key",
             &[("key", Value::Vec4([0.2, 0.8, 0.2, 1.0])), ("tolerance", Value::Float(0.12))],
         ),
         create("/cross", "tex.cross", &[("cross", Value::Float(0.3))]),
@@ -336,7 +336,7 @@ lumen"
             "tex.fit",
             &[size()[0].clone(), size()[1].clone(), ("justify", Value::Vec2([0.0, 0.5]))],
         ),
-        create("/lensdistort", "tex.lensdistort", &[("k1", Value::Float(0.3))]),
+        create("/lens_distort", "tex.lens_distort", &[("k1", Value::Float(0.3))]),
         create("/limit", "tex.limit", &[("max", Value::Float(0.5)), ("mode", "mirror".into())]),
         create("/lookup", "tex.lookup", &[]),
         create("/matte", "tex.matte", &[]),
@@ -369,15 +369,15 @@ lumen"
             ],
         ),
         connect("/image", "/flip", 0),
-        connect("/noise_value", "/channelmix", 0),
-        connect("/noise_value", "/chromakey", 0),
+        connect("/noise_value", "/channel_mix", 0),
+        connect("/noise_value", "/chroma_key", 0),
         connect("/noise", "/cross", 0),
         connect("/noise_value", "/cross", 1),
         connect("/image", "/displace", 0),
         connect("/noise_value", "/displace", 1),
         connect("/noise_value", "/edge", 0),
         connect("/image", "/fit", 0),
-        connect("/image", "/lensdistort", 0),
+        connect("/image", "/lens_distort", 0),
         connect("/noise_value", "/limit", 0),
         connect("/noise", "/lookup", 0),
         connect("/image", "/lookup", 1),
@@ -431,13 +431,13 @@ lumen"
         "hap_alpha",
         "hap_q",
         "flip",
-        "channelmix",
-        "chromakey",
+        "channel_mix",
+        "chroma_key",
         "cross",
         "displace",
         "edge",
         "fit",
-        "lensdistort",
+        "lens_distort",
         "limit",
         "lookup",
         "matte",
@@ -488,14 +488,14 @@ fn every_builtin_cooks_without_warnings() {
         create("/mat_feed", "mat.constant", &[]),
         create("/light_feed", "light.ambient", &[]),
         create("/view_feed", "view.camera", &[]),
-        create("/audio_feed", "chan.audioin", &[("device", "test".into())]),
+        create("/audio_feed", "chan.audio_in", &[("device", "test".into())]),
     ];
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
     std::fs::write(dir.join("poster.psd"), layers::psd()).unwrap();
     let kinds: Vec<String> = types.kinds().map(str::to_string).collect();
     let passes_on = |kind: &str| {
-        matches!(kind, "chan.null" | "chan.select" | "chan.rename" | "table.null" | "chan.oscout")
+        matches!(kind, "chan.null" | "chan.select" | "chan.rename" | "table.null" | "chan.osc_out")
     };
     for (i, kind) in kinds.iter().enumerate() {
         let path = format!("/n{i}");
@@ -515,10 +515,10 @@ fn every_builtin_cooks_without_warnings() {
             "geo.file" => params.push(("file", "box.obj".into())),
             "tex.layer" => params.push(("file", "poster.psd".into())),
             // Any free port, so the test never collides with something listening on 8000.
-            "chan.oscin" => params.push(("port", Value::Int(0))),
+            "chan.osc_in" => params.push(("port", Value::Int(0))),
             "light.environment" => params.push(("size", Value::Int(64))),
-            "chan.audioin" => params.push(("device", "test".into())),
-            "tex.videoin" => params.push(("device", "test".into())),
+            "chan.audio_in" => params.push(("device", "test".into())),
+            "tex.video_in" => params.push(("device", "test".into())),
             _ => {}
         }
         ops.push(create(&path, kind, &params));
@@ -530,9 +530,9 @@ fn every_builtin_cooks_without_warnings() {
                 penumbra_graph::DataKind::Light => Some("/light_feed"),
                 penumbra_graph::DataKind::View => Some("/view_feed"),
                 // Component ports and nulls pass on what they get and complain about nothing wired.
-                penumbra_graph::DataKind::Chan if kind == "chan.audioanalysis" => Some("/audio_feed"),
+                penumbra_graph::DataKind::Chan if kind == "chan.audio_analysis" => Some("/audio_feed"),
                 penumbra_graph::DataKind::Chan
-                    if desc.port.is_some() || passes_on(kind) || kind == "tex.fromchan" =>
+                    if desc.port.is_some() || passes_on(kind) || kind == "tex.from_chan" =>
                 {
                     Some("/chan_feed")
                 }
@@ -561,7 +561,7 @@ fn every_builtin_cooks_without_warnings() {
             rig.clock.advance(1);
             // A frame of audio for the audio nodes.
             rig.audio.feed("test", 48_000, 2, &[0.1; 1600]).unwrap();
-            // As the engine does every frame: a readback's waker (tex.blobtrack's) only fires
+            // As the engine does every frame: a readback's waker (tex.blob_track's) only fires
             // when the device is polled.
             rig.gpu.poll();
             rig.cook(&path);
@@ -838,7 +838,7 @@ fn text_follows_a_new_size_before_its_raster_is_done() {
 #[test]
 fn a_camera_frame_becomes_a_texture_and_every_new_one_a_new_result() {
     let Some(gpu) = gpu() else { return };
-    let mut rig = Rig::new(gpu, None, &[create("/cam", "tex.videoin", &[("device", "test".into())])]);
+    let mut rig = Rig::new(gpu, None, &[create("/cam", "tex.video_in", &[("device", "test".into())])]);
     let key = penumbra_camera::Key::new("test", "");
     rig.camera.feed(&key, camera_frame(235, 128, 128));
     let px = rig.pixels("/cam");
@@ -1086,7 +1086,7 @@ fn cache_outputs_frames_back() {
 }
 
 #[test]
-fn timemachine_looks_back_as_far_as_the_map_says() {
+fn time_machine_looks_back_as_far_as_the_map_says() {
     let Some(gpu) = gpu() else { return };
     let ops = [
         constant("/c", 0.0),
@@ -1095,7 +1095,7 @@ fn timemachine_looks_back_as_far_as_the_map_says() {
             "tex.constant",
             &[("width", Value::Int(8)), ("height", Value::Int(4)), ("color", Value::Vec4([1.0; 4]))],
         ),
-        create("/tm", "tex.timemachine", &[("length", Value::Int(2))]),
+        create("/tm", "tex.time_machine", &[("length", Value::Int(2))]),
         connect("/c", "/tm", 0),
         connect("/white", "/tm", 1),
     ];
@@ -1131,7 +1131,7 @@ fn timemachine_looks_back_as_far_as_the_map_says() {
 }
 
 #[test]
-fn timemachine_out_of_memory_keeps_fewer_frames_and_does_not_retry_every_cook() {
+fn time_machine_out_of_memory_keeps_fewer_frames_and_does_not_retry_every_cook() {
     // A device of its own: the stack limit applies to every stack of a device.
     let Ok(gpu) = Gpu::headless(AdapterChoice::Software) else { return };
     let ops = [
@@ -1140,7 +1140,7 @@ fn timemachine_out_of_memory_keeps_fewer_frames_and_does_not_retry_every_cook() 
             "tex.constant",
             &[("width", Value::Int(256)), ("height", Value::Int(256)), ("color", Value::Vec4([0.5; 4]))],
         ),
-        create("/tm", "tex.timemachine", &[("length", Value::Int(100_000)), ("budget", Value::Float(1.0))]),
+        create("/tm", "tex.time_machine", &[("length", Value::Int(100_000)), ("budget", Value::Float(1.0))]),
         connect("/c", "/tm", 0),
     ];
     // A 256 x 256 frame at 16 bits is 0.5 MiB: 256 to a chunk. Room for two chunks.
@@ -1482,7 +1482,7 @@ mod layers;
 
 /// A grey camera frame of 32 x 16 pixels, luma `y` give or take `noise` codes at random. One
 /// blue-difference sample follows the seed's parity, so consecutive seeds never make identical
-/// frames (which `tex.videoin` skips as repeats); red does not see it.
+/// frames (which `tex.video_in` skips as repeats); red does not see it.
 fn noisy_frame(y: u8, noise: u8, seed: u32) -> penumbra_camera::CameraFrame {
     let mut state = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
     let luma = (0..32 * 16)
@@ -1526,7 +1526,7 @@ fn red_stats(px: &penumbra_gpu::Pixels) -> (f64, f64) {
 fn denoise_calms_noise_follows_motion_and_reaches_small_changes() {
     let Some(gpu) = gpu() else { return };
     let ops = [
-        create("/cam", "tex.videoin", &[("device", "test".into())]),
+        create("/cam", "tex.video_in", &[("device", "test".into())]),
         create("/dn", "tex.denoise", &[]),
         connect("/cam", "/dn", 0),
     ];
@@ -1607,7 +1607,7 @@ fn denoise_treats_brightness_and_colour_noise_apart() {
     };
     let run = |params: &[(&str, Value)]| {
         let ops = [
-            create("/cam", "tex.videoin", &[("device", "test".into())]),
+            create("/cam", "tex.video_in", &[("device", "test".into())]),
             create("/dn", "tex.denoise", params),
             connect("/cam", "/dn", 0),
         ];
@@ -1678,11 +1678,11 @@ fn flow_of(rig: &mut Rig, frame: penumbra_camera::CameraFrame) -> ([f64; 2], pen
 }
 
 #[test]
-fn opticalflow_finds_known_motion() {
+fn optical_flow_finds_known_motion() {
     let Some(gpu) = gpu() else { return };
     let ops = [
-        create("/cam", "tex.videoin", &[("device", "test".into())]),
-        create("/of", "tex.opticalflow", &[("size", Value::Int(160)), ("confidence", Value::Bool(true))]),
+        create("/cam", "tex.video_in", &[("device", "test".into())]),
+        create("/of", "tex.optical_flow", &[("size", Value::Int(160)), ("confidence", Value::Bool(true))]),
         connect("/cam", "/of", 0),
     ];
     let mut rig = Rig::new(gpu, None, &ops);
@@ -1757,12 +1757,12 @@ fn object_frame(at: [f64; 2], seed: u32) -> penumbra_camera::CameraFrame {
 }
 
 #[test]
-fn opticalflow_fills_in_plain_parts_of_a_moving_thing() {
+fn optical_flow_fills_in_plain_parts_of_a_moving_thing() {
     let Some(gpu) = gpu() else { return };
     let interior_error = |fill: i64| {
         let ops = [
-            create("/cam", "tex.videoin", &[("device", "test".into())]),
-            create("/of", "tex.opticalflow", &[("size", Value::Int(160)), ("fill", Value::Int(fill))]),
+            create("/cam", "tex.video_in", &[("device", "test".into())]),
+            create("/of", "tex.optical_flow", &[("size", Value::Int(160)), ("fill", Value::Int(fill))]),
             connect("/cam", "/of", 0),
         ];
         let mut rig = Rig::new(gpu.clone(), None, &ops);
@@ -1831,13 +1831,13 @@ fn uv_picture(dir: &Path) -> Op {
 #[test]
 fn a_picture_becomes_channels_of_its_mean_per_cell() {
     let Some(gpu) = gpu() else { return };
-    let dir = scratch("fromtex");
+    let dir = scratch("from_tex");
     let ops = [
         uv_picture(&dir),
-        create("/c", "chan.fromtex", &[("columns", Value::Int(4)), ("rows", Value::Int(2))]),
+        create("/c", "chan.from_tex", &[("columns", Value::Int(4)), ("rows", Value::Int(2))]),
         connect("/uv", "/c", 0),
         create("/k", "tex.constant", &[("color", Value::Vec4([0.25, 0.5, 0.75, 1.0]))]),
-        create("/mean", "chan.fromtex", &[("components", "luminance".into())]),
+        create("/mean", "chan.from_tex", &[("components", "luminance".into())]),
         connect("/k", "/mean", 0),
     ];
     let mut rig = Rig::new(gpu, Some(&dir), &ops);
@@ -1861,7 +1861,7 @@ fn a_picture_becomes_channels_of_its_mean_per_cell() {
 #[test]
 fn channels_become_a_picture_and_back() {
     let Some(gpu) = gpu() else { return };
-    let dir = scratch("fromchan");
+    let dir = scratch("from_chan");
     let ops = [
         create(
             "/k",
@@ -1873,13 +1873,13 @@ fn channels_become_a_picture_and_back() {
                 ("value1", Value::Float(3.0)),
             ],
         ),
-        create("/t", "tex.fromchan", &[("high", Value::Float(2.0))]),
+        create("/t", "tex.from_chan", &[("high", Value::Float(2.0))]),
         connect("/k", "/t", 0),
         // Round trip: the u ramp read as 8 samples of red, drawn as a row again.
         uv_picture(&dir),
-        create("/c", "chan.fromtex", &[("columns", Value::Int(8)), ("components", "red".into())]),
+        create("/c", "chan.from_tex", &[("columns", Value::Int(8)), ("components", "red".into())]),
         connect("/uv", "/c", 0),
-        create("/back", "tex.fromchan", &[]),
+        create("/back", "tex.from_chan", &[]),
         connect("/c", "/back", 0),
     ];
     let mut rig = Rig::new(gpu, Some(&dir), &ops);

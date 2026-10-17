@@ -10,8 +10,8 @@ explained here.
 - [The Helpers window](helpers.md): outputs, resolution, show-machine checks, persistent state,
   OSC, audio.
 - [Audio](audio.md): reacting to sound: levels, onsets, tempo, beat and bar.
-- [Camera](camera.md): a live camera or capture card with `tex.videoin`, calmed with `tex.denoise`, its motion with `tex.opticalflow`.
-- [Tracking](tracking.md): blobs with ids that stay, from a camera, with `tex.blobtrack`.
+- [Camera](camera.md): a live camera or capture card with `tex.video_in`, calmed with `tex.denoise`, its motion with `tex.optical_flow`.
+- [Tracking](tracking.md): blobs with ids that stay, from a camera, with `tex.blob_track`.
 - [Looking around in 3D](navigation.md): the viewer's free view, steering a camera, the 3D mouse.
 - [Shaders](shaders.md): writing a `tex.shader` in WGSL.
 - [Scripts](scripts.md): writing a `script.python` node.

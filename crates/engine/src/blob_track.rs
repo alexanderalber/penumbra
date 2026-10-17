@@ -1,10 +1,10 @@
-//! Blob trackers in the engine. Command: `blobtrack.learn`.
+//! Blob trackers in the engine. Command: `blob_track.learn`.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use penumbra_core::NodePath;
-use penumbra_ops::tex::blobtrack::{BLOBTRACK, BlobTracks};
+use penumbra_ops::tex::blob_track::{BLOB_TRACK, BlobTracks};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
@@ -17,8 +17,8 @@ type CmdResult<T> = std::result::Result<T, CommandError>;
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
-        "blobtrack.learn",
-        "A tex.blobtrack takes a frame as the background (the empty scene): {path, delay?} (seconds before it does, default 0)",
+        "blob_track.learn",
+        "A tex.blob_track takes a frame as the background (the empty scene): {path, delay?} (seconds before it does, default 0)",
         move |p| learn(&e, p),
     ));
 }
@@ -34,8 +34,8 @@ fn learn(e: &Engine, p: &Json) -> CmdResult<Json> {
     let net = e.session().doc().snapshot();
     let id = require(&net, &a.path)?;
     let kind = net.node(id).map(|n| n.kind.clone()).unwrap_or_default();
-    if kind != BLOBTRACK {
-        return Err(CommandError(format!("{} is a {kind}, not a {BLOBTRACK}", a.path)));
+    if kind != BLOB_TRACK {
+        return Err(CommandError(format!("{} is a {kind}, not a {BLOB_TRACK}", a.path)));
     }
     let delay = a.delay.unwrap_or(0.0);
     if !(0.0..=600.0).contains(&delay) {
