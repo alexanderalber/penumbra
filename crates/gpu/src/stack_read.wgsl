@@ -19,19 +19,8 @@ struct Read {
 
 @group(0) @binding(0) var map: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> look: Read;
-@group(0) @binding(2) var c0: texture_2d_array<f32>;
-@group(0) @binding(3) var c1: texture_2d_array<f32>;
-@group(0) @binding(4) var c2: texture_2d_array<f32>;
-@group(0) @binding(5) var c3: texture_2d_array<f32>;
-@group(0) @binding(6) var c4: texture_2d_array<f32>;
-@group(0) @binding(7) var c5: texture_2d_array<f32>;
-@group(0) @binding(8) var c6: texture_2d_array<f32>;
-@group(0) @binding(9) var c7: texture_2d_array<f32>;
-@group(0) @binding(10) var c8: texture_2d_array<f32>;
-@group(0) @binding(11) var c9: texture_2d_array<f32>;
-@group(0) @binding(12) var c10: texture_2d_array<f32>;
-@group(0) @binding(13) var c11: texture_2d_array<f32>;
-@group(0) @binding(14) var samp: sampler;
+// The chunks (c0, c1, ...), the sampler and layer(), which picks layer k counted over all
+// chunks, are appended by stack.rs for as many chunks as the device can bind.
 
 struct V {
     @builtin(position) pos: vec4f,
@@ -46,24 +35,6 @@ fn vs(@builtin(vertex_index) i: u32) -> V {
     v.pos = vec4f(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
     v.uv = vec2f(x, y);
     return v;
-}
-
-fn layer(k: u32, uv: vec2f) -> vec4f {
-    let l = i32(k % look.chunk);
-    switch k / look.chunk {
-        case 0u: { return textureSampleLevel(c0, samp, uv, l, 0.0); }
-        case 1u: { return textureSampleLevel(c1, samp, uv, l, 0.0); }
-        case 2u: { return textureSampleLevel(c2, samp, uv, l, 0.0); }
-        case 3u: { return textureSampleLevel(c3, samp, uv, l, 0.0); }
-        case 4u: { return textureSampleLevel(c4, samp, uv, l, 0.0); }
-        case 5u: { return textureSampleLevel(c5, samp, uv, l, 0.0); }
-        case 6u: { return textureSampleLevel(c6, samp, uv, l, 0.0); }
-        case 7u: { return textureSampleLevel(c7, samp, uv, l, 0.0); }
-        case 8u: { return textureSampleLevel(c8, samp, uv, l, 0.0); }
-        case 9u: { return textureSampleLevel(c9, samp, uv, l, 0.0); }
-        case 10u: { return textureSampleLevel(c10, samp, uv, l, 0.0); }
-        default: { return textureSampleLevel(c11, samp, uv, l, 0.0); }
-    }
 }
 
 // The frame `back` frames before the newest.

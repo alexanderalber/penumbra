@@ -26,8 +26,10 @@ pub mod shapes;
 pub mod stack;
 pub mod tex;
 pub mod video;
+pub mod vram;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard};
 use std::time::{Duration, Instant};
 
@@ -41,6 +43,7 @@ pub use render::Lights;
 pub use shapes::{ShapeMode, ShapePoly, Shapes};
 pub use stack::Stack;
 pub use tex::{Tex, TexRing};
+pub use vram::Vram;
 
 /// The format of every texture flowing between nodes.
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -96,11 +99,45 @@ struct Inner {
     render: Mutex<Option<Arc<render::Pipelines>>>,
     environment: Mutex<Option<Arc<environment::Pipelines>>>,
     stack: Mutex<Option<Arc<stack::Pipelines>>>,
+    /// Test aid: frame stacks fail as if out of memory past this many bytes (see
+    /// [`Gpu::set_stack_limit`]).
+    stack_limit: Mutex<Option<u64>>,
+    /// Frame stack chunks asked for so far, created or not.
+    stack_attempts: AtomicU64,
+    lost: Arc<Lost>,
     /// Submissions and presents share it, surface configuration takes it alone (see
     /// [`Gpu::configure_surface`]).
     submit_lock: RwLock<()>,
     /// Until when submissions and presents wait (see [`Gpu::hold`]).
     held_until: Mutex<Option<Instant>>,
+}
+
+/// Whether the device is lost, why, and who wants to know (see [`Gpu::on_lost`]). Shared with
+/// wgpu's device-lost callback, which must not hold the [`Inner`] that holds the device.
+#[derive(Default)]
+struct Lost {
+    flag: AtomicBool,
+    message: Mutex<Option<String>>,
+    hooks: Mutex<Vec<LostHook>>,
+}
+
+/// Called once when the device is lost, with wgpu's message. It may run on any thread, inside
+/// a wgpu call that holds the device's locks: it must not use the GPU.
+pub type LostHook = Arc<dyn Fn(&str) + Send + Sync>;
+
+impl Lost {
+    /// Marks the device lost and calls the hooks; only the first call counts.
+    fn mark(&self, message: &str) {
+        if self.flag.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        log::error!("the GPU device is lost: {message}");
+        *lock(&self.message) = Some(message.to_string());
+        let hooks = lock(&self.hooks).clone();
+        for hook in hooks {
+            hook(message);
+        }
+    }
 }
 
 /// The longest [`Gpu::hold`] keeps one submission waiting, however often it is renewed.
@@ -128,6 +165,16 @@ impl Gpu {
             }
             log.last = Some(message);
         }));
+        // Only a loss counts: `Destroyed` also arrives when the device is dropped at exit.
+        let lost = Arc::new(Lost::default());
+        let sink = Arc::downgrade(&lost);
+        device.set_device_lost_callback(move |reason, message| {
+            if reason == wgpu::DeviceLostReason::Unknown
+                && let Some(lost) = sink.upgrade()
+            {
+                lost.mark(&message);
+            }
+        });
         let info = adapter.get_info();
         let layouts = pass::Layouts::new(&device);
         Self {
@@ -144,6 +191,9 @@ impl Gpu {
                 render: Mutex::new(None),
                 environment: Mutex::new(None),
                 stack: Mutex::new(None),
+                stack_limit: Mutex::new(None),
+                stack_attempts: AtomicU64::new(0),
+                lost,
                 submit_lock: RwLock::new(()),
                 held_until: Mutex::new(None),
             }),
@@ -154,6 +204,7 @@ impl Gpu {
     /// platform's choice (DX12 on Windows, as in the app).
     pub fn headless(choice: AdapterChoice) -> Result<Self, Error> {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+        desc.memory_budget_thresholds = vram::memory_thresholds();
         if cfg!(windows) && std::env::var_os("WGPU_BACKEND").is_none() {
             desc.backends = wgpu::Backends::DX12;
         }
@@ -207,6 +258,47 @@ impl Gpu {
             allocations: r.allocations.len() as u64,
             blocks: r.blocks.len() as u64,
         })
+    }
+
+    /// Dedicated video memory granted to and used by this process (DXGI, DX12 only). Cheap, but
+    /// not free: call it when deciding an allocation, not every frame.
+    pub fn vram(&self) -> Option<Vram> {
+        vram::query(&self.inner.adapter)
+    }
+
+    /// Waits up to `timeout` for the GPU to finish the work submitted so far, so that memory
+    /// of resources just dropped is really given back (wgpu frees it once the GPU is done with
+    /// it). For a decision based on [`Gpu::vram`] right after letting something big go.
+    pub fn settle(&self, timeout: Duration) {
+        let wait = wgpu::PollType::Wait { submission_index: None, timeout: Some(timeout) };
+        if let Err(e) = self.inner.device.poll(wait) {
+            log::warn!("GPU settle: {e}");
+        }
+    }
+
+    /// Why the device was lost, `None` while it works. After a loss nothing the GPU does is
+    /// valid any more: textures read back are garbage and every call fails.
+    pub fn lost(&self) -> Option<String> {
+        if self.is_lost() { lock(&self.inner.lost.message).clone() } else { None }
+    }
+
+    pub fn is_lost(&self) -> bool {
+        self.inner.lost.flag.load(Ordering::Acquire)
+    }
+
+    /// Calls `hook` when the device is lost (at once if it already is). See [`LostHook`].
+    pub fn on_lost(&self, hook: LostHook) {
+        lock(&self.inner.lost.hooks).push(hook.clone());
+        if let Some(message) = self.lost() {
+            hook(&message);
+        }
+    }
+
+    /// Ends the device as if the driver had lost it: marks it lost with `why`, then destroys
+    /// it, so every later use fails as after a real loss. For testing what the app does then.
+    pub fn simulate_loss(&self, why: &str) {
+        self.inner.lost.mark(why);
+        self.inner.device.destroy();
     }
 
     /// Errors wgpu raised outside an error scope since the device was opened.
@@ -402,12 +494,16 @@ impl Gpu {
     }
 }
 
-/// What penumbra asks of a device: the adapter's texture size limit (up to 16384), BC texture
-/// compression where the adapter has it (HAP, [`bc`]), otherwise wgpu's defaults. eframe gets
-/// the same in the app.
+/// What penumbra asks of a device: the adapter's texture size limit (up to 16384), up to 64
+/// sampled textures per shader stage (frame stacks bind one array texture per chunk, see
+/// [`stack`]), BC texture compression where the adapter has it (HAP, [`bc`]), otherwise wgpu's
+/// defaults. eframe gets the same in the app.
 pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
     let mut limits = wgpu::Limits::default();
-    limits.max_texture_dimension_2d = adapter.limits().max_texture_dimension_2d.clamp(8192, 16384);
+    let offered = adapter.limits();
+    limits.max_texture_dimension_2d = offered.max_texture_dimension_2d.clamp(8192, 16384);
+    limits.max_sampled_textures_per_shader_stage =
+        offered.max_sampled_textures_per_shader_stage.clamp(limits.max_sampled_textures_per_shader_stage, 64);
     let required_features = adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC;
     wgpu::DeviceDescriptor {
         label: Some("penumbra"),
@@ -469,5 +565,35 @@ mod tests {
                        Failed to wait for GPU to come idle before reconfiguring the Surface\n";
         assert!(super::is_surface_wait_failure(message));
         assert!(!super::is_surface_wait_failure("Validation Error\n  In Queue::submit\n"));
+    }
+
+    #[test]
+    fn a_lost_device_is_reported_once_and_dropping_one_is_not_a_loss() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        // Devices of their own: the shared test device must stay alive.
+        let Ok(gpu) = super::Gpu::headless(super::AdapterChoice::Software) else { return };
+        let calls = Arc::new(AtomicU32::new(0));
+        let seen = calls.clone();
+        gpu.on_lost(Arc::new(move |_| {
+            seen.fetch_add(1, Ordering::SeqCst);
+        }));
+        assert!(!gpu.is_lost());
+        gpu.simulate_loss("test");
+        gpu.poll();
+        assert_eq!(gpu.lost().as_deref(), Some("test"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // Using the device afterwards fails quietly; the error handler logs it.
+        let _ = super::Tex::new(&gpu, 4, 4, "after");
+
+        let Ok(other) = super::Gpu::headless(super::AdapterChoice::Software) else { return };
+        let late = Arc::new(AtomicU32::new(0));
+        let seen = late.clone();
+        other.on_lost(Arc::new(move |_| {
+            seen.fetch_add(1, Ordering::SeqCst);
+        }));
+        other.poll();
+        drop(other);
+        assert_eq!(late.load(Ordering::SeqCst), 0);
     }
 }

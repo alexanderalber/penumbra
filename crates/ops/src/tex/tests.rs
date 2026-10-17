@@ -1121,8 +1121,65 @@ fn timemachine_looks_back_as_far_as_the_map_says() {
     rig.edit(&[set("/tm.length", Value::Int(1_000_000)), set("/tm.record", Value::Bool(true))]);
     rig.cook("/tm");
     let s = rig.cooker.status(rig.id("/tm")).unwrap();
-    assert!(s.warning.as_deref().is_some_and(|w| w.contains("keeping 3072")), "{s:?}");
+    let most = penumbra_gpu::Stack::capacity(&rig.gpu, 8, 4, penumbra_gpu::stack::Precision::Half).unwrap();
+    let keeping = format!("keeping {most} ");
+    assert!(
+        s.warning.as_deref().is_some_and(|w| w.contains(&keeping) && w.contains("one stack holds")),
+        "{s:?}"
+    );
     assert!((red(&mut rig, "/tm") - 0.9).abs() < 0.01, "a new stack starts from the current frame");
+}
+
+#[test]
+fn timemachine_out_of_memory_keeps_fewer_frames_and_does_not_retry_every_cook() {
+    // A device of its own: the stack limit applies to every stack of a device.
+    let Ok(gpu) = Gpu::headless(AdapterChoice::Software) else { return };
+    let ops = [
+        create(
+            "/c",
+            "tex.constant",
+            &[("width", Value::Int(256)), ("height", Value::Int(256)), ("color", Value::Vec4([0.5; 4]))],
+        ),
+        create("/tm", "tex.timemachine", &[("length", Value::Int(100_000)), ("budget", Value::Float(1.0))]),
+        connect("/c", "/tm", 0),
+    ];
+    // A 256 x 256 frame at 16 bits is 0.5 MiB: 256 to a chunk. Room for two chunks.
+    let per = penumbra_gpu::Stack::bytes_for(256, 256, 1, penumbra_gpu::stack::Precision::Half);
+    gpu.set_stack_limit(Some(per * 256 * 2));
+    let mut rig = Rig::new(gpu.clone(), None, &ops);
+    let before = gpu.stack_attempts();
+    for i in 0..5 {
+        rig.clock.advance(1);
+        rig.edit(&[set("/c.color", Value::Vec4([f64::from(i) * 0.1, 0.0, 0.0, 1.0]))]);
+        rig.cook("/tm");
+    }
+    let s = rig.cooker.status(rig.id("/tm")).unwrap();
+    assert_eq!(s.error, None);
+    let w = s.warning.unwrap_or_default();
+    assert!(w.contains("keeping 512 ") && w.contains("refused more memory"), "{w}");
+    // Two created, the third refused, once; not again on the next four cooks.
+    assert_eq!(gpu.stack_attempts() - before, 3);
+    assert!((red(&mut rig, "/tm") - 0.4).abs() < 0.01, "the shorter stack works");
+
+    // Not even one chunk: an error, again without a retry on every cook.
+    gpu.set_stack_limit(Some(per));
+    rig.edit(&[set("/tm.budget", Value::Float(2.0))]);
+    let before = gpu.stack_attempts();
+    for i in 0..5 {
+        rig.clock.advance(1);
+        rig.edit(&[set("/c.color", Value::Vec4([f64::from(i) * 0.1, 0.0, 0.0, 1.0]))]);
+        rig.cook("/tm");
+    }
+    let s = rig.cooker.status(rig.id("/tm")).unwrap();
+    assert!(s.error.as_deref().is_some_and(|e| e.contains("tried again when")), "{s:?}");
+    assert_eq!(gpu.stack_attempts() - before, 1);
+    // A param changing is the retry.
+    gpu.set_stack_limit(None);
+    rig.edit(&[set("/tm.length", Value::Int(10))]);
+    rig.cook("/tm");
+    let s = rig.cooker.status(rig.id("/tm")).unwrap();
+    assert_eq!((s.error, s.warning), (None, None));
+    assert_eq!(gpu.errors().count, 0);
 }
 
 #[test]

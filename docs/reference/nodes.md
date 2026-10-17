@@ -801,7 +801,7 @@ Outputs: `out` (tex).
 | `precision` | 16bit \| 8bit | `"16bit"` |  | How the kept frames are stored: 16bit as they come, 8bit in half the memory with values above 1 clipped |
 | `step` | int | `1` | 1 to 8 (soft) | Keeps only every n-th input frame, for n times the length in the same memory; between kept frames the picture is blended, which smears fast motion |
 | `record` | bool | `true` |  | Take new frames; off holds what is kept |
-| `budget` *(more)* | float | `4` | 0.5 to 20 (soft) | Most GPU memory the kept frames take, in GiB; past it fewer are kept, with a warning |
+| `budget` *(more)* | float | `0` | 0 to 20 (soft) | Most GPU memory the kept frames take, in GiB; 0: automatic, half of what the GPU grants penumbra. Never more than the GPU has free; past either, fewer frames are kept, with a warning |
 
 ### tex.transform
 

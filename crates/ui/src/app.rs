@@ -290,13 +290,7 @@ impl PenumbraApp {
                     Ok(())
                 }
                 Action::Play(playing) => {
-                    self.engine.post_cook(move |st| {
-                        if playing {
-                            st.clock.play();
-                        } else {
-                            st.clock.pause();
-                        }
-                    });
+                    self.engine.play(playing);
                     Ok(())
                 }
                 Action::OpenHelpers => {
@@ -560,6 +554,10 @@ impl PenumbraApp {
                 ui.label(
                     RichText::new(if status.unsaved { "unsaved" } else { "saved" }).color(theme::TEXT_WEAK),
                 );
+                if let Some(notice) = self.engine.notice() {
+                    ui.separator();
+                    ui.colored_label(theme::WARNING, notice);
+                }
                 if let Some((m, at)) = &self.message {
                     if now.saturating_duration_since(*at).as_secs() < MESSAGE_SECONDS {
                         ui.separator();

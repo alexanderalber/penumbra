@@ -200,6 +200,34 @@ fn thumbnail_switch() {
 }
 
 #[test]
+fn a_lost_gpu_stops_the_passes_records_the_crash_and_saves_no_state() {
+    let f = Fixture::new("lost");
+    let Ok(gpu) = penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) else { return };
+    let marker = f.engine.session().dir().join("marker").join(crate::crash::FILE);
+    f.engine.set_crash_marker(Some(marker.clone()));
+    f.engine.attach_gpu(gpu).unwrap();
+    f.call("node.create", json!({"path": "/n", "kind": "tex.noise", "params": {"width": 32, "height": 16}}));
+    f.call("node.watch", json!({"path": "/n"}));
+    eventually("a pass", || f.call("cook.status", json!({}))["pass"].as_u64() > Some(2));
+    assert!(f.fail("gpu.simulate_loss", json!({})).contains("confirm"));
+    f.call("gpu.simulate_loss", json!({"confirm": true}));
+    let m = crate::crash::take(&marker).unwrap();
+    assert!(m.reason.starts_with("GPU device lost: simulated"), "{m:?}");
+    assert_eq!(std::path::Path::new(&m.project), f.engine.session().dir());
+    assert!(f.call("gpu.info", json!({}))["lost"].as_str().is_some());
+    // No further passes, and no state written from a lost device.
+    let pass = f.call("cook.status", json!({}))["pass"].as_u64();
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(f.call("cook.status", json!({}))["pass"].as_u64(), pass);
+    assert!(f.engine.save_state(Duration::from_secs(1)).unwrap_err().0.contains("lost"));
+    // The notice goes when the clock runs again.
+    f.engine.set_notice(Some("paused".into()));
+    assert_eq!(f.call("cook.status", json!({}))["notice"], "paused");
+    f.call("cook.play", json!({"playing": true}));
+    assert_eq!(f.call("cook.status", json!({}))["notice"], Json::Null);
+}
+
+#[test]
 fn snapshot_of_a_texture_node() {
     let f = Fixture::new("snapshot");
     assert!(f.fail("node.snapshot", json!({"path": "/n"})).contains("no GPU"));

@@ -1,11 +1,19 @@
 //! Frame stacks: many frames of one size kept on the GPU, written one at a time into a ring and
 //! read back with a per-pixel choice of how many frames back to look (`tex.timemachine`).
 //!
-//! The frames live in array textures of up to [`CHUNK`] layers each (wgpu's default limit on
-//! layers), at most [`CHUNKS`] of them, so one stack holds up to [`MAX_FRAMES`]. In practice
-//! memory runs out first: a 1080p frame is 16 MB at 16 bits, 8 MB at 8 bits.
+//! The frames live in array textures (chunks) of about [`CHUNK_BYTES`] each and at most
+//! [`CHUNK`] layers (wgpu's default limit on layers). Chunks stay small because one resource
+//! of several GB is more than drivers place reliably: a 1080p stack of 256 layers in one
+//! texture (4 GB) failed to allocate over and over until the device was suspended. A stack has
+//! as many chunks as the read pass can bind ([`Gpu::stack_slots`], at most [`MAX_SLOTS`]), so
+//! how many frames it holds depends on the frame size ([`layers_per_chunk`]): a 1080p frame is
+//! 16 MB at 16 bits, 8 MB at 8 bits.
+//!
+//! Chunks are created one after the other; when the GPU refuses one, the stack keeps those it
+//! has ([`Stack::shortfall`]).
 
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use penumbra_core::{Error, lock};
 
@@ -13,10 +21,19 @@ use crate::{FORMAT, Gpu, Tex};
 
 /// Most layers per array texture.
 pub const CHUNK: u32 = 256;
-/// Most array textures per stack; the read pass binds them all, plus the map.
-pub const CHUNKS: usize = 12;
-/// Most frames one stack holds.
-pub const MAX_FRAMES: u32 = CHUNK * CHUNKS as u32;
+/// Bytes one chunk aims at: as many whole frames as fit, at least one.
+pub const CHUNK_BYTES: u64 = 256 << 20;
+/// Most chunks per stack; the read pass binds them all, plus the map.
+pub const MAX_SLOTS: u32 = 32;
+/// Most frames one stack can hold (small frames, all slots).
+pub const MAX_FRAMES: u32 = CHUNK * MAX_SLOTS;
+
+/// Layers per chunk for frames of `frame_bytes`: as many as fit in [`CHUNK_BYTES`], at least
+/// one, at most `layer_limit` (the device's) and [`CHUNK`].
+pub fn layers_per_chunk(frame_bytes: u64, layer_limit: u32) -> u32 {
+    let fit = u32::try_from(CHUNK_BYTES / frame_bytes.max(1)).unwrap_or(u32::MAX);
+    fit.clamp(1, layer_limit.clamp(1, CHUNK))
+}
 
 /// How a stack stores its frames.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +76,7 @@ pub struct Look {
 struct Chunk {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    layers: u32,
 }
 
 /// A ring of frames, newest written last. See the module docs.
@@ -73,6 +91,8 @@ pub struct Stack {
     head: u32,
     /// Frames written, up to `frames`.
     count: u32,
+    /// Why the stack holds fewer frames than asked for.
+    short: Option<String>,
 }
 
 impl Stack {
@@ -81,49 +101,98 @@ impl Stack {
         u64::from(width) * u64::from(height) * u64::from(frames) * precision.bytes()
     }
 
-    /// An empty stack with room for `frames` (1 to [`MAX_FRAMES`]). Sizes are checked against
-    /// the device, and running out of GPU memory is an error, not a crash.
+    /// Frames a stack of this size and precision can hold on `gpu` at most.
+    pub fn capacity(gpu: &Gpu, width: u32, height: u32, precision: Precision) -> Result<u32, Error> {
+        let layers = layers_per_chunk(Self::bytes_for(width, height, 1, precision), Self::layer_limit(gpu));
+        Ok(layers * gpu.stack_slots()?)
+    }
+
+    fn layer_limit(gpu: &Gpu) -> u32 {
+        gpu.device().limits().max_texture_array_layers.clamp(1, CHUNK)
+    }
+
+    /// An empty stack with room for `frames` (1 to [`Stack::capacity`]). Sizes are checked
+    /// against the device. Running out of GPU memory is not a crash: when a chunk cannot be
+    /// created, the stack keeps the chunks it has, with fewer frames and the reason in
+    /// [`Stack::shortfall`]; when not even the first one can, that is the error.
     pub fn new(gpu: &Gpu, width: u32, height: u32, frames: u32, precision: Precision) -> Result<Self, Error> {
         let max = gpu.max_texture_size();
         if width == 0 || height == 0 || width > max || height > max {
             return Err(Error::new(format!("resolution {width}x{height} must be 1 to {max} on each side")));
         }
-        let chunk = gpu.device().limits().max_texture_array_layers.clamp(1, CHUNK);
-        let most = chunk * CHUNKS as u32;
+        let most = Self::capacity(gpu, width, height, precision)?;
         if frames == 0 || frames > most {
-            return Err(Error::new(format!("a frame stack holds 1 to {most} frames, not {frames}")));
-        }
-        let (chunks, error) = gpu.scoped(|| {
-            let mut chunks = Vec::new();
-            let mut left = frames;
-            while left > 0 {
-                let layers = left.min(chunk);
-                left -= layers;
-                let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {
-                    label: Some("frame stack"),
-                    size: wgpu::Extent3d { width, height, depth_or_array_layers: layers },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: precision.format(),
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                });
-                let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                    dimension: Some(wgpu::TextureViewDimension::D2Array),
-                    ..Default::default()
-                });
-                chunks.push(Chunk { texture, view });
-            }
-            chunks
-        });
-        if let Some(e) = error {
-            let mb = Self::bytes_for(width, height, frames, precision) >> 20;
             return Err(Error::new(format!(
-                "cannot keep {frames} frames of {width}x{height} ({mb} MB): {e}"
+                "a frame stack of {width}x{height} holds 1 to {most} frames, not {frames}"
             )));
         }
-        Ok(Self { chunks, width, height, frames, chunk, precision, head: 0, count: 0 })
+        let chunk = layers_per_chunk(Self::bytes_for(width, height, 1, precision), Self::layer_limit(gpu));
+        let limit = *lock(&gpu.inner.stack_limit);
+        let mut chunks = Vec::new();
+        let mut short = None;
+        let mut left = frames;
+        while left > 0 {
+            let layers = left.min(chunk);
+            gpu.inner.stack_attempts.fetch_add(1, Ordering::Relaxed);
+            let held = Self::bytes_for(width, height, frames - left, precision);
+            let bytes = Self::bytes_for(width, height, layers, precision);
+            let created = if limit.is_some_and(|l| held + bytes > l) {
+                Err("out of memory (test limit)".to_string())
+            } else {
+                Self::create_chunk(gpu, width, height, layers, precision)
+            };
+            match created {
+                Ok(c) => chunks.push(c),
+                Err(e) => {
+                    let mb = Self::bytes_for(width, height, frames, precision) >> 20;
+                    let message = format!("cannot keep {frames} frames of {width}x{height} ({mb} MB): {e}");
+                    if chunks.is_empty() {
+                        return Err(Error::new(message));
+                    }
+                    short = Some(message);
+                    break;
+                }
+            }
+            left -= layers;
+        }
+        let frames = chunks.iter().map(|c| c.layers).sum();
+        Ok(Self { chunks, width, height, frames, chunk, precision, head: 0, count: 0, short })
+    }
+
+    fn create_chunk(
+        gpu: &Gpu,
+        width: u32,
+        height: u32,
+        layers: u32,
+        precision: Precision,
+    ) -> Result<Chunk, String> {
+        let (chunk, error) = gpu.scoped(|| {
+            let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {
+                label: Some("frame stack"),
+                size: wgpu::Extent3d { width, height, depth_or_array_layers: layers },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: precision.format(),
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+            Chunk { texture, view, layers }
+        });
+        match error {
+            Some(e) => Err(e),
+            None => Ok(chunk),
+        }
+    }
+
+    /// Why the stack holds fewer frames than [`Stack::new`] was asked for (the GPU refused a
+    /// chunk), `None` when it holds them all.
+    pub fn shortfall(&self) -> Option<&str> {
+        self.short.as_deref()
     }
 
     pub fn size(&self) -> (u32, u32) {
@@ -247,15 +316,15 @@ impl Stack {
                 },
                 wgpu::BindGroupEntry { binding: 1, resource: buffer.as_entire_binding() },
             ];
-            for i in 0..CHUNKS {
-                let view = self.chunks.get(i).map_or(&p.empty_array, |c| &c.view);
+            for i in 0..p.slots {
+                let view = self.chunks.get(i as usize).map_or(&p.empty_array, |c| &c.view);
                 entries.push(wgpu::BindGroupEntry {
-                    binding: 2 + i as u32,
+                    binding: 2 + i,
                     resource: wgpu::BindingResource::TextureView(view),
                 });
             }
             entries.push(wgpu::BindGroupEntry {
-                binding: 2 + CHUNKS as u32,
+                binding: 2 + p.slots,
                 resource: wgpu::BindingResource::Sampler(&p.sampler),
             });
             let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -308,11 +377,36 @@ pub struct Pipelines {
     /// Stand-ins for no map and for chunks a stack does not have; transparent black.
     empty: wgpu::TextureView,
     empty_array: wgpu::TextureView,
+    /// Chunks the read pass binds.
+    slots: u32,
+}
+
+/// The read shader for `slots` chunks: `stack_read.wgsl` plus one binding per chunk and the
+/// function that picks a layer from them.
+fn read_shader(slots: u32) -> String {
+    use std::fmt::Write;
+    let mut s = String::from(include_str!("stack_read.wgsl"));
+    s.push('\n');
+    for i in 0..slots {
+        let _ = writeln!(s, "@group(0) @binding({}) var c{i}: texture_2d_array<f32>;", 2 + i);
+    }
+    let _ = writeln!(s, "@group(0) @binding({}) var samp: sampler;", 2 + slots);
+    s.push_str("\nfn layer(k: u32, uv: vec2f) -> vec4f {\n    let l = i32(k % look.chunk);\n");
+    s.push_str("    switch k / look.chunk {\n");
+    for i in 0..slots {
+        let case = if i + 1 == slots { "default".to_string() } else { format!("case {i}u") };
+        let _ = writeln!(s, "        {case}: {{ return textureSampleLevel(c{i}, samp, uv, l, 0.0); }}");
+    }
+    s.push_str("    }\n}\n");
+    s
 }
 
 impl Pipelines {
     fn new(gpu: &Gpu) -> Result<Self, Error> {
         let device = gpu.device();
+        // One binding for the map, the rest for chunks.
+        let slots =
+            device.limits().max_sampled_textures_per_shader_stage.saturating_sub(1).clamp(1, MAX_SLOTS);
         let (p, error) = gpu.scoped(|| {
             let texture = |binding, view_dimension| wgpu::BindGroupLayoutEntry {
                 binding,
@@ -345,8 +439,8 @@ impl Pipelines {
                 entries: &[texture(0, wgpu::TextureViewDimension::D2), sampler(1), uniform(2)],
             });
             let mut entries = vec![texture(0, wgpu::TextureViewDimension::D2), uniform(1)];
-            entries.extend((0..CHUNKS as u32).map(|i| texture(2 + i, wgpu::TextureViewDimension::D2Array)));
-            entries.push(sampler(2 + CHUNKS as u32));
+            entries.extend((0..slots).map(|i| texture(2 + i, wgpu::TextureViewDimension::D2Array)));
+            entries.push(sampler(2 + slots));
             let read_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("frame stack read"),
                 entries: &entries,
@@ -389,7 +483,7 @@ impl Pipelines {
                     })
                 };
             let push = include_str!("stack_push.wgsl");
-            let read = include_str!("stack_read.wgsl");
+            let read = read_shader(slots);
             let empty = |label, dimension| {
                 device
                     .create_texture(&wgpu::TextureDescriptor {
@@ -422,7 +516,7 @@ impl Pipelines {
                     "fs_push",
                     Precision::Byte.format(),
                 ),
-                read: pipeline("frame stack read", read, &read_layout, "fs_read", FORMAT),
+                read: pipeline("frame stack read", &read, &read_layout, "fs_read", FORMAT),
                 sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                     label: Some("frame stack"),
                     mag_filter: wgpu::FilterMode::Linear,
@@ -434,6 +528,7 @@ impl Pipelines {
                 empty_array: empty("frame stack no chunk", wgpu::TextureViewDimension::D2Array),
                 push_layout,
                 read_layout,
+                slots,
             }
         });
         match error {
@@ -444,6 +539,23 @@ impl Pipelines {
 }
 
 impl Gpu {
+    /// Chunks a frame stack can have on this device (see [`Stack::capacity`]).
+    pub fn stack_slots(&self) -> Result<u32, Error> {
+        Ok(self.stack_pipelines()?.slots)
+    }
+
+    /// Test aid: from now on frame stacks behave as if the GPU refused chunks past `bytes` per
+    /// stack (`None`: no limit), so running out of memory can be tested without filling the
+    /// GPU. Affects every stack of this device.
+    pub fn set_stack_limit(&self, bytes: Option<u64>) {
+        *lock(&self.inner.stack_limit) = bytes;
+    }
+
+    /// Frame stack chunks asked for since the device was opened, created or refused.
+    pub fn stack_attempts(&self) -> u64 {
+        self.inner.stack_attempts.load(Ordering::Relaxed)
+    }
+
     /// The frame stack pipelines, built once per device.
     pub fn stack_pipelines(&self) -> Result<Arc<Pipelines>, Error> {
         let mut slot = lock(&self.inner.stack);
@@ -541,6 +653,58 @@ mod tests {
         stack.read(&gpu, Some(&map), &out, Look { reach: 2.0, offset: 0.0, blend: true }).unwrap();
         assert_eq!(red(&gpu, &out, 1, 0), 0.0);
         assert_eq!(gpu.errors().count, 0);
+    }
+
+    #[test]
+    fn chunks_stay_near_their_size() {
+        let mb = 1u64 << 20;
+        // 1080p at 16 bits is 15.8 MiB a frame: 16 layers make one chunk of 253 MiB.
+        let hd = Stack::bytes_for(1920, 1080, 1, Precision::Half);
+        assert_eq!(layers_per_chunk(hd, 2048), 16);
+        assert!(u64::from(layers_per_chunk(hd, 2048)) * hd <= CHUNK_BYTES);
+        assert_eq!(layers_per_chunk(Stack::bytes_for(1920, 1080, 1, Precision::Byte), 2048), 32);
+        // Small frames: the layer limit, never more than CHUNK.
+        assert_eq!(layers_per_chunk(64, 2048), CHUNK);
+        assert_eq!(layers_per_chunk(64, 100), 100);
+        // A frame larger than a chunk (8K at 16 bits): one layer each, never zero.
+        assert_eq!(layers_per_chunk(300 * mb, 2048), 1);
+        assert_eq!(layers_per_chunk(0, 0), 1);
+    }
+
+    #[test]
+    fn a_refused_chunk_leaves_a_shorter_stack() {
+        // A device of its own: the limit would affect the other tests' stacks.
+        let Ok(gpu) = Gpu::headless(crate::AdapterChoice::Software) else { return };
+        let (w, h) = (256, 256);
+        let per = Stack::bytes_for(w, h, 1, Precision::Half);
+        let chunk = layers_per_chunk(per, gpu.device().limits().max_texture_array_layers);
+        // Room for two chunks and a bit: the third is refused.
+        gpu.set_stack_limit(Some(per * u64::from(chunk) * 2 + per));
+        let before = gpu.stack_attempts();
+        let stack = Stack::new(&gpu, w, h, chunk * 4, Precision::Half).unwrap();
+        assert_eq!(stack.frames(), chunk * 2);
+        assert!(stack.shortfall().is_some_and(|s| s.contains("out of memory")), "{:?}", stack.shortfall());
+        assert_eq!(gpu.stack_attempts() - before, 3, "creation stops at the first refusal");
+        // Not even one chunk: an error.
+        gpu.set_stack_limit(Some(per));
+        assert!(Stack::new(&gpu, w, h, chunk * 2, Precision::Half).is_err());
+        gpu.set_stack_limit(None);
+        let full = Stack::new(&gpu, w, h, chunk * 2, Precision::Half).unwrap();
+        assert_eq!((full.frames(), full.shortfall()), (chunk * 2, None));
+        assert_eq!(gpu.errors().count, 0);
+    }
+
+    #[test]
+    fn the_read_shader_binds_every_slot() {
+        let Some(gpu) = gpu() else { return };
+        // The device asks for up to 64 sampled textures; WARP offers them.
+        assert_eq!(gpu.stack_slots().unwrap(), MAX_SLOTS);
+        let s = read_shader(3);
+        assert!(s.contains("@binding(4) var c2: texture_2d_array<f32>;"), "{s}");
+        assert!(s.contains("@binding(5) var samp: sampler;"));
+        assert!(s.contains("case 1u:") && s.contains("default: { return textureSampleLevel(c2,"));
+        let module = naga::front::wgsl::parse_str(&read_shader(MAX_SLOTS));
+        assert!(module.is_ok(), "{module:?}");
     }
 
     #[test]

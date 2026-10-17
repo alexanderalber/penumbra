@@ -355,7 +355,9 @@ impl CookState {
     }
 
     fn frame(&mut self, session: &Session, due: u64, now: Instant) {
-        if due == 0 {
+        // A lost device fails every call and reads back garbage: no more passes (and so no
+        // state snapshots) until the app ends.
+        if due == 0 || self.gpu.as_ref().is_some_and(Gpu::is_lost) {
             return;
         }
         self.clock.advance(due);
@@ -536,6 +538,12 @@ pub struct Engine {
     recent: Mutex<Option<std::path::PathBuf>>,
     /// The nodes copied last (`node.copy`, Ctrl+C).
     clipboard: Mutex<Option<crate::clipboard::Clipboard>>,
+    /// Where a lost GPU device is recorded for the next start ([`crate::crash`]); `None`
+    /// records nothing (tests, headless).
+    crash_marker: Mutex<Option<std::path::PathBuf>>,
+    /// A message the UI keeps showing until the clock runs again (why the project opened
+    /// paused).
+    notice: Mutex<Option<String>>,
     state: Arc<StateShared>,
     osc: Arc<OscShared>,
     audio: AudioHub,
@@ -571,6 +579,8 @@ impl Engine {
             library: Mutex::new(None),
             recent: Mutex::new(None),
             clipboard: Mutex::new(None),
+            crash_marker: Mutex::new(None),
+            notice: Mutex::new(None),
             state: Arc::new(StateShared::default()),
             osc: Arc::new(OscShared::new(Hub::new())),
             audio: AudioHub::new(),
@@ -784,12 +794,64 @@ impl Engine {
         *lock(&self.library) = dir;
     }
 
+    /// Where a lost GPU device is recorded for the next start (see [`crate::crash`]); `None`
+    /// records nothing. The app sets it; tests and headless runs leave it unset.
+    pub fn set_crash_marker(&self, file: Option<std::path::PathBuf>) {
+        *lock(&self.crash_marker) = file;
+    }
+
+    /// Writes the crash marker, if one is set, so the next start opens paused and says
+    /// `reason`. For a lost GPU device (done here, see [`Engine::attach_gpu`]) and for the app
+    /// ending on an error of its own.
+    pub fn record_crash(&self, reason: &str) {
+        let file = lock(&self.crash_marker).clone();
+        let Some(file) = file else { return };
+        let project = self.session().dir().to_path_buf();
+        match crate::crash::write(&file, &project, reason) {
+            Ok(()) => log::info!("recorded how this run ended in {}", file.display()),
+            Err(e) => log::error!("cannot record how this run ended: {e}"),
+        }
+    }
+
+    /// The message shown until the clock runs again, if any ([`Engine::set_notice`]).
+    pub fn notice(&self) -> Option<String> {
+        lock(&self.notice).clone()
+    }
+
+    pub fn set_notice(&self, notice: Option<String>) {
+        *lock(&self.notice) = notice;
+    }
+
+    /// Runs or stops the show clock, without waiting for the cook thread. Running it also
+    /// clears the notice (it says why the clock was stopped).
+    pub fn play(&self, playing: bool) {
+        if playing {
+            self.set_notice(None);
+        }
+        self.post_cook(move |st| {
+            if playing {
+                st.clock.play();
+            } else {
+                st.clock.pause();
+            }
+        });
+    }
+
     /// Hands the GPU to the cook thread. Only the first call counts. Then reads the saved state
     /// back on a thread of its own ([`crate::state`]), unless `state.config` says not to.
+    ///
+    /// From then on a lost device is recorded in the crash marker ([`Engine::set_crash_marker`])
+    /// the moment wgpu reports it, and the cook thread stops using the GPU.
     pub fn attach_gpu(self: &Arc<Self>, gpu: Gpu) -> Result<(), Error> {
         if self.gpu.set(gpu.clone()).is_err() {
             return Err(Error::new("the engine has a GPU already"));
         }
+        let engine = Arc::downgrade(self);
+        gpu.on_lost(Arc::new(move |reason: &str| {
+            if let Some(engine) = engine.upgrade() {
+                engine.record_crash(&format!("GPU device lost: {reason}"));
+            }
+        }));
         self.on_cook(move |st| {
             st.cooker.provide(gpu.clone());
             st.gpu = Some(gpu);
@@ -890,6 +952,10 @@ impl Engine {
     /// Takes a state snapshot now and waits up to `timeout` for the file. The cook thread only
     /// starts it; the waiting happens here.
     pub fn save_state(&self, timeout: Duration) -> Result<SaveReport, Error> {
+        if let Some(why) = self.gpu().and_then(Gpu::lost) {
+            // What a lost device reads back is garbage; the last good file stays.
+            return Err(Error::new(format!("not saving the state: the GPU device is lost ({why})")));
+        }
         let seq = self.on_cook(|st| st.state.request())??;
         self.state.wait_for(seq, timeout)
     }

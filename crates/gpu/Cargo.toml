@@ -19,5 +19,9 @@ photocraft-psd.workspace = true
 log.workspace = true
 serde_json.workspace = true
 
+# The memory DXGI grants the process (budget and usage), read through wgpu's DX12 adapter.
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true, features = ["Win32_Graphics_Dxgi"] }
+
 [lints]
 workspace = true
