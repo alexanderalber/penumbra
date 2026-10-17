@@ -12,6 +12,8 @@ penumbra-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
+# NVIDIA's management library (GPU power, temperature, clock), loaded at runtime when present.
+libloading.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = [

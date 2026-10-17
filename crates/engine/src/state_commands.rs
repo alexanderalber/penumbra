@@ -57,7 +57,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "system.load",
-        "CPU over all cores and the busiest GPU engine in percent, sampled once a second while asked for (the first call waits for a sample)",
+        "CPU over all cores and the busiest GPU engine in percent, sampled once a second while asked for (the first call waits for a sample); on NVIDIA GPUs `nvidia`: power_w, power_limit_w, temperature_c, clock_mhz, limited_by of the GPU penumbra renders on (`matched`), else the first",
         system_load,
     );
     add(

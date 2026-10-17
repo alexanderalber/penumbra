@@ -909,6 +909,7 @@ impl Engine {
         if self.gpu.set(gpu.clone()).is_err() {
             return Err(Error::new("the engine has a GPU already"));
         }
+        self.load.set_adapter(&gpu.info().name);
         let engine = Arc::downgrade(self);
         gpu.on_lost(Arc::new(move |reason: &str| {
             if let Some(engine) = engine.upgrade() {

@@ -1,6 +1,7 @@
 //! The Windows calls behind [`crate::display`] and [`crate::checks`]: display configuration
-//! (`QueryDisplayConfig`) and the current user's registry. The crate's only `unsafe`; every
-//! call checks its status code and every buffer is sized by the API or by its type.
+//! (`QueryDisplayConfig`) and the current user's registry. With NVML's loader the crate's only
+//! `unsafe`; every call checks its status code and every buffer is sized by the API or by its
+//! type.
 #![allow(unsafe_code)]
 
 use std::ffi::c_void;

@@ -187,7 +187,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `system.check` | Show-machine settings that can ruin a show (gaming overlay, notifications) |
 | `system.fix` | Apply one check's fix; replies with what it replaced; {id} |
-| `system.load` | CPU over all cores and the busiest GPU engine in percent, sampled once a second while asked for (the first call waits for a sample) |
+| `system.load` | CPU over all cores and the busiest GPU engine in percent, sampled once a second while asked for (the first call waits for a sample); on NVIDIA GPUs `nvidia`: power_w, power_limit_w, temperature_c, clock_mhz, limited_by of the GPU penumbra renders on (`matched`), else the first |
 | `system.process` | This process: working set, private bytes, handles, threads; GPU memory through wgpu's allocator |
 | `system.restore` | Write back what system.fix replaced; {previous} as system.fix returned it |
 

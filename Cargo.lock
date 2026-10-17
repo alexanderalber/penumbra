@@ -3320,6 +3320,7 @@ dependencies = [
 name = "penumbra-system"
 version = "0.2.0"
 dependencies = [
+ "libloading",
  "log",
  "penumbra-core",
  "serde",

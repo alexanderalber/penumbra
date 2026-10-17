@@ -79,7 +79,9 @@ press play once the cause is fixed. The record of that lives in
   project file). Hover an entry to outline the nodes it touched, click it to select them.
   Undo and Redo sit in its header.
 - **The status bar**: the project menu (the folder), play and pause of the show clock, the
-  frame and the time, how long the last cook pass took, the outputs (hover for details), the control channel's port, the GPU,
+  frame and the time, how long the last cook pass took (click it for the last seconds as a
+  plot, the CPU and GPU load and, on NVIDIA GPUs, power draw, temperature, clock and what
+  holds the clock back), the outputs (hover for details), the control channel's port, the GPU,
   and whether `project.ron` is written yet.
 
 Each section of the right column folds by its header; the open state is kept with the project.

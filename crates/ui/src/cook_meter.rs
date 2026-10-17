@@ -1,11 +1,13 @@
 //! The cook time in the status bar: the smoothed pass time as a button, and on click the last
-//! seconds' passes as a plot with the numbers behind them and the machine's CPU and GPU load.
+//! seconds' passes as a plot with the numbers behind them and the machine's CPU and GPU load,
+//! on NVIDIA GPUs also the GPU's power, temperature, clock and what holds the clock back.
 
 use std::time::Instant;
 
 use egui::{Color32, PopupCloseBehavior, RectAlign, RichText, Sense, Shape, Stroke, Ui, pos2, vec2};
 use penumbra_engine::Engine;
 use penumbra_engine::meter::{CookMeter, WINDOW};
+use penumbra_system::GpuSensors;
 
 use crate::{automation, theme};
 
@@ -90,10 +92,58 @@ fn details(ui: &mut Ui, engine: &Engine, fps: f64, auto: &mut automation::Regist
             ui.label(RichText::new(value).monospace());
             ui.end_row();
         }
+        for (name, value, hint) in load.nvidia.as_ref().map(sensor_rows).unwrap_or_default() {
+            ui.label(RichText::new(name).color(theme::TEXT_WEAK)).on_hover_text(hint);
+            ui.label(RichText::new(value).monospace());
+            ui.end_row();
+        }
     });
     if let Some(e) = &load.error {
         ui.label(RichText::new(e).color(theme::TEXT_WEAK).small());
     }
+    if let Some(n) = load.nvidia.as_ref().filter(|n| !n.matched) {
+        ui.label(
+            RichText::new(format!("GPU sensors: {} (not found as the adapter penumbra renders on)", n.name))
+                .color(theme::TEXT_WEAK)
+                .small(),
+        );
+    }
+}
+
+/// The NVIDIA GPU's rows; a value the GPU did not report gets no row.
+fn sensor_rows(n: &GpuSensors) -> Vec<(&'static str, String, String)> {
+    let mut rows = Vec::new();
+    let power = match (n.power_w, n.power_limit_w) {
+        (Some(w), Some(limit)) => Some(format!("{w:.0} / {limit:.0} W")),
+        (Some(w), None) => Some(format!("{w:.0} W")),
+        _ => None,
+    };
+    if let Some(power) = power {
+        rows.push((
+            "GPU power",
+            power,
+            format!("{}: power draw and the limit the driver holds it to", n.name),
+        ));
+    }
+    if let Some(t) = n.temperature_c {
+        rows.push(("GPU temp", format!("{t} \u{b0}C"), format!("{}: the GPU die", n.name)));
+    }
+    if let Some(mhz) = n.clock_mhz {
+        rows.push(("GPU clock", format!("{mhz} MHz"), format!("{}: graphics clock", n.name)));
+    }
+    if let Some(reasons) = &n.limited_by {
+        rows.push((
+            "GPU held by",
+            if reasons.is_empty() { "nothing".to_string() } else { reasons.join(", ") },
+            format!(
+                "{}: what keeps the clock below its maximum right now. \"idle\" is normal without \
+                 work; \"power cap\" or \"thermal\" under load mean the GPU runs as fast as its \
+                 power limit or cooling allows",
+                n.name
+            ),
+        ));
+    }
+    rows
 }
 
 /// The passes of the last [`WINDOW`], newest on the right, with one frame at the show rate

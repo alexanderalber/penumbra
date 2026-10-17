@@ -1,5 +1,6 @@
 //! How busy the machine is: CPU over all cores and the busiest GPU engine, the numbers Task
-//! Manager shows (`system.load`, the cook time details in the status bar).
+//! Manager shows (`system.load`, the cook time details in the status bar). On NVIDIA GPUs also
+//! the GPU's power draw, temperature, clock and what holds the clock back ([`GpuSensors`]).
 //!
 //! Reading the GPU counters can take tens of milliseconds with many processes running, so a
 //! thread of its own samples them, once a second and only while someone asks: it starts with
@@ -26,9 +27,34 @@ pub struct Load {
     pub gpu: Option<f64>,
     /// Why a number is missing.
     pub error: Option<String>,
+    /// The NVIDIA GPU's sensors; `None` without an NVIDIA driver.
+    pub nvidia: Option<GpuSensors>,
     /// When it was taken; `None` before the first sample.
     #[serde(skip)]
     pub at: Option<Instant>,
+}
+
+/// One NVIDIA GPU's sensors, read through NVML. A value is `None` when the GPU did not report it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct GpuSensors {
+    /// NVML's name for the GPU, e.g. `NVIDIA GeForce RTX 3090`.
+    pub name: String,
+    /// NVML's index of the GPU.
+    pub index: usize,
+    /// Whether this is the adapter penumbra renders on (found by name). `false` means the first
+    /// NVIDIA GPU was taken because none matched, or the adapter is not known yet.
+    pub matched: bool,
+    /// Power draw, watts.
+    pub power_w: Option<f64>,
+    /// The power limit the driver enforces, watts.
+    pub power_limit_w: Option<f64>,
+    /// The GPU die, degrees Celsius.
+    pub temperature_c: Option<u32>,
+    /// Graphics clock, MHz.
+    pub clock_mhz: Option<u32>,
+    /// What holds the clock back right now (`power cap`, `thermal (hardware)`, `idle`, ...);
+    /// empty when nothing does.
+    pub limited_by: Option<Vec<String>>,
 }
 
 /// Samples [`Load`] on a thread of its own while asked for.
@@ -45,6 +71,8 @@ struct Shared {
 #[derive(Default)]
 struct State {
     latest: Load,
+    /// The name of the adapter penumbra renders on, to pick the matching NVIDIA GPU.
+    adapter: Option<String>,
     wanted: Option<Instant>,
     started: bool,
     stop: bool,
@@ -77,6 +105,12 @@ impl LoadMeter {
         }
         self.shared.wake.notify_all();
         s.latest.clone()
+    }
+
+    /// Names the adapter penumbra renders on (as the graphics API reports it), so the sensors
+    /// come from that GPU when there are several.
+    pub fn set_adapter(&self, name: &str) {
+        lock(&self.shared.state).adapter = Some(name.to_string());
     }
 
     /// Waits up to `timeout` for a sample newer than `after` (asking for it).
@@ -114,6 +148,9 @@ impl Drop for LoadMeter {
 
 fn run(shared: &Shared) {
     let mut sampler: Option<Sampler> = None;
+    // Kept for the thread's life once loaded: starting NVML costs more than keeping it. A
+    // failure is final too, so a machine without NVIDIA says so once in the log.
+    let mut nvml: Option<Option<crate::nvml::Nvml>> = None;
     let mut s = lock(&shared.state);
     loop {
         if s.stop {
@@ -126,7 +163,15 @@ fn run(shared: &Shared) {
             s = shared.wake.wait(s).unwrap_or_else(PoisonError::into_inner);
             continue;
         }
+        let adapter = s.adapter.clone();
         drop(s);
+        let nvml = nvml.get_or_insert_with(|| match crate::nvml::Nvml::open() {
+            Ok(n) => Some(n),
+            Err(e) => {
+                log::info!("no NVIDIA GPU sensors: {e}");
+                None
+            }
+        });
         let load = match &mut sampler {
             Some(sm) => sm.sample(),
             None => match Sampler::open() {
@@ -138,6 +183,10 @@ fn run(shared: &Shared) {
                 Err(e) => Some(Load { error: Some(e.0), at: Some(Instant::now()), ..Load::default() }),
             },
         };
+        let load = load.map(|mut l| {
+            l.nvidia = nvml.as_ref().and_then(|n| sensors(n, adapter.as_deref()));
+            l
+        });
         s = lock(&shared.state);
         if let Some(load) = load {
             s.latest = load;
@@ -170,7 +219,7 @@ impl Sampler {
             .flatten()
             .map(|e| e.0.clone())
             .reduce(|a, b| format!("{a}; {b}"));
-        Some(Load { cpu: cpu.ok(), gpu: gpu.ok(), error, at: Some(Instant::now()) })
+        Some(Load { cpu: cpu.ok(), gpu: gpu.ok(), error, at: Some(Instant::now()), nvidia: None })
     }
 }
 
@@ -186,6 +235,37 @@ impl Sampler {
     fn sample(&mut self) -> Option<Load> {
         None
     }
+}
+
+/// The sensors of the NVIDIA GPU named `adapter`, else of the first one.
+fn sensors(nvml: &crate::nvml::Nvml, adapter: Option<&str>) -> Option<GpuSensors> {
+    let names: Vec<&str> = nvml.names().collect();
+    let found = adapter.and_then(|a| pick(&names, a));
+    let index = found.unwrap_or(0);
+    let name = names.get(index)?.to_string();
+    let r = nvml.read(index)?;
+    let watts = |mw: Option<u32>| mw.map(|mw| f64::from(mw) / 1000.0);
+    Some(GpuSensors {
+        name,
+        index,
+        matched: found.is_some(),
+        power_w: watts(r.power_mw),
+        power_limit_w: watts(r.power_limit_mw),
+        temperature_c: r.temperature_c,
+        clock_mhz: r.clock_mhz,
+        limited_by: r.reasons.map(|v| v.into_iter().map(str::to_string).collect()),
+    })
+}
+
+/// The index of the GPU in `names` that is `adapter`. Names are compared without case and
+/// without a leading `NVIDIA` (older drivers leave it out on one side).
+pub fn pick(names: &[&str], adapter: &str) -> Option<usize> {
+    let norm = |s: &str| {
+        let s = s.trim().to_lowercase();
+        s.strip_prefix("nvidia ").map(str::to_string).unwrap_or(s)
+    };
+    let adapter = norm(adapter);
+    names.iter().position(|n| norm(n) == adapter)
 }
 
 /// Task Manager's number for one GPU: per engine (an adapter's 3D, copy or video engine) the
@@ -216,6 +296,15 @@ mod tests {
         assert_eq!(busiest_engine(items), Some(100.0));
         assert_eq!(busiest_engine(items.into_iter().take(3)), Some(55.0));
         assert_eq!(busiest_engine([]), None);
+    }
+
+    #[test]
+    fn the_rendering_adapter_is_found_by_name() {
+        let names = ["NVIDIA RTX A4000", "NVIDIA GeForce RTX 3090"];
+        assert_eq!(pick(&names, "NVIDIA GeForce RTX 3090"), Some(1));
+        assert_eq!(pick(&names, "GeForce RTX 3090"), Some(1));
+        assert_eq!(pick(&names, "nvidia rtx a4000 "), Some(0));
+        assert_eq!(pick(&names, "Intel(R) UHD Graphics 770"), None);
     }
 
     /// Takes two seconds and reads the machine's counters.
