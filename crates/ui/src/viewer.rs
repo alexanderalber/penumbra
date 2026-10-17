@@ -159,6 +159,7 @@ impl Viewer {
                 Some(d) if d.kind() == DataKind::View => d.get::<Viewpoint>().map(|v| match v.lens {
                     Lens::Fov { .. } => "camera".to_string(),
                     Lens::Calibrated(_) => "calibrated camera".to_string(),
+                    Lens::Ortho { .. } => "orthographic camera".to_string(),
                 }),
                 Some(d) if d.kind() == DataKind::Geo => d.get::<penumbra_gpu::Geo>().map(|g| {
                     let parts = g.part_count();
@@ -689,8 +690,9 @@ pub(crate) fn light_name(l: &penumbra_gpu::render::Light) -> &'static str {
 pub(crate) fn view_lines(v: &Viewpoint) -> [String; 3] {
     let p = v.position();
     let lens = match v.lens {
-        Lens::Fov { .. } => format!("fov {}°", format_value(v.fov())),
-        Lens::Calibrated(_) => format!("calibrated, fov {}°", format_value(v.fov())),
+        Lens::Fov { degrees, .. } => format!("fov {}°", format_value(degrees)),
+        Lens::Calibrated(_) => format!("calibrated, fov {}°", format_value(v.fov().unwrap_or(0.0))),
+        Lens::Ortho { height, .. } => format!("orthographic, {} high", format_value(height)),
     };
     [
         format!("at ({}, {}, {})", format_value(p[0]), format_value(p[1]), format_value(p[2])),

@@ -147,7 +147,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `render.frame` | Move a tex.render camera (its own, or the view.camera wired in) so its geometry fills the picture, keeping the direction; {path} |
+| `render.frame` | Move the view.camera wired into a tex.render so its geometry fills the picture, keeping the direction (orthographic: sets its size); {path} |
 
 ## res
 
@@ -207,7 +207,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `ui.arrange` | Arrange the nodes so wires cross little and run straight: {nodes?: [path]}, else every level (one undo step per level) |
-| `ui.camera` | The viewer's 3D view of a render or geometry: {mode?: picture\|free\|steer, home?, camera?: {eye, target, roll, fov}, orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; moves go to the free view's camera, or in steer mode to the camera node; take puts the free view into it |
+| `ui.camera` | The viewer's 3D view of a render or geometry: {mode?: picture\|free\|steer, home?, camera?: {eye, target, roll, fov, ortho?}, orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; moves go to the free view's camera, or in steer mode to the camera node (orthographic: dolly scales its size); take puts the free view into it |
 | `ui.click` | Click an element or a point; {id \| x, y, button?, double?, ctrl?, shift?, alt?} |
 | `ui.drag` | Drag between elements or points; {from: {id \| x, y}, to: {id \| x, y}, button?, steps?} |
 | `ui.elements` | Automation ids with rects in points; {prefix?} |
@@ -235,4 +235,4 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `view.free` | A render's or a geometry's scene from any camera, as the viewer's free view draws it (without its lines); {path, output?, camera?: {eye, target, roll, fov}, width?, height?, file?}; no camera starts where the viewer does |
+| `view.free` | A render's or a geometry's scene from any camera, as the viewer's free view draws it (without its lines); {path, output?, camera?: {eye, target, roll, fov, ortho?: height}, width?, height?, file?}; no camera starts where the viewer does |

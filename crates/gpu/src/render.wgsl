@@ -38,6 +38,7 @@ struct Light {
 struct Frame {
     clip: mat4x4f,
     view_z: vec4f,
+    // w 1: the eye's position; w 0: a parallel view, xyz the direction to the viewer.
     eye: vec4f,
     mode: u32,
     light_count: u32,
@@ -354,7 +355,11 @@ fn incoming(light: Light, kind: u32, p: vec3f, n: vec3f) -> Incoming {
         }
         tint = picture(u32(light.extra.z + 0.5), ndc * vec2f(0.5, -0.5) + 0.5);
     }
-    if kind >= 2u {
+    // A parallel projector (an orthographic camera, its clip matrix's w row 0 0 0 1) throws
+    // along its axis from everywhere alike, as a directional light.
+    let parallel = kind == 4u
+        && abs(light.clip[0].w) + abs(light.clip[1].w) + abs(light.clip[2].w) < 1e-12;
+    if kind >= 2u && !parallel {
         let d = light.position.xyz - p;
         let dist2 = max(dot(d, d), 1e-8);
         out.l = d * inverseSqrt(dist2);
@@ -393,6 +398,12 @@ fn env_reflection(light: Light, r: vec3f, roughness: f32) -> vec3f {
     return textureSampleLevel(env_specular, env_samp, env_uv(light, r), lod).rgb * light.color.rgb;
 }
 
+// From `p` towards the viewer (not normalized): to the eye, or along a parallel view
+// (`frame.eye.w` 0, `frame.eye.xyz` the direction).
+fn to_viewer(p: vec3f) -> vec3f {
+    return select(frame.eye.xyz, frame.eye.xyz - p, frame.eye.w > 0.5);
+}
+
 // A phong exponent as a roughness, for reflecting an environment.
 fn phong_roughness(shininess: f32) -> f32 {
     return sqrt(2.0 / (shininess + 2.0));
@@ -403,7 +414,7 @@ fn lighting(p: vec3f, n: vec3f, shininess: f32, open: f32) -> Lit {
     var out: Lit;
     out.diffuse = vec3f(0.0);
     out.highlight = vec3f(0.0);
-    let v = normalize(frame.eye.xyz - p);
+    let v = normalize(to_viewer(p));
     for (var i = 0u; i < min(frame.light_count, 16u); i++) {
         let light = frame.lights[i];
         let kind = u32(light.position.w + 0.5);
@@ -438,7 +449,7 @@ fn env_brdf(f0: vec3f, roughness: f32, ndv: f32) -> vec3f {
 // gives a matte white surface 1, so the highlight carries the pi the diffuse leaves out. `open`
 // as lighting()'s.
 fn pbr(p: vec3f, n: vec3f, albedo: vec3f, a: f32, open: f32) -> vec3f {
-    let v = normalize(frame.eye.xyz - p);
+    let v = normalize(to_viewer(p));
     let rough = clamp(draw.roughness, 0.03, 1.0);
     let alpha2 = pow(rough, 4.0);
     let metal = clamp(draw.metallic, 0.0, 1.0);
@@ -566,7 +577,7 @@ fn shade(v: VOut, open: f32) -> vec4f {
     let line = lines(v);
     var n = v.normal;
     if dot(n, n) < 1e-12 {
-        n = frame.eye.xyz - v.world;
+        n = to_viewer(v.world);
     }
     n = normalize(n);
     var base: vec4f;
@@ -589,7 +600,7 @@ fn shade(v: VOut, open: f32) -> vec4f {
     // reflections, and those pictures are about shape). Both sides answer alike: the normal is
     // turned to the viewer.
     let phong = draw.shading == 1u && frame.mode <= 1u;
-    let facing = select(-n, n, dot(n, frame.eye.xyz - v.world) >= 0.0);
+    let facing = select(-n, n, dot(n, to_viewer(v.world)) >= 0.0);
     if draw.shading == 2u && frame.mode <= 1u && frame.shade_all == 0u {
         let albedo = clamp(base.rgb / max(base.a, 1e-6), vec3f(0.0), vec3f(1e4));
         let rgb = pbr(v.world, facing, albedo, base.a, open) + draw.emit.rgb * base.a;
@@ -635,12 +646,12 @@ fn fs_prepass(v: VOut) -> Prepass {
     }
     var n = v.normal;
     if dot(n, n) < 1e-12 {
-        n = frame.eye.xyz - v.world;
+        n = to_viewer(v.world);
     }
     n = normalize(n);
     var out: Prepass;
     out.position = vec4f(v.world, max(dot(frame.view_z, vec4f(v.world, 1.0)), 1e-6));
-    out.normal = vec4f(select(-n, n, dot(n, frame.eye.xyz - v.world) >= 0.0), 1.0);
+    out.normal = vec4f(select(-n, n, dot(n, to_viewer(v.world)) >= 0.0), 1.0);
     return out;
 }
 

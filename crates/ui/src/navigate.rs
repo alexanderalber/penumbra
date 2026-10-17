@@ -4,7 +4,7 @@
 //! keeps the viewer's cameras, turns input into camera moves and draws the picture's lines.
 //!
 //! The free view changes no output and is not in the history. Steering edits the camera node's
-//! `position`, `target` and `roll`, one undo step per movement (a drag, a turn of the wheel, a
+//! `position`, `target` and `roll` (and `size` when orthographic), one undo step per movement (a drag, a turn of the wheel, a
 //! push of the 3D mouse until it rests again).
 
 use std::collections::BTreeMap;
@@ -134,8 +134,8 @@ impl Default for Navigation {
 pub struct Scene {
     pub node: NodeId,
     pub render: bool,
-    /// The camera node steering moves (the render's `view.camera`, or the render itself), or
-    /// why it cannot.
+    /// The camera node steering moves (the `view.camera` wired into the render), or why it
+    /// cannot.
     pub steer: Result<NodeId, String>,
 }
 
@@ -152,19 +152,17 @@ pub fn scene(net: &Network, types: &NodeTypes, node: NodeId, output: u32) -> Opt
 
 fn steer_target(net: &Network, types: &NodeTypes, render: NodeId) -> Result<NodeId, String> {
     let n = net.node(render).ok_or("the node is gone")?;
-    let camera = match n.inputs.get(CAMERA_INPUT).copied().flatten() {
-        Some(port) => {
-            let source = net.node(port.node).ok_or("the camera input's node is gone")?;
-            if source.kind != CAMERA {
-                return Err(format!(
-                    "the camera comes from a {}; only a view.camera can be steered",
-                    source.kind
-                ));
-            }
-            port.node
-        }
-        None => render,
-    };
+    let port = n
+        .inputs
+        .get(CAMERA_INPUT)
+        .copied()
+        .flatten()
+        .ok_or("the render has no camera: wire a view.camera into its `camera` input")?;
+    let source = net.node(port.node).ok_or("the camera input's node is gone")?;
+    if source.kind != CAMERA {
+        return Err(format!("the camera comes from a {}; only a view.camera can be steered", source.kind));
+    }
+    let camera = port.node;
     let calibrated = net
         .node(camera)
         .and_then(|c| c.param(types.desc(&c.kind)?, "calibration"))
@@ -187,16 +185,19 @@ pub fn stored_orbit(net: &Network, types: &NodeTypes, node: NodeId) -> Option<Or
         &[x, y, z] => Some([x, y, z]),
         _ => None,
     };
+    let ortho = n.param(desc, "projection").and_then(Value::as_str) == Some("orthographic");
     let o = Orbit {
         eye: three("position")?,
         target: three("target")?,
         roll: n.param(desc, "roll")?.as_f64()?,
         fov: n.param(desc, "fov")?.as_f64()?,
+        ortho: if ortho { Some(n.param(desc, "size")?.as_f64()?) } else { None },
     };
     o.is_valid().then_some(o)
 }
 
-/// The edits that give camera node `node` the camera `o`; `fov` too when `with_fov`.
+/// The edits that give camera node `node` the camera `o`; `fov` too when `with_fov`; an
+/// orthographic camera's `size` always (dollying changes it).
 pub fn orbit_ops(net: &Network, node: NodeId, o: &Orbit, with_fov: bool) -> Vec<Op> {
     let Some(path) = net.path_of(node) else { return Vec::new() };
     let param = |name: &str| format!("{path}.{name}").parse::<ParamPath>().ok();
@@ -206,8 +207,10 @@ pub fn orbit_ops(net: &Network, node: NodeId, o: &Orbit, with_fov: bool) -> Vec<
         ("target", Value::Vec3(o.target.map(round))),
         ("roll", Value::Float(round(o.roll))),
     ];
-    if with_fov {
-        values.push(("fov", Value::Float(round(o.fov))));
+    match o.ortho {
+        Some(h) => values.push(("size", Value::Float(round(h)))),
+        None if with_fov => values.push(("fov", Value::Float(round(o.fov)))),
+        None => {}
     }
     values.into_iter().filter_map(|(name, value)| Some(Op::Set { param: param(name)?, value })).collect()
 }
@@ -402,7 +405,7 @@ mod tests {
         assert!((m.look[0] - 9.0).abs() < 1e-9);
         let m = Move::fly(fly, 0.1, 2.0, false);
         assert!((m.roll - 9.0).abs() < 1e-9);
-        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 170.0, fov: 40.0 };
+        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 170.0, fov: 40.0, ortho: None };
         Move { roll: 20.0, ..Move::none() }.apply(&mut o);
         assert!((o.roll + 170.0).abs() < 1e-9, "wraps into -180..180: {}", o.roll);
         assert!(Move::none().is_none());
