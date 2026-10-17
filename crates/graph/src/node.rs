@@ -91,11 +91,14 @@ impl InputSpec {
 pub struct OutputSpec {
     pub name: String,
     pub kind: DataKind,
+    /// What the output holds, for the reference and the editor's port tooltip; worth writing
+    /// for every output of a node with several.
+    pub doc: String,
 }
 
 impl OutputSpec {
     pub fn new(name: &str, kind: DataKind) -> Self {
-        Self { name: name.to_string(), kind }
+        Self { name: name.to_string(), kind, doc: String::new() }
     }
 }
 
@@ -172,6 +175,24 @@ impl NodeDesc {
 
     pub fn output(mut self, name: &str, kind: DataKind) -> Self {
         self.outputs.push(OutputSpec::new(name, kind));
+        self
+    }
+
+    /// Describes the output `name` declared before ([`OutputSpec::doc`]); unknown names are
+    /// ignored here; a test in `penumbra-ops` checks that every output of a node with several is
+    /// described.
+    pub fn describe_output(mut self, name: &str, doc: &str) -> Self {
+        if let Some(o) = self.outputs.iter_mut().find(|o| o.name == name) {
+            o.doc = doc.to_string();
+        }
+        self
+    }
+
+    /// Describes the input `name` declared before ([`InputSpec::doc`]).
+    pub fn describe_input(mut self, name: &str, doc: &str) -> Self {
+        if let Some(i) = self.inputs.iter_mut().find(|i| i.name == name) {
+            i.doc = doc.to_string();
+        }
         self
     }
 

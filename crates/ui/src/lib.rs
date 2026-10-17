@@ -92,6 +92,12 @@ pub enum Action {
     /// Bind this param (`/n.scale`, a vector as a whole) to the next OSC address that arrives
     /// (`osc.learn`).
     LearnOsc(String),
+    /// Replace this node with a new one of `kind` under the same name and at the same place,
+    /// keeping the params, wires and bindings that fit (`node.replace`).
+    Replace {
+        node: NodeId,
+        kind: String,
+    },
     /// Start these nodes over (`node.reset`): stateful ones forget what they hold, a component
     /// stands for the stateful nodes inside it.
     Reset(Vec<NodeId>),

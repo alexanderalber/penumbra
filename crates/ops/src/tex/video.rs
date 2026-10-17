@@ -56,6 +56,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             )
             .output("out", DataKind::Tex)
             .output("info", DataKind::Chan)
+            .describe_output("out", "The video's picture")
+            .describe_output("info", "Playback: frame, progress (0 to 1), loops, late, seeks")
             .time_dependent(),
         || Box::new(Video::default()) as Box<dyn Operator>,
     ))

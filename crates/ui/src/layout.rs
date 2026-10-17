@@ -156,6 +156,9 @@ pub struct Layout {
     /// Each placed node's parent: positions are per component (each component's inside has a
     /// plane of its own), so overlap checks and bounds look at one level only.
     parents: HashMap<NodeId, Option<NodeId>>,
+    /// Each placed node's name: a node deleted and created again under the same name in one edit
+    /// (`node.replace`) keeps its place.
+    names: HashMap<NodeId, String>,
     /// The component whose inside the editor shows (`None`: the top level); `visible` and
     /// `bounds` refer to it.
     pub level: Option<NodeId>,
@@ -190,6 +193,7 @@ impl Layout {
             file: file.clone(),
             pos: HashMap::new(),
             parents: HashMap::new(),
+            names: HashMap::new(),
             level: None,
             level_views: HashMap::new(),
             loaded: BTreeMap::new(),
@@ -388,11 +392,16 @@ impl Layout {
     pub fn sync(&mut self, net: &Network, now: Instant) {
         let gone = &mut self.gone;
         let parents = &mut self.parents;
+        let names = &mut self.names;
+        let mut replaced: HashMap<(Option<NodeId>, String), Pos2> = HashMap::new();
         self.pos.retain(|id, p| {
             let keep = net.node(*id).is_some();
             if !keep {
                 gone.insert(*id, *p);
-                parents.remove(id);
+                let parent = parents.remove(id);
+                if let (Some(parent), Some(name)) = (parent, names.remove(id)) {
+                    replaced.insert((parent, name), *p);
+                }
             }
             keep
         });
@@ -405,10 +414,12 @@ impl Layout {
         let mut fresh: Vec<NodeId> = Vec::new();
         for node in net.nodes() {
             self.parents.insert(node.id, node.parent);
+            self.names.insert(node.id, node.name.to_string());
             if self.pos.contains_key(&node.id) {
                 continue;
             }
-            let back = self.gone.remove(&node.id);
+            let back =
+                self.gone.remove(&node.id).or_else(|| replaced.remove(&(node.parent, node.name.to_string())));
             let from_file =
                 back.or_else(|| net.path_of(node.id).and_then(|p| self.loaded.remove(&p.to_string())));
             match from_file {
@@ -747,6 +758,23 @@ mod tests {
         assert_eq!(layout.get(a), None);
         layout.sync(&net, now);
         assert_eq!(layout.get(a), Some(start));
+    }
+
+    #[test]
+    fn a_replaced_node_keeps_its_place() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let net = chain();
+        let mut layout = Layout::load(None);
+        let now = Instant::now();
+        layout.sync(&net, now);
+        let b = net.resolve(&"/b".parse().unwrap()).unwrap();
+        layout.set(b, pos2(500.0, 300.0), now);
+        let r = penumbra_graph::replace(&net, &types, &"/b".parse().unwrap(), "chan.filter").unwrap();
+        let after = net.apply(&types, &r.ops).unwrap().network;
+        layout.sync(&after, now);
+        let new_b = after.resolve(&"/b".parse().unwrap()).unwrap();
+        assert_ne!(new_b, b);
+        assert_eq!(layout.get(new_b), Some(pos2(500.0, 300.0)));
     }
 
     #[test]

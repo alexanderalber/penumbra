@@ -133,6 +133,14 @@ fn desc() -> NodeDesc {
         .output("out", DataKind::Tex)
         .output("blobs", DataKind::Table)
         .output("chans", DataKind::Chan)
+        .describe_output("out", "What the tracker sees, at the analysed size (`show`)")
+        .describe_output(
+            "blobs",
+            "One row per blob: id, x, y, left, top, width, height, area, age, vx, vy, r, g, b",
+        )
+        .describe_output("chans", "count, and id, x, y, area per slot (x1, y1, ...); a blob keeps its slot")
+        .describe_input("in", "The picture to search, a camera usually")
+        .describe_input("background", "The empty scene, for detect background; unconnected: learned")
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {

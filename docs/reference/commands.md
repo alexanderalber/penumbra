@@ -107,6 +107,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `node.lock` | Lock (hold outputs) or unlock a node; {path, locked?} |
 | `node.paste` | Paste the nodes copied last (or `text`) into a component or the root; {into?, text?} |
 | `node.rename` | Rename a node; {path, name} |
+| `node.replace` | Replace a node with one of another kind under the same name, keeping the params, wires and bindings that fit (one undo step); lists what was not kept; {path, kind} |
 | `node.reset` | Start stateful nodes over (feedback, cache, time machine, tracker, filter...); a component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path} |
 | `node.set` | Set params, null resets to the default; {path, params: {name: value}} |
 | `node.snapshot` | Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file?} |

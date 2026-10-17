@@ -316,7 +316,20 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     .input("geo", DataKind::Geo)
     .input("texture", DataKind::Tex)
     .input("lights", DataKind::Light)
-    .input("camera", DataKind::View);
+    .input("camera", DataKind::View)
+    .describe_output("out", "The rendered picture")
+    .describe_output(
+        "data",
+        "Not a picture to look at: texture coordinates in red and green, part id + 1 in blue (0 where \
+         nothing was drawn), distance along the view in metres in alpha; for shaders and masks",
+    )
+    .describe_input("geo", "What to render")
+    .describe_input(
+        "texture",
+        "Put on the geometry where its surface is texture (or auto without a material)",
+    )
+    .describe_input("lights", "Without lights, phong materials are black")
+    .describe_input("camera", "A view.camera; needed");
     let desc = desc
         .param(ParamSpec::choice("surface", &SURFACES).doc(
             "auto: the texture input where connected, else the file's materials; parts: a colour per part id",

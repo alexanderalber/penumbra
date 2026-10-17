@@ -8,7 +8,7 @@
         "/curve": (kind: "tex.from_chan", inputs: {"in": "brightness"}),
         "/mean": (kind: "chan.from_tex", params: {"components": "rgb"}, inputs: {"in": "picture"}),
         "/picture": (kind: "tex.noise", params: {"amplitude": 0.6, "color": true, "frequency": 2.0, "height": 720, "speed": 0.25, "width": 1280}),
-        "/strip": (kind: "tex.from_chan", params: {"layout": "rgba"}, inputs: {"in": "columns"}),
+        "/strip": (kind: "tex.from_chan", inputs: {"in": "columns"}),
         "/swatch": (kind: "tex.constant", params: {"height": 64, "width": 64}, binds: {"color.0": "mean:r", "color.1": "mean:g", "color.2": "mean:b"}),
         "/view": (kind: "tex.shader", params: {"file": "view.wgsl"}, inputs: {"in0": "picture", "in1": "curve", "in2": "strip", "in3": "swatch"}),
     },

@@ -52,6 +52,11 @@ fn desc() -> NodeDesc {
     .output("sdf", DataKind::Tex)
     .output("outline", DataKind::Tex)
     .output("table", DataKind::Table)
+    .describe_output("mask", "White inside the shapes of the tags in `tag`")
+    .describe_output("sdf", "Signed distance to the edge of those shapes")
+    .describe_output("outline", "Outlines of all shapes in their tag colours, to see them while placing them")
+    .describe_output("table", "Every shape as a row; another tex.shapes can read it at its `table` input")
+    .describe_input("table", "Shapes from a table (as the `table` output has them) instead of the node's own")
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {

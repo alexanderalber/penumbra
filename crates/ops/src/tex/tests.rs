@@ -1859,6 +1859,27 @@ fn a_picture_becomes_channels_of_its_mean_per_cell() {
 }
 
 #[test]
+fn a_mean_colour_comes_back_as_a_colour_swatch() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("mean_swatch");
+    let ops = [
+        create("/k", "tex.constant", &[("color", Value::Vec4([0.25, 0.5, 0.75, 1.0]))]),
+        create("/mean", "chan.from_tex", &[]),
+        connect("/k", "/mean", 0),
+        create("/swatch", "tex.from_chan", &[]),
+        connect("/mean", "/swatch", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    chans_of(&mut rig, "/mean");
+    let px = rig.pixels("/swatch");
+    assert_eq!((px.width, px.height), (1, 1));
+    let [r, g, b, a] = px.get(0, 0).unwrap();
+    let near = |x: f32, y: f32| (x - y).abs() < 0.01;
+    assert!(near(r, 0.25) && near(g, 0.5) && near(b, 0.75) && near(a, 1.0), "{:?}", px.get(0, 0));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn channels_become_a_picture_and_back() {
     let Some(gpu) = gpu() else { return };
     let dir = scratch("from_chan");

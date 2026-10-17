@@ -26,7 +26,8 @@ The families:
   A channel holds one or many samples, so a set of channels is a small grid of numbers:
   `tex.from_chan` turns it into a picture (a row per channel, a pixel per sample) for shaders to
   look values up in, and `chan.from_tex` averages a picture down to a few pixels and turns them
-  into channels (at 1 x 1, its mean colour).
+  into channels (at 1 x 1, its mean colour). Channels named `r`, `g`, `b` (and `a`), as
+  `chan.from_tex` makes them, come back from `tex.from_chan` as a colour.
 - **`table`**: text tables, typed in or read from a file, for scripts and OSC.
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
