@@ -899,3 +899,22 @@ fn vsyncs_that_pile_up_during_a_slow_pass_cook_once() {
     let after = f.engine.on_cook(|st| st.last.pass).unwrap();
     assert!(after - before < 5, "{} passes for one backlog", after - before);
 }
+
+#[test]
+fn the_ticker_rests_while_real_vsyncs_arrive() {
+    let f = Fixture::new("ticker-park");
+    assert!(f.engine.ticking(), "no output: the ticker paces");
+    for _ in 0..5 {
+        f.engine.vsync(Instant::now());
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    // A task after the vsyncs runs after the loop has seen them.
+    f.engine.on_cook(|_| ()).unwrap();
+    assert!(!f.engine.ticking(), "real vsyncs pace: the ticker rests");
+    // Three periods without one and the ticker takes over again.
+    let until = Instant::now() + Duration::from_secs(2);
+    while !f.engine.ticking() && Instant::now() < until {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(f.engine.ticking(), "the vsyncs stopped: the ticker paces again");
+}

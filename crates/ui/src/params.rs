@@ -38,6 +38,8 @@ pub struct Inputs<'a> {
     pub chan_drag: Option<NodeId>,
     /// The engine's cameras, offered for a `tex.videoin`'s `device` and `mode`.
     pub cameras: &'a penumbra_camera::Hub,
+    /// The engine's audio inputs: a `chan.audioin`'s `device` names the device it reads.
+    pub audio: &'a penumbra_audio::Hub,
 }
 
 #[derive(Default)]
@@ -805,6 +807,8 @@ impl ParamPanel {
                                 )
                             })
                             .inner
+                    } else if node.kind == penumbra_ops::audio::AUDIO_IN && spec.name == "device" {
+                        audio_device_box(ui, buffer, width, input.audio, &current)
                     } else {
                         ui.add(egui::TextEdit::singleline(buffer).desired_width(width))
                     };
@@ -1003,6 +1007,28 @@ fn camera_for<'l>(
 /// `add` in a layout as wide as `ui` offers and as high as the param's widget: one line, or the
 /// box of a text of several lines. A row's grid cell centres what it is given in the row's
 /// height, so a cell claiming less than it draws would sink a little lower every frame.
+/// A `chan.audioin`'s `device` box. It names the device actually read: greyed inside the box
+/// while `device` is empty (the system's default input), on hover otherwise. The name comes from
+/// the stream already open, so nothing is listed per frame.
+fn audio_device_box(
+    ui: &mut Ui,
+    buffer: &mut String,
+    width: f32,
+    hub: &penumbra_audio::Hub,
+    current: &str,
+) -> egui::Response {
+    let device = hub.stream_status(current.trim()).and_then(|s| s.device);
+    let hint = match &device {
+        Some(name) => format!("default: {name}"),
+        None => "the default input".to_string(),
+    };
+    let r = ui.add(egui::TextEdit::singleline(buffer).hint_text(hint).desired_width(width));
+    match device {
+        Some(name) => r.on_hover_text(format!("Reading {name}")),
+        None => r.on_hover_text("No device open yet"),
+    }
+}
+
 fn line<R>(
     ui: &mut Ui,
     height: f32,

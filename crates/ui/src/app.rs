@@ -17,7 +17,7 @@ use crate::changes::Changes;
 use crate::control::{Reply, UiRequest};
 use crate::editor::{self, Editor};
 use crate::icons::{self, Icon};
-use crate::layout::Layout;
+use crate::layout::{EditorOptions, Layout};
 use crate::navigate::{self, Move};
 use crate::params::{self, ParamPanel};
 use crate::textures::Textures;
@@ -168,7 +168,7 @@ impl PenumbraApp {
         }
         let layout = Layout::load(Some(engine.session().dir()));
         cc.egui_ctx.set_visuals(theme::visuals(false));
-        Self {
+        let app = Self {
             control: options.control,
             adapter,
             textures: Textures::new(cc.wgpu_render_state.clone()),
@@ -206,7 +206,9 @@ impl PenumbraApp {
             shown: (engine.generation(), engine.session()),
             flown: Instant::now(),
             engine,
-        }
+        };
+        app.apply_thumbnails();
+        app
     }
 
     /// Another project opened: writes the old one's layout, then starts over with the new
@@ -225,6 +227,18 @@ impl PenumbraApp {
         self.textures.clear();
         self.library.1 = None;
         self.title.clear();
+        self.apply_thumbnails();
+    }
+
+    /// Hands the project's thumbnail mode and rate (kept in its layout) to the engine.
+    fn apply_thumbnails(&self) {
+        let (mode, every) = (self.layout.options.thumbnails, self.layout.options.thumbnail_every);
+        self.engine.post_cook(move |st| {
+            let mut policy = st.cooker.thumbnail_policy();
+            policy.mode = mode;
+            policy.min_interval = every;
+            st.cooker.set_thumbnail_policy(policy);
+        });
     }
 
     /// Writes the layout now; for runs that end without `on_exit` (headless).
@@ -290,19 +304,15 @@ impl PenumbraApp {
                     Ok(())
                 }
                 Action::Thumbnails(mode) => {
-                    self.engine.post_cook(move |st| {
-                        let mut policy = st.cooker.thumbnail_policy();
-                        policy.mode = mode;
-                        st.cooker.set_thumbnail_policy(policy);
-                    });
+                    let options = EditorOptions { thumbnails: mode, ..self.layout.options };
+                    self.layout.set_options(options, now);
+                    self.apply_thumbnails();
                     Ok(())
                 }
                 Action::ThumbnailEvery(every) => {
-                    self.engine.post_cook(move |st| {
-                        let mut policy = st.cooker.thumbnail_policy();
-                        policy.min_interval = every;
-                        st.cooker.set_thumbnail_policy(policy);
-                    });
+                    let options = EditorOptions { thumbnail_every: every, ..self.layout.options };
+                    self.layout.set_options(options, now);
+                    self.apply_thumbnails();
                     Ok(())
                 }
                 Action::Message(m) => Err(penumbra_core::Error::new(m)),
@@ -533,7 +543,8 @@ impl PenumbraApp {
                 if let Some(t) = view.time {
                     ui.monospace(format!("{:>7}  {:>8.2} s", t.frame, t.seconds()));
                 }
-                crate::cook_meter::status(ui, &self.engine, &mut self.auto);
+                let fps = view.time.map_or(60.0, |t| t.rate.as_f64());
+                crate::cook_meter::status(ui, &self.engine, fps, &mut self.auto);
                 ui.separator();
                 self.helpers.status(ui, board, view.pace, &mut self.auto);
                 ui.separator();
@@ -603,15 +614,26 @@ impl PenumbraApp {
         });
         let target = self.viewer.target(&net, selected);
         // One right column: params on top, then viewer and changes, each collapsible; the
-        // editor gets everything else.
-        // Three tenths of the window to start with.
-        // The window is still opening at its unmaximized size on the first frame, so the monitor
-        // gives the width it is about to have.
-        let screen = ui.ctx().input(|i| i.viewport().monitor_size.map(|m| m.x));
-        let column_width = (screen.unwrap_or_else(|| ui.available_width()) * 0.3).max(260.0);
-        egui::Panel::right("column").resizable(true).default_size(column_width).min_size(260.0).show(
-            ui,
-            |ui| {
+        // editor gets everything else. The column keeps its share of the window (three tenths to
+        // start with), so it grows and shrinks with the window: egui would keep its width in
+        // points, so its stored size is set to the share's every frame. A width that comes out
+        // different is the user dragging the edge and gives the new share. Resizes of the window
+        // (it maximizes just after opening) never change the share.
+        let window_width = ui.available_width();
+        let column_width = crate::layout::column_width(self.layout.column, window_width);
+        let column_id = egui::Id::new("column");
+        let stored = egui::Rect::from_min_size(
+            egui::pos2(window.right() - column_width, window.top()),
+            vec2(column_width, window.height()),
+        );
+        ui.ctx().data_mut(|d| {
+            d.insert_persisted(column_id, egui::containers::panel::PanelState { outer_rect: stored })
+        });
+        let column = egui::Panel::right(column_id)
+            .resizable(true)
+            .default_size(column_width)
+            .min_size(crate::layout::COLUMN_MIN)
+            .show(ui, |ui| {
                 // The column is as wide as the user dragged it, never as its content: egui widens a
                 // panel to whatever was drawn into it, so a node with a long row made the column
                 // jump when selected. The content goes into a child that does not report its size back;
@@ -719,6 +741,7 @@ impl PenumbraApp {
                                 outputs: &view.outputs,
                                 chan_drag,
                                 cameras: self.engine.camera(),
+                                audio: self.engine.audio(),
                             };
                             self.params.show(ui, &input, &mut self.auto, &mut actions);
                         }
@@ -734,8 +757,11 @@ impl PenumbraApp {
                     }
                 });
                 self.layout.set_sections(sections, now);
-            },
-        );
+            });
+        let shown = column.response.rect.width();
+        if (shown - column_width).abs() > 1.0 && column_width < window_width {
+            self.layout.set_column(crate::layout::column_share(shown, window_width), now);
+        }
 
         // The library is listed again every few seconds (two small directories).
         if self.library.1.is_none_or(|t| now.saturating_duration_since(t) > Duration::from_secs(3)) {
