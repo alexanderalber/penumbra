@@ -52,6 +52,49 @@ pub fn column_share(width: f32, window: f32) -> f32 {
     ((width / window).clamp(COLUMN_SHARES.0, COLUMN_SHARES.1) * 1000.0).round() / 1000.0
 }
 
+/// The viewer's picture area to start with and after a reset: 16:9, width over height.
+pub const VIEWER_ASPECT: f32 = 16.0 / 9.0;
+/// The aspects (width over height) a viewer dragged by hand may keep.
+const VIEWER_ASPECTS: (f32, f32) = (0.25, 8.0);
+/// The viewer's lowest height, header included, in points.
+pub const VIEWER_MIN: f32 = 100.0;
+/// Height the viewer leaves to the parameters above it, header included, in points.
+pub const PARAMS_ROOM: f32 = 160.0;
+
+/// The viewer's height for a picture area `width` wide with `aspect` (width over height), plus
+/// `overhead` (header rows, frame). `room` is the height the viewer and the parameters share:
+/// the viewer leaves [`PARAMS_ROOM`] of it and gets shorter rather than push the parameters
+/// away, but never below [`VIEWER_MIN`].
+pub fn viewer_height(aspect: f32, width: f32, overhead: f32, room: f32) -> f32 {
+    let aspect = if aspect.is_finite() && aspect > 0.0 { aspect } else { VIEWER_ASPECT };
+    let picture = picture_height(aspect, width);
+    let height = if (picture + overhead).is_finite() { picture + overhead } else { VIEWER_MIN };
+    height.min(viewer_max(room)).max(VIEWER_MIN)
+}
+
+/// The tallest the viewer may be when it shares `room` with the parameters.
+pub fn viewer_max(room: f32) -> f32 {
+    (room - PARAMS_ROOM).max(VIEWER_MIN)
+}
+
+/// The height of a picture area `width` wide whose picture (inset by
+/// [`crate::viewer::INSET`] on every side) has `aspect`.
+fn picture_height(aspect: f32, width: f32) -> f32 {
+    let inset = 2.0 * crate::viewer::INSET;
+    (width - inset).max(0.0) / aspect.max(f32::EPSILON) + inset
+}
+
+/// The aspect (width over height) of the picture inside a picture area of `size`, for a viewer
+/// dragged to that size; `None` for nothing sensible.
+pub fn viewer_aspect(size: Vec2) -> Option<f32> {
+    let inset = 2.0 * crate::viewer::INSET;
+    let (w, h) = (size.x - inset, size.y - inset);
+    if !(w.is_finite() && h.is_finite()) || w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    Some(((w / h).clamp(VIEWER_ASPECTS.0, VIEWER_ASPECTS.1) * 1000.0).round() / 1000.0)
+}
+
 /// The slowest thumbnail rate taken from a file, as `cook.thumbnails` takes it.
 const MAX_THUMBNAIL_EVERY: u32 = 60;
 
@@ -70,6 +113,9 @@ struct FileRepr {
     /// The right column's width as a share of the window's.
     #[serde(default)]
     column: Option<f32>,
+    /// The viewer's picture aspect (width over height) when dragged by hand; none: 16:9.
+    #[serde(default)]
+    viewer_aspect: Option<f32>,
 }
 
 /// Which sections of the right column are open.
@@ -213,6 +259,9 @@ pub struct Layout {
     pub options: EditorOptions,
     /// The right column's share of the window's width ([`column_width`]).
     pub column: f32,
+    /// The viewer's picture aspect (width over height) after the user dragged its edge; `None`
+    /// keeps it at [`VIEWER_ASPECT`]. Its height follows the column's width either way.
+    pub viewer_aspect: Option<f32>,
     /// The part of the graph on screen, from the editor; new nodes without a placed input go
     /// there.
     pub visible: Option<Rect>,
@@ -243,6 +292,7 @@ impl Layout {
             sections: Sections::default(),
             options: EditorOptions::default(),
             column: COLUMN_DEFAULT,
+            viewer_aspect: None,
             visible: None,
             gone: HashMap::new(),
             moving: None,
@@ -277,6 +327,10 @@ impl Layout {
                 if let Some(share) = repr.column.filter(|s| s.is_finite()) {
                     layout.column = share.clamp(COLUMN_SHARES.0, COLUMN_SHARES.1);
                 }
+                layout.viewer_aspect = repr
+                    .viewer_aspect
+                    .filter(|a| a.is_finite() && *a > 0.0)
+                    .map(|a| a.clamp(VIEWER_ASPECTS.0, VIEWER_ASPECTS.1));
                 layout.last_text = Some(text);
             }
             Ok(None) => {}
@@ -315,6 +369,16 @@ impl Layout {
     pub fn set_column(&mut self, share: f32, now: Instant) {
         if share.is_finite() && self.column != share {
             self.column = share.clamp(COLUMN_SHARES.0, COLUMN_SHARES.1);
+            self.touch(now);
+        }
+    }
+
+    /// The viewer's picture aspect kept after a drag of its edge; `None` goes back to 16:9.
+    pub fn set_viewer_aspect(&mut self, aspect: Option<f32>, now: Instant) {
+        let aspect =
+            aspect.filter(|a| a.is_finite() && *a > 0.0).map(|a| a.clamp(VIEWER_ASPECTS.0, VIEWER_ASPECTS.1));
+        if self.viewer_aspect != aspect {
+            self.viewer_aspect = aspect;
             self.touch(now);
         }
     }
@@ -593,6 +657,7 @@ impl Layout {
             sections: Some(self.sections),
             options: Some(self.options),
             column: Some(self.column),
+            viewer_aspect: self.viewer_aspect,
         };
         for (id, p) in &self.pos {
             if let Some(path) = net.path_of(*id) {
@@ -897,6 +962,23 @@ mod tests {
     }
 
     #[test]
+    fn the_viewer_is_as_tall_as_its_picture_needs() {
+        // A 16:9 picture fills the picture area inside its inset.
+        let h = viewer_height(VIEWER_ASPECT, 488.0, 40.0, 2000.0);
+        assert!((h - (480.0 * 9.0 / 16.0 + 8.0 + 40.0)).abs() < 0.01, "{h}");
+        let back = viewer_aspect(vec2(488.0, h - 40.0)).unwrap();
+        assert!((back - VIEWER_ASPECT).abs() < 0.001, "{back}");
+        // Too little room: the parameters keep theirs, the viewer is shorter.
+        assert_eq!(viewer_height(VIEWER_ASPECT, 1000.0, 40.0, 500.0), 500.0 - PARAMS_ROOM);
+        // Never below its minimum, whatever the room.
+        assert_eq!(viewer_height(VIEWER_ASPECT, 1000.0, 40.0, 50.0), VIEWER_MIN);
+        assert_eq!(viewer_height(VIEWER_ASPECT, 0.0, 0.0, 2000.0), VIEWER_MIN);
+        assert_eq!(viewer_height(f32::NAN, 488.0, 40.0, 2000.0), h, "16:9 for nonsense");
+        assert_eq!(viewer_aspect(vec2(4.0, 300.0)), None);
+        assert_eq!(viewer_aspect(vec2(10_000.0, 20.0)), Some(VIEWER_ASPECTS.1));
+    }
+
+    #[test]
     fn positions_survive_a_round_trip_through_the_file() {
         let dir = std::env::temp_dir().join(format!("penumbra-layout-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -915,6 +997,7 @@ mod tests {
         };
         layout.set_options(options, now);
         layout.set_column(0.42, now);
+        layout.set_viewer_aspect(Some(2.5), now);
         layout.save_if_due(&net, now, false);
         assert!(!dir.join(FILE_NAME).exists(), "not before the delay");
         layout.save_if_due(&net, now + SAVE_DELAY, false);
@@ -923,6 +1006,7 @@ mod tests {
         assert_eq!(again.get(a), Some(pos2(500.0, -20.0)));
         assert_eq!(again.options, options);
         assert_eq!(again.column, 0.42);
+        assert_eq!(again.viewer_aspect, Some(2.5));
         // Thumbnail rates out of range are not taken from the file as they are.
         let text = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
         std::fs::write(dir.join(FILE_NAME), text.replace("thumbnail_every: 3", "thumbnail_every: 0"))
@@ -932,6 +1016,10 @@ mod tests {
         // A file from before the channel scale existed still loads, with the default.
         std::fs::write(dir.join(FILE_NAME), text.replace("chan_scale: per_channel,", "")).unwrap();
         assert_eq!(Layout::load(Some(&dir)).options.chan_scale, ChanScale::Auto);
+        // One from before the viewer kept a dragged height loads with the automatic 16:9.
+        assert!(text.contains("viewer_aspect: Some(2.5)"), "{text}");
+        std::fs::write(dir.join(FILE_NAME), text.replace("viewer_aspect: Some(2.5),", "")).unwrap();
+        assert_eq!(Layout::load(Some(&dir)).viewer_aspect, None);
         std::fs::write(dir.join(FILE_NAME), "garbage").unwrap();
         let broken = Layout::load(Some(&dir));
         assert!(broken.pos.is_empty() && broken.loaded.is_empty());

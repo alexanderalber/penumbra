@@ -216,7 +216,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.frame` | Fit all nodes into the editor |
 | `ui.key` | Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?} |
 | `ui.measure` | How tidy the level shown is, in graph units: the nodes' width and height, total and longest wire length, crossings, wire length running on top of a wire from another output (overlap, and where: overlaps) or through nodes |
-| `ui.options` | The editor's options (right-click on empty space) and the viewer's channel scale; {chan_bars?, viewer_background?, binding_lines?, chan_scale?: auto\|shared\|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale)} |
+| `ui.options` | The editor's options (right-click on empty space) and the viewer's channel scale; {chan_bars?, viewer_background?, binding_lines?, chan_scale?: auto\|shared\|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale), viewer_aspect?: auto\|number (the viewer's picture area, width over height; its height follows the column's width; dragging the viewer's edge sets it, auto is 16:9)} |
 | `ui.place` | Move nodes in the editor; {nodes: {path: [x, y]}} |
 | `ui.screenshot` | PNG of the window; {file?} (default %TEMP%/penumbra/ui.png) |
 | `ui.scroll` | Mouse wheel over an element or point; {id \| x, y, dy} |

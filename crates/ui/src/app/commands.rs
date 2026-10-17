@@ -383,7 +383,18 @@ impl PenumbraApp {
                 .and_then(crate::layout::ChanScale::parse)
                 .ok_or("`chan_scale` must be auto, shared or per_channel")?;
         }
+        let aspect = match p.get("viewer_aspect") {
+            None => self.layout.viewer_aspect,
+            Some(Json::String(s)) if s == "auto" => None,
+            Some(v) => Some(
+                v.as_f64()
+                    .map(|a| a as f32)
+                    .filter(|a| a.is_finite() && *a > 0.0)
+                    .ok_or("`viewer_aspect` must be \"auto\" or a width over height above 0")?,
+            ),
+        };
         self.layout.set_options(options, now);
+        self.layout.set_viewer_aspect(aspect, now);
         self.viewer.chan_scale = options.chan_scale;
         self.window_viewer.chan_scale = options.chan_scale;
         Ok(json!({
@@ -391,6 +402,7 @@ impl PenumbraApp {
             "viewer_background": options.viewer_background,
             "binding_lines": options.binding_lines,
             "chan_scale": options.chan_scale.name(),
+            "viewer_aspect": self.layout.viewer_aspect.map_or(json!("auto"), |a| json!(a)),
         }))
     }
 }

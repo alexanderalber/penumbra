@@ -29,6 +29,9 @@ const MAX_CURVES: usize = 16;
 /// Table rows drawn.
 const MAX_ROWS: usize = 200;
 
+/// The margin between the picture area and the picture fitted into it.
+pub const INSET: f32 = 4.0;
+
 #[derive(Default)]
 pub struct Viewer {
     pub pinned: Option<NodeId>,
@@ -47,6 +50,8 @@ pub struct Viewer {
     pub chan_scale: ChanScale,
     /// What `ChanScale::Auto` decided last, for its hysteresis.
     auto_lanes: bool,
+    /// The picture area drawn last, below the header rows.
+    pub picture: Option<Rect>,
 }
 
 /// What the viewer needs to look around in a 3D node.
@@ -240,6 +245,7 @@ impl Viewer {
         let visible = (ui.clip_rect().max.x - ui.cursor().min.x).max(0.0);
         let size = vec2(ui.available_width().min(visible), ui.available_height());
         let (rect, response) = ui.allocate_exact_size(size, sense);
+        self.picture = Some(rect);
         auto.add("viewer", rect, "viewer");
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, CornerRadius::ZERO, background);
@@ -248,7 +254,7 @@ impl Viewer {
             && mode != Mode::Picture
         {
             let ppp = painter.pixels_per_point();
-            let area = rect.shrink(4.0);
+            let area = rect.shrink(INSET);
             self.nav.size = (
                 (area.width() * ppp).round().max(16.0) as u32,
                 (area.height() * ppp).round().max(16.0) as u32,
@@ -302,7 +308,7 @@ impl Viewer {
                         self.shapes.canvas(ui, rect, tid, aspect, tex.size(), input, auto, actions);
                         return;
                     }
-                    let area = rect.shrink(4.0);
+                    let area = rect.shrink(INSET);
                     let w = area.width().min(area.height() * aspect);
                     // On whole pixels: the checker's anti-aliased edge would show as a grey
                     // line below or beside a picture ending inside a pixel.
@@ -334,7 +340,7 @@ impl Viewer {
                     && let Some(tid) = textures.show((id, self.output), tex)
                 {
                     let aspect = tex.width() as f32 / tex.height().max(1) as f32;
-                    let area = rect.shrink(4.0);
+                    let area = rect.shrink(INSET);
                     let w = area.width().min(area.height() * aspect);
                     // On whole pixels: the checker's anti-aliased edge would show as a grey
                     // line below or beside a picture ending inside a pixel.
@@ -407,7 +413,7 @@ impl Viewer {
                 let Some(tid) = textures.show((id, u32::MAX), &picture.tex) else { return };
                 let (w, h) = picture.tex.size();
                 let aspect = w as f32 / h.max(1) as f32;
-                let area = rect.shrink(4.0);
+                let area = rect.shrink(INSET);
                 let fw = area.width().min(area.height() * aspect);
                 let fit = Rect::from_center_size(area.center(), vec2(fw, fw / aspect))
                     .round_to_pixels(painter.pixels_per_point());
