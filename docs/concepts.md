@@ -42,7 +42,9 @@ The families:
 
 Every type, with every param, is in the [node reference](reference/nodes.md). Nodes cook only
 when something needs them (an output, the viewer, a visible thumbnail) and only when something
-they depend on changed.
+they depend on changed. A node may need only some of its inputs: `tex.switch` with
+`inactive: skip` cooks only the chain it shows, and the others stand still (their state pauses,
+their thumbnails cook only as thumbnails) until it switches to them.
 
 ## Params
 

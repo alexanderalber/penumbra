@@ -40,7 +40,8 @@ use serde::{Deserialize, Serialize};
 use crate::job::{Job, JobContext, JobPool, JobStatus, panic_message};
 use crate::network::{Network, NodeDef, Port};
 use crate::node::{
-    CookError, Cooked, Data, DataKind, Density, NodeDesc, NodeType, NodeTypes, Operator, StateItem,
+    CookError, Cooked, Data, DataKind, Density, InputChooser, NodeDesc, NodeType, NodeTypes, Operator,
+    StateItem,
 };
 use crate::watch::{FileWatch, Watcher};
 
@@ -200,6 +201,42 @@ impl<'a> CookContext<'a> {
             tx.send(node).ok();
         });
         self.spawner.pool.spawn(work, Some(notify))
+    }
+}
+
+/// What an [`InputChooser`] sees: the node's parameters, bound ones evaluated, and which of
+/// its inputs are wired. Nothing upstream of the inputs has cooked yet this frame.
+pub struct InputChoice<'a> {
+    def: &'a NodeDef,
+    desc: &'a NodeDesc,
+    bound: &'a BTreeMap<Name, Value>,
+}
+
+impl InputChoice<'_> {
+    pub fn def(&self) -> &NodeDef {
+        self.def
+    }
+
+    /// A parameter value, as [`CookContext::param`] will see it.
+    pub fn param(&self, name: &str) -> Option<&Value> {
+        self.bound.get(name).or_else(|| self.def.param(self.desc, name))
+    }
+
+    pub fn float(&self, name: &str) -> Option<f64> {
+        self.param(name).and_then(Value::as_f64)
+    }
+
+    pub fn bool(&self, name: &str) -> Option<bool> {
+        self.param(name).and_then(Value::as_bool)
+    }
+
+    pub fn text(&self, name: &str) -> Option<&str> {
+        self.param(name).and_then(Value::as_str)
+    }
+
+    /// Whether a wire leads into input `index`.
+    pub fn connected(&self, index: usize) -> bool {
+        self.def.inputs.get(index).is_some_and(Option::is_some)
     }
 }
 
@@ -582,28 +619,69 @@ impl Cooker {
         self.last_net = Some(net.clone());
     }
 
-    /// Cook `root` and whatever it depends on, upstream first.
+    /// Cook `root` and whatever it depends on, upstream first. A node whose type chooses its
+    /// inputs ([`NodeType::input_chooser`]) is taken in two steps: first what its parameters
+    /// depend on (bindings, node references) cooks, then, with the bound values known, it
+    /// picks its inputs and only those are followed upstream.
     fn evaluate(&mut self, root: NodeId, time: FrameTime, report: &mut CookReport) {
-        let mut order = Vec::new();
-        let mut stack = vec![(root, false)];
+        let mut stack = vec![(root, Visit::Expand)];
         let mut expanded = BTreeSet::new();
-        while let Some((id, done)) = stack.pop() {
-            if done {
-                order.push(id);
-                continue;
-            }
+        while let Some((id, visit)) = stack.pop() {
             let Some(rt) = self.runtimes.get(&id) else { continue };
-            if rt.evaluated_pass == self.pass || !expanded.insert(id) {
-                continue;
-            }
-            stack.push((id, true));
+            let upstream: Vec<NodeId> = match visit {
+                Visit::Cook => {
+                    self.cook_one(id, time, report);
+                    continue;
+                }
+                Visit::Expand => {
+                    if rt.evaluated_pass == self.pass || !expanded.insert(id) {
+                        continue;
+                    }
+                    if chooser(rt).is_some() {
+                        stack.push((id, Visit::Choose));
+                        rt.def.binds.values().map(|b| b.node).chain(self.current_refs(rt)).collect()
+                    } else {
+                        stack.push((id, Visit::Cook));
+                        rt.def.upstream().chain(self.current_refs(rt)).collect()
+                    }
+                }
+                Visit::Choose => {
+                    stack.push((id, Visit::Cook));
+                    let needed = self.needed(rt, &self.resolve_binds(rt).0);
+                    rt.def
+                        .inputs
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| !rt.def.is_previous(*i) && is_needed(needed.as_deref(), *i))
+                        .filter_map(|(_, p)| p.map(|p| p.node))
+                        .collect()
+                }
+            };
             // Reversed, so the first input is cooked first.
-            let upstream: Vec<NodeId> = rt.def.upstream().chain(self.current_refs(rt)).collect();
-            stack.extend(upstream.into_iter().rev().map(|n| (n, false)));
+            stack.extend(upstream.into_iter().rev().map(|n| (n, Visit::Expand)));
         }
-        for id in order {
-            self.cook_one(id, time, report);
+    }
+
+    /// Which inputs of a node are needed with parameters `bound` ([`NodeType::input_chooser`]),
+    /// one flag per input; `None` for all. A chooser that panics needs every input.
+    fn needed(&self, rt: &Runtime, bound: &BTreeMap<Name, Value>) -> Option<Vec<bool>> {
+        let choose = chooser(rt)?;
+        let desc = rt.ty.as_ref()?.desc();
+        let cx = InputChoice { def: &rt.def, desc, bound };
+        let picked = match catch_unwind(AssertUnwindSafe(|| choose(&cx))) {
+            Ok(picked) => picked?,
+            Err(p) => {
+                log::error!("node {}: choosing inputs panicked: {}", rt.def.id, panic_message(p.as_ref()));
+                return None;
+            }
+        };
+        let mut mask = vec![false; rt.def.inputs.len()];
+        for i in picked {
+            if let Some(m) = mask.get_mut(i) {
+                *m = true;
+            }
         }
+        Some(mask)
     }
 
     fn cook_one(&mut self, id: NodeId, time: FrameTime, report: &mut CookReport) {
@@ -612,6 +690,7 @@ impl Cooker {
             return;
         }
         let (bound, bind_warnings) = self.resolve_binds(rt);
+        let needed = self.needed(rt, &bound);
         let mut inputs = Vec::with_capacity(rt.def.inputs.len());
         let mut signature = Vec::with_capacity(rt.def.inputs.len());
         for (i, slot) in rt.def.inputs.iter().enumerate() {
@@ -620,6 +699,14 @@ impl Cooker {
                 signature.push(None);
                 continue;
             };
+            // An input the node does not need now reads as nothing, and what its source does
+            // meanwhile does not recook the node. Which inputs are needed follows from params
+            // and wiring only, so a change there recooks the node anyway.
+            if !is_needed(needed.as_deref(), i) {
+                inputs.push(None);
+                signature.push(Some((*port, 0)));
+                continue;
+            }
             let src = self.runtimes.get(&port.node);
             let data =
                 src.and_then(|s| s.outputs.as_ref()).and_then(|o| o.get(port.output as usize)).cloned();
@@ -789,6 +876,8 @@ impl Cooker {
         if rt.fresh || rt.params_changed || rt.notified || time_moved {
             return false;
         }
+        let bound = self.resolve_binds(rt).0;
+        let needed = self.needed(rt, &bound);
         let refs_same = self.current_refs(rt).all(|t| {
             known.get(&t) == Some(&true)
                 && rt.seen_inputs.iter().flatten().any(|(p, v)| {
@@ -806,7 +895,11 @@ impl Cooker {
                 .enumerate()
                 .all(|(i, (slot, seen))| match (slot, seen) {
                     (None, None) => true,
-                    (Some(port), Some((seen_port, _))) if rt.def.is_previous(i) => port == seen_port,
+                    (Some(port), Some((seen_port, _)))
+                        if rt.def.is_previous(i) || !is_needed(needed.as_deref(), i) =>
+                    {
+                        port == seen_port
+                    }
                     (Some(port), Some((seen_port, seen_version))) => {
                         port == seen_port
                             && known.get(&port.node) == Some(&true)
@@ -814,8 +907,8 @@ impl Cooker {
                     }
                     _ => false,
                 });
-        let binds_same = rt.def.binds.values().all(|b| known.get(&b.node) == Some(&true))
-            && self.resolve_binds(rt).0 == rt.seen_bound;
+        let binds_same =
+            rt.def.binds.values().all(|b| known.get(&b.node) == Some(&true)) && bound == rt.seen_bound;
         inputs_same && binds_same && rt.seen_inputs.len() >= rt.def.inputs.len()
     }
 
@@ -1039,6 +1132,26 @@ impl Cooker {
             .and_then(|rt| Some(rt.op.as_ref()?.sets_size(&rt.def, rt.ty.as_ref()?.desc())))
             .unwrap_or(false)
     }
+}
+
+/// A step of [`Cooker::evaluate`] for one node.
+#[derive(Clone, Copy)]
+enum Visit {
+    /// Follow what it depends on.
+    Expand,
+    /// Its parameters' sources have cooked: pick its inputs and follow them.
+    Choose,
+    /// Everything it needs has cooked: cook it.
+    Cook,
+}
+
+fn chooser(rt: &Runtime) -> Option<InputChooser> {
+    rt.ty.as_ref()?.input_chooser()
+}
+
+/// Whether input `i` is needed by a mask from [`Cooker::needed`] (`None`: all are).
+fn is_needed(mask: Option<&[bool]>, i: usize) -> bool {
+    mask.is_none_or(|m| m.get(i).copied().unwrap_or(true))
 }
 
 fn time_dependent(desc: &NodeDesc, op: Option<&dyn Operator>) -> bool {
@@ -1714,5 +1827,154 @@ mod tests {
         assert_eq!(f.cook(&["/dst"]), ["/t", "/dst"]);
         assert_eq!(f.value("/dst"), Some(0.5));
         assert!(!f.status("/dst").time_dependent);
+    }
+
+    /// `/a` (2) and `/b` (time) into `/pick`, which skips what it does not show.
+    fn pick_network(skip: bool) -> Fixture {
+        let mut f = Fixture::new(&[
+            create("/a", "test.const"),
+            create("/b", "test.time"),
+            create("/pick", "test.pick"),
+            connect("/a", "/pick", 0),
+            connect("/b", "/pick", 2),
+        ]);
+        f.set("/a.value", Value::Float(2.0));
+        f.set("/pick.skip", Value::Bool(skip));
+        f.clock.advance(60);
+        f
+    }
+
+    #[test]
+    fn a_node_that_needs_all_inputs_cooks_them_all() {
+        let mut f = pick_network(false);
+        assert_eq!(f.cook(&["/pick"]), ["/a", "/b", "/pick"]);
+        assert_eq!(f.value("/pick"), Some(2.0));
+        f.clock.advance(1);
+        // The hidden input's source moves: everything recooks, as it always did.
+        assert_eq!(f.cook(&["/pick"]), ["/b", "/pick"]);
+    }
+
+    #[test]
+    fn skipped_inputs_do_not_cook() {
+        let mut f = pick_network(true);
+        assert_eq!(f.cook(&["/pick"]), ["/a", "/pick"]);
+        assert_eq!(f.value("/pick"), Some(2.0));
+        assert!(f.cooker.outputs(f.id("/b")).is_none(), "the hidden branch never cooked");
+        f.clock.advance(1);
+        assert!(f.cook(&["/pick"]).is_empty(), "nothing it shows moved");
+        f.clock.advance(1);
+        f.cook(&[]);
+        assert!(f.cooker.current(&[f.id("/pick")], f.clock.now()).contains(&f.id("/pick")));
+        // Switching cooks the other branch in the same pass.
+        f.set("/pick.index", Value::Float(1.0));
+        assert_eq!(f.cook(&["/pick"]), ["/b", "/pick"]);
+        assert_eq!(f.value("/pick"), Some(62.0 / 60.0));
+        // Past the last wired input: the last one, as without skipping.
+        f.set("/pick.index", Value::Float(5.0));
+        assert_eq!(f.cook(&["/pick"]), ["/pick"]);
+        assert_eq!(f.value("/pick"), Some(62.0 / 60.0));
+        // Back to a branch that kept its result: only the node itself cooks.
+        f.set("/pick.index", Value::Float(0.0));
+        assert_eq!(f.cook(&["/pick"]), ["/pick"]);
+        assert_eq!(f.value("/pick"), Some(2.0));
+        // Cooking everything again.
+        f.clock.advance(1);
+        f.set("/pick.skip", Value::Bool(false));
+        assert_eq!(f.cook(&["/pick"]), ["/b", "/pick"]);
+    }
+
+    #[test]
+    fn a_skipped_node_still_cooks_for_whoever_else_asks() {
+        let mut f = pick_network(true);
+        f.edit(&[create("/other", "test.add"), connect("/b", "/other", 0)]);
+        // Wanted elsewhere: it cooks once, the picker ignores it.
+        assert_eq!(f.cook(&["/pick", "/other"]), ["/a", "/pick", "/b", "/other"]);
+        f.clock.advance(1);
+        assert_eq!(f.cook(&["/other", "/pick"]), ["/b", "/other"]);
+        // Viewed directly (a thumbnail, a snapshot): it cooks.
+        f.clock.advance(1);
+        let (cooked, report) = f.cook_with(&["/pick"], &["/b"]);
+        assert_eq!(cooked, ["/b"]);
+        assert_eq!(report.thumbnails, [f.id("/b")]);
+    }
+
+    #[test]
+    fn state_in_a_skipped_branch_pauses() {
+        let mut f = Fixture::new(&[
+            create("/a", "test.const"),
+            create("/n", "test.counter"),
+            create("/pick", "test.pick"),
+            connect("/a", "/pick", 0),
+            connect("/n", "/pick", 1),
+        ]);
+        f.set("/pick.skip", Value::Bool(true));
+        f.set("/pick.index", Value::Float(1.0));
+        f.cook(&["/pick"]);
+        f.clock.advance(1);
+        f.cook(&["/pick"]);
+        assert_eq!(f.value("/pick"), Some(2.0));
+        f.set("/pick.index", Value::Float(0.0));
+        for _ in 0..3 {
+            f.clock.advance(1);
+            assert!(!f.cook(&["/pick"]).contains(&"/n".to_string()));
+        }
+        f.set("/pick.index", Value::Float(1.0));
+        f.clock.advance(1);
+        f.cook(&["/pick"]);
+        assert_eq!(f.value("/pick"), Some(3.0), "carries on where it stopped");
+        assert_eq!(f.status("/n").stats.cooks, 3);
+        assert_eq!(f.cooker.reset(f.id("/n")), ResetOutcome::Reset);
+        f.clock.advance(1);
+        f.cook(&["/pick"]);
+        assert_eq!(f.value("/pick"), Some(1.0));
+    }
+
+    #[test]
+    fn a_source_shared_by_shown_and_skipped_inputs_cooks_once() {
+        let mut f = Fixture::new(&[
+            create("/s", "test.time"),
+            create("/a", "test.add"),
+            create("/b", "test.add"),
+            create("/pick", "test.pick"),
+            connect("/s", "/a", 0),
+            connect("/s", "/b", 0),
+            connect("/a", "/pick", 0),
+            connect("/b", "/pick", 1),
+        ]);
+        f.set("/pick.skip", Value::Bool(true));
+        assert_eq!(f.cook(&["/pick"]), ["/s", "/a", "/pick"]);
+        f.set("/pick.index", Value::Float(1.0));
+        f.clock.advance(1);
+        assert_eq!(f.cook(&["/pick"]), ["/s", "/b", "/pick"]);
+    }
+
+    #[test]
+    fn a_bound_index_is_known_before_the_inputs_are_chosen() {
+        let mut f = pick_network(true);
+        f.edit(&[
+            create("/idx", "test.const"),
+            Op::Bind {
+                param: ParamPath::parse("/pick.index").unwrap(),
+                component: None,
+                from: pp("/idx"),
+                channel: None,
+            },
+        ]);
+        assert_eq!(f.cook(&["/pick"]), ["/idx", "/a", "/pick"]);
+        assert_eq!(f.value("/pick"), Some(2.0));
+        // The channel moves the index: the other branch cooks in the same pass, after it.
+        f.set("/idx.value", Value::Float(1.0));
+        assert_eq!(f.cook(&["/pick"]), ["/idx", "/b", "/pick"]);
+        assert_eq!(f.value("/pick"), Some(1.0));
+        assert!(f.cooker.current(&[f.id("/pick")], f.clock.now()).contains(&f.id("/pick")));
+        f.clock.advance(1);
+        f.cook(&[]);
+        assert!(!f.cooker.current(&[f.id("/pick")], f.clock.now()).contains(&f.id("/pick")));
+        // Back: the hidden time source no longer outdates it.
+        f.set("/idx.value", Value::Float(0.0));
+        f.cook(&["/pick"]);
+        f.clock.advance(1);
+        f.cook(&[]);
+        assert!(f.cooker.current(&[f.id("/pick")], f.clock.now()).contains(&f.id("/pick")));
     }
 }

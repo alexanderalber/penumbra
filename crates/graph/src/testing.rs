@@ -148,6 +148,35 @@ pub fn test_types() -> NodeTypes {
         || Box::new(Slow::default()) as Box<dyn Operator>,
     ))
     .unwrap();
+    // Passes the wired input at `index` (counted over wired inputs); with `skip` it needs only
+    // that one, else all.
+    let pick_desc = NodeDesc::new("test.pick", "One of its inputs")
+        .param(ParamSpec::float("index", 0.0))
+        .param(ParamSpec::bool("skip", false))
+        .input("a", DataKind::Chan)
+        .input("b", DataKind::Chan)
+        .input("c", DataKind::Chan)
+        .output("out", DataKind::Chan);
+    let pick = |cx: &CookContext<'_>| {
+        let wired: Vec<usize> = (0..3).filter(|i| cx.def().inputs[*i].is_some()).collect();
+        let i = cx.float("index")?.max(0.0) as usize;
+        let slot = *wired.get(i.min(wired.len().saturating_sub(1))).ok_or(CookError::Pending)?;
+        match cx.input(slot) {
+            Some(d) => Ok(Cooked::Outputs(vec![d.clone()])),
+            None => Err(CookError::Pending),
+        }
+    };
+    t.register(FnNodeType::new(pick_desc, move || Box::new(F(pick)) as Box<dyn Operator>).choose_inputs(
+        |cx| {
+            if !cx.bool("skip")? {
+                return None;
+            }
+            let wired: Vec<usize> = (0..3).filter(|i| cx.connected(*i)).collect();
+            let i = cx.float("index")?.max(0.0) as usize;
+            Some(wired.get(i.min(wired.len().saturating_sub(1))).copied().into_iter().collect())
+        },
+    ))
+    .unwrap();
     t.register(FnNodeType::new(
         NodeDesc::new("test.counter", "Counts its cooks (time-dependent); keeps the count as state")
             .time_dependent()

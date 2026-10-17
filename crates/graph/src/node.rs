@@ -8,7 +8,7 @@ use std::sync::Arc;
 use penumbra_core::{Error, Name, ParamSpec};
 use serde::{Deserialize, Serialize};
 
-use crate::cook::CookContext;
+use crate::cook::{CookContext, InputChoice};
 use crate::job::JobStatus;
 use crate::network::NodeDef;
 
@@ -313,12 +313,24 @@ impl From<Error> for CookError {
     }
 }
 
+/// Which inputs a node needs this frame, decided from its parameters (bound ones already
+/// evaluated) and its wiring, before anything upstream of those inputs cooks: the indices of
+/// the needed inputs, or `None` for all of them. Inputs left out are not cooked for this node
+/// and read as nothing in its cook. Must be cheap and depend on nothing but what
+/// [`InputChoice`] offers, since the cooker also asks it to judge whether a picture is current.
+pub type InputChooser = fn(&InputChoice<'_>) -> Option<Vec<usize>>;
+
 /// A registered node type: its declaration and a factory for its runtime state.
 pub trait NodeType: Send + Sync {
     fn desc(&self) -> &NodeDesc;
     /// A fresh operator. Called when a node is created, when its kind changes and after an
     /// operator panicked.
     fn create(&self) -> Box<dyn Operator>;
+    /// Picks the inputs a node of this type needs ([`InputChooser`]); `None`, the default,
+    /// needs every input, always.
+    fn input_chooser(&self) -> Option<InputChooser> {
+        None
+    }
 }
 
 /// The runtime state of one node, owned by the cooker, living as long as the node does (so hot
@@ -458,11 +470,18 @@ impl NodeTypes {
 pub struct FnNodeType<F> {
     desc: NodeDesc,
     create: F,
+    chooser: Option<InputChooser>,
 }
 
 impl<F: Fn() -> Box<dyn Operator> + Send + Sync> FnNodeType<F> {
     pub fn new(desc: NodeDesc, create: F) -> Self {
-        Self { desc, create }
+        Self { desc, create, chooser: None }
+    }
+
+    /// Needs only the inputs `chooser` picks ([`NodeType::input_chooser`]).
+    pub fn choose_inputs(mut self, chooser: InputChooser) -> Self {
+        self.chooser = Some(chooser);
+        self
     }
 }
 
@@ -473,6 +492,10 @@ impl<F: Fn() -> Box<dyn Operator> + Send + Sync> NodeType for FnNodeType<F> {
 
     fn create(&self) -> Box<dyn Operator> {
         (self.create)()
+    }
+
+    fn input_chooser(&self) -> Option<InputChooser> {
+        self.chooser
     }
 }
 
