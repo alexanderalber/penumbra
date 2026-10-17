@@ -1425,6 +1425,25 @@ impl Editor {
                 i.consume_key(Modifiers::NONE, Key::U),
             )
         });
+        // R starts the selection over, or every stateful node of the level shown (not an edit,
+        // so also while Claude edits).
+        if ui.input_mut(|i| i.consume_key(Modifiers::NONE, Key::R)) {
+            let ids: Vec<NodeId> = if self.selection.is_empty() {
+                input
+                    .net
+                    .children(self.level)
+                    .filter(|n| input.types.desc(&n.kind).is_some_and(|d| d.stateful || d.container))
+                    .map(|n| n.id)
+                    .collect()
+            } else {
+                self.selection.iter().copied().collect()
+            };
+            if ids.is_empty() {
+                actions.push(Action::Message("nothing to reset here".into()));
+            } else {
+                actions.push(Action::Reset(ids));
+            }
+        }
         if group && input.can_edit && !self.selection.is_empty() {
             actions.push(Action::Group(self.selection.iter().copied().collect()));
         }

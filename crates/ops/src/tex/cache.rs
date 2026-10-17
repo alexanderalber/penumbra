@@ -19,6 +19,7 @@ const BUDGET: u64 = 2 << 30;
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(KIND, "The last frames of the input; outputs one of them, some frames back")
+            .stateful()
             .param(
                 ParamSpec::int("length", 30)
                     .clamp(1.0, 1000.0)

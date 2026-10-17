@@ -11,7 +11,7 @@ cargo run -p penumbra
 ```
 
 With no arguments the app opens the project that was open last. The first time (or when that
-project is gone or does not open) it opens a demo project, kept in
+project is gone or does not open) it opens a demo project, made in
 `%LOCALAPPDATA%\penumbra\demo` on Windows (`$XDG_DATA_HOME/penumbra/demo` or
 `~/.local/share/penumbra/demo` elsewhere); the project menu brings it back any time.
 It grows reaction-diffusion patterns around the title: click `/show` to see them in the
@@ -21,10 +21,17 @@ the pattern keeps clear of.
 
 A project is a directory with a `project.ron`. The folder button at the left end of the status
 bar opens the project menu: **New project** (pick or make an empty folder), **Open project**,
-the recently opened projects, the demo, the examples that come with penumbra, and the project's
-folder in the file manager. The project that was open is written first; the window and the
-outputs stay. The same from the [control channel](control.md): `project.new`, `project.open`,
+**Save copy as** (copy the project into a new or empty folder and go on there), the recently
+opened projects, the demo, the examples that come with penumbra, and the project's folder in the
+file manager. The project that was open is written first; the window and the outputs stay. The
+same from the [control channel](control.md): `project.new`, `project.open`, `project.save_as`,
 `project.demo`, `project.examples`, `project.example`, `project.recent`.
+
+The demo and the examples start fresh on every open, also when the app starts with one of them
+as the last project: changes, saved node state and node positions from before are gone. Within
+a run they are saved as usual. The status bar says `until reopened` while one of them is open;
+**Save copy as** makes a project of your own that keeps them. A copy takes every file of the
+project folder along and, of the `state/` folder, the latest snapshot.
 
 A project can also be given at the start (a missing directory is created):
 
@@ -117,6 +124,7 @@ command. Close the app (or open another project) and come back to it, and the ne
 | Delete or Backspace | delete the selection |
 | F | frame all nodes |
 | L | arrange the nodes (the selection when two or more are selected) |
+| R | reset the selected nodes (feedback loops, caches, time machines, trackers start over), or every stateful node of this level when nothing is selected |
 | Ctrl+A | select all |
 | Ctrl+C, Ctrl+X, Ctrl+V | copy, cut, paste (the nodes travel as text on the system clipboard) |
 | Ctrl+G | group the selection into a component |

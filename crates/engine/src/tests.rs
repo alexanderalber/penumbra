@@ -787,6 +787,61 @@ fn feedback_and_locked_textures_survive_a_restart() {
 }
 
 #[test]
+fn node_reset_starts_a_loop_over_and_leaves_locked_nodes_alone() {
+    let dir = TempDir::new("reset");
+    let Some(gpu) = warp() else { return };
+    let shots = dir.0.join("shots");
+    let (engine, r) = open(&dir.0);
+    engine.attach_gpu(gpu).unwrap();
+    let size = json!({"width": 40, "height": 24});
+    ok(&r, "node.create", json!({"path": "/black", "kind": "tex.constant", "params": size}));
+    let step = json!({"width": 40, "height": 24, "color": [0.0625, 0.03125, 0.0, 1.0]});
+    ok(&r, "node.create", json!({"path": "/step", "kind": "tex.constant", "params": step}));
+    ok(&r, "node.create", json!({"path": "/fb", "kind": "tex.feedback"}));
+    ok(&r, "node.create", json!({"path": "/add", "kind": "tex.composite", "params": {"op": "add"}}));
+    ok(&r, "node.connect", json!({"from": "/black", "to": "/fb", "input": "initial"}));
+    ok(&r, "node.connect", json!({"from": "/fb", "to": "/add", "input": "layer1"}));
+    ok(&r, "node.connect", json!({"from": "/step", "to": "/add", "input": "layer2"}));
+    ok(&r, "node.connect", json!({"from": "/add", "to": "/fb", "input": "previous"}));
+    ok(&r, "node.watch", json!({"path": "/add"}));
+    eventually("a few frames of the loop", || {
+        let s = ok(&r, "node.snapshot", json!({"path": "/fb", "file": shots.join("probe.png")}));
+        s["stats"]["mean"][0].as_f64().unwrap() > 0.3
+    });
+    ok(&r, "cook.play", json!({"playing": false}));
+    // A locked node holding a picture its input no longer gives.
+    ok(&r, "node.create", json!({"path": "/hold", "kind": "tex.null"}));
+    ok(&r, "node.connect", json!({"from": "/step", "to": "/hold", "input": 0}));
+    ok(&r, "node.snapshot", json!({"path": "/hold", "file": shots.join("probe.png")}));
+    ok(&r, "node.lock", json!({"path": "/hold"}));
+    ok(&r, "node.disconnect", json!({"to": "/hold", "input": 0}));
+    let hold_before = ok(&r, "node.snapshot", json!({"path": "/hold", "file": shots.join("hold.png")}));
+    // A component stands for the stateful nodes inside it.
+    ok(&r, "node.create", json!({"path": "/c", "kind": "comp.base"}));
+    ok(&r, "node.create", json!({"path": "/c/cache", "kind": "tex.cache"}));
+    ok(&r, "node.create", json!({"path": "/c/plain", "kind": "tex.null"}));
+
+    let done = ok(&r, "node.reset", json!({"paths": ["/fb", "/hold", "/step", "/c"]}));
+    assert_eq!(done["reset"], json!(["/fb", "/c/cache"]), "{done}");
+    assert_eq!(done["locked"], json!(["/hold"]), "{done}");
+    assert_eq!(done["stateless"], json!(["/step"]), "{done}");
+    assert!(done["message"].as_str().unwrap().starts_with("reset /fb, /c/cache"), "{done}");
+    // The loop shows its initial input again, though the clock stands still.
+    let fb = ok(&r, "node.snapshot", json!({"path": "/fb", "file": shots.join("fb.png")}));
+    assert!(fb["stats"]["mean"][0].as_f64().unwrap() < 0.1, "{fb}");
+    let hold = ok(&r, "node.snapshot", json!({"path": "/hold", "file": shots.join("hold.png")}));
+    assert_eq!(hold["stats"], hold_before["stats"]);
+    // One path works too; nothing stateful is not an error, a missing node is.
+    let one = ok(&r, "node.reset", json!({"path": "/black"}));
+    assert_eq!(one["message"], "nothing to reset; no state: /black", "{one}");
+    assert!(
+        r.dispatch("node.reset", &json!({"path": "/nope"}))["error"].as_str().unwrap().contains("no node")
+    );
+    assert_eq!(r.dispatch("node.reset", &json!({}))["ok"], false);
+    engine.shutdown();
+}
+
+#[test]
 fn nothing_is_saved_before_the_saved_state_was_read() {
     let f = Fixture::new("state-hold");
     // No GPU, so the startup restore has not happened: saving would overwrite the file.
@@ -945,4 +1000,58 @@ fn the_ticker_rests_while_real_vsyncs_arrive() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(f.engine.ticking(), "the vsyncs stopped: the ticker paces again");
+}
+
+#[test]
+fn save_a_copy_and_reopen_a_project_afresh() {
+    let f = Fixture::new("copy-a");
+    let target = TempDir::new("copy-b");
+    let elsewhere = TempDir::new("copy-c");
+    let dir = f.engine.session().dir().to_path_buf();
+    f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo"}));
+    std::fs::write(dir.join("look.wgsl"), "// a shader").unwrap();
+    std::fs::create_dir_all(dir.join("state")).unwrap();
+    std::fs::write(dir.join("state").join("latest.pnstate"), "latest").unwrap();
+    std::fs::write(dir.join("state").join("previous.pnstate"), "previous").unwrap();
+
+    // A folder that holds something, and one inside the project, are refused.
+    assert!(f.fail("project.save_as", json!({"dir": dir})).contains("not empty"));
+    assert!(f.fail("project.save_as", json!({"dir": dir.join("sub")})).contains("inside"));
+    assert_eq!(f.engine.generation(), 0);
+
+    let r = f.call("project.save_as", json!({"dir": target.0}));
+    assert_eq!(r["switched"], true);
+    assert_eq!(f.engine.generation(), 1);
+    assert!(crate::projects::same_dir(f.engine.session().dir(), &target.0));
+    assert!(std::fs::read_to_string(target.0.join(penumbra_project::FILE_NAME)).unwrap().contains("/lfo"));
+    assert!(target.0.join("look.wgsl").is_file());
+    assert_eq!(std::fs::read_to_string(target.0.join("state").join("latest.pnstate")).unwrap(), "latest");
+    assert!(!target.0.join("state").join("previous.pnstate").exists());
+    assert_eq!(f.call("node.list", json!({}))["nodes"][0]["path"], "/lfo");
+
+    // Reopening the open project afresh: the folder is rewritten after the project closed, so
+    // what was written on the way out does not come back.
+    f.call("node.create", json!({"path": "/n", "kind": "chan.noise"}));
+    let opened = crate::projects::open_fresh(&f.engine, &target.0, |d| {
+        assert!(std::fs::read_to_string(d.join(penumbra_project::FILE_NAME)).unwrap().contains("/n"));
+        std::fs::write(d.join(penumbra_project::FILE_NAME), "(version: 1)")
+            .map_err(|e| penumbra_core::Error::new(e.to_string()))?;
+        Ok(Content::default())
+    })
+    .unwrap();
+    assert!(opened.switched);
+    assert_eq!(f.engine.generation(), 2);
+    assert_eq!(f.call("node.list", json!({}))["nodes"], json!([]));
+
+    // When making the new one fails, the old project runs on.
+    f.call("node.create", json!({"path": "/m", "kind": "chan.noise"}));
+    let failed =
+        crate::projects::open_fresh(&f.engine, &elsewhere.0, |_| Err(penumbra_core::Error::new("no")));
+    assert!(failed.is_err());
+    assert!(crate::projects::same_dir(f.engine.session().dir(), &target.0));
+    assert_eq!(f.engine.generation(), 2);
+    f.call("node.watch", json!({"path": "/m"}));
+    eventually("/m to cook", || {
+        f.call("node.info", json!({"path": "/m"}))["status"]["cooks"].as_u64().unwrap_or(0) > 2
+    });
 }

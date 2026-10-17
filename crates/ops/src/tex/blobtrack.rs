@@ -42,6 +42,7 @@ pub const COLUMNS: [&str; 14] =
 
 fn desc() -> NodeDesc {
     NodeDesc::new(BLOBTRACK, "Finds blobs (people, hands, spots of light) and follows them with ids that stay")
+        .stateful()
         .param(ParamSpec::choice("detect", &["background", "bright"]).doc(
             "background: what differs from the empty scene (the `background` input where connected, else \
              learned: `blobtrack.learn`); bright: whatever is brighter than `threshold`",

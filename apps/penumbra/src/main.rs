@@ -1,5 +1,6 @@
 //! penumbra app. Started without arguments it opens the project open last (the demo project
-//! when there is none or it no longer opens), the control channel and a window, plus a
+//! when there is none or it no longer opens; the demo and the examples are made afresh on
+//! every open, so this one too), the control channel and a window, plus a
 //! fullscreen output window per display that an active `out.projector` names.
 //!
 //! Arguments: `--project DIR` (project directory, created if missing; default: the project open
@@ -44,14 +45,19 @@ fn main() -> std::process::ExitCode {
 }
 
 /// The project open when the app last ran, if there is one and it opens; `None` for the demo.
-/// The demo itself goes the demo's way, which also restores its shader if it went missing.
+/// The demo itself goes the demo's way below. An example's copy is made afresh first; if that
+/// fails (the shipped examples are gone), the copy opens as it is.
 fn open_last(types: &Arc<penumbra_graph::NodeTypes>) -> Option<Session> {
     let file = projects::default_recent_file().ok()?;
     let dir = projects::read_last(&file)?;
-    if projects::demo_dir().is_ok_and(|demo| projects::same_dir(&demo, &dir)) {
+    if projects::is_demo(&dir) {
         return None;
     }
-    match Session::open(&dir, types.clone(), &Content::default()) {
+    let template = projects::refresh(&dir, types).unwrap_or_else(|e| {
+        log::warn!("cannot make {} afresh: {e}; opening it as it is", dir.display());
+        Content::default()
+    });
+    match Session::open(&dir, types.clone(), &template) {
         Ok(session) => Some(session),
         Err(e) => {
             log::warn!("cannot open the last project {}: {e}; opening the demo", dir.display());
@@ -87,7 +93,7 @@ fn run() -> Result<(), String> {
             Some(session) => session,
             None => {
                 let dir = projects::demo_dir().map_err(|e| format!("{e}; pass --project DIR"))?;
-                let template = projects::prepare_demo(&dir, &types).map_err(|e| e.0)?;
+                let template = projects::fresh_demo(&dir, &types).map_err(|e| e.0)?;
                 Session::open(&dir, types, &template).map_err(|e| e.to_string())?
             }
         },

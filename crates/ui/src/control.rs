@@ -6,7 +6,8 @@
 //! frame, so egui sees a press, moves and a release as a real drag; the reply comes once it is
 //! processed.
 //!
-//! - `ui.state {positions?}`: selection, viewer, pan and zoom, editing mode (and node positions)
+//! - `ui.state {positions?}`: selection, viewer, pan and zoom, editing mode, the status bar's
+//!   message (and node positions)
 //! - `ui.elements {prefix?}`: automation ids with their rects ([`crate::automation`])
 //! - `ui.click {id | x, y, button?, double?, ctrl?, shift?, alt?}`
 //! - `ui.drag {from: {id | x, y}, to: {id | x, y}, button?, steps?}`
@@ -74,7 +75,7 @@ impl Bridge {
 }
 
 const COMMANDS: &[(&str, &str)] = &[
-    ("ui.state", "Selection, viewer, pan and zoom, editing mode; {positions?}"),
+    ("ui.state", "Selection, viewer, pan and zoom, editing mode, the status bar's message; {positions?}"),
     ("ui.elements", "Automation ids with rects in points; {prefix?}"),
     ("ui.click", "Click an element or a point; {id | x, y, button?, double?, ctrl?, shift?, alt?}"),
     ("ui.drag", "Drag between elements or points; {from: {id | x, y}, to: {id | x, y}, button?, steps?}"),

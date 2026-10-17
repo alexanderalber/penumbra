@@ -30,7 +30,7 @@ mod tests;
 use std::sync::Arc;
 
 pub use command::{Command, CommandError, FnCommand, Registry};
-pub use engine::{CookState, Engine, OutputFrame, PassStats, ViewFrame, ViewRequest};
+pub use engine::{CookState, Engine, OutputFrame, PassStats, ResetReport, ViewFrame, ViewRequest};
 
 /// Version of this build, reported by `ping`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

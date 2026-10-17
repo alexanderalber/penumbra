@@ -133,6 +133,57 @@ fn build_wire_tweak_and_undo_through_the_ui() {
 }
 
 #[test]
+fn reset_stateful_nodes_with_the_key_and_the_button() {
+    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-reset-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&dir.0);
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let project = r#"(
+        version: 1,
+        nodes: {
+            "/seed": (kind: "tex.noise", params: {"width": 64, "height": 36}),
+            "/loop": (kind: "tex.feedback", inputs: {"initial": "seed", "previous": "keep"}),
+            "/keep": (kind: "tex.level", inputs: {"in": "loop"}),
+            "/smooth": (kind: "chan.filter"),
+        },
+    )"#;
+    let content = penumbra_project::parse(project, &types).unwrap();
+    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let script = [
+        json!({"wait": 0.5}),
+        // Nothing selected: R resets every stateful node of the level.
+        json!({"method": "ui.click", "params": {"id": "node./keep"}}),
+        json!({"method": "ui.select", "params": {"paths": []}}),
+        json!({"method": "ui.key", "params": {"key": "R"}}),
+        json!({"wait": 0.1}),
+        json!({"method": "ui.state", "params": {}}),
+        // A selection: only it.
+        json!({"method": "ui.select", "params": {"paths": ["/keep"]}}),
+        json!({"method": "ui.key", "params": {"key": "R"}}),
+        json!({"wait": 0.1}),
+        json!({"method": "ui.state", "params": {}}),
+        // The button sits in the params of stateful nodes only.
+        json!({"method": "ui.elements", "params": {"prefix": "param.reset"}}),
+        json!({"method": "ui.select", "params": {"paths": ["/loop"]}}),
+        json!({"wait": 0.1}),
+        json!({"method": "ui.click", "params": {"id": "param.reset"}}),
+        json!({"wait": 0.1}),
+        json!({"method": "ui.state", "params": {}}),
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+    for (m, r) in &replies {
+        eprintln!("{m}: {}", r.to_string().chars().take(300).collect::<String>());
+    }
+    assert_eq!(reply(&replies, "ui.state", 0)["message"], "reset /loop, /smooth");
+    assert_eq!(reply(&replies, "ui.state", 1)["message"], "nothing to reset; no state: /keep");
+    assert_eq!(reply(&replies, "ui.elements", 0)["elements"], json!([]), "/keep has no reset button");
+    assert_eq!(reply(&replies, "ui.state", 2)["message"], "reset /loop");
+    engine.shutdown();
+}
+
+#[test]
 fn bind_and_unbind_through_the_param_panel() {
     let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-bind-{}", std::process::id())));
     let _ = std::fs::remove_dir_all(&dir.0);

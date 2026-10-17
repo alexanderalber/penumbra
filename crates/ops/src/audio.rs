@@ -64,6 +64,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             AUDIO_ANALYSIS,
             "Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audioin)",
         )
+        .stateful()
         .param(ParamSpec::text("channel", "").doc("The channel to analyse, e.g. `ch1`; empty: all mixed"))
         .param(ParamSpec::float("offset", 0.0).range(-200.0, 200.0).doc(
             "Milliseconds to move beat and bar ahead by, to make up for the projector's delay",

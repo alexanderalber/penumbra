@@ -112,6 +112,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("chan.filter", "Smooths each channel over time, rising and falling at their own pace")
+            .stateful()
             .param(
                 ParamSpec::float("rise", 0.2)
                     .clamp(0.0, 3600.0)
@@ -138,6 +139,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "chan.speed",
             "Adds up each channel over time, as a rate per second: a speed becomes a position",
         )
+        .stateful()
         .param(
             ParamSpec::choice("limit", &["none", "loop", "clamp"])
                 .doc("Keep the sum within min and max: start again from min (loop) or stop there (clamp)"),

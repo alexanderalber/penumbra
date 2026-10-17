@@ -126,6 +126,19 @@ impl ParamPanel {
             if r.changed() {
                 actions.push(Action::edit(vec![Op::Lock { path: path.clone(), locked }]));
             }
+            if desc.is_some_and(|d| d.stateful || d.container) {
+                // Not an edit, so allowed while Claude edits too.
+                let tip = if desc.is_some_and(|d| d.container) {
+                    "Start the stateful nodes inside over (R over the editor)"
+                } else {
+                    "Start over: forget what this node holds from earlier frames (R over the editor)"
+                };
+                let r = ui.button("reset").on_hover_text(tip);
+                auto.add("param.reset", r.rect, "reset");
+                if r.clicked() {
+                    actions.push(Action::Reset(vec![input.node]));
+                }
+            }
             if let Some(s) = input.status {
                 ui.label(
                     RichText::new(format!("cook {:.2} ms", s.stats.average.as_secs_f64() * 1000.0))
