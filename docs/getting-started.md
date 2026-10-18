@@ -72,8 +72,11 @@ press play once the cause is fixed. The record of that lives in
   cook time, and its params. Params that belong together sit in folded sections, the rarely
   used ones under "more".
 - **Viewer** (middle right): the selected node's output, or the node pinned with `pin`.
-  `window` shows it in a window of its own (on a second monitor, say). A node with several
-  outputs gets a button per output. For geometry and renders it can also look around in the
+  `window` shows it in a window of its own (on a second monitor, say). Its picture area stays
+  16:9 as the column grows and shrinks; drag its top edge for another shape, which is kept with
+  the project, and double-click the edge to go back to 16:9 (`ui.options {viewer_aspect}`).
+  When the window is too low, the viewer gets shorter so the parameters keep some room. A
+  node with several outputs gets a button per output. For geometry and renders it can also look around in the
   scene ([Looking around in 3D](navigation.md)). Channels are drawn as curves with a value axis
   and, along the bottom, seconds before now (the last 240 frames of a channel with one value,
   all samples of one with many; a spectrum or a picture's row is counted by sample instead). The

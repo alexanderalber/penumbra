@@ -515,6 +515,82 @@ fn any_node_opens_in_the_viewer_window() {
     engine.shutdown();
 }
 
+/// The aspect (width over height) of the picture inside the viewer's picture area, from the
+/// `nth` `ui.elements` reply listing it.
+fn viewer_aspect(replies: &[(String, Json)], nth: usize) -> f32 {
+    let elements = reply(replies, "ui.elements", nth)["elements"].as_array().unwrap();
+    let viewer = elements.iter().find(|e| e["id"] == "viewer").expect("the viewer is on screen");
+    let [w, h] = [2, 3].map(|i| viewer["rect"][i].as_f64().unwrap() as f32 - 2.0 * crate::viewer::INSET);
+    w / h
+}
+
+#[test]
+fn the_viewer_follows_the_column_until_its_edge_is_dragged() {
+    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-viewer-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&dir.0);
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let content = penumbra_project::parse(PROJECT, &types).unwrap();
+    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let elements = json!({"method": "ui.elements", "params": {"prefix": "viewer"}});
+    let script = [
+        json!({"method": "ui.select", "params": {"paths": ["/noise1"]}}),
+        // Opened small, then maximized: the viewer grows with the column.
+        json!({"resize": [1800.0, 1100.0]}),
+        json!({"wait": 0.3}),
+        elements.clone(),
+        // A drag of the edge sticks, through a resize too.
+        json!({"method": "ui.drag", "params": {"from": {"id": "viewer.edge"}, "to": {"x": 1600, "y": 300}}}),
+        json!({"wait": 0.3}),
+        json!({"resize": [1500.0, 950.0]}),
+        json!({"wait": 0.3}),
+        elements.clone(),
+        json!({"method": "ui.options", "params": {}}),
+        // A double-click on the edge goes back to 16:9.
+        json!({"method": "ui.click", "params": {"id": "viewer.edge", "double": true}}),
+        json!({"wait": 0.3}),
+        elements.clone(),
+        json!({"method": "ui.options", "params": {}}),
+        // So does the command, and a tiny window keeps the parameters in sight.
+        json!({"method": "ui.options", "params": {"viewer_aspect": 4.0}}),
+        json!({"method": "ui.options", "params": {"viewer_aspect": "auto"}}),
+        json!({"resize": [1500.0, 400.0]}),
+        json!({"wait": 0.3}),
+        elements,
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [900.0, 600.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(
+        engine.clone(),
+        &script.join(
+            "
+",
+        ),
+        &options,
+    )
+    .unwrap();
+    for (m, r) in &replies {
+        eprintln!("{m}: {}", r.to_string().chars().take(400).collect::<String>());
+    }
+    let wide = viewer_aspect(&replies, 0);
+    assert!((wide - 16.0 / 9.0).abs() < 0.02, "16:9 after maximizing: {wide}");
+    let dragged = viewer_aspect(&replies, 1);
+    let kept =
+        reply(&replies, "ui.options", 0)["viewer_aspect"].as_f64().expect("a number after the drag") as f32;
+    assert!(kept < 1.5, "the drag made it taller: {kept}");
+    assert!((dragged - kept).abs() < 0.02, "the dragged aspect holds at another size: {dragged} vs {kept}");
+    let reset = viewer_aspect(&replies, 2);
+    assert_eq!(reply(&replies, "ui.options", 1)["viewer_aspect"], "auto");
+    assert!((reset - 16.0 / 9.0).abs() < 0.02, "16:9 after the double-click: {reset}");
+    assert_eq!(reply(&replies, "ui.options", 2)["viewer_aspect"], json!(4.0));
+    assert_eq!(reply(&replies, "ui.options", 3)["viewer_aspect"], "auto");
+    let low = viewer_aspect(&replies, 3);
+    assert!(low > 2.0, "in a low window the viewer is flatter, the parameters keep room: {low}");
+    engine.shutdown();
+    let layout = std::fs::read_to_string(dir.0.join(crate::layout::FILE_NAME)).unwrap();
+    assert!(!layout.contains("viewer_aspect: Some"), "back to automatic: {layout}");
+}
+
 #[test]
 fn backward_wires_go_around_nodes() {
     use egui::{Rect, pos2};

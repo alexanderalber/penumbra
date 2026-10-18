@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use egui::{Color32, Key, Modifiers, RichText, Sense, Ui, vec2};
+use egui::{Color32, Key, Modifiers, Pos2, Rect, RichText, Sense, Ui, Vec2, vec2};
 use penumbra_core::NodeId;
 use penumbra_engine::{Engine, ViewFrame, ViewRequest};
 use penumbra_project::{Actor, Session, SessionStatus};
@@ -45,6 +45,9 @@ const RESIZE_HOLD: Duration = Duration::from_millis(250);
 const RESIZE_SETTLE: Duration = Duration::from_millis(500);
 /// Height of a collapsed section of the right column, header only.
 const SECTION_HEADER: f32 = 30.0;
+/// The viewer's header row and frame (width, height) around its picture area, until the first
+/// frame has measured them.
+const VIEWER_OVERHEAD: Vec2 = vec2(12.0, 28.0);
 
 /// What the app is started with besides the engine.
 pub struct AppOptions {
@@ -80,6 +83,10 @@ pub struct PenumbraApp {
     window_viewer: Viewer,
     /// Whether the viewer's window was shown last frame; if not, this frame creates its surface.
     window_viewer_shown: bool,
+    /// The viewer's panel and its picture area last frame, for the height of its header rows.
+    viewer_frame: Option<(Rect, Rect)>,
+    /// Whether the pointer went down on the viewer's edge and has not been released since.
+    viewer_drag: bool,
     changes: Changes,
     auto: automation::Registry,
     requests: Option<Receiver<UiRequest>>,
@@ -180,6 +187,8 @@ impl PenumbraApp {
             viewer: Viewer::default(),
             window_viewer: Viewer::default(),
             window_viewer_shown: false,
+            viewer_frame: None,
+            viewer_drag: false,
             changes: Changes::default(),
             auto: automation::Registry::default(),
             requests: options.requests,
@@ -709,17 +718,67 @@ impl PenumbraApp {
                     }
                 });
 
+                // The viewer is as tall as its picture area needs to be 16:9 at the column's
+                // width (or the aspect its edge was dragged to), below header rows that come and
+                // go with the node shown. egui would keep the height in points it had on the
+                // first frame, when the window was still small, so the stored height is set every
+                // frame, as for the column; header rows and frame are measured the frame before.
+                // A drag of the edge keeps its aspect, a double-click on the edge (or
+                // `ui.options {viewer_aspect: "auto"}`) goes back to 16:9. The parameters above
+                // keep a minimum: in a low window the viewer is shorter instead.
                 let viewer_open = sections.viewer;
-                let width = ui.available_width();
+                let viewer_id = egui::Id::new("viewer");
+                let room = ui.available_rect_before_wrap();
+                let grab = ui.style().interaction.resize_grab_radius_side;
+                let (overhead, edge) = match self.viewer_frame {
+                    Some((panel, picture)) => (
+                        panel.size() - picture.size(),
+                        Some(Rect::from_x_y_ranges(panel.x_range(), panel.top()..=panel.top()).expand(grab)),
+                    ),
+                    None => (VIEWER_OVERHEAD, None),
+                };
+                let on_edge = |p: Option<Pos2>| p.zip(edge).is_some_and(|(p, e)| e.contains(p));
+                if viewer_open && let Some(edge) = edge {
+                    self.auto.add("viewer.edge", edge, "viewer height: drag, double-click for 16:9");
+                    let (pressed, double) = ui.input(|i| {
+                        let on = on_edge(i.pointer.interact_pos());
+                        (
+                            i.pointer.primary_pressed() && on,
+                            i.pointer.button_double_clicked(egui::PointerButton::Primary) && on,
+                        )
+                    });
+                    self.viewer_drag |= pressed;
+                    if double {
+                        self.layout.set_viewer_aspect(None, now);
+                    }
+                }
+                let aspect = self.layout.viewer_aspect.unwrap_or(crate::layout::VIEWER_ASPECT);
+                let viewer_height = crate::layout::viewer_height(
+                    aspect,
+                    room.width() - overhead.x,
+                    overhead.y,
+                    room.height(),
+                );
                 let panel = if viewer_open {
-                    egui::Panel::bottom("viewer")
+                    let stored = Rect::from_min_size(
+                        egui::pos2(room.left(), room.bottom() - viewer_height),
+                        vec2(room.width(), viewer_height),
+                    );
+                    ui.ctx().data_mut(|d| {
+                        d.insert_persisted(
+                            viewer_id,
+                            egui::containers::panel::PanelState { outer_rect: stored },
+                        )
+                    });
+                    egui::Panel::bottom(viewer_id)
                         .resizable(true)
-                        .default_size(width * 9.0 / 16.0 + SECTION_HEADER + 8.0)
-                        .min_size(100.0)
+                        .default_size(viewer_height)
+                        .min_size(crate::layout::VIEWER_MIN)
+                        .max_size(crate::layout::viewer_max(room.height()))
                 } else {
                     egui::Panel::bottom("viewer_closed").resizable(false).exact_size(SECTION_HEADER)
                 };
-                panel.show(ui, |ui| {
+                let shown = panel.show(ui, |ui| {
                     let outputs = target.and_then(|id| view.outputs.get(&id));
                     let doc = session.doc();
                     let new_group = || doc.new_group();
@@ -728,19 +787,29 @@ impl PenumbraApp {
                     let viewer = &mut self.viewer;
                     let scene =
                         target.and_then(|id| navigate::scene(&net, session.types(), id, viewer.output));
-                    section(ui, &mut self.auto, "viewer", "Viewer", &mut sections.viewer, |ui, auto| {
-                        viewer.header(
-                            ui,
-                            &net,
-                            target,
-                            outputs,
-                            &output_names,
-                            false,
-                            scene.as_ref(),
-                            auto,
-                            &mut actions,
-                        );
-                    });
+                    // Wrapping: in a narrow column the buttons go on in a second row rather than
+                    // out of sight.
+                    section_row(
+                        ui,
+                        true,
+                        &mut self.auto,
+                        "viewer",
+                        "Viewer",
+                        &mut sections.viewer,
+                        |ui, auto| {
+                            viewer.header(
+                                ui,
+                                &net,
+                                target,
+                                outputs,
+                                &output_names,
+                                false,
+                                scene.as_ref(),
+                                auto,
+                                &mut actions,
+                            );
+                        },
+                    );
                     if viewer_open {
                         let nav = scene.as_ref().map(|scene| crate::viewer::NavInputs {
                             scene,
@@ -765,6 +834,20 @@ impl PenumbraApp {
                         );
                     }
                 });
+                if viewer_open && let Some(picture) = self.viewer.picture {
+                    // A height other than the one set is the user dragging the edge.
+                    let shown = shown.response.rect;
+                    if self.viewer_drag
+                        && (shown.height() - viewer_height).abs() > 1.0
+                        && let Some(aspect) = crate::layout::viewer_aspect(picture.size())
+                    {
+                        self.layout.set_viewer_aspect(Some(aspect), now);
+                    }
+                    self.viewer_frame = Some((shown, picture));
+                }
+                if !ui.input(|i| i.pointer.primary_down()) {
+                    self.viewer_drag = false;
+                }
 
                 egui::CentralPanel::default().show(ui, |ui| {
                     section(ui, &mut self.auto, "params", "Parameters", &mut sections.params, |_, _| {});
@@ -1281,7 +1364,20 @@ fn section(
     open: &mut bool,
     extra: impl FnOnce(&mut Ui, &mut automation::Registry),
 ) {
-    ui.horizontal(|ui| {
+    section_row(ui, false, auto, id, title, open, extra);
+}
+
+/// A section header whose `extra` widgets go on in further rows when `wrap` and the row is full.
+fn section_row(
+    ui: &mut Ui,
+    wrap: bool,
+    auto: &mut automation::Registry,
+    id: &str,
+    title: &str,
+    open: &mut bool,
+    extra: impl FnOnce(&mut Ui, &mut automation::Registry),
+) {
+    let row = |ui: &mut Ui| {
         let (rect, tri) = ui.allocate_exact_size(vec2(12.0, 16.0), Sense::click());
         let label = ui.add(egui::Label::new(RichText::new(title).strong()).sense(Sense::click()));
         let hovered = tri.hovered() || label.hovered();
@@ -1298,7 +1394,12 @@ fn section(
             *open = !*open;
         }
         extra(ui, auto);
-    });
+    };
+    if wrap {
+        ui.horizontal_wrapped(row);
+    } else {
+        ui.horizontal(row);
+    }
 }
 
 enum Outcome {

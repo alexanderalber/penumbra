@@ -3,8 +3,9 @@
 //! screen and in tests; `ui.screenshot` saves what the window would show.
 //!
 //! The script is JSON lines. Each line is a request (`{"method": ..., "params": {...}}`, any
-//! engine or `ui.*` command), or `{"wait": seconds}` to let the show run (thumbnails cook at
-//! 10 Hz, a shader compiles in a job). Empty lines and lines starting with `//` are skipped.
+//! engine or `ui.*` command), `{"wait": seconds}` to let the show run (thumbnails cook at
+//! 10 Hz, a shader compiles in a job), or `{"resize": [width, height]}` to change the window's
+//! size in points, as a maximize would. Empty lines and lines starting with `//` are skipped.
 
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -99,6 +100,22 @@ pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(
     for line in lines {
         if let Some(s) = line.get("wait").and_then(Json::as_f64) {
             step_for(&mut harness, Duration::from_secs_f64(s.clamp(0.0, 600.0)));
+            continue;
+        }
+        if let Some(size) = line.get("resize") {
+            let [w, h] = [0, 1].map(|i| size.get(i).and_then(Json::as_f64).unwrap_or(0.0) as f32);
+            if !(w.is_finite() && h.is_finite() && w >= 64.0 && h >= 64.0) {
+                out.push((
+                    "resize".into(),
+                    json!({"ok": false, "error": "`resize` needs [width, height] of 64 or more"}),
+                ));
+                continue;
+            }
+            harness.set_size(egui::vec2(w, h));
+            for _ in 0..4 {
+                step(&mut harness);
+            }
+            out.push(("resize".into(), json!({"ok": true, "result": {"width": w, "height": h}})));
             continue;
         }
         let Some(method) = line.get("method").and_then(Json::as_str).map(str::to_string) else {

@@ -96,7 +96,7 @@ const COMMANDS: &[(&str, &str)] = &[
     (
         "ui.options",
         "The editor's options (right-click on empty space) and the viewer's channel scale; {chan_bars?, viewer_background?, binding_lines?, \
-         chan_scale?: auto|shared|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale)}",
+         chan_scale?: auto|shared|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale),          viewer_aspect?: auto|number (the viewer's picture area, width over height; its height follows the column's width;          dragging the viewer's edge sets it, auto is 16:9)}",
     ),
     (
         "ui.arrange",
