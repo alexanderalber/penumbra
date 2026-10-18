@@ -377,11 +377,20 @@ impl PenumbraApp {
         if let Some(v) = p.get("binding_lines") {
             options.binding_lines = v.as_bool().ok_or("`binding_lines` must be true or false")?;
         }
+        if let Some(v) = p.get("chan_scale") {
+            options.chan_scale = v
+                .as_str()
+                .and_then(crate::layout::ChanScale::parse)
+                .ok_or("`chan_scale` must be auto, shared or per_channel")?;
+        }
         self.layout.set_options(options, now);
+        self.viewer.chan_scale = options.chan_scale;
+        self.window_viewer.chan_scale = options.chan_scale;
         Ok(json!({
             "chan_bars": options.chan_bars,
             "viewer_background": options.viewer_background,
             "binding_lines": options.binding_lines,
+            "chan_scale": options.chan_scale.name(),
         }))
     }
 }

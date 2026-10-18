@@ -12,6 +12,16 @@ pub const MAX_CHANNELS: usize = 4096;
 /// Most samples over all channels of one [`Chans`] (8 MiB of `f64`).
 pub const MAX_SAMPLES: usize = 1 << 20;
 
+/// What the samples of a [`Chans`] are spread over, for showing them: time (the rate is
+/// samples per second, the last sample is now) or a plain index (bands of a spectrum, pixels of
+/// a row), where the rate says nothing about the samples.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SampleAxis {
+    #[default]
+    Time,
+    Index,
+}
+
 /// One named channel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Channel {
@@ -33,6 +43,7 @@ impl Channel {
 pub struct Chans {
     rate: f64,
     channels: Vec<Channel>,
+    axis: SampleAxis,
 }
 
 impl Chans {
@@ -71,7 +82,7 @@ impl Chans {
                 return Err(Error::new(format!("channel `{}` appears twice", c.name)));
             }
         }
-        Ok(Self { rate, channels })
+        Ok(Self { rate, channels, axis: SampleAxis::Time })
     }
 
     /// One channel with one sample.
@@ -82,6 +93,16 @@ impl Chans {
     /// No channels at all (what a node with nothing to say produces).
     pub fn empty(rate: f64) -> Result<Self, Error> {
         Self::new(rate, Vec::new())
+    }
+
+    /// The same channels, their samples spread over `axis` ([`Chans::new`] makes them time).
+    pub fn with_axis(mut self, axis: SampleAxis) -> Self {
+        self.axis = axis;
+        self
+    }
+
+    pub fn axis(&self) -> SampleAxis {
+        self.axis
     }
 
     /// Samples per second.
@@ -145,5 +166,7 @@ mod tests {
         assert!(e.is_empty());
         assert_eq!(e.value(None), None);
         assert!(Chans::new(1.0, vec![ch("x", &vec![0.0; MAX_SAMPLES + 1])]).is_err());
+        assert_eq!(c.axis(), SampleAxis::Time);
+        assert_eq!(c.with_axis(SampleAxis::Index).axis(), SampleAxis::Index);
     }
 }

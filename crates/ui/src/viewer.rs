@@ -1,21 +1,23 @@
 //! The viewer: the output of the selected node, or of a pinned one, at full rate. Textures fit
 //! the panel; channels show their values and a short history (or all samples when a channel
-//! carries many); tables show their first rows; geometry and materials their pictures, lights
-//! a line each.
+//! carries many) on labelled axes, on one scale or a lane each ([`crate::plot`]); tables show
+//! their first rows; geometry and materials their pictures, lights a line each.
 
 use std::collections::{BTreeMap, VecDeque};
 
 use egui::emath::GuiRounding as _;
-use egui::{Color32, CornerRadius, Pos2, Rect, RichText, Sense, Stroke, Ui, pos2, vec2};
-use penumbra_core::{Chans, Name, NodeId, Table};
+use egui::{Color32, CornerRadius, Rect, RichText, Sense, Ui, pos2, vec2};
+use penumbra_core::{Chans, FrameTime, Name, NodeId, SampleAxis, Table};
 use penumbra_graph::{Data, DataKind, Network};
 use penumbra_ops::freeview::Request;
 use penumbra_ops::view::{Lens, Viewpoint};
 
 use crate::automation;
 use crate::editor::format_value;
+use crate::layout::ChanScale;
 use crate::mapping::{MapEditor, MapInputs};
 use crate::navigate::{Mode, Move, Navigation, Scene};
+use crate::plot::{self, Scale, Series, XAxis};
 use crate::shapes::{ShapeEditor, ShapeInputs};
 use crate::textures::Textures;
 use crate::{Action, theme};
@@ -23,7 +25,7 @@ use crate::{Action, theme};
 /// Channel samples kept for the curve (four seconds at 60 fps).
 const HISTORY: usize = 240;
 /// Channels drawn as curves and listed; more are counted.
-const MAX_CURVES: usize = 12;
+const MAX_CURVES: usize = 16;
 /// Table rows drawn.
 const MAX_ROWS: usize = 200;
 
@@ -41,6 +43,10 @@ pub struct Viewer {
     pub window: Option<NodeId>,
     /// The free view's cameras and the modes chosen for 3D nodes.
     pub nav: Navigation,
+    /// How several channels are scaled; kept in the layout, set by the app before drawing.
+    pub chan_scale: ChanScale,
+    /// What `ChanScale::Auto` decided last, for its hysteresis.
+    auto_lanes: bool,
 }
 
 /// What the viewer needs to look around in a 3D node.
@@ -125,6 +131,27 @@ impl Viewer {
                 }
             }
             let data = outputs.and_then(|o| o.get(self.output as usize));
+            if data.is_some_and(|d| d.kind() == DataKind::Chan) {
+                // Short words where the header is about to run out of room (a narrow column).
+                let short = ui.available_width() < 150.0;
+                let text = match (self.chan_scale, short) {
+                    (ChanScale::Auto, false) => "scale: auto",
+                    (ChanScale::Shared, false) => "scale: shared",
+                    (ChanScale::PerChannel, false) => "scale: per channel",
+                    (ChanScale::Auto, true) => "auto",
+                    (ChanScale::Shared, true) => "shared",
+                    (ChanScale::PerChannel, true) => "lanes",
+                };
+                let r = ui.button(text).on_hover_text(
+                    "How several channels are scaled; click for the next. shared: one scale for all, \
+                     to compare them; per channel (lanes): a lane each with its own scale; auto: per \
+                     channel when one that moves would be flat on the shared scale",
+                );
+                auto.add("viewer.scale", r.rect, text);
+                if r.clicked() {
+                    self.chan_scale = self.chan_scale.next();
+                }
+            }
             let size = match data {
                 Some(d) if d.kind() == DataKind::Tex => {
                     d.get::<penumbra_gpu::Tex>().map(|t| format!("{} x {}", t.width(), t.height()))
@@ -172,7 +199,8 @@ impl Viewer {
                 _ => None,
             };
             if let Some(size) = size {
-                ui.label(RichText::new(size).color(theme::TEXT_WEAK));
+                // Cut short rather than widen the column's content past the column.
+                ui.add(egui::Label::new(RichText::new(size).color(theme::TEXT_WEAK)).truncate());
             }
         }
     }
@@ -184,7 +212,7 @@ impl Viewer {
         ui: &mut Ui,
         target: Option<NodeId>,
         outputs: Option<&Vec<Data>>,
-        frame: Option<i64>,
+        time: Option<FrameTime>,
         background: Color32,
         textures: &mut Textures,
         map: Option<&MapInputs<'_>>,
@@ -207,7 +235,11 @@ impl Viewer {
         let mode = nav.map(|n| self.nav.mode(n.scene));
         let sense =
             if mode.is_some_and(|m| m != Mode::Picture) { Sense::click_and_drag() } else { Sense::hover() };
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), sense);
+        // No wider than what is visible: a header line too long for a narrow column widens the
+        // space below it, and the picture would run out of sight on the right.
+        let visible = (ui.clip_rect().max.x - ui.cursor().min.x).max(0.0);
+        let size = vec2(ui.available_width().min(visible), ui.available_height());
+        let (rect, response) = ui.allocate_exact_size(size, sense);
         auto.add("viewer", rect, "viewer");
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, CornerRadius::ZERO, background);
@@ -287,7 +319,7 @@ impl Viewer {
             }
             DataKind::Chan => {
                 if let Some(chans) = data.get::<Chans>() {
-                    self.channels(&painter, rect, id, chans, frame);
+                    self.channels(&painter, rect, id, chans, time);
                 }
             }
             DataKind::Table => {
@@ -463,7 +495,7 @@ impl Viewer {
     }
 
     /// Curves of the channels: their samples when they carry many, else the last four seconds
-    /// of their values. A list of names and values on top.
+    /// of their values, on labelled axes; the names and values on top.
     ///
     /// The history is keyed by show frame, not by UI frame or cook pass: the UI repaints on its
     /// own beat, so it sometimes misses a pass, and the clock may skip a late frame. Placing each
@@ -474,13 +506,15 @@ impl Viewer {
         rect: Rect,
         id: NodeId,
         chans: &Chans,
-        frame: Option<i64>,
+        time: Option<FrameTime>,
     ) {
+        let frame = time.map(|t| t.frame);
         let shown: Vec<&penumbra_core::Channel> = chans.channels().iter().take(MAX_CURVES).collect();
         // A seek backwards starts over, like another node.
         if self.history_of != Some((id, self.output)) || frame < self.last_frame {
             self.history.clear();
             self.history_of = Some((id, self.output));
+            self.auto_lanes = false;
         }
         let sampled = chans.len() > 1;
         if let Some(now) = frame
@@ -501,53 +535,50 @@ impl Viewer {
                 }
             }
         }
-        let series: Vec<(usize, Vec<(f64, f64)>)> = shown
+        // The x of each point: seconds before now, or the sample index for samples that are
+        // not moments. The history is in show frames, so at the show's rate.
+        let show_rate = time.map_or(60.0, |t| t.rate.as_f64()).max(1e-6);
+        let x = if !sampled {
+            XAxis::Seconds { span: (HISTORY - 1) as f64 / show_rate }
+        } else if chans.axis() == SampleAxis::Index {
+            XAxis::Index { last: chans.len().saturating_sub(1) as f64 }
+        } else {
+            XAxis::Seconds { span: chans.len().saturating_sub(1) as f64 / chans.rate() }
+        };
+        let series: Vec<Series<'_>> = shown
             .iter()
             .enumerate()
             .map(|(i, c)| {
                 let points = if sampled {
                     let last = c.samples.len().saturating_sub(1);
-                    c.samples.iter().enumerate().map(|(k, v)| ((last - k) as f64, *v)).collect()
+                    c.samples
+                        .iter()
+                        .enumerate()
+                        .map(|(k, v)| match x {
+                            XAxis::Index { .. } => (k as f64, *v),
+                            XAxis::Seconds { .. } => (-((last - k) as f64) / chans.rate(), *v),
+                        })
+                        .collect()
                 } else {
                     let now = frame.unwrap_or(0);
                     self.history
                         .get(&c.name)
-                        .map(|h| h.iter().map(|(f, v)| ((now - f) as f64, *v)).collect())
+                        .map(|h| h.iter().map(|(f, v)| (-((now - f) as f64) / show_rate, *v)).collect())
                         .unwrap_or_default()
                 };
-                (i, points)
+                Series { color: i, name: c.name.as_str(), value: c.value(), points }
             })
             .collect();
-        let span = if sampled { chans.len() } else { HISTORY };
-        curves(painter, rect.shrink(12.0), &series, span);
-        let font =
-            if shown.len() == 1 { egui::FontId::monospace(22.0) } else { egui::FontId::monospace(13.0) };
-        let mut y = rect.min.y + 10.0;
-        for (i, c) in shown.iter().enumerate() {
-            let text = if shown.len() == 1 && c.name.as_str() == "value" {
-                format_value(c.value())
-            } else {
-                format!("{}  {}", c.name, format_value(c.value()))
-            };
-            let r = painter.text(
-                pos2(rect.min.x + 12.0, y),
-                egui::Align2::LEFT_TOP,
-                text,
-                font.clone(),
-                if shown.len() == 1 { theme::TEXT } else { theme::channel_color(i) },
-            );
-            y = r.max.y + 2.0;
-        }
+        let scale = match self.chan_scale {
+            ChanScale::Shared => Scale::Shared,
+            ChanScale::PerChannel => Scale::Lanes,
+            ChanScale::Auto => {
+                self.auto_lanes = plot::auto_lanes(&series, self.auto_lanes);
+                if self.auto_lanes { Scale::Lanes } else { Scale::Shared }
+            }
+        };
         let more = chans.channels().len().saturating_sub(MAX_CURVES);
-        if more > 0 {
-            painter.text(
-                pos2(rect.min.x + 12.0, y),
-                egui::Align2::LEFT_TOP,
-                format!("+{more} more"),
-                egui::FontId::monospace(13.0),
-                theme::TEXT_WEAK,
-            );
-        }
+        plot::draw(painter, rect.shrink(4.0), &series, more, x, scale);
         if chans.is_empty() {
             painter.text(
                 rect.center(),
@@ -557,44 +588,6 @@ impl Viewer {
                 theme::TEXT_WEAK,
             );
         }
-    }
-}
-
-/// Lines through `series` (channel index, points as (age, value)) on one shared scale; age 0
-/// at the right edge, `span` samples across the width.
-fn curves(painter: &egui::Painter, rect: Rect, series: &[(usize, Vec<(f64, f64)>)], span: usize) {
-    let (lo, hi) = series.iter().flat_map(|(_, p)| p.iter().map(|(_, v)| v)).fold(
-        (f64::INFINITY, f64::NEG_INFINITY),
-        |(lo, hi), v| {
-            if v.is_finite() { (lo.min(*v), hi.max(*v)) } else { (lo, hi) }
-        },
-    );
-    if !(lo.is_finite() && hi.is_finite()) {
-        return;
-    }
-    let (lo, hi) = if hi - lo < 1e-9 { (lo - 1.0, hi + 1.0) } else { (lo, hi) };
-    let n = span.saturating_sub(1).max(1) as f32;
-    for (i, values) in series {
-        if values.len() < 2 {
-            continue;
-        }
-        let points: Vec<Pos2> = values
-            .iter()
-            .filter(|(_, v)| v.is_finite())
-            .map(|(age, v)| {
-                let x = rect.max.x - *age as f32 / n * rect.width();
-                let y = rect.max.y - ((v - lo) / (hi - lo)) as f32 * rect.height();
-                pos2(x, y)
-            })
-            .collect();
-        painter.add(egui::Shape::line(points, Stroke::new(1.5, theme::channel_color(*i))));
-    }
-    if lo < 0.0 && hi > 0.0 {
-        let y = rect.max.y - ((0.0 - lo) / (hi - lo)) as f32 * rect.height();
-        painter.line_segment(
-            [pos2(rect.min.x, y), pos2(rect.max.x, y)],
-            Stroke::new(1.0, Color32::from_white_alpha(25)),
-        );
     }
 }
 

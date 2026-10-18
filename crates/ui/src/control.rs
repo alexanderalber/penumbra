@@ -95,7 +95,8 @@ const COMMANDS: &[(&str, &str)] = &[
     ("ui.place", "Move nodes in the editor; {nodes: {path: [x, y]}}"),
     (
         "ui.options",
-        "The editor's options (right-click on empty space); {chan_bars?, viewer_background?, binding_lines?}",
+        "The editor's options (right-click on empty space) and the viewer's channel scale; {chan_bars?, viewer_background?, binding_lines?, \
+         chan_scale?: auto|shared|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale)}",
     ),
     (
         "ui.arrange",

@@ -14,7 +14,7 @@ pub mod table;
 pub mod time;
 pub mod value;
 
-pub use chan::{Channel, Chans};
+pub use chan::{Channel, Chans, SampleAxis};
 pub use error::Error;
 pub use id::{GroupId, NodeId};
 pub use param::{ChoiceDoc, ChoiceHelp, Curve, MORE, ParamHelp, ParamKind, ParamSpec, Range, Unit};

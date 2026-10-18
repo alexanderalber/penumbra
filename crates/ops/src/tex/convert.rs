@@ -397,7 +397,10 @@ fn chans_of(read: &PendingRead, components: Components, rate: f64) -> Result<Cha
         penumbra_gpu::RowsError::Gpu(e) => e.to_string(),
         penumbra_gpu::RowsError::Sink(e) => e,
     })?;
-    Chans::new(rate, channels).map_err(|e| e.to_string())
+    // Samples are pixels along a row, not moments.
+    Chans::new(rate, channels)
+        .map(|c| c.with_axis(penumbra_core::SampleAxis::Index))
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

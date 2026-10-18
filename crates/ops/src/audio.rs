@@ -14,7 +14,7 @@
 //! every change of the network.
 
 use penumbra_audio::{Analyzer, Cursor, Hub, Settings, Watch};
-use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, Unit};
+use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, SampleAxis, Unit};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes, Operator,
 };
@@ -318,7 +318,8 @@ impl Operator for Analysis {
             }
         };
         let spectrum = if f.spectrum.is_empty() { vec![0.0] } else { f.spectrum };
-        let spectrum = Chans::new(cx.rate().as_f64(), vec![Channel { name, samples: spectrum }])?;
+        let spectrum = Chans::new(cx.rate().as_f64(), vec![Channel { name, samples: spectrum }])?
+            .with_axis(SampleAxis::Index);
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, out), Data::new(DataKind::Chan, spectrum)]))
     }
 }

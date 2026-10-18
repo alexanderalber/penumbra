@@ -87,10 +87,10 @@ impl Default for Sections {
     }
 }
 
-/// What the editor's own menu (a right-click on empty space) switches, kept per project. The
-/// thumbnail mode and rate are the engine's (`cook.thumbnails`); the menu's choice is kept here
-/// and handed to the engine when the project opens. A change over the control channel lasts for
-/// the run only.
+/// What the editor's own menu (a right-click on empty space) switches, and the viewer's channel
+/// scale, kept per project. The thumbnail mode and rate are the engine's (`cook.thumbnails`);
+/// the menu's choice is kept here and handed to the engine when the project opens. A change over
+/// the control channel lasts for the run only.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct EditorOptions {
@@ -105,6 +105,47 @@ pub struct EditorOptions {
     pub thumbnails: ThumbnailMode,
     /// Cook passes between two thumbnail cooks of a node.
     pub thumbnail_every: u32,
+    /// How the viewer scales several channels.
+    pub chan_scale: ChanScale,
+}
+
+/// How the viewer scales the curves of several channels.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChanScale {
+    /// Per channel when one that moves would be flat on the shared scale, else shared.
+    #[default]
+    Auto,
+    /// All curves on one scale, to compare them.
+    Shared,
+    /// A lane per channel, each with its own scale.
+    PerChannel,
+}
+
+impl ChanScale {
+    pub const ALL: [ChanScale; 3] = [ChanScale::Auto, ChanScale::Shared, ChanScale::PerChannel];
+
+    /// The name in `layout.ron` and in `ui.options`.
+    pub fn name(self) -> &'static str {
+        match self {
+            ChanScale::Auto => "auto",
+            ChanScale::Shared => "shared",
+            ChanScale::PerChannel => "per_channel",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<ChanScale> {
+        Self::ALL.into_iter().find(|c| c.name() == s)
+    }
+
+    /// The one after this, for a button that steps through them.
+    pub fn next(self) -> ChanScale {
+        match self {
+            ChanScale::Auto => ChanScale::Shared,
+            ChanScale::Shared => ChanScale::PerChannel,
+            ChanScale::PerChannel => ChanScale::Auto,
+        }
+    }
 }
 
 impl Default for EditorOptions {
@@ -116,6 +157,7 @@ impl Default for EditorOptions {
             binding_lines: true,
             thumbnails: policy.mode,
             thumbnail_every: policy.min_interval,
+            chan_scale: ChanScale::Auto,
         }
     }
 }
@@ -868,6 +910,7 @@ mod tests {
         let options = EditorOptions {
             thumbnails: ThumbnailMode::WhenFree,
             thumbnail_every: 3,
+            chan_scale: ChanScale::PerChannel,
             ..EditorOptions::default()
         };
         layout.set_options(options, now);
@@ -885,6 +928,10 @@ mod tests {
         std::fs::write(dir.join(FILE_NAME), text.replace("thumbnail_every: 3", "thumbnail_every: 0"))
             .unwrap();
         assert_eq!(Layout::load(Some(&dir)).options.thumbnail_every, 1);
+        assert!(text.contains("chan_scale: per_channel"), "{text}");
+        // A file from before the channel scale existed still loads, with the default.
+        std::fs::write(dir.join(FILE_NAME), text.replace("chan_scale: per_channel,", "")).unwrap();
+        assert_eq!(Layout::load(Some(&dir)).options.chan_scale, ChanScale::Auto);
         std::fs::write(dir.join(FILE_NAME), "garbage").unwrap();
         let broken = Layout::load(Some(&dir));
         assert!(broken.pos.is_empty() && broken.loaded.is_empty());

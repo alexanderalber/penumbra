@@ -879,7 +879,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed), [chan.trail](#chantrail)
 
 ### chan.audio_analysis
 
@@ -1159,6 +1159,26 @@ Outputs: `out` (chan).
 | `min` | float | `0` | -10 to 10 (soft) | Lower end of the range the sum stays in (limit loop or clamp) |
 | `max` | float | `1` | -10 to 10 (soft) | Upper end of the range the sum stays in (limit loop or clamp) |
 | `reset` | bool | `false` |  | Hold the sum at 0 (or min) while on |
+
+### chan.trail
+
+The recent history of each input channel as samples, oldest first: a time graph to look at or to feed on
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+
+Inputs:
+
+- `in` (chan): The channels to record; of each, its value now (its last sample) is taken
+
+Outputs:
+
+- `out` (chan): The input's channels by name, each with length times rate samples, the newest last; before the trail is full, the first value fills its start
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `length` | float | `5` | 0.1 to 60 s (soft) | How far back the trail reaches; older values drop off its start |
+| `rate` | float | `60` | 1 to 240 Hz (soft) | Samples taken per second of show time, whatever the frame rate; length times rate is the number of samples |
+| `active` | bool | `true` |  | Records while on; off holds the trail as it is, and recording resumes from the moment it is on again |
 
 ## table
 
