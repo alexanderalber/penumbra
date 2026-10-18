@@ -31,7 +31,7 @@ Outputs:
 |---|---|---|---|---|
 | `detect` | background \| bright | `"background"` |  | What counts as part of a blob; background: what differs from the empty scene (the `background` input where connected, else learned: `blob_track.learn`); bright: whatever is brighter than `threshold` |
 | `threshold` | float | `0.1` | 0 to 0.5 (soft) | Difference to the background (in any channel), or brightness, from which a pixel counts |
-| `adapt` | float | `30` | 0 to 300 s (soft) | How soon a lasting change (light, a moved chair) becomes background; someone standing still fades ten times slower. 0: never |
+| `adapt` | float | `30` | 0 to 300 s (soft) | How soon a lasting change (light, a moved chair) becomes background; someone standing still fades ten times slower; 0: never |
 | `min_area` | float | `0.1` | 0 to 5 % (soft) | Smaller blobs are ignored (of the picture's area) |
 | `max_area` | float | `50` | 1 to 100 % (soft) | Larger blobs are ignored (the whole room changing is not a blob) |
 | `max_blobs` | int | `16` | 1 to 32 (soft) | Most blobs reported; with more found, the largest are kept |
@@ -819,7 +819,7 @@ Outputs: `out` (tex).
 | `precision` | 16bit \| 8bit | `"16bit"` |  | How the kept frames are stored; 16bit: as they come; 8bit: in half the memory, with values above 1 clipped |
 | `step` | int | `1` | 1 to 8 (soft) | Keeps only every n-th input frame, for n times the length in the same memory; between kept frames the picture is blended, which smears fast motion |
 | `record` | bool | `true` |  | Take new frames; off holds what is kept |
-| `budget` *(more)* | float | `0` | 0 to 20 (soft) | Most GPU memory the kept frames take, in GiB; 0: automatic, half of what the GPU grants penumbra. Never more than the GPU has free; past either, fewer frames are kept, with a warning |
+| `budget` *(more)* | float | `0` (automatic) | 0 to 20 (soft) | Most GPU memory the kept frames take, in GiB; automatic is half of what the GPU grants penumbra. Never more than the GPU has free; past either, fewer frames are kept, with a warning; 0: automatic |
 
 ### tex.transform
 
@@ -1078,7 +1078,7 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `port` | int | `8000` | 1024 to 65535 (soft) | UDP port to listen on (0: any free port, see osc.status) |
+| `port` | int | `8000` | 1024 to 65535 (soft) | UDP port to listen on; osc.status says which port it got; 0: any free port |
 | `lan` | bool | `false` |  | Listen on every network interface (phones, other computers), not only this machine |
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
 | `params` | bool | `false` |  | Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, outside the undo history). Binding to the channels is the better way for continuous control |
@@ -1668,14 +1668,15 @@ Outputs: none.
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `record` | bool | `false` |  | Recording while on: turning it on starts a new file, turning it off finishes it. Bind it to a channel to start and stop from OSC or a button; video_out.start and .stop do the same without it |
+| `record` | bool | `false` |  | Recording while on: turning it on starts a new file, turning it off finishes it. The record button above and video_out.start / .stop switch it; bind it to a channel to start and stop from OSC or a button. A project always opens with it off |
 | `codec` | h264 \| prores_422 \| prores_422_hq \| prores_4444 | `"h264"` |  | What the picture is encoded as (the file's extension follows it); h264: H.264 in MP4: small files any player opens; 4:2:0, 8 bits, high constant quality; prores_422: Apple ProRes 422 in MOV: for editing, every frame a keyframe; about 37 MB/s at 1080p60; prores_422_hq: Apple ProRes 422 HQ in MOV: as 422 at a higher rate, about 55 MB/s at 1080p60; prores_4444: Apple ProRes 4444 in MOV with alpha: 4:4:4, 12 bits, the transparency kept; the largest files |
+| `preset` | fast \| balanced \| best | `"fast"` |  | How hard the H.264 encoder works per frame: faster drops fewer frames of a busy picture, slower keeps more fine detail; fast: the fastest: Baseline profile, constant quality 23; files no larger than balanced's, fine detail a little softer; 20 to 45 % faster than balanced on busy pictures; balanced: High profile, constant quality 18, the encoder's quickest search; best: High profile, quality 18, a wider search: slightly smaller files, a third slower than balanced; for calm pictures, smaller sizes or lower rates |
 | `file` | text |  |  | The movie file, relative to the project; empty records to recordings/<node name>. A file that exists is never overwritten: the recording gets the next free name with _2, _3, ... |
-| `rate` | float | `0` | 0 to 120 Hz (soft) | Frames per second of the file; 0 takes the show's rate. Frames follow the show clock, so a slower show makes frames last longer, a faster one leaves some out |
+| `rate` | float | `0` (show rate) | 0 to 120 Hz (soft) | Frames per second of the file. Frames follow the show clock, so a slower show makes frames last longer, a faster one leaves some out; 0: show rate |
 | `size` | input \| fixed | `"input"` |  | The picture size of the file, fixed when the recording starts; input: the input's size when recording starts (rounded down to even); fixed: width x height; the input is scaled to it, aspect not kept |
 | `width` | int | `1920` | 16 to 3840 (soft) | Width of the file in pixels with `size` fixed (rounded down to even) |
 | `height` | int | `1080` | 16 to 2160 (soft) | Height of the file in pixels with `size` fixed (rounded down to even) |
-| `threads` *(more)* | int | `0` | 0 to 16 (soft) | Encoder threads; 0 takes all of this machine's logical cores but two. Fewer leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner |
+| `threads` *(more)* | int | `0` (automatic) | 0 to 16 (soft) | Encoder threads; automatic is all of this machine's logical cores but two. Fewer leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner; 0: automatic |
 
 ## comp
 

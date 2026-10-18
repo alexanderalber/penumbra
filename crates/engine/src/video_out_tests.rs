@@ -47,13 +47,27 @@ fn commands_start_and_stop_a_recording() {
     let frames =
         s["frames"].as_u64().unwrap() + s["skipped"].as_u64().unwrap() + s["dropped"].as_u64().unwrap();
     assert_eq!(d.info().frames as u64, frames, "{s}");
-    // `record` was never touched: requests are not edits.
+    // Start and stop are edits of `record`, one undo step each.
     let info = f.call("node.info", json!({"path": "/rec"}));
     assert_eq!(info["params"][0], json!({"name": "record", "value": false}), "{info}");
+    let history = f.call("history.list", json!({"limit": 2}));
+    assert!(history.to_string().contains("start recording"), "{history}");
+    assert!(history.to_string().contains("stop recording"), "{history}");
+    // Bound to a channel, `record` is not the commands' to switch.
+    f.call("node.create", json!({"path": "/on", "kind": "chan.constant"}));
+    f.call("node.bind", json!({"param": "/rec.record", "from": "/on"}));
+    assert!(f.fail("video_out.start", json!({"path": "/rec"})).contains("follows a channel"));
+    f.call("node.unbind", json!({"param": "/rec.record"}));
 
     // A second recording gets a new name; the shutdown finishes it.
     let s = f.call("video_out.start", json!({"path": "/rec"}));
     assert!(s["file"].as_str().unwrap().ends_with("rec_2.mov"), "{s}");
+    let again = f.call("video_out.start", json!({"path": "/rec"}));
+    assert_eq!(
+        (again["recording"].clone(), again["file"].clone()),
+        (json!(true), s["file"].clone()),
+        "no-op"
+    );
     std::thread::sleep(Duration::from_millis(300));
     f.engine.shutdown();
     let s = f.engine.record().all()[0].1.clone();

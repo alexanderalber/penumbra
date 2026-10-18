@@ -65,9 +65,10 @@ fn desc() -> NodeDesc {
                 .range(0.0, 300.0)
                 .curve(Curve::Power(2.0))
                 .unit(Unit::Seconds)
+                .special(0.0, "never")
                 .doc(
                     "How soon a lasting change (light, a moved chair) becomes background; someone standing \
-                     still fades ten times slower. 0: never",
+                     still fades ten times slower",
                 ),
         )
         .param(

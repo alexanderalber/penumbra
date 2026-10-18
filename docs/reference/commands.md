@@ -245,9 +245,9 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `video_out.start` | Start recording an out.video node to a new file (its params say which and how); {path}; answers with the status once recording |
+| `video_out.start` | Start recording an out.video node to a new file (its params say which and how) by turning its record param on (an edit); {path}; answers with the status once recording |
 | `video_out.status` | Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error; {path?} |
-| `video_out.stop` | Stop an out.video's recording and finish the file; {path}; answers with the status |
+| `video_out.stop` | Stop an out.video's recording and finish the file by turning record off (an edit); {path}; answers with the status |
 
 ## view
 

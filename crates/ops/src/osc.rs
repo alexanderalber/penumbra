@@ -45,7 +45,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 ParamSpec::int("port", DEFAULT_IN_PORT)
                     .clamp(0.0, 65535.0)
                     .range(1024.0, 65535.0)
-                    .doc("UDP port to listen on (0: any free port, see osc.status)"),
+                    .special(0.0, "any free port")
+                    .doc("UDP port to listen on; osc.status says which port it got"),
             )
             .param(
                 ParamSpec::bool("lan", false).doc(

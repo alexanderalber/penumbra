@@ -156,3 +156,16 @@ opt-level = 2
 
 [profile.dev.package.penumbra-video]
 opt-level = 2
+
+# The CPU video encoders run per pixel on every recorded frame. At opt-level 2 alone they were
+# still well behind the release build (overflow checks and debug assertions stay on in a dev
+# profile), so a debug build dropped frames recording 1080p60 that a release build kept.
+[profile.dev.package.filmcraft-h264enc]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.filmcraft-prores]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false

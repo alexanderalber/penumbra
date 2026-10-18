@@ -5,8 +5,8 @@
 //! - [`writer`]: one thread per recording that encodes the frames it is handed and writes them
 //!   into the file; the queue in front of it is bounded, and a frame that does not fit is
 //!   dropped (the caller counts it), so whoever records never waits for the encoder.
-//! - [`hub`]: the recordings of a process: start and stop requests from commands and the UI,
-//!   status, and finishing every file when the app closes.
+//! - [`hub`]: the recordings of a process: their status, and finishing every file when the app
+//!   closes.
 //!
 //! The pictures arrive as Y'CbCr planes already converted (on the GPU, in `penumbra-gpu`),
 //! through the [`Planes`] trait, so this crate needs no GPU. No UI, no graph: the node type
@@ -22,8 +22,67 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-pub use hub::{Hub, Request, Status};
+pub use hub::{Hub, Status};
 pub use writer::{Recording, Settings};
+
+/// How hard the H.264 encoder works for each frame: the trade of speed against size and
+/// quality. FilmCraft's encoder runs on the CPU; how many frames per second it manages depends
+/// on the picture far more than on this.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum H264Preset {
+    /// Constrained Baseline (CAVLC entropy coding, no 8x8 transform), the encoder's fastest
+    /// search, constant quality 23, no adaptive quantisation, no extra keyframes at cuts.
+    Fast,
+    /// High profile (CABAC), the encoder's fastest search, constant quality 18.
+    #[default]
+    Balanced,
+    /// High profile, the encoder's balanced search (more partitions, a wider motion search),
+    /// constant quality 18: about a third slower.
+    Best,
+}
+
+impl H264Preset {
+    /// The names a param uses, in [`H264Preset::ALL`]'s order.
+    pub const NAMES: [&'static str; 3] = ["fast", "balanced", "best"];
+    pub const ALL: [H264Preset; 3] = [H264Preset::Fast, H264Preset::Balanced, H264Preset::Best];
+
+    pub fn parse(name: &str) -> Option<H264Preset> {
+        Self::NAMES.iter().zip(Self::ALL).find(|(n, _)| **n == name).map(|(_, p)| p)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            H264Preset::Fast => "fast",
+            H264Preset::Balanced => "balanced",
+            H264Preset::Best => "best",
+        }
+    }
+
+    /// Sets profile, search, rate control and analysis in `cfg`.
+    pub(crate) fn apply(self, cfg: &mut filmcraft_h264enc::EncoderConfig) {
+        use filmcraft_h264enc as h;
+        match self {
+            H264Preset::Fast => {
+                cfg.profile = h::Profile::Baseline;
+                cfg.preset = h::Preset::Speed;
+                cfg.rate = h::RateControl::Crf(23.0);
+                cfg.aq_strength = 0.0;
+                cfg.scenecut = false;
+            }
+            H264Preset::Balanced => {
+                cfg.profile = h::Profile::High;
+                cfg.preset = h::Preset::Speed;
+                cfg.rate = h::RateControl::Crf(18.0);
+            }
+            H264Preset::Best => {
+                cfg.profile = h::Profile::High;
+                cfg.preset = h::Preset::Balanced;
+                cfg.rate = h::RateControl::Crf(18.0);
+            }
+        }
+    }
+}
 
 /// What a recording is encoded as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]

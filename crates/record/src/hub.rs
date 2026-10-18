@@ -1,9 +1,7 @@
 //! The recordings of a process.
 //!
-//! Each `out.video` node attaches itself ([`Hub::attach`]) with a way to wake it. Commands and
-//! the UI ask for a recording to start or stop ([`Hub::request`]); the node takes the request
-//! at its next cook ([`Hub::take_request`]) and starts the recording through the hub
-//! ([`Hub::start`]), which keeps its thread. The status of a node's current or last recording
+//! Each `out.video` node attaches itself ([`Hub::attach`]) and starts its recordings through the
+//! hub ([`Hub::start`]), which keeps their threads; the node's `record` param decides when. The status of a node's current or last recording
 //! stays readable here ([`Hub::status`]), also after the node's handle is gone.
 //!
 //! [`Hub::shutdown`] stops every recording and waits (bounded) for the files to be finished:
@@ -19,16 +17,6 @@ use penumbra_core::{NodeId, lock};
 use serde::Serialize;
 
 use crate::writer::{self, Recording, Settings, Shared};
-
-/// What a command or the UI asks of a node.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Request {
-    Start,
-    Stop,
-}
-
-/// Wakes a node so it cooks at the next frame boundary.
-pub type Wake = Arc<dyn Fn() + Send + Sync>;
 
 /// A recording as far as it got.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -69,8 +57,6 @@ pub struct Status {
 struct Entry {
     /// The node's label (name).
     path: String,
-    request: Option<Request>,
-    wake: Option<Wake>,
     /// The node's current or last recording.
     current: Option<Arc<Shared>>,
     /// The node is gone (deleted, its project closed); only its last recording's status stays.
@@ -97,9 +83,9 @@ impl Hub {
         Self::default()
     }
 
-    /// Registers `node` under `label` (its name; the engine shows paths) with a way to wake it.
-    /// Called on every cook; cheap.
-    pub fn attach(&self, node: NodeId, label: &str, wake: impl FnOnce() -> Wake) {
+    /// Registers `node` under `label` (its name; the engine shows paths). Called on every cook;
+    /// cheap.
+    pub fn attach(&self, node: NodeId, label: &str) {
         let mut inner = lock(&self.inner);
         let e = inner.nodes.entry(node).or_default();
         if e.detached {
@@ -109,53 +95,21 @@ impl Hub {
         if e.path != label {
             e.path = label.to_string();
         }
-        if e.wake.is_none() {
-            e.wake = Some(wake());
-        }
     }
 
-    /// Forgets `node` (deleted, or its project closed): no more requests; the status of its last
-    /// recording stays readable. Its recording, if any, ends when the node drops its handle.
+    /// Forgets `node` (deleted, or its project closed); the status of its last recording stays
+    /// readable. Its recording, if any, ends when the node drops its handle.
     pub fn detach(&self, node: NodeId) {
         let mut inner = lock(&self.inner);
         match inner.nodes.get_mut(&node) {
             Some(e) if e.current.is_some() => {
                 e.detached = true;
-                e.wake = None;
-                e.request = None;
             }
             Some(_) => {
                 inner.nodes.remove(&node);
             }
             None => {}
         }
-    }
-
-    /// Asks `node` to start or stop recording and wakes it. Fails for a node that is not an
-    /// attached `out.video` (not cooked yet, or something else).
-    pub fn request(&self, node: NodeId, request: Request) -> Result<(), String> {
-        let wake = {
-            let mut inner = lock(&self.inner);
-            if inner.closed {
-                return Err("the app is closing".into());
-            }
-            let e = inner
-                .nodes
-                .get_mut(&node)
-                .filter(|e| !e.detached)
-                .ok_or("not a video output that has cooked")?;
-            e.request = Some(request);
-            e.wake.clone()
-        };
-        if let Some(w) = wake {
-            w();
-        }
-        Ok(())
-    }
-
-    /// The request waiting for `node`, taken.
-    pub fn take_request(&self, node: NodeId) -> Option<Request> {
-        lock(&self.inner).nodes.get_mut(&node).and_then(|e| e.request.take())
     }
 
     /// Starts a recording for `node`. Refused once the hub is shut down.

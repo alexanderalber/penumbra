@@ -5,7 +5,7 @@ use penumbra_core::NodeId;
 use penumbra_video::{Limits, PixelData};
 
 use crate::writer::default_threads;
-use crate::{Bytes, Codec, Fps, Frame, Hub, Layout, Planes, Request, Settings};
+use crate::{Bytes, Codec, Fps, Frame, H264Preset, Hub, Layout, Planes, Settings};
 
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("penumbra-record-{name}-{}", std::process::id()));
@@ -47,6 +47,7 @@ fn settings(path: &Path, codec: Codec, w: u32, h: u32) -> Settings {
         fps: Fps { num: 30, den: 1 },
         threads: 2,
         queue: 4,
+        h264: H264Preset::Balanced,
     }
 }
 
@@ -81,12 +82,17 @@ fn mean_luma(frame: &penumbra_video::Frame) -> f64 {
 fn every_codec_records_and_reads_back() {
     let dir = scratch("codecs");
     let hub = Hub::new();
-    for (i, codec) in Codec::ALL.into_iter().enumerate() {
+    // Every codec, and H.264 with each preset.
+    let takes = Codec::ALL
+        .into_iter()
+        .map(|c| (c, H264Preset::Balanced))
+        .chain([(Codec::H264, H264Preset::Fast), (Codec::H264, H264Preset::Best)]);
+    for (i, (codec, preset)) in takes.enumerate() {
         let node = NodeId(i as u64 + 1);
-        hub.attach(node, &format!("/rec{i}"), || std::sync::Arc::new(|| {}));
-        let path = dir.join(format!("{}.{}", codec.name(), codec.extension()));
+        hub.attach(node, &format!("/rec{i}"));
+        let path = dir.join(format!("{}_{i}.{}", codec.name(), codec.extension()));
         let (w, h) = (64, 48);
-        let rec = hub.start(node, settings(&path, codec, w, h)).unwrap();
+        let rec = hub.start(node, Settings { h264: preset, ..settings(&path, codec, w, h) }).unwrap();
         let layout = rec.layout();
         // Dark then light, five frames each (pushed slowly enough for the queue).
         for k in 0..10 {
@@ -101,17 +107,17 @@ fn every_codec_records_and_reads_back() {
         }
         drop(rec);
         let s = wait_done(&hub, node);
-        assert_eq!(s.error, None, "{codec:?}");
-        assert_eq!((s.frames, s.dropped), (10, 0), "{codec:?}");
+        assert_eq!(s.error, None, "{codec:?} {preset:?}");
+        assert_eq!((s.frames, s.dropped), (10, 0), "{codec:?} {preset:?}");
         assert_eq!(s.node, format!("/rec{i}"));
         let mut d = penumbra_video::open(&path, &Limits::default()).unwrap();
         let info = d.info().clone();
-        assert_eq!((info.width, info.height, info.frames), (w, h, 10), "{codec:?}: {info:?}");
-        assert!((info.rate() - 30.0).abs() < 1e-6, "{codec:?}: {}", info.rate());
+        assert_eq!((info.width, info.height, info.frames), (w, h, 10), "{codec:?} {preset:?}: {info:?}");
+        assert!((info.rate() - 30.0).abs() < 1e-6, "{codec:?} {preset:?}: {}", info.rate());
         let dark = mean_luma(&d.frame(2).unwrap());
         let light = mean_luma(&d.frame(7).unwrap());
-        assert!((dark - 40.0).abs() < 1.5, "{codec:?}: dark {dark}");
-        assert!((light - 200.0).abs() < 1.5, "{codec:?}: light {light}");
+        assert!((dark - 40.0).abs() < 1.5, "{codec:?} {preset:?}: dark {dark}");
+        assert!((light - 200.0).abs() < 1.5, "{codec:?} {preset:?}: light {light}");
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -208,22 +214,11 @@ fn a_full_queue_drops_frames_instead_of_waiting() {
 }
 
 #[test]
-fn requests_reach_the_node_and_shutdown_finishes_files() {
+fn shutdown_finishes_files() {
     let dir = scratch("hub");
     let hub = Hub::new();
     let node = NodeId(7);
-    assert!(hub.request(node, Request::Start).is_err(), "not attached yet");
-    let woken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let w = woken.clone();
-    hub.attach(node, "/out/video1", move || {
-        std::sync::Arc::new(move || {
-            w.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        })
-    });
-    hub.request(node, Request::Start).unwrap();
-    assert_eq!(woken.load(std::sync::atomic::Ordering::Acquire), 1);
-    assert_eq!(hub.take_request(node), Some(Request::Start));
-    assert_eq!(hub.take_request(node), None);
+    hub.attach(node, "/out/video1");
     assert_eq!(hub.status(node), None, "nothing recorded yet");
     // A recording whose handle is still alive is finished by the shutdown.
     let path = dir.join("open.mov");
@@ -261,4 +256,9 @@ fn layouts_and_rates() {
         assert_eq!(codec.name(), *name);
     }
     assert!(default_threads() >= 2);
+    for (name, preset) in H264Preset::NAMES.iter().zip(H264Preset::ALL) {
+        assert_eq!(H264Preset::parse(name), Some(preset));
+        assert_eq!(preset.name(), *name);
+    }
+    assert_eq!(H264Preset::default(), H264Preset::Balanced);
 }

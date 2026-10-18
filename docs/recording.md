@@ -10,8 +10,14 @@ for documentation, for an edit, or to play back later with `tex.video`.
    the button shows the file, the length so far, frames written and dropped, and how fast the
    encoder runs. **stop** (or `video_out.stop {path}`) finishes the file.
 3. To start and stop from a channel (an OSC button, a timer, a beat), bind `record`: turning it
-   on starts a new file, turning it off finishes it. A project opened with `record` on does not
-   start recording by itself; it waits for `record` to turn off and on.
+   on starts a new file, turning it off finishes it.
+
+The `record` param is the one switch: the button and the two commands turn it on and off, as
+an ordinary edit (undo undoes it, so undoing a start stops the recording). While a channel
+drives `record`, the button is greyed and the commands refuse. A project always opens with
+`record` off, whatever was saved, so opening a project never starts a recording by itself.
+When a recording cannot start or ends with an error, the node shows why and does not try again
+until `record` turns off and on.
 
 `file` empty records to `recordings/<node name>.mp4` (or `.mov`) in the project folder. A
 file that exists is never overwritten: the next recording goes to `<name>_2`, `<name>_3`, ...
@@ -40,14 +46,34 @@ fast depends on how busy the picture is far more than on anything else. Measured
 | busy (the curl-noise example) | 81 fps | 46 fps | 42 fps | 29 fps |
 | very busy (a zooming Mandelbrot set) | 88 fps | 48 fps | 44 fps | 26 fps |
 
-Inside the running show the encoder shares the CPU: recording the curl-noise example at
-1080p60, `h264` kept up (0 frames dropped in two runs of three, 27 of about 390 in the third),
-`prores_422_hq` managed about 39 frames per second and dropped 40 % of the frames. The cook
-thread took about 0.4 ms more per frame while recording. So: `h264` for recording a busy show
-in real time, ProRes for calm pictures, smaller sizes or lower rates.
+(`h264` there with `preset` balanced.) Inside the running show the encoder shares the CPU:
+`prores_422_hq` managed about 39 frames per second of the curl-noise example and dropped 40 %
+of the frames. The cook thread took about 0.4 ms more per frame while recording. So: `h264`
+for recording a busy show in real time, ProRes for calm pictures, smaller sizes or lower rates.
 
-`threads` (under more) sets the encoder threads; 0 takes all logical cores but two. With 8 the
-curl-noise recording above dropped a third of its frames.
+### H.264 presets
+
+`preset` trades the H.264 encoder's speed against size and quality:
+
+- `fast` (default): Baseline profile, constant quality 23, the encoder's quickest search. The
+  files are no larger (often smaller) than balanced's; fine detail is a little softer.
+- `balanced`: High profile, constant quality 18, the quickest search.
+- `best`: High profile, quality 18, a wider search; about a third slower than balanced again,
+  so for calm pictures, smaller sizes or lower rates.
+
+Recorded at 1920 x 1080, 60 frames per second, inside the running app (12 s each, 14 encoder
+threads, same machine), the encoder's own speed and the share of frames dropped:
+
+| picture | `fast` | `balanced` | `best` |
+|---|---|---|---|
+| the demo (reaction-diffusion) | 105 fps, 0 dropped, 1.5 MB/s | 73 fps, 0 dropped, 3.6 MB/s | 50 fps, 16 % dropped |
+| full-screen colour noise, 5 octaves, moving | 91 fps, 0 dropped, 1.9 MB/s | 74 fps, 0 dropped, 2.6 MB/s | 52 fps, 13 % dropped |
+| the curl-noise example | 75 fps, 0 dropped, 7.2 MB/s | 62 fps, 0 dropped, 13.5 MB/s | 22 fps, 59 % dropped |
+
+The debug build records as fast as the release build: the encoders are always built optimised.
+
+`threads` (under more) sets the encoder threads; automatic (0) takes all logical cores but
+two. With 8 a curl-noise recording dropped a third of its frames.
 
 ## When the encoder falls behind
 
@@ -55,14 +81,14 @@ Recording never makes the show wait. Each frame is converted on the GPU and read
 waiting; a few frames queue up for the encoder. When the encoder is slower than the frames come,
 the queue fills and frames are **dropped**: the status and the node's warning count them, and in
 the file the frame before lasts longer instead, so the recording keeps time with the show. To
-drop fewer, record at a lower `rate` or a smaller size (`size` fixed, `width` and `height`), use
-`h264` for busy pictures, or give the encoder more `threads`.
+drop fewer, use `h264` with `preset` fast for busy pictures, record at a lower `rate` or a
+smaller size (`size` fixed, `width` and `height`), or give the encoder more `threads`.
 
 ## Rate, time and size
 
-- `rate` 0 records at the show's rate; any other value is the file's frames per second. Frames
-  follow the show clock: frame k is the picture k / rate seconds after the start. While the
-  clock is paused nothing is recorded. When the show runs slower than `rate` (a heavy network),
+- `rate` 0, shown as "show rate (60 Hz)", records at the show's rate; any other value is the
+  file's frames per second. Frames follow the show clock: frame k is the picture k / rate
+  seconds after the start. While the clock is paused nothing is recorded. When the show runs slower than `rate` (a heavy network),
   frames last longer (counted as **skipped**); a jump back in time or of more than a second
   forward continues the file without a gap.
 - `size` input records at the input's size when recording starts (rounded down to even sides);

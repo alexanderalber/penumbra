@@ -76,11 +76,18 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                  between kept frames the picture is blended, which smears fast motion",
         ))
         .param(ParamSpec::bool("record", true).doc("Take new frames; off holds what is kept"))
-        .param(ParamSpec::float("budget", 0.0).clamp(0.0, 64.0).range(0.0, 20.0).more().doc(
-            "Most GPU memory the kept frames take, in GiB; 0: automatic, half of what the GPU \
+        .param(
+            ParamSpec::float("budget", 0.0)
+                .clamp(0.0, 64.0)
+                .range(0.0, 20.0)
+                .more()
+                .special(0.0, "automatic")
+                .doc(
+                    "Most GPU memory the kept frames take, in GiB; automatic is half of what the GPU \
                  grants penumbra. Never more than the GPU has free; past either, fewer frames are \
                  kept, with a warning",
-        ))
+                ),
+        )
         .input("in", DataKind::Tex)
         .input("map", DataKind::Tex)
         .output("out", DataKind::Tex),
