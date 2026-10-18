@@ -911,6 +911,9 @@ fn nothing_is_saved_before_the_saved_state_was_read() {
 #[path = "osc_tests.rs"]
 mod osc_tests;
 
+#[path = "dmx_tests.rs"]
+mod dmx_tests;
+
 #[path = "audio_tests.rs"]
 mod audio_tests;
 

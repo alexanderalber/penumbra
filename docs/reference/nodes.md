@@ -1608,7 +1608,27 @@ Outputs:
 
 ## out
 
-[out.projector](#outprojector)
+[out.dmx](#outdmx), [out.projector](#outprojector)
+
+### out.dmx
+
+Channels to DMX slots: Enttec Open DMX USB, Art-Net, sACN or DDP
+
+Inputs:
+
+- `chans` (chan)
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `protocol` | open_dmx \| art_net \| sacn \| ddp | `"open_dmx"` |  | How the slots leave this machine; open_dmx: an Enttec Open DMX USB on a serial port, one universe; art_net: Art-Net over UDP, to a node or as a broadcast; sacn: sACN (E1.31) over UDP, to each universe's multicast group or a host; ddp: DDP over UDP to a pixel controller such as WLED, no universes |
+| `port` | text |  |  | Serial port of the Open DMX USB, such as COM5 or /dev/ttyUSB0; empty takes the first FTDI FT232R plugged in (dmx.ports lists them) |
+| `host` | text |  |  | IP address to send to, optionally with :port; empty broadcasts Art-Net and sends sACN to the multicast groups; DDP needs one |
+| `universe` | int | `1` | 0 to 16 (soft) | Universe of the first slot, as the protocol counts (Art-Net from 0, sACN from 1); more than 512 slots spill into the next. Not used by the Open DMX USB and DDP |
+| `address` | int | `1` | 1 to 512 (soft) | DMX address (slot, from 1) the first channel goes to; for DDP the byte, from 1 |
+| `values` | unit \| byte | `"unit"` |  | What the channel values mean; unit: 0 to 1, sent as 0 to 255; byte: 0 to 255, sent as they are (rounded) |
+| `rate` | float | `30` | 1 to 60 Hz (soft) | Frames per second, sent whether or not anything changed; the Open DMX USB manages about 35 |
 
 ### out.projector
 

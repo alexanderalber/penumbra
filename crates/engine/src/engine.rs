@@ -57,11 +57,13 @@
 //! network's `chan.audio_in` nodes want; the hub keeps a stream thread per device, and the
 //! nodes read what arrived. **Cameras** the same way: the [`CameraHub`] opens what the
 //! `tex.video_in` nodes want, a capture thread per camera, and keeps each one's newest frame.
+//! **DMX** the other way round: the [`DmxHub`] is a resource the `out.dmx` nodes put their slots
+//! into, with a sending thread per target.
 //!
 //! **Another project** ([`Engine::open_project`]): the threads above stop (state saved and
 //! changes written as at closing) and start again for the new session with a fresh cook state.
 //! What does not belong to a project stays: the GPU, the output board and windows, the OSC
-//! audio and camera hubs, the component library, the clipboard. [`Engine::generation`] tells the UI.
+//! audio, DMX and camera hubs, the component library, the clipboard. [`Engine::generation`] tells the UI.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -76,6 +78,7 @@ use penumbra_camera::Hub as CameraHub;
 use penumbra_core::{
     Error, FrameTime, LatePolicy, NodeId, PaceSource, Pacer, ParamSpec, Rate, ShowClock, lock,
 };
+use penumbra_dmx::Hub as DmxHub;
 use penumbra_gpu::Gpu;
 use penumbra_graph::{
     CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, PERSIST_STATE, ResetOutcome,
@@ -548,6 +551,7 @@ pub struct Engine {
     state: Arc<StateShared>,
     osc: Arc<OscShared>,
     audio: AudioHub,
+    dmx: DmxHub,
     camera: CameraHub,
     /// The 3D mouse; its reader starts when the UI first asks for it.
     spacenav: SpaceNav,
@@ -623,6 +627,7 @@ impl Engine {
             state: Arc::new(StateShared::default()),
             osc: Arc::new(OscShared::new(Hub::new())),
             audio: AudioHub::new(),
+            dmx: DmxHub::new(),
             camera: CameraHub::new(),
             spacenav: SpaceNav::new(),
             ticker: Arc::new(Ticker::default()),
@@ -645,6 +650,7 @@ impl Engine {
         cooker.provide(renders.clone());
         cooker.provide(self.osc.hub().clone());
         cooker.provide(self.audio.clone());
+        cooker.provide(self.dmx.clone());
         cooker.provide(self.camera.clone());
         cooker.provide(penumbra_ops::tex::blob_track::BlobTracks::new());
         let gpu = self.gpu.get().cloned();
@@ -983,6 +989,11 @@ impl Engine {
         &self.audio
     }
 
+    /// The DMX outputs.
+    pub fn dmx(&self) -> &DmxHub {
+        &self.dmx
+    }
+
     /// The cameras.
     pub fn camera(&self) -> &CameraHub {
         &self.camera
@@ -1239,6 +1250,7 @@ impl Engine {
         self.stop_threads(true);
         self.osc.hub().shutdown();
         self.audio.shutdown();
+        self.dmx.shutdown();
         self.camera.shutdown();
         self.spacenav.shutdown();
         self.load.shutdown();

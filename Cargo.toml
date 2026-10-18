@@ -16,6 +16,7 @@ penumbra-audio = { path = "crates/audio" }
 penumbra-calib = { path = "crates/calib" }
 penumbra-camera = { path = "crates/camera" }
 penumbra-core = { path = "crates/core" }
+penumbra-dmx = { path = "crates/dmx" }
 penumbra-engine = { path = "crates/engine" }
 penumbra-gpu = { path = "crates/gpu" }
 penumbra-graph = { path = "crates/graph" }
@@ -91,6 +92,9 @@ raw-window-handle = "0.6"
 rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 # Media Foundation for camera input (crates/camera); the COM interfaces need the full crate.
 windows = "0.62"
+# Serial ports for the Open DMX USB (crates/dmx): break control on Windows and Linux. Without
+# libudev, so Linux builds need no system library (ports are listed from sysfs).
+serialport = { version = "4.10", default-features = false }
 # The SpaceNavigator as plain HID (crates/spacenav), Windows only for now; the native backend
 # needs no C library.
 hidapi = { version = "2.6", default-features = false, features = ["windows-native"] }

@@ -60,6 +60,14 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `cook.status` | Show clock, last cook pass, watched nodes, thumbnail policy |
 | `cook.thumbnails` | Global thumbnail switch and rate; {mode?: always \| when_free \| never, every?: cook passes between two thumbnail cooks of a node, 1 = every frame} |
 
+## dmx
+
+| command | |
+|---|---|
+| `dmx.config` | DMX settings for this run: {enabled?, blackout?}; blackout sends zeros on every output |
+| `dmx.ports` | The serial ports of this machine (name, USB ids, whether it is an FT232R like the Open DMX USB) |
+| `dmx.status` | DMX outputs: target, writers, device, open, error, frames, rate asked and measured, timings in ms |
+
 ## edit
 
 | command | |
