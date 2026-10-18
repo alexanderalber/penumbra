@@ -47,7 +47,8 @@ No command line needed:
 
 1. Download the zip from the [latest release](https://github.com/alexanderalber/penumbra/releases/latest)
    (under "Assets", `penumbra-...-windows-x64.zip`).
-2. Unpack it anywhere and double-click `penumbra.exe`. It opens a demo project.
+2. Unpack it anywhere and double-click `penumbra.exe`. The first time it opens a demo project,
+   later the project you had open last.
 
 Windows may warn "Windows protected your PC", because the program is not signed: click
 "More info", then "Run anyway". You need Windows 10 or 11 (64-bit) and a graphics card with
@@ -60,7 +61,8 @@ documentation.
 cargo run -p penumbra
 ```
 
-With no arguments the app opens a demo project; more are in [examples](examples/README.md).
+With no arguments the app opens the project that was open last, the first time a demo project;
+more are in [examples](examples/README.md).
 The [documentation](docs/README.md) starts with [getting started](docs/getting-started.md) and
 has a reference of every [node](docs/reference/nodes.md) and [command](docs/reference/commands.md).
 

@@ -1,8 +1,10 @@
-//! penumbra app. Started without arguments it opens the demo project, the control channel and
-//! a window, plus a fullscreen output window per display that an active `out.projector` names.
+//! penumbra app. Started without arguments it opens the project open last (the demo project
+//! when there is none or it no longer opens), the control channel and a window, plus a
+//! fullscreen output window per display that an active `out.projector` names.
 //!
-//! Arguments: `--project DIR` (project directory, created if missing; default: the demo project
-//! in the user's data directory; the project menu opens others while it runs), `--port N`
+//! Arguments: `--project DIR` (project directory, created if missing; default: the project open
+//! last, else the demo project in the user's data directory; the project menu opens others
+//! while it runs), `--port N`
 //! (control channel port, default from `PENUMBRA_PORT` or 9880), `--fresh` (discard what
 //! feedback loops, caches and other nodes kept from the last run; locked nodes keep their
 //! outputs).
@@ -36,6 +38,23 @@ fn main() -> std::process::ExitCode {
     }
 }
 
+/// The project open when the app last ran, if there is one and it opens; `None` for the demo.
+/// The demo itself goes the demo's way, which also restores its shader if it went missing.
+fn open_last(types: &Arc<penumbra_graph::NodeTypes>) -> Option<Session> {
+    let file = projects::default_recent_file().ok()?;
+    let dir = projects::read_last(&file)?;
+    if projects::demo_dir().is_ok_and(|demo| projects::same_dir(&demo, &dir)) {
+        return None;
+    }
+    match Session::open(&dir, types.clone(), &Content::default()) {
+        Ok(session) => Some(session),
+        Err(e) => {
+            log::warn!("cannot open the last project {}: {e}; opening the demo", dir.display());
+            None
+        }
+    }
+}
+
 struct Args {
     port: u16,
     project: Option<PathBuf>,
@@ -49,23 +68,27 @@ fn run() -> Result<(), String> {
     let args = parse_args(std::env::args().skip(1))?;
     let types = Arc::new(penumbra_ops::builtin_types().map_err(|e| e.to_string())?);
     let mut scratch = None;
-    let (dir, template) = match (&args.project, &args.headless) {
-        (Some(dir), _) => (dir.clone(), Content::default()),
+    let session = match (&args.project, &args.headless) {
+        (Some(dir), _) => Session::open(dir, types, &Content::default()).map_err(|e| e.to_string())?,
         (None, Some(_)) => {
             let dir = std::env::temp_dir().join("penumbra").join(format!("headless-{}", std::process::id()));
             // A leftover from an earlier run with the same process id would not be the demo.
             let _ = std::fs::remove_dir_all(&dir);
             scratch = Some(dir.clone());
             let template = projects::prepare_demo(&dir, &types).map_err(|e| e.0)?;
-            (dir, template)
+            Session::open(&dir, types, &template).map_err(|e| e.to_string())?
         }
-        (None, None) => {
-            let dir = projects::demo_dir().map_err(|e| format!("{e}; pass --project DIR"))?;
-            let template = projects::prepare_demo(&dir, &types).map_err(|e| e.0)?;
-            (dir, template)
-        }
+        (None, None) => match open_last(&types) {
+            Some(session) => session,
+            None => {
+                let dir = projects::demo_dir().map_err(|e| format!("{e}; pass --project DIR"))?;
+                let template = projects::prepare_demo(&dir, &types).map_err(|e| e.0)?;
+                Session::open(&dir, types, &template).map_err(|e| e.to_string())?
+            }
+        },
     };
-    let session = Arc::new(Session::open(&dir, types, &template).map_err(|e| e.to_string())?);
+    let dir = session.dir().to_path_buf();
+    let session = Arc::new(session);
     log::info!("project: {}", session.file().display());
     let engine = Engine::start(session).map_err(|e| e.to_string())?;
     if args.fresh {

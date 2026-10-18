@@ -69,9 +69,9 @@ specific channel by name. A vector or colour binds per component: drop the wire 
 A bound row shows its name in the channel colour, the live value, and the source. The stored
 value stays and comes back when the binding is removed; it is also used, with a warning, while
 the channel is missing. Integers round, booleans are on from 0.5, hard ranges clamp. The editor
-draws a binding as a dashed green line into the top of the node while the source or the bound
-node is selected or under the pointer, otherwise as a short stub on the bound node ("All binding
-lines" in the editor's right-click menu draws every line).
+draws every binding as a dashed green line into the top of the node. With "All binding lines"
+unticked in the editor's right-click menu, a binding shows as a short stub on the bound node,
+and as a line only while the source or the bound node is selected or under the pointer.
 
 ## Paths
 
@@ -144,8 +144,10 @@ file that does not load) shows the error and keeps putting out what it made last
 during a show does not black out a projector.
 
 **Thumbnails** follow the editor's options (right-click on empty canvas): always live, only
-when free (nothing is cooked just for a thumbnail), or never. A live thumbnail cooks at most
-every 6th frame by default (10 Hz at 60 fps); the same menu raises that up to every frame. A
+when free (nothing is cooked just for a thumbnail), or never. A live thumbnail cooks every
+frame by default; the same menu lowers that to every 2nd, 3rd or 6th frame for large networks.
+Both choices are kept with the project (`cook.thumbnails` over the control channel changes them
+for the run only). A
 picture is only shown while it is up to date; an outdated one would be misleading. "Pause
 thumbnail" in a node's menu does the same for one node.
 
@@ -158,7 +160,7 @@ kept across restarts. Use it for calibration results and anything expensive to m
 | | |
 |---|---|
 | `project.ron` | the network: nodes, params, wires, bindings, project settings. Written a second after each change |
-| `layout.ron` | where the nodes sit, pan and zoom, open sections, editor options |
+| `layout.ron` | where the nodes sit, pan and zoom, open sections, the right column's width, editor options (thumbnails included) |
 | `state/` | what nodes hold across restarts (feedback loops, caches, locked outputs); ignored by git through its own `.gitignore` |
 | `components/` | the project's own component files |
 | anything else | shaders, scripts, images, videos, meshes, referenced by relative path |

@@ -10,8 +10,10 @@ double-click `penumbra.exe`. Or build it from source with a current stable Rust:
 cargo run -p penumbra
 ```
 
-With no arguments the app opens a demo project, kept in `%LOCALAPPDATA%\penumbra\demo` on
-Windows (`$XDG_DATA_HOME/penumbra/demo` or `~/.local/share/penumbra/demo` elsewhere).
+With no arguments the app opens the project that was open last. The first time (or when that
+project is gone or does not open) it opens a demo project, kept in
+`%LOCALAPPDATA%\penumbra\demo` on Windows (`$XDG_DATA_HOME/penumbra/demo` or
+`~/.local/share/penumbra/demo` elsewhere); the project menu brings it back any time.
 It grows reaction-diffusion patterns around the title: click `/show` to see them in the
 viewer. `/sharpen` runs the shader `sharpen.wgsl` in the demo's folder; edit and save it and
 the node reloads. `/palettes` `index` picks one of four colourings, `/title` `text` the word
@@ -34,7 +36,7 @@ Other arguments:
 
 | argument | |
 |---|---|
-| `--project DIR` | the project directory (default: the demo) |
+| `--project DIR` | the project directory (default: the project open last, else the demo) |
 | `--port N` | the control channel's port (default `PENUMBRA_PORT`, else 9880) |
 | `--fresh` | start without what feedback loops, caches and similar nodes kept from the last run (see [persistent state](helpers.md#state)) |
 | `--headless SCRIPT` | run without a window, driven by a script (see [Control](control.md#headless-runs)) |
@@ -64,6 +66,8 @@ else runs without it.
   and whether `project.ron` is written yet.
 
 Each section of the right column folds by its header; the open state is kept with the project.
+The column keeps its share of the window's width when the window is resized; drag its edge to
+change the share (also kept with the project).
 
 ## A first network
 

@@ -138,6 +138,10 @@ impl Changes {
     }
 }
 
+/// How far the header's buttons sit below the row's centre: centred, their labels looked higher
+/// than the section title next to them.
+const BUTTONS_DROP: f32 = 2.0;
+
 /// Undo and Redo, for the section header (usable while the list is collapsed).
 pub fn buttons(
     ui: &mut Ui,
@@ -146,16 +150,20 @@ pub fn buttons(
     auto: &mut automation::Registry,
     actions: &mut Vec<Action>,
 ) {
-    let r = ui.add_enabled_ui(can_undo, |ui| icons::button(ui, Icon::Undo, "Undo")).inner;
-    auto.add("button.undo", r.rect, "Undo");
-    if r.on_hover_text("Ctrl+Z").clicked() {
-        actions.push(Action::Undo);
-    }
-    let r = ui.add_enabled_ui(can_redo, |ui| icons::button(ui, Icon::Redo, "Redo")).inner;
-    auto.add("button.redo", r.rect, "Redo");
-    if r.on_hover_text("Ctrl+Shift+Z").clicked() {
-        actions.push(Action::Redo);
-    }
+    let rect = ui.available_rect_before_wrap().translate(egui::vec2(0.0, BUTTONS_DROP));
+    let layout = *ui.layout();
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(layout), |ui| {
+        let r = ui.add_enabled_ui(can_undo, |ui| icons::button(ui, Icon::Undo, "Undo")).inner;
+        auto.add("button.undo", r.rect, "Undo");
+        if r.on_hover_text("Ctrl+Z").clicked() {
+            actions.push(Action::Undo);
+        }
+        let r = ui.add_enabled_ui(can_redo, |ui| icons::button(ui, Icon::Redo, "Redo")).inner;
+        auto.add("button.redo", r.rect, "Redo");
+        if r.on_hover_text("Ctrl+Shift+Z").clicked() {
+            actions.push(Action::Redo);
+        }
+    });
 }
 
 /// Minutes at the finest: a seconds count would tick every second.

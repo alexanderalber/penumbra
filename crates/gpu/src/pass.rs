@@ -287,6 +287,20 @@ pub struct PassInput<'a> {
     pub param: &'a dyn Fn(&str) -> Option<Value>,
 }
 
+/// naga's message with its box-drawing frame (`┌─`, `│`, `╰`) in ASCII: the UI font has no
+/// glyphs for those, so they showed as boxes. Everything else is kept.
+pub(crate) fn ascii_frame(text: &str) -> String {
+    text.chars()
+        .map(|c| match c {
+            '─' | '━' | '═' | '╌' | '╍' | '┄' | '┅' | '┈' | '┉' => '-',
+            '│' | '┃' | '║' | '╎' | '╏' | '┆' | '┇' | '┊' | '┋' => '|',
+            '·' => ':',
+            '\u{2500}'..='\u{257f}' => '+',
+            c => c,
+        })
+        .collect()
+}
+
 /// A compiled fullscreen pass.
 pub struct Pass {
     label: String,
@@ -304,10 +318,10 @@ impl Pass {
     pub fn compile(gpu: &Gpu, label: &str, source: &str, params: &[ParamSpec]) -> Result<Self, Error> {
         let full = format!("{source}\n{PRELUDE}{}", params_wgsl(params));
         let module = naga::front::wgsl::parse_str(&full)
-            .map_err(|e| Error::new(e.emit_to_string_with_path(&full, label)))?;
+            .map_err(|e| Error::new(ascii_frame(&e.emit_to_string_with_path(&full, label))))?;
         let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), Default::default())
             .validate(&module)
-            .map_err(|e| Error::new(e.emit_to_string_with_path(&full, label)))?;
+            .map_err(|e| Error::new(ascii_frame(&e.emit_to_string_with_path(&full, label))))?;
         let entry = module
             .entry_points
             .iter()
@@ -624,6 +638,16 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     }
 
     #[test]
+    fn the_error_frame_becomes_ascii() {
+        let naga = "error: no definition in scope\n  ┌─ a.wgsl:3:10\n  │\n3 │   return nope;\n  │          ^^^^ here\n  ·\n  ╰── end";
+        assert_eq!(
+            ascii_frame(naga),
+            "error: no definition in scope\n  +- a.wgsl:3:10\n  |\n3 |   return nope;\n  |          ^^^^ here\n  :\n  +-- end"
+        );
+        assert_eq!(ascii_frame("ä ├┬┤"), "ä +++");
+    }
+
+    #[test]
     fn compile_errors_point_at_the_source_line() {
         let Some(gpu) = gpu() else { return };
         let e = Pass::compile(
@@ -635,6 +659,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         .err()
         .unwrap();
         assert!(e.0.contains("broken.wgsl:3"), "{e}");
+        assert!(e.0.is_ascii(), "{e}");
         let e = Pass::compile(&gpu, "x", "fn f() {}", &[]).err().unwrap();
         assert!(e.0.contains("no fragment entry point"), "{e}");
     }

@@ -9,13 +9,12 @@ use penumbra_engine::meter::{CookMeter, WINDOW};
 
 use crate::{automation, theme};
 
-/// The reference line: a frame at 60 Hz.
-const FRAME_60_MS: f64 = 1000.0 / 60.0;
 const PLOT_SIZE: egui::Vec2 = vec2(360.0, 120.0);
 const PASS: Color32 = Color32::from_gray(120);
 
-/// The status bar entry and its popup.
-pub fn status(ui: &mut Ui, engine: &Engine, auto: &mut automation::Registry) {
+/// The status bar entry and its popup; `fps` is the show rate, whose frame time the plot draws
+/// as its reference line.
+pub fn status(ui: &mut Ui, engine: &Engine, fps: f64, auto: &mut automation::Registry) {
     // Monospace and padded, so a cook time growing a digit does not shift everything to its
     // right.
     let text = match engine.cook_smoothed() {
@@ -35,22 +34,23 @@ pub fn status(ui: &mut Ui, engine: &Engine, auto: &mut automation::Registry) {
         .align(RectAlign::TOP_START)
         .gap(4.0)
         .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| details(ui, engine, auto));
+        .show(|ui| details(ui, engine, fps, auto));
 }
 
-fn details(ui: &mut Ui, engine: &Engine, auto: &mut automation::Registry) {
+fn details(ui: &mut Ui, engine: &Engine, fps: f64, auto: &mut automation::Registry) {
     let now = Instant::now();
     let meter = engine.cook_meter();
     let load = engine.load().latest();
     let s = meter.summary(now);
     ui.set_width(PLOT_SIZE.x);
-    let r = plot(ui, &meter, s.high_ms, now);
+    let fps = if fps.is_finite() && fps > 0.0 { fps } else { 60.0 };
+    let r = plot(ui, &meter, s.high_ms, 1000.0 / fps, now);
     auto.add("cook.plot", r.rect, "cook time plot");
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
         ui.label(RichText::new("\u{2014} each pass").color(PASS).small());
         ui.label(RichText::new("\u{2014} smoothed (1 s)").color(theme::ACCENT).small());
-        ui.label(RichText::new("- - 60 fps").color(theme::WARNING).small());
+        ui.label(RichText::new(format!("- - {}", fps_label(fps))).color(theme::WARNING).small());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
                 RichText::new(format!("last {:.0} s", WINDOW.as_secs_f64())).color(theme::TEXT_WEAK).small(),
@@ -96,14 +96,15 @@ fn details(ui: &mut Ui, engine: &Engine, auto: &mut automation::Registry) {
     }
 }
 
-/// The passes of the last [`WINDOW`], newest on the right, with the 60 fps line dashed. The
+/// The passes of the last [`WINDOW`], newest on the right, with one frame at the show rate
+/// (`frame_ms`) as a dashed line. The
 /// scale reaches the 1 % high, not the slowest pass: one hitch (a shader compiling) would
 /// otherwise flatten everything else; passes above it are cut off at the top.
-fn plot(ui: &mut Ui, meter: &CookMeter, high_ms: f64, now: Instant) -> egui::Response {
+fn plot(ui: &mut Ui, meter: &CookMeter, high_ms: f64, frame_ms: f64, now: Instant) -> egui::Response {
     let (rect, r) = ui.allocate_exact_size(PLOT_SIZE, Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 2.0, ui.visuals().extreme_bg_color);
-    let highest = meter.samples(now).map(|s| s.smoothed).fold(FRAME_60_MS.max(high_ms), f64::max);
+    let highest = meter.samples(now).map(|s| s.smoothed).fold(frame_ms.max(high_ms), f64::max);
     let top = scale(highest * 1.15);
     let window = WINDOW.as_secs_f64();
     let point = |at: Instant, ms: f64| {
@@ -116,7 +117,7 @@ fn plot(ui: &mut Ui, meter: &CookMeter, high_ms: f64, now: Instant) -> egui::Res
     let smoothed: Vec<_> = meter.samples(now).map(|s| point(s.at, s.smoothed)).collect();
     painter.add(Shape::line(passes, Stroke::new(1.0, PASS)));
     painter.add(Shape::line(smoothed, Stroke::new(1.5, theme::ACCENT)));
-    let y = rect.bottom() - (FRAME_60_MS / top) as f32 * rect.height();
+    let y = rect.bottom() - (frame_ms / top) as f32 * rect.height();
     painter.extend(Shape::dashed_line(
         &[pos2(rect.left(), y), pos2(rect.right(), y)],
         Stroke::new(1.0, theme::WARNING),
@@ -131,6 +132,11 @@ fn plot(ui: &mut Ui, meter: &CookMeter, high_ms: f64, now: Instant) -> egui::Res
         theme::TEXT_WEAK,
     );
     r
+}
+
+/// A rate for the legend: whole rates without decimals, others (29.97) with two.
+fn fps_label(fps: f64) -> String {
+    if (fps - fps.round()).abs() < 0.005 { format!("{fps:.0} fps") } else { format!("{fps:.2} fps") }
 }
 
 /// The plot's top: the next round number of milliseconds at or above `ms`.
@@ -154,5 +160,12 @@ mod tests {
         assert_eq!(super::scale(20.5), 25.0);
         assert_eq!(super::scale(26.0), 50.0);
         assert_eq!(super::scale(130.0), 200.0);
+    }
+
+    #[test]
+    fn the_legend_names_the_rate() {
+        assert_eq!(super::fps_label(50.0), "50 fps");
+        assert_eq!(super::fps_label(60.0), "60 fps");
+        assert_eq!(super::fps_label(30000.0 / 1001.0), "29.97 fps");
     }
 }

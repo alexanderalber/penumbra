@@ -6,7 +6,8 @@ Two nodes make a show react to sound: `chan.audioin` reads an input device, and
 ## Setting up
 
 1. Add a `chan.audioin` (Tab > chan > audioin). With `device` empty it reads the system's
-   default input. The `...` menu beside `device` lists the inputs of this machine; part of a
+   default input; the empty `device` box names that device in grey (hover the box for the device
+   a typed name picked). `audio.status` names it too. The `...` menu beside `device` lists the inputs of this machine; part of a
    name typed in works too, e.g. `Focusrite`. The [Helpers window](helpers.md#audio) shows a
    level meter per channel. The device is opened in shared mode, so other programs can use it too.
 2. Connect it to a `chan.audioanalysis`.

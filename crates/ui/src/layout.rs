@@ -16,7 +16,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use egui::{Pos2, Rect, Vec2, pos2, vec2};
 use penumbra_core::{NodeId, NodePath};
-use penumbra_graph::Network;
+use penumbra_graph::{Network, ThumbnailMode, ThumbnailPolicy};
 use serde::{Deserialize, Serialize};
 
 pub const FILE_NAME: &str = "layout.ron";
@@ -31,6 +31,29 @@ pub const NODE_SIZE: Vec2 = vec2(150.0, 118.0);
 /// thumbnail closely.
 pub const ZOOM: (f32, f32) = (0.15, 6.0);
 pub(crate) const GAP: Vec2 = vec2(50.0, 24.0);
+/// The right column's narrowest width, in points.
+pub const COLUMN_MIN: f32 = 260.0;
+/// The right column's share of the window to start with.
+const COLUMN_DEFAULT: f32 = 0.3;
+/// The shares of the window the right column may take.
+const COLUMN_SHARES: (f32, f32) = (0.05, 0.9);
+
+/// The right column's width for its share of the window: never narrower than [`COLUMN_MIN`]
+/// (unless the window itself is), never wider than the window.
+pub fn column_width(share: f32, window: f32) -> f32 {
+    (share * window).max(COLUMN_MIN).min(window).max(0.0)
+}
+
+/// The share of the window a column of `width` takes, for a column dragged to that width.
+pub fn column_share(width: f32, window: f32) -> f32 {
+    if !(width.is_finite() && window.is_finite()) || window <= 0.0 {
+        return COLUMN_DEFAULT;
+    }
+    ((width / window).clamp(COLUMN_SHARES.0, COLUMN_SHARES.1) * 1000.0).round() / 1000.0
+}
+
+/// The slowest thumbnail rate taken from a file, as `cook.thumbnails` takes it.
+const MAX_THUMBNAIL_EVERY: u32 = 60;
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +67,9 @@ struct FileRepr {
     sections: Option<Sections>,
     #[serde(default)]
     options: Option<EditorOptions>,
+    /// The right column's width as a share of the window's.
+    #[serde(default)]
+    column: Option<f32>,
 }
 
 /// Which sections of the right column are open.
@@ -61,8 +87,10 @@ impl Default for Sections {
     }
 }
 
-/// What the editor's own menu (a right-click on empty space) switches; thumbnails are a
-/// command of the engine's (`cook.thumbnails`) and not kept here.
+/// What the editor's own menu (a right-click on empty space) switches, kept per project. The
+/// thumbnail mode and rate are the engine's (`cook.thumbnails`); the menu's choice is kept here
+/// and handed to the engine when the project opens. A change over the control channel lasts for
+/// the run only.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct EditorOptions {
@@ -70,13 +98,25 @@ pub struct EditorOptions {
     pub chan_bars: bool,
     /// The viewer's picture behind the network, filling the editor.
     pub viewer_background: bool,
-    /// Every binding as a line; off, only those of the selected or hovered nodes.
+    /// Every binding as a line; off, a stub on the bound node, and a line only for the selected
+    /// or hovered nodes.
     pub binding_lines: bool,
+    /// Which nodes show a live picture.
+    pub thumbnails: ThumbnailMode,
+    /// Cook passes between two thumbnail cooks of a node.
+    pub thumbnail_every: u32,
 }
 
 impl Default for EditorOptions {
     fn default() -> Self {
-        Self { chan_bars: true, viewer_background: false, binding_lines: false }
+        let policy = ThumbnailPolicy::default();
+        Self {
+            chan_bars: true,
+            viewer_background: false,
+            binding_lines: true,
+            thumbnails: policy.mode,
+            thumbnail_every: policy.min_interval,
+        }
     }
 }
 
@@ -126,6 +166,8 @@ pub struct Layout {
     pub view: View,
     pub sections: Sections,
     pub options: EditorOptions,
+    /// The right column's share of the window's width ([`column_width`]).
+    pub column: f32,
     /// The part of the graph on screen, from the editor; new nodes without a placed input go
     /// there.
     pub visible: Option<Rect>,
@@ -154,6 +196,7 @@ impl Layout {
             view: View::default(),
             sections: Sections::default(),
             options: EditorOptions::default(),
+            column: COLUMN_DEFAULT,
             visible: None,
             gone: HashMap::new(),
             moving: None,
@@ -181,8 +224,12 @@ impl Layout {
                 if let Some(sections) = repr.sections {
                     layout.sections = sections;
                 }
-                if let Some(options) = repr.options {
+                if let Some(mut options) = repr.options {
+                    options.thumbnail_every = options.thumbnail_every.clamp(1, MAX_THUMBNAIL_EVERY);
                     layout.options = options;
+                }
+                if let Some(share) = repr.column.filter(|s| s.is_finite()) {
+                    layout.column = share.clamp(COLUMN_SHARES.0, COLUMN_SHARES.1);
                 }
                 layout.last_text = Some(text);
             }
@@ -215,6 +262,13 @@ impl Layout {
     pub fn set_options(&mut self, options: EditorOptions, now: Instant) {
         if self.options != options {
             self.options = options;
+            self.touch(now);
+        }
+    }
+
+    pub fn set_column(&mut self, share: f32, now: Instant) {
+        if share.is_finite() && self.column != share {
+            self.column = share.clamp(COLUMN_SHARES.0, COLUMN_SHARES.1);
             self.touch(now);
         }
     }
@@ -485,6 +539,7 @@ impl Layout {
             nodes: BTreeMap::new(),
             sections: Some(self.sections),
             options: Some(self.options),
+            column: Some(self.column),
         };
         for (id, p) in &self.pos {
             if let Some(path) = net.path_of(*id) {
@@ -758,6 +813,20 @@ mod tests {
     }
 
     #[test]
+    fn the_column_is_a_share_of_the_window() {
+        assert_eq!(column_width(0.3, 2000.0), 600.0);
+        assert_eq!(column_width(0.3, 800.0), COLUMN_MIN, "never narrower than its minimum");
+        assert_eq!(column_width(0.3, 200.0), 200.0, "never wider than the window");
+        assert_eq!(column_share(500.0, 2000.0), 0.25);
+        assert_eq!(column_share(1990.0, 2000.0), COLUMN_SHARES.1);
+        assert_eq!(column_share(f32::NAN, 2000.0), COLUMN_DEFAULT);
+        assert_eq!(column_share(300.0, 0.0), COLUMN_DEFAULT);
+        // A share dragged at one window size gives the same share at another.
+        let share = column_share(column_width(0.35, 1600.0), 1600.0);
+        assert!((column_width(share, 3200.0) - 1120.0).abs() < 1.0);
+    }
+
+    #[test]
     fn positions_survive_a_round_trip_through_the_file() {
         let dir = std::env::temp_dir().join(format!("penumbra-layout-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -768,12 +837,26 @@ mod tests {
         let mut layout = Layout::load(Some(&dir));
         layout.sync(&net, now);
         layout.set(a, pos2(500.0, -20.0), now);
+        let options = EditorOptions {
+            thumbnails: ThumbnailMode::WhenFree,
+            thumbnail_every: 3,
+            ..EditorOptions::default()
+        };
+        layout.set_options(options, now);
+        layout.set_column(0.42, now);
         layout.save_if_due(&net, now, false);
         assert!(!dir.join(FILE_NAME).exists(), "not before the delay");
         layout.save_if_due(&net, now + SAVE_DELAY, false);
         let mut again = Layout::load(Some(&dir));
         again.sync(&net, now);
         assert_eq!(again.get(a), Some(pos2(500.0, -20.0)));
+        assert_eq!(again.options, options);
+        assert_eq!(again.column, 0.42);
+        // Thumbnail rates out of range are not taken from the file as they are.
+        let text = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
+        std::fs::write(dir.join(FILE_NAME), text.replace("thumbnail_every: 3", "thumbnail_every: 0"))
+            .unwrap();
+        assert_eq!(Layout::load(Some(&dir)).options.thumbnail_every, 1);
         std::fs::write(dir.join(FILE_NAME), "garbage").unwrap();
         let broken = Layout::load(Some(&dir));
         assert!(broken.pos.is_empty() && broken.loaded.is_empty());

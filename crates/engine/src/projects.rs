@@ -6,9 +6,10 @@
 //! ([`Engine::open_project`]); the window, the GPU and the outputs stay.
 //!
 //! The recent projects are a small JSON file in the user's data directory
-//! ([`default_recent_file`]), newest first. The demo project is left out: it opens on every
-//! start without arguments and would always sit on top; the menu offers it separately. So are the
-//! examples, which the menu lists too.
+//! ([`default_recent_file`]), newest first. The demo project is left out: the menu offers it
+//! separately. So are the examples, which the menu lists too. The same file names the project
+//! open last, whichever it was (the demo and the examples included), which a start without
+//! arguments opens again ([`read_last`]).
 //!
 //! The examples ship in `examples/` beside the executable (in a checkout: at the repository
 //! root, a few levels above it). penumbra saves into the project it has open, so an example is
@@ -221,39 +222,47 @@ pub fn same_dir(a: &Path, b: &Path) -> bool {
 struct RecentFile {
     #[serde(default)]
     projects: Vec<PathBuf>,
+    /// The project open last, also when it is the demo or an example.
+    #[serde(default)]
+    last: Option<PathBuf>,
 }
 
-/// Every entry of the recent file, also those whose project is gone. A missing, large or
-/// broken file is an empty list.
-fn read_all(file: &Path) -> Vec<PathBuf> {
+/// The recent file with every entry, also those whose project is gone. A missing, large or
+/// broken file is an empty one.
+fn read_file(file: &Path) -> RecentFile {
     let too_large = std::fs::metadata(file).map(|m| m.len() > RECENT_MAX_BYTES).unwrap_or(true);
     if too_large {
-        return Vec::new();
+        return RecentFile::default();
     }
-    let Ok(text) = std::fs::read_to_string(file) else { return Vec::new() };
-    let mut list = serde_json::from_str::<RecentFile>(&text).map(|r| r.projects).unwrap_or_default();
-    list.truncate(RECENT_MAX);
-    list
+    let Ok(text) = std::fs::read_to_string(file) else { return RecentFile::default() };
+    let mut recent = serde_json::from_str::<RecentFile>(&text).unwrap_or_default();
+    recent.projects.truncate(RECENT_MAX);
+    recent
 }
 
 /// The recent projects in `file`, newest first, only those that still have a project file.
 pub fn read_recent(file: &Path) -> Vec<PathBuf> {
-    read_all(file).into_iter().filter(|d| d.join(FILE_NAME).is_file()).collect()
+    read_file(file).projects.into_iter().filter(|d| d.join(FILE_NAME).is_file()).collect()
 }
 
-/// Puts `dir` on top of the recent projects in `file` (the demo project and the examples are left
-/// out).
+/// The project open last according to `file`, if it still has a project file.
+pub fn read_last(file: &Path) -> Option<PathBuf> {
+    read_file(file).last.filter(|d| d.join(FILE_NAME).is_file())
+}
+
+/// Notes `dir` as the project open last and puts it on top of the recent projects in `file` (the
+/// demo project and the examples are left out of that list).
 pub fn remember(file: &Path, dir: &Path) -> Result<(), Error> {
     let dir = absolute(dir);
-    if listed_elsewhere(&dir) {
-        return Ok(());
+    let mut recent = read_file(file);
+    recent.last = Some(dir.clone());
+    if !listed_elsewhere(&dir) {
+        recent.projects.retain(|d| !same_dir(d, &dir) && d.join(FILE_NAME).is_file());
+        recent.projects.insert(0, dir);
+        recent.projects.truncate(RECENT_MAX);
     }
-    let mut list = read_all(file);
-    list.retain(|d| !same_dir(d, &dir) && d.join(FILE_NAME).is_file());
-    list.insert(0, dir);
-    list.truncate(RECENT_MAX);
-    let text = serde_json::to_string_pretty(&RecentFile { projects: list })
-        .map_err(|e| Error::new(format!("recent projects: {e}")))?;
+    let text =
+        serde_json::to_string_pretty(&recent).map_err(|e| Error::new(format!("recent projects: {e}")))?;
     let fail = |e: std::io::Error| Error::new(format!("cannot write {}: {e}", file.display()));
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent).map_err(fail)?;
@@ -426,6 +435,31 @@ mod tests {
             remember(&file, &d).unwrap();
         }
         assert_eq!(read_recent(&file).len(), RECENT_MAX);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_last_project_is_kept_also_when_the_list_leaves_it_out() {
+        let root = temp("last");
+        let file = root.join("recent.json");
+        assert_eq!(read_last(&file), None);
+        let p = root.join("p");
+        std::fs::create_dir_all(&p).unwrap();
+        std::fs::write(p.join(FILE_NAME), "(version: 1)").unwrap();
+        remember(&file, &p).unwrap();
+        assert!(read_last(&file).is_some_and(|d| same_dir(&d, &p)));
+        // The demo is the last project but stays off the list.
+        let demo = demo_dir().unwrap();
+        remember(&file, &demo).unwrap();
+        let list = read_recent(&file);
+        assert_eq!(list.len(), 1);
+        assert!(same_dir(&list[0], &p));
+        let last = read_file(&file).last.unwrap();
+        assert!(same_dir(&last, &demo));
+        // A last project without a project file any more is none.
+        remember(&file, &p).unwrap();
+        std::fs::remove_file(p.join(FILE_NAME)).unwrap();
+        assert_eq!(read_last(&file), None);
         std::fs::remove_dir_all(&root).unwrap();
     }
 

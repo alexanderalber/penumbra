@@ -261,6 +261,8 @@ pub struct CookState {
     pictures: GeoPictures,
     /// When a real output's vsync last arrived; the ticker's are ignored while it is recent.
     real_vsync: Option<Instant>,
+    /// The ticker, parked while real vsyncs arrive ([`CookState::pace_ticker`]).
+    ticker: Arc<Ticker>,
     /// The resolution overlay is on (`res.overlay`).
     overlay: bool,
     /// The latest analysis with the network and pass it was made for.
@@ -437,6 +439,15 @@ impl CookState {
         self.real_vsync.is_some_and(|v| now.saturating_duration_since(v) < fallback)
     }
 
+    /// Parks the ticker while a real output's vsyncs pace (its ticks would only be dropped) and
+    /// runs it at the show rate otherwise. The cook loop calls this on every message and on
+    /// the pacer's own deadline, which comes a few periods after the last real vsync, so the
+    /// ticker resumes when an output stops presenting.
+    fn pace_ticker(&self, now: Instant) {
+        let period = (!self.real_vsync_recent(now)).then(|| self.clock.now().rate.period());
+        self.ticker.set(period);
+    }
+
     fn publish(
         &mut self,
         net: &Network,
@@ -606,6 +617,7 @@ impl Engine {
             free_views: Vec::new(),
             pictures: GeoPictures::default(),
             real_vsync: None,
+            ticker: self.ticker.clone(),
             overlay: false,
             resolution: None,
             state: StateKeeper::new(self.state.clone(), session.dir()),
@@ -995,6 +1007,12 @@ impl Engine {
 
     /// The pacing output presented a frame at `at` (called from its thread): the cook thread
     /// cooks the next frame now instead of waiting for its timer.
+    /// Whether the ticker ticks (it is parked while real vsyncs arrive).
+    #[cfg(test)]
+    pub(crate) fn ticking(&self) -> bool {
+        self.ticker.ticking()
+    }
+
     pub fn vsync(&self, at: Instant) {
         lock(&self.cook).send(CookMsg::Vsync(at)).ok();
     }
@@ -1047,6 +1065,7 @@ impl Engine {
 fn cook_loop(session: &Session, mut state: CookState, rx: &Receiver<CookMsg>) {
     loop {
         let now = Instant::now();
+        state.pace_ticker(now);
         let deadline = state.pacer.next_deadline();
         if now >= deadline {
             let due = state.pacer.due(now);
