@@ -215,6 +215,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.enter` | Show the inside of a component in the editor, the top level without a path; {path?} |
 | `ui.frame` | Fit all nodes into the editor |
 | `ui.key` | Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?} |
+| `ui.measure` | How tidy the level shown is, in graph units: the nodes' width and height, total and longest wire length, crossings, wire length running on top of a wire from another output (overlap, and where: overlaps) or through nodes |
 | `ui.options` | The editor's options (right-click on empty space); {chan_bars?, viewer_background?, binding_lines?} |
 | `ui.place` | Move nodes in the editor; {nodes: {path: [x, y]}} |
 | `ui.screenshot` | PNG of the window; {file?} (default %TEMP%/penumbra/ui.png) |

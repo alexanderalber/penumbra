@@ -17,6 +17,7 @@
 //! - `ui.camera {mode?, home?, camera?, orbit?, pan?, dolly?, travel?, look?, roll?, take?}`: the
 //!   viewer's free view and steering ([`crate::navigate`])
 //! - `ui.place {nodes: {path: [x, y]}}`, `ui.arrange {nodes?: [path]}`, `ui.frame`
+//! - `ui.measure`: how tidy the level shown looks (size, wire length, crossings, overlaps)
 //! - `ui.screenshot {file?}`: PNG of the window
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -101,6 +102,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "Arrange the nodes so wires cross little and run straight: {nodes?: [path]}, else every level (one undo step per level)",
     ),
     ("ui.frame", "Fit all nodes into the editor"),
+    (
+        "ui.measure",
+        "How tidy the level shown is, in graph units: the nodes' width and height, total and longest wire length, crossings, wire length running on top of a wire from another output (overlap, and where: overlaps) or through nodes",
+    ),
     ("ui.screenshot", "PNG of the window; {file?} (default %TEMP%/penumbra/ui.png)"),
 ];
 

@@ -27,6 +27,7 @@ use crate::add_dialog::{AddDialog, Outcome};
 use crate::automation;
 use crate::layout::{Layout, NODE_SIZE, View, ZOOM};
 use crate::textures::Textures;
+use crate::wires::{self, Ends, Route, flatten, wire_points};
 use crate::{Action, theme};
 
 const HEADER: f32 = 20.0;
@@ -106,6 +107,32 @@ pub struct Editor {
     hovered_wire: Option<WireKey>,
     /// The wire the open context menu is about; `None`: the editor's options.
     menu_wire: Option<WireKey>,
+    /// The wires of the level shown, routed in graph units, kept while nothing moves.
+    routes: RouteCache,
+}
+
+/// Routes for one arrangement of wires and nodes, recomputed when either changes. While nodes
+/// are dragged, each wire is routed on its own (quick); once they rest, all together, keeping
+/// wires off each other.
+#[derive(Default)]
+struct RouteCache {
+    key: Option<(Vec<Ends>, Vec<Rect>, bool)>,
+    routes: Vec<Route>,
+}
+
+impl RouteCache {
+    fn get(&mut self, wires: &[Ends], nodes: &[Rect], quick: bool) -> &[Route] {
+        let fresh = self
+            .key
+            .as_ref()
+            .is_some_and(|(w, n, q)| *q == quick && w.as_slice() == wires && n.as_slice() == nodes);
+        if !fresh {
+            self.routes =
+                if quick { wires::route_each(wires, nodes) } else { wires::route_all(wires, nodes) };
+            self.key = Some((wires.to_vec(), nodes.to_vec(), quick));
+        }
+        &self.routes
+    }
 }
 
 /// A line on the canvas that a right-click can act on.
@@ -124,6 +151,8 @@ const WIRE_PICK: f32 = 5.0;
 /// the node and slot a wire really connects to.
 struct PortGeo {
     pos: Pos2,
+    /// The same place in graph units.
+    at: Pos2,
     kind: DataKind,
     target: (NodeId, u32),
     name: String,
@@ -137,6 +166,8 @@ struct PortGeo {
 struct Geo {
     id: NodeId,
     rect: Rect,
+    /// The same rect in graph units.
+    graph: Rect,
     inputs: Vec<PortGeo>,
     outputs: Vec<PortGeo>,
     comp: bool,
@@ -163,6 +194,7 @@ impl Default for Editor {
             replacing: None,
             hovered_wire: None,
             menu_wire: None,
+            routes: RouteCache::default(),
         }
     }
 }
@@ -216,6 +248,37 @@ pub fn fresh_name(net: &Network, level: Option<NodeId>, kind: &str) -> String {
     (1..).map(|i| format!("{base}{i}")).find(|n| !taken.contains(n.as_str())).unwrap_or(base)
 }
 
+/// How tidy `level` looks as laid out in `layout`, with the wires routed as the editor draws
+/// them (see [`wires::Measure`]).
+pub(crate) fn measure(
+    net: &Network,
+    types: &NodeTypes,
+    level: Option<NodeId>,
+    layout: &Layout,
+) -> wires::Measure {
+    let placed = Placed::new(net, types, level, layout, Rect::from_min_size(Pos2::ZERO, Vec2::ZERO));
+    let mut ends = Vec::new();
+    for to in &placed.geos {
+        for port_in in &to.inputs {
+            let (reader, slot) = port_in.target;
+            let Some(source) = net.node(reader).and_then(|n| n.inputs.get(slot as usize).copied().flatten())
+            else {
+                continue;
+            };
+            let Some((from, out)) = placed
+                .out_at
+                .get(&(source.node, source.output))
+                .and_then(|(gi, oi)| Some((placed.geos.get(*gi)?, placed.geos.get(*gi)?.outputs.get(*oi)?)))
+            else {
+                continue;
+            };
+            ends.push(Ends { a: out.at, b: port_in.at, from: from.graph, to: to.graph, source: out.target });
+        }
+    }
+    let rects: Vec<Rect> = placed.geos.iter().map(|g| g.graph).collect();
+    wires::measure(&rects, &ends)
+}
+
 /// The path of `level` (`/` for the top).
 pub fn level_path(net: &Network, level: Option<NodeId>) -> NodePath {
     level.and_then(|l| net.path_of(l)).unwrap_or_else(NodePath::root)
@@ -231,6 +294,7 @@ fn ports_of(
     let Some(d) = types.desc(&node.kind) else { return (Vec::new(), Vec::new()) };
     let port = |pos, kind, target, name: &str, doc: &str, previous| PortGeo {
         pos,
+        at: pos,
         kind,
         target,
         name: name.to_string(),
@@ -292,6 +356,7 @@ struct Placed<'a> {
     /// The path of `level`, which stubs name nodes outside from.
     here: NodePath,
     view: View,
+    canvas: Rect,
     /// Every node on this level, in network order.
     geos: Vec<Geo>,
     geo_of: HashMap<NodeId, usize>,
@@ -325,17 +390,21 @@ impl<'a> Placed<'a> {
             let (mut ins, mut outs) = ports_of(net, types, node);
             let size = vec2(NODE_SIZE.x, HEADER + body_height(desc, ins.len().max(outs.len())));
             let rect = Rect::from_min_size(to_screen(canvas, view, p), size * view.zoom);
+            let graph = Rect::from_min_size(p, size);
             let body_top = rect.min.y + HEADER * view.zoom;
             let body_h = rect.max.y - body_top;
             let (n_in, n_out) = (ins.len(), outs.len());
+            let body = size.y - HEADER;
             for (i, port) in ins.iter_mut().enumerate() {
                 port.pos = pos2(rect.min.x, port_y(body_top, body_h, i, n_in));
+                port.at = pos2(graph.min.x, port_y(graph.min.y + HEADER, body, i, n_in));
             }
             for (i, port) in outs.iter_mut().enumerate() {
                 port.pos = pos2(rect.max.x, port_y(body_top, body_h, i, n_out));
+                port.at = pos2(graph.max.x, port_y(graph.min.y + HEADER, body, i, n_out));
             }
             let comp = desc.is_some_and(|d| d.container);
-            geos.push(Geo { id: node.id, rect, inputs: ins, outputs: outs, comp });
+            geos.push(Geo { id: node.id, rect, graph, inputs: ins, outputs: outs, comp });
         }
         let geo_of = geos.iter().enumerate().map(|(i, g)| (g.id, i)).collect();
         let out_at = geos
@@ -343,7 +412,7 @@ impl<'a> Placed<'a> {
             .enumerate()
             .flat_map(|(gi, g)| g.outputs.iter().enumerate().map(move |(oi, o)| (o.target, (gi, oi))))
             .collect();
-        Self { net, level, here: level_path(net, level), view, geos, geo_of, out_at }
+        Self { net, level, here: level_path(net, level), view, canvas, geos, geo_of, out_at }
     }
 
     fn geo(&self, id: NodeId) -> Option<&Geo> {
@@ -663,14 +732,16 @@ impl Editor {
     /// path. The wire being picked up from an input is left out.
     /// Returns each wire's line on screen, for picking.
     fn draw_wires(
-        &self,
+        &mut self,
         painter: &egui::Painter,
         input: &Inputs<'_>,
         placed: &Placed<'_>,
     ) -> Vec<(WireKey, Vec<Pos2>)> {
         let (net, geos, zoom) = (placed.net, &placed.geos, placed.view.zoom);
-        let node_rects: Vec<Rect> = geos.iter().map(|g| g.rect).collect();
         let mut lines: Vec<(WireKey, Vec<Pos2>)> = Vec::new();
+        // (wire, colour, reads the previous frame, drawn hot), routed together below.
+        let mut shown: Vec<(WireKey, Color32, bool, bool)> = Vec::new();
+        let mut ends: Vec<Ends> = Vec::new();
         for to in geos {
             for port_in in &to.inputs {
                 let (reader, slot) = port_in.target;
@@ -710,16 +781,30 @@ impl Editor {
                     continue;
                 };
                 let hot = input.highlight.contains(&reader) && input.highlight.contains(&source.node);
-                let route = wire_route(out.pos, b, from.rect, to.rect, &node_rects, zoom);
-                let points = flatten(&route);
-                if port_in.previous {
-                    // Last frame's result, usually wired back from the end of a loop: dashed.
-                    wire_previous(painter, &points, theme::kind_color(out.kind), zoom, hot || lit);
-                } else {
-                    wire(painter, &points, theme::kind_color(out.kind), zoom, hot || lit);
-                }
-                lines.push((key, points));
+                shown.push((key, theme::kind_color(out.kind), port_in.previous, hot || lit));
+                ends.push(Ends {
+                    a: out.at,
+                    b: port_in.at,
+                    from: from.graph,
+                    to: to.graph,
+                    source: out.target,
+                });
             }
+        }
+        let rects: Vec<Rect> = geos.iter().map(|g| g.graph).collect();
+        let quick = matches!(self.drag, Drag::Nodes);
+        let routes = self.routes.get(&ends, &rects, quick);
+        for (&(key, color, previous, hot), route) in shown.iter().zip(routes) {
+            let on_screen: Route =
+                route.iter().map(|s| s.map(|p| to_screen(placed.canvas, placed.view, p))).collect();
+            let points = flatten(&on_screen);
+            if previous {
+                // Last frame's result, usually wired back from the end of a loop: dashed.
+                wire_previous(painter, &points, color, zoom, hot);
+            } else {
+                wire(painter, &points, color, zoom, hot);
+            }
+            lines.push((key, points));
         }
         lines
     }
@@ -2061,197 +2146,6 @@ pub fn format_value(v: f64) -> String {
         return format!("{v}");
     }
     if v.abs() >= 1000.0 { format!("{v:.1}") } else { format!("{v:.3}") }
-}
-
-/// The path of a wire: cubic segments, each given by its four control points.
-type Route = Vec<[Pos2; 4]>;
-
-/// Control points of a wire from output `a` to input `b`, blind to the nodes around it. A wire
-/// running backwards (the end of a feedback loop into its start) swings below.
-fn wire_points(a: Pos2, b: Pos2, zoom: f32) -> [Pos2; 4] {
-    if b.x < a.x - 20.0 * zoom {
-        let out = 80.0 * zoom;
-        let down = 140.0 * zoom + (a.x - b.x) * 0.08;
-        return [a, a + vec2(out, down), b + vec2(-out, down), b];
-    }
-    let dx = ((b.x - a.x).abs() * 0.5).max(30.0 * zoom);
-    [a, a + vec2(dx, 0.0), b - vec2(dx, 0.0), b]
-}
-
-/// The route of a wire from output `a` of node `from` to input `b` of node `to`. A forward wire
-/// keeps the plain curve unless that clips a node; then it bends into a free horizontal corridor
-/// between the nodes in its way, runs along it and bends out to its input. A backward wire can
-/// swing below both nodes, above them, or snake through the gap between them when one sits
-/// above the other, each as one curve or, when that clips a node, as a wider loop around both;
-/// the one that runs through the least node area wins, then the shorter one.
-pub(crate) fn wire_route(a: Pos2, b: Pos2, from: Rect, to: Rect, nodes: &[Rect], zoom: f32) -> Route {
-    if b.x >= a.x - 20.0 * zoom {
-        return forward_route(a, b, nodes, zoom);
-    }
-    let out = 80.0 * zoom;
-    let margin = 30.0 * zoom;
-    let below = from.max.y.max(to.max.y) + margin;
-    let above = from.min.y.min(to.min.y) - margin;
-    let right = from.max.x.max(to.max.x) + margin;
-    let left = from.min.x.min(to.min.x) - margin;
-    // Each single curve also comes swinging out wider, to clear a corner it would graze.
-    let wides = [1.0, 1.25, 1.5];
-    // One curve, both inner control points at one height so that its middle lands at `y`.
-    let swing = |y: f32, wide: f32| {
-        let c = (y - (a.y + b.y) / 8.0) / 0.75;
-        vec![[a, pos2(a.x + out * wide, c), pos2(b.x - out * wide, c), b]]
-    };
-    let mut candidates = vec![
-        (around(a, b, right, below, left, margin), 1.3),
-        (around(a, b, right, above, left, margin), 1.3),
-    ];
-    for wide in wides {
-        candidates.push((swing(below, wide), 1.0));
-        candidates.push((swing(above, wide), 1.0));
-    }
-    let (upper, lower) = if to.center().y < from.center().y { (to, from) } else { (from, to) };
-    if lower.min.y - upper.max.y > 10.0 * zoom {
-        // One S crossing midway between the ports, or a loop through the middle of the gap.
-        for wide in wides {
-            let k = (out * 1.5).max((a.x - b.x) * 0.75) * wide;
-            candidates.push((vec![[a, a + vec2(k, 0.0), b - vec2(k, 0.0), b]], 1.0));
-        }
-        candidates.push((around(a, b, right, (upper.max.y + lower.min.y) / 2.0, left, margin), 1.3));
-    }
-    candidates
-        .into_iter()
-        // The loops are wider and less calm than the single curves: chosen when those clip.
-        .map(|(r, weight)| (route_cost(&r, nodes, zoom) * weight, r))
-        .min_by(|x, y| x.0.total_cmp(&y.0))
-        .map_or_else(|| vec![wire_points(a, b, zoom)], |(_, r)| r)
-}
-
-/// A forward wire: the plain curve, or when that clips a node the cheapest corridor route.
-/// Corridors are tried just above and below each node between the two ends, nearest first.
-fn forward_route(a: Pos2, b: Pos2, nodes: &[Rect], zoom: f32) -> Route {
-    let plain = vec![wire_points(a, b, zoom)];
-    // The bends need room: a wire to the neighbouring column stays a plain curve.
-    let bend = 60.0 * zoom;
-    if b.x - a.x < bend * 3.0 {
-        return plain;
-    }
-    let plain_cost = route_cost(&plain, nodes, zoom);
-    if plain_cost <= route_cost(&plain, &[], zoom) * 1.001 {
-        return plain;
-    }
-    let span =
-        Rect::from_min_max(pos2(a.x + bend * 0.5, f32::NEG_INFINITY), pos2(b.x - bend * 0.5, f32::INFINITY));
-    let middle = (a.y + b.y) / 2.0;
-    let margin = 12.0 * zoom;
-    let mut heights: Vec<f32> = nodes
-        .iter()
-        .filter(|r| r.min.x < span.max.x && r.max.x > span.min.x)
-        .flat_map(|r| [r.min.y - margin, r.max.y + margin])
-        .collect();
-    heights.sort_by(|x, y| (x - middle).abs().total_cmp(&(y - middle).abs()));
-    heights.dedup_by(|x, y| (*x - *y).abs() < 1.0);
-    heights.truncate(16);
-    // An S from each end into the corridor and a straight run along it.
-    let along = |y: f32| -> Route {
-        let (p, q) = (pos2(a.x + bend, y), pos2(b.x - bend, y));
-        let h = bend * 0.5;
-        vec![
-            [a, a + vec2(h, 0.0), p - vec2(h, 0.0), p],
-            [p, p.lerp(q, 1.0 / 3.0), p.lerp(q, 2.0 / 3.0), q],
-            [q, q + vec2(h, 0.0), b - vec2(h, 0.0), b],
-        ]
-    };
-    heights
-        .into_iter()
-        .map(along)
-        // A corridor route is less calm than the plain curve: it has to be clearly better.
-        .map(|r| (route_cost(&r, nodes, zoom) * 1.15, r))
-        .chain(std::iter::once((plain_cost, plain.clone())))
-        .min_by(|x, y| x.0.total_cmp(&y.0))
-        .map_or(plain, |(_, r)| r)
-}
-
-/// A loop from `a` out to the right as far as `right`, across at height `y`, back to `left` and
-/// into `b` from the left: straight runs with rounded corners, so it keeps clear of whatever
-/// lies inside that frame.
-fn around(a: Pos2, b: Pos2, right: f32, y: f32, left: f32, radius: f32) -> Route {
-    rounded(&[a, pos2(right, a.y), pos2(right, y), pos2(left, y), pos2(left, b.y), b], radius)
-}
-
-/// A path along `points`, each inner corner rounded to a quarter circle of up to `radius`.
-/// The corners next to the ends may use the whole first or last run, the others half of theirs.
-fn rounded(points: &[Pos2], radius: f32) -> Route {
-    // Bezier handle length of a quarter circle, as a fraction of its radius.
-    const ARC: f32 = 0.5523;
-    let line = |p: Pos2, q: Pos2| [p, p.lerp(q, 1.0 / 3.0), p.lerp(q, 2.0 / 3.0), q];
-    let last = points.len().saturating_sub(1);
-    let mut route = Vec::new();
-    let mut at = match points.first() {
-        Some(p) => *p,
-        None => return route,
-    };
-    for (i, w) in points.windows(3).enumerate() {
-        let &[p, c, q] = w else { continue };
-        let (din, dout) = ((c - p).normalized(), (q - c).normalized());
-        let share_in = if i == 0 { 1.0 } else { 0.5 };
-        let share_out = if i + 2 == last { 1.0 } else { 0.5 };
-        let r = radius.min((c - p).length() * share_in).min((q - c).length() * share_out);
-        let (s, e) = (c - din * r, c + dout * r);
-        if at.distance(s) > 0.01 {
-            route.push(line(at, s));
-        }
-        route.push([s, s + din * r * ARC, e - dout * r * ARC, e]);
-        at = e;
-    }
-    if let Some(end) = points.last()
-        && at.distance(*end) > 0.01
-    {
-        route.push(line(at, *end));
-    }
-    route
-}
-
-/// Length of a route, with the stretches inside a node counted two hundred times: any clean route
-/// beats one that clips a node.
-pub(crate) fn route_cost(route: &[[Pos2; 4]], nodes: &[Rect], zoom: f32) -> f32 {
-    let points: Vec<Pos2> =
-        route.iter().flat_map(|s| (0..=32).map(move |i| cubic_at(s, i as f32 / 32.0))).collect();
-    let bounds = Rect::from_points(&points);
-    // Grown, so a wire grazing a corner counts as clipping it; except right at the ports.
-    let near: Vec<Rect> =
-        nodes.iter().map(|r| r.expand(8.0 * zoom)).filter(|r| r.intersects(bounds)).collect();
-    let ends: Vec<Pos2> = route.first().map(|s| s[0]).into_iter().chain(route.last().map(|s| s[3])).collect();
-    let clips =
-        |p: Pos2| ends.iter().all(|e| e.distance(p) > 12.0 * zoom) && near.iter().any(|r| r.contains(p));
-    points
-        .windows(2)
-        .filter_map(|w| match w {
-            [p, q] => {
-                let len = p.distance(*q);
-                let mid = p.lerp(*q, 0.5);
-                Some(if clips(mid) { len * 200.0 } else { len })
-            }
-            _ => None,
-        })
-        .sum()
-}
-
-fn cubic_at(s: &[Pos2; 4], t: f32) -> Pos2 {
-    let u = 1.0 - t;
-    let [p0, p1, p2, p3] = s.map(|p| p.to_vec2());
-    (p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t)).to_pos2()
-}
-
-fn flatten(route: &[[Pos2; 4]]) -> Vec<Pos2> {
-    let mut points = Vec::new();
-    for s in route {
-        let curve =
-            egui::epaint::CubicBezierShape::from_points_stroke(*s, false, Color32::TRANSPARENT, Stroke::NONE);
-        // Segments share their end points.
-        let skip = usize::from(!points.is_empty());
-        points.extend(curve.flatten(Some(0.5)).into_iter().skip(skip));
-    }
-    points
 }
 
 fn wire(painter: &egui::Painter, points: &[Pos2], color: Color32, zoom: f32, hot: bool) {
