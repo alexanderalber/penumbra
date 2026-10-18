@@ -5,7 +5,9 @@ velocity, growing and shrinking over its life, the whole swarm pulsing in length
 
 The simulation runs on the GPU, one particle per texel of a 256 x 256 texture:
 
-- `/ini` (`ini.wgsl`) holds where particles start: a position in rgb, a random life in alpha.
+- `/ini` (`ini.wgsl`) holds where particles start: a random point of a round cloud in rgb (its
+  `spread` says how wide), a random life in alpha. Each particle gets its own point, so the
+  swarm looks from the first frame as it does later.
 - `/pos` (`pos.wgsl`) moves each particle by its velocity and ages it; a spent one starts again
   at its place in `/ini`. `/pos_last` is a `tex.feedback` that hands the positions to the next
   frame.
@@ -16,11 +18,11 @@ The simulation runs on the GPU, one particle per texel of a 256 x 256 texture:
 towards `/vel`, stretched by `/scale` (the size times `/pulse`) and coloured by `/palette`.
 `/render` draws them lit by `/light`, `/out` puts them over a dark radial `/background`.
 
-The swarm needs half a minute or so to spread out from its start.
-
 Try:
 
 - `/palette` `keys`: other colours (the sticks take them by column).
 - `/vel` `noise`: the first value is the push's strength, the second how small the swirls are.
 - `/pulse` `rate` and `amplitude`, or bind `/scale` `pulse` to a sound level instead.
 - `/box` `size` for thicker or longer sticks.
+- `/ini` `spread`: a smaller cloud leaves more of the background free, a larger one reaches the
+  camera and fills the picture.

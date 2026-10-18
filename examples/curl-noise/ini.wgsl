@@ -1,16 +1,25 @@
-// Where particles start, one per texel: smooth noise per channel (two octaves) for the
-// position, a random life for each.
-// rgb: a position in about -1..1, a: life 0..1.
-// @param period float = 1 0.1..8 -- noise features across the texture
+// Where particles start, one per texel: a random point of a round cloud around the centre (a
+// normal distribution per axis, about as wide as the swarm stays later), so the first frames
+// already look like the running flow; and a random life for each. A spent particle starts
+// again at its point here.
+// rgb: the position, a: life 0..1.
+// @param spread float = 1.6 0.1..5 -- the cloud's standard deviation per axis
+fn unit(x: u32) -> f32 {
+    return (f32(x >> 8u) + 0.5) / 16777216.0;
+}
+
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
-    let p = vec3f(v.uv * params.period, 0.0);
-    var rgb = vec3f(0.0);
-    for (var c = 0u; c < 3u; c++) {
-        let n = pn_noise(p, c) + 0.5 * pn_noise(p * 2.0, c + 3u);
-        rgb[c] = n / 1.5;
-    }
-    let h = pn_hash(vec3u(vec2u(v.pos.xy), 7u));
+    let at = vec2u(v.pos.xy);
+    let a = pn_hash(vec3u(at, 11u));
+    let b = pn_hash(vec3u(at, 13u));
+    // Box-Muller: two pairs of uniform numbers give four normal ones; three are used.
+    let r0 = sqrt(-2.0 * log(unit(a.x)));
+    let r1 = sqrt(-2.0 * log(unit(a.z)));
+    let t0 = 6.2831853 * unit(a.y);
+    let t1 = 6.2831853 * unit(b.x);
+    let n = vec3f(r0 * cos(t0), r0 * sin(t0), r1 * cos(t1));
+    let h = pn_hash(vec3u(at, 7u));
     let life = f32(h.x >> 8u) / 16777216.0;
-    return vec4f(rgb, life);
+    return vec4f(n * params.spread, life);
 }
