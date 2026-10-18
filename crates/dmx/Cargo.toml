@@ -1,6 +1,6 @@
 [package]
 name = "penumbra-dmx"
-description = "DMX512 out: the Enttec Open DMX USB on a serial port, Art-Net, sACN (E1.31) and DDP over UDP, one sending thread per output. No GPU, no UI."
+description = "DMX512 out: the Enttec Open DMX USB on a serial port, Art-Net, sACN (E1.31) and DDP over UDP, one sending thread per output; DMX512 in: Art-Net and sACN. No GPU, no UI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

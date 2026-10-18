@@ -1,6 +1,6 @@
-//! Art-Net 4: the ArtDmx packet (OpCode 0x5000), the only one an output needs. Receivers learn
-//! about a sender from its ArtDmx packets; ArtPoll replies are optional for a controller that
-//! is told where to send.
+//! Art-Net 4: the ArtDmx packet (OpCode 0x5000), built for sending and read when receiving.
+//! Receivers learn about a sender from its ArtDmx packets; ArtPoll replies are optional for a
+//! controller that is told where to send, so neither side answers polls.
 
 use crate::SLOTS;
 
@@ -33,9 +33,47 @@ pub fn dmx_packet(universe: u16, sequence: u8, data: &[u8]) -> Vec<u8> {
     p
 }
 
+/// What an ArtDmx packet carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Dmx<'a> {
+    /// The 15-bit port address.
+    pub universe: u16,
+    pub sequence: u8,
+    /// At most 512 slots.
+    pub data: &'a [u8],
+}
+
+/// Reads an ArtDmx packet; `None` for any other packet. A length past the packet's end is cut
+/// to what is there.
+pub fn parse_dmx(p: &[u8]) -> Option<Dmx<'_>> {
+    if p.get(..8)? != b"Art-Net\0" || p.get(8..10)? != [0x00, 0x50] {
+        return None;
+    }
+    let sequence = *p.get(12)?;
+    let universe = u16::from_le_bytes([*p.get(14)?, *p.get(15)?]) & MAX_UNIVERSE;
+    let len = usize::from(u16::from_be_bytes([*p.get(16)?, *p.get(17)?])).min(SLOTS);
+    let rest = p.get(HEADER..)?;
+    let data = rest.get(..len.min(rest.len()))?;
+    Some(Dmx { universe, sequence, data })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packets_read_back() {
+        let p = dmx_packet(0x0123, 7, &[10, 20, 30]);
+        let d = parse_dmx(&p).unwrap();
+        assert_eq!((d.universe, d.sequence, d.data), (0x0123, 7, &[10, 20, 30, 0][..]));
+        // Cut short: what is there.
+        assert_eq!(parse_dmx(&p[..HEADER + 1]).unwrap().data, &[10]);
+        assert!(parse_dmx(&p[..10]).is_none());
+        let mut poll = p.clone();
+        poll[9] = 0x20;
+        assert!(parse_dmx(&poll).is_none());
+        assert!(parse_dmx(b"Art-Net").is_none());
+    }
 
     #[test]
     fn packet_layout() {

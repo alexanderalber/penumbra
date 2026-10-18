@@ -116,6 +116,7 @@ impl Rig {
         camera.feed(&penumbra_camera::Key::new("test", ""), camera_frame(126, 128, 128));
         cooker.provide(camera.clone());
         cooker.provide(penumbra_dmx::Hub::new());
+        cooker.provide(penumbra_dmx::Inputs::new());
         let record = penumbra_record::Hub::new();
         cooker.provide(record.clone());
         cooker.set_base_dir(dir.map(Path::to_path_buf));
@@ -509,6 +510,8 @@ fn every_builtin_cooks_without_warnings() {
     // out.dmx sends here rather than to an Open DMX USB that may be plugged in.
     let dmx_rx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let dmx_host = dmx_rx.local_addr().unwrap().to_string();
+    // chan.dmx_in listens on this machine only, on a port that was free, not on Art-Net's.
+    let dmx_in_port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     // tex.spout_in receives what out.spout sends (it cooks first, `out` sorts before `tex`).
     let spout = format!("penumbra test registry {}", std::process::id());
     for (i, kind) in kinds.iter().enumerate() {
@@ -533,6 +536,11 @@ fn every_builtin_cooks_without_warnings() {
             "light.environment" => params.push(("size", Value::Int(64))),
             "chan.audio_in" => params.push(("device", "test".into())),
             "out.dmx" => params.extend([("protocol", "art_net".into()), ("host", dmx_host.as_str().into())]),
+            "chan.dmx_in" => params.extend([
+                ("interface", "127.0.0.1".into()),
+                ("port", Value::Int(i64::from(dmx_in_port))),
+                ("count", Value::Int(4)),
+            ]),
             "tex.video_in" => params.push(("device", "test".into())),
             "out.spout" => params.push(("name", spout.as_str().into())),
             "tex.spout_in" => params.push(("sender", spout.as_str().into())),
@@ -581,9 +589,15 @@ fn every_builtin_cooks_without_warnings() {
             // As the engine does every frame: a readback's waker (tex.blob_track's) only fires
             // when the device is polled.
             rig.gpu.poll();
+            // A frame of Art-Net for chan.dmx_in, which warns until something arrived.
+            let dmx_in = kind == "chan.dmx_in";
+            if dmx_in {
+                let packet = penumbra_dmx::artnet::dmx_packet(1, 0, &[255; 4]);
+                dmx_rx.send_to(&packet, ("127.0.0.1", dmx_in_port)).unwrap();
+            }
             rig.cook(&path);
             let s = rig.cooker.status(rig.id(&path)).unwrap();
-            if s.has_output {
+            if s.has_output && !(dmx_in && s.warning.is_some()) {
                 // One more pass at a new time, where an undeclared time read would show.
                 rig.clock.advance(1);
                 rig.cook(&path);

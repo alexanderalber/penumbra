@@ -103,3 +103,65 @@ fn ddp_needs_a_host_and_bad_settings_are_node_errors() {
     f.call("node.set", json!({"path": "/dmx", "params": {"protocol": "sacn", "universe": 0, "host": ""}}));
     eventually("an error about the universe", || error(&f).contains("start at 1"));
 }
+
+#[test]
+fn dmx_in_reads_what_out_dmx_sends_and_says_what_is_missing() {
+    let f = Fixture::new("dmx_in");
+    let port = UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    f.call(
+        "node.create",
+        json!({"path": "/in", "kind": "chan.dmx_in", "params": {
+            "interface": "127.0.0.1", "port": port, "universe": 2, "address": 511, "count": 3
+        }}),
+    );
+    f.call("node.watch", json!({"path": "/in"}));
+    let warning = |f: &Fixture| {
+        f.call("node.info", json!({"path": "/in"}))["status"]["warning"].as_str().unwrap_or("").to_string()
+    };
+    eventually("a warning about silence", || {
+        warning(&f).contains("nothing received on universe 2 and 3 yet")
+    });
+    assert_eq!(
+        f.call("chan.read", json!({"path": "/in"}))["channels"][0],
+        json!({"name": "ch1", "value": 0.0})
+    );
+
+    f.call(
+        "node.create",
+        json!({"path": "/k", "kind": "chan.constant", "params": {"rows": 3, "value0": 1, "value1": 0.2, "value2": 0.6}}),
+    );
+    f.call(
+        "node.create",
+        json!({"path": "/dmx", "kind": "out.dmx", "params": {
+            "protocol": "art_net", "host": format!("127.0.0.1:{port}"), "universe": 2, "address": 511
+        }}),
+    );
+    f.call("node.connect", json!({"from": "/k", "to": "/dmx"}));
+    let values = |f: &Fixture| -> Vec<f64> {
+        let read = f.call("chan.read", json!({"path": "/in"}));
+        read["channels"].as_array().unwrap().iter().map(|c| c["value"].as_f64().unwrap()).collect()
+    };
+    eventually("the slots", || values(&f) == vec![1.0, 51.0 / 255.0, 153.0 / 255.0]);
+    eventually("no warning", || warning(&f).is_empty());
+    f.call("node.set", json!({"path": "/in", "params": {"values": "byte"}}));
+    eventually("bytes", || values(&f) == vec![255.0, 51.0, 153.0]);
+    f.call("node.set", json!({"path": "/k", "params": {"value1": 0.0}}));
+    eventually("the change", || values(&f) == vec![255.0, 0.0, 153.0]);
+
+    let status = f.call("dmx.status", json!({}));
+    let input = &status["inputs"][0];
+    assert_eq!(input["readers"], json!(["in"]), "{status}");
+    assert_eq!(input["listen"]["protocol"], "art_net");
+    assert_eq!(input["universes"].as_array().unwrap().len(), 2, "{status}");
+
+    // Bad settings are node errors; the universe range follows the protocol.
+    let error = |f: &Fixture| {
+        f.call("node.info", json!({"path": "/in"}))["status"]["error"].as_str().unwrap_or("").to_string()
+    };
+    f.call("node.set", json!({"path": "/in", "params": {"protocol": "sacn", "universe": 0}}));
+    eventually("an error about the universe", || error(&f).contains("`universe` is 1 to 63999"));
+    f.call("node.set", json!({"path": "/in", "params": {"universe": 1, "interface": "eth0"}}));
+    eventually("an error about the interface", || error(&f).contains("not an IPv4 address"));
+    f.call("node.delete", json!({"path": "/in"}));
+    eventually("the listener to stop", || f.call("dmx.status", json!({}))["inputs"] == json!([]));
+}

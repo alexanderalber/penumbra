@@ -1,7 +1,9 @@
 # DMX
 
 `out.dmx` (Tab > outputs > dmx) sends channels to lights: through an Enttec Open DMX USB on
-this machine, or over the network as Art-Net, sACN or DDP.
+this machine, or over the network as Art-Net, sACN or DDP. `chan.dmx_in` (Tab > chan > dmx_in)
+goes the other way: it receives Art-Net or sACN, from a lighting desk say, and makes the slots
+channels to bind params to. See [Receiving](#receiving).
 
 ## Setting up
 
@@ -49,10 +51,38 @@ margin, so it manages about 35 frames a second; 30 is a good rate. `dmx.status` 
 does: the rate measured, the time between frames (min, mean, max) and how long break and write
 took. On Windows it uses FTDI's virtual COM port driver, which Windows installs by itself.
 
+## Receiving
+
+`chan.dmx_in` listens for Art-Net or sACN (`protocol`) and makes `count` channels, `ch1` to
+`chN`: `ch1` is slot `address` of `universe`, `ch2` the next, and past slot 512 it reads on in
+the next universe. With `values` on `unit` they run 0 to 1, with `byte` 0 to 255. The node cooks
+when something arrives, not every frame.
+
+- **Art-Net:** set the desk to send to this machine's IP address, or as a broadcast. penumbra
+  does not answer Art-Net polls, so a desk that only sends to the nodes it discovered will not
+  list it; give it the address by hand. Universes from 0, as Art-Net counts.
+- **sACN:** the node joins each universe's multicast group, so the desk's default (multicast)
+  works; sending to this machine's address works too. Universes from 1.
+- **Several senders** of one universe merge: the ones with the highest sACN priority count
+  (Art-Net has none), and among them the highest value of each slot wins. A sender counts as
+  gone after 2.5 s of silence (sACN) or 10 s (Art-Net), or when it says goodbye (sACN). With no
+  sender left the last values stay, and the node says so.
+- **Under *more*:** `interface` takes the IP address of one network card to listen on (empty
+  listens on all; sACN multicast then joins on the system's default card), `port` another port
+  than the protocol's own (Art-Net 6454, sACN 5568).
+
+Only one program can listen on a port. When another one (a lighting visualizer, a second
+penumbra) holds it, the node shows the error and tries again every second. Windows may ask once
+whether penumbra may receive from the network; allow it for private networks.
+
+Nodes that listen on the same protocol, interface and port share the socket. Receiving needs no
+DMX hardware: the Open DMX USB only sends.
+
 ## Commands
 
 - `dmx.ports`: the serial ports, the FT232R ones (`open_dmx: true`) first.
 - `dmx.status`: every output: target, writing nodes, device, open, error, frames, rates and
-  timings.
+  timings; and every input: where it listens, reading nodes, open, error, packets taken and
+  dropped, and per universe its senders.
 - `dmx.config {blackout: true}` sends zeros on every output until `{blackout: false}`;
-  `{enabled: false}` stops sending altogether and closes the port.
+  `{enabled: false}` stops sending altogether and closes the port. Neither touches the inputs.

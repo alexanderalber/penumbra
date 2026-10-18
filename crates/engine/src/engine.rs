@@ -58,7 +58,8 @@
 //! nodes read what arrived. **Cameras** the same way: the [`CameraHub`] opens what the
 //! `tex.video_in` nodes want, a capture thread per camera, and keeps each one's newest frame.
 //! **DMX** the other way round: the [`DmxHub`] is a resource the `out.dmx` nodes put their slots
-//! into, with a sending thread per target. **Recordings** likewise: the [`RecordHub`] gives each
+//! into, with a sending thread per target; the [`DmxInputs`] one the `chan.dmx_in` nodes read
+//! from, with a listener thread per protocol and port. **Recordings** likewise: the [`RecordHub`] gives each
 //! `out.video` node a recording with a thread of its own; closing a project drops the nodes,
 //! which finishes their files, and [`Engine::shutdown`] waits for them (bounded).
 //!
@@ -81,6 +82,7 @@ use penumbra_core::{
     Error, FrameTime, LatePolicy, NodeId, PaceSource, Pacer, ParamSpec, Rate, ShowClock, lock,
 };
 use penumbra_dmx::Hub as DmxHub;
+use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_gpu::Gpu;
 use penumbra_graph::{
     CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, PERSIST_STATE, Port, ResetOutcome,
@@ -561,6 +563,7 @@ pub struct Engine {
     osc: Arc<OscShared>,
     audio: AudioHub,
     dmx: DmxHub,
+    dmx_in: DmxInputs,
     camera: CameraHub,
     /// The movie recordings of `out.video` nodes.
     record: RecordHub,
@@ -639,6 +642,7 @@ impl Engine {
             osc: Arc::new(OscShared::new(Hub::new())),
             audio: AudioHub::new(),
             dmx: DmxHub::new(),
+            dmx_in: DmxInputs::new(),
             camera: CameraHub::new(),
             record: RecordHub::new(),
             spacenav: SpaceNav::new(),
@@ -663,6 +667,7 @@ impl Engine {
         cooker.provide(self.osc.hub().clone());
         cooker.provide(self.audio.clone());
         cooker.provide(self.dmx.clone());
+        cooker.provide(self.dmx_in.clone());
         cooker.provide(self.camera.clone());
         cooker.provide(self.record.clone());
         cooker.provide(penumbra_ops::tex::blob_track::BlobTracks::new());
@@ -1007,6 +1012,11 @@ impl Engine {
         &self.dmx
     }
 
+    /// The DMX inputs.
+    pub fn dmx_in(&self) -> &DmxInputs {
+        &self.dmx_in
+    }
+
     /// The cameras.
     pub fn camera(&self) -> &CameraHub {
         &self.camera
@@ -1271,6 +1281,7 @@ impl Engine {
         self.osc.hub().shutdown();
         self.audio.shutdown();
         self.dmx.shutdown();
+        self.dmx_in.shutdown();
         self.camera.shutdown();
         self.spacenav.shutdown();
         self.load.shutdown();

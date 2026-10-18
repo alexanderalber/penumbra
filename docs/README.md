@@ -10,7 +10,8 @@ explained here.
 - [The Helpers window](helpers.md): outputs, resolution, show-machine checks, persistent state,
   OSC, audio.
 - [Audio](audio.md): reacting to sound: levels, onsets, tempo, beat and bar.
-- [DMX](dmx.md): driving lights through the Enttec Open DMX USB, Art-Net, sACN or DDP.
+- [DMX](dmx.md): driving lights through the Enttec Open DMX USB, Art-Net, sACN or DDP, and
+  receiving Art-Net or sACN from a lighting desk.
 - [Recording](recording.md): the show to a movie file with `out.video` (H.264 or ProRes).
 - [Spout](spout.md): pictures to and from other programs on this machine (TouchDesigner, OBS, Resolume) with `out.spout` and `tex.spout_in`.
 - [Camera](camera.md): a live camera or capture card with `tex.video_in`, calmed with `tex.denoise`, its motion with `tex.optical_flow`.

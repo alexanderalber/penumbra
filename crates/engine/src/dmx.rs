@@ -1,5 +1,5 @@
 //! DMX in the engine: the hub is a resource of the cooker, the `out.dmx` nodes put their slots
-//! into it.
+//! into it; the inputs are another, the `chan.dmx_in` nodes read from them.
 //!
 //! Commands: `dmx.ports`, `dmx.status`, `dmx.config`.
 
@@ -26,12 +26,13 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "dmx.status",
-        "DMX outputs: target, writers, device, open, error, frames, rate asked and measured, timings in ms",
+        "DMX outputs (target, writers, device, open, error, frames, rate asked and measured, timings in ms) \
+         and inputs (listen, readers, open, error, packets, universes with their sources)",
         dmx_status,
     );
     add(
         "dmx.config",
-        "DMX settings for this run: {enabled?, blackout?}; blackout sends zeros on every output",
+        "DMX output settings for this run: {enabled?, blackout?}; blackout sends zeros on every output",
         dmx_config,
     );
 }
@@ -43,7 +44,7 @@ fn dmx_ports(_e: &Engine, _p: &Json) -> CmdResult<Json> {
 
 fn dmx_status(e: &Engine, _p: &Json) -> CmdResult<Json> {
     let hub = e.dmx();
-    Ok(json!({ "config": hub.config(), "outputs": hub.status() }))
+    Ok(json!({ "config": hub.config(), "outputs": hub.status(), "inputs": e.dmx_in().status() }))
 }
 
 fn dmx_config(e: &Engine, p: &Json) -> CmdResult<Json> {
