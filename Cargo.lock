@@ -3246,6 +3246,7 @@ dependencies = [
  "penumbra-record",
  "penumbra-script",
  "penumbra-spacenav",
+ "penumbra-spout",
  "penumbra-system",
  "penumbra-video",
  "serde",
@@ -3306,6 +3307,7 @@ dependencies = [
  "penumbra-osc",
  "penumbra-record",
  "penumbra-script",
+ "penumbra-spout",
  "penumbra-track",
  "penumbra-video",
  "photocraft-codecs",
@@ -3396,6 +3398,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "penumbra-spout"
+version = "0.2.0"
+dependencies = [
+ "half",
+ "log",
+ "penumbra-gpu",
+ "serde",
+ "wgpu",
+ "windows",
+]
+
+[[package]]
 name = "penumbra-system"
 version = "0.2.0"
 dependencies = [
@@ -3431,6 +3445,7 @@ dependencies = [
  "penumbra-project",
  "penumbra-record",
  "penumbra-spacenav",
+ "penumbra-spout",
  "penumbra-system",
  "raw-window-handle",
  "rfd",

@@ -14,6 +14,7 @@ penumbra-project.workspace = true
 penumbra-engine.workspace = true
 penumbra-gpu.workspace = true
 penumbra-ops.workspace = true
+penumbra-spout.workspace = true
 penumbra-osc.workspace = true
 penumbra-audio.workspace = true
 penumbra-camera.workspace = true

@@ -509,6 +509,8 @@ fn every_builtin_cooks_without_warnings() {
     // out.dmx sends here rather than to an Open DMX USB that may be plugged in.
     let dmx_rx = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let dmx_host = dmx_rx.local_addr().unwrap().to_string();
+    // tex.spout_in receives what out.spout sends (it cooks first, `out` sorts before `tex`).
+    let spout = format!("penumbra test registry {}", std::process::id());
     for (i, kind) in kinds.iter().enumerate() {
         let path = format!("/n{i}");
         let mut params: Vec<(&str, Value)> = Vec::new();
@@ -532,6 +534,8 @@ fn every_builtin_cooks_without_warnings() {
             "chan.audio_in" => params.push(("device", "test".into())),
             "out.dmx" => params.extend([("protocol", "art_net".into()), ("host", dmx_host.as_str().into())]),
             "tex.video_in" => params.push(("device", "test".into())),
+            "out.spout" => params.push(("name", spout.as_str().into())),
+            "tex.spout_in" => params.push(("sender", spout.as_str().into())),
             _ => {}
         }
         ops.push(create(&path, kind, &params));
@@ -2250,4 +2254,47 @@ fn out_video_stops_harmlessly_and_reports_bad_paths() {
     let error = rig.cooker.status(rec).unwrap().error.clone().unwrap_or_default();
     assert!(error.contains("too large"), "{error}");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `out.spout` to `tex.spout_in` in one process, through the same shared texture another
+/// program would open: 8 bits straight (rounded to an sRGB step) and 16-bit float.
+#[cfg(windows)]
+#[test]
+fn spout_round_trip() {
+    let Some(gpu) = gpu() else { return };
+    let name = format!("penumbra test round trip {}", std::process::id());
+    let color = |c: [f64; 4]| ("color", Value::Vec4(c));
+    let mut rig = Rig::new(
+        gpu,
+        None,
+        &[
+            create(
+                "/c",
+                "tex.constant",
+                &[("width", Value::Int(8)), ("height", Value::Int(4)), color([1.0, 0.5, 0.25, 0.5])],
+            ),
+            create("/out", "out.spout", &[("name", name.as_str().into())]),
+            connect("/c", "/out", 0),
+            create("/in", "tex.spout_in", &[("sender", name.as_str().into())]),
+        ],
+    );
+    rig.cook("/out");
+    let px = rig.pixels("/in");
+    assert_eq!((px.width, px.height), (8, 4));
+    let want = [0.5, 0.25, 0.125, 0.5];
+    for p in &px.data {
+        assert!(p.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.01), "{p:?}, expected {want:?}");
+    }
+
+    // A new picture arrives as a new frame (the sender counts frames).
+    let before = rig.version("/in");
+    rig.edit(&[set("/c.color", Value::Vec4([0.0, 1.0, 0.0, 1.0])), set("/out.format", "16bit_float".into())]);
+    rig.cook("/out");
+    let tex = rig.cook_until_new("/in", before);
+    let px = rig.gpu.read(&tex).unwrap();
+    for p in &px.data {
+        assert!(p.iter().zip([0.0, 1.0, 0.0, 1.0]).all(|(a, b)| (a - b).abs() < 3e-3), "{p:?}");
+    }
+    let status = rig.cooker.status(rig.id("/out")).unwrap();
+    assert_eq!((status.error, status.warning), (None, None));
 }

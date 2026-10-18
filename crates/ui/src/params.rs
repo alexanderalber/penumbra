@@ -66,6 +66,8 @@ pub struct ParamPanel {
     /// Cameras offered for a `tex.video_in`'s `device` or `mode`, listed when the menu opens
     /// (listing opens every camera briefly).
     cameras: Option<(String, Result<Vec<penumbra_camera::DeviceInfo>, String>)>,
+    /// Spout senders offered for a `tex.spout_in`'s `sender`, listed when the menu opens.
+    spout_senders: Option<(String, Vec<penumbra_spout::Listing>)>,
     /// Lines the colour row being drawn takes: swatch and fields on one, the fields below the
     /// swatch, or the fields two by two below it (narrow column).
     color_lines: u8,
@@ -821,6 +823,9 @@ impl ParamPanel {
                             .to_string();
                         self.camera_menu(ui, input.cameras, key, spec.name == "mode", &device, auto, new);
                     }
+                    if node.kind == penumbra_ops::tex::SPOUT_IN && spec.name == "sender" {
+                        self.spout_menu(ui, key, auto, new);
+                    }
                     if spec.node_ref {
                         node_menu(ui, input, node, key, auto, new);
                     }
@@ -937,6 +942,46 @@ impl ParamPanel {
         auto.add(format!("param.{key}.menu"), r.response.rect, "audio inputs");
         if r.inner.is_none() && self.audio_inputs.as_ref().is_some_and(|(k, _)| k == key) {
             self.audio_inputs = None;
+        }
+    }
+
+    /// The Spout senders running now for a `tex.spout_in`'s `sender`
+    /// (`param.<path>.menu`, entries `sender.default` and `sender.<i>`).
+    fn spout_menu(
+        &mut self,
+        ui: &mut Ui,
+        key: &str,
+        auto: &mut automation::Registry,
+        new: &mut Option<Value>,
+    ) {
+        let r = ui.menu_button("\u{2026}", |ui| {
+            if self.spout_senders.as_ref().is_none_or(|(k, _)| k != key) {
+                self.spout_senders = Some((key.to_string(), penumbra_spout::senders()));
+            }
+            let r = ui.button("the active sender").on_hover_text("Leaves `sender` empty");
+            auto.add("sender.default", r.rect, "active sender");
+            if r.clicked() {
+                *new = Some(Value::Text(String::new()));
+                ui.close();
+            }
+            let list = self.spout_senders.as_ref().map(|(_, l)| l.as_slice()).unwrap_or(&[]);
+            if !penumbra_spout::SUPPORTED {
+                ui.label(RichText::new("Spout exists only on Windows").color(theme::TEXT_WEAK));
+            } else if list.is_empty() {
+                ui.label(RichText::new("no Spout senders running").color(theme::TEXT_WEAK));
+            }
+            for (i, s) in list.iter().enumerate() {
+                let r = ui.button(format!("{}  {}x{}, {}", s.name, s.width, s.height, s.program));
+                auto.add(format!("sender.{i}"), r.rect, s.name.clone());
+                if r.clicked() {
+                    *new = Some(Value::Text(s.name.clone()));
+                    ui.close();
+                }
+            }
+        });
+        auto.add(format!("param.{key}.menu"), r.response.rect, "Spout senders");
+        if r.inner.is_none() && self.spout_senders.as_ref().is_some_and(|(k, _)| k == key) {
+            self.spout_senders = None;
         }
     }
 

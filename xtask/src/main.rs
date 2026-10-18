@@ -62,6 +62,7 @@ const LAYERS: &[(&str, &[&str])] = &[
     ("penumbra-track", UI_AND_GPU),
     ("penumbra-script", UI_AND_GPU),
     ("penumbra-pyhost", UI_AND_GPU),
+    ("penumbra-spout", UI),
     ("penumbra-output", EGUI),
 ];
 

@@ -26,6 +26,7 @@ penumbra-osc = { path = "crates/osc" }
 penumbra-output = { path = "crates/output" }
 penumbra-project = { path = "crates/project" }
 penumbra-record = { path = "crates/record" }
+penumbra-spout = { path = "crates/spout" }
 penumbra-pyhost = { path = "crates/pyhost" }
 penumbra-script = { path = "crates/script" }
 penumbra-spacenav = { path = "crates/spacenav" }

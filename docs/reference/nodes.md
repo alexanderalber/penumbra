@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
 
 ### tex.blob_track
 
@@ -718,6 +718,21 @@ Outputs: `out` (tex).
 | `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | Channel whose slope is measured; luminance: the brightness as the eye weighs it (Rec. 709); red: the red channel only; green: the green channel only; blue: the blue channel only; alpha: the opacity |
 | `strength` | float | `4` | 0 to 50 (soft) | Gain on the slope (value change per pixel); higher makes gentle slopes visible |
 | `offset` | float | `0.5` | 0 to 1 (soft) | Value of a flat area; rising slopes lie above it, falling below. 0.5 suits tex.displace's midpoint |
+
+### tex.spout_in
+
+Another program's Spout sender (Windows); resolution of the sender's
+
+Inputs: none.
+
+Outputs:
+
+- `out` (tex): The sender's picture
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `sender` | text |  |  | The sender's name (the ... menu lists those running); empty: the active sender, the one picked last in a Spout program, else the first |
+| `alpha` | straight \| premultiplied \| opaque | `"straight"` |  | How the sender's transparency is taken; straight: colour and alpha apart, as most programs take it; premultiplied: colour multiplied by alpha; opaque: no transparency: sent over black, or a received alpha ignored |
 
 ### tex.switch
 
@@ -1612,7 +1627,7 @@ Outputs:
 
 ## out
 
-[out.dmx](#outdmx), [out.projector](#outprojector), [out.video](#outvideo)
+[out.dmx](#outdmx), [out.projector](#outprojector), [out.spout](#outspout), [out.video](#outvideo)
 
 ### out.dmx
 
@@ -1653,6 +1668,22 @@ Outputs: none.
 | `fit` | fit \| fill \| stretch | `"fit"` |  | How the picture sits in the viewport when their aspects differ; fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted |
 | `viewport` *(more)* | vec4 | `[0, 0, 1, 1]` | 0 to 1 | x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5) |
 | `test` | bool | `false` |  | A test pattern in the projector's own pixels instead of the input: square cells, centre, circle, and the image's edge in this projector's colour |
+
+### out.spout
+
+Shares its input with other programs on this machine through Spout (Windows)
+
+Inputs:
+
+- `in` (tex): The picture to share
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `name` | text |  |  | The sender name receivers pick, ASCII only; empty: `penumbra` and the node's name, such as `penumbra spout1`. Taken by another program, it gets a number (`name_1`) |
+| `format` | 8bit \| 16bit_float | `"8bit"` |  | The pixel format of the shared texture; 8bit: BGRA, 8 bits per channel: what every Spout program takes; 16bit_float: RGBA, 16-bit float: finer steps and values above 1, for receivers that take it (TouchDesigner does) |
+| `alpha` | straight \| premultiplied \| opaque | `"straight"` |  | How transparency travels to the receivers; straight: colour and alpha apart, as most programs take it; premultiplied: colour multiplied by alpha; opaque: no transparency: sent over black, or a received alpha ignored |
 
 ### out.video
 
