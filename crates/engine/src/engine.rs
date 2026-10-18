@@ -58,7 +58,9 @@
 //! nodes read what arrived. **Cameras** the same way: the [`CameraHub`] opens what the
 //! `tex.video_in` nodes want, a capture thread per camera, and keeps each one's newest frame.
 //! **DMX** the other way round: the [`DmxHub`] is a resource the `out.dmx` nodes put their slots
-//! into, with a sending thread per target.
+//! into, with a sending thread per target. **Recordings** likewise: the [`RecordHub`] gives each
+//! `out.video` node a recording with a thread of its own; closing a project drops the nodes,
+//! which finishes their files, and [`Engine::shutdown`] waits for them (bounded).
 //!
 //! **Another project** ([`Engine::open_project`]): the threads above stop (state saved and
 //! changes written as at closing) and start again for the new session with a fresh cook state.
@@ -92,6 +94,7 @@ use penumbra_ops::tex::mapper::Mappers;
 use penumbra_ops::tex::render::Renders;
 use penumbra_osc::Hub;
 use penumbra_project::Session;
+use penumbra_record::Hub as RecordHub;
 use penumbra_spacenav::SpaceNav;
 use penumbra_system::LoadMeter;
 use serde::Serialize;
@@ -104,6 +107,8 @@ use crate::ticker::Ticker;
 
 /// How often the project thread looks at the file and autosaves.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
+/// How long closing the app waits for recordings to finish their files.
+pub const RECORD_FINISH: Duration = Duration::from_secs(5);
 /// How long a command waits for the cook thread before giving up.
 pub const COOK_TASK_TIMEOUT: Duration = Duration::from_secs(5);
 /// Passes between two resolution analyses while they are wanted and the network stays the
@@ -553,6 +558,8 @@ pub struct Engine {
     audio: AudioHub,
     dmx: DmxHub,
     camera: CameraHub,
+    /// The movie recordings of `out.video` nodes.
+    record: RecordHub,
     /// The 3D mouse; its reader starts when the UI first asks for it.
     spacenav: SpaceNav,
     /// The timer pacing the show clock while no output does, one thread per open project.
@@ -629,6 +636,7 @@ impl Engine {
             audio: AudioHub::new(),
             dmx: DmxHub::new(),
             camera: CameraHub::new(),
+            record: RecordHub::new(),
             spacenav: SpaceNav::new(),
             ticker: Arc::new(Ticker::default()),
             load: LoadMeter::new(),
@@ -652,6 +660,7 @@ impl Engine {
         cooker.provide(self.audio.clone());
         cooker.provide(self.dmx.clone());
         cooker.provide(self.camera.clone());
+        cooker.provide(self.record.clone());
         cooker.provide(penumbra_ops::tex::blob_track::BlobTracks::new());
         let gpu = self.gpu.get().cloned();
         if let Some(gpu) = &gpu {
@@ -999,6 +1008,11 @@ impl Engine {
         &self.camera
     }
 
+    /// The movie recordings.
+    pub fn record(&self) -> &RecordHub {
+        &self.record
+    }
+
     /// The 3D mouse; [`SpaceNav::start`] opens it.
     pub fn spacenav(&self) -> &SpaceNav {
         &self.spacenav
@@ -1248,6 +1262,8 @@ impl Engine {
         }
         let _switch = lock(&self.switching);
         self.stop_threads(true);
+        // The cook thread has dropped its nodes, so every recording is finishing its file.
+        self.record.shutdown(RECORD_FINISH);
         self.osc.hub().shutdown();
         self.audio.shutdown();
         self.dmx.shutdown();

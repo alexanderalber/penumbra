@@ -1,5 +1,5 @@
 //! Built-in node types: `chan` and `table` nodes on the CPU, `tex` nodes on the GPU, the projector
-//! and DMX outputs and the Python script node.
+//! DMX and movie outputs and the Python script node.
 
 pub mod audio;
 pub mod chan;
@@ -50,7 +50,9 @@ pub fn inactive(
     desc: &penumbra_graph::NodeDesc,
     name: &str,
 ) -> Option<&'static str> {
-    view::inactive(node, desc, name).or_else(|| dmx::inactive(node, desc, name))
+    view::inactive(node, desc, name)
+        .or_else(|| dmx::inactive(node, desc, name))
+        .or_else(|| out::video::inactive(node, desc, name))
 }
 
 /// All built-in node types.

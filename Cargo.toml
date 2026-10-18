@@ -25,6 +25,7 @@ penumbra-ops = { path = "crates/ops" }
 penumbra-osc = { path = "crates/osc" }
 penumbra-output = { path = "crates/output" }
 penumbra-project = { path = "crates/project" }
+penumbra-record = { path = "crates/record" }
 penumbra-pyhost = { path = "crates/pyhost" }
 penumbra-script = { path = "crates/script" }
 penumbra-spacenav = { path = "crates/spacenav" }
@@ -71,6 +72,11 @@ filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0b
 # The MP4/MOV sample tables for HAP, which FilmCraft does not decode; HAP's second stage is Snappy.
 filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
 snap = "1"
+# Recording (crates/record): FilmCraft's encoders and its MP4/MOV writer, same pin as the decoders.
+# rayon is the thread pool both encoders use (already in the tree through FilmCraft).
+filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+filmcraft-prores = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+rayon = "1"
 # The script node: embedded CPython through the stable ABI, so one pyhost library serves Python 3.12
 # and later. Only crates/pyhost uses it.
 pyo3 = { version = "=0.29.3", default-features = false, features = ["abi3-py312"] }
@@ -134,6 +140,9 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.penumbra-gpu]
+opt-level = 2
+
+[profile.dev.package.penumbra-record]
 opt-level = 2
 
 [profile.dev.package.penumbra-mesh]

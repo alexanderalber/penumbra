@@ -1,5 +1,7 @@
 //! `out` nodes: sinks that leave the graph.
 //!
+//! `out.video` records its input to a movie file ([`video`]).
+//!
 //! `out.projector` is one projector: a viewport inside the fullscreen output window on one
 //! display. Usually a projector fills its display; a 4K signal into a hardware splitter is one
 //! display with four projector nodes, each with a quarter as viewport. Projectors naming the
@@ -16,6 +18,7 @@
 //! same drawer the mapper uses ([`penumbra_gpu::Projection`]), from a plain [`Mapping`].
 
 pub mod place;
+pub mod video;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
@@ -188,7 +191,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         // Not reading the clock; declared so the node picks up what the output side reports
         // (a display plugged in or out) every frame. Cooking it costs nothing.
         .time_dependent();
-    types.register(FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>))
+    types.register(FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>))?;
+    video::register(types)
 }
 
 /// The size of a projector's image: its viewport of the display it is shown on, as the

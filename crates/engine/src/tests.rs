@@ -917,6 +917,9 @@ mod dmx_tests;
 #[path = "audio_tests.rs"]
 mod audio_tests;
 
+#[path = "video_out_tests.rs"]
+mod video_out_tests;
+
 #[test]
 fn copy_and_paste_nodes() {
     let f = Fixture::new("clipboard");

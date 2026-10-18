@@ -24,6 +24,7 @@ pub mod state;
 pub mod state_commands;
 pub mod ticker;
 pub mod video_in;
+pub mod video_out;
 
 #[cfg(test)]
 mod tests;
@@ -55,6 +56,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     audio::register(&mut registry, engine);
     dmx::register(&mut registry, engine);
     video_in::register(&mut registry, engine);
+    video_out::register(&mut registry, engine);
     blob_track::register(&mut registry, engine);
     projects::register(&mut registry, engine);
     navigation::register(&mut registry, engine);

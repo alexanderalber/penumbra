@@ -44,6 +44,8 @@ pub struct Inputs<'a> {
     pub cameras: &'a penumbra_camera::Hub,
     /// The engine's audio inputs: a `chan.audio_in`'s `device` names the device it reads.
     pub audio: &'a penumbra_audio::Hub,
+    /// The engine's recordings: an `out.video` shows its own and has start and stop.
+    pub record: &'a penumbra_record::Hub,
 }
 
 #[derive(Default)]
@@ -165,6 +167,9 @@ impl ParamPanel {
                     actions.push(Action::LearnBackground { node: input.node, delay: 5.0 });
                 }
             });
+        }
+        if node.kind == penumbra_ops::out::video::VIDEO_OUT {
+            record_row(ui, input, auto, actions);
         }
         ui.separator();
 
@@ -1773,6 +1778,48 @@ pub fn values(net: &Network, types: &NodeTypes, id: NodeId) -> BTreeMap<String, 
         out.entry(name.to_string()).or_insert_with(|| value.clone());
     }
     out
+}
+
+/// An `out.video`'s start or stop button and how its recording stands. Not an edit (`record`
+/// stays as it is), so allowed while Claude edits too.
+fn record_row(ui: &mut Ui, input: &Inputs<'_>, auto: &mut automation::Registry, actions: &mut Vec<Action>) {
+    let status = input.record.status(input.node);
+    let recording = status.as_ref().is_some_and(|s| s.recording);
+    ui.horizontal(|ui| {
+        let (label, tip, id) = if recording {
+            ("stop", "Stop recording and finish the file (video_out.stop)", "param.record_stop")
+        } else {
+            ("record", "Start recording to a new file (video_out.start)", "param.record_start")
+        };
+        let r = ui.button(label).on_hover_text(tip);
+        auto.add(id, r.rect, label);
+        if r.clicked() {
+            actions.push(Action::Record { node: input.node, start: !recording });
+        }
+        let Some(s) = &status else {
+            ui.label(RichText::new("not recording").color(theme::TEXT_WEAK).small());
+            return;
+        };
+        let name = Path::new(&s.file)
+            .file_name()
+            .map_or_else(|| s.file.clone(), |n| n.to_string_lossy().into_owned());
+        let (text, colour) = if s.recording {
+            let text = format!(
+                "{name}  {:.1} s  {} frames  {} dropped  encoder {:.0} fps",
+                s.seconds, s.frames, s.dropped, s.encoder_fps
+            );
+            (text, if s.dropped > 0 { theme::WARNING } else { theme::ERROR })
+        } else if s.finishing {
+            (format!("{name}: finishing the file ..."), theme::TEXT_WEAK)
+        } else if let Some(e) = &s.error {
+            (e.clone(), theme::ERROR)
+        } else {
+            let text =
+                format!("saved {name}: {:.1} s, {} frames, {} dropped", s.seconds, s.frames, s.dropped);
+            (text, theme::TEXT_WEAK)
+        };
+        ui.label(RichText::new(text).color(colour).small()).on_hover_text(&s.file);
+    });
 }
 
 #[cfg(test)]
