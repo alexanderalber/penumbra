@@ -1,0 +1,22 @@
+[package]
+name = "penumbra-ndi"
+description = "NDI: sending textures to and receiving sources from the network, through the NDI runtime loaded at runtime. No UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+penumbra-core.workspace = true
+penumbra-gpu.workspace = true
+wgpu.workspace = true
+# The NDI runtime is loaded when first needed, never linked (crates/ndi/src/ffi.rs).
+libloading.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+half.workspace = true
+
+[lints]
+workspace = true

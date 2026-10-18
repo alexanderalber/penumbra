@@ -16,6 +16,7 @@ penumbra-dmx.workspace = true
 penumbra-graph.workspace = true
 penumbra-gpu.workspace = true
 penumbra-mesh.workspace = true
+penumbra-ndi.workspace = true
 penumbra-osc.workspace = true
 penumbra-record.workspace = true
 penumbra-script.workspace = true

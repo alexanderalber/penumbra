@@ -23,6 +23,8 @@ What you need
 - Windows 10 or 11, 64-bit, with a graphics card that supports DirectX 12 or Vulkan.
 - Optional: Python 3.12 or later (python.org), only for script nodes. Everything else works
   without it.
+- Optional: NDI Tools or the NDI Runtime (https://ndi.video/tools/), only for the NDI nodes
+  (out.ndi, tex.ndi_in). NDI® is a registered trademark of Vizrt NDI AB.
 
 Files
 -----

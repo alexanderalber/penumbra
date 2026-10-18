@@ -1,7 +1,7 @@
 //! `out` nodes: sinks that leave the graph.
 //!
 //! `out.video` records its input to a movie file ([`video`]); `out.spout` shares it with other
-//! programs on this machine ([`spout`]).
+//! programs on this machine ([`spout`]), `out.ndi` with programs on the network ([`ndi`]).
 //!
 //! `out.projector` is one projector: a viewport inside the fullscreen output window on one
 //! display. Usually a projector fills its display; a 4K signal into a hardware splitter is one
@@ -18,6 +18,7 @@
 //! projector only places its input into its viewport by `fit`. The outputs draw that with the
 //! same drawer the mapper uses ([`penumbra_gpu::Projection`]), from a plain [`Mapping`].
 
+pub mod ndi;
 pub mod place;
 pub mod spout;
 pub mod video;
@@ -194,6 +195,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         // (a display plugged in or out) every frame. Cooking it costs nothing.
         .time_dependent();
     types.register(FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>))?;
+    ndi::register(types)?;
     spout::register(types)?;
     video::register(types)
 }

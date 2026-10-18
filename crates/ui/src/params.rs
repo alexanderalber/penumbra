@@ -826,6 +826,12 @@ impl ParamPanel {
                     if node.kind == penumbra_ops::tex::SPOUT_IN && spec.name == "sender" {
                         self.spout_menu(ui, key, auto, new);
                     }
+                    if node.kind == penumbra_ops::tex::NDI_IN && spec.name == "source" {
+                        ndi_menu(ui, key, auto, new);
+                    }
+                    if node.kind == penumbra_ops::out::ndi::NDI_OUT && spec.name == "name" {
+                        ndi_link(ui, key, auto);
+                    }
                     if spec.node_ref {
                         node_menu(ui, input, node, key, auto, new);
                     }
@@ -1957,6 +1963,56 @@ fn record_row(
         };
         ui.label(RichText::new(text).color(colour).small()).on_hover_text(&s.file);
     });
+}
+
+/// The NDI sources on the network for a `tex.ndi_in`'s `source` (`param.<path>.menu`, entries
+/// `source.first` and `source.<i>`). The list is read every frame while the menu is open, so it
+/// fills in as sources answer. Ends with the link to NDI's site its licence asks for.
+fn ndi_menu(ui: &mut Ui, key: &str, auto: &mut automation::Registry, new: &mut Option<Value>) {
+    let r = ui.menu_button("\u{2026}", |ui| {
+        let r = ui.button("the first source").on_hover_text("Leaves `source` empty");
+        auto.add("source.first", r.rect, "first source");
+        if r.clicked() {
+            *new = Some(Value::Text(String::new()));
+            ui.close();
+        }
+        match penumbra_ndi::sources() {
+            Err(e) => {
+                ui.colored_label(theme::WARNING, e);
+            }
+            Ok(list) => {
+                if list.is_empty() {
+                    let text = if penumbra_ndi::settling() {
+                        "looking for sources..."
+                    } else {
+                        "no NDI sources on the network"
+                    };
+                    ui.label(RichText::new(text).color(theme::TEXT_WEAK));
+                }
+                for (i, s) in list.iter().enumerate() {
+                    let r = ui.button(&s.name).on_hover_text(&s.url);
+                    auto.add(format!("source.{i}"), r.rect, s.name.clone());
+                    if r.clicked() {
+                        *new = Some(Value::Text(s.name.clone()));
+                        ui.close();
+                    }
+                }
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+            }
+        }
+        ui.separator();
+        ndi_link(ui, key, auto);
+    });
+    auto.add(format!("param.{key}.menu"), r.response.rect, "NDI sources");
+}
+
+/// The link to NDI's site, which its licence asks for wherever NDI is chosen
+/// (`param.<path>.ndi`).
+fn ndi_link(ui: &mut Ui, key: &str, auto: &mut automation::Registry) {
+    let r = ui
+        .hyperlink_to(RichText::new("NDI\u{ae}").color(theme::TEXT_WEAK), penumbra_ndi::SITE)
+        .on_hover_text("NDI\u{ae} is a registered trademark of Vizrt NDI AB. ndi.video");
+    auto.add(format!("param.{key}.ndi"), r.rect, "ndi.video");
 }
 
 #[cfg(test)]

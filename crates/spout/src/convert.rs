@@ -4,42 +4,10 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 
+pub use penumbra_gpu::Alpha;
 use penumbra_gpu::Gpu;
 
 const SOURCE: &str = include_str!("convert.wgsl");
-
-/// How alpha travels in the Spout texture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-pub enum Alpha {
-    /// Colour and alpha separate, as most programs expect.
-    #[default]
-    Straight,
-    /// Colour multiplied by alpha (after encoding).
-    Premultiplied,
-    /// No transparency: sending composites over black, receiving ignores the alpha.
-    Opaque,
-}
-
-impl Alpha {
-    pub const NAMES: [&'static str; 3] = ["straight", "premultiplied", "opaque"];
-
-    pub fn parse(s: &str) -> Option<Self> {
-        Some(match s {
-            "straight" => Self::Straight,
-            "premultiplied" => Self::Premultiplied,
-            "opaque" => Self::Opaque,
-            _ => return None,
-        })
-    }
-
-    fn constant(self) -> f64 {
-        match self {
-            Self::Straight => 0.0,
-            Self::Premultiplied => 1.0,
-            Self::Opaque => 2.0,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Direction {
@@ -116,7 +84,7 @@ impl Converter {
                 !matches!(key.format, wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgba32Float);
             let constants = [
                 ("DIRECTION", if direction == Direction::ToSpout { 0.0 } else { 1.0 }),
-                ("ALPHA", alpha.constant()),
+                ("ALPHA", alpha.shader_constant()),
                 ("CLAMP", if clamp { 1.0 } else { 0.0 }),
             ];
             let (pipeline, error) = gpu.scoped(|| {

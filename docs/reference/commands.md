@@ -97,6 +97,12 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `history.redo` | Redo one history entry |
 | `history.undo` | Undo one history entry |
 
+## ndi
+
+| command | |
+|---|---|
+| `ndi.sources` | The NDI sources on the network, this process's out.ndi nodes included (name as `PC (Source)`, address), and the NDI runtime in use. The first call starts looking: `settling` is true while the list may still be filling |
+
 ## node
 
 | command | |
