@@ -1,7 +1,7 @@
-//! Cameras in the engine: the hub's streams follow the network's `tex.videoin` nodes (the cook
-//! thread calls [`penumbra_ops::tex::videoin::wants`] when the network changes).
+//! Cameras in the engine: the hub's streams follow the network's `tex.video_in` nodes (the cook
+//! thread calls [`penumbra_ops::tex::video_in::wants`] when the network changes).
 //!
-//! Commands: `videoin.devices`, `videoin.status`, `videoin.config`.
+//! Commands: `video_in.devices`, `video_in.status`, `video_in.config`.
 
 use std::sync::Arc;
 
@@ -20,24 +20,24 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         registry.register(FnCommand::new(id, summary, move |p| f(&engine, p)));
     };
     add(
-        "videoin.devices",
+        "video_in.devices",
         "The cameras of this machine with their modes (size, rate, pixel format, whether penumbra reads it)",
-        videoin_devices,
+        video_in_devices,
     );
     add(
-        "videoin.status",
+        "video_in.status",
         "Camera streams (device, mode, open, error, frames, fps, dropped, delay_ms from the camera's timestamp)",
-        videoin_status,
+        video_in_status,
     );
-    add("videoin.config", "Camera settings for this run: {enabled?}", videoin_config);
+    add("video_in.config", "Camera settings for this run: {enabled?}", video_in_config);
 }
 
-fn videoin_devices(e: &Engine, _p: &Json) -> CmdResult<Json> {
+fn video_in_devices(e: &Engine, _p: &Json) -> CmdResult<Json> {
     let list = e.camera().devices().map_err(CommandError)?;
     Ok(json!({ "devices": list }))
 }
 
-fn videoin_status(e: &Engine, _p: &Json) -> CmdResult<Json> {
+fn video_in_status(e: &Engine, _p: &Json) -> CmdResult<Json> {
     let hub = e.camera();
     Ok(json!({
         "enabled": hub.config().enabled,
@@ -46,7 +46,7 @@ fn videoin_status(e: &Engine, _p: &Json) -> CmdResult<Json> {
     }))
 }
 
-fn videoin_config(e: &Engine, p: &Json) -> CmdResult<Json> {
+fn video_in_config(e: &Engine, p: &Json) -> CmdResult<Json> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct A {

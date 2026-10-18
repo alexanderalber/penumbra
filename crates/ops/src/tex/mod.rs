@@ -6,7 +6,7 @@
 //! premultiplied alpha, origin top left. Without a GPU (headless tools, tests of other crates)
 //! these nodes fail with a clear error instead of producing anything.
 
-pub mod blobtrack;
+pub mod blob_track;
 mod blur;
 mod cache;
 mod convert;
@@ -16,19 +16,19 @@ mod flow;
 mod image;
 mod layer;
 pub mod mapper;
-mod opticalflow;
+mod optical_flow;
 mod ramp;
 pub mod render;
 mod shader;
 pub mod shapes;
 mod text;
-mod timemachine;
+mod time_machine;
 mod video;
-pub mod videoin;
+pub mod video_in;
 
 pub use text::{DEFAULT_FONT, TEXT, families as font_families};
 pub use video::VIDEO;
-pub use videoin::VIDEO_IN;
+pub use video_in::VIDEO_IN;
 
 use std::sync::Arc;
 
@@ -319,7 +319,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 as Box<dyn Operator>
         }))?;
     }
-    blobtrack::register(types)?;
+    blob_track::register(types)?;
     blur::register(types)?;
     cache::register(types)?;
     convert::register(types)?;
@@ -328,15 +328,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     image::register(types)?;
     layer::register(types)?;
     mapper::register(types)?;
-    opticalflow::register(types)?;
+    optical_flow::register(types)?;
     ramp::register(types)?;
     render::register(types)?;
     shader::register(types)?;
     shapes::register(types)?;
     text::register(types)?;
-    timemachine::register(types)?;
+    time_machine::register(types)?;
     video::register(types)?;
-    videoin::register(types)?;
+    video_in::register(types)?;
     Ok(())
 }
 
@@ -349,20 +349,20 @@ pub fn warm_up(gpu: &Gpu) {
             log::error!("built-in shader {} does not compile: {e}", b.desc.kind);
         }
     }
-    if let Err(e) = blobtrack::warm_up(gpu) {
-        log::error!("built-in shader tex.blobtrack does not compile: {e}");
+    if let Err(e) = blob_track::warm_up(gpu) {
+        log::error!("built-in shader tex.blob_track does not compile: {e}");
     }
     if let Err(e) = blur::warm_up(gpu) {
         log::error!("built-in shader tex.blur does not compile: {e}");
     }
     if let Err(e) = convert::warm_up(gpu) {
-        log::error!("built-in shader chan.fromtex does not compile: {e}");
+        log::error!("built-in shader chan.from_tex does not compile: {e}");
     }
     if let Err(e) = denoise::warm_up(gpu) {
         log::error!("built-in shader tex.denoise does not compile: {e}");
     }
-    if let Err(e) = opticalflow::warm_up(gpu) {
-        log::error!("built-in shader tex.opticalflow does not compile: {e}");
+    if let Err(e) = optical_flow::warm_up(gpu) {
+        log::error!("built-in shader tex.optical_flow does not compile: {e}");
     }
     if let Err(e) = ramp::warm_up(gpu) {
         log::error!("built-in shader tex.ramp does not compile: {e}");
@@ -373,8 +373,8 @@ pub fn warm_up(gpu: &Gpu) {
     if let Err(e) = text::warm_up(gpu) {
         log::error!("built-in shader tex.text does not compile: {e}");
     }
-    if let Err(e) = timemachine::warm_up(gpu) {
-        log::error!("built-in shader tex.timemachine does not compile: {e}");
+    if let Err(e) = time_machine::warm_up(gpu) {
+        log::error!("built-in shader tex.time_machine does not compile: {e}");
     }
     if let Err(e) = gpu.video_pipeline() {
         log::error!("built-in shader video.wgsl does not compile: {e}");

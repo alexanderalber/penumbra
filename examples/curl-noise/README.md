@@ -14,7 +14,7 @@ The simulation runs on the GPU, one particle per texel of a 256 x 256 texture:
 - `/vel` (`vel.wgsl`) pushes each particle along the curl of a noise field, which swirls without
   bunching up, and damps the velocity. `/vel_last` loops it back like `/pos_last`.
 
-`/sticks` is a `geo.texinstance`: one copy of `/stick` per texel, placed by `/pos`, turned
+`/sticks` is a `geo.tex_instance`: one copy of `/stick` per texel, placed by `/pos`, turned
 towards `/vel`, stretched by `/scale` (the size times `/pulse`) and coloured by `/palette`.
 `/render` draws them lit by `/light`, `/out` puts them over a dark radial `/background`.
 

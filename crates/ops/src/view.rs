@@ -19,7 +19,8 @@ pub const CAMERA: &str = "view.camera";
 
 /// The params that make a camera: on `tex.render` they count only while its camera input is
 /// not connected.
-pub const CAMERA_PARAMS: [&str; 8] = ["position", "target", "fov", "roll", "shift", "camera", "near", "far"];
+pub const CAMERA_PARAMS: [&str; 8] =
+    ["position", "target", "fov", "roll", "shift", "calibration", "near", "far"];
 
 /// A camera on a `view` connection, for a picture of any size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -47,12 +48,12 @@ impl Viewpoint {
         if !(near > 0.0 && far > near) {
             return Err(CookError::failed("`far` must be beyond `near`"));
         }
-        let json = cx.text("camera")?.trim();
+        let json = cx.text("calibration")?.trim();
         if !json.is_empty() {
             let c: Camera = serde_json::from_str(json)
-                .map_err(|e| CookError::failed(format!("`camera` is not a camera: {e}")))?;
+                .map_err(|e| CookError::failed(format!("`calibration` is not a camera calibration: {e}")))?;
             if c.intrinsics.size.contains(&0) {
-                return Err(CookError::failed("`camera` has no picture size"));
+                return Err(CookError::failed("`calibration` has no picture size"));
             }
             return Ok(Self { pose: c.pose, lens: Lens::Calibrated(c.intrinsics), near, far });
         }
@@ -144,7 +145,7 @@ pub fn params(desc: NodeDesc) -> NodeDesc {
     )
 }
 
-/// The camera's rarely used params, in `group`: `shift`, `camera`, `near`, `far`.
+/// The camera's rarely used params, in `group`: `shift`, `calibration`, `near`, `far`.
 pub fn more_params(desc: NodeDesc, group: &str) -> NodeDesc {
     desc.param(
         ParamSpec::vec2("shift", [0.0; 2])
@@ -152,8 +153,8 @@ pub fn more_params(desc: NodeDesc, group: &str) -> NodeDesc {
             .group(group)
             .doc("Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height"),
     )
-    .param(ParamSpec::text("camera", "").group(group).doc(
-        "A calibrated camera as JSON (calib.solve's `camera`); replaces position, target, fov, roll and shift",
+    .param(ParamSpec::text("calibration", "").group(group).doc(
+        "A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, fov, roll and shift",
     ))
     .param(
         ParamSpec::float("near", 0.05)

@@ -1,4 +1,4 @@
-//! `tex.timemachine`: keeps the last frames of its input and shows, per pixel, one from as far
+//! `tex.time_machine`: keeps the last frames of its input and shows, per pixel, one from as far
 //! back as a second picture (the map) says: black is now, white is `length` frames ago. The
 //! frames live in a [`Stack`] on the GPU, which can be kept smaller (resolution, 8 bits, every
 //! n-th frame) where memory runs out before the wanted length.
@@ -20,7 +20,7 @@ use penumbra_graph::{
 
 use super::{gpu, waiting};
 
-const KIND: &str = "tex.timemachine";
+const KIND: &str = "tex.time_machine";
 const MAX_STEP: i64 = 16;
 const GIB: f64 = (1u64 << 30) as f64;
 /// Share of the memory the GPU grants penumbra that the automatic budget takes.

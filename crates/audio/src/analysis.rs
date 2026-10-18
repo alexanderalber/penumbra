@@ -302,7 +302,7 @@ impl Analyzer {
     pub fn new(rate: f64) -> Result<Analyzer, String> {
         if !(MIN_RATE..=MAX_RATE).contains(&rate) {
             return Err(format!(
-                "a sample rate of {rate} Hz is not audio ({MIN_RATE} to {MAX_RATE} Hz): connect a chan.audioin"
+                "a sample rate of {rate} Hz is not audio ({MIN_RATE} to {MAX_RATE} Hz): connect a chan.audio_in"
             ));
         }
         // `as`: rate over ~94 hops per second, rounded to a power of two (64 to 8192).

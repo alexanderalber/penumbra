@@ -1,4 +1,4 @@
-// tex.chromakey: pixels whose chroma lies near the key colour's become transparent. Chroma is
+// tex.chroma_key: pixels whose chroma lies near the key colour's become transparent. Chroma is
 // Cb/Cr (Rec. 709) of gamma-encoded colour, so distances follow the eye rather than linear light;
 // brightness does not matter, which keeps shadows on the screen keyed. Spill pulls the key
 // colour's tint out of what stays.

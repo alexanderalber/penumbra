@@ -172,9 +172,15 @@ fn port_y(top: f32, height: f32, i: usize, n: usize) -> f32 {
 }
 
 /// A free node name for `kind` among the children of `level`: `noise1`, `noise2`, ...
+/// (`time_machine1` for `tex.time_machine`).
 pub fn fresh_name(net: &Network, level: Option<NodeId>, kind: &str) -> String {
-    let base: String =
-        kind.rsplit('.').next().unwrap_or(kind).chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let base: String = kind
+        .rsplit('.')
+        .next()
+        .unwrap_or(kind)
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
     let base = match base.as_str() {
         "" => "node".to_string(),
         // `comp.base` makes `group1` (`comp1` reads like a composite).

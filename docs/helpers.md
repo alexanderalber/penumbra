@@ -73,12 +73,12 @@ initial input, for example from a binding.
 
 ## OSC
 
-OSC input comes in through `chan.oscin` nodes, output goes out through `chan.oscout`; this
+OSC input comes in through `chan.osc_in` nodes, output goes out through `chan.osc_out`; this
 section shows what they are doing.
 
 - **listen** off closes every OSC port for this run; the nodes stay.
 - **this machine on the network** is the address to enter on a phone or another computer. A
-  `chan.oscin` is reachable from other machines only with its `lan` param on; otherwise only
+  `chan.osc_in` is reachable from other machines only with its `lan` param on; otherwise only
   programs on this machine reach it.
 - Per listener: its port, packets and addresses received, and what was dropped (malformed,
   too large, over the rate limit). Per sender: packets sent and failures. The last messages,
@@ -86,10 +86,10 @@ section shows what they are doing.
 
 Two ways to control a param from OSC:
 
-- **Bind it** to the `chan.oscin`'s channel for that address, by hand or with **learn from
+- **Bind it** to the `chan.osc_in`'s channel for that address, by hand or with **learn from
   OSC** in the param's link menu: the next address that arrives with a number is bound. This
   is the better way for continuous control.
-- **By address:** with `params` on, a `chan.oscin` also sets the params its addresses name:
+- **By address:** with `params` on, a `chan.osc_in` also sets the params its addresses name:
   `/scene/speed 0.5` sets `/scene.speed`, `/n/translate/0 0.5` one component. These values are
   live: they do not enter the undo history. File params and a script's code are never set
   this way, so whoever can send OSC cannot make penumbra load a file or run a program.
@@ -99,11 +99,11 @@ Two ways to control a param from OSC:
 What the [audio input](audio.md) is doing:
 
 - **listen** off closes every audio input for this run; the nodes stay.
-- Per input a `chan.audioin` opened: the device, its sample rate and channels, glitches the
+- Per input a `chan.audio_in` opened: the device, its sample rate and channels, glitches the
   system reported, an error if the device is missing or failed, and a level meter per channel
   (red near clipping).
 - **inputs on this machine** lists the input devices with their format; **list again** after
-  plugging one in. Part of a name goes into a `chan.audioin`'s `device`.
+  plugging one in. Part of a name goes into a `chan.audio_in`'s `device`.
 
 ## Show machine
 

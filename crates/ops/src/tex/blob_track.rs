@@ -1,4 +1,4 @@
-//! `tex.blobtrack`: finds blobs in the input (a camera, usually) and follows them with ids that
+//! `tex.blob_track`: finds blobs in the input (a camera, usually) and follows them with ids that
 //! stay, by [`penumbra_track::Tracker`].
 //!
 //! The GPU shrinks the input to `size` pixels wide; that small picture is read back and
@@ -28,8 +28,8 @@ use penumbra_track::{Blob, Detect, Image, Settings, Tracker};
 use super::{gpu, waiting};
 
 /// The node kind.
-pub const BLOBTRACK: &str = "tex.blobtrack";
-const SOURCE: &str = include_str!("blobtrack.wgsl");
+pub const BLOB_TRACK: &str = "tex.blob_track";
+const SOURCE: &str = include_str!("blob_track.wgsl");
 /// How long a cook waits for the readback of the frame it just started.
 pub const WAIT: Duration = Duration::from_millis(4);
 /// A readback older than this is given up.
@@ -41,11 +41,11 @@ pub const COLUMNS: [&str; 14] =
     ["id", "x", "y", "left", "top", "width", "height", "area", "age", "vx", "vy", "r", "g", "b"];
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(BLOBTRACK, "Finds blobs (people, hands, spots of light) and follows them with ids that stay")
+    NodeDesc::new(BLOB_TRACK, "Finds blobs (people, hands, spots of light) and follows them with ids that stay")
         .stateful()
         .param(ParamSpec::choice("detect", &["background", "bright"]).doc(
             "background: what differs from the empty scene (the `background` input where connected, else \
-             learned: `blobtrack.learn`); bright: whatever is brighter than `threshold`",
+             learned: `blob_track.learn`); bright: whatever is brighter than `threshold`",
         ))
         .param(
             ParamSpec::float("threshold", 0.1)
@@ -140,14 +140,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 }
 
 fn pass(gpu: &Gpu) -> Result<Arc<penumbra_gpu::Pass>, Error> {
-    gpu.cached_pass(BLOBTRACK, SOURCE, &[])
+    gpu.cached_pass(BLOB_TRACK, SOURCE, &[])
 }
 
 pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     pass(gpu).map(|_| ())
 }
 
-/// Requests to the blob trackers from outside the cook (`blobtrack.learn`), by node. Provided by
+/// Requests to the blob trackers from outside the cook (`blob_track.learn`), by node. Provided by
 /// the engine as a cooker resource; cheap to clone.
 #[derive(Clone, Default)]
 pub struct BlobTracks(Arc<Mutex<BTreeMap<NodeId, Entry>>>);
@@ -307,7 +307,7 @@ impl BlobTrack {
         let (w, h) = src.size();
         let width = u32::try_from(cx.int("size")?).unwrap_or(320).clamp(16, w.max(16));
         let height = ((u64::from(width) * u64::from(h)) / u64::from(w.max(1))).clamp(1, 4096) as u32;
-        let target = self.small.next(gpu, width, height, BLOBTRACK)?;
+        let target = self.small.next(gpu, width, height, BLOB_TRACK)?;
         let pass = pass(gpu)?;
         pass.render(
             gpu,
@@ -317,7 +317,7 @@ impl BlobTrack {
         // A connected background is shrunk the same way and read back with the frame.
         let background = match cx.input_as::<Tex>(1) {
             Some(bg) => {
-                let t = self.small_background.next(gpu, width, height, BLOBTRACK)?;
+                let t = self.small_background.next(gpu, width, height, BLOB_TRACK)?;
                 pass.render(
                     gpu,
                     &t,
@@ -352,7 +352,7 @@ impl BlobTrack {
         let blobs = self.tracker.update(image, dt, &s);
         let mut bytes = view(cx.text("show")?, image, &self.tracker, &blobs, s.threshold);
         let (w, h) = (image.width as u32, image.height as u32);
-        let out = self.view.next(gpu, w, h, BLOBTRACK)?;
+        let out = self.view.next(gpu, w, h, BLOB_TRACK)?;
         gpu.write_rgba16f(&out, &mut bytes)?;
         let slots = usize::try_from(cx.int("slots")?).unwrap_or(0);
         assign_slots(&mut self.slots, slots, &blobs);

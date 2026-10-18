@@ -1,19 +1,19 @@
 # Tracking
 
-`tex.blobtrack` finds blobs in a picture (people in front of a camera, hands, spots of light)
+`tex.blob_track` finds blobs in a picture (people in front of a camera, hands, spots of light)
 and follows them: each blob keeps its id while it moves, and through a short gap. Positions
 come out as a table and as channels, ready to bind.
 
 ## Setting up
 
-1. Feed it a camera: Tab > tex > videoin, then Tab > tex > blobtrack, and connect the two (see
+1. Feed it a camera: Tab > tex > video_in, then Tab > tex > blob_track, and connect the two (see
    [Camera](camera.md)). Any `tex` works as input, so a video file is fine for trying things
    out, and tex nodes in between can crop or mask the picture first.
 2. **Learn the empty scene.** With `detect` on `background` (the default), a blob is whatever
    differs from a learned picture of the empty room. The first frame is learned by itself,
    which is wrong whenever someone is in the picture at that moment. Clear the picture and
    press **learn background** in the param panel, or **in 5 s** to give yourself time to walk
-   out first. From a script: `blobtrack.learn {path, delay?}`.
+   out first. From a script: `blob_track.learn {path, delay?}`.
    Instead of learning, a picture can be connected to the second input, `background`: a
    photo of the empty room (`tex.image`), a frame held by a `tex.cache` (`record` off), or
    anything computed. While it is connected it is the background for every frame; learning

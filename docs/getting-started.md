@@ -54,7 +54,7 @@ else runs without it.
 ### When the GPU gives up
 
 penumbra stops creating GPU memory at 90 % of what Windows grants it, so a node asking for too
-much gets an error (or, for `tex.timemachine`, fewer frames and a warning) instead of taking
+much gets an error (or, for `tex.time_machine`, fewer frames and a warning) instead of taking
 the driver down. Should the GPU device still be lost (a driver reset, another program filling
 the GPU), penumbra saves the project file but no state, shows a message and exits with code 3.
 The next start opens the project with the show clock stopped and says why in the status bar;

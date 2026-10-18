@@ -24,12 +24,12 @@ The families:
 - **`chan`**: numbers that change over time. Generators (`lfo`, `noise`, `constant`), `math`,
   `filter`, and OSC in and out. Channels drive params through [bindings](#bindings).
   A channel holds one or many samples, so a set of channels is a small grid of numbers:
-  `tex.fromchan` turns it into a picture (a row per channel, a pixel per sample) for shaders to
-  look values up in, and `chan.fromtex` averages a picture down to a few pixels and turns them
+  `tex.from_chan` turns it into a picture (a row per channel, a pixel per sample) for shaders to
+  look values up in, and `chan.from_tex` averages a picture down to a few pixels and turns them
   into channels (at 1 x 1, its mean colour).
 - **`table`**: text tables, typed in or read from a file, for scripts and OSC.
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
-  primitives, transformed and merged; materials put on it with `geo.material`; lights and a
+  primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
   camera wired into a `tex.render`, which makes a picture of it all. `light.projector` throws a
   picture through a camera onto the geometry: a virtual projector, for trying a mapping on a
   model of the room. Coordinates are metres, z up.

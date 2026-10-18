@@ -358,7 +358,7 @@ impl Helpers {
         ui.horizontal(|ui| {
             let mut config = hub.config();
             let r = ui.checkbox(&mut config.enabled, "listen").on_hover_text(
-                "Off closes every OSC port for this run (osc.config enabled); the chan.oscin nodes stay",
+                "Off closes every OSC port for this run (osc.config enabled); the chan.osc_in nodes stay",
             );
             auto.add("helpers.osc.enabled", r.rect, "listen");
             if r.changed() {
@@ -369,13 +369,15 @@ impl Helpers {
                 None => "no network found".to_string(),
             };
             ui.label(RichText::new(text).color(weak)).on_hover_text(
-                "The address to enter on a phone or another computer; it reaches a chan.oscin only with lan on",
+                "The address to enter on a phone or another computer; it reaches a chan.osc_in only with lan on",
             );
         });
         if status.listeners.is_empty() && status.senders.is_empty() {
             ui.label(
-                RichText::new("Nothing listens or sends: add a chan.oscin or chan.oscout node (Tab > chan).")
-                    .color(weak),
+                RichText::new(
+                    "Nothing listens or sends: add a chan.osc_in or chan.osc_out node (Tab > chan).",
+                )
+                .color(weak),
             );
         }
         for l in &status.listeners {
@@ -489,7 +491,7 @@ impl Helpers {
         }
         let streams = hub.status();
         if streams.is_empty() {
-            ui.label(RichText::new("Nothing listens: add a chan.audioin node (Tab > chan).").color(weak));
+            ui.label(RichText::new("Nothing listens: add a chan.audio_in node (Tab > chan).").color(weak));
         }
         for s in &streams {
             let asked =
@@ -540,7 +542,7 @@ impl Helpers {
                         text.push_str("   (default)");
                     }
                     ui.label(RichText::new(text).monospace().color(weak))
-                        .on_hover_text("Put part of this name into a chan.audioin's device");
+                        .on_hover_text("Put part of this name into a chan.audio_in's device");
                 }
             }
             Some(Err(e)) => {

@@ -19,11 +19,11 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `audio.devices` | The audio inputs of this machine: name, default, rate, channels, format |
 | `audio.status` | Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) |
 
-## blobtrack
+## blob_track
 
 | command | |
 |---|---|
-| `blobtrack.learn` | A tex.blobtrack takes a frame as the background (the empty scene): {path, delay?} (seconds before it does, default 0) |
+| `blob_track.learn` | A tex.blob_track takes a frame as the background (the empty scene): {path, delay?} (seconds before it does, default 0) |
 
 ## calib
 
@@ -223,13 +223,13 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.type` | Type text into the focused field; {text} |
 | `ui.view` | Pin the viewer to a node, or unpin without a path; {path?} |
 
-## videoin
+## video_in
 
 | command | |
 |---|---|
-| `videoin.config` | Camera settings for this run: {enabled?} |
-| `videoin.devices` | The cameras of this machine with their modes (size, rate, pixel format, whether penumbra reads it) |
-| `videoin.status` | Camera streams (device, mode, open, error, frames, fps, dropped, delay_ms from the camera's timestamp) |
+| `video_in.config` | Camera settings for this run: {enabled?} |
+| `video_in.devices` | The cameras of this machine with their modes (size, rate, pixel format, whether penumbra reads it) |
+| `video_in.status` | Camera streams (device, mode, open, error, frames, fps, dropped, delay_ms from the camera's timestamp) |
 
 ## view
 

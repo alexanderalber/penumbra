@@ -1,5 +1,5 @@
 //! Frame stacks: many frames of one size kept on the GPU, written one at a time into a ring and
-//! read back with a per-pixel choice of how many frames back to look (`tex.timemachine`).
+//! read back with a per-pixel choice of how many frames back to look (`tex.time_machine`).
 //!
 //! The frames live in array textures (chunks) of about [`CHUNK_BYTES`] each and at most
 //! [`CHUNK`] layers (wgpu's default limit on layers). Chunks stay small because one resource

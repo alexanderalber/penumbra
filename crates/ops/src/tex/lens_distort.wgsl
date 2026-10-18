@@ -1,4 +1,4 @@
-// tex.lensdistort: radial lens distortion (Brown-Conrady, k1 and k2) around `center`. The radius
+// tex.lens_distort: radial lens distortion (Brown-Conrady, k1 and k2) around `center`. The radius
 // is 1 at half the image height, so the image's aspect ratio does not change the curve. Positive
 // k1 pulls the edges in (barrel), negative pushes them out (pincushion); `scale` zooms after.
 

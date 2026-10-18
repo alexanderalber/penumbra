@@ -1,11 +1,11 @@
 # Camera
 
-`tex.videoin` shows a live camera: a capture card such as the Elgato Cam Link behind a camera's
+`tex.video_in` shows a live camera: a capture card such as the Elgato Cam Link behind a camera's
 HDMI output, or a webcam. Tracking (blobs, laser spots) will build on it.
 
 ## Setting up
 
-1. Add a `tex.videoin` (Tab > tex > videoin). With `device` empty it opens the first camera of
+1. Add a `tex.video_in` (Tab > tex > video_in). With `device` empty it opens the first camera of
    the machine. The `...` menu beside `device` lists the cameras; part of a name typed in works
    too, e.g. `Cam Link`.
 2. `mode` picks size, rate and pixel format. Empty (`auto` in the menu) takes the largest size
@@ -58,8 +58,8 @@ measuring the whole path from light to projector needs the projector filmed by t
 
 ## Commands
 
-`videoin.devices` lists cameras and modes, `videoin.status` the open streams (fps, dropped,
-delay, error), `videoin.config {enabled}` switches all cameras off and on for this run. See the
+`video_in.devices` lists cameras and modes, `video_in.status` the open streams (fps, dropped,
+delay, error), `video_in.config {enabled}` switches all cameras off and on for this run. See the
 [command reference](reference/commands.md).
 
 Camera input exists on Windows (Media Foundation) so far; on other systems the node reports
@@ -69,7 +69,7 @@ that it is not built there yet.
 
 A camera in a dark room is noisy, and the noise flickers into whatever reads the picture
 (tracking, a feedback, a projection of the camera itself). `tex.denoise` behind the
-`tex.videoin` calms it: where the picture is still it averages over about `frames` frames;
+`tex.video_in` calms it: where the picture is still it averages over about `frames` frames;
 where it moves (a change beyond `motion`) it shows the new frame at once and smooths that
 within the frame instead (`spatial`), keeping edges. Raise `motion` when the noise still
 flickers; lower it, or lower `frames`, when moving things leave trails. It costs about half a
@@ -83,7 +83,7 @@ fractions such as 2.5 are meaningful, and a channel can drive it smoothly.
 
 ## Motion
 
-`tex.opticalflow` behind the `tex.videoin` (or behind a `tex.denoise`) measures how far each
+`tex.optical_flow` behind the `tex.video_in` (or behind a `tex.denoise`) measures how far each
 part of the picture moved since the previous frame. Its output is a small picture, `size` wide
 (320 by default, under "more"), whose red and green are the motion in image sizes per frame:
 red to the right, green downwards (x in widths, y in heights), negative the other way; blue is 0,

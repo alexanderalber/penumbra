@@ -1,6 +1,6 @@
 //! OSC nodes.
 //!
-//! - **`chan.oscin`** listens on a UDP port (this machine only unless `lan`) and makes every
+//! - **`chan.osc_in`** listens on a UDP port (this machine only unless `lan`) and makes every
 //!   address that arrives a channel holding its latest number: `/fader1 0.5` becomes channel
 //!   `fader1`, an address with several numbers one channel per number (`xy_0`, `xy_1`), in the
 //!   order the addresses first came. Binding params to these channels is the primary way to
@@ -8,7 +8,7 @@
 //!   path their address names (the engine does that, see `penumbra-engine`'s `osc` module).
 //!   The node recooks when something arrives, not every frame. Its second output lists what
 //!   arrived as a table.
-//! - **`chan.oscout`** sends its input's channels (and the rows of a table: address, then
+//! - **`chan.osc_out`** sends its input's channels (and the rows of a table: address, then
 //!   values) to a host and port at a rate, as a bundle per packet; by default only what
 //!   changed, plus everything once a second.
 //!
@@ -28,9 +28,9 @@ use penumbra_osc::hub::{self, Hub, Sender, Want, Watch};
 use penumbra_osc::{Budget, Pattern, channel_name};
 
 /// Kind of the OSC input node.
-pub const OSC_IN: &str = "chan.oscin";
+pub const OSC_IN: &str = "chan.osc_in";
 /// Kind of the OSC output node.
-pub const OSC_OUT: &str = "chan.oscout";
+pub const OSC_OUT: &str = "chan.osc_out";
 /// The default port to listen on: what TouchOSC sends to by default.
 pub const DEFAULT_IN_PORT: i64 = 8000;
 /// The default port to send to: what TouchOSC listens on by default.
@@ -98,7 +98,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     Ok(())
 }
 
-/// The listeners the network's `chan.oscin` nodes want (stored params; a binding of `port` or
+/// The listeners the network's `chan.osc_in` nodes want (stored params; a binding of `port` or
 /// `lan` is not followed: a listener does not move with a channel).
 pub fn wants(net: &Network, types: &NodeTypes) -> Vec<Want> {
     let Some(desc) = types.desc(OSC_IN) else { return Vec::new() };
@@ -115,7 +115,7 @@ pub fn wants(net: &Network, types: &NodeTypes) -> Vec<Want> {
         .collect()
 }
 
-/// `chan.oscin`'s `addresses`: OSC patterns to keep and to leave out (`^`). `*` on its own
+/// `chan.osc_in`'s `addresses`: OSC patterns to keep and to leave out (`^`). `*` on its own
 /// keeps every address, whatever its depth.
 #[derive(Default)]
 pub struct Filter {

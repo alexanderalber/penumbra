@@ -5,7 +5,7 @@
 //! and the project thread (autosave, external edits). It uses the GPU (snapshots) but no UI.
 
 pub mod audio;
-pub mod blobtrack;
+pub mod blob_track;
 pub mod calib;
 pub mod clipboard;
 pub mod command;
@@ -22,7 +22,7 @@ pub mod projects;
 pub mod state;
 pub mod state_commands;
 pub mod ticker;
-pub mod videoin;
+pub mod video_in;
 
 #[cfg(test)]
 mod tests;
@@ -52,8 +52,8 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
     audio::register(&mut registry, engine);
-    videoin::register(&mut registry, engine);
-    blobtrack::register(&mut registry, engine);
+    video_in::register(&mut registry, engine);
+    blob_track::register(&mut registry, engine);
     projects::register(&mut registry, engine);
     navigation::register(&mut registry, engine);
     registry

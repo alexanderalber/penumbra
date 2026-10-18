@@ -1,4 +1,4 @@
-// tex.opticalflow: pyramidal Lucas-Kanade, one stage per pass, `stage` set by the node:
+// tex.optical_flow: pyramidal Lucas-Kanade, one stage per pass, `stage` set by the node:
 //
 //   0 prep   the input shrunk to the analysed size, as the square root of its luma (so one
 //            amount of texture means about the same in dark and bright parts)

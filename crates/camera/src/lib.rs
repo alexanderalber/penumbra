@@ -1,4 +1,4 @@
-//! Camera input for `tex.videoin`.
+//! Camera input for `tex.video_in`.
 //!
 //! - [`hub`]: the [`Hub`] opens the cameras the network wants, one capture thread each, and
 //!   keeps the newest frame of each for whoever shows it.

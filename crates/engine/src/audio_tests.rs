@@ -43,8 +43,8 @@ fn fed_audio_becomes_channels_and_a_tempo() {
     f.call(
         "node.batch",
         json!({"ops": [
-            {"op": "create", "path": "/in", "kind": "chan.audioin", "params": {"device": "test"}},
-            {"op": "create", "path": "/a", "kind": "chan.audioanalysis"},
+            {"op": "create", "path": "/in", "kind": "chan.audio_in", "params": {"device": "test"}},
+            {"op": "create", "path": "/a", "kind": "chan.audio_analysis"},
             {"op": "connect", "from": "/in", "to": "/a"},
         ]}),
     );
@@ -102,7 +102,7 @@ fn audio_errors_are_node_errors() {
         "node.batch",
         json!({"ops": [
             {"op": "create", "path": "/lfo", "kind": "chan.lfo"},
-            {"op": "create", "path": "/a", "kind": "chan.audioanalysis"},
+            {"op": "create", "path": "/a", "kind": "chan.audio_analysis"},
             {"op": "connect", "from": "/lfo", "to": "/a"},
         ]}),
     );
@@ -113,7 +113,7 @@ fn audio_errors_are_node_errors() {
     f.call("audio.config", json!({"enabled": false}));
     f.call(
         "node.create",
-        json!({"path": "/in", "kind": "chan.audioin", "params": {"device": "nothing like it"}}),
+        json!({"path": "/in", "kind": "chan.audio_in", "params": {"device": "nothing like it"}}),
     );
     f.call("node.watch", json!({"path": "/in"}));
     eventually("the switch to show", || error_of(&f, "/in").contains("switched off"));

@@ -19,7 +19,7 @@ A `tex.render` gets a line of buttons under the viewer's header:
   one undo step: a drag, a turn of the wheel, or a push of the 3D mouse until the cap rests.
 
 The camera that moves is the `view.camera` wired into the render's `camera` input, or the
-render's own camera params when nothing is wired. A calibrated camera (one whose `camera`
+render's own camera params when nothing is wired. A calibrated camera (one whose `calibration`
 param holds a `calib.solve` result) cannot be steered, because that would replace the
 calibration. The numbers in the param panel stay the precise way to place a camera.
 

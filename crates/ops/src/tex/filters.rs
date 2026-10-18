@@ -81,7 +81,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             )
         },
         pass(
-            filter("tex.channelmix", "Each output channel a weighted sum of the input's channels")
+            filter("tex.channel_mix", "Each output channel a weighted sum of the input's channels")
                 .param(
                     ParamSpec::vec4("red", [1.0, 0.0, 0.0, 0.0])
                         .range(-2.0, 2.0)
@@ -111,7 +111,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             include_str!("channel_mix.wgsl"),
         ),
         pass(
-            filter("tex.chromakey", "Make pixels near a key colour transparent (green or blue screen)")
+            filter("tex.chroma_key", "Make pixels near a key colour transparent (green or blue screen)")
                 .param(ParamSpec::color("key", [0.0, 1.0, 0.0, 1.0]).doc("The screen's colour"))
                 .param(
                     ParamSpec::float("tolerance", 0.1)
@@ -212,7 +212,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             )
         },
         pass(
-            filter("tex.lensdistort", "Radial lens distortion (barrel or pincushion) around a centre")
+            filter("tex.lens_distort", "Radial lens distortion (barrel or pincushion) around a centre")
                 .param(
                     ParamSpec::float("k1", 0.1)
                         .range(-1.0, 1.0)

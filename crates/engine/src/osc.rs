@@ -1,8 +1,8 @@
-//! OSC in the engine: the hub's listeners follow the network's `chan.oscin` nodes (the cook thread
+//! OSC in the engine: the hub's listeners follow the network's `chan.osc_in` nodes (the cook thread
 //! calls [`penumbra_ops::osc::wants`] when the network changes), and the **osc thread** turns what
 //! arrives into edits:
 //!
-//! - **Params by address** (on ports whose `chan.oscin` has `params` on): `/scene/speed 0.5`
+//! - **Params by address** (on ports whose `chan.osc_in` has `params` on): `/scene/speed 0.5`
 //!   sets `/scene.speed` (an exposed param of a component, or any node's param by its path;
 //!   `/n/translate/0 0.5` sets one component; `/n/translate 1 2 3` the whole vector). Patterns
 //!   in the address (`/lights/*/dim 0`) match nodes and params with a step budget. What arrives
@@ -11,7 +11,7 @@
 //!   ([`penumbra_graph::History::live`]). OSC edits pass the gate as the user's (refused
 //!   while Claude holds the claim) and are refused on locked nodes and bound params.
 //! - **Learn** (`osc.learn`): the next address with a number binds the param to that address's
-//!   channel on the `chan.oscin` that takes it; one undo step.
+//!   channel on the `chan.osc_in` that takes it; one undo step.
 //!
 //! Commands: `osc.status`, `osc.config`, `osc.learn`, `osc.send`.
 
@@ -479,7 +479,7 @@ fn bind_learned(
 ) -> Result<(String, Vec<String>), String> {
     let net = session.doc().snapshot();
     let types = session.types();
-    let desc = types.desc(OSC_IN).ok_or("no chan.oscin node type")?;
+    let desc = types.desc(OSC_IN).ok_or("no chan.osc_in node type")?;
     let mut nodes: Vec<(NodePath, &Arc<NodeDef>)> = net
         .nodes()
         .filter(|n| n.kind == OSC_IN)
@@ -491,7 +491,7 @@ fn bind_learned(
         .collect();
     nodes.sort_by(|a, b| a.0.cmp(&b.0));
     let Some((from, _)) = nodes.first() else {
-        return Err(format!("no chan.oscin on port {port} keeps {address} (see its addresses)"));
+        return Err(format!("no chan.osc_in on port {port} keeps {address} (see its addresses)"));
     };
     let (param, component) = &learning.target;
     let target = net.resolve_alias(types, param).map_err(|e| e.0)?;

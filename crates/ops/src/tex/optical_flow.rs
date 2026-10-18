@@ -1,5 +1,5 @@
-//! `tex.opticalflow`: how far each part of the picture moved since the previous input frame.
-//! Pyramidal Lucas-Kanade on the GPU (`opticalflow.wgsl`): the input is shrunk to `size` wide,
+//! `tex.optical_flow`: how far each part of the picture moved since the previous input frame.
+//! Pyramidal Lucas-Kanade on the GPU (`optical_flow.wgsl`): the input is shrunk to `size` wide,
 //! a pyramid of halved levels is built, and the motion is refined from the coarsest level to the
 //! finest, a few steps per level. The previous frame's pyramid is kept, so each new frame costs
 //! one pyramid plus the steps. The same input frame again is not measured twice.
@@ -19,8 +19,8 @@ use penumbra_graph::{
 
 use super::{gpu, waiting};
 
-const KIND: &str = "tex.opticalflow";
-const SOURCE: &str = include_str!("opticalflow.wgsl");
+const KIND: &str = "tex.optical_flow";
+const SOURCE: &str = include_str!("optical_flow.wgsl");
 
 /// Most pyramid levels.
 const MAX_LEVELS: usize = 8;

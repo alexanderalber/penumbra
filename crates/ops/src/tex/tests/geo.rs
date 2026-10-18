@@ -89,7 +89,7 @@ fn a_scene_of_parts_renders_with_depth_and_a_data_pass() {
     // ambient.
     ops.extend([
         create("/phong", "mat.phong", &[("color", Value::Vec4([0.9, 0.85, 0.8, 1.0]))]),
-        create("/shiny", "geo.material", &[]),
+        create("/shiny", "geo.assign_material", &[]),
         connect("/scene", "/shiny", 0),
         connect("/phong", "/shiny", 1),
         create(
@@ -164,7 +164,7 @@ fn a_calibrated_camera_renders_where_calib_projects() {
         &[
             ("width", Value::Int(480)),
             ("height", Value::Int(270)),
-            ("camera", json.as_str().into()),
+            ("calibration", json.as_str().into()),
             ("surface", "parts".into()),
         ],
     ));
@@ -195,10 +195,10 @@ fn a_calibrated_camera_renders_where_calib_projects() {
     }
     assert_eq!(checked, 5);
     // A camera that is not one: an error naming the param.
-    rig.edit(&[set("/projector.camera", "{\"nope\": 1}".into())]);
+    rig.edit(&[set("/projector.calibration", "{\"nope\": 1}".into())]);
     rig.cook("/projector");
     let s = rig.cooker.status(rig.id("/projector")).unwrap();
-    assert!(s.error.as_deref().is_some_and(|e| e.contains("`camera`")), "{s:?}");
+    assert!(s.error.as_deref().is_some_and(|e| e.contains("`calibration`")), "{s:?}");
 }
 
 #[test]
@@ -241,7 +241,7 @@ fn a_camera_node_replaces_the_renders_own_camera() {
     let camera = Camera { intrinsics, pose };
     let json = serde_json::to_string(&camera).unwrap();
     let v = rig.version("/wired");
-    rig.edit(&[set("/cam.camera", json.as_str().into())]);
+    rig.edit(&[set("/cam.calibration", json.as_str().into())]);
     let tex = rig.cook_until_new("/wired", v);
     let d = data(&rig, "/wired");
     let point = [0.1, -0.2, 0.5];
@@ -251,10 +251,10 @@ fn a_camera_node_replaces_the_renders_own_camera() {
     assert_eq!(p[2], 1.0, "the box's top at {u}, {vv}: {p:?}");
     // A camera node that fails leaves the render with an error, not its own params.
     let v = rig.version("/wired");
-    rig.edit(&[set("/cam.camera", "{\"nope\": 1}".into())]);
+    rig.edit(&[set("/cam.calibration", "{\"nope\": 1}".into())]);
     rig.cook("/wired");
     let s = rig.cooker.status(rig.id("/cam")).unwrap();
-    assert!(s.error.as_deref().is_some_and(|e| e.contains("`camera`")), "{s:?}");
+    assert!(s.error.as_deref().is_some_and(|e| e.contains("`calibration`")), "{s:?}");
     // Unwired, the render's own params count again.
     rig.edit(&[penumbra_graph::Op::Disconnect { to: "/wired".parse().unwrap(), input: 3 }]);
     rig.cook_until_new("/wired", v);
@@ -522,11 +522,11 @@ fn materials_answer_lights_by_the_numbers() {
     let mut ops = vec![
         wall,
         create("/flat_mat", "mat.phong", &[("specular", Value::Vec4([0.0, 0.0, 0.0, 1.0]))]),
-        create("/flat", "geo.material", &[]),
+        create("/flat", "geo.assign_material", &[]),
         connect("/wall", "/flat", 0),
         connect("/flat_mat", "/flat", 1),
         create("/shiny_mat", "mat.phong", &[("specular", Value::Vec4([0.5, 0.5, 0.5, 1.0]))]),
-        create("/shiny", "geo.material", &[]),
+        create("/shiny", "geo.assign_material", &[]),
         connect("/wall", "/shiny", 0),
         connect("/shiny_mat", "/shiny", 1),
         create(
@@ -539,12 +539,12 @@ fn materials_answer_lights_by_the_numbers() {
             ],
         ),
         create("/red_mat", "mat.constant", &[("color", Value::Vec4([1.0, 0.0, 0.0, 1.0]))]),
-        create("/red", "geo.material", &[]),
+        create("/red", "geo.assign_material", &[]),
         connect("/wall", "/red", 0),
         connect("/red_mat", "/red", 1),
         create("/tex_mat", "mat.constant", &[]),
         connect("/green", "/tex_mat", 0),
-        create("/textured", "geo.material", &[]),
+        create("/textured", "geo.assign_material", &[]),
         connect("/wall", "/textured", 0),
         connect("/tex_mat", "/textured", 1),
         // Lights: head on, from 60 degrees, ambient, a point at 2 m fading, two halves merged.
@@ -664,8 +664,8 @@ fn materials_answer_lights_by_the_numbers() {
     rig.cook_until_new("/amb", v);
     let s = rig.cooker.status(rig.id("/amb")).unwrap();
     assert!(s.warning.as_deref().is_some_and(|w| w.contains("17 lights")), "{s:?}");
-    // geo.material without a material names what is missing.
-    rig.edit(&[create("/bare", "geo.material", &[]), connect("/wall", "/bare", 0)]);
+    // geo.assign_material without a material names what is missing.
+    rig.edit(&[create("/bare", "geo.assign_material", &[]), connect("/wall", "/bare", 0)]);
     rig.cook("/bare");
     let s = rig.cooker.status(rig.id("/bare")).unwrap();
     assert!(s.error.as_deref().is_some_and(|e| e.contains("material")), "{s:?}");
@@ -685,7 +685,7 @@ fn a_material_replaces_the_files_colour() {
     let ops = vec![
         create("/file", "geo.file", &[("file", "red.glb".into())]),
         create("/blue_mat", "mat.constant", &[("color", Value::Vec4([0.0, 0.0, 1.0, 1.0]))]),
-        create("/blue", "geo.material", &[]),
+        create("/blue", "geo.assign_material", &[]),
         connect("/file", "/blue", 0),
         connect("/blue_mat", "/blue", 1),
         cam("/as_file"),
@@ -726,7 +726,7 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
     let white = |path: &str, geo: &str| {
         vec![
             create(&format!("{path}_mat"), "mat.phong", &[("specular", Value::Vec4([0.0, 0.0, 0.0, 1.0]))]),
-            create(path, "geo.material", &[]),
+            create(path, "geo.assign_material", &[]),
             connect(geo, path, 0),
             connect(&format!("{path}_mat"), path, 1),
         ]
@@ -748,7 +748,7 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
             &[("shape", "plane".into()), ("size", Value::Vec3([0.3, 1.0, 0.3]))],
         ),
         create("/glass_mat", "mat.constant", &[("color", Value::Vec4([1.0, 1.0, 1.0, 0.2]))]),
-        create("/glass_on", "geo.material", &[]),
+        create("/glass_on", "geo.assign_material", &[]),
         connect("/glass", "/glass_on", 0),
         connect("/glass_mat", "/glass_on", 1),
         create("/glass_at", "geo.transform", &[("translate", Value::Vec3([0.0, -1.0, 0.0]))]),
@@ -799,7 +799,7 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
         let (mat, on, merged) = (format!("/{name}_mat"), format!("/{name}_on"), format!("/{name}"));
         ops.extend([
             create(&mat, "mat.wireframe", &[("faces", "filled".into()), ("shadows", Value::Bool(shadows))]),
-            create(&on, "geo.material", &[]),
+            create(&on, "geo.assign_material", &[]),
             connect("/box_at", &on, 0),
             connect(&mat, &on, 1),
             create(&merged, "geo.merge", &[]),
@@ -912,7 +912,7 @@ fn see_through_surfaces_sort_and_tint_the_light() {
                 &[("shape", "plane".into()), ("size", Value::Vec3([0.6, 1.0, 0.6]))],
             ),
             create(&format!("{path}_mat"), "mat.constant", &[("color", Value::Vec4(rgba))]),
-            create(&format!("{path}_on"), "geo.material", &[]),
+            create(&format!("{path}_on"), "geo.assign_material", &[]),
             connect(&format!("{path}_shape"), &format!("{path}_on"), 0),
             connect(&format!("{path}_mat"), &format!("{path}_on"), 1),
             create(path, "geo.transform", &[("translate", Value::Vec3([0.0, y, 0.0]))]),
@@ -926,7 +926,7 @@ fn see_through_surfaces_sort_and_tint_the_light() {
             &[("shape", "plane".into()), ("size", Value::Vec3([4.0, 1.0, 2.0]))],
         ),
         create("/wall_mat", "mat.phong", &[("specular", Value::Vec4([0.0, 0.0, 0.0, 1.0]))]),
-        create("/lit_wall", "geo.material", &[]),
+        create("/lit_wall", "geo.assign_material", &[]),
         connect("/wall", "/lit_wall", 0),
         connect("/wall_mat", "/lit_wall", 1),
         // Nearest first, the opaque wall last: the worst order for drawing as it comes.
@@ -1051,7 +1051,7 @@ fn an_environment_lights_and_reflects_by_its_picture() {
     let on = |path: &str, geo: &str, mat: &str, params: &[(&str, Value)]| {
         vec![
             create(&format!("{path}_mat"), mat, params),
-            create(path, "geo.material", &[]),
+            create(path, "geo.assign_material", &[]),
             connect(geo, path, 0),
             connect(&format!("{path}_mat"), path, 1),
         ]
@@ -1187,7 +1187,7 @@ fn ambient_occlusion_darkens_creases_in_the_ambient_light() {
         connect("/wall", "/both", 0),
         connect("/box_at", "/both", 1),
         create("/white", "mat.phong", &[("specular", Value::Vec4([0.0, 0.0, 0.0, 1.0]))]),
-        create("/scene", "geo.material", &[]),
+        create("/scene", "geo.assign_material", &[]),
         connect("/both", "/scene", 0),
         connect("/white", "/scene", 1),
         // Half ambient, half from the camera's direction.
@@ -1269,7 +1269,7 @@ fn wireframes_show_edges_and_occluders_hide() {
     let ops = vec![
         create("/box", "geo.primitive", &[("size", Value::Vec3([1.0, 1.0, 1.0]))]),
         create("/quads_mat", "mat.wireframe", &[("line_width", Value::Float(3.0))]),
-        create("/quads", "geo.material", &[]),
+        create("/quads", "geo.assign_material", &[]),
         connect("/box", "/quads", 0),
         connect("/quads_mat", "/quads", 1),
         cam("/quads_seen"),
@@ -1279,7 +1279,7 @@ fn wireframes_show_edges_and_occluders_hide() {
             "mat.wireframe",
             &[("line_width", Value::Float(3.0)), ("edges", "triangles".into())],
         ),
-        create("/tris", "geo.material", &[]),
+        create("/tris", "geo.assign_material", &[]),
         connect("/box", "/tris", 0),
         connect("/tris_mat", "/tris", 1),
         cam("/tris_seen"),
@@ -1293,11 +1293,11 @@ fn wireframes_show_edges_and_occluders_hide() {
         create("/wall_at", "geo.transform", &[("translate", Value::Vec3([0.0, 1.0, 0.0]))]),
         connect("/wall", "/wall_at", 0),
         create("/red", "mat.constant", &[("color", Value::Vec4([1.0, 0.0, 0.0, 1.0]))]),
-        create("/red_wall", "geo.material", &[]),
+        create("/red_wall", "geo.assign_material", &[]),
         connect("/wall_at", "/red_wall", 0),
         connect("/red", "/red_wall", 1),
         create("/hole", "mat.occluder", &[]),
-        create("/hidden", "geo.material", &[]),
+        create("/hidden", "geo.assign_material", &[]),
         connect("/box", "/hidden", 0),
         connect("/hole", "/hidden", 1),
         create("/both", "geo.merge", &[]),
@@ -1316,7 +1316,7 @@ fn wireframes_show_edges_and_occluders_hide() {
                 ("fill", Value::Vec4([0.0, 0.0, 1.0, 1.0])),
             ],
         ),
-        create("/filled", "geo.material", &[]),
+        create("/filled", "geo.assign_material", &[]),
         connect("/box", "/filled", 0),
         connect("/filled_mat", "/filled", 1),
         cam("/filled_seen"),
@@ -1326,7 +1326,7 @@ fn wireframes_show_edges_and_occluders_hide() {
             "mat.wireframe",
             &[("line_width", Value::Float(3.0)), ("faces", "hidden".into())],
         ),
-        create("/front", "geo.material", &[]),
+        create("/front", "geo.assign_material", &[]),
         connect("/box", "/front", 0),
         connect("/front_mat", "/front", 1),
         create("/front_wall", "geo.merge", &[]),
@@ -1435,9 +1435,9 @@ fn instance_places_a_copy_per_row() {
 /// Two copies placed, turned, scaled and coloured by texels, seen from the front: the left one
 /// as it is but twice as tall, green; the right one turned to lie along x, red.
 #[test]
-fn texinstance_places_a_copy_per_texel() {
+fn tex_instance_places_a_copy_per_texel() {
     let Some(gpu) = gpu() else { return };
-    let dir = scratch("geo-texinstance");
+    let dir = scratch("geo-tex_instance");
     let shader = |name: &str, left: &str, right: &str| {
         let src = format!(
             "@fragment\nfn main(v: PnVertex) -> @location(0) vec4f {{\n    return select(vec4f({right}), vec4f({left}), v.uv.x < 0.5);\n}}\n"
@@ -1463,14 +1463,14 @@ fn texinstance_places_a_copy_per_texel() {
     let ops = vec![
         create("/stick", "geo.primitive", &[("size", Value::Vec3([0.4, 1.2, 0.4]))]),
         create("/white", "mat.constant", &[]),
-        create("/plain", "geo.material", &[]),
+        create("/plain", "geo.assign_material", &[]),
         connect("/stick", "/plain", 0),
         connect("/white", "/plain", 1),
         texels("/position", "position.wgsl"),
         texels("/aim", "aim.wgsl"),
         texels("/scale", "scale.wgsl"),
         texels("/color", "color.wgsl"),
-        create("/copies", "geo.texinstance", &[]),
+        create("/copies", "geo.tex_instance", &[]),
         connect("/plain", "/copies", 0),
         connect("/position", "/copies", 1),
         connect("/aim", "/copies", 2),

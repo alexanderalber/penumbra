@@ -1,7 +1,7 @@
 //! The OSC hub: one UDP listener per port, what arrived on it, and the hand-over to whoever
 //! uses it.
 //!
-//! - **Listeners** are wanted by the network ([`Hub::set_wanted`]: one [`Want`] per `chan.oscin`
+//! - **Listeners** are wanted by the network ([`Hub::set_wanted`]: one [`Want`] per `chan.osc_in`
 //!   node); the hub opens one thread per port, binds `127.0.0.1` unless a want asks for the LAN
 //!   (`0.0.0.0`), rebinds when that changes and retries a taken port every second. Port 0 binds
 //!   any free port ([`ListenerStatus::bound`] says which).

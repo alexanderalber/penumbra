@@ -33,7 +33,7 @@ fn param_value(f: &Fixture, path: &str, name: &str) -> Json {
 #[test]
 fn osc_in_becomes_channels_that_bind_and_osc_out_sends_them() {
     let f = Fixture::new("osc_chan");
-    f.call("node.create", json!({"path": "/in", "kind": "chan.oscin", "params": {"port": 0}}));
+    f.call("node.create", json!({"path": "/in", "kind": "chan.osc_in", "params": {"port": 0}}));
     let port = osc_port(&f, 0);
     send(port, "/fader1", vec![Arg::Float(0.25)]);
     send(port, "/1/xy", vec![Arg::Float(0.5), Arg::Int(2)]);
@@ -73,7 +73,7 @@ fn osc_in_becomes_channels_that_bind_and_osc_out_sends_them() {
     let rx_port = rx.local_addr().unwrap().port();
     f.call(
         "node.create",
-        json!({"path": "/out", "kind": "chan.oscout", "params": {"port": rx_port, "prefix": "/show"}}),
+        json!({"path": "/out", "kind": "chan.osc_out", "params": {"port": rx_port, "prefix": "/show"}}),
     );
     f.call("node.connect", json!({"from": "/k", "to": "/out"}));
     let mut buf = [0u8; 2048];
@@ -102,7 +102,7 @@ fn osc_addresses_set_params_live_outside_the_history() {
     let f = Fixture::new("osc_params");
     f.call(
         "node.create",
-        json!({"path": "/in", "kind": "chan.oscin", "params": {"port": 0, "params": true}}),
+        json!({"path": "/in", "kind": "chan.osc_in", "params": {"port": 0, "params": true}}),
     );
     f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo"}));
     f.call("node.create", json!({"path": "/lfo2", "kind": "chan.lfo"}));
@@ -173,7 +173,7 @@ fn osc_is_refused_while_claude_edits_and_learn_binds_the_next_address() {
     let f = Fixture::new("osc_learn");
     f.call(
         "node.create",
-        json!({"path": "/in", "kind": "chan.oscin", "params": {"port": 0, "params": true}}),
+        json!({"path": "/in", "kind": "chan.osc_in", "params": {"port": 0, "params": true}}),
     );
     f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo"}));
     f.call("node.create", json!({"path": "/nz", "kind": "tex.noise"}));
@@ -229,7 +229,7 @@ fn osc_does_not_set_a_scripts_code() {
     let f = Fixture::new("osc_code");
     f.call(
         "node.create",
-        json!({"path": "/in", "kind": "chan.oscin", "params": {"port": 0, "params": true}}),
+        json!({"path": "/in", "kind": "chan.osc_in", "params": {"port": 0, "params": true}}),
     );
     f.call("node.create", json!({"path": "/py", "kind": "script.python"}));
     let code = param_value(&f, "/py", "code");

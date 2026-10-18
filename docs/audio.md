@@ -1,21 +1,21 @@
 # Audio
 
-Two nodes make a show react to sound: `chan.audioin` reads an input device, and
-`chan.audioanalysis` turns what it hears into channels that params can be bound to.
+Two nodes make a show react to sound: `chan.audio_in` reads an input device, and
+`chan.audio_analysis` turns what it hears into channels that params can be bound to.
 
 ## Setting up
 
-1. Add a `chan.audioin` (Tab > chan > audioin). With `device` empty it reads the system's
+1. Add a `chan.audio_in` (Tab > chan > audio_in). With `device` empty it reads the system's
    default input; the empty `device` box names that device in grey (hover the box for the device
    a typed name picked). `audio.status` names it too. The `...` menu beside `device` lists the inputs of this machine; part of a
    name typed in works too, e.g. `Focusrite`. The [Helpers window](helpers.md#audio) shows a
    level meter per channel. The device is opened in shared mode, so other programs can use it too.
-2. Connect it to a `chan.audioanalysis`.
+2. Connect it to a `chan.audio_analysis`.
 3. Bind params to the analysis' channels, as to any channel (see
    [bindings](concepts.md#bindings)): drag a wire from its output onto a param row, or pick the
    channel in the param's link menu.
 
-`chan.audioin` outputs the samples that arrived since its last cook, one channel per device
+`chan.audio_in` outputs the samples that arrived since its last cook, one channel per device
 channel (`ch1`, `ch2`, ...) at the device's sample rate. It keeps listening while the show is
 paused. If the device goes away (a pulled cable), the node shows an error and the input is
 opened again every two seconds until it is back.

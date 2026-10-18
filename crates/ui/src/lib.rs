@@ -95,7 +95,7 @@ pub enum Action {
     /// Start these nodes over (`node.reset`): stateful ones forget what they hold, a component
     /// stands for the stateful nodes inside it.
     Reset(Vec<NodeId>),
-    /// A `tex.blobtrack` takes the first frame after `delay` seconds as its background.
+    /// A `tex.blob_track` takes the first frame after `delay` seconds as its background.
     LearnBackground {
         node: NodeId,
         delay: f64,

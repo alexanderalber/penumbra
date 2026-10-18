@@ -21,7 +21,7 @@ pub enum DataKind {
     Chan,
     Table,
     Geo,
-    /// A material, put on geometry by `geo.material`.
+    /// A material, put on geometry by `geo.assign_material`.
     Mat,
     /// Lights for a render.
     Light,

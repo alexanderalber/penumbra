@@ -1,4 +1,4 @@
-//! `mat` nodes: materials as in TouchDesigner, put on geometry by `geo.material`. `mat.constant`
+//! `mat` nodes: materials as in TouchDesigner, put on geometry by `geo.assign_material`. `mat.constant`
 //! shows its colour as it is, with or without lights; `mat.phong` and `mat.pbr` (metallic and rough
 //! as in glTF) answer the render's lights and are black without them. `mat.wireframe` draws only
 //! the edges, unlit; `mat.occluder` draws nothing but hides what is behind it.

@@ -6,7 +6,7 @@
 //! transform changes matrices and a merge concatenates lists, so neither copies or re-uploads
 //! geometry.
 //!
-//! A [`Material`] can be put on every model of a [`Geo`] by `geo.material`; without one, a model
+//! A [`Material`] can be put on every model of a [`Geo`] by `geo.assign_material`; without one, a model
 //! shows its file's materials as they are (unlit, as [`Shading::Constant`]).
 
 use std::collections::HashMap;
@@ -362,7 +362,7 @@ pub enum Faces {
     Hidden,
 }
 
-/// A material from a `mat` node, put on geometry by `geo.material`.
+/// A material from a `mat` node, put on geometry by `geo.assign_material`.
 #[derive(Clone)]
 pub struct Material {
     pub shading: Shading,

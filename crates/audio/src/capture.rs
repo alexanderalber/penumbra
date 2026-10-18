@@ -2,7 +2,7 @@
 //! hand-over to whoever reads them.
 //!
 //! - **Streams** are wanted by the network ([`Hub::set_wanted`]: one device pattern per
-//!   `chan.audioin` node; empty is the system's default input). Each wanted device gets a thread
+//!   `chan.audio_in` node; empty is the system's default input). Each wanted device gets a thread
 //!   that owns its cpal stream: it opens the device in its default format (shared mode on
 //!   Windows, so other programs keep using it), and reopens it two seconds after an error, a
 //!   lost device or a second without samples (a pulled USB cable does not always report an

@@ -98,7 +98,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Transform) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("geo.material", "Puts a material on every model of the input")
+        NodeDesc::new("geo.assign_material", "Puts a material on every model of the input")
             .input("in", DataKind::Geo)
             .input("mat", DataKind::Mat)
             .output("out", DataKind::Geo),
@@ -129,7 +129,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new(
-            "geo.texinstance",
+            "geo.tex_instance",
             "A copy of the input per texel of position, drawn on the GPU: scaled by scale's rgb, its +y turned to aim's rgb (+z kept up), moved to position's rgb, its colour times color's rgb; texel i % width, i / width of each texture is copy i's",
         )
         .param(
