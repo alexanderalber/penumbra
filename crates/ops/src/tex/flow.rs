@@ -9,7 +9,8 @@ use std::sync::Arc;
 use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::{Pass, PassInput, Tex, TexRing};
 use penumbra_graph::{
-    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator, StateItem,
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, InputChoice, NodeDesc, NodeTypes, Operator,
+    StateItem,
 };
 
 use super::{gpu, waiting};
@@ -31,13 +32,24 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(0.0, (SWITCH_INPUTS - 1) as f64)
                 .doc("Which connected input, counted from 0; past the last, the last"),
         )
-        .param(ParamSpec::bool("blend", false).doc("A fractional index mixes the two inputs either side"));
+        .param(ParamSpec::bool("blend", false).doc("A fractional index mixes the two inputs either side"))
+        .param(ParamSpec::choice("inactive", &["cook", "skip"]).doc(
+            "The inputs not shown: cook keeps their chains cooking as if shown; skip cooks only \
+             the shown input's chain, the others stand still and cost nothing. Switching to a \
+             skipped input cooks its chain in that frame (a slow chain makes the frame late, a \
+             video may need a moment to catch up), and a feedback loop, cache or time machine \
+             in it carries on from where it stopped. With skip an input counts as connected \
+             as soon as it is wired",
+        ));
     for i in 0..SWITCH_INPUTS {
         switch = switch.input(&format!("in{i}"), DataKind::Tex);
     }
-    types.register(FnNodeType::new(switch.output("out", DataKind::Tex), || {
-        Box::new(Switch { ring: TexRing::new(), cross: None }) as Box<dyn Operator>
-    }))?;
+    types.register(
+        FnNodeType::new(switch.output("out", DataKind::Tex), || {
+            Box::new(Switch { ring: TexRing::new(), cross: None }) as Box<dyn Operator>
+        })
+        .choose_inputs(switch_inputs),
+    )?;
 
     types.register(FnNodeType::new(
         NodeDesc::new("tex.select", "The output of another node, named by path: a wire without the wire")
@@ -93,17 +105,47 @@ struct Switch {
     cross: Option<Arc<Pass>>,
 }
 
+/// Where a switch's `index` falls among `count` connected inputs: the one below, and the share
+/// of the one above (0 for none). Past either end, the end.
+fn switch_position(index: f64, count: usize) -> Option<(usize, f64)> {
+    let last = count.checked_sub(1)?;
+    let index = if index.is_finite() { index.clamp(0.0, last as f64) } else { 0.0 };
+    Some((index.floor() as usize, index - index.floor()))
+}
+
+/// With `inactive: skip`, the switch needs only the wired inputs it shows.
+fn switch_inputs(cx: &InputChoice<'_>) -> Option<Vec<usize>> {
+    if cx.text("inactive")? != "skip" {
+        return None;
+    }
+    let wired: Vec<usize> = (0..SWITCH_INPUTS).filter(|i| cx.connected(*i)).collect();
+    let (lower, t) = switch_position(cx.float("index")?, wired.len()).unwrap_or((0, 0.0));
+    let blend = cx.bool("blend").unwrap_or(false) && t >= 1e-6;
+    let upper = if blend { lower + 1 } else { lower };
+    Some(wired.iter().skip(lower).take(upper - lower + 1).copied().collect())
+}
+
 impl Operator for Switch {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let connected: Vec<&Data> = (0..SWITCH_INPUTS).filter_map(|i| cx.input(i)).collect();
-        let Some(last) = connected.len().checked_sub(1) else { return Err(waiting(cx)) };
-        let index = cx.float("index")?;
-        let index = if index.is_finite() { index.clamp(0.0, last as f64) } else { 0.0 };
-        let lower = index.floor() as usize;
-        let t = index - index.floor();
-        let pick = |i: usize| connected.get(i.min(last)).copied();
-        let (Some(a), Some(b)) = (pick(lower), pick(lower + 1)) else { return Err(waiting(cx)) };
-        if !cx.bool("blend")? || t < 1e-6 || a.same(b) {
+        // Skipping, the inputs not shown read as nothing, so they count by their wires.
+        let connected: Vec<Option<&Data>> = if cx.text("inactive")? == "skip" {
+            (0..SWITCH_INPUTS)
+                .filter(|i| cx.def().inputs.get(*i).is_some_and(Option::is_some))
+                .map(|i| cx.input(i))
+                .collect()
+        } else {
+            (0..SWITCH_INPUTS).filter_map(|i| cx.input(i)).map(Some).collect()
+        };
+        let Some((lower, t)) = switch_position(cx.float("index")?, connected.len()) else {
+            return Err(waiting(cx));
+        };
+        let last = connected.len().saturating_sub(1);
+        let pick = |i: usize| connected.get(i.min(last)).copied().flatten();
+        let Some(a) = pick(lower) else { return Err(waiting(cx)) };
+        let blend = cx.bool("blend")? && t >= 1e-6;
+        let b = if blend { pick(lower + 1) } else { Some(a) };
+        let Some(b) = b else { return Err(waiting(cx)) };
+        if !blend || a.same(b) {
             return pass_on(a);
         }
         let (Some(ta), Some(tb)) = (a.get::<Tex>(), b.get::<Tex>()) else {

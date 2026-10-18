@@ -18,7 +18,7 @@ pub mod watch;
 mod testing;
 
 pub use cook::{
-    CookContext, CookReport, CookStats, Cooker, Kept, NodeStatus, ResetOutcome, ThumbnailMode,
+    CookContext, CookReport, CookStats, Cooker, InputChoice, Kept, NodeStatus, ResetOutcome, ThumbnailMode,
     ThumbnailPolicy, Waker,
 };
 pub use document::{Document, EditOutcome};
@@ -29,8 +29,8 @@ pub use network::{
     check_setting, natural_cmp, parse_expose,
 };
 pub use node::{
-    CookError, Cooked, Data, DataKind, Density, FnNodeType, NodeDesc, NodeType, NodeTypes, Operator,
-    PortRole, StateItem,
+    CookError, Cooked, Data, DataKind, Density, FnNodeType, InputChooser, NodeDesc, NodeType, NodeTypes,
+    Operator, PortRole, StateItem,
 };
 pub use replace::{Replacement, replace};
 pub use watch::FileWatch;

@@ -740,6 +740,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `index` | float | `0` | 0 to 7 (soft) | Which connected input, counted from 0; past the last, the last |
 | `blend` | bool | `false` |  | A fractional index mixes the two inputs either side |
+| `inactive` | cook \| skip | `"cook"` |  | The inputs not shown: cook keeps their chains cooking as if shown; skip cooks only the shown input's chain, the others stand still and cost nothing. Switching to a skipped input cooks its chain in that frame (a slow chain makes the frame late, a video may need a moment to catch up), and a feedback loop, cache or time machine in it carries on from where it stopped. With skip an input counts as connected as soon as it is wired |
 
 ### tex.text
 

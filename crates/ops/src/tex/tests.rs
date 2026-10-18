@@ -1048,6 +1048,34 @@ fn select_follows_the_named_node_and_switch_picks_or_blends() {
 }
 
 #[test]
+fn a_switch_that_skips_cooks_only_what_it_shows() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        constant("/a", 0.2),
+        constant("/b", 0.6),
+        constant("/c", 0.8),
+        create("/sw", "tex.switch", &[("index", Value::Float(1.0)), ("inactive", "skip".into())]),
+        connect("/a", "/sw", 0),
+        connect("/b", "/sw", 3),
+        connect("/c", "/sw", 5),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    // Index 1 is the second wired input, whatever its slot, though the first never cooked.
+    assert!((red(&mut rig, "/sw") - 0.6).abs() < 0.01);
+    let cooked = |rig: &Rig, p: &str| rig.cooker.outputs(rig.id(p)).is_some();
+    assert!(!cooked(&rig, "/a") && !cooked(&rig, "/c"));
+    rig.edit(&[set("/sw.index", Value::Float(1.5)), set("/sw.blend", Value::Bool(true))]);
+    assert!((red(&mut rig, "/sw") - 0.7).abs() < 0.01, "half way from 0.6 to 0.8");
+    assert!(!cooked(&rig, "/a"));
+    rig.edit(&[set("/sw.index", Value::Float(-3.0))]);
+    assert!((red(&mut rig, "/sw") - 0.2).abs() < 0.01, "before the first is the first");
+    // An unwired switch waits, as it does when cooking everything.
+    rig.edit(&[create("/empty", "tex.switch", &[("inactive", "skip".into())])]);
+    rig.cook("/empty");
+    assert!(rig.tex("/empty").is_none());
+}
+
+#[test]
 fn cache_outputs_frames_back() {
     let Some(gpu) = gpu() else { return };
     let ops = [
