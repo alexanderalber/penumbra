@@ -118,7 +118,9 @@ command. Close the app (or open another project) and come back to it, and the ne
 | left-drag on empty canvas | select by box; Shift or Ctrl adds to the selection |
 | right- or middle-drag | pan |
 | mouse wheel | zoom around the pointer |
-| right-click a node | its menu: view (pin), pause thumbnail, lock, delete, cut, copy, group |
+| right-click a node | its menu: view (pin), pause thumbnail, lock, replace (another kind under the same name, keeping the params, wires and bindings that fit), delete, cut, copy, group |
+| right-click a wire | delete the connection; on a binding line, remove the binding |
+| point at a port | its name, data kind and what it holds |
 | right-click empty canvas | the editor's options: arrange, channel bars, the viewer as background, all binding lines, thumbnails and their rate, Helpers |
 | Tab, double-click on canvas | add a node |
 | Delete or Backspace | delete the selection |

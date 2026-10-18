@@ -126,7 +126,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .input("audio", DataKind::Chan)
         .output("out", DataKind::Chan)
-        .output("spectrum", DataKind::Chan),
+        .output("spectrum", DataKind::Chan)
+        .describe_output(
+            "out",
+            "Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat",
+        )
+        .describe_output("spectrum", "One channel whose samples are log-spaced bands from 30 Hz to 16 kHz"),
         || Box::new(Analysis::default()) as Box<dyn Operator>,
     ))?;
     Ok(())

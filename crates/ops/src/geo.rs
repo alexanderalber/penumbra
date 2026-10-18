@@ -55,7 +55,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("smooth: edges sharper than this stay hard; 180 smooths everything"),
         )
         .output("out", DataKind::Geo)
-        .output("parts", DataKind::Table),
+        .output("parts", DataKind::Table)
+        .describe_output("out", "The mesh")
+        .describe_output("parts", "One row per part: id, name, triangles, bounds (min_x .. max_z)"),
         || Box::new(GeoFile::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(

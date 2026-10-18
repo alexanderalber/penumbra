@@ -46,3 +46,21 @@ pub fn builtin_types() -> Result<NodeTypes, Error> {
     register(&mut types)?;
     Ok(types)
 }
+
+#[cfg(test)]
+mod port_docs {
+    /// Wiring the wrong one of several outputs is easy (the editor names them, but `tex.render`'s
+    /// `data` looks like a picture of its own), so each says what it holds.
+    #[test]
+    fn every_output_of_a_node_with_several_is_described() {
+        let types = super::builtin_types().unwrap();
+        for kind in types.kinds() {
+            let desc = types.desc(kind).unwrap();
+            if desc.outputs.len() > 1 {
+                for o in &desc.outputs {
+                    assert!(!o.doc.is_empty(), "{kind} output `{}` has no description", o.name);
+                }
+            }
+        }
+    }
+}

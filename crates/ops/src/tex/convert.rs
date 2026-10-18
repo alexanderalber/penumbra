@@ -2,7 +2,9 @@
 //!
 //! `tex.from_chan` uploads a [`Chans`] as a picture: one row per channel (samples across), or up
 //! to four channels as the red, green, blue and alpha of one row. With many samples per channel
-//! (an audio spectrum) that is a texture a shader can look values up in.
+//! (an audio spectrum) that is a texture a shader can look values up in. Its default layout,
+//! `auto`, takes channels named exactly `r`, `g`, `b` (and `a`), as `chan.from_tex` names them,
+//! as a colour, so a mean colour read at 1 x 1 comes back as a colour swatch.
 //!
 //! `chan.from_tex` averages its input down to `columns` x `rows` pixels on the GPU, reads that
 //! small picture back and hands it out as channels: one per row and colour component, a sample
@@ -42,10 +44,11 @@ const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new(FROM_CHAN, "Channels as a picture: a row per channel, a pixel per sample")
-            .param(ParamSpec::choice("layout", &["rows", "rgba"]).doc(
-                "rows: one grey row per channel, as many pixels wide as there are samples; rgba: the first \
-                 four channels as red, green, blue and alpha of one row (alpha 1 where missing)",
+        NodeDesc::new(FROM_CHAN, "Channels as a picture: a row per channel, a pixel per sample; r, g, b as a colour")
+            .param(ParamSpec::choice("layout", &["auto", "rows", "rgba"]).doc(
+                "auto: rgba when the channels are exactly r, g, b (and a), as chan.from_tex names them, \
+                 else rows; rows: one grey row per channel, as many pixels wide as there are samples; \
+                 rgba: the first four channels as red, green, blue and alpha of one row (alpha 1 where missing)",
             ))
             .param(ParamSpec::float("low", 0.0).range(-1.0, 1.0).doc("Channel value that becomes 0"))
             .param(ParamSpec::float("high", 1.0).range(0.0, 2.0).doc("Channel value that becomes 1"))
@@ -97,7 +100,11 @@ impl Operator for FromChan {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let chans = cx.input_as::<Chans>(0).ok_or_else(|| waiting(cx))?;
-        let layout = if cx.text("layout")? == "rgba" { Layout::Rgba } else { Layout::Rows };
+        let layout = match cx.text("layout")? {
+            "rgba" => Layout::Rgba,
+            "rows" => Layout::Rows,
+            _ => auto_layout(chans),
+        };
         let (low, high) = (cx.float("low")?, cx.float("high")?);
         let max = gpu.max_texture_size().max(1) as usize;
         let picture = picture(chans, layout, low, high, max);
@@ -115,6 +122,16 @@ impl Operator for FromChan {
 enum Layout {
     Rows,
     Rgba,
+}
+
+/// What `auto` picks: a colour for channels named exactly `r`, `g`, `b` (and `a`) in that order,
+/// rows for anything else.
+fn auto_layout(chans: &Chans) -> Layout {
+    let names: Vec<&str> = chans.channels().iter().map(|c| c.name.as_str()).collect();
+    match names.as_slice() {
+        ["r", "g", "b"] | ["r", "g", "b", "a"] => Layout::Rgba,
+        _ => Layout::Rows,
+    }
 }
 
 /// Half-float RGBA rows ready for upload, and why they show less than the input.
@@ -397,6 +414,22 @@ mod tests {
         assert_eq!(floats(&p), [1.0, 0.5, 0.0, 1.0], "alpha 1 without a fourth channel");
         let five = chans(&[("a", &[0.0]), ("b", &[0.0]), ("c", &[0.0]), ("d", &[0.0]), ("e", &[0.0])]);
         assert!(picture(&five, Layout::Rgba, 0.0, 1.0, 64).warning.is_some());
+    }
+
+    #[test]
+    fn auto_takes_r_g_b_as_a_colour_and_anything_else_as_rows() {
+        let rgb = chans(&[("r", &[0.1]), ("g", &[0.2]), ("b", &[0.3])]);
+        assert_eq!(auto_layout(&rgb), Layout::Rgba);
+        let rgba = chans(&[("r", &[0.1]), ("g", &[0.2]), ("b", &[0.3]), ("a", &[1.0])]);
+        assert_eq!(auto_layout(&rgba), Layout::Rgba);
+        for other in [
+            chans(&[("r", &[0.1])]),
+            chans(&[("lum", &[0.1])]),
+            chans(&[("r0", &[0.1]), ("g0", &[0.2]), ("b0", &[0.3])]),
+            chans(&[("g", &[0.1]), ("r", &[0.2]), ("b", &[0.3])]),
+        ] {
+            assert_eq!(auto_layout(&other), Layout::Rows, "{other:?}");
+        }
     }
 
     #[test]

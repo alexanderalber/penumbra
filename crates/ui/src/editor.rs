@@ -3,11 +3,13 @@
 //! keep in sync, and every node, port and wire gets an automation id.
 //!
 //! Mouse: left-drag a node moves it (with the selection), left-drag on empty space selects by
-//! box, right- or middle-drag pans, the wheel zooms, right-click on a node opens its menu (on
-//! empty space it does nothing), a double-click on empty space (or Tab) the "add node" dialog
+//! box, right- or middle-drag pans, the wheel zooms, right-click on a node opens its menu, on a
+//! wire or binding line one to delete it, on empty space the editor's options; a double-click on
+//! empty space (or Tab) the "add node" dialog
 //! ([`crate::add_dialog`]), a double-click on a component enters it (on other nodes it does
 //! nothing; pinning to the viewer is in the node menu). Drag from an output to an input
 //! connects; dragging a connected input picks its wire up (drop on nothing to disconnect).
+//! Ports are named beside them on nodes with several, and a tooltip says what each holds.
 //! Keys: Tab adds a node, Delete deletes, F frames, L arranges ([`crate::arrange`]).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -98,7 +100,25 @@ pub struct Editor {
     pub level: Option<NodeId>,
     /// The node under the pointer in the last frame, whose binding lines show.
     hovered: Option<NodeId>,
+    /// The node the add dialog replaces ("Replace node..." in the node menu) instead of adding.
+    replacing: Option<NodeId>,
+    /// The wire or binding line under the pointer in the last frame, drawn brighter.
+    hovered_wire: Option<WireKey>,
+    /// The wire the open context menu is about; `None`: the editor's options.
+    menu_wire: Option<WireKey>,
 }
+
+/// A line on the canvas that a right-click can act on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WireKey {
+    /// The wire into this input (node and slot).
+    Input((NodeId, u32)),
+    /// The binding lines from a source to a reader (as shown on this level).
+    Binding((NodeId, NodeId)),
+}
+
+/// Pick distance of a wire, in points at zoom 1.
+const WIRE_PICK: f32 = 5.0;
 
 /// One port on screen. A component's ports stand for its input and output nodes: `target` is
 /// the node and slot a wire really connects to.
@@ -107,6 +127,8 @@ struct PortGeo {
     kind: DataKind,
     target: (NodeId, u32),
     name: String,
+    /// What the port holds or wants, from the node type; empty for a component's ports.
+    doc: String,
     /// Reads its source's previous result (dashed wire).
     previous: bool,
 }
@@ -138,6 +160,9 @@ impl Default for Editor {
             canvas: Rect::NOTHING,
             level: None,
             hovered: None,
+            replacing: None,
+            hovered_wire: None,
+            menu_wire: None,
         }
     }
 }
@@ -204,11 +229,12 @@ fn ports_of(
     node: &penumbra_graph::NodeDef,
 ) -> (Vec<PortGeo>, Vec<PortGeo>) {
     let Some(d) = types.desc(&node.kind) else { return (Vec::new(), Vec::new()) };
-    let port = |pos, kind, target, name: &str, previous| PortGeo {
+    let port = |pos, kind, target, name: &str, doc: &str, previous| PortGeo {
         pos,
         kind,
         target,
         name: name.to_string(),
+        doc: doc.to_string(),
         previous,
     };
     if d.container {
@@ -218,7 +244,7 @@ fn ports_of(
                 .filter_map(|p| {
                     let n = net.node(p)?;
                     let kind = types.desc(&n.kind)?.inputs.first()?.kind;
-                    Some(port(Pos2::ZERO, kind, (p, 0), n.name.as_str(), false))
+                    Some(port(Pos2::ZERO, kind, (p, 0), n.name.as_str(), "", false))
                 })
                 .collect()
         };
@@ -228,13 +254,13 @@ fn ports_of(
         .inputs
         .iter()
         .enumerate()
-        .map(|(i, s)| port(Pos2::ZERO, s.kind, (node.id, i as u32), &s.name, s.previous))
+        .map(|(i, s)| port(Pos2::ZERO, s.kind, (node.id, i as u32), &s.name, &s.doc, s.previous))
         .collect();
     let outs = d
         .outputs
         .iter()
         .enumerate()
-        .map(|(o, s)| port(Pos2::ZERO, s.kind, (node.id, o as u32), &s.name, false))
+        .map(|(o, s)| port(Pos2::ZERO, s.kind, (node.id, o as u32), &s.name, &s.doc, false))
         .collect();
     (ins, outs)
 }
@@ -351,20 +377,17 @@ impl<'a> Placed<'a> {
         FontId::proportional(11.0 * self.view.zoom.clamp(0.6, 1.2))
     }
 
-    /// Outputs read by a wire anywhere, and the readers outside this level of each output.
-    #[allow(clippy::type_complexity)]
-    fn connections(&self) -> (BTreeSet<(NodeId, u32)>, BTreeMap<(NodeId, u32), Vec<NodeId>>) {
-        let mut connected: BTreeSet<(NodeId, u32)> = BTreeSet::new();
+    /// The readers outside this level of each output shown on it.
+    fn outside_readers(&self) -> BTreeMap<(NodeId, u32), Vec<NodeId>> {
         let mut outside_readers: BTreeMap<(NodeId, u32), Vec<NodeId>> = BTreeMap::new();
         for n in self.net.nodes() {
             for src in n.inputs.iter().flatten() {
-                connected.insert((src.node, src.output));
                 if self.shown(n.id).is_none() && self.shown(src.node).is_some() {
                     outside_readers.entry((src.node, src.output)).or_default().push(n.id);
                 }
             }
         }
-        (connected, outside_readers)
+        outside_readers
     }
 
     /// The bindings that touch this level. A binding into or out of a component shows on the
@@ -421,6 +444,7 @@ impl Editor {
         self.level = level;
         self.selection.clear();
         self.add_menu = None;
+        self.replacing = None;
         self.drag = Drag::None;
         if !layout.enter(level, now) {
             self.frame_request = true;
@@ -541,17 +565,45 @@ impl Editor {
 
         let placed = Placed::new(net, input.types, self.level, layout, canvas);
         let pointer = ui.input(|i| i.pointer.hover_pos());
-        let (connected, outside_readers) = placed.connections();
+        let outside_readers = placed.outside_readers();
         // Wires, bindings and references, under the nodes.
-        self.draw_wires(&painter, input, &placed);
+        let mut lines = self.draw_wires(&painter, input, &placed);
         draw_outside_readers(&painter, &placed, &outside_readers);
-        draw_bindings(&painter, input, &placed, &self.selection, self.hovered);
+        lines.extend(draw_bindings(
+            &painter,
+            input,
+            &placed,
+            &self.selection,
+            self.hovered,
+            self.hovered_wire,
+        ));
         draw_references(&painter, input, &placed);
 
         let geos = &placed.geos;
         let (clicked_node, hovered_port) =
             self.nodes(ui, &painter, geos, canvas, input, layout, textures, auto, actions, pointer);
-        self.draw_ports(&painter, geos, hovered_port, view.zoom, &connected);
+        self.draw_ports(&painter, geos, hovered_port, view.zoom);
+        if canvas_resp.hovered() || self.hovered.is_some() {
+            self.port_tooltip(ui, geos, hovered_port);
+        }
+        // Nodes and ports lie on top of wires and win the pointer.
+        self.hovered_wire = None;
+        if canvas_resp.hovered()
+            && self.hovered.is_none()
+            && hovered_port.is_none()
+            && matches!(self.drag, Drag::None)
+            && let Some(q) = pointer
+        {
+            let pick = WIRE_PICK * view.zoom.clamp(0.6, 1.5);
+            self.hovered_wire = lines
+                .iter()
+                .map(|(key, points)| (distance_to_line(q, points), *key))
+                .filter(|(d, _)| *d <= pick)
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, key)| key);
+        }
+        let node_rects: Vec<Rect> = geos.iter().map(|g| g.rect).collect();
+        register_lines(net, &lines, &node_rects, auto);
         self.start_port_drag(ui, canvas, net, geos, input.can_edit);
         self.draw_dragged_wire(&painter, geos, pointer, view.zoom);
         let released = ui.input(|i| i.pointer.primary_released());
@@ -609,9 +661,16 @@ impl Editor {
     /// The wires into the inputs on this level, routed around the nodes. A wire from outside
     /// the component shown (an input node's source) is a stub from the left with the source's
     /// path. The wire being picked up from an input is left out.
-    fn draw_wires(&self, painter: &egui::Painter, input: &Inputs<'_>, placed: &Placed<'_>) {
+    /// Returns each wire's line on screen, for picking.
+    fn draw_wires(
+        &self,
+        painter: &egui::Painter,
+        input: &Inputs<'_>,
+        placed: &Placed<'_>,
+    ) -> Vec<(WireKey, Vec<Pos2>)> {
         let (net, geos, zoom) = (placed.net, &placed.geos, placed.view.zoom);
         let node_rects: Vec<Rect> = geos.iter().map(|g| g.rect).collect();
+        let mut lines: Vec<(WireKey, Vec<Pos2>)> = Vec::new();
         for to in geos {
             for port_in in &to.inputs {
                 let (reader, slot) = port_in.target;
@@ -626,6 +685,8 @@ impl Editor {
                     continue;
                 }
                 let b = port_in.pos;
+                let key = WireKey::Input(port_in.target);
+                let lit = self.hovered_wire == Some(key);
                 let Some((from, out)) = placed
                     .out_at
                     .get(&(source.node, source.output))
@@ -633,7 +694,9 @@ impl Editor {
                 else {
                     let a = b - vec2(36.0 * zoom, 0.0);
                     let color = theme::kind_color(port_in.kind);
-                    wire(painter, &[wire_points(a, b, zoom)], color, zoom, false);
+                    let points = flatten(&[wire_points(a, b, zoom)]);
+                    wire(painter, &points, color, zoom, lit);
+                    lines.push((key, points));
                     if zoom > 0.45 {
                         let text = placed.stub_text(&[source.node]);
                         painter.text(
@@ -648,14 +711,17 @@ impl Editor {
                 };
                 let hot = input.highlight.contains(&reader) && input.highlight.contains(&source.node);
                 let route = wire_route(out.pos, b, from.rect, to.rect, &node_rects, zoom);
+                let points = flatten(&route);
                 if port_in.previous {
                     // Last frame's result, usually wired back from the end of a loop: dashed.
-                    wire_previous(painter, &route, theme::kind_color(out.kind), zoom, hot);
+                    wire_previous(painter, &points, theme::kind_color(out.kind), zoom, hot || lit);
                 } else {
-                    wire(painter, &route, theme::kind_color(out.kind), zoom, hot);
+                    wire(painter, &points, theme::kind_color(out.kind), zoom, hot || lit);
                 }
+                lines.push((key, points));
             }
         }
+        lines
     }
 
     /// The nodes on this level that reach into the canvas: their interaction, their drawing
@@ -690,8 +756,11 @@ impl Editor {
             if resp.hovered() {
                 self.hovered = Some(g.id);
             }
-            self.node_interaction(ui, &resp, g.id, input, layout, actions, &mut clicked_node);
-            self.draw_node(ui, painter, g, input, textures, &path, &resp);
+            self.node_interaction(ui, &resp, g.id, input, layout, auto, actions, &mut clicked_node);
+            let on_port = pointer.is_some_and(|q| {
+                g.inputs.iter().chain(&g.outputs).any(|port| q.distance(port.pos) <= PORT_PICK)
+            });
+            self.draw_node(ui, painter, g, input, textures, &path, &resp, on_port);
             for (i, port) in g.inputs.iter().enumerate() {
                 let r = Rect::from_center_size(port.pos, Vec2::splat(PORT_PICK * 2.0));
                 auto.add(format!("port.in.{path}.{i}"), r, format!("{:?}", port.kind));
@@ -711,14 +780,7 @@ impl Editor {
     }
 
     /// Ports draw over nodes; the one under the pointer and compatible targets light up.
-    fn draw_ports(
-        &self,
-        painter: &egui::Painter,
-        geos: &[Geo],
-        hovered_port: Option<PortHit>,
-        zoom: f32,
-        connected: &BTreeSet<(NodeId, u32)>,
-    ) {
+    fn draw_ports(&self, painter: &egui::Painter, geos: &[Geo], hovered_port: Option<PortHit>, zoom: f32) {
         let dragging_kind = match self.drag {
             Drag::FromOutput { from, .. } => find_port(geos, false, from).map(|o| (true, o.kind)),
             Drag::FromInput { to } => find_port(geos, true, to).map(|o| (false, o.kind)),
@@ -735,8 +797,36 @@ impl Editor {
                     painter.circle_stroke(port.pos, r, Stroke::new(1.0, Color32::from_gray(20)));
                 }
             }
-            self.port_labels(painter, g, hovered_port, zoom, connected);
+            self.port_labels(painter, g, hovered_port, zoom);
         }
+    }
+
+    /// The port under the pointer: its name, data kind and what it holds or wants. Not while a
+    /// wire or node is dragged, where it would cover the targets.
+    fn port_tooltip(&self, ui: &Ui, geos: &[Geo], hovered: Option<PortHit>) {
+        let Some((is_input, node, slot, kind)) = hovered else { return };
+        if !matches!(self.drag, Drag::None) {
+            return;
+        }
+        let Some(port) = geos
+            .iter()
+            .flat_map(|g| if is_input { g.inputs.iter() } else { g.outputs.iter() })
+            .find(|p| p.target == (node, slot))
+        else {
+            return;
+        };
+        let side = if is_input { "input" } else { "output" };
+        let mut text = format!("{side} {} ({})", port.name, theme::kind_name(kind));
+        if port.previous {
+            text.push_str(", sees the previous frame");
+        }
+        if !port.doc.is_empty() {
+            text.push('\n');
+            text.push_str(&port.doc);
+        }
+        let id = ui.id().with(("port_tip", is_input, node, slot));
+        egui::Tooltip::always_open(ui.ctx().clone(), ui.layer_id(), id, egui::PopupAnchor::Pointer)
+            .show(|ui| ui.label(text));
     }
 
     /// Port drags start where the pointer pressed, before node drags see it. Pressing a
@@ -771,13 +861,13 @@ impl Editor {
             Drag::FromOutput { from, .. } => {
                 if let Some(o) = find_port(geos, false, from) {
                     let color = theme::kind_color(o.kind);
-                    wire(painter, &[wire_points(o.pos, q, zoom)], color, zoom, true);
+                    wire(painter, &flatten(&[wire_points(o.pos, q, zoom)]), color, zoom, true);
                 }
             }
             Drag::FromInput { to } => {
                 if let Some(i) = find_port(geos, true, to) {
                     let color = theme::kind_color(i.kind);
-                    wire(painter, &[wire_points(q, i.pos, zoom)], color, zoom, true);
+                    wire(painter, &flatten(&[wire_points(q, i.pos, zoom)]), color, zoom, true);
                 }
             }
             _ => {}
@@ -855,11 +945,17 @@ impl Editor {
         {
             self.open_add_menu(input, p, to_graph(canvas, view, p));
         }
-        // A right-click on empty space: the editor's options (it did nothing before, and the
-        // thumbnail switch sat in the status bar).
+        // A right-click on a wire: what can be done to it; on empty space: the editor's options.
+        if resp.secondary_clicked() {
+            self.menu_wire = self.hovered_wire;
+        }
         let mut arrange = false;
         let selected = self.selection.len();
-        resp.context_menu(|ui| arrange = options_menu(ui, input, layout, auto, actions, selected));
+        let menu_wire = self.menu_wire;
+        resp.context_menu(|ui| match menu_wire {
+            Some(key) => wire_menu(ui, input, key, auto, actions),
+            None => arrange = options_menu(ui, input, layout, auto, actions, selected),
+        });
         if arrange {
             self.arrange(input, layout);
         }
@@ -886,6 +982,7 @@ impl Editor {
             _ => self.add_family.clone(),
         };
         self.add_menu = Some(AddDialog::new(screen, at, &family));
+        self.replacing = None;
     }
 
     fn pan_and_zoom(
@@ -924,6 +1021,7 @@ impl Editor {
         id: NodeId,
         input: &Inputs<'_>,
         layout: &mut Layout,
+        auto: &mut automation::Registry,
         actions: &mut Vec<Action>,
         clicked_node: &mut bool,
     ) {
@@ -997,6 +1095,20 @@ impl Editor {
                             .push(Action::edit(vec![Op::Lock { path: path.clone(), locked: !node.locked }]));
                         ui.close();
                     }
+                    if !is_comp {
+                        let tip =
+                            "Pick another kind for it; the params, wires and bindings that fit are kept";
+                        let r = ui.button("Replace node...").on_hover_text(tip);
+                        auto.add("menu.replace", r.rect, "Replace node...");
+                        if r.clicked() {
+                            self.replacing = Some(id);
+                            let family = node.kind.split_once('.').map_or("tex", |(f, _)| f);
+                            let mut dialog = AddDialog::new(resp.rect.left_top(), Pos2::ZERO, family);
+                            dialog.title = Some(format!("replace {} with", node.name));
+                            self.add_menu = Some(dialog);
+                            ui.close();
+                        }
+                    }
                     if ui.button("Delete").clicked() {
                         actions.push(Action::edit(vec![Op::Delete { path }]));
                         ui.close();
@@ -1050,6 +1162,7 @@ impl Editor {
         textures: &mut Textures,
         path: &str,
         resp: &egui::Response,
+        on_port: bool,
     ) {
         let Some(node) = input.net.node(g.id) else { return };
         let zoom = (g.rect.width() / NODE_SIZE.x).max(0.01);
@@ -1269,7 +1382,8 @@ impl Editor {
             ui.ctx().request_repaint();
         }
 
-        if resp.hovered() && matches!(self.drag, Drag::None) {
+        // Over a port, the port's own tooltip shows instead (see `port_tooltip`).
+        if resp.hovered() && matches!(self.drag, Drag::None) && !on_port {
             let mut tip = format!("{path}  ({})", node.kind);
             if let Some(s) = status {
                 tip.push_str(&format!(
@@ -1288,17 +1402,10 @@ impl Editor {
         }
     }
 
-    /// Names next to the ports: always for the inputs of a node with several (which one is
-    /// which), for the unconnected outputs of a node with several, and for the port under the
-    /// pointer. `connected`: outputs read by a wire.
-    fn port_labels(
-        &self,
-        painter: &egui::Painter,
-        g: &Geo,
-        hovered: Option<PortHit>,
-        zoom: f32,
-        connected: &BTreeSet<(NodeId, u32)>,
-    ) {
+    /// Names next to the ports, inside the node's edge: always for the inputs and for the outputs
+    /// of a node with several of them (which one is which, `tex.render`'s `data` is no picture to
+    /// look at), and for the port under the pointer.
+    fn port_labels(&self, painter: &egui::Painter, g: &Geo, hovered: Option<PortHit>, zoom: f32) {
         let font = egui::FontId::proportional(11.0 * zoom.clamp(0.6, 1.4));
         let gap = (PORT_R + 4.0) * zoom.clamp(0.6, 1.4);
         let label = |p: Pos2, text: &str, is_input: bool| {
@@ -1327,11 +1434,10 @@ impl Editor {
             };
             label(port.pos, &text, true);
         }
-        let several = g.outputs.len() > 1 && zoom >= 0.6;
+        let several = (g.outputs.len() > 1 || g.comp) && zoom >= 0.6;
         for port in &g.outputs {
             let is_hovered = hovered.is_some_and(|h| !h.0 && (h.1, h.2) == port.target);
-            let open = several && !connected.contains(&port.target);
-            if is_hovered || open || (g.comp && zoom >= 0.6) {
+            if is_hovered || several {
                 label(port.pos, &port.name, false);
             }
         }
@@ -1526,6 +1632,7 @@ impl Editor {
         let outcome = menu.show(ui, input.types, input.library, auto);
         self.add_family.clone_from(&menu.family);
         let at = menu.at;
+        let replacing = self.replacing;
         match outcome {
             Outcome::Open => return,
             Outcome::Remove(name) => {
@@ -1533,6 +1640,15 @@ impl Editor {
                 return;
             }
             Outcome::Close => {}
+            Outcome::Chosen(kind) if replacing.is_some() => match replacing {
+                Some(_) if kind.starts_with(crate::add_dialog::LIBRARY_MARK) => {
+                    actions.push(Action::Message(
+                        "a component cannot replace a node; delete it and add the component".into(),
+                    ))
+                }
+                Some(node) => actions.push(Action::Replace { node, kind }),
+                None => {}
+            },
             Outcome::Chosen(kind) if kind.starts_with(crate::add_dialog::LIBRARY_MARK) => {
                 let name = kind.trim_start_matches(crate::add_dialog::LIBRARY_MARK).to_string();
                 actions.push(Action::AddComponent { name, level: self.level, at });
@@ -1557,6 +1673,7 @@ impl Editor {
             }
         }
         self.add_menu = None;
+        self.replacing = None;
     }
 }
 
@@ -1599,8 +1716,95 @@ fn fit_rect(area: Rect, aspect: f32) -> Rect {
     Rect::from_center_size(area.center(), vec2(w, h))
 }
 
-/// The editor's options, from a right-click on empty space.
-/// The editor's options; returns whether "Arrange" was clicked.
+/// What a right-click on a wire offers: deleting the connection; on a binding line, removing
+/// each of the bindings it stands for. Closes when the wire is gone meanwhile.
+fn wire_menu(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    key: WireKey,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    let net = input.net;
+    match key {
+        WireKey::Input((node, slot)) => {
+            let source = net.node(node).and_then(|n| n.inputs.get(slot as usize).copied().flatten());
+            let (Some(to), Some(_)) = (net.path_of(node), source) else {
+                ui.close();
+                return;
+            };
+            ui.add_enabled_ui(input.can_edit, |ui| {
+                let r = ui.button("Delete connection");
+                auto.add("wire.delete", r.rect, "Delete connection");
+                if r.clicked() {
+                    actions.push(Action::edit(vec![Op::Disconnect { to, input: slot }]));
+                    ui.close();
+                }
+            });
+        }
+        WireKey::Binding((src, reader)) => {
+            let unbinds = binding_unbinds(net, src, reader);
+            if unbinds.is_empty() {
+                ui.close();
+                return;
+            }
+            ui.add_enabled_ui(input.can_edit, |ui| {
+                for (i, op) in unbinds.iter().enumerate() {
+                    let Op::Unbind { param, component } = op else { continue };
+                    let text = match component {
+                        Some(c) => format!("Remove binding {param}.{c}"),
+                        None => format!("Remove binding {param}"),
+                    };
+                    let r = ui.button(&text);
+                    auto.add(format!("wire.unbind.{i}"), r.rect, text);
+                    if r.clicked() {
+                        actions.push(Action::edit(vec![op.clone()]));
+                        ui.close();
+                    }
+                }
+                if unbinds.len() > 1 {
+                    let r = ui.button(format!("Remove all {} bindings", unbinds.len()));
+                    auto.add("wire.unbind_all", r.rect, "Remove all bindings");
+                    if r.clicked() {
+                        actions.push(Action::edit(unbinds.clone()));
+                        ui.close();
+                    }
+                }
+            });
+        }
+    }
+}
+
+/// The unbind ops for every binding a line from `src` to `reader` stands for: those of `reader`
+/// (or of nodes inside it) that read `src` (or a node inside it).
+fn binding_unbinds(net: &Network, src: NodeId, reader: NodeId) -> Vec<Op> {
+    let within = |id: NodeId, top: NodeId| {
+        let mut current = Some(id);
+        for _ in 0..=NodePath::MAX_DEPTH {
+            match current {
+                Some(c) if c == top => return true,
+                Some(c) => current = net.node(c).and_then(|n| n.parent),
+                None => return false,
+            }
+        }
+        false
+    };
+    let mut ops = Vec::new();
+    for node in net.nodes().filter(|n| within(n.id, reader)) {
+        let Some(path) = net.path_of(node.id) else { continue };
+        for (part, bind) in &node.binds {
+            if within(bind.node, src)
+                && let Ok(param) = penumbra_core::ParamPath::new(path.clone(), part.param.clone())
+            {
+                ops.push(Op::Unbind { param, component: part.component });
+            }
+        }
+    }
+    ops
+}
+
+/// The editor's options, from a right-click on empty space; returns whether "Arrange" was
+/// clicked.
 fn options_menu(
     ui: &mut Ui,
     input: &Inputs<'_>,
@@ -1612,7 +1816,7 @@ fn options_menu(
     use penumbra_graph::ThumbnailMode;
     let label = if selected > 1 { "Arrange selection" } else { "Arrange" };
     let r = ui.button(format!("{label}  (L)")).on_hover_text(
-        "Moves the nodes so that wires cross as little as possible and run straight where they can;          the selection when two or more nodes are selected, else everything shown. Ctrl+Z puts them back",
+        "Moves the nodes so that wires cross as little as possible and run straight where they can; the selection when two or more nodes are selected, else everything shown. Ctrl+Z puts them back",
     );
     auto.add("options.arrange", r.rect, label);
     let arrange = r.clicked();
@@ -1630,7 +1834,7 @@ fn options_menu(
         .on_hover_text("The viewer's picture behind the network, dimmed so nodes and wires stay readable");
     auto.add("options.viewer_background", r.rect, "Viewer as background");
     let r = ui.checkbox(&mut options.binding_lines, "All binding lines").on_hover_text(
-        "A line for every binding. Off, a binding shows as a short stub on the node it drives, and as a          line while its source or that node is selected or under the pointer",
+        "A line for every binding. Off, a binding shows as a short stub on the node it drives, and as a line while its source or that node is selected or under the pointer",
     );
     auto.add("options.binding_lines", r.rect, "All binding lines");
     layout.set_options(options, input.now);
@@ -2050,17 +2254,74 @@ fn flatten(route: &[[Pos2; 4]]) -> Vec<Pos2> {
     points
 }
 
-fn wire(painter: &egui::Painter, route: &[[Pos2; 4]], color: Color32, zoom: f32, hot: bool) {
+fn wire(painter: &egui::Painter, points: &[Pos2], color: Color32, zoom: f32, hot: bool) {
     let width = if hot { 3.0 } else { 2.0 } * zoom.clamp(0.5, 1.5);
     let stroke = Stroke::new(width, if hot { color } else { color.gamma_multiply(0.8) });
-    painter.add(Shape::line(flatten(route), stroke));
+    painter.add(Shape::line(points.to_vec(), stroke));
 }
 
 /// A wire into an input that reads the previous frame (`InputSpec::previous`).
-fn wire_previous(painter: &egui::Painter, route: &[[Pos2; 4]], color: Color32, zoom: f32, hot: bool) {
+fn wire_previous(painter: &egui::Painter, points: &[Pos2], color: Color32, zoom: f32, hot: bool) {
     let width = if hot { 3.0 } else { 2.0 } * zoom.clamp(0.5, 1.5);
     let stroke = Stroke::new(width, if hot { color } else { color.gamma_multiply(0.8) });
-    painter.extend(Shape::dashed_line(&flatten(route), stroke, 7.0 * zoom, 5.0 * zoom));
+    painter.extend(Shape::dashed_line(points, stroke, 7.0 * zoom, 5.0 * zoom));
+}
+
+/// The distance from `p` to the nearest point of a line through `points`.
+fn distance_to_line(p: Pos2, points: &[Pos2]) -> f32 {
+    let segment = |a: Pos2, b: Pos2| {
+        let ab = b - a;
+        let len2 = ab.length_sq();
+        let t = if len2 > 0.0 { ((p - a).dot(ab) / len2).clamp(0.0, 1.0) } else { 0.0 };
+        p.distance(a + ab * t)
+    };
+    match points {
+        [] => f32::INFINITY,
+        [only] => p.distance(*only),
+        _ => points
+            .windows(2)
+            .filter_map(|w| Some(segment(*w.first()?, *w.get(1)?)))
+            .fold(f32::INFINITY, f32::min),
+    }
+}
+
+/// The point at `t` (0 to 1) of the way along a line through `points`.
+fn along(points: &[Pos2], t: f32) -> Option<Pos2> {
+    let pairs = || points.windows(2).filter_map(|w| Some((*w.first()?, *w.get(1)?)));
+    let mut left = pairs().map(|(a, b)| a.distance(b)).sum::<f32>() * t;
+    for (a, b) in pairs() {
+        let d = a.distance(b);
+        if d >= left && d > 0.0 {
+            return Some(a + (b - a) * (left / d));
+        }
+        left -= d;
+    }
+    points.first().copied()
+}
+
+/// Automation ids for the wires (`wire./reader.slot`) and binding lines (`binding./src>/reader`):
+/// a small rect on each line where a click picks it, near its middle and off the nodes.
+fn register_lines(
+    net: &Network,
+    lines: &[(WireKey, Vec<Pos2>)],
+    nodes: &[Rect],
+    auto: &mut automation::Registry,
+) {
+    const SPOTS: [f32; 9] = [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8, 0.1, 0.9];
+    for (key, points) in lines {
+        let free = |p: &Pos2| !nodes.iter().any(|r| r.expand(PORT_PICK).contains(*p));
+        let Some(mid) = SPOTS.iter().filter_map(|t| along(points, *t)).find(free) else { continue };
+        let rect = Rect::from_center_size(mid, Vec2::splat(6.0));
+        let id = match key {
+            WireKey::Input((node, slot)) => net.path_of(*node).map(|p| format!("wire.{p}.{slot}")),
+            WireKey::Binding((src, reader)) => {
+                net.path_of(*src).zip(net.path_of(*reader)).map(|(s, r)| format!("binding.{s}>{r}"))
+            }
+        };
+        if let Some(id) = id {
+            auto.add(id, rect, "wire");
+        }
+    }
 }
 
 /// Outputs read outside the component shown (an output node's readers): a stub to the right
@@ -2076,7 +2337,7 @@ fn draw_outside_readers(
             let Some(readers) = outside_readers.get(&port.target) else { continue };
             let a = port.pos;
             let b = a + vec2(36.0 * zoom, 0.0);
-            wire(painter, &[wire_points(a, b, zoom)], theme::kind_color(port.kind), zoom, false);
+            wire(painter, &flatten(&[wire_points(a, b, zoom)]), theme::kind_color(port.kind), zoom, false);
             if zoom > 0.45 {
                 let text = placed.stub_text(readers);
                 painter.text(
@@ -2109,9 +2370,11 @@ fn draw_bindings(
     placed: &Placed<'_>,
     selection: &BTreeSet<NodeId>,
     hovered: Option<NodeId>,
-) {
+    hovered_line: Option<WireKey>,
+) -> Vec<(WireKey, Vec<Pos2>)> {
     let zoom = placed.view.zoom;
     let bindings = placed.bindings();
+    let mut lines: Vec<(WireKey, Vec<Pos2>)> = Vec::new();
     for (src, readers) in &bindings.to_outside {
         let Some(from) = placed.geo(*src) else { continue };
         // Out of the bottom (bindings into a node come in at the top), clear of the
@@ -2154,17 +2417,21 @@ fn draw_bindings(
             continue;
         };
         let b = top_or_bottom(from.rect, to.rect);
+        let key = WireKey::Binding((src, reader));
         let hot = input.highlight.contains(&reader) && input.highlight.contains(&src);
-        let touched = [src, reader].iter().any(|id| selection.contains(id) || hovered == Some(*id));
+        let touched = [src, reader].iter().any(|id| selection.contains(id) || hovered == Some(*id))
+            || hovered_line == Some(key);
         let color = theme::kind_color(DataKind::Chan).gamma_multiply(if hot || touched { 1.0 } else { 0.7 });
         if input.binding_lines || hot || touched {
             dashed(painter, a, b, color, zoom);
+            lines.push((key, vec![a, b]));
         } else {
             let away = if b.y > to.rect.center().y { 1.0 } else { -1.0 };
             dashed(painter, b, b + vec2(0.0, 12.0 * zoom * away), color, zoom);
         }
         painter.circle_filled(b, 3.0 * zoom, color);
     }
+    lines
 }
 
 /// Where a dashed line from `from` enters `to`: the middle of its top, or of its bottom when

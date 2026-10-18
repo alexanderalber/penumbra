@@ -9,7 +9,8 @@
 //! the grid keeps its shape and the eye its places. Families with a match are marked in their
 //! tab (bright text, a bar underneath), the others dimmed; the dialog never switches the tab by
 //! itself. Enter takes the first match of the active tab, Tab switches to the next tab, Escape or a
-//! click outside closes. Opened by double-click on empty canvas or Tab in the editor.
+//! click outside closes. Opened by double-click on empty canvas or Tab in the editor, and by "Replace
+//! node..." in the node menu, where choosing replaces that node.
 
 use std::sync::Arc;
 
@@ -54,6 +55,9 @@ pub struct AddDialog {
     focus: bool,
     /// A family of the active tab; the editor opens the next dialog on it.
     pub family: String,
+    /// What choosing does, beside the search field, when it is not adding a node ("replace
+    /// noise1 with").
+    pub title: Option<String>,
 }
 
 pub enum Outcome {
@@ -154,7 +158,7 @@ fn matches(kind: &str, filter: &str) -> bool {
 
 impl AddDialog {
     pub fn new(screen: Pos2, at: Pos2, family: &str) -> Self {
-        Self { at, screen, filter: String::new(), focus: true, family: family.to_string() }
+        Self { at, screen, filter: String::new(), focus: true, family: family.to_string(), title: None }
     }
 
     /// `library`: the component files on offer, shown in the `comp` tab; choosing one gives
@@ -243,6 +247,9 @@ impl AddDialog {
             if self.focus {
                 edit.request_focus();
                 self.focus = false;
+            }
+            if let Some(title) = &self.title {
+                ui.label(egui::RichText::new(title).color(theme::ACCENT));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let r = icons::small_button(ui, Icon::Remove).on_hover_text("Close (Esc)");

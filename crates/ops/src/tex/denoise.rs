@@ -45,7 +45,7 @@ fn desc() -> NodeDesc {
                      it when the noise still flickers, lower it when moving things leave trails",
     ))
     .param(ParamSpec::float("spatial", 0.5).clamp(0.0, 1.0).range(0.0, 1.0).doc(
-        "Smooths the brightness of what moves, where the average cannot help, keeping edges stronger          than `motion`; 0: off",
+        "Smooths the brightness of what moves, where the average cannot help, keeping edges stronger than `motion`; 0: off",
     ))
     .param(
         ParamSpec::float("color_spatial", 0.5)

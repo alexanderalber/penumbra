@@ -112,6 +112,29 @@ fn build_a_network_and_watch_it_cook() {
 }
 
 #[test]
+fn replace_a_node_keeping_what_fits() {
+    let f = Fixture::new("replace");
+    f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo", "params": {"rate": 2}}));
+    f.call("node.create", json!({"path": "/m", "kind": "chan.math"}));
+    f.call("node.connect", json!({"from": "/lfo", "to": "/m", "input": "a"}));
+    f.call("node.create", json!({"path": "/n", "kind": "tex.noise"}));
+    f.call("node.bind", json!({"param": "/n.speed", "from": "/lfo"}));
+    let r = f.call("node.replace", json!({"path": "/lfo", "kind": "chan.noise"}));
+    assert_eq!(r["history"], "new");
+    let info = f.call("node.info", json!({"path": "/lfo"}));
+    assert_eq!(info["kind"], "chan.noise");
+    let m = f.call("node.info", json!({"path": "/m"}));
+    assert_eq!(m["inputs"][0]["from"], "/lfo");
+    let n = f.call("node.info", json!({"path": "/n"}));
+    assert!(n.to_string().contains("/lfo"), "the binding stays: {n}");
+    // chan.noise has no `rate`.
+    assert!(r["lost"].as_array().unwrap().iter().any(|l| l == "param rate"), "{r}");
+    f.call("history.undo", json!({}));
+    assert_eq!(f.call("node.info", json!({"path": "/lfo"}))["kind"], "chan.lfo");
+    assert!(f.fail("node.replace", json!({"path": "/m", "kind": "comp.base"})).contains("component"));
+}
+
+#[test]
 fn errors_say_what_is_wrong() {
     let f = Fixture::new("errors");
     assert!(f.fail("node.create", json!({"path": "/x", "kind": "chan.nope"})).contains("chan.lfo"));

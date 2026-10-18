@@ -71,6 +71,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .input("table1", DataKind::Table)
         .output("out", DataKind::Chan)
         .output("table", DataKind::Table)
+        .describe_output("out", "The channels cook(cx) returns")
+        .describe_output("table", "The table cook(cx) returns")
         .extra_params(),
         || Box::new(Script::new()) as Box<dyn Operator>,
     ))

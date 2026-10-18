@@ -18,10 +18,14 @@ Keeps state from frame to frame: `node.reset`, the reset button or R starts it o
 
 Inputs:
 
-- `in` (tex)
-- `background` (tex)
+- `in` (tex): The picture to search, a camera usually
+- `background` (tex): The empty scene, for detect background; unconnected: learned
 
-Outputs: `out` (tex), `blobs` (table), `chans` (chan).
+Outputs:
+
+- `out` (tex): What the tracker sees, at the analysed size (`show`)
+- `blobs` (table): One row per blob: id, x, y, left, top, width, height, area, age, vx, vy, r, g, b
+- `chans` (chan): count, and id, x, y, area per slot (x1, y1, ...); a blob keeps its slot
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -271,7 +275,7 @@ Outputs: `out` (tex).
 
 ### tex.from_chan
 
-Channels as a picture: a row per channel, a pixel per sample
+Channels as a picture: a row per channel, a pixel per sample; r, g, b as a colour
 
 Inputs:
 
@@ -281,7 +285,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `layout` | rows \| rgba | `"rows"` |  | rows: one grey row per channel, as many pixels wide as there are samples; rgba: the first four channels as red, green, blue and alpha of one row (alpha 1 where missing) |
+| `layout` | auto \| rows \| rgba | `"auto"` |  | auto: rgba when the channels are exactly r, g, b (and a), as chan.from_tex names them, else rows; rows: one grey row per channel, as many pixels wide as there are samples; rgba: the first four channels as red, green, blue and alpha of one row (alpha 1 where missing) |
 | `low` | float | `0` | -1 to 1 (soft) | Channel value that becomes 0 |
 | `high` | float | `1` | 0 to 2 (soft) | Channel value that becomes 1 |
 
@@ -331,7 +335,10 @@ A layer of a PSD/PSB file or of a directory of images, or the whole picture; rel
 
 Inputs: none.
 
-Outputs: `out` (tex), `layers` (table).
+Outputs:
+
+- `out` (tex): The chosen layer, or the whole picture
+- `layers` (table): Every layer, bottom first: index, name, path, group, visible, opacity, blend, left, top, width, height
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -594,12 +601,15 @@ Geometry through a camera: the picture, and a data pass (uv, part id + 1, depth)
 
 Inputs:
 
-- `geo` (geo)
-- `texture` (tex)
-- `lights` (light)
-- `camera` (view)
+- `geo` (geo): What to render
+- `texture` (tex): Put on the geometry where its surface is texture (or auto without a material)
+- `lights` (light): Without lights, phong materials are black
+- `camera` (view): A view.camera; needed
 
-Outputs: `out` (tex), `data` (tex).
+Outputs:
+
+- `out` (tex): The rendered picture
+- `data` (tex): Not a picture to look at: texture coordinates in red and green, part id + 1 in blue (0 where nothing was drawn), distance along the view in metres in alpha; for shaders and masks
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -675,9 +685,14 @@ Tagged shapes on the surface: a mask and a distance field per tag, outlines, a t
 
 Inputs:
 
-- `table` (table)
+- `table` (table): Shapes from a table (as the `table` output has them) instead of the node's own
 
-Outputs: `mask` (tex), `sdf` (tex), `outline` (tex), `table` (table).
+Outputs:
+
+- `mask` (tex): White inside the shapes of the tags in `tag`
+- `sdf` (tex): Signed distance to the edge of those shapes
+- `outline` (tex): Outlines of all shapes in their tag colours, to see them while placing them
+- `table` (table): Every shape as a row; another tex.shapes can read it at its `table` input
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -831,7 +846,10 @@ Follows the show clock: cooks again whenever time moves.
 
 Inputs: none.
 
-Outputs: `out` (tex), `info` (chan).
+Outputs:
+
+- `out` (tex): The video's picture
+- `info` (chan): Playback: frame, progress (0 to 1), loops, late, seeks
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -847,7 +865,10 @@ A live camera or capture card; resolution of the camera's mode
 
 Inputs: none.
 
-Outputs: `out` (tex), `info` (chan).
+Outputs:
+
+- `out` (tex): The camera's picture
+- `info` (chan): The stream: fps, delay_ms, age_ms, frames, dropped
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -869,7 +890,10 @@ Inputs:
 
 - `audio` (chan)
 
-Outputs: `out` (chan), `spectrum` (chan).
+Outputs:
+
+- `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat
+- `spectrum` (chan): One channel whose samples are log-spaced bands from 30 Hz to 16 kHz
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -1042,7 +1066,10 @@ OSC from the network: every address a channel with its latest number
 
 Inputs: none.
 
-Outputs: `out` (chan), `messages` (table).
+Outputs:
+
+- `out` (chan): A channel per address (per number), holding its latest value
+- `messages` (table): What arrived: address, count, values
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -1217,7 +1244,10 @@ A mesh file (OBJ, STL, glTF/GLB) with its parts; reloads when the file changes
 
 Inputs: none.
 
-Outputs: `out` (geo), `parts` (table).
+Outputs:
+
+- `out` (geo): The mesh
+- `parts` (table): One row per part: id, name, triangles, bounds (min_x .. max_z)
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -1543,7 +1573,10 @@ Inputs:
 - `table0` (table)
 - `table1` (table)
 
-Outputs: `out` (chan), `table` (table).
+Outputs:
+
+- `out` (chan): The channels cook(cx) returns
+- `table` (table): The table cook(cx) returns
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|

@@ -60,6 +60,19 @@ pub fn picture_bg(claude: bool) -> Color32 {
 /// How long nodes touched by Claude or the file stay outlined.
 pub const RECENT_SECONDS: f32 = 8.0;
 
+/// A data kind as the project file and the docs name it.
+pub fn kind_name(kind: DataKind) -> &'static str {
+    match kind {
+        DataKind::Tex => "tex",
+        DataKind::Chan => "chan",
+        DataKind::Table => "table",
+        DataKind::Geo => "geo",
+        DataKind::Mat => "mat",
+        DataKind::Light => "light",
+        DataKind::View => "view",
+    }
+}
+
 pub fn kind_color(kind: DataKind) -> Color32 {
     match kind {
         DataKind::Tex => Color32::from_rgb(190, 120, 240),

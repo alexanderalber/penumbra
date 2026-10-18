@@ -50,6 +50,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("node.info", "One node: params, connections, cook status; {path}", node_info);
     add("node.create", "Create a node; {path, kind, params?}", node_create);
     add("node.delete", "Delete a node and everything inside it; {path}", node_delete);
+    add(
+        "node.replace",
+        "Replace a node with one of another kind under the same name, keeping the params, wires and bindings that fit (one undo step); lists what was not kept; {path, kind}",
+        node_replace,
+    );
     add("node.rename", "Rename a node; {path, name}", node_rename);
     add("node.set", "Set params, null resets to the default; {path, params: {name: value}}", node_set);
     add("node.connect", "Connect an output to an input; {from, output?, to, input?}", node_connect);
@@ -96,7 +101,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("cook.status", "Show clock, last cook pass, watched nodes, thumbnail policy", cook_status);
     add(
         "cook.thumbnails",
-        "Global thumbnail switch and rate; {mode?: always | when_free | never, every?: cook passes          between two thumbnail cooks of a node, 1 = every frame}",
+        "Global thumbnail switch and rate; {mode?: always | when_free | never, every?: cook passes between two thumbnail cooks of a node, 1 = every frame}",
         cook_thumbnails,
     );
     add("cook.play", "Run or stop the show clock; {playing?} (default true)", cook_play);
@@ -514,6 +519,24 @@ fn node_create(e: &Engine, p: &Json) -> Result<Json> {
 fn node_delete(e: &Engine, p: &Json) -> Result<Json> {
     let a: PathArg = args(p)?;
     Ok(outcome(&edit(e, &[Op::Delete { path: a.path }], "")?))
+}
+
+fn node_replace(e: &Engine, p: &Json) -> Result<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        path: NodePath,
+        kind: String,
+    }
+    let a: A = args(p)?;
+    let net = e.session().doc().snapshot();
+    let r = penumbra_graph::replace(&net, e.types(), &a.path, &a.kind)?;
+    let label = format!("replace {} with {}", a.path, a.kind);
+    let mut out = outcome(&edit(e, &r.ops, &label)?);
+    if let Some(map) = out.as_object_mut() {
+        map.insert("lost".into(), json!(r.lost));
+    }
+    Ok(out)
 }
 
 fn node_rename(e: &Engine, p: &Json) -> Result<Json> {

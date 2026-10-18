@@ -33,7 +33,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("The layer where it sits on the canvas (the canvas's size); off: only its own rectangle"),
         )
         .output("out", DataKind::Tex)
-        .output("layers", DataKind::Table),
+        .output("layers", DataKind::Table)
+        .describe_output("out", "The chosen layer, or the whole picture")
+        .describe_output(
+            "layers",
+            "Every layer, bottom first: index, name, path, group, visible, opacity, blend, left, top, width, height",
+        ),
         || Box::new(Layer::default()) as Box<dyn Operator>,
     ))
 }

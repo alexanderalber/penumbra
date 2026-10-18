@@ -184,6 +184,63 @@ fn reset_stateful_nodes_with_the_key_and_the_button() {
 }
 
 #[test]
+fn delete_a_wire_and_replace_a_node_by_right_click() {
+    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-wire-{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&dir.0);
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let project = r#"(
+        version: 1,
+        nodes: {
+            "/noise1": (kind: "tex.noise", params: {"width": 160, "height": 90}),
+            "/level1": (kind: "tex.level", params: {"gamma": 2.0}, inputs: {"in": "/noise1"}),
+            "/out": (kind: "tex.null", inputs: {"in": "/level1"}),
+        },
+    )"#;
+    let content = penumbra_project::parse(project, &types).unwrap();
+    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let script = [
+        json!({"wait": 0.5}),
+        json!({"method": "ui.place", "params": {"nodes": {"/noise1": [0, 0], "/level1": [300, 0], "/out": [600, 0]}}}),
+        json!({"method": "ui.frame", "params": {}}),
+        json!({"wait": 0.3}),
+        json!({"method": "ui.click", "params": {"id": "wire./out.0", "button": "right"}}),
+        json!({"wait": 0.1}),
+        json!({"method": "ui.click", "params": {"id": "wire.delete"}}),
+        json!({"wait": 0.1}),
+        json!({"method": "ui.click", "params": {"id": "node./level1", "button": "right"}}),
+        json!({"wait": 0.1}),
+        json!({"method": "ui.click", "params": {"id": "menu.replace"}}),
+        json!({"wait": 0.1}),
+        json!({"method": "ui.type", "params": {"text": "blur"}}),
+        json!({"method": "ui.key", "params": {"key": "Enter"}}),
+        json!({"wait": 0.2}),
+        json!({"method": "ui.state", "params": {"positions": true}}),
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+    for (m, r) in &replies {
+        eprintln!("{m}: {}", r.to_string().chars().take(300).collect::<String>());
+    }
+    let net = engine.session().doc().snapshot();
+    let out = net.node(net.resolve(&"/out".parse().unwrap()).unwrap()).unwrap();
+    assert_eq!(out.inputs, vec![None], "the wire into /out is gone");
+    let level = net.node(net.resolve(&"/level1".parse().unwrap()).unwrap()).unwrap();
+    assert_eq!(level.kind, "tex.blur");
+    assert!(level.inputs[0].is_some(), "the wire from /noise1 is kept");
+    let state = reply(&replies, "ui.state", 0);
+    assert_eq!(state["selection"], json!(["/level1"]));
+    assert!(state["message"].as_str().unwrap().contains("not kept: param gamma"), "{state}");
+    let history = engine
+        .session()
+        .doc()
+        .with_history(|h| h.entries().iter().map(|e| e.label.clone()).collect::<Vec<_>>());
+    assert_eq!(history, ["disconnect /out:0", "replace /level1 with tex.blur"]);
+    engine.shutdown();
+}
+
+#[test]
 fn bind_and_unbind_through_the_param_panel() {
     let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-bind-{}", std::process::id())));
     let _ = std::fs::remove_dir_all(&dir.0);

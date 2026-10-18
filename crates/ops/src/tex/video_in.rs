@@ -42,7 +42,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                  does not say). Raised blacks mean the camera sends full range while limited is assumed",
             ))
             .output("out", DataKind::Tex)
-            .output("info", DataKind::Chan),
+            .output("info", DataKind::Chan)
+            .describe_output("out", "The camera's picture")
+            .describe_output("info", "The stream: fps, delay_ms, age_ms, frames, dropped"),
         || Box::new(VideoIn::default()) as Box<dyn Operator>,
     ))
 }

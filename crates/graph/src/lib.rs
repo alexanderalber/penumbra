@@ -11,6 +11,7 @@ pub mod history;
 pub mod job;
 pub mod network;
 pub mod node;
+pub mod replace;
 pub mod watch;
 
 #[cfg(test)]
@@ -31,4 +32,5 @@ pub use node::{
     CookError, Cooked, Data, DataKind, Density, FnNodeType, NodeDesc, NodeType, NodeTypes, Operator,
     PortRole, StateItem,
 };
+pub use replace::{Replacement, replace};
 pub use watch::FileWatch;

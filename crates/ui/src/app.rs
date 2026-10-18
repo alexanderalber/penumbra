@@ -362,6 +362,7 @@ impl PenumbraApp {
                         self.message = Some((m, now));
                     }
                 }),
+                Action::Replace { node, kind } => self.replace(node, &kind, now),
                 Action::Reset(ids) => self.engine.reset_nodes(&ids).map(|report| {
                     self.message = Some((report.message(), now));
                 }),
@@ -406,6 +407,31 @@ impl PenumbraApp {
                 self.message = Some((e.0, now));
             }
         }
+    }
+
+    /// Replaces `node` with a new node of `kind` (`node.replace`, as the user): the new one takes
+    /// the old one's place and the selection; what could not be kept goes to the status bar.
+    fn replace(&mut self, node: NodeId, kind: &str, now: Instant) -> Result<(), penumbra_core::Error> {
+        let session = self.engine.session().clone();
+        let net = session.doc().snapshot();
+        let path = net.path_of(node).ok_or_else(|| penumbra_core::Error::new("the node is gone"))?;
+        let place = self.layout.get(node);
+        let r = penumbra_graph::replace(&net, self.engine.types(), &path, kind)?;
+        let label = format!("replace {path} with {kind}");
+        let out = session.edit(Actor::User, &r.ops, None, &label, now)?;
+        if let Some(id) = out.created.first() {
+            if let Some(at) = place {
+                self.layout.set(*id, at, now);
+            }
+            self.editor.selection = [*id].into();
+        }
+        let text = if r.lost.is_empty() {
+            format!("{path} is a {kind} now")
+        } else {
+            format!("{path} is a {kind} now; not kept: {}", r.lost.join(", "))
+        };
+        self.message = Some((text, now));
+        Ok(())
     }
 
     /// Keeps what was just copied for pasting and hands its text to the system clipboard.

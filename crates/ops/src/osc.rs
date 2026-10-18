@@ -61,7 +61,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                  outside the undo history). Binding to the channels is the better way for continuous control",
             ))
             .output("out", DataKind::Chan)
-            .output("messages", DataKind::Table),
+            .output("messages", DataKind::Table)
+            .describe_output("out", "A channel per address (per number), holding its latest value")
+            .describe_output("messages", "What arrived: address, count, values"),
         || Box::new(OscIn::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
