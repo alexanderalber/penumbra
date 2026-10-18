@@ -45,9 +45,9 @@ const TEMPO_SAME: f64 = 0.04;
 /// Periods laid over the onset strength to find the beat.
 const COMB_BEATS: usize = 6;
 /// Lowest spectrum frequency, Hz.
-const SPECTRUM_LOW: f64 = 30.0;
+pub const SPECTRUM_LOW: f64 = 30.0;
 /// Highest spectrum frequency, Hz (or the Nyquist frequency, if lower).
-const SPECTRUM_HIGH: f64 = 16_000.0;
+pub const SPECTRUM_HIGH: f64 = 16_000.0;
 /// The span of the spectrum's values: 0 is this far below the reference.
 const SPECTRUM_DB: f64 = 60.0;
 /// How fast the normalising peak falls, dB per second.

@@ -635,6 +635,8 @@ impl PenumbraApp {
         // changes it there at the end of the frame.
         self.viewer.chan_scale = self.layout.options.chan_scale;
         self.window_viewer.chan_scale = self.layout.options.chan_scale;
+        self.viewer.audio_view = self.layout.options.audio_view;
+        self.window_viewer.audio_view = self.layout.options.audio_view;
         let session = self.engine.session();
         let status = session.status(now);
         let net = session.doc().snapshot();
@@ -951,6 +953,13 @@ impl PenumbraApp {
             [self.viewer.chan_scale, self.window_viewer.chan_scale].into_iter().find(|s| *s != scale)
         {
             let options = crate::layout::EditorOptions { chan_scale: changed, ..self.layout.options };
+            self.layout.set_options(options, now);
+        }
+        let audio = self.layout.options.audio_view;
+        if let Some(changed) =
+            [self.viewer.audio_view, self.window_viewer.audio_view].into_iter().find(|v| *v != audio)
+        {
+            let options = crate::layout::EditorOptions { audio_view: changed, ..self.layout.options };
             self.layout.set_options(options, now);
         }
         self.apply(actions, now);

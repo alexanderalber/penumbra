@@ -45,6 +45,29 @@ the loudest of the last seconds, so a quiet microphone still spans 0 to 1. Sound
 The second output, `spectrum`, is one channel whose samples are the loudness of `bands` (32)
 bands from 30 Hz to 16 kHz, low to high, each 0 to 1 over 60 dB.
 
+## The meters in the viewer
+
+Selected, the analysis shows meters in the viewer, made to be read at a glance during a show:
+
+- **Level and bands:** `level`, `low`, `mid` and `high` as bars (in the colours their curves
+  have in the plot), each with a white line that holds its peak for a second, then falls.
+- **Tempo:** `bpm` in large type, `--` until a tempo is found. The less sure the analysis is,
+  the dimmer the number; the bar below it is `confidence` (red when unsure, amber, green).
+- **Beat light:** a disc that flashes on each beat, amber on a bar's first, blue on the others,
+  in a ring that fills with `beat` from one beat to the next.
+- **Bar:** a cell per beat of the bar (`beats_per_bar`), the first outlined in amber; the
+  current one (`bar_beat`) is lit and fills with `beat`. The line below fills with `bar`.
+- **Hits:** the last four seconds of kicks, onsets and beats as marks moving left, a row each
+  (a bar's first beat amber); the dot before each row flashes on its hit.
+- **Spectrum:** the `spectrum` output as bars, low to high, coloured as the low, mid and high
+  bands (by the `low` and `high` params).
+
+In a narrow column the spectrum and the rows' names are left out. `view: meters` in the
+viewer's header switches to the plot of the channels and back (`ui.options {audio_view:
+"meters" | "plot"}`); the choice is kept with the project and holds for every analysis. The
+meters keep their short memory (peaks, recent hits) in the viewer: switching nodes starts it
+over.
+
 ## Tempo and beat
 
 The tempo is found after about four seconds of music and follows a new track within a few
