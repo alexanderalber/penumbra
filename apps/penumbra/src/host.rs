@@ -1,7 +1,16 @@
 //! The event loop: forwards everything to eframe (the editor window) and drives the projector
 //! output windows next to it (own winit windows, created on the event loop thread, presented from
 //! their own threads).
+//!
+//! It is also where the app ends when the GPU device is lost. Nothing drawn after that is
+//! valid, and egui-wgpu panics on the first buffer it cannot write, so every call into eframe
+//! is guarded: once the device is lost, or eframe panics, nothing more is forwarded; the
+//! engine shuts down (it saves no state from a lost device), a message box says what happened
+//! and the process exits with [`EXIT_CRASHED`]. The crash marker makes the next start open
+//! paused (`penumbra_engine::crash`).
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -22,12 +31,21 @@ pub type InstanceSlot = Arc<Mutex<Option<wgpu::Instance>>>;
 /// black until the next resize) if another thread submits while it waits for an idle GPU.
 const RESIZE_QUIET: Duration = Duration::from_millis(250);
 
+/// The exit code after a lost GPU device or a failed editor window.
+pub const EXIT_CRASHED: i32 = 3;
+
+/// How long the shutdown after a crash may take before the process exits without it: a
+/// thread stuck in a call on the lost device must not keep a dead app open.
+const CRASH_SHUTDOWN: Duration = Duration::from_secs(10);
+
 pub struct Host<'a> {
     pub eframe: eframe::EframeWinitApplication<'a>,
     pub outputs: Outputs,
     pub engine: Arc<Engine>,
     pub instance: InstanceSlot,
     attached: bool,
+    /// Set once the app is going down after a crash; nothing is forwarded to eframe any more.
+    crashed: bool,
 }
 
 impl<'a> Host<'a> {
@@ -36,7 +54,14 @@ impl<'a> Host<'a> {
         engine: Arc<Engine>,
         instance: InstanceSlot,
     ) -> Self {
-        Self { eframe, outputs: Outputs::new(engine.clone()), engine, instance, attached: false }
+        Self {
+            eframe,
+            outputs: Outputs::new(engine.clone()),
+            engine,
+            instance,
+            attached: false,
+            crashed: false,
+        }
     }
 
     fn attach(&mut self) {
@@ -49,22 +74,94 @@ impl<'a> Host<'a> {
             self.attached = true;
         }
     }
+
+    /// Whether events may still go to eframe; ends the app first if the device was lost.
+    fn alive(&mut self) -> bool {
+        if self.crashed {
+            return false;
+        }
+        if let Some(why) = self.engine.gpu().and_then(penumbra_gpu::Gpu::lost) {
+            self.crash(&format!("The GPU device was lost: {why}"));
+            return false;
+        }
+        true
+    }
+
+    /// Runs `f` on eframe unless the app is going down; a panic in it ends the app.
+    fn guard(&mut self, f: impl FnOnce(&mut eframe::EframeWinitApplication<'a>)) {
+        if !self.alive() {
+            return;
+        }
+        let result = catch_unwind(AssertUnwindSafe(|| f(&mut self.eframe)));
+        if let Err(payload) = result {
+            let what = payload
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".into());
+            let message = match self.engine.gpu().and_then(penumbra_gpu::Gpu::lost) {
+                Some(why) => format!("The GPU device was lost: {why}"),
+                None => format!("The editor window failed: {what}"),
+            };
+            self.crash(&message);
+        }
+    }
+
+    /// Ends the app after a crash: records it for the next start, shuts the engine and the
+    /// outputs down, tells the user and exits. Does not return.
+    fn crash(&mut self, message: &str) {
+        self.crashed = true;
+        log::error!("{message}");
+        // The lost-device hook has written the marker already; this covers a panic in eframe.
+        self.engine.record_crash(message.lines().next().unwrap_or(message));
+        let done = Arc::new(AtomicBool::new(false));
+        let watched = Arc::clone(&done);
+        let spawned = std::thread::Builder::new().name("crash-watchdog".into()).spawn(move || {
+            std::thread::sleep(CRASH_SHUTDOWN);
+            if !watched.load(Ordering::Acquire) {
+                log::error!("the shutdown after the crash did not finish; exiting without it");
+                std::process::exit(EXIT_CRASHED);
+            }
+        });
+        if let Err(e) = spawned {
+            log::warn!("no crash watchdog: {e}");
+        }
+        self.outputs.shutdown();
+        self.engine.shutdown();
+        done.store(true, Ordering::Release);
+        if std::env::var_os("PENUMBRA_NO_CRASH_DIALOG").is_none() {
+            rfd::MessageDialog::new()
+                .set_level(rfd::MessageLevel::Error)
+                .set_title("penumbra")
+                .set_description(format!(
+                    "{message}\n\npenumbra has to close. The project file is saved; the next start \
+                     opens it with the clock stopped."
+                ))
+                .set_buttons(rfd::MessageButtons::Ok)
+                .show();
+        }
+        // Not through eframe's shutdown: dropping its renderer on a lost device can panic too.
+        std::process::exit(EXIT_CRASHED);
+    }
 }
 
 impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
     fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
-        self.eframe.new_events(event_loop, cause);
+        self.guard(|e| e.new_events(event_loop, cause));
     }
 
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        self.eframe.resumed(event_loop);
+        self.guard(|e| e.resumed(event_loop));
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: eframe::UserEvent) {
-        self.eframe.user_event(event_loop, event);
+        self.guard(|e| e.user_event(event_loop, event));
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: WindowEvent) {
+        if !self.alive() {
+            return;
+        }
         if !self.outputs.window_event(window_id, &event) {
             if let WindowEvent::Resized(size) = &event
                 && size.width > 0
@@ -73,16 +170,19 @@ impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
             {
                 gpu.quiesce(Instant::now() + RESIZE_QUIET);
             }
-            self.eframe.window_event(event_loop, window_id, event);
+            self.guard(|e| e.window_event(event_loop, window_id, event));
         }
     }
 
     fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
-        self.eframe.device_event(event_loop, device_id, event);
+        self.guard(|e| e.device_event(event_loop, device_id, event));
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.eframe.about_to_wait(event_loop);
+        self.guard(|e| e.about_to_wait(event_loop));
+        if self.crashed {
+            return;
+        }
         self.attach();
         if self.attached {
             self.outputs.tick(event_loop);
@@ -99,15 +199,15 @@ impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
     }
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) {
-        self.eframe.suspended(event_loop);
+        self.guard(|e| e.suspended(event_loop));
     }
 
     fn exiting(&mut self, event_loop: &ActiveEventLoop) {
         self.outputs.shutdown();
-        self.eframe.exiting(event_loop);
+        self.guard(|e| e.exiting(event_loop));
     }
 
     fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
-        self.eframe.memory_warning(event_loop);
+        self.guard(|e| e.memory_warning(event_loop));
     }
 }

@@ -35,6 +35,7 @@ impl Default for Options {
 
 fn setup(software: bool) -> egui_wgpu::WgpuSetup {
     let mut setup = egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+    setup.instance_descriptor.memory_budget_thresholds = penumbra_gpu::vram::memory_thresholds();
     if cfg!(windows) && std::env::var_os("WGPU_BACKEND").is_none() {
         setup.instance_descriptor.backends = wgpu::Backends::DX12;
     }

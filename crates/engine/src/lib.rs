@@ -12,6 +12,7 @@ pub mod command;
 pub mod commands;
 pub mod components;
 pub mod control;
+pub mod crash;
 pub mod engine;
 pub mod meter;
 pub mod navigation;

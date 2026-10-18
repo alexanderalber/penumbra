@@ -26,6 +26,8 @@ wgpu.workspace = true
 # The event loop is the app's (output windows next to eframe's); keeps winit's default
 # backends (Wayland via dlopen, X11) on Linux.
 winit.workspace = true
+# The message box when the app has to close after a crash.
+rfd.workspace = true
 
 [build-dependencies]
 winresource.workspace = true

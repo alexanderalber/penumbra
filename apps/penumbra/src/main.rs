@@ -14,6 +14,11 @@
 //! the script saves what the window would show. Without `--project` it works on a fresh copy
 //! of the demo in the temp directory, so the real demo project is left alone. `--software`
 //! renders on WARP instead of the GPU, `--size WxH` sets the window size in points.
+//!
+//! When the GPU device is lost or the editor window fails, the app records it in
+//! `gpu-lost.json` in its data directory, shows a message box (not with
+//! `PENUMBRA_NO_CRASH_DIALOG` set) and exits with code 3; the next start opens the project with
+//! the clock stopped and says why (see `host`).
 
 mod host;
 
@@ -109,6 +114,7 @@ fn run() -> Result<(), String> {
         Ok(file) => engine.set_recent_file(Some(file)),
         Err(e) => log::warn!("no list of recent projects: {e}"),
     }
+    after_crash(&engine);
     engine.remember(&dir);
 
     let (bridge, requests) = Bridge::new();
@@ -142,6 +148,8 @@ fn run() -> Result<(), String> {
         if cfg!(windows) && std::env::var_os("WGPU_BACKEND").is_none() {
             setup.instance_descriptor.backends = wgpu::Backends::DX12;
         }
+        // A clean out-of-memory error near the GPU's budget, before the driver gets into trouble.
+        setup.instance_descriptor.memory_budget_thresholds = penumbra_gpu::vram::memory_thresholds();
         // The same device serves the cook thread (textures up to 16384 pixels).
         setup.device_descriptor = Arc::new(penumbra_gpu::device_descriptor);
     }
@@ -149,6 +157,25 @@ fn run() -> Result<(), String> {
     // Normally done in `on_exit` already; repeated here for a window that failed to open.
     engine.shutdown();
     result
+}
+
+/// Arms the crash marker for this run and, when the last run left one (a lost GPU device, a
+/// failed editor window), stops the show clock before the first frame and says why: the
+/// project file still holds whatever caused the crash, and running it at once would repeat it.
+fn after_crash(engine: &Engine) {
+    let file = match penumbra_engine::crash::default_file() {
+        Ok(file) => file,
+        Err(e) => {
+            log::warn!("no crash marker: {e}");
+            return;
+        }
+    };
+    if let Some(marker) = penumbra_engine::crash::take(&file) {
+        log::warn!("the last run ended abnormally ({}); starting paused", marker.reason);
+        engine.play(false);
+        engine.set_notice(Some(penumbra_engine::crash::notice(&marker)));
+    }
+    engine.set_crash_marker(Some(file));
 }
 
 /// The window icon, chosen once at start for the taskbar's colour: a plain sphere on a light

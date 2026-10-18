@@ -95,7 +95,12 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         cook_thumbnails,
     );
     add("cook.play", "Run or stop the show clock; {playing?} (default true)", cook_play);
-    add("gpu.info", "GPU adapter, texture size limit, errors raised so far", gpu_info);
+    add("gpu.info", "GPU adapter, texture size limit, memory, errors raised so far, whether lost", gpu_info);
+    add(
+        "gpu.simulate_loss",
+        "Test aid: end the GPU device as if the driver had lost it; the app then closes as after a real loss and the next start opens paused; {confirm: true}",
+        gpu_simulate_loss,
+    );
     add("text.fonts", "Font families and their styles, for tex.text's font and style; {family?}", text_fonts);
     add(
         "script.info",
@@ -736,6 +741,7 @@ fn cook_status(e: &Engine, p: &Json) -> Result<Json> {
         "seconds": now.seconds(),
         "rate": now.rate.to_string(),
         "playing": playing,
+        "notice": e.notice(),
         "pace": pace,
         "pass": last.pass,
         "last_pass_ms": last.elapsed.as_secs_f64() * 1000.0,
@@ -787,6 +793,9 @@ fn cook_play(e: &Engine, p: &Json) -> Result<Json> {
     }
     let a: A = args(p)?;
     let playing = a.playing;
+    if playing {
+        e.set_notice(None);
+    }
     let frame = e.on_cook(move |st| {
         if playing {
             st.clock.play();
@@ -1314,12 +1323,34 @@ fn gpu_info(e: &Engine, p: &Json) -> Result<Json> {
         return Ok(json!({"attached": false}));
     };
     let errors = gpu.errors();
+    let vram = gpu.vram();
     Ok(json!({
         "attached": true,
         "adapter": gpu.name(),
         "max_texture_size": gpu.max_texture_size(),
         "format": format!("{:?}", penumbra_gpu::FORMAT),
+        "vram_budget": vram.map(|v| v.budget),
+        "vram_usage": vram.map(|v| v.usage),
         "errors": errors.count,
         "last_error": errors.last,
+        "lost": gpu.lost(),
     }))
+}
+
+fn gpu_simulate_loss(e: &Engine, p: &Json) -> Result<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        #[serde(default)]
+        confirm: bool,
+    }
+    let a: A = args(p)?;
+    if !a.confirm {
+        return Err(CommandError(
+            "this ends the GPU device and closes the app; pass {\"confirm\": true}".into(),
+        ));
+    }
+    let gpu = e.gpu().ok_or_else(|| CommandError("no GPU attached".into()))?;
+    gpu.simulate_loss("simulated by gpu.simulate_loss");
+    Ok(json!({"lost": true}))
 }

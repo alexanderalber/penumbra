@@ -78,7 +78,8 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `gpu.info` | GPU adapter, texture size limit, errors raised so far |
+| `gpu.info` | GPU adapter, texture size limit, memory, errors raised so far, whether lost |
+| `gpu.simulate_loss` | Test aid: end the GPU device as if the driver had lost it; the app then closes as after a real loss and the next start opens paused; {confirm: true} |
 
 ## history
 
