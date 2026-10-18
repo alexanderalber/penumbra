@@ -13,6 +13,7 @@
 //! [`Gpu::new`] replaces it with one that logs and counts ([`Gpu::errors`]).
 
 pub mod bc;
+pub mod canvas;
 pub mod environment;
 pub mod geo;
 pub mod header;
@@ -35,6 +36,7 @@ use std::time::{Duration, Instant};
 
 use penumbra_core::{Error, lock};
 
+pub use canvas::{Canvas, Paint};
 pub use geo::{Geo, Mat};
 pub use pass::{Batch, Pass, PassInput};
 pub use projection::{MeshVertex, Projection};
@@ -96,6 +98,7 @@ struct Inner {
     passes: Mutex<HashMap<u64, Arc<Pass>>>,
     video: Mutex<Option<Arc<video::Pipeline>>>,
     bc: Mutex<Option<Arc<bc::Pipeline>>>,
+    canvas: Mutex<Option<Arc<canvas::Pipelines>>>,
     render: Mutex<Option<Arc<render::Pipelines>>>,
     environment: Mutex<Option<Arc<environment::Pipelines>>>,
     stack: Mutex<Option<Arc<stack::Pipelines>>>,
@@ -188,6 +191,7 @@ impl Gpu {
                 passes: Mutex::new(HashMap::new()),
                 video: Mutex::new(None),
                 bc: Mutex::new(None),
+                canvas: Mutex::new(None),
                 render: Mutex::new(None),
                 environment: Mutex::new(None),
                 stack: Mutex::new(None),

@@ -28,8 +28,10 @@ pub const AUDIO_ANALYSIS: &str = "chan.audio_analysis";
 /// dropped).
 pub const MAX_BLOCK_SECONDS: f64 = 0.5;
 
-/// The channels `chan.audio_analysis` outputs, in order.
-pub const FEATURES: [&str; 14] = [
+/// The channels `chan.audio_analysis` outputs, in order. The last three repeat params
+/// (`beats_per_bar`, `low`, `high`), so what draws the analysis (`tex.audio_meters`, the
+/// viewer) knows them without the node, also while a param is bound to a channel.
+pub const FEATURES: [&str; 17] = [
     "level",
     "low",
     "mid",
@@ -44,6 +46,9 @@ pub const FEATURES: [&str; 14] = [
     "confidence",
     "rms",
     "peak",
+    "beats_per_bar",
+    "low_hz",
+    "high_hz",
 ];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
@@ -135,7 +140,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("spectrum", DataKind::Chan)
         .describe_output(
             "out",
-            "Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat",
+            "Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them",
         )
         .describe_output("spectrum", "One channel whose samples are log-spaced bands from 30 Hz to 16 kHz"),
         || Box::new(Analysis::default()) as Box<dyn Operator>,
@@ -302,6 +307,9 @@ impl Operator for Analysis {
             f.confidence,
             f.rms,
             f.peak,
+            f64::from(settings.beats_per_bar),
+            settings.low_hz,
+            settings.high_hz,
         ];
         let channels = self
             .names

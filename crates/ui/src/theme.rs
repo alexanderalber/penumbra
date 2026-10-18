@@ -98,6 +98,18 @@ pub fn channel_color(i: usize) -> Color32 {
     COLORS.get(i % COLORS.len()).copied().unwrap_or(Color32::WHITE)
 }
 
+/// The colours of the audio meters (the viewer's and `tex.audio_meters`' alike).
+pub fn meters_palette() -> penumbra_ops::meters::Palette {
+    penumbra_ops::meters::Palette {
+        text: TEXT.to_array(),
+        text_weak: TEXT_WEAK.to_array(),
+        accent: ACCENT.to_array(),
+        warning: WARNING.to_array(),
+        error: ERROR.to_array(),
+        channels: [0, 1, 2, 3].map(|i| channel_color(i).to_array()),
+    }
+}
+
 /// Header colour of a node family (`tex`, `chan`, ...).
 pub fn family_color(family: &str) -> Color32 {
     let c = match family {
@@ -167,4 +179,13 @@ pub fn lock_glyph(painter: &egui::Painter, c: Pos2, zoom: f32) {
         Stroke::new(1.5 * zoom, Color32::WHITE),
         StrokeKind::Middle,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_meters_texture_has_the_ui_colours() {
+        // tex.audio_meters draws outside the UI with the standard set; it must not drift.
+        assert_eq!(super::meters_palette(), penumbra_ops::meters::Palette::STANDARD);
+    }
 }
