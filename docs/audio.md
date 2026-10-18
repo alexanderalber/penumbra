@@ -77,8 +77,8 @@ on a monitor output or lay over the show. Connect the analysis' `out` to its `in
 (1920 x 1080) set the picture's size; it is laid out as the viewer would draw it at about 640 x
 360 and enlarged, so type and lines keep their proportions at any size, and below about 150
 pixels of height the spectrum and the rows' names go, as in a narrow viewer. `background`
-(black) is the colour behind the meters; with alpha 0 only the meters are drawn, ready for a
-`tex.composite`.
+is the colour behind the meters; by default it is transparent, so only the meters are drawn,
+ready for a `tex.composite`; give it alpha 1 for a solid picture.
 
 The node keeps its own short memory (peaks, recent hits) on the show clock: a paused show
 stands still, a jump back in time starts it over, and `node.reset` (or R) clears it. It draws

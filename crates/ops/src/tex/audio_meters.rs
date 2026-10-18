@@ -55,8 +55,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(super::width_param())
         .param(super::height_param())
         .param(super::keep_size())
-        .param(ParamSpec::color("background", [0.0, 0.0, 0.0, 1.0]).doc(
-            "Colour behind the meters, linear RGBA with straight alpha; alpha 0 leaves only the meters, to lay over a picture",
+        .param(ParamSpec::color("background", [0.0, 0.0, 0.0, 0.0]).doc(
+            "Colour behind the meters, linear RGBA with straight alpha; the default (alpha 0) leaves only the meters, to lay over a picture",
         ))
         .input("in", DataKind::Chan)
         .input("spectrum", DataKind::Chan)

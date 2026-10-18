@@ -98,7 +98,7 @@ def setup(name: str, work: Path) -> list[dict]:
         call("node.create", path="/synth", kind="script.python", params={"code": AUDIO_SYNTH, "cook": "every frame"}),
         call("node.create", path="/analysis", kind="chan.audio_analysis"),
         call("node.connect", **{"from": "/synth", "to": "/analysis"}),
-        call("node.create", path="/meters", kind="tex.audio_meters"),
+        call("node.create", path="/meters", kind="tex.audio_meters", params={"background": [0.0, 0.0, 0.0, 1.0]}),
         call("node.connect", **{"from": "/analysis", "output": "out", "to": "/meters", "input": "in"}),
         call("node.connect", **{"from": "/analysis", "output": "spectrum", "to": "/meters", "input": "spectrum"}),
     ]
