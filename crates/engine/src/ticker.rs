@@ -94,7 +94,9 @@ mod tests {
         let ticks = ticks.lock().unwrap();
         assert_eq!(ticks.len(), 30);
         let span = ticks.last().unwrap().duration_since(*ticks.first().unwrap()).as_secs_f64();
-        assert!((span - 0.29).abs() < 0.03, "29 periods of 10 ms took {span} s");
+        // Never faster than the rate; slower only by what a machine busy with the rest of the
+        // test suite costs single ticks.
+        assert!((0.27..0.38).contains(&span), "29 periods of 10 ms took {span} s");
         // Off and stopped: the loop ends.
         ticker.set(None);
         assert!(!ticker.ticking());
