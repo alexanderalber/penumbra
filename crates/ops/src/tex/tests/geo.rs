@@ -55,6 +55,49 @@ fn scene() -> Vec<penumbra_graph::Op> {
     ]
 }
 
+/// A rig on `ops` with a camera for every render: each `tex.render` created there without a
+/// camera wired in gets a `view.camera` named `<render>_camera`, wired into `camera`, carrying
+/// the camera params given to the render (`position`, `fov`, ...).
+fn rig(gpu: penumbra_gpu::Gpu, dir: Option<&Path>, ops: &[penumbra_graph::Op]) -> Rig {
+    Rig::new(gpu, dir, &with_cameras(ops))
+}
+
+fn with_cameras(ops: &[penumbra_graph::Op]) -> Vec<penumbra_graph::Op> {
+    use penumbra_graph::Op;
+    let wired: Vec<String> = ops
+        .iter()
+        .filter_map(|o| match o {
+            Op::Connect { to, input: 3, .. } => Some(to.to_string()),
+            _ => None,
+        })
+        .collect();
+    let mut out = Vec::new();
+    for op in ops {
+        match op {
+            Op::Create { path, kind, params } if kind == "tex.render" => {
+                let (camera, own): (std::collections::BTreeMap<_, _>, std::collections::BTreeMap<_, _>) =
+                    params
+                        .clone()
+                        .into_iter()
+                        .partition(|(k, _)| crate::view::CAMERA_PARAMS.contains(&k.as_str()));
+                out.push(Op::Create { path: path.clone(), kind: kind.clone(), params: own });
+                let render = path.to_string();
+                if !wired.contains(&render) {
+                    let cam = format!("{render}_camera");
+                    out.push(Op::Create {
+                        path: cam.parse().unwrap(),
+                        kind: "view.camera".into(),
+                        params: camera,
+                    });
+                    out.push(connect(&cam, &render, 3));
+                }
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    out
+}
+
 fn render(path: &str, params: &[(&str, Value)]) -> penumbra_graph::Op {
     let mut p: Vec<(&str, Value)> = super::size().to_vec();
     p.extend(params.iter().cloned());
@@ -117,7 +160,7 @@ fn a_scene_of_parts_renders_with_depth_and_a_data_pass() {
     ops.push(render("/lit", &[]));
     ops.push(connect("/shiny", "/lit", 0));
     ops.push(connect("/lights", "/lit", 2));
-    let mut rig = Rig::new(gpu, None, &ops);
+    let mut rig = rig(gpu, None, &ops);
     for name in ["parts", "textured", "lit"] {
         let px = rig.pixels(&format!("/{name}"));
         golden(&format!("render_{name}"), &px);
@@ -169,7 +212,7 @@ fn a_calibrated_camera_renders_where_calib_projects() {
         ],
     ));
     ops.push(connect("/scene", "/projector", 0));
-    let mut rig = Rig::new(gpu, None, &ops);
+    let mut rig = rig(gpu, None, &ops);
     rig.pixels("/projector");
     look(&mut rig, "/projector", "render_projector", (480, 270));
     let d = data(&rig, "/projector");
@@ -195,14 +238,14 @@ fn a_calibrated_camera_renders_where_calib_projects() {
     }
     assert_eq!(checked, 5);
     // A camera that is not one: an error naming the param.
-    rig.edit(&[set("/projector.calibration", "{\"nope\": 1}".into())]);
+    rig.edit(&[set("/projector_camera.calibration", "{\"nope\": 1}".into())]);
     rig.cook("/projector");
-    let s = rig.cooker.status(rig.id("/projector")).unwrap();
+    let s = rig.cooker.status(rig.id("/projector_camera")).unwrap();
     assert!(s.error.as_deref().is_some_and(|e| e.contains("`calibration`")), "{s:?}");
 }
 
 #[test]
-fn a_camera_node_replaces_the_renders_own_camera() {
+fn a_render_sees_through_its_camera_node_and_needs_one() {
     let Some(gpu) = gpu() else { return };
     let look_from = [
         ("position", Value::Vec3([1.5, -4.0, 2.0])),
@@ -211,24 +254,24 @@ fn a_camera_node_replaces_the_renders_own_camera() {
         ("roll", Value::Float(30.0)),
     ];
     let mut ops = scene();
-    // The same camera as the render's own params and as a camera node wired into another.
-    ops.push(render("/own", &[&look_from[..], &[("surface", "parts".into())]].concat()));
+    // Two renders, each with a camera node seeing alike.
+    ops.push(render("/a", &[&look_from[..], &[("surface", "parts".into())]].concat()));
     ops.push(render("/wired", &[("surface", "parts".into())]));
     ops.push(create("/cam", "view.camera", &look_from));
-    ops.push(connect("/scene", "/own", 0));
+    ops.push(connect("/scene", "/a", 0));
     ops.push(connect("/scene", "/wired", 0));
     ops.push(connect("/cam", "/wired", 3));
-    let mut rig = Rig::new(gpu, None, &ops);
-    rig.pixels("/own");
+    let mut rig = rig(gpu, None, &ops);
+    rig.pixels("/a");
     rig.pixels("/wired");
-    let (own, wired) = (data(&rig, "/own"), data(&rig, "/wired"));
-    assert!(own.data.iter().any(|p| p[2] == 3.0), "the wall is in the picture");
-    assert!(own.data == wired.data, "the wired render sees as the one with its own params");
-    // The roll is in the picture: unrolled, the render's own params see differently.
-    rig.edit(&[set("/own.roll", Value::Float(0.0))]);
-    let v = rig.version("/own");
-    rig.cook_until_new("/own", v);
-    assert!(data(&rig, "/own").data != wired.data);
+    let (a, wired) = (data(&rig, "/a"), data(&rig, "/wired"));
+    assert!(a.data.iter().any(|p| p[2] == 3.0), "the wall is in the picture");
+    assert!(a.data == wired.data, "the same camera params see alike");
+    // The roll is in the picture.
+    rig.edit(&[set("/a_camera.roll", Value::Float(0.0))]);
+    let v = rig.version("/a");
+    rig.cook_until_new("/a", v);
+    assert!(data(&rig, "/a").data != wired.data);
     // Moving the camera node moves the wired render.
     let v = rig.version("/wired");
     rig.edit(&[set("/cam.position", Value::Vec3([-1.5, -4.0, 2.0]))]);
@@ -249,17 +292,93 @@ fn a_camera_node_replaces_the_renders_own_camera() {
     let (x, y) = (u * f64::from(tex.width()) / 1920.0, vv * f64::from(tex.height()) / 1080.0);
     let p = at(&d, x as u32, y as u32);
     assert_eq!(p[2], 1.0, "the box's top at {u}, {vv}: {p:?}");
-    // A camera node that fails leaves the render with an error, not its own params.
+    // The calibration wins over an orthographic projection.
     let v = rig.version("/wired");
+    rig.edit(&[set("/cam.projection", "orthographic".into())]);
+    rig.cook_until_new("/wired", v);
+    assert!(data(&rig, "/wired").data == d.data, "a calibration stays perspective");
+    // A camera node that fails leaves the render with an error.
     rig.edit(&[set("/cam.calibration", "{\"nope\": 1}".into())]);
     rig.cook("/wired");
     let s = rig.cooker.status(rig.id("/cam")).unwrap();
     assert!(s.error.as_deref().is_some_and(|e| e.contains("`calibration`")), "{s:?}");
-    // Unwired, the render's own params count again.
+    // Without a camera the render says so and draws nothing.
     rig.edit(&[penumbra_graph::Op::Disconnect { to: "/wired".parse().unwrap(), input: 3 }]);
-    rig.cook_until_new("/wired", v);
+    rig.cook("/wired");
     let s = rig.cooker.status(rig.id("/wired")).unwrap();
-    assert!(s.error.is_none(), "{s:?}");
+    assert!(s.error.as_deref().is_some_and(|e| e.contains("view.camera")), "{s:?}");
+    rig.edit(&[create("/bare", "tex.render", &[])]);
+    rig.cook("/bare");
+    let s = rig.cooker.status(rig.id("/bare")).unwrap();
+    assert!(s.error.as_deref().is_some_and(|e| e.contains("geo input") && e.contains("camera")), "{s:?}");
+}
+
+/// An orthographic camera keeps sizes at any depth: two equal boxes, one far behind the other,
+/// stand equally high in its picture (and not in a perspective one); a parallel projector
+/// lights them alike.
+#[test]
+fn an_orthographic_camera_keeps_sizes_at_any_depth() {
+    let Some(gpu) = gpu() else { return };
+    let ops = vec![
+        create("/near_box", "geo.primitive", &[("size", Value::Vec3([0.5, 0.5, 0.5]))]),
+        create("/far_box", "geo.primitive", &[("size", Value::Vec3([0.5, 0.5, 0.5]))]),
+        create("/near_at", "geo.transform", &[("translate", Value::Vec3([-0.6, 0.0, 0.0]))]),
+        create("/far_at", "geo.transform", &[("translate", Value::Vec3([0.6, 6.0, 0.0]))]),
+        connect("/near_box", "/near_at", 0),
+        connect("/far_box", "/far_at", 0),
+        create("/boxes", "geo.merge", &[]),
+        connect("/near_at", "/boxes", 0),
+        connect("/far_at", "/boxes", 1),
+        render(
+            "/ortho",
+            &[
+                ("surface", "parts".into()),
+                ("antialias", Value::Bool(false)),
+                ("position", Value::Vec3([0.0, -4.0, 0.0])),
+                ("target", Value::Vec3([0.0, 0.0, 0.0])),
+                ("projection", "orthographic".into()),
+                ("size", Value::Float(2.0)),
+            ],
+        ),
+        connect("/boxes", "/ortho", 0),
+        render(
+            "/persp",
+            &[
+                ("surface", "parts".into()),
+                ("antialias", Value::Bool(false)),
+                ("position", Value::Vec3([0.0, -4.0, 0.0])),
+                ("target", Value::Vec3([0.0, 0.0, 0.0])),
+            ],
+        ),
+        connect("/boxes", "/persp", 0),
+    ];
+    let mut rig = rig(gpu, None, &ops);
+    rig.pixels("/ortho");
+    rig.pixels("/persp");
+    // Rows covered per box (part 1 left, part 2 right), and how many pixels.
+    let heights = |px: &Pixels| -> [(u32, u32); 2] {
+        [1.0, 2.0].map(|part| {
+            let rows = (0..px.height).filter(|y| (0..px.width).any(|x| at(px, x, *y)[2] == part)).count();
+            let count = px.data.iter().filter(|p| p[2] == part).count();
+            (rows as u32, count as u32)
+        })
+    };
+    let ortho = data(&rig, "/ortho");
+    let [(near_rows, near_px), (far_rows, far_px)] = heights(&ortho);
+    // 0.5 of 2 m high: a quarter of the picture.
+    let expected = super::H as f64 / 4.0;
+    assert!((f64::from(near_rows) - expected).abs() <= 1.5, "{near_rows} rows, expected {expected}");
+    assert!(
+        near_rows.abs_diff(far_rows) <= 1 && near_px.abs_diff(far_px) <= near_px / 20,
+        "{near_rows} {far_rows}"
+    );
+    // The depth pass still measures the distance along the view: the far box's front face.
+    let depth = ortho.data.iter().filter(|p| p[2] == 2.0).map(|p| p[3]).fold(0.0f32, f32::max);
+    assert!((depth - 9.75).abs() < 0.05, "far box's front at {depth}");
+    let persp = data(&rig, "/persp");
+    let [(near_rows, _), (far_rows, _)] = heights(&persp);
+    assert!(far_rows * 2 < near_rows, "perspective: the far box is smaller ({near_rows} vs {far_rows})");
+    look(&mut rig, "/ortho", "render_ortho", (super::W, super::H));
 }
 
 #[test]
@@ -284,7 +403,7 @@ fn mesh_files_load_with_their_parts_and_reload() {
         render("/view", &[("surface", "material".into())]),
         connect("/glb", "/view", 0),
     ];
-    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let mut rig = rig(gpu, Some(&dir), &ops);
     let geo = |rig: &mut Rig, path: &str| -> (Geo, Table) {
         let id = rig.id(path);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
@@ -376,7 +495,7 @@ fn render_nodes_ask_of_their_texture_what_their_cameras_see() {
         )
     };
     let dims = |w: i64, h: i64| [("width", Value::Int(w)), ("height", Value::Int(h))];
-    let mut rig = Rig::new(
+    let mut rig = rig(
         gpu,
         None,
         &[
@@ -497,7 +616,7 @@ fn render_nodes_ask_of_their_texture_what_their_cameras_see() {
     assert!(is_green(centre(&rig, "/near")), "{:?}", centre(&rig, "/near"));
     assert!(is_blue(centre(&rig, "/far")), "{:?}", centre(&rig, "/far"));
     // Moving a camera makes its field outdated until it is measured again.
-    rig.edit(&[set("/far.position", Value::Vec3([0.5, -far, 0.0]))]);
+    rig.edit(&[set("/far_camera.position", Value::Vec3([0.5, -far, 0.0]))]);
     rig.cooker.cook(&rig.net, rig.clock.now(), &[rig.id("/p_far")], &[]);
     assert_eq!(renders.field(rig.id("/far")).map(|(_, c)| c), Some(false));
     settle(&mut rig);
@@ -595,7 +714,7 @@ fn materials_answer_lights_by_the_numbers() {
     }
     ops.push(cam("/green_tex"));
     ops.push(connect("/textured", "/green_tex", 0));
-    let mut rig = Rig::new(gpu, None, &ops);
+    let mut rig = rig(gpu, None, &ops);
     let centre = |rig: &mut Rig, path: &str| {
         let px = rig.pixels(path);
         at(&px, px.width / 2, px.height / 2)
@@ -693,7 +812,7 @@ fn a_material_replaces_the_files_colour() {
         cam("/as_mat"),
         connect("/blue", "/as_mat", 0),
     ];
-    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let mut rig = rig(gpu, Some(&dir), &ops);
     let centre = |rig: &mut Rig, path: &str| {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         loop {
@@ -823,7 +942,7 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
         ops.push(connect(geo, path, 0));
         ops.push(connect(light, path, 2));
     }
-    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let mut rig = rig(gpu, Some(&dir), &ops);
     let wait = |rig: &mut Rig, path: &str| {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
@@ -972,7 +1091,7 @@ fn see_through_surfaces_sort_and_tint_the_light() {
             ops.push(connect(l, path, 2));
         }
     }
-    let mut rig = Rig::new(gpu, None, &ops);
+    let mut rig = rig(gpu, None, &ops);
     let px_of = |px: &Pixels, x: f64, z: f64| {
         let f = 0.5 * px.height as f64 / 20f64.to_radians().tan();
         let u = (0.5 * px.width as f64 + f * x / 4.0) as u32;
@@ -1094,7 +1213,7 @@ fn an_environment_lights_and_reflects_by_its_picture() {
         ops.push(connect(geo, path, 0));
         ops.push(connect(light, path, 2));
     }
-    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let mut rig = rig(gpu, Some(&dir), &ops);
     let centre = |rig: &mut Rig, path: &str| {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
@@ -1214,7 +1333,7 @@ fn ambient_occlusion_darkens_creases_in_the_ambient_light() {
         ops.push(connect(lights, path, 2));
     }
     ops.extend([weak, connect("/scene", "/weak", 0), connect("/lights", "/weak", 2)]);
-    let mut rig = Rig::new(gpu, None, &ops);
+    let mut rig = rig(gpu, None, &ops);
     // Where a point (x, z) of the wall shows in the picture, from y = -4 with fov 40.
     let px_of = |px: &Pixels, x: f64, z: f64| {
         let f = 0.5 * px.height as f64 / 20f64.to_radians().tan();
@@ -1335,7 +1454,7 @@ fn wireframes_show_edges_and_occluders_hide() {
         cam("/front_seen"),
         connect("/front_wall", "/front_seen", 0),
     ];
-    let mut rig = Rig::new(gpu, None, &ops);
+    let mut rig = rig(gpu, None, &ops);
     for path in ["/quads_seen", "/tris_seen", "/occluded", "/filled_seen", "/front_seen"] {
         rig.pixels(path);
     }
@@ -1421,7 +1540,7 @@ fn instance_places_a_copy_per_row() {
         connect("/box", "/copies", 0),
         connect("/places", "/copies", 1),
     ];
-    let mut rig = Rig::new(gpu, None, &ops);
+    let mut rig = rig(gpu, None, &ops);
     rig.cook("/copies");
     let geo =
         rig.cooker.output(Port { node: rig.id("/copies"), output: 0 }).unwrap().get::<Geo>().unwrap().clone();
@@ -1479,7 +1598,7 @@ fn tex_instance_places_a_copy_per_texel() {
         render("/front", &[("position", Value::Vec3([0.0, -8.0, 0.0])), ("antialias", Value::Bool(false))]),
         connect("/copies", "/front", 0),
     ];
-    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let mut rig = rig(gpu, Some(&dir), &ops);
     let deadline = Instant::now() + Duration::from_secs(20);
     let px = loop {
         let px = rig.pixels("/front");

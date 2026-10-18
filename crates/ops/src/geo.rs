@@ -204,6 +204,7 @@ pub fn view_of(camera: &Camera, near: f64, far: f64) -> Option<View> {
         clip_from_world: clip,
         view_z: [r20, r21, r22, camera.pose.translation[2]],
         eye: camera.position(),
+        parallel: false,
     })
 }
 

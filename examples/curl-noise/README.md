@@ -16,7 +16,7 @@ The simulation runs on the GPU, one particle per texel of a 256 x 256 texture:
 
 `/sticks` is a `geo.tex_instance`: one copy of `/stick` per texel, placed by `/pos`, turned
 towards `/vel`, stretched by `/scale` (the size times `/pulse`) and coloured by `/palette`.
-`/render` draws them lit by `/light`, `/out` puts them over a dark radial `/background`.
+`/render` draws them lit by `/light`, seen through `/render_camera`; `/out` puts them over a dark radial `/background`.
 
 Try:
 

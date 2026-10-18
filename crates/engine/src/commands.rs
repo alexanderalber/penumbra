@@ -90,7 +90,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "render.frame",
-        "Move a tex.render camera (its own, or the view.camera wired in) so its geometry fills the picture, keeping the direction; {path}",
+        "Move the view.camera wired into a tex.render so its geometry fills the picture, keeping the direction (orthographic: sets its size); {path}",
         render_frame,
     );
     add("cook.status", "Show clock, last cook pass, watched nodes, thumbnail policy", cook_status);
@@ -1009,25 +1009,32 @@ fn render_frame(e: &Engine, p: &Json) -> Result<Json> {
     let b = geo.bounds().ok_or("its geometry is empty")?;
     let size = |name: &str| node.param(desc, name).and_then(Value::as_f64).unwrap_or(1.0).max(1.0);
     let aspect = size("width") / size("height");
-    // With a camera wired in, that camera node is the one to move.
-    let (path, node, desc) = match node.inputs.get(penumbra_ops::tex::render::CAMERA_INPUT).copied().flatten()
-    {
-        None => (a.path.clone(), node, desc),
-        Some(src) => {
-            let cam = net.node(src.node).ok_or("its camera input comes from nowhere")?;
-            let path = net.path_of(src.node).ok_or("its camera input comes from nowhere")?;
-            if cam.kind != penumbra_ops::view::CAMERA {
-                return Err(format!(
-                    "its camera comes from {path}, a {}; frame a {} instead",
-                    cam.kind,
-                    penumbra_ops::view::CAMERA
-                )
-                .into());
-            }
-            let desc = kind_at(e, &net, &path)?;
-            (path, cam, desc)
-        }
-    };
+    // The wired camera node is the one to move.
+    let src = node
+        .inputs
+        .get(penumbra_ops::tex::render::CAMERA_INPUT)
+        .copied()
+        .flatten()
+        .ok_or_else(|| format!("{} has no camera: wire a view.camera into its `camera` input", a.path))?;
+    let cam = net.node(src.node).ok_or("its camera input comes from nowhere")?;
+    let path = net.path_of(src.node).ok_or("its camera input comes from nowhere")?;
+    if cam.kind != penumbra_ops::view::CAMERA {
+        return Err(format!(
+            "its camera comes from {path}, a {}; frame a {} instead",
+            cam.kind,
+            penumbra_ops::view::CAMERA
+        )
+        .into());
+    }
+    let desc = kind_at(e, &net, &path)?;
+    let node = cam;
+    let text = |name: &str| node.param(desc, name).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if !text("calibration").is_empty() {
+        return Err(
+            format!("{path} is calibrated (its `calibration` param); framing would not move it").into()
+        );
+    }
+    let ortho = text("projection") == "orthographic";
     let vec3 = |name: &str| match node.param(desc, name).and_then(Value::components) {
         Some(&[x, y, z]) => [x, y, z],
         _ => [0.0; 3],
@@ -1040,19 +1047,35 @@ fn render_frame(e: &Engine, p: &Json) -> Result<Json> {
     let mut dir = [position[0] - target[0], position[1] - target[1], position[2] - target[2]];
     let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
     dir = if len > 1e-9 { dir.map(|c| c / len) } else { penumbra_ops::geo::FRONT_RIGHT_ABOVE };
-    let half = (0.5 * fov).tan().min((0.5 * fov).tan() * aspect).atan();
-    let distance = radius / half.sin().max(1e-3) * 1.02;
+    // Orthographic: the height sees the bounding sphere across the narrower side; the camera
+    // stays as far as it was, at least clear of the sphere.
+    let (distance, height) = if ortho {
+        (len.max(radius * 2.0), 2.0 * radius * 1.02 / aspect.min(1.0))
+    } else {
+        let half = (0.5 * fov).tan().min((0.5 * fov).tan() * aspect).atan();
+        (radius / half.sin().max(1e-3) * 1.02, 0.0)
+    };
     let eye = [0, 1, 2]
         .map(|k| center.get(k).copied().unwrap_or(0.0) + dir.get(k).copied().unwrap_or(0.0) * distance);
-    let ops = vec![
+    let mut ops = vec![
         Op::Set { param: ParamPath::new(path.clone(), Name::new("position")?)?, value: Value::Vec3(eye) },
         Op::Set { param: ParamPath::new(path.clone(), Name::new("target")?)?, value: Value::Vec3(center) },
     ];
+    if ortho {
+        let height = (height * 1e6).round() / 1e6;
+        ops.push(Op::Set {
+            param: ParamPath::new(path.clone(), Name::new("size")?)?,
+            value: Value::Float(height),
+        });
+    }
     let mut out = outcome(&edit(e, &ops, "frame the geometry")?);
     if let Some(o) = out.as_object_mut() {
         o.insert("camera".into(), json!(path.to_string()));
         o.insert("position".into(), json!(eye));
         o.insert("target".into(), json!(center));
+        if ortho {
+            o.insert("size".into(), json!(height));
+        }
     }
     Ok(out)
 }

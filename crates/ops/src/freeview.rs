@@ -13,7 +13,7 @@ use penumbra_gpu::{Geo, Gpu, Lights, Tex, TexRing};
 use penumbra_graph::{Cooker, DataKind, Network, NodeTypes};
 use penumbra_mesh::Bounds;
 
-use crate::geo::{framing, view_of};
+use crate::geo::framing;
 use crate::tex::render::{RENDER, Renders};
 use crate::view::Orbit;
 
@@ -112,10 +112,9 @@ impl FreeView {
                 input(2).and_then(|d| d.get::<Lights>()).map(|l| l.0.clone()).unwrap_or_default();
             let bounds = geo.bounds();
             // The render's camera, drawn a part of the way to the scene's middle.
-            let camera = scene.viewpoint.camera(scene.size, |_| {});
-            let eye = camera.position();
+            let eye = scene.viewpoint.position();
             let focus = bounds.map_or(1.0, |b| distance(eye, center(&b)));
-            if let Some(view) = view_of(&camera, scene.viewpoint.near, scene.viewpoint.far) {
+            if let Some(view) = scene.viewpoint.view(scene.size, |_| {}) {
                 frustum(&view.clip_from_world, focus * GIZMO_REACH, CAMERA_COLOR, &mut lines);
             }
             light_lines(&lights, bounds, &mut lines);
@@ -130,7 +129,7 @@ impl FreeView {
             let camera =
                 framing(data.bounds(), (w, h), FOV).ok_or_else(|| Error::new("cannot frame the geometry"))?;
             let target = data.bounds().map_or([0.0; 3], |b| center(&b));
-            let home = Orbit { eye: camera.position(), target, roll: 0.0, fov: FOV };
+            let home = Orbit { eye: camera.position(), target, roll: 0.0, fov: FOV, ortho: None };
             let look = Look {
                 surface: Surface::Material,
                 shade_all: true,
@@ -147,8 +146,8 @@ impl FreeView {
         let (near, far) = depth_range(&camera, geo.bounds(), &lines);
         let viewpoint =
             camera.viewpoint(near, far).ok_or_else(|| Error::new("the view camera cannot be drawn"))?;
-        let view = view_of(&viewpoint.camera((w, h), |_| {}), near, far)
-            .ok_or_else(|| Error::new("the view camera cannot be drawn"))?;
+        let view =
+            viewpoint.view((w, h), |_| {}).ok_or_else(|| Error::new("the view camera cannot be drawn"))?;
         // Geometry alone is lit as its thumbnail: a little from everywhere, the rest from the eye.
         let lights = if node.kind == RENDER {
             scene_lights
@@ -214,8 +213,8 @@ fn depth_range(camera: &Orbit, bounds: Option<Bounds>, lines: &[Line]) -> (f64, 
     (far * 1e-4, far)
 }
 
-/// A camera or projector as lines: from its lens to a rectangle `length` away, with a small
-/// triangle on the picture's top edge.
+/// A camera or projector as lines: from its lens to a rectangle `length` away (an orthographic
+/// one as a box from its near rectangle), with a small triangle on the picture's top edge.
 fn frustum(clip: &Mat4, length: f64, color: [u8; 3], out: &mut Vec<Line>) {
     let corner = |x: f64, y: f64| -> Option<([f64; 3], [f64; 3])> {
         let near = unproject_clip(clip, [x, y, 0.0])?;
@@ -232,16 +231,30 @@ fn frustum(clip: &Mat4, length: f64, color: [u8; 3], out: &mut Vec<Line>) {
         return;
     };
     let [bl, br, tr, tl, mid] = [0, 1, 2, 3, 4].map(|i| points.get(i).copied().unwrap_or_default());
-    // The lens: where two opposite corners' rays meet.
-    let apex = meeting(bl, tr).unwrap_or(mid.0);
-    // The corners' rays are longer than the axis: scale so the rectangle stands at `length`
-    // along the axis from the lens.
-    let along = |(_, dir): ([f64; 3], [f64; 3])| mad(apex, dir, length / dot(dir, mid.1).max(0.05));
-    let far = [bl, br, tr, tl].map(along);
-    for (i, p) in far.iter().enumerate() {
-        out.push(Line { from: apex, to: *p, color });
-        out.push(Line { from: *p, to: far.get((i + 1) % 4).copied().unwrap_or(*p), color });
-    }
+    // An orthographic camera (w row 0 0 0 1): parallel rays, a box from its near rectangle.
+    let parallel = clip.get(3).is_some_and(|r| r[0].abs() + r[1].abs() + r[2].abs() < 1e-12);
+    let far = if parallel {
+        let near = [bl, br, tr, tl].map(|(p, _)| p);
+        let far = [bl, br, tr, tl].map(|(p, dir)| mad(p, dir, length));
+        for (i, (n, f)) in near.iter().zip(&far).enumerate() {
+            out.push(Line { from: *n, to: *f, color });
+            out.push(Line { from: *f, to: far.get((i + 1) % 4).copied().unwrap_or(*f), color });
+            out.push(Line { from: *n, to: near.get((i + 1) % 4).copied().unwrap_or(*n), color });
+        }
+        far
+    } else {
+        // The lens: where two opposite corners' rays meet.
+        let apex = meeting(bl, tr).unwrap_or(mid.0);
+        // The corners' rays are longer than the axis: scale so the rectangle stands at
+        // `length` along the axis from the lens.
+        let along = |(_, dir): ([f64; 3], [f64; 3])| mad(apex, dir, length / dot(dir, mid.1).max(0.05));
+        let far = [bl, br, tr, tl].map(along);
+        for (i, p) in far.iter().enumerate() {
+            out.push(Line { from: apex, to: *p, color });
+            out.push(Line { from: *p, to: far.get((i + 1) % 4).copied().unwrap_or(*p), color });
+        }
+        far
+    };
     // The top: a triangle above the top edge, a fifth of the edge high.
     let [_, bottom_r, top_r, top_l] = far;
     let up = sub(top_r, bottom_r);

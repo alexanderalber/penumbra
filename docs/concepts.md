@@ -30,7 +30,8 @@ The families:
 - **`table`**: text tables, typed in or read from a file, for scripts and OSC.
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
-  camera wired into a `tex.render`, which makes a picture of it all. `light.projector` throws a
+  `view.camera` wired into a `tex.render`, which makes a picture of it all (a render needs its
+  camera; the camera is perspective, orthographic or calibrated). `light.projector` throws a
   picture through a camera onto the geometry: a virtual projector, for trying a mapping on a
   model of the room. Coordinates are metres, z up.
 - **`script`**: Python that turns channels and tables into channels and a table (see
@@ -49,7 +50,7 @@ field: the slider covers the usual range, a typed value may go beyond it (the re
 "soft" for such a range); a hard range clamps. Colours are linear and may go above 1. File
 params are relative to the project directory and reload when the file changes.
 
-- **Folded sections** group params that belong together (a render's `camera`, a mapper's
+- **Folded sections** group params that belong together (a render's `occlusion`, a mapper's
   `warp`); **"more"**, always the last, holds the rarely used ones. Only the main rows are
   shown at first; a section stays open for every node of that type once opened.
 - **A reset button** appears beside a param that is not at its default.

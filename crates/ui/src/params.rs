@@ -444,7 +444,11 @@ impl ParamPanel {
         let removable = self.removable;
         let mut remove_clicked = false;
         let mut label = RichText::new(self.label.as_deref().unwrap_or(&spec.name));
-        let replaced = replaced(node, spec);
+        let inactive = input
+            .types
+            .desc(&node.kind)
+            .and_then(|desc| penumbra_ops::view::inactive(node, desc, &spec.name));
+        let replaced = inactive.is_some();
         if replaced {
             label = label.color(theme::TEXT_WEAK).italics();
         } else if !bound.is_empty() {
@@ -477,8 +481,8 @@ impl ParamPanel {
             ),
         };
         if let Some(l) = l {
-            if replaced {
-                l.on_hover_text("The camera input replaces this while it is connected");
+            if let Some(why) = inactive {
+                l.on_hover_text(format!("{why}. {}", spec.doc));
             } else if !spec.doc.is_empty() {
                 l.on_hover_text(&spec.doc);
             }
@@ -1653,14 +1657,6 @@ pub fn values(net: &Network, types: &NodeTypes, id: NodeId) -> BTreeMap<String, 
         out.entry(name.to_string()).or_insert_with(|| value.clone());
     }
     out
-}
-
-/// Whether an input of the node, connected, replaces this param: a render's camera input
-/// replaces its own camera params.
-fn replaced(node: &NodeDef, spec: &ParamSpec) -> bool {
-    node.kind == penumbra_ops::tex::render::RENDER
-        && penumbra_ops::view::CAMERA_PARAMS.contains(&spec.name.as_str())
-        && node.inputs.get(penumbra_ops::tex::render::CAMERA_INPUT).is_some_and(Option::is_some)
 }
 
 #[cfg(test)]

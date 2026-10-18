@@ -538,10 +538,18 @@ fn geometry_through_commands() {
     // A geo node's snapshot is its picture.
     let r = f.call("node.snapshot", json!({"path": "/both"}));
     assert_eq!(r["width"], 512);
-    // render.frame points the camera at the middle of the geometry, keeping its direction.
-    f.call("node.create", json!({"path": "/r", "kind": "tex.render", "params": {"width": 64, "height": 36, "position": [0, -50, 0]}}));
+    // A render needs a camera node: render.frame and the render say so without one.
+    f.call("node.create", json!({"path": "/r", "kind": "tex.render", "params": {"width": 64, "height": 36}}));
     f.call("node.connect", json!({"from": "/both", "to": "/r"}));
+    assert!(f.fail("render.frame", json!({"path": "/r"})).contains("view.camera"));
+    // render.frame points the wired camera at the middle of the geometry, keeping its direction.
+    f.call(
+        "node.create",
+        json!({"path": "/cam", "kind": "view.camera", "params": {"position": [0, -50, 0]}}),
+    );
+    f.call("node.connect", json!({"from": "/cam", "to": "/r", "input": "camera"}));
     let framed = f.call("render.frame", json!({"path": "/r"}));
+    assert_eq!(framed["camera"], "/cam", "{framed}");
     assert_eq!(framed["target"], json!([0.0, 0.0, 0.5]));
     let y = framed["position"][1].as_f64().unwrap();
     assert!(y < -2.0 && y > -6.0 && framed["position"][0] == 0.0, "{framed}");
@@ -578,24 +586,19 @@ fn geometry_through_commands() {
     });
     f.engine.set_view(crate::ViewRequest::default());
     f.call("node.delete", json!({"path": "/k"}));
-    // With a camera node wired in, framing moves that node and leaves the render's own params.
-    f.call(
-        "node.create",
-        json!({"path": "/cam", "kind": "view.camera", "params": {"position": [50, 0, 0.5]}}),
-    );
-    f.call("node.connect", json!({"from": "/cam", "to": "/r", "input": "camera"}));
-    let position = |path: &str| {
-        let info = f.call("node.info", json!({"path": path}));
-        info["params"].as_array().unwrap().iter().find(|p| p["name"] == "position").unwrap()["value"].clone()
-    };
-    let own = position("/r");
+    // Orthographic: framing sets the height seen, from the same direction and distance.
+    f.call("node.set", json!({"path": "/cam", "params": {"projection": "orthographic"}}));
     let framed = f.call("render.frame", json!({"path": "/r"}));
-    assert_eq!(framed["camera"], "/cam", "{framed}");
-    let x = framed["position"][0].as_f64().unwrap();
-    assert!(x > 2.0 && x < 6.0 && framed["position"][1] == 0.0, "{framed}");
-    assert_eq!(position("/cam"), framed["position"]);
-    assert_eq!(position("/r"), own);
-    f.call("node.disconnect", json!({"to": "/r", "input": "camera"}));
+    let size = framed["size"].as_f64().unwrap();
+    // The bounds' sphere (radius 1.5) across the picture's height, a little to spare.
+    assert!(size > 2.0 && size < 4.0, "{framed}");
+    assert!((framed["position"][1].as_f64().unwrap() - y).abs() < 1e-6, "{framed}");
+    let r = f.call("node.snapshot", json!({"path": "/r"}));
+    assert!(r["stats"]["max"][3].as_f64().unwrap() > 0.99, "{r}");
+    // The free view of an orthographic render starts orthographic and draws its camera as a box.
+    let free = f.call("view.free", json!({"path": "/r", "width": 96, "height": 54}));
+    assert_eq!((free["home"]["ortho"].as_f64(), free["lines"].clone()), (Some(size), json!(14)), "{free}");
+    f.call("node.set", json!({"path": "/cam", "params": {"projection": "perspective"}}));
     // res.analyze waits for the render node to measure what its camera sees of its texture.
     f.call(
         "node.batch",

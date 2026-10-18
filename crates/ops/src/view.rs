@@ -1,26 +1,30 @@
-//! `view.camera`: one camera as data, wired into `tex.render`'s `camera` input (and later into a
-//! projector light), so a single node says where several others see from and a calibrated projector
-//! is kept in one place. `tex.render` has the same params for when nothing is wired.
+//! `view.camera`: one camera as data, wired into `tex.render`'s `camera` input (which needs
+//! one) or a projector light, so a single node says where several others see from and a
+//! calibrated projector is kept in one place.
 //!
-//! The camera is a pinhole as `calib` models projectors: built from the params (position,
-//! target, field of view, roll, lens shift) or a calibrated `calib::Camera` as JSON (what
-//! `calib.solve` returns). On the wire it does not know the picture's size yet; the render
-//! fits it to its own ([`Viewpoint::camera`]).
+//! The camera is a pinhole as `calib` models projectors, built from the params (position,
+//! target, field of view, roll, lens shift), or a calibrated `calib::Camera` as JSON (what
+//! `calib.solve` returns); or orthographic, a parallel view whose `size` is how high it sees.
+//! On the wire it does not know the picture's size yet; the render fits it to its own
+//! ([`Viewpoint::view`]).
 
 use penumbra_calib::{Camera, Intrinsics, Pose};
-use penumbra_core::{Curve, Error, ParamSpec, Unit};
+use penumbra_core::{Curve, Error, ParamSpec, Unit, Value};
+use penumbra_gpu::geo::Mat4;
+use penumbra_gpu::render::View;
 use penumbra_graph::{
-    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDef, NodeDesc, NodeTypes, Operator,
 };
 
 use crate::geo::{UP_AXIS, perspective};
 
 pub const CAMERA: &str = "view.camera";
 
-/// The params that make a camera: on `tex.render` they count only while its camera input is
-/// not connected.
-pub const CAMERA_PARAMS: [&str; 8] =
-    ["position", "target", "fov", "roll", "shift", "calibration", "near", "far"];
+/// The camera's params, in panel order.
+pub const CAMERA_PARAMS: [&str; 10] =
+    ["position", "target", "projection", "fov", "size", "roll", "shift", "calibration", "near", "far"];
+
+pub const PROJECTIONS: [&str; 2] = ["perspective", "orthographic"];
 
 /// A camera on a `view` connection, for a picture of any size.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,10 +43,16 @@ pub enum Lens {
     Fov { degrees: f64, shift: [f64; 2] },
     /// A calibrated lens in the pixels of the picture it was calibrated for; scaled to others.
     Calibrated(Intrinsics),
+    /// Orthographic: parallel rays, `height` world units seen from the picture's bottom to its
+    /// top, the width as the picture's aspect says; `shift` as [`Lens::Fov`]'s.
+    Ortho { height: f64, shift: [f64; 2] },
 }
 
+/// Smallest height an orthographic camera sees.
+pub const MIN_ORTHO_HEIGHT: f64 = 1e-4;
+
 impl Viewpoint {
-    /// The camera the params describe (see [`params`] and [`more_params`]).
+    /// The camera the params describe (see [`register`]).
     pub fn from_params(cx: &CookContext<'_>) -> Result<Self, CookError> {
         let (near, far) = (cx.float("near")?, cx.float("far")?);
         if !(near > 0.0 && far > near) {
@@ -76,11 +86,17 @@ impl Viewpoint {
             .or_else(|| Pose::look_at(eye, target, [0.0, 1.0, 0.0]))
             .ok_or_else(|| CookError::failed("`position` and `target` are the same point"))?
             .rolled(cx.float("roll")?);
-        Ok(Self { pose, lens: Lens::Fov { degrees: cx.float("fov")?, shift }, near, far })
+        let lens = if cx.text("projection")? == "orthographic" {
+            Lens::Ortho { height: cx.float("size")?.max(MIN_ORTHO_HEIGHT), shift }
+        } else {
+            Lens::Fov { degrees: cx.float("fov")?, shift }
+        };
+        Ok(Self { pose, lens, near, far })
     }
 
-    /// The camera for a picture of `size`; what does not fit goes to `warn`.
-    pub fn camera(&self, size: (u32, u32), warn: impl Fn(String)) -> Camera {
+    /// The pinhole for a picture of `size`; what does not fit goes to `warn`. `None` for an
+    /// orthographic camera, which is no pinhole.
+    pub fn pinhole(&self, size: (u32, u32), warn: impl Fn(String)) -> Option<Camera> {
         let intrinsics = match self.lens {
             Lens::Fov { degrees, shift } => perspective(size, degrees, shift),
             Lens::Calibrated(mut c) => {
@@ -101,8 +117,52 @@ impl Viewpoint {
                 c.size = [size.0, size.1];
                 c
             }
+            Lens::Ortho { .. } => return None,
         };
-        Camera { intrinsics, pose: self.pose }
+        Some(Camera { intrinsics, pose: self.pose })
+    }
+
+    /// World to clip space for a picture of `size` (as `calib::Camera::clip_from_world`: x right
+    /// and y up in -1..1, depth 0 at `near` to 1 at `far`). `None` when it cannot be made.
+    pub fn clip_from_world(&self, size: (u32, u32), warn: impl Fn(String)) -> Option<Mat4> {
+        let Lens::Ortho { height, shift } = self.lens else {
+            return self.pinhole(size, warn)?.clip_from_world(self.near, self.far);
+        };
+        let (near, far) = (self.near, self.far);
+        if !(near > 0.0 && far > near && far.is_finite() && height > 0.0 && height.is_finite()) {
+            return None;
+        }
+        let aspect = f64::from(size.0.max(1)) / f64::from(size.1.max(1));
+        let (sx, sy) = (2.0 / (height * aspect), 2.0 / height);
+        let [r0, r1, r2] = self.pose.rotation_matrix();
+        let t = self.pose.translation;
+        // Camera space x right, y down, z ahead; clip y up. The shift moves the picture as a
+        // pinhole's lens shift does.
+        let depth = 1.0 / (far - near);
+        let m = [
+            [r0[0] * sx, r0[1] * sx, r0[2] * sx, t[0] * sx - 2.0 * shift[0]],
+            [-r1[0] * sy, -r1[1] * sy, -r1[2] * sy, -t[1] * sy - 2.0 * shift[1]],
+            [r2[0] * depth, r2[1] * depth, r2[2] * depth, (t[2] - near) * depth],
+            [0.0, 0.0, 0.0, 1.0],
+        ];
+        m.iter().flatten().all(|v| v.is_finite()).then_some(m)
+    }
+
+    /// The render view for a picture of `size`; `None` when the camera cannot be drawn.
+    pub fn view(&self, size: (u32, u32), warn: impl Fn(String)) -> Option<View> {
+        let clip = self.clip_from_world(size, warn)?;
+        let [_, _, r2] = self.pose.rotation_matrix();
+        Some(View {
+            clip_from_world: clip,
+            view_z: [r2[0], r2[1], r2[2], self.pose.translation[2]],
+            eye: self.position(),
+            parallel: self.is_parallel(),
+        })
+    }
+
+    /// An orthographic camera.
+    pub fn is_parallel(&self) -> bool {
+        matches!(self.lens, Lens::Ortho { .. })
     }
 
     /// Where the camera is; what the pose's rounding leaves of a zero is zero.
@@ -112,29 +172,71 @@ impl Viewpoint {
         p.map(|v| if v.abs() < 1e-12 * scale { 0.0 } else { v })
     }
 
-    /// The vertical field of view in degrees (a calibrated lens's at its centre).
-    pub fn fov(&self) -> f64 {
+    /// The direction it looks in (unit length).
+    pub fn forward(&self) -> [f64; 3] {
+        self.pose.rotation_matrix()[2]
+    }
+
+    /// The vertical field of view in degrees (a calibrated lens's at its centre); `None` for an
+    /// orthographic camera.
+    pub fn fov(&self) -> Option<f64> {
         match self.lens {
-            Lens::Fov { degrees, .. } => degrees,
+            Lens::Fov { degrees, .. } => Some(degrees),
             Lens::Calibrated(c) => {
-                (2.0 * (0.5 * f64::from(c.size[1]) / c.focal[1].abs().max(1e-9)).atan()).to_degrees()
+                Some((2.0 * (0.5 * f64::from(c.size[1]) / c.focal[1].abs().max(1e-9)).atan()).to_degrees())
             }
+            Lens::Ortho { .. } => None,
         }
     }
 }
 
-/// The camera's main params: `position`, `target`, `fov`, `roll`.
-pub fn params(desc: NodeDesc) -> NodeDesc {
-    desc.param(
+/// Why param `name` of a `view.camera` does not count: the calibration replaces it, or the
+/// projection leaves it unused. `None` while it counts (and for other nodes).
+pub fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str> {
+    if node.kind != CAMERA {
+        return None;
+    }
+    let text = |n: &str| node.param(desc, n).and_then(Value::as_str).unwrap_or("").trim().to_string();
+    if !text("calibration").is_empty()
+        && ["position", "target", "projection", "fov", "size", "roll", "shift"].contains(&name)
+    {
+        return Some("The calibration replaces this while it is set");
+    }
+    match (text("projection").as_str(), name) {
+        ("orthographic", "fov") => Some("Orthographic: `size` says how much it sees"),
+        ("orthographic", _) => None,
+        (_, "size") => Some("Perspective: `fov` says how much it sees"),
+        _ => None,
+    }
+}
+
+pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
+    let more = penumbra_core::MORE;
+    let desc = NodeDesc::new(
+        CAMERA,
+        "A camera: where it is, what it looks at, its lens; for tex.render's camera input and light.projector",
+    )
+    .param(
         ParamSpec::vec3("position", [2.4, -3.2, 1.6]).range(-10.0, 10.0).doc("Where the camera is (z up)"),
     )
     .param(ParamSpec::vec3("target", [0.0; 3]).range(-10.0, 10.0).doc("What it looks at"))
+    .param(ParamSpec::choice("projection", &PROJECTIONS).doc(
+        "perspective: rays from one point, farther things smaller (fov); orthographic: parallel rays, sizes kept at any distance (size). A calibration is always perspective",
+    ))
     .param(
         ParamSpec::float("fov", 40.0)
             .clamp(1.0, 170.0)
             .range(5.0, 120.0)
             .unit(Unit::Degrees)
-            .doc("Vertical field of view"),
+            .doc("Vertical field of view (perspective)"),
+    )
+    .param(
+        ParamSpec::float("size", 2.0)
+            .clamp(MIN_ORTHO_HEIGHT, 1e5)
+            .range(0.1, 20.0)
+            .curve(Curve::Log)
+            .unit(Unit::Metres)
+            .doc("How much the picture sees from bottom to top (orthographic); the width follows the picture's aspect"),
     )
     .param(
         ParamSpec::float("roll", 0.0)
@@ -143,42 +245,28 @@ pub fn params(desc: NodeDesc) -> NodeDesc {
             .unit(Unit::Degrees)
             .doc("Turn about the view axis; positive tilts the picture's top to the right"),
     )
-}
-
-/// The camera's rarely used params, in `group`: `shift`, `calibration`, `near`, `far`.
-pub fn more_params(desc: NodeDesc, group: &str) -> NodeDesc {
-    desc.param(
+    .param(
         ParamSpec::vec2("shift", [0.0; 2])
             .range(-1.0, 1.0)
-            .group(group)
+            .group(more)
             .doc("Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height"),
     )
-    .param(ParamSpec::text("calibration", "").group(group).doc(
-        "A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, fov, roll and shift",
+    .param(ParamSpec::text("calibration", "").group(more).doc(
+        "A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, projection, fov, size, roll and shift",
     ))
     .param(
         ParamSpec::float("near", 0.05)
             .clamp(1e-4, 1e4)
             .curve(Curve::Log)
-            .group(group)
-            .doc("Nearest distance drawn"),
+            .group(more)
+            .doc("Nearest distance drawn (orthographic too: nothing behind the camera is drawn)"),
     )
     .param(
         ParamSpec::float("far", 100.0)
             .clamp(1e-3, 1e6)
             .curve(Curve::Log)
-            .group(group)
+            .group(more)
             .doc("Farthest distance drawn"),
-    )
-}
-
-pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    let desc = more_params(
-        params(NodeDesc::new(
-            CAMERA,
-            "A camera: where it is, what it looks at, its lens; for tex.render's camera input",
-        )),
-        penumbra_core::MORE,
     )
     .output("out", DataKind::View);
     types.register(FnNodeType::new(desc, || Box::new(CameraNode) as Box<dyn Operator>))
@@ -193,9 +281,10 @@ impl Operator for CameraNode {
 }
 
 /// A camera as one flies it: where it is, the point it looks at (which orbiting turns about),
-/// its roll and field of view. The viewer's own camera, and what steering a camera node edits
-/// (`position`, `target`, `roll`, `fov` are the camera params). Pure math, so the commands, the
-/// mouse and the SpaceMouse all move it alike.
+/// its roll and field of view, or for an orthographic camera how high it sees. The viewer's own
+/// camera, and what steering a camera node edits (`position`, `target`, `roll`, `fov`, `size`
+/// are the camera params). Pure math, so the commands, the mouse and the SpaceMouse all move it
+/// alike.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Orbit {
     pub eye: [f64; 3],
@@ -204,7 +293,13 @@ pub struct Orbit {
     pub roll: f64,
     /// Vertical field of view in degrees.
     pub fov: f64,
+    /// Orthographic: the height it sees (world units) instead of the field of view.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ortho: Option<f64>,
 }
+
+/// The field of view an orbit keeps for a camera without one (orthographic).
+const DEFAULT_FOV: f64 = 40.0;
 
 /// Highest and lowest elevation orbiting and looking reach: straight up or down the picture's
 /// top would be undefined.
@@ -247,12 +342,11 @@ impl Orbit {
     }
 
     pub fn viewpoint(&self, near: f64, far: f64) -> Option<Viewpoint> {
-        Some(Viewpoint {
-            pose: self.pose()?,
-            lens: Lens::Fov { degrees: self.fov, shift: [0.0; 2] },
-            near,
-            far,
-        })
+        let lens = match self.ortho {
+            Some(height) => Lens::Ortho { height, shift: [0.0; 2] },
+            None => Lens::Fov { degrees: self.fov, shift: [0.0; 2] },
+        };
+        Some(Viewpoint { pose: self.pose()?, lens, near, far })
     }
 
     /// The orbit that sees as `v` does, looking at a point `focus` ahead.
@@ -260,7 +354,11 @@ impl Orbit {
         let eye = v.position();
         let [_, _, forward] = v.pose.rotation_matrix();
         let target = add_scaled(eye, forward, focus.max(MIN_DISTANCE));
-        let level = Orbit { eye, target, roll: 0.0, fov: v.fov() };
+        let ortho = match v.lens {
+            Lens::Ortho { height, .. } => Some(height),
+            _ => None,
+        };
+        let level = Orbit { eye, target, roll: 0.0, fov: v.fov().unwrap_or(DEFAULT_FOV), ortho };
         // The roll is the turn from the level camera's right to this one's.
         let roll = match level.pose() {
             Some(p) => {
@@ -310,15 +408,24 @@ impl Orbit {
     }
 
     /// [`Orbit::travel`] sideways in picture heights at the target's distance: (1, 0) moves the
-    /// camera right by as much as the picture shows from top to bottom there.
+    /// camera right by as much as the picture shows from top to bottom there (an orthographic
+    /// camera's height at any distance).
     pub fn pan(&mut self, right: f64, up: f64) {
-        let height = 2.0 * self.distance() * (0.5 * self.fov.to_radians()).tan();
+        let height = match self.ortho {
+            Some(h) => h,
+            None => 2.0 * self.distance() * (0.5 * self.fov.to_radians()).tan(),
+        };
         self.travel(right * height, up * height, 0.0);
     }
 
-    /// Moves the eye towards the target (`factor` < 1) or away from it.
+    /// Moves the eye towards the target (`factor` < 1) or away from it; an orthographic camera,
+    /// where distance changes nothing in the picture, sees `factor` times as high instead.
     pub fn dolly(&mut self, factor: f64) {
         if !(factor.is_finite() && factor > 0.0) {
+            return;
+        }
+        if let Some(h) = self.ortho {
+            self.ortho = Some((h * factor).max(MIN_ORTHO_HEIGHT));
             return;
         }
         let offset = sub(self.eye, self.target);
@@ -334,6 +441,7 @@ impl Orbit {
     pub fn is_valid(&self) -> bool {
         self.eye.iter().chain(&self.target).chain([&self.roll, &self.fov]).all(|v| v.is_finite())
             && self.distance() > 0.0
+            && self.ortho.is_none_or(|h| h.is_finite() && h > 0.0)
     }
 }
 
@@ -347,7 +455,7 @@ mod tests {
 
     #[test]
     fn an_orbit_round_trips_through_a_viewpoint() {
-        let o = Orbit { eye: [2.0, -3.0, 1.5], target: [0.2, 0.1, 0.4], roll: 17.0, fov: 40.0 };
+        let o = Orbit { eye: [2.0, -3.0, 1.5], target: [0.2, 0.1, 0.4], roll: 17.0, fov: 40.0, ortho: None };
         let v = o.viewpoint(0.1, 100.0).unwrap();
         let back = Orbit::from_viewpoint(&v, o.distance());
         assert!(close(back.eye, o.eye) && close(back.target, o.target), "{back:?}");
@@ -356,7 +464,7 @@ mod tests {
 
     #[test]
     fn orbiting_keeps_the_target_and_distance() {
-        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 0.0, fov: 40.0 };
+        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 0.0, fov: 40.0, ortho: None };
         o.orbit(90.0, 0.0);
         // Counter-clockwise from above: from -y to +x.
         assert!(close(o.eye, [4.0, 0.0, 0.0]), "{:?}", o.eye);
@@ -368,7 +476,7 @@ mod tests {
 
     #[test]
     fn looking_travelling_panning_and_dollying() {
-        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 0.0, fov: 90.0 };
+        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 0.0, fov: 90.0, ortho: None };
         let (right, up, forward) = o.axes().unwrap();
         assert!(
             close(right, [1.0, 0.0, 0.0]) && close(up, [0.0, 0.0, 1.0]) && close(forward, [0.0, 1.0, 0.0])
@@ -376,10 +484,10 @@ mod tests {
         o.look(90.0, 0.0);
         // Turning right from looking along +y looks along +x.
         assert!(close(o.target, [4.0, -4.0, 0.0]), "{:?}", o.target);
-        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 0.0, fov: 90.0 };
+        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 0.0, fov: 90.0, ortho: None };
         o.travel(1.0, 2.0, 3.0);
         assert!(close(o.eye, [1.0, -1.0, 2.0]) && close(o.target, [1.0, 3.0, 2.0]));
-        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 0.0, fov: 90.0 };
+        let mut o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 0.0, fov: 90.0, ortho: None };
         // 90 degrees at distance 4 shows 8 from top to bottom.
         o.pan(0.5, 0.0);
         assert!(close(o.eye, [4.0, -4.0, 0.0]));
@@ -391,5 +499,39 @@ mod tests {
         let rolled = Orbit { roll: 90.0, ..o };
         let (right, _, _) = rolled.axes().unwrap();
         assert!(close(right, [0.0, 0.0, -1.0]), "{right:?}");
+    }
+
+    #[test]
+    fn an_orthographic_view_is_parallel_and_pans_and_dollies_by_its_size() {
+        let o = Orbit { eye: [0.0, -4.0, 0.0], target: [0.0; 3], roll: 0.0, fov: 40.0, ortho: Some(2.0) };
+        let v = o.viewpoint(0.1, 100.0).unwrap();
+        let view = v.view((200, 100), |_| {}).unwrap();
+        assert!(view.parallel && view.clip_from_world[3] == [0.0, 0.0, 0.0, 1.0]);
+        let clip = |p: [f64; 3]| -> [f64; 4] {
+            std::array::from_fn(|r| {
+                let m = view.clip_from_world[r];
+                m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3]
+            })
+        };
+        // 2 high, 4 wide: (1, y, 0.5) is at the right half's middle and the top, at any depth.
+        for y in [0.0, 5.0, 50.0] {
+            let c = clip([1.0, y, 1.0]);
+            assert!((c[0] - 0.5).abs() < 1e-9 && (c[1] - 1.0).abs() < 1e-9 && c[3] == 1.0, "{c:?}");
+        }
+        // Depth 0 at near, 1 at far.
+        assert!(clip([0.0, -3.9, 0.0])[2].abs() < 1e-9 && (clip([0.0, 96.0, 0.0])[2] - 1.0).abs() < 1e-9);
+        // The shift moves the picture as a pinhole's does.
+        let shifted = Viewpoint { lens: Lens::Ortho { height: 2.0, shift: [0.0, 0.5] }, ..v };
+        let m = shifted.clip_from_world((200, 100), |_| {}).unwrap();
+        assert!((m[1][3] + 1.0).abs() < 1e-9, "{m:?}");
+        // Back to an orbit, then pan by picture heights and dolly by size.
+        let mut back = Orbit::from_viewpoint(&v, 4.0);
+        assert_eq!(back.ortho, Some(2.0));
+        back.pan(0.5, 0.0);
+        assert!(close(back.eye, [1.0, -4.0, 0.0]), "{:?}", back.eye);
+        back.dolly(0.5);
+        assert_eq!(back.ortho, Some(1.0));
+        assert!((back.distance() - 4.0).abs() < 1e-9);
+        assert!(!Orbit { ortho: Some(f64::NAN), ..back }.is_valid());
     }
 }

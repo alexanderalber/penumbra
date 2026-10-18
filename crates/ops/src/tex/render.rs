@@ -1,8 +1,6 @@
-//! `tex.render`: geometry seen through a camera. The camera comes from the `camera` input (a
-//! `view.camera` node) or, while that is not connected, from the node's own params, the same as the
-//! camera node's (`crate::view`): built from position, target, field of view, roll and lens shift,
-//! or a calibrated `calib::Camera` as JSON, so a projector renders exactly as it was solved. Two
-//! outputs: the picture, and the data pass (texture coordinates, part id + 1, distance along the
+//! `tex.render`: geometry seen through a camera. The camera comes from the `camera` input, which
+//! it needs: a `view.camera` node (`crate::view`), perspective, orthographic, or a calibrated
+//! `calib::Camera`, so a projector renders exactly as it was solved. Two outputs: the picture, and the data pass (texture coordinates, part id + 1, distance along the
 //! view). Lights come in through the `lights` input; without them phong materials are black,
 //! constant ones as they are. Lights casting shadows draw them through shadow maps of
 //! `shadow_size`. Ambient occlusion (`ao`) dims ambient and environment light in creases and
@@ -31,14 +29,16 @@ use penumbra_graph::{
     NodeTypes, Operator, Waker,
 };
 
-use crate::geo::view_of;
 use crate::mapping::{DEMAND_PERCENTILE, quantile};
 use crate::view::Viewpoint;
 
 pub const RENDER: &str = "tex.render";
 
-/// The input that, where connected, replaces the node's own camera params.
+/// The input the camera comes in through.
 pub const CAMERA_INPUT: usize = 3;
+
+/// What a render says while no camera is wired.
+pub const NO_CAMERA: &str = "connect a camera: wire a view.camera into `camera`";
 
 pub const SURFACES: [&str; 6] = ["auto", "material", "texture", "parts", "uv", "normals"];
 
@@ -317,17 +317,17 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     .input("texture", DataKind::Tex)
     .input("lights", DataKind::Light)
     .input("camera", DataKind::View);
-    let desc = crate::view::params(desc).param(ParamSpec::choice("surface", &SURFACES).doc(
-        "auto: the texture input where connected, else the file's materials; parts: a colour per part id",
-    ));
-    let desc = crate::view::more_params(desc, "camera")
-        .param(ParamSpec::color("background", [0.0; 4]).more())
+    let desc = desc
+        .param(ParamSpec::choice("surface", &SURFACES).doc(
+            "auto: the texture input where connected, else the file's materials; parts: a colour per part id",
+        ))
+        .param(ParamSpec::color("background", [0.0; 4]).doc("Where no geometry is drawn"))
+        .param(ParamSpec::bool("antialias", true).doc("Four samples per pixel"))
         .param(
             ParamSpec::bool("cull", false)
                 .more()
                 .doc("Leave out faces turned away (counter-clockwise is the front)"),
         )
-        .param(ParamSpec::bool("antialias", true).more().doc("Four samples per pixel"))
         .param(
             ParamSpec::int("shadow_size", 2048)
                 .clamp(64.0, 8192.0)
@@ -363,26 +363,28 @@ struct Render {
     data_ring: TexRing,
 }
 
-/// Where a render node sees from: its `camera` input where connected, else its own params.
+/// Where a render node sees from: its `camera` input, which it needs.
 pub fn viewpoint(cx: &CookContext<'_>) -> Result<Viewpoint, CookError> {
-    if cx.def().inputs.get(CAMERA_INPUT).is_some_and(Option::is_some) {
-        return cx
-            .input_as::<Viewpoint>(CAMERA_INPUT)
-            .copied()
-            .ok_or_else(|| CookError::failed("the camera input has no camera yet"));
+    if !cx.def().inputs.get(CAMERA_INPUT).is_some_and(Option::is_some) {
+        return Err(CookError::failed(NO_CAMERA));
     }
-    Viewpoint::from_params(cx)
+    cx.input_as::<Viewpoint>(CAMERA_INPUT)
+        .copied()
+        .ok_or_else(|| CookError::failed("the camera input has no camera yet"))
 }
 
 impl Operator for Render {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = super::gpu(cx)?;
         let (w, h) = (super::side(cx, "width")?, super::side(cx, "height")?);
+        let wired = |k: usize| cx.def().inputs.get(k).is_some_and(Option::is_some);
         let Some(geo) = cx.input_as::<Geo>(0) else {
-            return Err(if cx.def().inputs.first().is_some_and(Option::is_some) {
-                CookError::Pending
-            } else {
-                CookError::failed("connect a geo input")
+            return Err(match (wired(0), wired(CAMERA_INPUT)) {
+                (true, _) => CookError::Pending,
+                (false, true) => CookError::failed("connect a geo input"),
+                (false, false) => {
+                    CookError::failed("connect a geo input, and a camera: wire a view.camera into `camera`")
+                }
             });
         };
         let texture = cx.input_as::<Tex>(1);
@@ -396,8 +398,8 @@ impl Operator for Render {
             _ => Surface::Material,
         };
         let viewpoint = viewpoint(cx)?;
-        let camera = viewpoint.camera((w, h), |m| cx.warn(m));
-        let view = view_of(&camera, viewpoint.near, viewpoint.far)
+        let view = viewpoint
+            .view((w, h), |m| cx.warn(m))
             .ok_or_else(|| CookError::failed("the camera cannot be drawn"))?;
         let background = match cx.param("background").and_then(|v| v.components()) {
             Some(&[r, g, b, a]) => [r * a, g * a, b * a, a].map(|c| c as f32),

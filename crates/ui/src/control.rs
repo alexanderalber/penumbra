@@ -87,9 +87,9 @@ const COMMANDS: &[(&str, &str)] = &[
     ("ui.view", "Pin the viewer to a node, or unpin without a path; {path?}"),
     (
         "ui.camera",
-        "The viewer's 3D view of a render or geometry: {mode?: picture|free|steer, home?, camera?: {eye, target, roll, fov}, \
+        "The viewer's 3D view of a render or geometry: {mode?: picture|free|steer, home?, camera?: {eye, target, roll, fov, ortho?}, \
          orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; \
-         moves go to the free view's camera, or in steer mode to the camera node; take puts the free view into it",
+         moves go to the free view's camera, or in steer mode to the camera node (orthographic: dolly scales its size); take puts the free view into it",
     ),
     ("ui.place", "Move nodes in the editor; {nodes: {path: [x, y]}}"),
     (

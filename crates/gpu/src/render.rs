@@ -82,7 +82,11 @@ pub struct View {
     pub clip_from_world: Mat4,
     /// The view's depth row: `dot(view_z, [x, y, z, 1])` is the distance along the view.
     pub view_z: [f64; 4],
+    /// Where the camera is.
     pub eye: [f64; 3],
+    /// An orthographic camera: every ray runs along the view (`view_z`'s direction), so shading
+    /// takes that one direction to the viewer instead of the way to `eye`.
+    pub parallel: bool,
 }
 
 /// What kind of light a [`Light`] is.
@@ -1092,7 +1096,7 @@ impl Renderer {
 
         let maps = Maps { shadow: shadow_size, tint: tint_size, tinted, ao: ao.is_some() };
         for (p, buffer) in placed.iter().filter_map(|p| p.layer.map(|_| p)).zip(&self.shadow_frames) {
-            let from = View { clip_from_world: p.clip, view_z: [0.0; 4], eye: [0.0; 3] };
+            let from = View { clip_from_world: p.clip, view_z: [0.0; 4], eye: [0.0; 3], parallel: false };
             gpu.queue().write_buffer(buffer, 0, &frame_bytes(&from, look, maps, &[], &[]));
         }
         gpu.queue().write_buffer(&shared.frame, 0, &frame_bytes(view, look, maps, lights, &placed));
@@ -1349,10 +1353,18 @@ fn frame_bytes(view: &View, look: &Look, maps: Maps, lights: &[Light], placed: &
     for v in view.view_z {
         f(v as f32);
     }
-    for v in view.eye {
-        f(v as f32);
+    // w 1: the eye's position; w 0: the direction to the viewer of a parallel view.
+    if view.parallel {
+        for v in &view.view_z[..3] {
+            f(-*v as f32);
+        }
+        f(0.0);
+    } else {
+        for v in view.eye {
+            f(v as f32);
+        }
+        f(1.0);
     }
-    f(1.0);
     let mode: u32 = match look.surface {
         Surface::Material => 0,
         Surface::Texture => 1,

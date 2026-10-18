@@ -238,16 +238,16 @@ impl Operator for ProjectorNode {
         let size = match (&texture, viewpoint.lens) {
             (Some(t), _) => t.size(),
             (None, Lens::Calibrated(c)) => (c.size[0].max(1), c.size[1].max(1)),
-            (None, Lens::Fov { .. }) => UNTEXTURED,
+            (None, Lens::Fov { .. } | Lens::Ortho { .. }) => UNTEXTURED,
         };
-        let camera = viewpoint.camera(size, |m| cx.warn(m));
-        let clip_from_world = camera
-            .clip_from_world(viewpoint.near, viewpoint.far)
+        // An orthographic camera throws parallel, as a directional light inside its box.
+        let clip_from_world = viewpoint
+            .clip_from_world(size, |m| cx.warn(m))
             .ok_or_else(|| CookError::failed("the camera cannot be projected from"))?;
         let mut light = Light::ambient(light_color(cx)?);
         light.kind = LightKind::Projector;
         light.position = viewpoint.position();
-        light.direction = camera.pose.rotation_matrix()[2];
+        light.direction = viewpoint.forward();
         light.inverse_square = cx.text("falloff")? == "inverse square";
         shadow_params(cx, &mut light)?;
         light.projector = Some(Projector { clip_from_world, texture });

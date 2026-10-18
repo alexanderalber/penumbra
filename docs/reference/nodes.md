@@ -606,18 +606,10 @@ Outputs: `out` (tex), `data` (tex).
 | `width` | int | `1920` | 1 to 16384 px |  |
 | `height` | int | `1080` | 1 to 16384 px |  |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
-| `position` | vec3 | `[2.4, -3.2, 1.6]` | -10 to 10 (soft) | Where the camera is (z up) |
-| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | What it looks at |
-| `fov` | float | `40` | 5 to 120 ° (soft) | Vertical field of view |
-| `roll` | float | `0` | -180 to 180 ° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
 | `surface` | auto \| material \| texture \| parts \| uv \| normals | `"auto"` |  | auto: the texture input where connected, else the file's materials; parts: a colour per part id |
-| `shift` *(camera)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
-| `calibration` *(camera)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, fov, roll and shift |
-| `near` *(camera)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn |
-| `far` *(camera)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn |
-| `background` *(more)* | colour | `[0, 0, 0, 0]` |  |  |
+| `background` | colour | `[0, 0, 0, 0]` |  | Where no geometry is drawn |
+| `antialias` | bool | `true` |  | Four samples per pixel |
 | `cull` *(more)* | bool | `false` |  | Leave out faces turned away (counter-clockwise is the front) |
-| `antialias` *(more)* | bool | `true` |  | Four samples per pixel |
 | `shadow_size` *(more)* | int | `2048` | 256 to 4096 (soft) | Texels across each light's shadow map: sharper shadows, more memory |
 | `ao` *(occlusion)* | bool | `false` |  | Ambient occlusion: less ambient and environment light in creases and where objects meet; direct light and unlit surfaces stay as they are |
 | `ao_radius` *(occlusion)* | float | `0.5` | 0.01 to 2 m (soft) | How far around a point geometry darkens it |
@@ -1515,7 +1507,7 @@ Outputs: `out` (light).
 
 ### view.camera
 
-A camera: where it is, what it looks at, its lens; for tex.render's camera input
+A camera: where it is, what it looks at, its lens; for tex.render's camera input and light.projector
 
 Inputs: none.
 
@@ -1525,11 +1517,13 @@ Outputs: `out` (view).
 |---|---|---|---|---|
 | `position` | vec3 | `[2.4, -3.2, 1.6]` | -10 to 10 (soft) | Where the camera is (z up) |
 | `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | What it looks at |
-| `fov` | float | `40` | 5 to 120 ° (soft) | Vertical field of view |
+| `projection` | perspective \| orthographic | `"perspective"` |  | perspective: rays from one point, farther things smaller (fov); orthographic: parallel rays, sizes kept at any distance (size). A calibration is always perspective |
+| `fov` | float | `40` | 5 to 120 ° (soft) | Vertical field of view (perspective) |
+| `size` | float | `2` | 0.1 to 20 m (soft) | How much the picture sees from bottom to top (orthographic); the width follows the picture's aspect |
 | `roll` | float | `0` | -180 to 180 ° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
 | `shift` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
-| `calibration` *(more)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, fov, roll and shift |
-| `near` *(more)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn |
+| `calibration` *(more)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, projection, fov, size, roll and shift |
+| `near` *(more)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn (orthographic too: nothing behind the camera is drawn) |
 | `far` *(more)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn |
 
 ## script
