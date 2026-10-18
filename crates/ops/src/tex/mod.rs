@@ -32,7 +32,7 @@ pub use video_in::VIDEO_IN;
 
 use std::sync::Arc;
 
-use penumbra_core::{Curve, Error, ParamSpec, Unit};
+use penumbra_core::{Curve, Error, ParamSpec, Unit, Value};
 use penumbra_gpu::{Gpu, PassInput, Tex, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, Density, FnNodeType, NodeDef, NodeDesc, NodeTypes,
@@ -60,6 +60,19 @@ type SizeFn = fn(&CookContext<'_>, (u32, u32)) -> Result<(u32, u32), CookError>;
 
 /// Edge modes of `extend` params, in the order `pn_extend` numbers them.
 const EXTEND: [&str; 4] = ["hold", "zero", "repeat", "mirror"];
+
+/// An `extend` param ([`EXTEND`]) with `default` chosen: what a node fetches from beyond its
+/// input's edges.
+fn extend(default: &str) -> ParamSpec {
+    let mut spec = ParamSpec::choice("extend", &EXTEND)
+        .doc("What shows where the picture is fetched from beyond the input's edges")
+        .choice_doc("hold", "the edge pixels continue outwards")
+        .choice_doc("zero", "transparent black")
+        .choice_doc("repeat", "the input again, tiled")
+        .choice_doc("mirror", "the input again, mirrored, so the copies meet at the edges");
+    spec.default = Value::Text(default.to_string());
+    spec
+}
 
 /// A built-in pass node.
 struct Builtin {
@@ -101,7 +114,10 @@ fn core_builtins() -> Vec<Builtin> {
     vec![
         Builtin {
             desc: sized(NodeDesc::new("tex.constant", "One colour everywhere"))
-                .param(ParamSpec::color("color", [0.0, 0.0, 0.0, 1.0]).doc("Linear RGBA, straight alpha")),
+                .param(
+                    ParamSpec::color("color", [0.0, 0.0, 0.0, 1.0])
+                        .doc("The colour, linear RGBA with straight alpha; above 1 is brighter than white"),
+                ),
             source: include_str!("constant.wgsl"),
             size: Size::Params,
             animated: None,
@@ -115,37 +131,64 @@ fn core_builtins() -> Vec<Builtin> {
             ))
             .param(
                 ParamSpec::choice("basis", &["gradient", "value"])
-                    .doc("Smooth gradient noise or blockier value noise"),
+                    .doc("The kind of noise each octave is made of")
+                    .choice_doc("gradient", "smooth, round blobs (Perlin-like)")
+                    .choice_doc("value", "blockier, with a visible grid of cells"),
             )
-            .param(ParamSpec::int("seed", 0).range(0.0, 100.0))
+            .param(
+                ParamSpec::int("seed", 0)
+                    .range(0.0, 100.0)
+                    .doc("Picks another noise of the same look; each number gives the same picture every time"),
+            )
             .param(
                 ParamSpec::float("frequency", 4.0)
                     .range(0.1, 100.0)
                     .curve(Curve::Log)
-                    .doc("Cells per image height"),
+                    .doc("Size of the pattern: noise cells per image height; higher is finer"),
             )
-            .param(ParamSpec::int("octaves", 3).clamp(1.0, 8.0))
+            .param(
+                ParamSpec::int("octaves", 3)
+                    .clamp(1.0, 8.0)
+                    .doc("Layers of ever finer noise added up (fractal detail); 1 is smooth blobs only"),
+            )
             .param(
                 ParamSpec::float("roughness", 0.5)
                     .range(0.0, 1.0)
-                    .doc("Amplitude from one octave to the next"),
+                    .doc("Strength of each octave relative to the one before; higher gives more fine grain"),
             )
             .param(
                 ParamSpec::float("lacunarity", 2.0)
                     .range(1.0, 4.0)
                     .more()
-                    .doc("Frequency from one octave to the next"),
+                    .doc("How much finer each octave is than the one before (2: twice the cells)"),
             )
-            .param(ParamSpec::float("amplitude", 0.5).range(0.0, 2.0))
-            .param(ParamSpec::float("offset", 0.5).range(-1.0, 1.0))
+            .param(
+                ParamSpec::float("amplitude", 0.5)
+                    .range(0.0, 2.0)
+                    .doc("Contrast: the noise (about -1 to 1) is multiplied by this, then offset is added"),
+            )
+            .param(
+                ParamSpec::float("offset", 0.5)
+                    .range(-1.0, 1.0)
+                    .doc("Added after amplitude: the mean grey. With 0.5 and 0.5 the values span about 0 to 1"),
+            )
             .param(
                 ParamSpec::float("speed", 0.0)
                     .range(0.0, 4.0)
-                    .doc("Movement through the noise per second; 0 is still"),
+                    .doc("How fast the pattern changes, in cells per second; it moves through a third dimension, so it morphs rather than slides. 0 is still"),
             )
-            .param(ParamSpec::vec3("translate", [0.0; 3]).more().doc("Position in the noise"))
+            .param(
+                ParamSpec::vec3("translate", [0.0; 3])
+                    .more()
+                    .doc("Position in the noise, in cells: x and y slide the picture, z morphs it as speed does"),
+            )
             .param(ParamSpec::bool("color", false).doc("Three independent channels instead of grey"))
-            .param(ParamSpec::float("alpha", 1.0).clamp(0.0, 1.0).more()),
+            .param(
+                ParamSpec::float("alpha", 1.0)
+                    .clamp(0.0, 1.0)
+                    .more()
+                    .doc("Opacity of the whole picture; below 1, what lies under it in a composite shows through"),
+            ),
             source: include_str!("noise.wgsl"),
             size: Size::Params,
             animated: Some(|cx| cx.float("speed").is_ok_and(|s| s != 0.0)),
@@ -158,17 +201,28 @@ fn core_builtins() -> Vec<Builtin> {
                 "Translate, rotate and scale around a pivot; resolution of the input",
             )
             .param(
-                ParamSpec::vec2("translate", [0.0; 2]).range(-1.0, 1.0).doc("In image sizes; y points down"),
+                ParamSpec::vec2("translate", [0.0; 2])
+                    .range(-1.0, 1.0)
+                    .doc("Shift in image sizes: 1 moves by the whole width or height; positive y moves down"),
             )
             .param(
                 ParamSpec::float("rotate", 0.0)
                     .range(-180.0, 180.0)
                     .unit(Unit::Degrees)
-                    .doc("Counter-clockwise"),
+                    .doc("Turn around the pivot, counter-clockwise on screen"),
             )
-            .param(ParamSpec::vec2("scale", [1.0; 2]).range(0.0, 4.0))
-            .param(ParamSpec::vec2("pivot", [0.5; 2]).range(0.0, 1.0).more().doc("0, 0 is the top left"))
-            .param(ParamSpec::choice("extend", &EXTEND).doc("Outside the input"))
+            .param(
+                ParamSpec::vec2("scale", [1.0; 2])
+                    .range(0.0, 4.0)
+                    .doc("Size across and down, around the pivot: 1 keeps it, 2 doubles it, negative mirrors"),
+            )
+            .param(
+                ParamSpec::vec2("pivot", [0.5; 2])
+                    .range(0.0, 1.0)
+                    .more()
+                    .doc("The point rotate and scale turn and grow around, in image sizes: 0, 0 is the top left, 0.5, 0.5 the centre"),
+            )
+            .param(extend("hold"))
             .input("in", DataKind::Tex)
             .output("out", DataKind::Tex),
             source: include_str!("transform.wgsl"),
@@ -179,13 +233,41 @@ fn core_builtins() -> Vec<Builtin> {
         },
         Builtin {
             desc: NodeDesc::new("tex.level", "Levels, gamma, contrast, brightness, invert, opacity")
-                .param(ParamSpec::float("black", 0.0).range(0.0, 1.0).doc("Input value that becomes 0"))
-                .param(ParamSpec::float("white", 1.0).range(0.0, 1.0).doc("Input value that becomes 1"))
-                .param(ParamSpec::float("gamma", 1.0).clamp(0.01, 10.0).curve(Curve::Log))
-                .param(ParamSpec::float("contrast", 1.0).range(0.0, 4.0))
-                .param(ParamSpec::float("brightness", 1.0).range(0.0, 4.0))
-                .param(ParamSpec::bool("invert", false))
-                .param(ParamSpec::float("opacity", 1.0).range(0.0, 1.0))
+                .param(
+                    ParamSpec::float("black", 0.0)
+                        .range(0.0, 1.0)
+                        .doc("Input value that becomes 0, per channel; darker goes below 0. The first step"),
+                )
+                .param(
+                    ParamSpec::float("white", 1.0)
+                        .range(0.0, 1.0)
+                        .doc("Input value that becomes 1, per channel; brighter goes above 1 (not clipped)"),
+                )
+                .param(
+                    ParamSpec::float("gamma", 1.0)
+                        .clamp(0.01, 10.0)
+                        .curve(Curve::Log)
+                        .doc("Bends the midtones after black and white: above 1 brightens them, below 1 darkens; 0 and 1 stay"),
+                )
+                .param(
+                    ParamSpec::float("contrast", 1.0)
+                        .range(0.0, 4.0)
+                        .doc("Spreads values away from mid grey (0.5) after gamma: 0 is flat grey, 2 doubles the distance"),
+                )
+                .param(
+                    ParamSpec::float("brightness", 1.0)
+                        .range(0.0, 4.0)
+                        .doc("Multiplies the colour after contrast: 0 is black, 2 twice as bright"),
+                )
+                .param(
+                    ParamSpec::bool("invert", false)
+                        .doc("1 minus the colour, after all the steps above; alpha stays"),
+                )
+                .param(
+                    ParamSpec::float("opacity", 1.0)
+                        .range(0.0, 1.0)
+                        .doc("Multiplies alpha: 0 transparent, 1 as the input; fades a layer in a composite"),
+                )
                 .input("in", DataKind::Tex)
                 .output("out", DataKind::Tex),
             source: include_str!("level.wgsl"),
@@ -214,14 +296,25 @@ fn core_builtins() -> Vec<Builtin> {
             )
             .param(
                 ParamSpec::choice("dither", &["none", "ordered"])
-                    .doc("Ordered: a 4 x 4 Bayer pattern per block, so gradients survive few levels"),
+                    .doc("How values between two levels are shown")
+                    .choice_doc("none", "each snaps to the nearest level: hard bands")
+                    .choice_doc(
+                        "ordered",
+                        "a 4 x 4 Bayer pattern per block mixes the two levels, so gradients survive few levels",
+                    ),
             )
             .param(
                 ParamSpec::choice("space", &["perceptual", "linear"])
                     .more()
-                    .doc("Where the levels are evenly spaced: to the eye (sRGB curve) or in linear light"),
+                    .doc("Where the levels are evenly spaced")
+                    .choice_doc("perceptual", "to the eye (on the sRGB curve): even steps from black to white")
+                    .choice_doc("linear", "in linear light: most levels look bright, few dark"),
             )
-            .param(ParamSpec::bool("alpha", false).more().doc("Quantize alpha too"))
+            .param(
+                ParamSpec::bool("alpha", false)
+                    .more()
+                    .doc("Snap alpha to the levels too; off keeps the input's alpha, so soft edges stay soft"),
+            )
             .input("in", DataKind::Tex)
             .output("out", DataKind::Tex),
             source: include_str!("quantize.wgsl"),
@@ -254,7 +347,26 @@ fn core_builtins() -> Vec<Builtin> {
                     "color",
                     "luminosity",
                 ],
-            ).doc("Each layer goes onto what lies below it. inside, outside: the layer only where the picture below is, or is not; atop: the layer over the picture below, only where that is; overlay: darkens the dark and brightens the bright parts of the picture below by the layer; color: the layer's hue and saturation at the brightness below (tinting a grey picture); luminosity: the other way round"))
+            )
+            .doc("How each layer goes onto what lies below it: layer2 onto layer1, then layer3 onto that, ...")
+            .choice_doc("over", "the layer in front, covering by its alpha")
+            .choice_doc("add", "both summed: brighter, black adds nothing")
+            .choice_doc("multiply", "both multiplied: darker, white changes nothing")
+            .choice_doc("screen", "the opposite of multiply: lighter, black changes nothing")
+            .choice_doc("subtract", "the picture below minus the layer's colour")
+            .choice_doc("difference", "how far the colours differ, per channel")
+            .choice_doc("maximum", "the brighter of both, per channel")
+            .choice_doc("minimum", "the darker of both, per channel")
+            .choice_doc("average", "half of each")
+            .choice_doc("inside", "the layer only where the picture below is (its alpha)")
+            .choice_doc("outside", "the layer only where the picture below is not")
+            .choice_doc("atop", "the layer over the picture below, only where that is")
+            .choice_doc(
+                "overlay",
+                "darkens the dark and brightens the bright parts of the picture below by the layer",
+            )
+            .choice_doc("color", "the layer's hue and saturation at the brightness below (tinting a grey picture)")
+            .choice_doc("luminosity", "the layer's brightness with the hue and saturation below"))
             .param(
                 ParamSpec::bool("swap", false)
                     .doc("Swap the order of each step: the picture below onto the layer (TouchDesigner's Swap Operation Order)"),
@@ -293,10 +405,21 @@ fn transform_density(def: &NodeDef, desc: &NodeDesc, _: usize, sizes: Option<Siz
 
 /// Adds `width`, `height` and [`keep_size`].
 fn sized(desc: NodeDesc) -> NodeDesc {
-    desc.param(ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels))
-        .param(ParamSpec::int("height", 1080).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels))
-        .param(keep_size())
-        .output("out", DataKind::Tex)
+    desc.param(width_param()).param(height_param()).param(keep_size()).output("out", DataKind::Tex)
+}
+
+/// The `width` of a node that makes a picture of its own size.
+fn width_param() -> ParamSpec {
+    ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).doc(
+        "Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on",
+    )
+}
+
+/// The `height` of a node that makes a picture of its own size.
+fn height_param() -> ParamSpec {
+    ParamSpec::int("height", 1080).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).doc(
+        "Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on",
+    )
 }
 
 /// The param that pins a node's `width` and `height` against `res.optimize`, on every node whose

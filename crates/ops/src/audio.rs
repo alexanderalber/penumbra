@@ -69,7 +69,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(ParamSpec::float("offset", 0.0).range(-200.0, 200.0).doc(
             "Milliseconds to move beat and bar ahead by, to make up for the projector's delay",
         ))
-        .param(ParamSpec::int("beats_per_bar", 4).clamp(1.0, 64.0).range(2.0, 8.0))
+        .param(
+            ParamSpec::int("beats_per_bar", 4)
+                .clamp(1.0, 64.0)
+                .range(2.0, 8.0)
+                .doc("Beats in one bar (4 for 4/4, 3 for a waltz): how often bar and bar_beat come round"),
+        )
         .param(
             ParamSpec::float("sensitivity", 0.5)
                 .clamp(0.0, 1.0)
@@ -87,7 +92,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(20.0, 400.0)
                 .range(80.0, 300.0)
                 .more()
-                .doc("The fastest tempo considered"),
+                .doc("The fastest tempo considered, in beats per minute; see min_bpm"),
         )
         .param(
             ParamSpec::bool("normalize", true)
@@ -107,7 +112,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(40.0, 500.0)
                 .unit(Unit::Hertz)
                 .group("levels")
-                .doc("Where the low band ends"),
+                .doc("Where the low band ends: the low channel is the level below this frequency"),
         )
         .param(
             ParamSpec::float("high", 2500.0)
@@ -115,14 +120,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(1000.0, 8000.0)
                 .unit(Unit::Hertz)
                 .group("levels")
-                .doc("Where the high band starts"),
+                .doc("Where the high band starts: the high channel is the level above this; mid lies between low and high"),
         )
         .param(
             ParamSpec::int("bands", 32)
                 .clamp(1.0, penumbra_audio::analysis::MAX_BANDS as f64)
                 .range(4.0, 128.0)
                 .group("levels")
-                .doc("Bands of the spectrum output"),
+                .doc("Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame"),
         )
         .input("audio", DataKind::Chan)
         .output("out", DataKind::Chan)

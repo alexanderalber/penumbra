@@ -65,10 +65,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 "Resolution of the kept frames relative to the input; 0.5 needs a quarter of the memory",
             ),
         )
-        .param(ParamSpec::choice("precision", &["16bit", "8bit"]).doc(
-            "How the kept frames are stored: 16bit as they come, 8bit in half the memory with \
-                 values above 1 clipped",
-        ))
+        .param(
+            ParamSpec::choice("precision", &["16bit", "8bit"])
+                .doc("How the kept frames are stored")
+                .choice_doc("16bit", "as they come")
+                .choice_doc("8bit", "in half the memory, with values above 1 clipped"),
+        )
         .param(ParamSpec::int("step", 1).clamp(1.0, MAX_STEP as f64).range(1.0, 8.0).doc(
             "Keeps only every n-th input frame, for n times the length in the same memory; \
                  between kept frames the picture is blended, which smears fast motion",

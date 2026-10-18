@@ -7,6 +7,10 @@
 //! A parameter driven by a channel shows the channel's value live, its widget (or the bound
 //! component's) disabled, and the source next to it. The link button binds and unbinds
 //! (`param.<path>.bind`).
+//!
+//! The circled "i" before each name (`param.<path>.info`) opens the param's help: what it does,
+//! what each choice does, default, range and unit ([`ParamSpec::help`], the same as
+//! `node.kinds {kind, param}` returns). A click outside or Escape closes it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -462,29 +466,36 @@ impl ParamPanel {
         self.color_lines = if is_color { self.color_measured.get(&key).copied().unwrap_or(1) } else { 1 };
         let height = row_height(ui, spec, self.color_lines);
         let one = ui.spacing().interact_size.y;
-        // The grid centres a cell in its row; the label of a taller row sits at its top.
-        let l = match &name_edit {
-            Some(name_spec) => self.name_field(ui, input, node, name_spec, auto, actions),
-            None => Some(
-                ui.allocate_ui_with_layout(
-                    egui::vec2(0.0, height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        if height > one {
-                            let text = ui.text_style_height(&egui::TextStyle::Body);
-                            ui.add_space(((one - text) / 2.0).max(0.0));
+        // The grid centres a cell in its row; the label of a taller row sits at its top. The
+        // help button comes first, so the buttons form a column whatever the names' lengths.
+        let l = ui
+            .allocate_ui_with_layout(
+                egui::vec2(0.0, height),
+                egui::Layout::top_down(egui::Align::Min),
+                |ui| {
+                    if height > one {
+                        let text = ui.text_style_height(&egui::TextStyle::Body);
+                        ui.add_space(((one - text) / 2.0).max(0.0));
+                    }
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        help_button(ui, spec, &key, inactive, auto);
+                        match &name_edit {
+                            Some(name_spec) => self.name_field(ui, input, node, name_spec, auto, actions),
+                            None => {
+                                Some(ui.add(egui::Label::new(label).wrap_mode(egui::TextWrapMode::Extend)))
+                            }
                         }
-                        ui.add(egui::Label::new(label).wrap_mode(egui::TextWrapMode::Extend))
-                    },
-                )
-                .inner,
-            ),
-        };
+                    })
+                    .inner
+                },
+            )
+            .inner;
         if let Some(l) = l {
             if let Some(why) = inactive {
-                l.on_hover_text(format!("{why}. {}", spec.doc));
-            } else if !spec.doc.is_empty() {
-                l.on_hover_text(&spec.doc);
+                l.on_hover_text(format!("{why}. {}", spec.full_doc()));
+            } else if !spec.full_doc().is_empty() {
+                l.on_hover_text(spec.full_doc());
             }
         }
         let mut new: Option<Value> = None;
@@ -1044,6 +1055,113 @@ fn audio_device_box(
         Some(name) => r.on_hover_text(format!("Reading {name}")),
         None => r.on_hover_text("No device open yet"),
     }
+}
+
+/// The circled "i" of a param row and the help it opens beside it (`param.<key>.info`, the
+/// overlay `param.info`): what the param does, the meaning of each choice, then type, default,
+/// range, unit and slider curve. `inactive` says why the param does not count at the moment.
+fn help_button(
+    ui: &mut Ui,
+    spec: &ParamSpec,
+    key: &str,
+    inactive: Option<&str>,
+    auto: &mut automation::Registry,
+) {
+    let popup_id = ui.make_persistent_id(("param_help", key));
+    let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+    let (r, clicked) = icons::info_button(ui, open);
+    auto.add(format!("param.{key}.info"), r.rect, format!("help on {}", spec.name));
+    let r = if open {
+        r
+    } else {
+        let tip = "What this param does, its range and default";
+        r.on_hover_text(tip).on_disabled_hover_text(tip)
+    };
+    let shown = egui::Popup::from_response(&r)
+        .id(popup_id)
+        .open_memory(clicked.then_some(egui::SetOpenCommand::Toggle))
+        // Beside the panel, over the editor, so the param's own row and its neighbours stay
+        // in sight; below the button when the window has no room on the left.
+        .align(egui::RectAlign::LEFT_START)
+        .align_alternatives(&[egui::RectAlign::BOTTOM_START, egui::RectAlign::RIGHT_START])
+        .gap(6.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| help_body(ui, &spec.help(), inactive));
+    if let Some(shown) = shown {
+        auto.add("param.info", shown.response.rect, format!("help on {}", spec.name));
+    }
+}
+
+/// Width of the help overlay's text, in points.
+const HELP_WIDTH: f32 = 300.0;
+
+fn help_body(ui: &mut Ui, help: &penumbra_core::ParamHelp, inactive: Option<&str>) {
+    ui.set_max_width(HELP_WIDTH);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(&help.name).strong().color(theme::TEXT));
+        let mut kind = help.type_label.clone();
+        if !help.group.is_empty() {
+            kind.push_str(&format!(", in {}", help.group));
+        }
+        ui.label(RichText::new(kind).color(theme::TEXT_WEAK).small());
+    });
+    ui.add_space(2.0);
+    if help.doc.is_empty() && help.choices.iter().all(|c| c.doc.is_empty()) {
+        ui.label(RichText::new("Not described yet.").color(theme::TEXT_WEAK).italics());
+    } else if !help.doc.is_empty() {
+        ui.add(egui::Label::new(&help.doc).wrap());
+    }
+    if let Some(why) = inactive {
+        ui.add(egui::Label::new(RichText::new(format!("Not used now. {why}.")).color(theme::WARNING)).wrap());
+    }
+    if !help.choices.is_empty() {
+        ui.add_space(4.0);
+        egui::Grid::new("param_help_choices").num_columns(2).spacing([10.0, 3.0]).show(ui, |ui| {
+            for c in &help.choices {
+                ui.label(
+                    RichText::new(&c.value).small().family(egui::FontFamily::Monospace).color(theme::TEXT),
+                );
+                ui.add(egui::Label::new(RichText::new(&c.doc).small()).wrap());
+                ui.end_row();
+            }
+        });
+    }
+    ui.add_space(4.0);
+    ui.separator();
+    let facts = help_facts(help);
+    egui::Grid::new("param_help_facts").num_columns(2).spacing([10.0, 2.0]).show(ui, |ui| {
+        for (name, value) in facts {
+            ui.label(RichText::new(name).color(theme::TEXT_WEAK).small());
+            ui.add(egui::Label::new(RichText::new(value).small()).wrap());
+            ui.end_row();
+        }
+    });
+}
+
+/// The lines below the help's text: default, range, unit, slider, channels.
+fn help_facts(help: &penumbra_core::ParamHelp) -> Vec<(&'static str, String)> {
+    let mut facts = Vec::new();
+    let default = if help.default.is_empty() { "empty".to_string() } else { help.default.clone() };
+    facts.push(("default", default));
+    if !help.range.is_empty() {
+        let how = if help.clamped {
+            "values outside are clamped"
+        } else {
+            "the slider's; typed values outside are kept"
+        };
+        facts.push(("range", format!("{}, {how}", help.range)));
+    } else if !help.unit.is_empty() {
+        facts.push(("unit", help.unit.clone()));
+    }
+    match help.curve.as_str() {
+        "log" => facts.push(("slider", "logarithmic: equal steps are equal ratios".to_string())),
+        "power" => facts.push(("slider", "finer near the minimum".to_string())),
+        _ => {}
+    }
+    if help.bindable {
+        facts.push(("channels", "can drive it: the link button, or drop a chan wire on it".to_string()));
+    }
+    facts
 }
 
 fn line<R>(

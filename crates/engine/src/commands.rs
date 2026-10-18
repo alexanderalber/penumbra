@@ -45,7 +45,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("history.list", "Recent history entries; {limit?}", history_list);
     add("history.undo", "Undo one history entry", history_undo);
     add("history.redo", "Redo one history entry", history_redo);
-    add("node.kinds", "Node types with their params, inputs and outputs; {kind?}", node_kinds);
+    add(
+        "node.kinds",
+        "Node types with their params, inputs and outputs; with a param, its help (what it does,          type, default, range, unit, what each choice does); {kind?, param?}",
+        node_kinds,
+    );
     add("node.list", "Nodes under a path; {path?, recursive?}", node_list);
     add("node.info", "One node: params, connections, cook status; {path}", node_info);
     add("node.create", "Create a node; {path, kind, params?}", node_create);
@@ -286,9 +290,23 @@ fn node_kinds(e: &Engine, p: &Json) -> Result<Json> {
     #[serde(deny_unknown_fields)]
     struct A {
         kind: Option<String>,
+        param: Option<String>,
     }
     let a: A = args(p)?;
     let types = e.types();
+    if let Some(param) = &a.param {
+        let kind = a.kind.as_deref().ok_or("`param` needs `kind`")?;
+        let desc = types.desc(kind).ok_or_else(|| format!("unknown node kind `{kind}`"))?;
+        let spec = desc.param_spec(param).ok_or_else(|| {
+            let hint = if desc.extra_params {
+                "; params a node declares itself (a shader's) are in node.info"
+            } else {
+                ""
+            };
+            format!("{kind} has no param `{param}`{hint}")
+        })?;
+        return Ok(json!({"kind": kind, "param": to_json(&spec.help())?}));
+    }
     let descs: Vec<&NodeDesc> = match &a.kind {
         Some(k) => vec![types.desc(k).ok_or_else(|| format!("unknown node kind `{k}`"))?],
         None => types.kinds().filter_map(|k| types.desc(k)).collect(),
@@ -416,7 +434,7 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             let explicit = node.params.get(spec.name.as_str());
             instance.push(json!({
                 "name": spec.name, "kind": spec.kind, "value": explicit.unwrap_or(&spec.default),
-                "default": spec.default, "range": spec.range, "doc": spec.doc,
+                "default": spec.default, "range": spec.range, "unit": spec.unit, "doc": spec.doc,
             }));
         }
         for (name, value) in &node.params {

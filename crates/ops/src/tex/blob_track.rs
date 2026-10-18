@@ -43,10 +43,15 @@ pub const COLUMNS: [&str; 14] =
 fn desc() -> NodeDesc {
     NodeDesc::new(BLOB_TRACK, "Finds blobs (people, hands, spots of light) and follows them with ids that stay")
         .stateful()
-        .param(ParamSpec::choice("detect", &["background", "bright"]).doc(
-            "background: what differs from the empty scene (the `background` input where connected, else \
-             learned: `blob_track.learn`); bright: whatever is brighter than `threshold`",
-        ))
+        .param(
+            ParamSpec::choice("detect", &["background", "bright"])
+                .doc("What counts as part of a blob")
+                .choice_doc(
+                    "background",
+                    "what differs from the empty scene (the `background` input where connected, else learned: `blob_track.learn`)",
+                )
+                .choice_doc("bright", "whatever is brighter than `threshold`"),
+        )
         .param(
             ParamSpec::float("threshold", 0.1)
                 .clamp(0.0, 1.0)
@@ -80,11 +85,20 @@ fn desc() -> NodeDesc {
                 .unit(Unit::Percent)
                 .doc("Larger blobs are ignored (the whole room changing is not a blob)"),
         )
-        .param(ParamSpec::int("max_blobs", 16).clamp(1.0, 256.0).range(1.0, 32.0).doc("Most blobs, the largest"))
-        .param(ParamSpec::choice("show", &["overlay", "mask", "difference", "background"]).doc(
-            "What `out` shows: the picture with the blobs marked, the pixels counted, the difference (the \
-             threshold is mid grey) or the learned background",
-        ))
+        .param(
+            ParamSpec::int("max_blobs", 16)
+                .clamp(1.0, 256.0)
+                .range(1.0, 32.0)
+                .doc("Most blobs reported; with more found, the largest are kept"),
+        )
+        .param(
+            ParamSpec::choice("show", &["overlay", "mask", "difference", "background"])
+                .doc("What `out` shows")
+                .choice_doc("overlay", "the picture with the blobs marked")
+                .choice_doc("mask", "the pixels counted, white on black")
+                .choice_doc("difference", "the difference to the background (the threshold is mid grey)")
+                .choice_doc("background", "the learned background"),
+        )
         .param(
             ParamSpec::int("size", 320)
                 .clamp(16.0, 1920.0)

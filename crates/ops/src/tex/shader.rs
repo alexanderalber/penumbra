@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use penumbra_core::{Curve, Error, ParamSpec, Unit};
+use penumbra_core::{Error, ParamSpec};
 use penumbra_gpu::header::{self, Header};
 use penumbra_gpu::{Pass, PassInput, TexRing};
 use penumbra_graph::{
@@ -28,15 +28,22 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "tex.shader",
             "A WGSL fragment shader from a file, hot reloaded; parameters come from its `// @param` header",
         )
-        .param(ParamSpec::file("file", &["wgsl"]).doc("Relative to the project directory"))
+        .param(
+            ParamSpec::file("file", &["wgsl"])
+                .doc("The WGSL file, relative to the project directory; saving it reloads the node"),
+        )
         .param(
             ParamSpec::choice("resolution", &["input", "custom"])
-                .doc("From in0 (custom size while in0 is unconnected) or width and height"),
+                .doc("Where the output's size comes from")
+                .choice_doc("input", "in0's size; width and height while in0 is unconnected")
+                .choice_doc("custom", "width and height, whatever is wired"),
         )
-        .param(ParamSpec::int("width", 1920).clamp(1.0, super::MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels))
-        .param(
-            ParamSpec::int("height", 1080).clamp(1.0, super::MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels),
-        )
+        .param(super::width_param().doc(
+            "Width of the output in pixels, for resolution custom or without in0; res.optimize may change it unless keep_size is on",
+        ))
+        .param(super::height_param().doc(
+            "Height of the output in pixels, for resolution custom or without in0; res.optimize may change it unless keep_size is on",
+        ))
         .param(super::keep_size())
         .input("in0", DataKind::Tex)
         .input("in1", DataKind::Tex)

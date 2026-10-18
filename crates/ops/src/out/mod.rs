@@ -163,10 +163,17 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::text("display", "")
                 .doc("Display id from output.list, e.g. `EPSON PJ @ port 4`; the monitor name alone works when unique"),
         )
-        .param(ParamSpec::bool("active", true).doc("Open the output window"))
-        .param(ParamSpec::choice("fit", &["fit", "fill", "stretch"]).doc(
-            "fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted",
-        ))
+        .param(
+            ParamSpec::bool("active", true)
+                .doc("Open the output window on its display; off closes it and the node does nothing"),
+        )
+        .param(
+            ParamSpec::choice("fit", &["fit", "fill", "stretch"])
+                .doc("How the picture sits in the viewport when their aspects differ")
+                .choice_doc("fit", "all visible, black bars")
+                .choice_doc("fill", "covered, cropped")
+                .choice_doc("stretch", "covered, distorted"),
+        )
         .param(
             ParamSpec::vec4("viewport", [0.0, 0.0, 1.0, 1.0])
                 .clamp(0.0, 1.0)

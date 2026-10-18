@@ -56,6 +56,10 @@ params are relative to the project directory and reload when the file changes.
 - **Folded sections** group params that belong together (a render's `occlusion`, a mapper's
   `warp`); **"more"**, always the last, holds the rarely used ones. Only the main rows are
   shown at first; a section stays open for every node of that type once opened.
+- **The circled "i"** before each param's name opens its help beside the panel: what the
+  param does, what each value of a choice does, its type, default, range and unit, and whether
+  a channel can drive it. A click elsewhere or Escape closes it; hovering the name shows the
+  text alone. `node.kinds {kind, param}` returns the same help over the control channel.
 - **A reset button** appears beside a param that is not at its default.
 - **One drag is one undo step**, however long it takes.
 - **Params from a file:** a shader's header and a script's `PARAMS` add their own rows, under

@@ -109,6 +109,18 @@ fn build_a_network_and_watch_it_cook() {
     assert_eq!(list["nodes"][0], json!({"path": "/c", "kind": "chan.constant"}));
     let kinds = f.call("node.kinds", json!({"kind": "chan.lfo"}));
     assert_eq!(kinds["kinds"][0]["params"][0]["name"], "rate");
+    let help = f.call("node.kinds", json!({"kind": "chan.lfo", "param": "shape"}))["param"].clone();
+    assert_eq!(help["type"], "choice");
+    assert_eq!(help["default"], "sine");
+    assert_eq!(
+        help["choices"][0],
+        json!({"value": "sine", "doc": help["choices"][0]["doc"], "default": true})
+    );
+    assert!(!help["doc"].as_str().unwrap_or_default().is_empty());
+    let rate = f.call("node.kinds", json!({"kind": "chan.lfo", "param": "rate"}))["param"].clone();
+    assert_eq!((rate["unit"].as_str(), rate["bindable"].as_bool()), (Some("Hz"), Some(true)));
+    assert!(f.fail("node.kinds", json!({"param": "rate"})).contains("needs `kind`"));
+    assert!(f.fail("node.kinds", json!({"kind": "chan.lfo", "param": "nope"})).contains("no param `nope`"));
 }
 
 #[test]

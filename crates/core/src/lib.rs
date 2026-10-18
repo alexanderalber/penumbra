@@ -17,7 +17,7 @@ pub mod value;
 pub use chan::{Channel, Chans};
 pub use error::Error;
 pub use id::{GroupId, NodeId};
-pub use param::{Curve, MORE, ParamKind, ParamSpec, Range, Unit};
+pub use param::{ChoiceDoc, ChoiceHelp, Curve, MORE, ParamHelp, ParamKind, ParamSpec, Range, Unit};
 pub use path::{Name, NodePath, ParamPart, ParamPath};
 pub use sync::lock;
 pub use table::Table;

@@ -34,45 +34,45 @@ const SOURCE: &str = include_str!("text.wgsl");
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(TEXT, "Text in any installed or bundled font, placed at a position")
-            .param(ParamSpec::text("text", "Text").multiline())
+            .param(
+                ParamSpec::text("text", "Text")
+                    .multiline()
+                    .doc("What is written; line breaks are kept, align lines the lines up"),
+            )
             .param(
                 ParamSpec::float("size", 100.0)
                     .clamp(1.0, MAX_SIZE)
                     .range(4.0, 500.0)
                     .curve(Curve::Log)
                     .unit(Unit::Pixels)
-                    .doc("Font size"),
+                    .doc("Font size in pixels of the output picture (the font's em, a little more than a capital's height)"),
             )
-            .param(ParamSpec::color("color", [1.0, 1.0, 1.0, 1.0]).doc("Linear RGBA, straight alpha"))
+            .param(
+                ParamSpec::color("color", [1.0, 1.0, 1.0, 1.0])
+                    .doc("Colour of the text, linear RGBA with straight alpha; the rest is transparent"),
+            )
             .param(
                 ParamSpec::vec2("position", [0.5, 0.5])
                     .range(0.0, 1.0)
                     .doc("Where the text's anchor sits, in image sizes; 0, 0 is the top left"),
             )
             .param(
-                ParamSpec::choice("align", &["center", "left", "right"]).doc(
-                    "Lines aligned to each other and the anchor: the block's centre, left or right edge",
-                ),
+                ParamSpec::choice("align", &["center", "left", "right"])
+                    .doc("How the lines line up with each other, and which point of the block sits at position")
+                    .choice_doc("center", "centred; the block's centre at position")
+                    .choice_doc("left", "flush left; the block's left edge at position")
+                    .choice_doc("right", "flush right; the block's right edge at position"),
             )
             .param(
                 ParamSpec::text("font", DEFAULT_FONT)
                     .doc("Family name; Inter, JetBrains Mono, Noto Serif are bundled"),
             )
-            .param(ParamSpec::text("style", "Regular").doc("Regular, Bold, Italic, Light, ..."))
             .param(
-                ParamSpec::int("width", 1920)
-                    .clamp(1.0, super::MAX_SIDE)
-                    .curve(Curve::Log)
-                    .unit(Unit::Pixels)
-                    .more(),
+                ParamSpec::text("style", "Regular")
+                    .doc("Style within the family: Regular, Bold, Italic, Light, ...; the menu lists the family's"),
             )
-            .param(
-                ParamSpec::int("height", 1080)
-                    .clamp(1.0, super::MAX_SIDE)
-                    .curve(Curve::Log)
-                    .unit(Unit::Pixels)
-                    .more(),
-            )
+            .param(super::width_param().more())
+            .param(super::height_param().more())
             .param(super::keep_size())
             .output("out", DataKind::Tex),
         || Box::new(Text::default()) as Box<dyn Operator>,

@@ -63,4 +63,39 @@ mod port_docs {
             }
         }
     }
+
+    /// The param panel's help overlay and the reference show these texts; a param nobody
+    /// explained leaves its user guessing. A text of three words or fewer ("Wave form", "In
+    /// tiles") says too little to count, and each value of a choice says what it does.
+    #[test]
+    fn every_param_is_described() {
+        let types = super::builtin_types().unwrap();
+        let mut missing = Vec::new();
+        let mut total = 0;
+        for kind in types.kinds() {
+            for p in &types.desc(kind).unwrap().params {
+                total += 1;
+                if p.full_doc().split_whitespace().count() <= 3 {
+                    missing.push(format!("{kind}.{} ({:?})", p.name, p.full_doc()));
+                }
+                if let penumbra_core::ParamKind::Choice(values) = &p.kind {
+                    let bare: Vec<&str> =
+                        values.iter().filter(|v| p.doc_of_choice(v).is_none()).map(String::as_str).collect();
+                    if !bare.is_empty() {
+                        missing.push(format!("{kind}.{}: no text for {}", p.name, bare.join(", ")));
+                    }
+                }
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "{} problems in the descriptions of {total} params (four words or more, every choice):
+{}",
+            missing.len(),
+            missing.join(
+                "
+"
+            )
+        );
+    }
 }

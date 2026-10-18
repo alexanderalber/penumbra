@@ -33,14 +33,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("Which connected input, counted from 0; past the last, the last"),
         )
         .param(ParamSpec::bool("blend", false).doc("A fractional index mixes the two inputs either side"))
-        .param(ParamSpec::choice("inactive", &["cook", "skip"]).doc(
-            "The inputs not shown: cook keeps their chains cooking as if shown; skip cooks only \
-             the shown input's chain, the others stand still and cost nothing. Switching to a \
-             skipped input cooks its chain in that frame (a slow chain makes the frame late, a \
-             video may need a moment to catch up), and a feedback loop, cache or time machine \
-             in it carries on from where it stopped. With skip an input counts as connected \
-             as soon as it is wired",
-        ));
+        .param(
+            ParamSpec::choice("inactive", &["cook", "skip"])
+                .doc("What the inputs not shown do")
+                .choice_doc("cook", "their chains keep cooking as if shown")
+                .choice_doc(
+                    "skip",
+                    "only the shown input's chain cooks, the others stand still and cost nothing. \
+                     Switching to a skipped input cooks its chain in that frame (a slow chain makes the \
+                     frame late, a video may need a moment to catch up), and a feedback loop, cache or \
+                     time machine in it carries on from where it stopped. An input counts as connected \
+                     as soon as it is wired",
+                ),
+        );
     for i in 0..SWITCH_INPUTS {
         switch = switch.input(&format!("in{i}"), DataKind::Tex);
     }
@@ -57,7 +62,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 ParamSpec::node("node")
                     .doc("Path of the node (/name), or the name of a node beside this one"),
             )
-            .param(ParamSpec::int("output", 0).clamp(0.0, 63.0).more().doc("Which of its outputs"))
+            .param(
+                ParamSpec::int("output", 0)
+                    .clamp(0.0, 63.0)
+                    .more()
+                    .doc("Which output of that node, counted from 0 (tex.render's data is 1)"),
+            )
             .output("out", DataKind::Tex),
         || Box::new(Select) as Box<dyn Operator>,
     ))?;

@@ -9,7 +9,7 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
-use super::{EXTEND, gpu, inputs, waiting};
+use super::{gpu, inputs, waiting};
 
 const KIND: &str = "tex.blur";
 const SOURCE: &str = include_str!("blur.wgsl");
@@ -22,10 +22,20 @@ fn desc() -> NodeDesc {
                 .range(0.0, 100.0)
                 .curve(penumbra_core::Curve::Power(2.0))
                 .unit(Unit::Pixels)
-                .doc("Radius: three standard deviations"),
+                .doc("Blur radius in pixels (three standard deviations of the Gaussian); below 0.5 leaves the input as it is"),
         )
-        .param(ParamSpec::choice("direction", &["both", "horizontal", "vertical"]))
-        .param(ParamSpec::choice("extend", &EXTEND).more().doc("What lies beyond the edges"))
+        .param(
+            ParamSpec::choice("direction", &["both", "horizontal", "vertical"])
+                .doc("Which way the picture is smeared")
+                .choice_doc("both", "in every direction, a round blur")
+                .choice_doc("horizontal", "only left and right, as motion across")
+                .choice_doc("vertical", "only up and down"),
+        )
+        .param(
+            super::extend("hold")
+                .more()
+                .doc("What the blur reads beyond the input's edges; hold keeps the edges from darkening"),
+        )
         .input("in", DataKind::Tex)
         .output("out", DataKind::Tex)
 }

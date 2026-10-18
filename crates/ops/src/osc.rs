@@ -72,7 +72,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 ParamSpec::text("host", "127.0.0.1")
                     .doc("IP address to send to, or localhost; names are not looked up"),
             )
-            .param(ParamSpec::int("port", DEFAULT_OUT_PORT).clamp(1.0, 65535.0).range(1024.0, 65535.0))
+            .param(
+                ParamSpec::int("port", DEFAULT_OUT_PORT)
+                    .clamp(1.0, 65535.0)
+                    .range(1024.0, 65535.0)
+                    .doc("UDP port the receiver listens on (TouchOSC and many apps use 9000)"),
+            )
             .param(
                 ParamSpec::float("rate", 30.0)
                     .clamp(0.1, 1000.0)
@@ -80,9 +85,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .unit(Unit::Hertz)
                     .doc("Sends per second at most"),
             )
-            .param(ParamSpec::choice("send", &["changes", "always"]).doc(
-                "changes: only what changed, plus everything once a second; always: everything each time",
-            ))
+            .param(
+                ParamSpec::choice("send", &["changes", "always"])
+                    .doc("Which channels each send carries")
+                    .choice_doc("changes", "only what changed, plus everything once a second")
+                    .choice_doc("always", "everything, each time"),
+            )
             .param(
                 ParamSpec::text("prefix", "")
                     .doc("Put before every channel's address: `/show` sends /show/x"),

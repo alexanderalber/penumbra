@@ -45,9 +45,13 @@ fn desc() -> NodeDesc {
     .param(ParamSpec::vec4("region", [0.0, 0.0, 1.0, 1.0]).clamp(0.0, 1.0).doc(
         "The part of the input (the surface) shown: x, y, width, height in input sizes",
     ))
-    .param(ParamSpec::choice("fit", &["fit", "fill", "stretch"]).doc(
-        "How the region sits in the picture before the corners move: fit (bars), fill (cropped), stretch",
-    ))
+    .param(
+        ParamSpec::choice("fit", &["fit", "fill", "stretch"])
+            .doc("How the region sits in the picture before the corners move")
+            .choice_doc("fit", "whole, aspect kept, with bars")
+            .choice_doc("fill", "covering the picture, aspect kept, cropped")
+            .choice_doc("stretch", "covering the picture, distorted to its aspect"),
+    )
     .param(ParamSpec::bool("blend", true).doc(
         "Soft edges where other mappers of the same input overlap this one (off for stacked projectors)",
     ))
