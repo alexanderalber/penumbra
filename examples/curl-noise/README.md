@@ -7,7 +7,7 @@ The simulation runs on the GPU, one particle per texel of a 256 x 256 texture:
 
 - `/ini` (`ini.wgsl`) holds where particles start: a random point of a round cloud in rgb (its
   `spread` says how wide), a random life in alpha. Each particle gets its own point, so the
-  swarm looks from the first frame as it does later.
+  swarm starts as a loose ball, not a clump, and grows into the flow within seconds.
 - `/pos` (`pos.wgsl`) moves each particle by its velocity and ages it; a spent one starts again
   at its place in `/ini`. `/pos_last` is a `tex.feedback` that hands the positions to the next
   frame.

@@ -3,7 +3,7 @@
 // already look like the running flow; and a random life for each. A spent particle starts
 // again at its point here.
 // rgb: the position, a: life 0..1.
-// @param spread float = 1.6 0.1..5 -- the cloud's standard deviation per axis
+// @param spread float = 0.8 0.1..5 -- the cloud's standard deviation per axis
 fn unit(x: u32) -> f32 {
     return (f32(x >> 8u) + 0.5) / 16777216.0;
 }
