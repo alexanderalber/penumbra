@@ -1,20 +1,22 @@
 //! The show machine around penumbra: which displays are connected and how to name them
 //! stably ([`display`]), and the operating-system settings that can ruin a show, checked and
 //! fixed on request ([`checks`], the commands `system.check` and `system.fix`). Also whether the
-//! taskbar is light, for the app icon ([`appearance`]). How busy CPU and GPU are ([`load`]).
+//! taskbar is light, for the app icon ([`appearance`]). How busy CPU and GPU are ([`load`]),
+//! with NVIDIA GPUs' power, temperature and clock ([`nvml`]).
 //!
-//! OS-specific code lives here and in the output crate only; the Windows calls are in one module,
-//! the crate's only `unsafe`. No GPU, no UI.
+//! OS-specific code lives here and in the output crate only; the Windows calls are in one module
+//! and NVIDIA's library in another, the crate's only `unsafe`. No graphics API, no UI.
 
 pub mod appearance;
 pub mod checks;
 pub mod display;
 pub mod load;
+pub mod nvml;
 pub mod process;
 #[cfg(windows)]
 mod windows;
 
 pub use checks::{Check, CheckStatus, Previous};
 pub use display::{DisplayDetails, Resolved, displays, resolve};
-pub use load::{Load, LoadMeter};
+pub use load::{GpuSensors, Load, LoadMeter};
 pub use process::ProcessStats;
