@@ -11,7 +11,7 @@
         "/kick": (kind: "chan.select", params: {"channels": "kick"}, inputs: {"in": "analysis"}),
         "/kick_fade": (kind: "chan.filter", params: {"fall": 0.25, "rise": 0.0}, inputs: {"in": "kick"}),
         "/label": (kind: "tex.text", params: {"position": [0.5, 0.88], "size": 90.0, "style": "Bold", "text": "make some noise"}),
-        "/meters": (kind: "tex.audio_meters", inputs: {"in": "analysis", "spectrum": "analysis:spectrum"}),
+        "/meters": (kind: "tex.null", inputs: {"in": "analysis:meters"}),
         "/mic": (kind: "chan.audio_in"),
         "/pump": (kind: "tex.transform", params: {"extend": "mirror"}, inputs: {"in": "cloud"}, binds: {"scale.0": "zoom:low", "scale.1": "zoom:low"}),
         "/punch": (kind: "chan.math", params: {"b": 0.7}, inputs: {"a": "kick_fade"}),

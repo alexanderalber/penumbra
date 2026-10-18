@@ -71,19 +71,26 @@ over.
 
 ## The meters as a picture
 
-`tex.audio_meters` draws the same meters into a texture, to project during a sound check, put
-on a monitor output or lay over the show. Connect the analysis' `out` to its `in` and its
-`spectrum` to `spectrum` (left unconnected, the spectrum is left out). `width` and `height`
-(1920 x 1080) set the picture's size; it is laid out as the viewer would draw it at about 640 x
-360 and enlarged, so type and lines keep their proportions at any size, and below about 150
-pixels of height the spectrum and the rows' names go, as in a narrow viewer. `background`
-is the colour behind the meters; by default it is transparent, so only the meters are drawn,
-ready for a `tex.composite`; give it alpha 1 for a solid picture.
+The analysis' third output, `meters`, is the same meters as a texture, to project during a
+sound check, put on a monitor output or lay over the show: wire it into a tex node, or pick it
+in the viewer's header (`ui.view {path, output: "meters"}`). `width` and `height` in the
+analysis' `meters` section (1920 x 1080; `keep_size` pins them against `res.optimize`) set the
+picture's size; it is laid out as the viewer would draw it at about 640 x 360 and enlarged, so
+type and lines keep their proportions at any size, and below about 150 pixels of height the
+spectrum and the rows' names go, as in a narrow viewer.
 
-The node keeps its own short memory (peaks, recent hits) on the show clock: a paused show
-stands still, a jump back in time starts it over, and `node.reset` (or R) clears it. It draws
-on the GPU every frame; a cook takes about a quarter of a millisecond at 1080p. The text is
-set in Inter; a size seen for the first time shows its characters a frame or two later.
+Around the meters the texture is transparent, ready for a `tex.composite` over the show. For a
+solid picture, composite it over a `tex.constant` of the colour wanted. The viewer shows this
+output on black, as its meters view.
+
+The output is drawn only while something reads it: a wire into a node that cooks (for an
+output, the viewer or a thumbnail), the viewer showing it, or `node.snapshot`. Otherwise the
+analysis does not draw, and holds no textures for it. While drawn it costs about a quarter of a
+millisecond at 1080p and keeps its own short memory (peaks, recent hits) on a steady clock, as
+the viewer does; `node.reset` (or R) on the analysis clears it, and it starts over when the
+output is read again after a pause. It is drawn when the analysis cooks, that is when audio
+arrives, also while the show is paused. The text is set in Inter; a size seen for the first
+time shows its characters a frame or two later.
 
 ## Tempo and beat
 

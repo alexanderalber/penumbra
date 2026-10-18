@@ -55,8 +55,26 @@ impl PenumbraApp {
                     Some(path) => Some(resolve(&net, path)?),
                     None => None,
                 };
+                if let Some(slot) = p.get("output") {
+                    let id = pinned.ok_or("`output` needs a `path`")?;
+                    let session = self.engine.session();
+                    let names: Vec<&str> = net
+                        .node(id)
+                        .and_then(|n| session.types().desc(&n.kind))
+                        .map(|d| d.outputs.iter().map(|o| o.name.as_str()).collect())
+                        .unwrap_or_default();
+                    let index = match (slot.as_str(), slot.as_u64()) {
+                        (Some(name), _) => names.iter().position(|n| *n == name),
+                        (None, Some(i)) => usize::try_from(i).ok().filter(|i| *i < names.len()),
+                        _ => None,
+                    };
+                    let index = index.ok_or_else(|| {
+                        format!("no output {slot} on the node; it has {}", names.join(", "))
+                    })?;
+                    self.viewer.output = u32::try_from(index).map_err(|_| "too many outputs")?;
+                }
                 self.viewer.pinned = pinned;
-                done(json!({"pinned": pinned.and_then(|id| path_of(&net, id))}))
+                done(json!({"pinned": pinned.and_then(|id| path_of(&net, id)), "output": self.viewer.output}))
             }
             "ui.camera" => done(self.camera(p, now)?),
             "ui.place" => done(self.place(p, now)?),

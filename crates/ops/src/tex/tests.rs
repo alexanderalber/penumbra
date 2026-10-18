@@ -495,8 +495,6 @@ fn every_builtin_cooks_without_warnings() {
         create("/light_feed", "light.ambient", &[]),
         create("/view_feed", "view.camera", &[]),
         create("/audio_feed", "chan.audio_in", &[("device", "test".into())]),
-        create("/analysis_feed", "chan.audio_analysis", &[]),
-        connect("/audio_feed", "/analysis_feed", 0),
     ];
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
@@ -546,7 +544,6 @@ fn every_builtin_cooks_without_warnings() {
                 penumbra_graph::DataKind::View => Some("/view_feed"),
                 // Component ports and nulls pass on what they get and complain about nothing wired.
                 penumbra_graph::DataKind::Chan if kind == "chan.audio_analysis" => Some("/audio_feed"),
-                penumbra_graph::DataKind::Chan if kind == "tex.audio_meters" => Some("/analysis_feed"),
                 penumbra_graph::DataKind::Chan
                     if desc.port.is_some() || passes_on(kind) || kind == "tex.from_chan" =>
                 {
@@ -1963,111 +1960,126 @@ fn channels_become_a_picture_and_back() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A `chan.constant` with one row per `(name, value)`, standing in for an analysis' `out`.
-fn analysis_like(path: &str, rows: &[(&str, f64)]) -> Op {
-    let mut params: Vec<(String, Value)> = vec![("rows".into(), Value::Int(rows.len() as i64))];
-    for (k, (name, value)) in rows.iter().enumerate() {
-        params.push((format!("name{k}"), (*name).into()));
-        params.push((format!("value{k}"), Value::Float(*value)));
-    }
-    Op::Create {
-        path: NodePath::parse(path).unwrap(),
-        kind: "chan.constant".into(),
-        params: params.iter().map(|(k, v)| (k.parse().unwrap(), v.clone())).collect(),
-    }
-}
-
 /// Whether the level meter's peak line (the UI's text grey) crosses the level well near 90 %
 /// of its height (y about 18), in a 320 x 180 picture with a spectrum, laid out at scale 1.
 fn peak_line_high(px: &Pixels) -> bool {
     (14..23).any(|y| px.get(19, y).is_some_and(|p| p[0] > 0.5 && (p[0] - p[1]).abs() < 0.05))
 }
 
-#[test]
-fn audio_meters_cook_from_channels_and_start_over_on_reset() {
-    let Some(gpu) = gpu() else { return };
-    let loud = [("level", 0.9), ("bpm", 124.0), ("beat", 0.3), ("confidence", 0.8), ("beats_per_bar", 3.0)];
-    let ops = [
-        analysis_like("/a", &loud),
-        analysis_like("/bands", &[("spectrum", 0.5)]),
+/// An audio input fed by the test, into an analysis at 320 x 180 whose levels are the input's
+/// own (no normalising), so a block of 0.9 reads as level 0.9.
+fn analysis_rig(gpu: Gpu, more: &[Op]) -> Rig {
+    let mut ops = vec![
+        create("/in", "chan.audio_in", &[("device", "test".into())]),
         create(
-            "/m",
-            "tex.audio_meters",
-            &[
-                ("width", Value::Int(320)),
-                ("height", Value::Int(180)),
-                ("background", Value::Vec4([0.0, 0.0, 0.0, 1.0])),
-            ],
+            "/a",
+            "chan.audio_analysis",
+            &[("width", Value::Int(320)), ("height", Value::Int(180)), ("normalize", Value::Bool(false))],
         ),
-        connect("/a", "/m", 0),
-        connect("/bands", "/m", 1),
+        connect("/in", "/a", 0),
     ];
-    let mut rig = Rig::new(gpu, None, &ops);
-    let px = rig.pixels("/m");
-    assert_eq!((px.width, px.height), (320, 180));
-    // The level bar: green, from the bottom of its well up to 90 %.
-    let [r, g, b, a] = px.get(19, 80).unwrap();
-    assert!(g > r && g > b && a == 1.0, "level green: {:?}", [r, g, b, a]);
-    assert!(peak_line_high(&px), "the peak sits on top of a loud level");
-    let s = rig.cooker.status(rig.id("/m")).unwrap();
-    assert_eq!((s.error, s.warning), (None, None));
-    assert!(s.time_dependent);
+    ops.extend_from_slice(more);
+    Rig::new(gpu, None, &ops)
+}
 
-    // Quiet now: the peak holds.
-    rig.edit(&[set("/a.value0", Value::Float(0.1))]);
-    let v = rig.version("/m");
-    rig.clock.advance(1);
-    let tex = rig.cook_until_new("/m", v);
-    let px = rig.gpu.read(&tex).unwrap();
-    assert!(peak_line_high(&px), "held");
-
-    // Reset: the memory is gone, the peak is where the level is.
-    assert_eq!(rig.cooker.reset(rig.id("/m")), penumbra_graph::ResetOutcome::Reset);
-    let v = rig.version("/m");
-    rig.clock.advance(1);
-    let tex = rig.cook_until_new("/m", v);
-    let px = rig.gpu.read(&tex).unwrap();
-    assert!(!peak_line_high(&px), "reset forgets the peak");
-
-    // The size follows the params; huge or odd values in the channels do no harm.
-    rig.edit(&[
-        set("/m.width", Value::Int(200)),
-        set("/m.height", Value::Int(100)),
-        set("/a.value1", Value::Float(1e300)),
-        set("/a.value2", Value::Float(-5.0)),
-        set("/a.value4", Value::Float(1e12)),
-    ]);
-    let v = rig.version("/m");
-    rig.clock.advance(1);
-    let tex = rig.cook_until_new("/m", v);
-    assert_eq!(tex.size(), (200, 100));
-    let s = rig.cooker.status(rig.id("/m")).unwrap();
-    assert_eq!(s.error, None);
+/// The analysis' meters output with `level` fed and shown (as a viewer shows it), once it has
+/// a picture whose text is set (the glyph jobs done).
+fn meters_shown(rig: &mut Rig, level: f32) -> Tex {
+    let a = rig.id("/a");
+    let meters = Port { node: a, output: 2 };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut last = None;
+    loop {
+        rig.audio.feed("test", 48_000, 2, &[level; 1600]).unwrap();
+        rig.clock.advance(1);
+        rig.cooker.cook_showing(&rig.net, rig.clock.now(), &[], &[], &[meters]);
+        let s = rig.cooker.status(a).unwrap();
+        assert_eq!(s.error, None);
+        let idle = !matches!(
+            s.job,
+            Some(penumbra_graph::JobStatus::Queued | penumbra_graph::JobStatus::Running { .. })
+        );
+        if let Some(t) = rig.cooker.output(meters).and_then(|d| d.get::<Tex>()).cloned() {
+            if idle && last.is_some() {
+                return t;
+            }
+            last = Some(t);
+        }
+        assert!(Instant::now() < deadline, "no meters: {s:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 #[test]
-fn audio_meters_without_an_analysis_say_so() {
+fn analysis_meters_are_drawn_only_while_read() {
     let Some(gpu) = gpu() else { return };
-    let ops = [
-        create("/alone", "tex.audio_meters", &size()),
-        analysis_like("/other", &[("x", 1.0)]),
-        create("/wrong", "tex.audio_meters", &size()),
-        connect("/other", "/wrong", 0),
-        // Only the spectrum wired: `in` is still missing.
-        create("/half", "tex.audio_meters", &size()),
-        connect("/other", "/half", 1),
-    ];
-    let mut rig = Rig::new(gpu, None, &ops);
-    for (path, says) in
-        [("/alone", "connect the out output"), ("/wrong", "none of an analysis"), ("/half", "to `in`")]
-    {
-        rig.cook(path);
-        rig.cook(path);
-        let s = rig.cooker.status(rig.id(path)).unwrap();
-        let error = s.error.unwrap_or_default();
-        assert!(error.contains(says), "{path}: {error}");
-        assert!(!s.has_output, "{path}");
+    let mut rig = analysis_rig(
+        gpu,
+        &[create("/sink", "chan.null", &[]), connect("/a", "/sink", 0), create("/view", "tex.null", &[])],
+    );
+    let a = rig.id("/a");
+    let meters = |rig: &Rig| rig.cooker.output(Port { node: a, output: 2 }).cloned();
+    // Only the channels are read: no picture, not even the drawing state.
+    for _ in 0..3 {
+        rig.audio.feed("test", 48_000, 2, &[0.9; 1600]).unwrap();
+        rig.clock.advance(1);
+        rig.cook("/sink");
     }
+    let m = meters(&rig).expect("an output in the meters slot");
+    assert!(m.is_skipped() && m.get::<Tex>().is_none());
+    let s = rig.cooker.status(a).unwrap();
+    assert_eq!((s.error, s.warning), (None, None));
+
+    // Wired into a node that cooks: drawn, with nothing new from the audio.
+    rig.edit(&[Op::Connect {
+        from: "/a".parse().unwrap(),
+        output: 2,
+        to: "/view".parse().unwrap(),
+        input: 0,
+    }]);
+    rig.cook("/view");
+    let tex = rig.tex("/view").expect("the meters through tex.null");
+    assert_eq!(tex.size(), (320, 180));
+    let s = rig.cooker.status(a).unwrap();
+    assert_eq!((s.error, s.warning), (None, None));
+    assert!(!s.time_dependent, "the analysis follows the audio, not the clock");
+
+    // tex.null no longer cooks: skipped again.
+    rig.audio.feed("test", 48_000, 2, &[0.9; 1600]).unwrap();
+    rig.cook("/sink");
+    assert!(meters(&rig).unwrap().is_skipped());
+}
+
+#[test]
+fn analysis_meters_show_the_levels_on_transparent_black_and_start_over_on_reset() {
+    let Some(gpu) = gpu() else { return };
+    let mut rig = analysis_rig(gpu, &[]);
+    let tex = meters_shown(&mut rig, 0.9);
+    assert_eq!(tex.size(), (320, 180));
+    let px = rig.gpu.read(&tex).unwrap();
+    // The level bar: green, from the bottom of its well up to 90 %.
+    let [r, g, b, a] = px.get(19, 80).unwrap();
+    assert!(g > r && g > b && a > 0.9, "level green: {:?}", [r, g, b, a]);
+    assert!(peak_line_high(&px), "the peak sits on top of a loud level");
+    // Nothing behind the meters: the corners are transparent.
+    for (x, y) in [(0, 0), (319, 0), (0, 179), (319, 179)] {
+        assert_eq!(px.get(x, y).map(|p| p[3]), Some(0.0), "corner {x}, {y}");
+    }
+    let s = rig.cooker.status(rig.id("/a")).unwrap();
+    assert_eq!((s.error, s.warning), (None, None));
+
+    // Quiet now: the peak holds.
+    let tex = meters_shown(&mut rig, 0.0);
+    assert!(peak_line_high(&rig.gpu.read(&tex).unwrap()), "held");
+
+    // Reset: the memory is gone, the peak is where the level is.
+    assert_eq!(rig.cooker.reset(rig.id("/a")), penumbra_graph::ResetOutcome::Reset);
+    let tex = meters_shown(&mut rig, 0.0);
+    assert!(!peak_line_high(&rig.gpu.read(&tex).unwrap()), "reset forgets the peak");
+
+    // The size follows the params.
+    rig.edit(&[set("/a.width", Value::Int(200)), set("/a.height", Value::Int(100))]);
+    assert_eq!(meters_shown(&mut rig, 0.0).size(), (200, 100));
 }
 
 /// Waits until `node`'s recording has finished its file.

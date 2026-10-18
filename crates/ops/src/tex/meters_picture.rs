@@ -1,33 +1,32 @@
-//! `tex.audio_meters`: the viewer's meters of a `chan.audio_analysis` as a picture in the
+//! The `meters` output of `chan.audio_analysis`: the viewer's meters as a picture in the
 //! network, to project or composite. The look comes from [`crate::meters`], the same description
-//! the viewer paints with egui; here it is drawn by [`Canvas`] on the GPU.
+//! the viewer paints with egui; here it is drawn by [`Canvas`] on the GPU, on transparent black
+//! (a solid backdrop is a `tex.composite` over a `tex.constant` away).
 //!
 //! Text is set from glyphs cached in the canvas' atlas: each character is measured and
 //! rasterised once per size, off the cook thread, so a tempo or a percentage changing costs
 //! nothing but quads. Until a glyph is ready its character is left out (a frame or two after
-//! the node starts or the size changes).
+//! the picture is first drawn or the size changes).
 //!
 //! The picture is laid out as the viewer would draw it at about 640 x 360 points and enlarged
 //! to the output's size, so type and lines keep their proportions at any resolution.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use effectcraft_text::kurbo::{Affine, BezPath, Shape as _};
 use effectcraft_text::{ParagraphStyle, TextStyle};
-use penumbra_core::{Chans, Error, ParamSpec};
+use penumbra_core::{Chans, Curve, ParamSpec, Unit};
 use penumbra_gpu::canvas::ATLAS;
-use penumbra_gpu::{Canvas, Paint, TexRing};
-use penumbra_graph::{
-    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, Job, NodeDef, NodeDesc, NodeTypes, Operator,
-};
+use penumbra_gpu::{Canvas, Paint, Tex, TexRing};
+use penumbra_graph::{CookContext, CookError, Job, JobStatus};
 
-use super::{gpu, side};
+use super::{KEEP_SIZE, MAX_SIDE, gpu, side};
 use crate::meters::{Anchor, Color, Measure, Meters, Palette, Rect, Shape};
 
-/// The node kind.
-pub const AUDIO_METERS: &str = "tex.audio_meters";
-
+/// The params' section on the analysis node.
+const GROUP: &str = "meters";
 /// The layout's room at scale 1; larger pictures are this enlarged.
 const LAYOUT: [f32; 2] = [640.0, 360.0];
 /// The font of every text.
@@ -41,38 +40,25 @@ const MAX_GLYPH: u32 = 384;
 const MAX_BATCH: usize = 256;
 /// Most distinct characters kept (the meters use a few dozen).
 const MAX_CHARS: usize = 512;
-/// The analysis channels of which `in` must have at least one.
-const SHAPE: [&str; 6] = ["level", "low", "high", "beat", "bpm", "confidence"];
 
-pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(
-        NodeDesc::new(
-            AUDIO_METERS,
-            "The meters of a chan.audio_analysis as a picture: levels, tempo, beat, bar, hits, spectrum",
-        )
-        .time_dependent()
-        .stateful()
-        .param(super::width_param())
-        .param(super::height_param())
-        .param(super::keep_size())
-        .param(ParamSpec::color("background", [0.0, 0.0, 0.0, 0.0]).doc(
-            "Colour behind the meters, linear RGBA with straight alpha; the default (alpha 0) leaves only the meters, to lay over a picture",
-        ))
-        .input("in", DataKind::Chan)
-        .input("spectrum", DataKind::Chan)
-        .describe_input("in", "The out output of a chan.audio_analysis")
-        .describe_input("spectrum", "Its spectrum output; unconnected, the spectrum is left out")
-        .output("out", DataKind::Tex)
-        .describe_output(
-            "out",
-            "The meters as in the viewer: level and band bars with peaks, tempo, beat light, bar, hits, spectrum",
+/// The params that size the picture: `width`, `height` and `keep_size`, in a section of their
+/// own.
+pub(crate) fn params() -> [ParamSpec; 3] {
+    [
+        ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).group(GROUP).doc(
+            "Width of the meters output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on",
         ),
-        || Box::new(AudioMeters::default()) as Box<dyn Operator>,
-    ))
+        ParamSpec::int("height", 1080).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).group(GROUP).doc(
+            "Height of the meters output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on",
+        ),
+        ParamSpec::bool(KEEP_SIZE, false)
+            .group(GROUP)
+            .doc("res.optimize leaves the width and height of the meters output alone"),
+    ]
 }
 
-/// Compiles the canvas pipelines ahead of the first node.
-pub fn warm_up(gpu: &penumbra_gpu::Gpu) -> Result<(), Error> {
+/// Compiles the canvas pipelines ahead of the first picture.
+pub fn warm_up(gpu: &penumbra_gpu::Gpu) -> Result<(), penumbra_core::Error> {
     gpu.canvas_pipelines().map(|_| ())
 }
 
@@ -153,8 +139,10 @@ impl Shelf {
     }
 }
 
-#[derive(Default)]
-struct AudioMeters {
+/// What drawing the meters keeps between cooks: their memory (peaks, hits), the canvas with its
+/// glyph atlas, the textures drawn into. Made on the first draw, so an analysis whose meters
+/// nobody reads holds none of it.
+pub(crate) struct MetersPicture {
     meters: Meters,
     canvas: Canvas,
     ring: TexRing,
@@ -163,27 +151,42 @@ struct AudioMeters {
     shelf: Shelf,
     /// The glyph job in flight, if any.
     job: Option<Job<Batch>>,
+    /// The meters' clock (peaks falling, flashes fading): steady, like the viewer's, since the
+    /// analysis follows the audio rather than the show clock.
+    started: Instant,
 }
 
-impl Operator for AudioMeters {
-    fn sets_size(&self, _def: &NodeDef, _desc: &NodeDesc) -> bool {
-        true
+impl Default for MetersPicture {
+    fn default() -> Self {
+        Self {
+            meters: Meters::default(),
+            canvas: Canvas::default(),
+            ring: TexRing::default(),
+            font: Font::default(),
+            glyphs: HashMap::new(),
+            shelf: Shelf::default(),
+            job: None,
+            started: Instant::now(),
+        }
+    }
+}
+
+impl MetersPicture {
+    /// Whether the glyph job has finished (its text is worth drawing).
+    pub(crate) fn job_done(&self) -> bool {
+        self.job.as_ref().is_some_and(|j| matches!(j.status(), JobStatus::Done | JobStatus::Failed { .. }))
     }
 
-    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+    /// Draws the meters of `out` (the analysis' channels; `fresh` when just made rather than
+    /// drawn again) with `spectrum`, at the size of the `width` and `height` params.
+    pub(crate) fn draw(
+        &mut self,
+        cx: &CookContext<'_>,
+        out: &Chans,
+        spectrum: Option<&[f64]>,
+        fresh: bool,
+    ) -> Result<Tex, CookError> {
         let gpu = gpu(cx)?;
-        if cx.def().inputs.first().is_none_or(Option::is_none) {
-            return Err(CookError::failed("connect the out output of a chan.audio_analysis to `in`"));
-        }
-        let Some(out) = cx.input_as::<Chans>(0) else { return Err(CookError::Pending) };
-        if !out.is_empty() && !SHAPE.iter().any(|n| out.get(n).is_some()) {
-            return Err(CookError::failed(format!(
-                "`in` has none of an analysis' channels ({}): connect the out output of a chan.audio_analysis",
-                SHAPE.join(", ")
-            )));
-        }
-        let spectrum =
-            cx.input_as::<Chans>(1).and_then(|c| c.channels().first()).map(|c| c.samples.as_slice());
         if let Some(done) = self.job.as_ref().and_then(Job::take) {
             self.job = None;
             match done {
@@ -192,8 +195,7 @@ impl Operator for AudioMeters {
             }
         }
         let (w, h) = (side(cx, "width")?, side(cx, "height")?);
-        let now = cx.time().seconds();
-        let fresh = cx.inputs_changed() || cx.first_cook();
+        let now = self.started.elapsed().as_secs_f64();
         let reading = self.meters.update(Some(out), fresh, now);
         // As the viewer at about 640 x 360 points, enlarged.
         let k = (w as f32 / LAYOUT[0]).min(h as f32 / LAYOUT[1]).max(1.0);
@@ -215,18 +217,11 @@ impl Operator for AudioMeters {
         if !wanted.is_empty() && self.job.is_none() {
             self.request(cx, wanted);
         }
-        let background = match cx.param("background").and_then(penumbra_core::Value::components) {
-            // `as`: colour components to f32.
-            Some([r, g, b, a]) => [*r as f32, *g as f32, *b as f32, *a as f32],
-            _ => [0.0; 4],
-        };
-        let target = self.ring.next(gpu, w, h, AUDIO_METERS)?;
-        self.canvas.render(gpu, &target, background, &paints)?;
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))
+        let target = self.ring.next(gpu, w, h, "chan.audio_analysis meters")?;
+        self.canvas.render(gpu, &target, [0.0; 4], &paints)?;
+        Ok(target)
     }
-}
 
-impl AudioMeters {
     /// Adds the paints of one shape (in pixels); characters without a glyph yet go to `wanted`.
     fn paint(&self, shape: Shape, paints: &mut Vec<Paint>, wanted: &mut HashSet<(char, u32)>) {
         let rgba = |c: Color| c.map(|v| f32::from(v) / 255.0);

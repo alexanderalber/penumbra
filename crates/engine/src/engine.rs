@@ -83,7 +83,7 @@ use penumbra_core::{
 use penumbra_dmx::Hub as DmxHub;
 use penumbra_gpu::Gpu;
 use penumbra_graph::{
-    CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, PERSIST_STATE, ResetOutcome,
+    CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, PERSIST_STATE, Port, ResetOutcome,
     ThumbnailMode,
 };
 use penumbra_ops::freeview;
@@ -132,6 +132,9 @@ enum CookMsg {
 pub struct ViewRequest {
     /// Cooked every frame, like an output (the viewer).
     pub viewers: Vec<NodeId>,
+    /// The outputs the viewers show, so a lazy one among them is made
+    /// ([`penumbra_graph::NodeDesc::lazy_output`]).
+    pub shown: Vec<Port>,
     /// Cooked as low-priority sinks (the editor's visible nodes) in [`ThumbnailMode::Always`].
     pub thumbnails: Vec<NodeId>,
     /// Visible nodes whose thumbnail is paused: never cooked for, shown only while current.
@@ -390,7 +393,8 @@ impl CookState {
         wanted.extend(self.watched.iter().copied());
         let request = lock(&self.view.request).clone();
         wanted.extend(request.viewers.iter().copied().filter(|id| net.node(*id).is_some()));
-        self.last = self.cooker.cook(&net, self.clock.now(), &wanted, &request.thumbnails);
+        let shown: Vec<Port> = request.shown.iter().copied().filter(|p| net.node(p.node).is_some()).collect();
+        self.last = self.cooker.cook_showing(&net, self.clock.now(), &wanted, &request.thumbnails, &shown);
         let output = OutputFrame {
             pass: self.pass_base + self.last.pass,
             time: Some(self.clock.now()),

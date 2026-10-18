@@ -132,8 +132,12 @@ impl Viewer {
                 }
             }
             self.audio = target.and_then(|id| AudioNode::of(net, id));
-            let meters = self.audio.is_some() && self.audio_view == AudioView::Meters;
-            if self.audio.is_some() {
+            let data = outputs.and_then(|o| o.get(self.output as usize));
+            // The meters view stands for the analysis' channel outputs; its `meters` output is
+            // a texture and shows as one.
+            let on_chan = data.is_none_or(|d| d.kind() == DataKind::Chan);
+            let meters = self.audio.is_some() && self.audio_view == AudioView::Meters && on_chan;
+            if self.audio.is_some() && on_chan {
                 let short = ui.available_width() < 150.0;
                 let text = match (self.audio_view, short) {
                     (AudioView::Meters, false) => "view: meters",
@@ -151,8 +155,7 @@ impl Viewer {
                 }
             }
             let count = outputs.map_or(0, Vec::len);
-            // The meters show both outputs at once.
-            if count > 1 && !meters && !scene.is_some_and(|sc| self.nav.mode(sc) == Mode::Free) {
+            if count > 1 && !scene.is_some_and(|sc| self.nav.mode(sc) == Mode::Free) {
                 for o in 0..count {
                     let name = names.get(o).cloned().unwrap_or_else(|| format!("out {o}"));
                     let o = o as u32;
@@ -163,7 +166,6 @@ impl Viewer {
                     }
                 }
             }
-            let data = outputs.and_then(|o| o.get(self.output as usize));
             if data.is_some_and(|d| d.kind() == DataKind::Chan) && !meters {
                 // Short words where the header is about to run out of room (a narrow column).
                 let short = ui.available_width() < 150.0;
@@ -342,12 +344,26 @@ impl Viewer {
                     // line below or beside a picture ending inside a pixel.
                     let fit = Rect::from_center_size(area.center(), vec2(w, w / aspect))
                         .round_to_pixels(painter.pixels_per_point());
-                    theme::checker(&painter, fit, 1.5);
+                    if self.audio.is_some_and(|a| a.id == id) {
+                        // The analysis' meters are made to be seen on black, as in the meters
+                        // view; the texture itself stays transparent to lay over a picture.
+                        painter.rect_filled(fit, CornerRadius::ZERO, Color32::BLACK);
+                    } else {
+                        theme::checker(&painter, fit, 1.5);
+                    }
                     painter.image(
                         tid,
                         fit,
                         Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
                         Color32::WHITE,
+                    );
+                } else if data.is_skipped() {
+                    painter.text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "not drawn yet",
+                        egui::FontId::proportional(14.0),
+                        theme::TEXT_WEAK,
                     );
                 }
             }

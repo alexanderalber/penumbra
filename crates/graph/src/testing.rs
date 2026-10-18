@@ -177,6 +177,24 @@ pub fn test_types() -> NodeTypes {
         },
     ))
     .unwrap();
+    // `out` is `value`; the lazy `extra` is `value + 100` while read, skipped otherwise.
+    simple(
+        &mut t,
+        NodeDesc::new("test.lazy", "A number, and a lazy second one")
+            .param(value())
+            .output("out", DataKind::Chan)
+            .output("extra", DataKind::Chan)
+            .lazy_output("extra"),
+        |cx| {
+            let v = cx.float("value")?;
+            let extra = if cx.output_wanted(1) {
+                Data::new(DataKind::Chan, chans(v + 100.0))
+            } else {
+                Data::skipped(DataKind::Chan)
+            };
+            Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, chans(v)), extra]))
+        },
+    );
     t.register(FnNodeType::new(
         NodeDesc::new("test.counter", "Counts its cooks (time-dependent); keeps the count as state")
             .time_dependent()

@@ -26,13 +26,14 @@ WIDTH = 1280
 JPG_QUALITY = 90
 
 # name, project folder (None: the demo the app opens without arguments, or the network the
-# setup below builds), node whose picture is saved, seconds of show time before the shots,
-# whether the window is kept too (only worth it where the network fits the screen readably)
+# setup below builds), node whose picture is saved (`path` or `path:output`), seconds of show
+# time before the shots, whether the window is kept too (only worth it where the network fits
+# the screen readably). Pictures with transparency are laid on black.
 SHOWCASE = [
     ("demo", None, "/show", 45, False),
     ("curl-noise", ROOT / "examples" / "curl-noise", "/out", 45, True),
     ("projection-room", ROOT / "examples" / "projection-room", "/view", 10, False),
-    ("audio-meters", None, "/meters", 9, False),
+    ("audio-meters", None, "/analysis:meters", 9, False),
 ]
 
 # A Python script node playing a 124 BPM pattern (kick on every beat, louder on the bar's first,
@@ -98,17 +99,16 @@ def setup(name: str, work: Path) -> list[dict]:
         call("node.create", path="/synth", kind="script.python", params={"code": AUDIO_SYNTH, "cook": "every frame"}),
         call("node.create", path="/analysis", kind="chan.audio_analysis"),
         call("node.connect", **{"from": "/synth", "to": "/analysis"}),
-        call("node.create", path="/meters", kind="tex.audio_meters", params={"background": [0.0, 0.0, 0.0, 1.0]}),
-        call("node.connect", **{"from": "/analysis", "output": "out", "to": "/meters", "input": "in"}),
-        call("node.connect", **{"from": "/analysis", "output": "spectrum", "to": "/meters", "input": "spectrum"}),
     ]
 
 
 def script_lines(output: str, wait: float, picture: Path, window: Path, before: list[dict]) -> str:
+    path, _, port = output.partition(":")
+    which = {"output": port} if port else {}
     steps = before + [
-        {"method": "ui.view", "params": {"path": output}},
+        {"method": "ui.view", "params": {"path": path, **which}},
         {"wait": wait},
-        {"method": "node.snapshot", "params": {"path": output, "file": picture.as_posix()}},
+        {"method": "node.snapshot", "params": {"path": path, "file": picture.as_posix(), **which}},
         {"method": "ui.screenshot", "params": {"file": window.as_posix()}},
     ]
     return "\n".join(json.dumps(s) for s in steps) + "\n"
@@ -116,7 +116,8 @@ def script_lines(output: str, wait: float, picture: Path, window: Path, before: 
 
 def to_jpg(png: Path, jpg: Path) -> None:
     with Image.open(png) as image:
-        image = image.convert("RGB")
+        image = image.convert("RGBA")
+        image = Image.alpha_composite(Image.new("RGBA", image.size, (0, 0, 0, 255)), image).convert("RGB")
         height = round(image.height * WIDTH / image.width)
         image.resize((WIDTH, height), Image.Resampling.LANCZOS).save(jpg, quality=JPG_QUALITY)
 

@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 use egui::{Color32, Key, Modifiers, Pos2, Rect, RichText, Sense, Ui, Vec2, vec2};
 use penumbra_core::NodeId;
 use penumbra_engine::{Engine, ViewFrame, ViewRequest};
+use penumbra_graph::Port;
 use penumbra_project::{Actor, Session, SessionStatus};
 use serde_json::json;
 
@@ -975,6 +976,11 @@ impl PenumbraApp {
         let main = self.viewer.target(&net, self.selected());
         let mut viewers: Vec<NodeId> = main.into_iter().collect();
         viewers.extend(self.viewer.window.filter(|id| !viewers.contains(id)));
+        let shown: Vec<Port> = main
+            .map(|node| Port { node, output: self.viewer.output })
+            .into_iter()
+            .chain(self.viewer.window.map(|node| Port { node, output: self.window_viewer.output }))
+            .collect();
         let mut free = Vec::new();
         let types = session.types();
         if self.layout.sections.viewer
@@ -989,6 +995,7 @@ impl PenumbraApp {
         }
         self.engine.set_view(ViewRequest {
             viewers,
+            shown,
             thumbnails,
             passive,
             detail: self.selected(),
