@@ -64,6 +64,13 @@ way.
 - **Start fresh** makes the nodes forget what they hold, here and in the folder (locked nodes
   keep their outputs). Starting the app with `--fresh` does the same.
 
+To start single nodes over, select them and press **R** over the node editor (with nothing
+selected, R resets every stateful node of the level shown), or use the **reset** button at the
+top of a stateful node's params. A component resets the stateful nodes inside it. Locked nodes
+keep their outputs, and the state folder is not touched. From the control channel:
+`node.reset {paths: [...]}`. A `tex.feedback`'s `reset` param stays for holding a loop at its
+initial input, for example from a binding.
+
 ## OSC
 
 OSC input comes in through `chan.oscin` nodes, output goes out through `chan.oscout`; this

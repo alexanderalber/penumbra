@@ -78,7 +78,8 @@ use penumbra_core::{
 };
 use penumbra_gpu::Gpu;
 use penumbra_graph::{
-    CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, PERSIST_STATE, ThumbnailMode,
+    CookReport, Cooker, Data, JobPool, Network, NodeStatus, NodeTypes, PERSIST_STATE, ResetOutcome,
+    ThumbnailMode,
 };
 use penumbra_ops::freeview;
 use penumbra_ops::mapping::Mapping;
@@ -557,6 +558,44 @@ pub struct Engine {
     shut: AtomicBool,
 }
 
+/// What [`Engine::reset_nodes`] did, by node path.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct ResetReport {
+    /// Started over.
+    pub reset: Vec<String>,
+    /// Locked: they keep their held outputs.
+    pub locked: Vec<String>,
+    /// Asked for, but they keep no state.
+    pub stateless: Vec<String>,
+}
+
+impl ResetReport {
+    /// A short line for the status bar.
+    pub fn message(&self) -> String {
+        fn names(paths: &[String]) -> String {
+            const SHOWN: usize = 4;
+            let mut text = paths.iter().take(SHOWN).cloned().collect::<Vec<_>>().join(", ");
+            if paths.len() > SHOWN {
+                text.push_str(&format!(" and {} more", paths.len() - SHOWN));
+            }
+            text
+        }
+        let mut parts = Vec::new();
+        if self.reset.is_empty() {
+            parts.push("nothing to reset".to_string());
+        } else {
+            parts.push(format!("reset {}", names(&self.reset)));
+        }
+        if !self.locked.is_empty() {
+            parts.push(format!("locked, kept: {}", names(&self.locked)));
+        }
+        if !self.stateless.is_empty() && self.reset.is_empty() {
+            parts.push(format!("no state: {}", names(&self.stateless)));
+        }
+        parts.join("; ")
+    }
+}
+
 impl Engine {
     /// Starts the cook and project threads for `session`.
     pub fn start(session: Arc<Session>) -> Result<Arc<Engine>, Error> {
@@ -685,12 +724,13 @@ impl Engine {
         Ok(())
     }
 
-    /// Saves the state if due, stops the project's threads and writes its unsaved changes.
-    fn stop_threads(&self) {
+    /// Saves the state if due (and `save_state`), stops the project's threads and writes its
+    /// unsaved changes.
+    fn stop_threads(&self, save_state: bool) {
         let session = self.session();
         let snapshot = session.clone();
-        let due =
-            self.on_cook(move |st| st.state.due(&st.cooker, &snapshot.doc().snapshot())).unwrap_or(false);
+        let due = save_state
+            && self.on_cook(move |st| st.state.due(&st.cooker, &snapshot.doc().snapshot())).unwrap_or(false);
         if due
             && !self.state.holding()
             && let Err(e) = self.save_state(Duration::from_secs(10))
@@ -716,12 +756,35 @@ impl Engine {
     /// stay. The old project's state is saved and its unsaved changes written first, as at
     /// closing. That can take seconds, so the UI calls this from a thread of its own.
     pub fn open_project(self: &Arc<Self>, session: Arc<Session>) -> Result<(), Error> {
+        self.replace_project(true, move || Ok(session))
+    }
+
+    /// [`Engine::open_project`] with the new session made by `make` once the old project is
+    /// closed, so `make` may rewrite the old project's directory (an example opened afresh
+    /// while it is open). `save_state` false skips the old project's closing state snapshot,
+    /// for a directory about to be replaced. When `make` fails, the old project opens again.
+    pub fn replace_project<F>(self: &Arc<Self>, save_state: bool, make: F) -> Result<(), Error>
+    where
+        F: FnOnce() -> Result<Arc<Session>, Error>,
+    {
         let _switch = lock(&self.switching);
         if self.shut.load(Ordering::Acquire) {
             return Err(Error::new("the app is closing"));
         }
         let pass_base = self.view().pass.max(self.output().pass);
-        self.stop_threads();
+        self.stop_threads(save_state);
+        let session = match make() {
+            Ok(session) => session,
+            Err(e) => {
+                let old = self.session();
+                if let Err(again) = self.launch(&old, pass_base) {
+                    log::error!("cannot start the old project again: {again}");
+                } else if self.gpu().is_some() {
+                    self.restore_in_background();
+                }
+                return Err(e);
+            }
+        };
         *lock(&self.view.request) = ViewRequest::default();
         *lock(&self.view.frame) = Arc::new(ViewFrame { pass: pass_base, ..ViewFrame::default() });
         *lock(&self.view.output) = Arc::new(OutputFrame { pass: pass_base, ..OutputFrame::default() });
@@ -1027,6 +1090,59 @@ impl Engine {
         Ok(format!("started fresh: {nodes} nodes forgot what they held; locked nodes keep their outputs"))
     }
 
+    /// Starts the given nodes over (`node.reset`, the reset button, R in the editor): what a
+    /// feedback loop, cache, time machine, tracker or similar node holds is dropped, and it
+    /// cooks as if new. A component stands for the stateful nodes inside it, at any depth.
+    /// Locked nodes keep their held outputs. The state files are left alone; the next snapshot
+    /// writes what is held then.
+    pub fn reset_nodes(&self, ids: &[NodeId]) -> Result<ResetReport, Error> {
+        let net = self.session().doc().snapshot();
+        let types = self.types.clone();
+        let stateful =
+            |id: NodeId| net.node(id).and_then(|n| types.desc(&n.kind)).is_some_and(|d| d.stateful);
+        let container =
+            |id: NodeId| net.node(id).and_then(|n| types.desc(&n.kind)).is_some_and(|d| d.container);
+        // (node, asked for by name): nodes found inside a component count only when stateful.
+        let mut targets: Vec<(NodeId, bool)> = Vec::new();
+        let mut stack: Vec<NodeId> = Vec::new();
+        for &id in ids {
+            if net.node(id).is_none() {
+                return Err(Error::new(format!("no node with id {id}")));
+            }
+            if container(id) {
+                stack.push(id);
+            } else {
+                targets.push((id, true));
+            }
+        }
+        while let Some(parent) = stack.pop() {
+            for child in net.children(Some(parent)) {
+                if container(child.id) {
+                    stack.push(child.id);
+                } else if stateful(child.id) {
+                    targets.push((child.id, false));
+                }
+            }
+        }
+        targets.sort_unstable();
+        targets.dedup_by_key(|t| t.0);
+        let ids: Vec<NodeId> = targets.iter().map(|t| t.0).collect();
+        let outcomes =
+            self.on_cook(move |st| ids.iter().map(|&id| st.cooker.reset(id)).collect::<Vec<_>>())?;
+        let mut report = ResetReport::default();
+        for ((id, asked), outcome) in targets.into_iter().zip(outcomes) {
+            let path = net.path_of(id).map(|p| p.to_string()).unwrap_or_default();
+            match outcome {
+                ResetOutcome::Reset => report.reset.push(path),
+                ResetOutcome::NotCooked if stateful(id) => report.reset.push(path),
+                ResetOutcome::Locked => report.locked.push(path),
+                ResetOutcome::Stateless | ResetOutcome::NotCooked if asked => report.stateless.push(path),
+                _ => {}
+            }
+        }
+        Ok(report)
+    }
+
     pub fn gpu(&self) -> Option<&Gpu> {
         self.gpu.get()
     }
@@ -1119,7 +1235,7 @@ impl Engine {
             return;
         }
         let _switch = lock(&self.switching);
-        self.stop_threads();
+        self.stop_threads(true);
         self.osc.hub().shutdown();
         self.audio.shutdown();
         self.camera.shutdown();

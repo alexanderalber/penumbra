@@ -22,6 +22,7 @@ fn desc() -> NodeDesc {
         KIND,
         "Calms a noisy picture (a camera in the dark): averages over frames where it is still",
     )
+    .stateful()
     .param(
         ParamSpec::float("frames", 8.0)
             .clamp(1.0, 256.0)

@@ -123,6 +123,8 @@ pub struct PenumbraApp {
     shown: (u64, Arc<Session>),
     /// When the 3D mouse was last applied, for the time its deflection was held.
     flown: Instant,
+    /// The open project is the demo or an example, made afresh on every open.
+    starts_fresh: bool,
 }
 
 /// Resizing the window once more so egui-wgpu reconfigures a surface whose last configure
@@ -205,6 +207,7 @@ impl PenumbraApp {
             projects: crate::projects::ProjectMenu::default(),
             shown: (engine.generation(), engine.session()),
             flown: Instant::now(),
+            starts_fresh: penumbra_engine::projects::starts_fresh(engine.session().dir()),
             engine,
         };
         app.apply_thumbnails();
@@ -217,7 +220,12 @@ impl PenumbraApp {
     fn project_switched(&mut self, now: Instant) {
         let (generation, old) = (self.engine.generation(), self.engine.session());
         let (_, previous) = std::mem::replace(&mut self.shown, (generation, old.clone()));
-        self.layout.save_if_due(&previous.doc().snapshot(), now, true);
+        // The same folder again means it was made afresh (the demo or an example opened anew):
+        // the old layout must not be written over the fresh one.
+        if !penumbra_engine::projects::same_dir(previous.dir(), old.dir()) {
+            self.layout.save_if_due(&previous.doc().snapshot(), now, true);
+        }
+        self.starts_fresh = penumbra_engine::projects::starts_fresh(old.dir());
         self.layout = Layout::load(Some(old.dir()));
         self.editor = Editor::default();
         self.params = ParamPanel::default();
@@ -353,6 +361,9 @@ impl PenumbraApp {
                     if let Some(m) = message {
                         self.message = Some((m, now));
                     }
+                }),
+                Action::Reset(ids) => self.engine.reset_nodes(&ids).map(|report| {
+                    self.message = Some((report.message(), now));
                 }),
                 Action::LearnBackground { node, delay } => {
                     let wait = Duration::from_secs_f64(delay);
@@ -521,7 +532,9 @@ impl PenumbraApp {
     ) {
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                if let Some(m) = self.projects.show(ui, &self.engine, &mut self.auto) {
+                let (layout, session) = (&mut self.layout, &self.shown.1);
+                let save_layout = || layout.save_if_due(&session.doc().snapshot(), now, true);
+                if let Some(m) = self.projects.show(ui, &self.engine, &mut self.auto, save_layout) {
                     self.message = Some((m, now));
                 }
                 let playing = view.playing;
@@ -554,6 +567,12 @@ impl PenumbraApp {
                 ui.label(
                     RichText::new(if status.unsaved { "unsaved" } else { "saved" }).color(theme::TEXT_WEAK),
                 );
+                if self.starts_fresh {
+                    ui.label(RichText::new("until reopened").color(theme::TEXT_WEAK)).on_hover_text(
+                        "The demo and the examples start fresh on every open. To keep your changes, \
+                         use Save copy as in the project menu.",
+                    );
+                }
                 if let Some(notice) = self.engine.notice() {
                     ui.separator();
                     ui.colored_label(theme::WARNING, notice);

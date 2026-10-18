@@ -1,6 +1,6 @@
 //! Opening and creating projects while the app runs (`project.open`, `project.new`,
-//! `project.demo`, `project.examples`, `project.example`, `project.recent`), the demo project,
-//! the shipped examples and the list of recent projects.
+//! `project.save_as`, `project.demo`, `project.examples`, `project.example`, `project.recent`),
+//! the demo project, the shipped examples and the list of recent projects.
 //!
 //! A project is a directory with a `project.ron`. Opening one switches the running engine over
 //! ([`Engine::open_project`]); the window, the GPU and the outputs stay.
@@ -13,8 +13,10 @@
 //!
 //! The examples ship in `examples/` beside the executable (in a checkout: at the repository
 //! root, a few levels above it). penumbra saves into the project it has open, so an example is
-//! not opened in place: the first time it is copied into `examples` in [`data_dir`], and that
-//! copy opens from then on, keeping the user's changes. The shipped folder stays as it is.
+//! not opened in place but copied into `examples` in [`data_dir`]. That copy is made afresh on
+//! every open, as is the demo: whatever was changed, saved node state and the editor layout
+//! included, goes, so a broken experiment never outlives a reopen. Within a run both save as
+//! usual. "Save copy as" (`project.save_as`) turns either into a project of the user's own.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -148,30 +150,39 @@ pub fn list_examples(source: &Path) -> Vec<String> {
     names
 }
 
-/// The copy of example `name` from `source` in `copies`, made unless there is one (with a
-/// project file) already.
-pub fn copy_example(source: &Path, name: &str, copies: &Path) -> Result<PathBuf, Error> {
+/// Where the copy of example `name` from `source` goes in `copies`; an error unless `source`
+/// has that example (so `name` cannot reach outside `copies`).
+fn example_copy(source: &Path, name: &str, copies: &Path) -> Result<PathBuf, Error> {
     if !list_examples(source).iter().any(|n| n == name) {
         return Err(Error::new(format!("there is no example named `{name}` in {}", source.display())));
     }
-    let to = copies.join(name);
-    if !to.join(FILE_NAME).is_file() {
-        copy_tree(&source.join(name), &to)?;
-    }
+    Ok(copies.join(name))
+}
+
+/// Makes the copy of example `name` from `source` in `copies` afresh: whatever the folder held
+/// (changes, saved state, layout) goes first.
+pub fn copy_example(source: &Path, name: &str, copies: &Path) -> Result<PathBuf, Error> {
+    let to = example_copy(source, name, copies)?;
+    clear_dir(&to)?;
+    copy_tree(&source.join(name), &to, &[])?;
     Ok(to)
 }
 
-/// Copies the files and directories below `from` into `to`; links are skipped.
-fn copy_tree(from: &Path, to: &Path) -> Result<(), Error> {
+/// Copies the files and directories below `from` into `to`, except the entries of `from`
+/// itself named in `skip`; links are skipped.
+fn copy_tree(from: &Path, to: &Path, skip: &[&str]) -> Result<(), Error> {
     let fail = |p: &Path, e: std::io::Error| Error::new(format!("{}: {e}", p.display()));
     std::fs::create_dir_all(to).map_err(|e| fail(to, e))?;
     for entry in std::fs::read_dir(from).map_err(|e| fail(from, e))? {
         let entry = entry.map_err(|e| fail(from, e))?;
+        if entry.file_name().to_str().is_some_and(|n| skip.contains(&n)) {
+            continue;
+        }
         let path = entry.path();
         let kind = entry.file_type().map_err(|e| fail(&path, e))?;
         let target = to.join(entry.file_name());
         if kind.is_dir() {
-            copy_tree(&path, &target)?;
+            copy_tree(&path, &target, &[])?;
         } else if kind.is_file() {
             std::fs::copy(&path, &target).map_err(|e| fail(&path, e))?;
         }
@@ -179,12 +190,47 @@ fn copy_tree(from: &Path, to: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// Whether the menu lists `dir` anyway: the demo or a copy of an example.
-fn listed_elsewhere(dir: &Path) -> bool {
-    if demo_dir().is_ok_and(|demo| same_dir(&demo, dir)) {
-        return true;
+/// Deletes everything inside `dir` (missing is fine). The directory itself stays, since a
+/// file watcher may still hold it open.
+fn clear_dir(dir: &Path) -> Result<(), Error> {
+    let fail = |p: &Path, e: std::io::Error| Error::new(format!("cannot delete {}: {e}", p.display()));
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(fail(dir, e)),
+    };
+    for entry in entries {
+        let entry = entry.map_err(|e| fail(dir, e))?;
+        let path = entry.path();
+        let is_dir = entry.file_type().map_err(|e| fail(&path, e))?.is_dir();
+        if is_dir {
+            std::fs::remove_dir_all(&path).map_err(|e| fail(&path, e))?;
+        } else {
+            std::fs::remove_file(&path).map_err(|e| fail(&path, e))?;
+        }
     }
-    examples_copy_dir().is_ok_and(|copies| dir.parent().is_some_and(|parent| same_dir(&copies, parent)))
+    Ok(())
+}
+
+/// Whether `dir` is the demo project.
+pub fn is_demo(dir: &Path) -> bool {
+    demo_dir().is_ok_and(|demo| same_dir(&demo, dir))
+}
+
+/// The example whose copy `dir` is, by name.
+pub fn example_of(dir: &Path) -> Option<String> {
+    let copies = examples_copy_dir().ok()?;
+    let dir = absolute(dir);
+    if !same_dir(&copies, dir.parent()?) {
+        return None;
+    }
+    dir.file_name()?.to_str().map(str::to_string)
+}
+
+/// Whether `dir` is made afresh on every open (the demo or a copy of an example), so changes
+/// there do not outlive a reopen. The menu lists these on their own, not among the recent ones.
+pub fn starts_fresh(dir: &Path) -> bool {
+    is_demo(dir) || example_of(dir).is_some()
 }
 
 /// The list of recent projects, `recent.json` in [`data_dir`].
@@ -203,9 +249,40 @@ pub fn prepare_demo(dir: &Path, types: &NodeTypes) -> Result<Content, Error> {
     penumbra_project::parse(DEMO, types).map_err(|e| e.context("demo"))
 }
 
+/// Makes the demo project in `dir` afresh: whatever the folder held goes, the shader is written
+/// again; returns the content its project file is to be made from.
+pub fn fresh_demo(dir: &Path, types: &NodeTypes) -> Result<Content, Error> {
+    clear_dir(dir)?;
+    prepare_demo(dir, types)
+}
+
+/// Makes `dir` afresh if it is the demo or an example's copy, for a start that opens it again;
+/// returns the template for a missing project file. Other projects are left alone.
+pub fn refresh(dir: &Path, types: &NodeTypes) -> Result<Content, Error> {
+    if is_demo(dir) {
+        return fresh_demo(dir, types);
+    }
+    if let Some(name) = example_of(dir) {
+        let source = examples_source().ok_or_else(|| Error::new("no examples folder beside penumbra"))?;
+        copy_example(&source, &name, &examples_copy_dir()?)?;
+    }
+    Ok(Content::default())
+}
+
 /// `dir` made absolute (not resolved through links), for comparing and listing.
 fn absolute(dir: &Path) -> PathBuf {
     std::path::absolute(dir).unwrap_or_else(|_| dir.to_path_buf())
+}
+
+/// `dir` as compared: absolute, lower case on Windows.
+fn comparable(dir: &Path) -> PathBuf {
+    let dir = absolute(dir);
+    if cfg!(windows) { PathBuf::from(dir.to_string_lossy().to_lowercase()) } else { dir }
+}
+
+/// Whether `inner` is `outer` or lies below it.
+fn within(inner: &Path, outer: &Path) -> bool {
+    comparable(inner).starts_with(comparable(outer))
 }
 
 /// Whether two project directories are the same (case-insensitive on Windows).
@@ -256,7 +333,7 @@ pub fn remember(file: &Path, dir: &Path) -> Result<(), Error> {
     let dir = absolute(dir);
     let mut recent = read_file(file);
     recent.last = Some(dir.clone());
-    if !listed_elsewhere(&dir) {
+    if !starts_fresh(&dir) {
         recent.projects.retain(|d| !same_dir(d, &dir) && d.join(FILE_NAME).is_file());
         recent.projects.insert(0, dir);
         recent.projects.truncate(RECENT_MAX);
@@ -315,19 +392,74 @@ pub fn create(engine: &Arc<Engine>, dir: &Path) -> Result<Opened, Error> {
     switch(engine, dir, &Content::default())
 }
 
-/// Opens the demo project, made again where it is missing.
-pub fn open_demo(engine: &Arc<Engine>) -> Result<Opened, Error> {
-    let dir = demo_dir()?;
-    let template = prepare_demo(&dir, engine.types())?;
-    switch(engine, &dir, &template)
+/// Switches to `dir` after `fill` made it afresh (and returned the template for its project
+/// file). That happens once the open project is closed, so the open project may be `dir`
+/// itself; its closing state snapshot is skipped then, since the folder is replaced anyway.
+pub(crate) fn open_fresh<F>(engine: &Arc<Engine>, dir: &Path, fill: F) -> Result<Opened, Error>
+where
+    F: FnOnce(&Path) -> Result<Content, Error>,
+{
+    let target = absolute(dir);
+    let shown = target.display().to_string();
+    let reopen = same_dir(engine.session().dir(), &target);
+    let types = engine.types().clone();
+    engine.replace_project(!reopen, move || {
+        let template = fill(&target)?;
+        Ok(Arc::new(Session::open(&target, types, &template)?))
+    })?;
+    log::info!("project (fresh): {shown}");
+    Ok(Opened { dir: shown, switched: true })
 }
 
-/// Opens the shipped example `name`, from its copy in the user's data directory (made on the
-/// first open).
+/// Opens the demo project, made afresh (also when it is open: then it starts over).
+pub fn open_demo(engine: &Arc<Engine>) -> Result<Opened, Error> {
+    let dir = demo_dir()?;
+    let types = engine.types().clone();
+    open_fresh(engine, &dir, move |d| fresh_demo(d, &types))
+}
+
+/// Opens the shipped example `name` from a fresh copy in the user's data directory (also when
+/// it is open: then it starts over).
 pub fn open_example(engine: &Arc<Engine>, name: &str) -> Result<Opened, Error> {
     let source = examples_source().ok_or_else(|| Error::new("no examples folder beside penumbra"))?;
-    let dir = copy_example(&source, name, &examples_copy_dir()?)?;
-    open(engine, &dir)
+    let copies = examples_copy_dir()?;
+    let dir = example_copy(&source, name, &copies)?;
+    open_fresh(engine, &dir, |_| copy_example(&source, name, &copies).map(|_| Content::default()))
+}
+
+/// Writes the open project into `dir` (new, or an empty folder) and switches to the copy, a
+/// project like any other. Everything in the project folder goes along (shaders, scripts,
+/// media, the layout) except the state folder, of which only the latest snapshot is taken, so
+/// feedback loops and locked nodes go on where they were.
+pub fn save_copy(engine: &Arc<Engine>, dir: &Path) -> Result<Opened, Error> {
+    let target = absolute(dir);
+    let current = absolute(engine.session().dir());
+    if target.is_file() {
+        return Err(Error::new(format!("{} is a file, not a folder", target.display())));
+    }
+    let occupied = std::fs::read_dir(&target).map(|mut d| d.next().is_some()).unwrap_or(false);
+    if occupied {
+        return Err(Error::new(format!("{} is not empty; pick a new or empty folder", target.display())));
+    }
+    if within(&target, &current) {
+        return Err(Error::new("the copy cannot go inside the project itself"));
+    }
+    let shown = target.display().to_string();
+    let types = engine.types().clone();
+    engine.replace_project(true, move || {
+        // The old project is closed by now: its changes and its state are on disk.
+        copy_tree(&current, &target, &[crate::state::DIR])?;
+        let latest = crate::state::dir_of(&current).join(crate::state::LATEST);
+        if latest.is_file() {
+            let to = crate::state::dir_of(&target);
+            std::fs::create_dir_all(&to).map_err(|e| Error::new(format!("{}: {e}", to.display())))?;
+            std::fs::copy(&latest, to.join(crate::state::LATEST))
+                .map_err(|e| Error::new(format!("{}: {e}", latest.display())))?;
+        }
+        Ok(Arc::new(Session::open(&target, types, &Content::default())?))
+    })?;
+    log::info!("project (copy): {shown}");
+    Ok(Opened { dir: shown, switched: true })
 }
 
 #[derive(Deserialize)]
@@ -347,8 +479,8 @@ fn reply(r: Result<Opened, Error>) -> Result<Json, CommandError> {
     Ok(json!({"dir": opened.dir, "switched": opened.switched}))
 }
 
-/// Registers `project.open`, `project.new`, `project.demo`, `project.examples`,
-/// `project.example` and `project.recent`.
+/// Registers `project.open`, `project.new`, `project.save_as`, `project.demo`,
+/// `project.examples`, `project.example` and `project.recent`.
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
@@ -364,8 +496,14 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     ));
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
+        "project.save_as",
+        "Copy the open project (its files and the latest state snapshot) into dir (new or empty) and open the copy, a project of its own; {dir}",
+        move |p| reply(save_copy(&e, &args::<DirArg>(p)?.dir)),
+    ));
+    let e = Arc::clone(engine);
+    registry.register(FnCommand::new(
         "project.demo",
-        "Open the demo project (made again if missing)",
+        "Open the demo project, made afresh: changes, state and layout from before are gone",
         move |p| {
             args::<crate::commands::Empty>(p)?;
             reply(open_demo(&e))
@@ -384,8 +522,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "project.example",
-        "Open a shipped example: copied into the user's data folder on the first open, so the \
-         shipped one stays as it is; later opens keep the changes; {name}",
+        "Open a shipped example from a fresh copy in the user's data folder (the shipped one stays \
+         as it is); changes last until it is opened again, project.save_as keeps them; {name}",
         move |p| reply(open_example(&e, &args::<NameArg>(p)?.name)),
     ));
     let e = Arc::clone(engine);
@@ -464,7 +602,7 @@ mod tests {
     }
 
     #[test]
-    fn an_example_is_copied_once_and_then_kept() {
+    fn an_example_is_copied_afresh_every_time() {
         let root = temp("examples");
         let source = root.join("examples");
         for name in ["b", "a"] {
@@ -479,10 +617,16 @@ mod tests {
         let copies = root.join("copies");
         let dir = copy_example(&source, "a", &copies).unwrap();
         assert!(dir.join("sub").join("x.wgsl").is_file());
-        // A second open keeps what the user changed.
+        // A second open drops what the user changed, saved state and layout included.
         std::fs::write(dir.join(FILE_NAME), "(version: 1, nodes: {})").unwrap();
+        std::fs::create_dir_all(dir.join("state")).unwrap();
+        std::fs::write(dir.join("state").join("latest.pnstate"), "x").unwrap();
+        std::fs::write(dir.join("layout.ron"), "()").unwrap();
         copy_example(&source, "a", &copies).unwrap();
-        assert_eq!(std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(), "(version: 1, nodes: {})");
+        assert_eq!(std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(), "(version: 1)");
+        assert!(!dir.join("state").exists());
+        assert!(!dir.join("layout.ron").exists());
+        assert!(dir.join("sub").join("x.wgsl").is_file());
         for bad in ["c", "not-a-project", "..", "../examples/a", ""] {
             assert!(copy_example(&source, bad, &copies).is_err(), "{bad}");
         }

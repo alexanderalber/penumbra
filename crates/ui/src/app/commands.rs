@@ -110,6 +110,7 @@ impl PenumbraApp {
             "editing": session.status(now).edit,
             "thumbnails_paused": self.editor.paused.iter().filter_map(|id| path(*id)).collect::<Vec<_>>(),
             "level": editor::level_path(&net, self.editor.level),
+            "message": self.message.as_ref().map(|(m, _)| m.clone()),
         });
         if let Some(id) = selected
             && let Some(o) = state.as_object_mut()

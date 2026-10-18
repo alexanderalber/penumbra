@@ -14,6 +14,8 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 Finds blobs (people, hands, spots of light) and follows them with ids that stay
 
+Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+
 Inputs:
 
 - `in` (tex)
@@ -56,6 +58,8 @@ Outputs: `out` (tex).
 ### tex.cache
 
 The last frames of the input; outputs one of them, some frames back
+
+Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
 
 Inputs:
 
@@ -159,6 +163,8 @@ Outputs: `out` (tex).
 
 Calms a noisy picture (a camera in the dark): averages over frames where it is still
 
+Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+
 Inputs:
 
 - `in` (tex)
@@ -214,7 +220,7 @@ Outputs: `out` (tex).
 
 A loop: wire the end of the chain back into `previous`; `initial` until that has a frame
 
-Follows the show clock: cooks again whenever time moves.
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
 
 Inputs:
 
@@ -502,6 +508,8 @@ Outputs: `out` (tex).
 
 How far each part of the picture moved since the previous frame (optical flow)
 
+Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+
 Inputs:
 
 - `in` (tex)
@@ -785,6 +793,8 @@ Outputs: `out` (tex).
 
 Per pixel, a frame from the past: the map says how far back (black now, white oldest)
 
+Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+
 Inputs:
 
 - `in` (tex)
@@ -861,6 +871,8 @@ Outputs: `out` (tex), `info` (chan).
 
 Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audioin)
 
+Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+
 Inputs:
 
 - `audio` (chan)
@@ -913,7 +925,7 @@ Outputs: `out` (chan).
 
 Smooths each channel over time, rising and falling at their own pace
 
-Follows the show clock: cooks again whenever time moves.
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
 
 Inputs:
 
@@ -1113,7 +1125,7 @@ Outputs: `out` (chan).
 
 Adds up each channel over time, as a rate per second: a speed becomes a position
 
-Follows the show clock: cooks again whenever time moves.
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
 
 Inputs:
 

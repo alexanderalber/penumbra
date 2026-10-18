@@ -346,6 +346,19 @@ pub enum Kept {
     State(Vec<StateItem>),
 }
 
+/// What [`Cooker::reset`] did with a node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResetOutcome {
+    /// It starts over at its next cook.
+    Reset,
+    /// Locked: it keeps the outputs it holds.
+    Locked,
+    /// Its type keeps no state and its operator holds none: nothing to reset.
+    Stateless,
+    /// It has not cooked yet, so it holds nothing.
+    NotCooked,
+}
+
 struct Runtime {
     def: Arc<NodeDef>,
     ty: Option<Arc<dyn NodeType>>,
@@ -372,6 +385,27 @@ struct Runtime {
 }
 
 impl Runtime {
+    /// Whether the operator holds state now (or state restored for it waits).
+    fn holds_state(&self, id: NodeId) -> bool {
+        self.restored.is_some()
+            || self.op.as_ref().is_some_and(|op| match catch_unwind(AssertUnwindSafe(|| op.save_state())) {
+                Ok(items) => items.is_some_and(|i| !i.is_empty()),
+                Err(p) => {
+                    log::error!("node {id}: save_state panicked: {}", panic_message(p.as_ref()));
+                    true
+                }
+            })
+    }
+
+    /// Drops the operator and what was restored for it, so the next cook makes it anew, with
+    /// nothing on its inputs that read a previous result.
+    fn start_over(&mut self) {
+        self.restored = None;
+        self.op = None;
+        self.notified = true;
+        self.blank_previous = true;
+    }
+
     fn new(def: Arc<NodeDef>, types: &NodeTypes) -> Self {
         let ty = types.get(&def.kind).cloned();
         Self {
@@ -892,28 +926,29 @@ impl Cooker {
     pub fn forget_state(&mut self) -> usize {
         let mut count = 0;
         for (&id, rt) in &mut self.runtimes {
-            if rt.def.locked {
-                continue;
-            }
-            let holds = rt.restored.is_some()
-                || rt.op.as_ref().is_some_and(|op| {
-                    match catch_unwind(AssertUnwindSafe(|| op.save_state())) {
-                        Ok(items) => items.is_some_and(|i| !i.is_empty()),
-                        Err(p) => {
-                            log::error!("node {id}: save_state panicked: {}", panic_message(p.as_ref()));
-                            true
-                        }
-                    }
-                });
-            if holds {
-                rt.restored = None;
-                rt.op = None;
-                rt.notified = true;
-                rt.blank_previous = true;
+            if !rt.def.locked && rt.holds_state(id) {
+                rt.start_over();
                 count += 1;
             }
         }
         count
+    }
+
+    /// Starts node `id` over, as if it were new: its operator is dropped (with whatever it held:
+    /// a loop's frame, a cache, a learned background) and made again at the next cook. Only for
+    /// a node whose type is [`NodeDesc::stateful`] or whose operator holds state now; a locked
+    /// node keeps its held outputs.
+    pub fn reset(&mut self, id: NodeId) -> ResetOutcome {
+        let Some(rt) = self.runtimes.get_mut(&id) else { return ResetOutcome::NotCooked };
+        if rt.def.locked {
+            return ResetOutcome::Locked;
+        }
+        let stateful = rt.ty.as_ref().is_some_and(|t| t.desc().stateful);
+        if !stateful && !rt.holds_state(id) {
+            return ResetOutcome::Stateless;
+        }
+        rt.start_over();
+        ResetOutcome::Reset
     }
 
     /// Puts back what [`Cooker::kept`] returned, maybe in an earlier run: a locked node's

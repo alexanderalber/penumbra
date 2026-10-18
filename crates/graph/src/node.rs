@@ -132,6 +132,10 @@ pub struct NodeDesc {
     /// reads them from its file, [`Operator::params`]). Such values are only checked for being
     /// finite when set; the operator checks them against its own declaration.
     pub extra_params: bool,
+    /// Holds what earlier cooks made beyond its params: a feedback loop's frame, a cache's or a
+    /// time machine's frames, a learned background, a running sum. `node.reset` starts such a
+    /// node over ([`Cooker::reset`](crate::Cooker::reset)), and the editor offers a reset button.
+    pub stateful: bool,
 }
 
 impl NodeDesc {
@@ -146,6 +150,7 @@ impl NodeDesc {
             container: false,
             port: None,
             extra_params: false,
+            stateful: false,
         }
     }
 
@@ -188,6 +193,12 @@ impl NodeDesc {
 
     pub fn extra_params(mut self) -> Self {
         self.extra_params = true;
+        self
+    }
+
+    /// Declares [`NodeDesc::stateful`].
+    pub fn stateful(mut self) -> Self {
+        self.stateful = true;
         self
     }
 

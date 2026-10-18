@@ -1,14 +1,15 @@
 //! The project menu behind the folder button at the left end of the status bar: a new project,
-//! open one, the recent ones, the demo, the shipped examples, and the project's folder in the
-//! file manager.
+//! open one, save a copy, the recent ones, the demo, the shipped examples, and the project's
+//! folder in the file manager. The demo and the examples open afresh every time, also the one
+//! that is open (it starts over).
 //!
 //! Opening runs on a thread of its own, since the old project's state is saved first, which can
 //! take seconds; the folder dialog too. The window keeps drawing meanwhile, and the button is
 //! disabled until it is done.
 //!
 //! Automation ids: `button.project`, then in the menu `project.new`, `project.open`,
-//! `project.recent.<i>` (newest first), `project.demo`, `project.examples` (a submenu with
-//! `project.example.<name>`), `project.folder`.
+//! `project.save_as`, `project.recent.<i>` (newest first), `project.demo`, `project.examples` (a
+//! submenu with `project.example.<name>`), `project.folder`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -29,12 +30,14 @@ use crate::theme;
 enum Pick {
     Open,
     New,
+    SaveAs,
 }
 
 /// Which project to open.
 enum Target {
     Open(PathBuf),
     New(PathBuf),
+    SaveAs(PathBuf),
     Demo,
     Example(String),
 }
@@ -63,14 +66,16 @@ impl ProjectMenu {
     }
 
     /// Draws the button and its menu. Returns a message for the status bar when something
-    /// starts, finishes or fails.
+    /// starts, finishes or fails. `save_layout` writes the editor layout now, so a copy of the
+    /// project takes the latest one.
     pub fn show(
         &mut self,
         ui: &mut Ui,
         engine: &Arc<Engine>,
         auto: &mut automation::Registry,
+        save_layout: impl FnOnce(),
     ) -> Option<String> {
-        let mut message = self.poll(engine);
+        let mut message = self.poll(engine, save_layout);
         let current = engine.session().dir().to_path_buf();
         let busy = self.busy();
         let r = ui.add_enabled_ui(!busy, |ui| icons::button(ui, Icon::Folder, "")).inner;
@@ -99,6 +104,14 @@ impl ProjectMenu {
                 self.pick(Pick::Open, &current);
                 ui.close();
             }
+            let b = ui
+                .button("Save copy as\u{2026}")
+                .on_hover_text("Copy this project into a new or empty folder and go on there");
+            auto.add("project.save_as", b.rect, "Save copy as");
+            if b.clicked() {
+                self.pick(Pick::SaveAs, &current);
+                ui.close();
+            }
             ui.separator();
             let recent = self.recent.get_or_insert_with(|| engine.recent());
             if recent.is_empty() {
@@ -122,15 +135,15 @@ impl ProjectMenu {
                     ui.close();
                 }
             }
-            let demo = projects::demo_dir().is_ok_and(|d| projects::same_dir(&d, &current));
-            let b = ui
-                .add(egui::Button::new("Demo project").selected(demo))
-                .on_hover_text("The project penumbra opens when started without arguments");
+            let demo = projects::is_demo(&current);
+            let b = ui.add(egui::Button::new("Demo project").selected(demo)).on_hover_text(if demo {
+                "Start the demo over: your changes go"
+            } else {
+                "Opens fresh every time; Save copy as keeps your changes"
+            });
             auto.add("project.demo", b.rect, "Demo project");
             if b.clicked() {
-                if !demo {
-                    chosen = Some(Target::Demo);
-                }
+                chosen = Some(Target::Demo);
                 ui.close();
             }
             let examples = self.examples.get_or_insert_with(|| {
@@ -143,11 +156,9 @@ impl ProjectMenu {
                         let copy = copies.as_ref().map(|c| c.join(name));
                         let open = copy.as_ref().is_some_and(|c| projects::same_dir(c, &current));
                         let tip = match &copy {
-                            Some(c) if c.join(FILE_NAME).is_file() => {
-                                format!("Opens your copy in {}, with your changes", c.display())
-                            }
+                            Some(_) if open => "Start it over: your changes go".to_string(),
                             Some(c) => format!(
-                                "Copied to {} and opened; the shipped one stays as it is",
+                                "A fresh copy in {}, every time; Save copy as keeps your changes",
                                 c.display()
                             ),
                             None => "The user's data folder is unknown".to_string(),
@@ -155,9 +166,7 @@ impl ProjectMenu {
                         let b = ui.add(egui::Button::new(name.as_str()).selected(open)).on_hover_text(tip);
                         auto.add(format!("project.example.{name}"), b.rect, name.as_str());
                         if b.clicked() {
-                            if !open {
-                                chosen = Some(Target::Example(name.clone()));
-                            }
+                            chosen = Some(Target::Example(name.clone()));
                             ui.close();
                         }
                     }
@@ -183,7 +192,7 @@ impl ProjectMenu {
     }
 
     /// Takes up what the dialog and the opening thread finished.
-    fn poll(&mut self, engine: &Arc<Engine>) -> Option<String> {
+    fn poll(&mut self, engine: &Arc<Engine>, save_layout: impl FnOnce()) -> Option<String> {
         let mut message = None;
         if let Some((pick, rx)) = &self.dialog {
             let pick = *pick;
@@ -198,6 +207,10 @@ impl ProjectMenu {
                     self.dialog = None;
                     let is_project = dir.join(FILE_NAME).is_file();
                     message = Some(match (pick, is_project) {
+                        (Pick::SaveAs, _) => {
+                            save_layout();
+                            self.open(engine, Target::SaveAs(dir))
+                        }
                         (Pick::Open, false) => {
                             format!("{} holds no {FILE_NAME}; New project makes one there", dir.display())
                         }
@@ -235,6 +248,7 @@ impl ProjectMenu {
         let title = match pick {
             Pick::Open => "Open a penumbra project",
             Pick::New => "Folder for the new project",
+            Pick::SaveAs => "A new or empty folder for the copy",
         };
         let spawned = std::thread::Builder::new().name("folder-dialog".into()).spawn(move || {
             let mut dialog = rfd::FileDialog::new().set_title(title);
@@ -252,7 +266,7 @@ impl ProjectMenu {
     /// Starts opening `target` on a thread of its own; returns the message for the status bar.
     fn open(&mut self, engine: &Arc<Engine>, target: Target) -> String {
         let name = match &target {
-            Target::Open(dir) | Target::New(dir) => name_of(dir),
+            Target::Open(dir) | Target::New(dir) | Target::SaveAs(dir) => name_of(dir),
             Target::Demo => "the demo project".to_string(),
             Target::Example(name) => format!("the example {name}"),
         };
@@ -262,6 +276,7 @@ impl ProjectMenu {
             let result = match target {
                 Target::Open(dir) => projects::open(&engine, &dir),
                 Target::New(dir) => projects::create(&engine, &dir),
+                Target::SaveAs(dir) => projects::save_copy(&engine, &dir),
                 Target::Demo => projects::open_demo(&engine),
                 Target::Example(name) => projects::open_example(&engine, &name),
             };

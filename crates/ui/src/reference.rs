@@ -88,6 +88,12 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
     if desc.time_dependent {
         notes.push("Follows the show clock: cooks again whenever time moves.".to_string());
     }
+    if desc.stateful {
+        notes.push(
+            "Keeps state from frame to frame: `node.reset`, the reset button or R starts it over."
+                .to_string(),
+        );
+    }
     if desc.container {
         notes.push("Holds nodes of its own (a component).".to_string());
     }

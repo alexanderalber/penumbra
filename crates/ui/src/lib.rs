@@ -92,6 +92,9 @@ pub enum Action {
     /// Bind this param (`/n.scale`, a vector as a whole) to the next OSC address that arrives
     /// (`osc.learn`).
     LearnOsc(String),
+    /// Start these nodes over (`node.reset`): stateful ones forget what they hold, a component
+    /// stands for the stateful nodes inside it.
+    Reset(Vec<NodeId>),
     /// A `tex.blobtrack` takes the first frame after `delay` seconds as its background.
     LearnBackground {
         node: NodeId,

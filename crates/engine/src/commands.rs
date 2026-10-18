@@ -64,6 +64,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("node.batch", "Apply ops as one all-or-nothing batch; {ops: [{op, ...}], label?}", node_batch);
     add("node.watch", "Cook a node every frame (or stop); {path, watch?}", node_watch);
     add(
+        "node.reset",
+        "Start stateful nodes over (feedback, cache, time machine, tracker, filter...); a component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path}",
+        node_reset,
+    );
+    add(
         "node.snapshot",
         "Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file?}",
         node_snapshot,
@@ -720,6 +725,31 @@ fn node_watch(e: &Engine, p: &Json) -> Result<Json> {
         }
     })?;
     Ok(json!({"path": a.path, "watched": watch}))
+}
+
+fn node_reset(e: &Engine, p: &Json) -> Result<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        #[serde(default)]
+        path: Option<NodePath>,
+        #[serde(default)]
+        paths: Vec<NodePath>,
+    }
+    let a: A = args(p)?;
+    let paths: Vec<NodePath> = a.path.into_iter().chain(a.paths).collect();
+    if paths.is_empty() {
+        return Err(CommandError("give the nodes to reset: {paths: [...]} or {path}".into()));
+    }
+    let net = e.session().doc().snapshot();
+    let ids = paths.iter().map(|p| require(&net, p)).collect::<Result<Vec<NodeId>>>()?;
+    let report = e.reset_nodes(&ids)?;
+    Ok(json!({
+        "reset": report.reset,
+        "locked": report.locked,
+        "stateless": report.stateless,
+        "message": report.message(),
+    }))
 }
 
 fn cook_status(e: &Engine, p: &Json) -> Result<Json> {

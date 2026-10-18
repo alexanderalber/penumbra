@@ -5,9 +5,11 @@ end of the status bar: **Examples**, then the example's name. Then click the nod
 to see its picture in the viewer.
 
 The menu opens a copy of the example in penumbra's data folder (`%LOCALAPPDATA%\penumbra\examples`),
-made the first time, so this folder stays as it is and your changes are kept in the copy. To
-start over, delete the copy. (**Open project** on the example's folder here opens it in place,
-and penumbra then saves into it.)
+so this folder stays as it is. The copy is made afresh on every open (the menu, or the start
+that reopens the last project), so changes last until the example is opened again; choosing
+the open example in the menu starts it over. To keep your changes, use **Save copy as** in the
+same menu. (**Open project** on the example's folder here opens it in place, and penumbra then
+saves into it.)
 
 | example | shows | look at | needs |
 |---|---|---|---|

@@ -55,6 +55,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "tex.feedback",
             "A loop: wire the end of the chain back into `previous`; `initial` until that has a frame",
         )
+        .stateful()
         .param(ParamSpec::bool("reset", false).doc("Pass `initial` instead, while on"))
         .param(
             ParamSpec::bool("persist", true)

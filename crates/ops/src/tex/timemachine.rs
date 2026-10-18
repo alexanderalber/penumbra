@@ -40,6 +40,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             KIND,
             "Per pixel, a frame from the past: the map says how far back (black now, white oldest)",
         )
+        .stateful()
         .param(
             ParamSpec::int("length", 120)
                 .clamp(1.0, longest)

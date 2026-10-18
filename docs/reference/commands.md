@@ -107,6 +107,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `node.lock` | Lock (hold outputs) or unlock a node; {path, locked?} |
 | `node.paste` | Paste the nodes copied last (or `text`) into a component or the root; {into?, text?} |
 | `node.rename` | Rename a node; {path, name} |
+| `node.reset` | Start stateful nodes over (feedback, cache, time machine, tracker, filter...); a component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path} |
 | `node.set` | Set params, null resets to the default; {path, params: {name: value}} |
 | `node.snapshot` | Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file?} |
 | `node.unbind` | Back to the param's stored value; {param} |
@@ -131,14 +132,15 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `project.demo` | Open the demo project (made again if missing) |
-| `project.example` | Open a shipped example: copied into the user's data folder on the first open, so the shipped one stays as it is; later opens keep the changes; {name} |
+| `project.demo` | Open the demo project, made afresh: changes, state and layout from before are gone |
+| `project.example` | Open a shipped example from a fresh copy in the user's data folder (the shipped one stays as it is); changes last until it is opened again, project.save_as keeps them; {name} |
 | `project.examples` | The examples shipped with penumbra, by name, and where they lie |
 | `project.info` | Project directory, unsaved changes, file errors, who is editing |
 | `project.new` | Make an empty project in dir (created if missing, must hold no project.ron) and open it; {dir} |
 | `project.open` | Close this project (state saved, changes written) and open the one in dir; {dir} |
 | `project.recent` | Recently opened projects, newest first (the demo is not listed), and the open one |
 | `project.save` | Write project.ron now, also over a file that failed to merge |
+| `project.save_as` | Copy the open project (its files and the latest state snapshot) into dir (new or empty) and open the copy, a project of its own; {dir} |
 | `project.settings` | Project settings with their values and what they do; {set?: {name: value}}, null resets (one undo step) |
 
 ## render
@@ -217,7 +219,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.screenshot` | PNG of the window; {file?} (default %TEMP%/penumbra/ui.png) |
 | `ui.scroll` | Mouse wheel over an element or point; {id \| x, y, dy} |
 | `ui.select` | Select nodes in the editor (it shows the component they sit in); {paths} |
-| `ui.state` | Selection, viewer, pan and zoom, editing mode; {positions?} |
+| `ui.state` | Selection, viewer, pan and zoom, editing mode, the status bar's message; {positions?} |
 | `ui.type` | Type text into the focused field; {text} |
 | `ui.view` | Pin the viewer to a node, or unpin without a path; {path?} |
 

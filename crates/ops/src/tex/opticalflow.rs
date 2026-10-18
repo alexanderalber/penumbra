@@ -37,6 +37,7 @@ const MAX_SMOOTH: i64 = 6;
 
 fn desc() -> NodeDesc {
     NodeDesc::new(KIND, "How far each part of the picture moved since the previous frame (optical flow)")
+        .stateful()
         .param(ParamSpec::bool("colors", false).doc(
             "Show the motion as colours instead of passing the numbers on: direction as hue, speed as \
              brightness. For looking at it; nodes that use the motion want this off",
