@@ -52,6 +52,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             AUDIO_IN,
             "Audio from an input device: one channel per device channel, at its sample rate",
         )
+        .sampled()
         .param(ParamSpec::text("device", "").doc(
             "Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's \
                  default input",

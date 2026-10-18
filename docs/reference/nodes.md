@@ -1172,12 +1172,12 @@ Inputs:
 
 Outputs:
 
-- `out` (chan): The input's channels by name, each with length times rate samples, the newest last; before the trail is full, the first value fills its start
+- `out` (chan): The input's channels by name, the newest sample last: one sample when the trail starts (made, reset or sought back), one more per sample taken, up to length times rate
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `length` | float | `5` | 0.1 to 60 s (soft) | How far back the trail reaches; older values drop off its start |
-| `rate` | float | `60` | 1 to 240 Hz (soft) | Samples taken per second of show time, whatever the frame rate; length times rate is the number of samples |
+| `length` | float | `5` | 0.1 to 60 s (soft) | How far back the trail reaches once it is full; older values drop off its start |
+| `rate` | float | `60` | 1 to 240 Hz (soft) | Samples taken per second of show time, whatever the frame rate; length times rate is the number of samples of a full trail |
 | `active` | bool | `true` |  | Records while on; off holds the trail as it is, and recording resumes from the moment it is on again |
 
 ## table

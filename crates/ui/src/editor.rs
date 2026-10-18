@@ -207,20 +207,21 @@ fn to_graph(canvas: Rect, view: View, p: Pos2) -> Pos2 {
     ((p - canvas.min) / view.zoom + view.origin).to_pos2()
 }
 
-/// Body height of a node in graph units: a 16:9 picture for textures, a value line otherwise,
-/// tall enough for its ports (`ports`: the most on one side, for components).
+/// Body height of a node in graph units: a 16:9 picture for textures and for the plot of a node
+/// with many samples per channel ([`NodeDesc::sampled`]), a value line otherwise, tall enough for
+/// its ports (`ports`: the most on one side, for components).
 fn body_height(desc: Option<&NodeDesc>, ports: usize) -> f32 {
     let Some(d) = desc else { return 28.0 };
     let ports = d.inputs.len().max(d.outputs.len()).max(ports) as f32;
-    let content =
-        if d.outputs.first().is_some_and(|o| matches!(o.kind, DataKind::Tex | DataKind::Geo | DataKind::Mat))
-        {
-            NODE_SIZE.x * 9.0 / 16.0
-        } else if d.container {
-            56.0
-        } else {
-            28.0
-        };
+    let content = if d.sampled
+        || d.outputs.first().is_some_and(|o| matches!(o.kind, DataKind::Tex | DataKind::Geo | DataKind::Mat))
+    {
+        NODE_SIZE.x * 9.0 / 16.0
+    } else if d.container {
+        56.0
+    } else {
+        28.0
+    };
     content.max(ports * 16.0 + 8.0)
 }
 
@@ -1304,7 +1305,12 @@ impl Editor {
                     if let Some(chans) = first.get::<penumbra_core::Chans>()
                         && zoom > 0.4
                     {
-                        chan_body(painter, body_rect, chans, zoom, input.chan_bars);
+                        if chans.window() > 1 {
+                            let after_labels = input_labels_width(painter, g, zoom);
+                            crate::plot::body(painter, body_rect, chans, zoom, after_labels);
+                        } else {
+                            chan_body(painter, body_rect, chans, zoom, input.chan_bars);
+                        }
                     }
                 }
                 DataKind::Table => {
@@ -1491,8 +1497,7 @@ impl Editor {
     /// of a node with several of them (which one is which, `tex.render`'s `data` is no picture to
     /// look at), and for the port under the pointer.
     fn port_labels(&self, painter: &egui::Painter, g: &Geo, hovered: Option<PortHit>, zoom: f32) {
-        let font = egui::FontId::proportional(11.0 * zoom.clamp(0.6, 1.4));
-        let gap = (PORT_R + 4.0) * zoom.clamp(0.6, 1.4);
+        let (font, gap) = port_label_style(zoom);
         let label = |p: Pos2, text: &str, is_input: bool| {
             let galley = painter.layout_no_wrap(text.to_string(), font.clone(), theme::TEXT_WEAK);
             let size = galley.size();
@@ -1505,8 +1510,7 @@ impl Editor {
             painter.rect_filled(rect, CornerRadius::same(3), Color32::from_black_alpha(170));
             painter.galley(min, galley, theme::TEXT_WEAK);
         };
-        // A component's ports are named by their nodes: always worth showing.
-        let always = (g.inputs.len() > 1 || g.comp) && zoom >= 0.6;
+        let always = input_labels_shown(g, zoom);
         for port in &g.inputs {
             let is_hovered = hovered.is_some_and(|h| h.0 && (h.1, h.2) == port.target);
             if !(always || is_hovered) {
@@ -2014,8 +2018,35 @@ fn lines_fit(body: Rect, zoom: f32) -> usize {
     ((body.height() / zoom.max(1e-3) - 4.0) / 12.0 + 0.01).floor().max(1.0) as usize
 }
 
-/// A chan node's body: one channel as its value with a bar (red while negative), several as a
-/// short list.
+/// The font of port labels and their distance from the port at `zoom`.
+fn port_label_style(zoom: f32) -> (FontId, f32) {
+    (FontId::proportional(11.0 * zoom.clamp(0.6, 1.4)), (PORT_R + 4.0) * zoom.clamp(0.6, 1.4))
+}
+
+/// Whether the inputs of `g` are named whether hovered or not: a node with several, and a
+/// component, whose ports are named by their nodes.
+fn input_labels_shown(g: &Geo, zoom: f32) -> bool {
+    (g.inputs.len() > 1 || g.comp) && zoom >= 0.6
+}
+
+/// How far the input labels of `g` reach into its body from the left edge, in screen points; 0
+/// when they are not shown.
+fn input_labels_width(painter: &egui::Painter, g: &Geo, zoom: f32) -> f32 {
+    if !input_labels_shown(g, zoom) {
+        return 0.0;
+    }
+    let (font, gap) = port_label_style(zoom);
+    let widest = g
+        .inputs
+        .iter()
+        .map(|p| painter.layout_no_wrap(p.name.clone(), font.clone(), theme::TEXT_WEAK).size().x)
+        .fold(0.0f32, f32::max);
+    gap + widest + 3.0
+}
+
+/// A chan node's body with one sample per channel: one channel as its value with a bar (red
+/// while negative), several as a short list. Channels with many samples get a plot instead
+/// ([`crate::plot::body`]).
 fn chan_body(painter: &egui::Painter, body: Rect, chans: &penumbra_core::Chans, zoom: f32, bars: bool) {
     let channels = chans.channels();
     if let [only] = channels {

@@ -522,7 +522,8 @@ impl Viewer {
             self.history_of = Some((id, self.output));
             self.auto_lanes = false;
         }
-        let sampled = chans.len() > 1;
+        // A trail that has just started has one sample but is still a trail.
+        let sampled = chans.window() > 1;
         if let Some(now) = frame
             && !sampled
         {
@@ -549,7 +550,8 @@ impl Viewer {
         } else if chans.axis() == SampleAxis::Index {
             XAxis::Index { last: chans.len().saturating_sub(1) as f64 }
         } else {
-            XAxis::Seconds { span: chans.len().saturating_sub(1) as f64 / chans.rate() }
+            // The whole window, so a growing trail fills in from the right with now at 0.
+            XAxis::Seconds { span: chans.window().saturating_sub(1) as f64 / chans.rate() }
         };
         let series: Vec<Series<'_>> = shown
             .iter()
