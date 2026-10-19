@@ -17,6 +17,7 @@ penumbra-ops.workspace = true
 penumbra-osc.workspace = true
 penumbra-audio.workspace = true
 penumbra-camera.workspace = true
+penumbra-record.workspace = true
 penumbra-system.workspace = true
 penumbra-spacenav.workspace = true
 serde.workspace = true

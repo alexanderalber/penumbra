@@ -508,6 +508,9 @@ pub fn warm_up(gpu: &Gpu) {
     if let Err(e) = gpu.video_pipeline() {
         log::error!("built-in shader video.wgsl does not compile: {e}");
     }
+    if let Err(e) = gpu.yuv_pipeline() {
+        log::error!("built-in shader yuv.wgsl (out.video) does not compile: {e}");
+    }
 }
 
 struct BuiltinOp {

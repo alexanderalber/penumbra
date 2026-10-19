@@ -241,6 +241,14 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `video_in.devices` | The cameras of this machine with their modes (size, rate, pixel format, whether penumbra reads it) |
 | `video_in.status` | Camera streams (device, mode, open, error, frames, fps, dropped, delay_ms from the camera's timestamp) |
 
+## video_out
+
+| command | |
+|---|---|
+| `video_out.start` | Start recording an out.video node to a new file (its params say which and how); {path}; answers with the status once recording |
+| `video_out.status` | Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error; {path?} |
+| `video_out.stop` | Stop an out.video's recording and finish the file; {path}; answers with the status |
+
 ## view
 
 | command | |

@@ -396,6 +396,11 @@ impl PenumbraApp {
                         Err(e) => Err(e),
                     }
                 }
+                Action::Record { node, start } => {
+                    let request =
+                        if start { penumbra_record::Request::Start } else { penumbra_record::Request::Stop };
+                    self.engine.record().request(node, request).map_err(penumbra_core::Error::new)
+                }
                 Action::LearnOsc(param) => {
                     let timeout = penumbra_engine::osc::LEARN_TIMEOUT;
                     match self.engine.osc().learn(&self.engine.session(), &param, timeout) {
@@ -874,6 +879,7 @@ impl PenumbraApp {
                                 chan_drag,
                                 cameras: self.engine.camera(),
                                 audio: self.engine.audio(),
+                                record: self.engine.record(),
                             };
                             self.params.show(ui, &input, &mut self.auto, &mut actions);
                         }

@@ -1507,6 +1507,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filmcraft-h264enc"
+version = "0.6.0"
+source = "git+https://github.com/storytold/filmcraft?rev=4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe#4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe"
+dependencies = [
+ "filmcraft-bitstream",
+ "rayon",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "filmcraft-hevc"
 version = "0.6.0"
 source = "git+https://github.com/storytold/filmcraft?rev=4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe#4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe"
@@ -3233,9 +3243,11 @@ dependencies = [
  "penumbra-ops",
  "penumbra-osc",
  "penumbra-project",
+ "penumbra-record",
  "penumbra-script",
  "penumbra-spacenav",
  "penumbra-system",
+ "penumbra-video",
  "serde",
  "serde_json",
 ]
@@ -3292,6 +3304,7 @@ dependencies = [
  "penumbra-graph",
  "penumbra-mesh",
  "penumbra-osc",
+ "penumbra-record",
  "penumbra-script",
  "penumbra-track",
  "penumbra-video",
@@ -3343,6 +3356,20 @@ name = "penumbra-pyhost"
 version = "0.2.0"
 dependencies = [
  "pyo3",
+]
+
+[[package]]
+name = "penumbra-record"
+version = "0.2.0"
+dependencies = [
+ "filmcraft-h264enc",
+ "filmcraft-isobmff",
+ "filmcraft-prores",
+ "log",
+ "penumbra-core",
+ "penumbra-video",
+ "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -3402,6 +3429,7 @@ dependencies = [
  "penumbra-ops",
  "penumbra-osc",
  "penumbra-project",
+ "penumbra-record",
  "penumbra-spacenav",
  "penumbra-system",
  "raw-window-handle",

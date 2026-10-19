@@ -1,0 +1,82 @@
+# Recording
+
+`out.video` (Tab > outputs > video) records its input to a movie file: the show as it runs,
+for documentation, for an edit, or to play back later with `tex.video`.
+
+## Recording
+
+1. Add an `out.video` and connect the picture to record, usually what feeds the projector.
+2. Press **record** at the top of its params (or call `video_out.start {path}`). The row beside
+   the button shows the file, the length so far, frames written and dropped, and how fast the
+   encoder runs. **stop** (or `video_out.stop {path}`) finishes the file.
+3. To start and stop from a channel (an OSC button, a timer, a beat), bind `record`: turning it
+   on starts a new file, turning it off finishes it. A project opened with `record` on does not
+   start recording by itself; it waits for `record` to turn off and on.
+
+`file` empty records to `recordings/<node name>.mp4` (or `.mov`) in the project folder. A
+file that exists is never overwritten: the next recording goes to `<name>_2`, `<name>_3`, ...
+and the status says which. A name without an extension gets the codec's.
+
+The file is finished when recording stops, and also when the node is deleted, the project
+closed or the app quit (closing waits up to 5 seconds for that). A file whose recording was cut
+off by a crash or a power failure is not playable; recordings are meant to be stopped.
+
+## Codecs
+
+| `codec` | file | what for | size at 1080p60 |
+|---|---|---|---|
+| `h264` (default) | MP4 | watching, sharing; any player opens it | 0.1 to 10 MB/s, depending on the picture |
+| `prores_422` | MOV | editing: every frame a keyframe, 10 bits | up to about 37 MB/s |
+| `prores_422_hq` | MOV | editing at a higher quality | up to about 55 MB/s |
+| `prores_4444` | MOV | with transparency: alpha kept, 4:4:4, 12 bits | up to about 83 MB/s |
+
+All four are encoded on the CPU by FilmCraft's encoders (pure Rust; no GPU encoder yet). How
+fast depends on how busy the picture is far more than on anything else. Measured on a Ryzen 7
+5800X3D (8 cores, 16 threads) at 1920 x 1080 with 14 encoder threads, outside the show:
+
+| picture | `h264` | `prores_422` | `prores_422_hq` | `prores_4444` |
+|---|---|---|---|---|
+| calm (a recorded projection show) | 187 fps | 165 fps | 162 fps | 135 fps |
+| busy (the curl-noise example) | 81 fps | 46 fps | 42 fps | 29 fps |
+| very busy (a zooming Mandelbrot set) | 88 fps | 48 fps | 44 fps | 26 fps |
+
+Inside the running show the encoder shares the CPU: recording the curl-noise example at
+1080p60, `h264` kept up (0 frames dropped in two runs of three, 27 of about 390 in the third),
+`prores_422_hq` managed about 39 frames per second and dropped 40 % of the frames. The cook
+thread took about 0.4 ms more per frame while recording. So: `h264` for recording a busy show
+in real time, ProRes for calm pictures, smaller sizes or lower rates.
+
+`threads` (under more) sets the encoder threads; 0 takes all logical cores but two. With 8 the
+curl-noise recording above dropped a third of its frames.
+
+## When the encoder falls behind
+
+Recording never makes the show wait. Each frame is converted on the GPU and read back without
+waiting; a few frames queue up for the encoder. When the encoder is slower than the frames come,
+the queue fills and frames are **dropped**: the status and the node's warning count them, and in
+the file the frame before lasts longer instead, so the recording keeps time with the show. To
+drop fewer, record at a lower `rate` or a smaller size (`size` fixed, `width` and `height`), use
+`h264` for busy pictures, or give the encoder more `threads`.
+
+## Rate, time and size
+
+- `rate` 0 records at the show's rate; any other value is the file's frames per second. Frames
+  follow the show clock: frame k is the picture k / rate seconds after the start. While the
+  clock is paused nothing is recorded. When the show runs slower than `rate` (a heavy network),
+  frames last longer (counted as **skipped**); a jump back in time or of more than a second
+  forward continues the file without a gap.
+- `size` input records at the input's size when recording starts (rounded down to even sides);
+  `fixed` scales the input to `width` x `height`, aspect not kept. The size of a running
+  recording stays: an input that changes size is scaled to it.
+
+## Colour
+
+Pictures in penumbra are linear light. The recording encodes them with the sRGB curve, the
+BT.709 matrix and video range, and tags the file BT.709, as players expect; `tex.video` reads
+such a file back with the same curve, so a recording played in penumbra looks as it did when
+recorded. Values above 1 are clipped. Without alpha (H.264, ProRes 422) the picture is taken
+over black; ProRes 4444 keeps the alpha channel.
+
+## Not yet
+
+Sound is not recorded. There is no hardware encoder (NVENC) yet.

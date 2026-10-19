@@ -109,6 +109,11 @@ pub enum Action {
         node: NodeId,
         delay: f64,
     },
+    /// An `out.video` starts (`true`) or stops recording (`video_out.start`, `.stop`).
+    Record {
+        node: NodeId,
+        start: bool,
+    },
 }
 
 impl Action {

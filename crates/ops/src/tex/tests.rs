@@ -78,6 +78,8 @@ struct Rig {
     audio: penumbra_audio::Hub,
     /// Camera frames are fed here (key `test`), not read from a camera.
     camera: penumbra_camera::Hub,
+    /// The recordings of `out.video` nodes.
+    record: penumbra_record::Hub,
 }
 
 /// A camera frame of one colour, 4:2:0, limited range.
@@ -114,6 +116,8 @@ impl Rig {
         camera.feed(&penumbra_camera::Key::new("test", ""), camera_frame(126, 128, 128));
         cooker.provide(camera.clone());
         cooker.provide(penumbra_dmx::Hub::new());
+        let record = penumbra_record::Hub::new();
+        cooker.provide(record.clone());
         cooker.set_base_dir(dir.map(Path::to_path_buf));
         Self {
             types,
@@ -123,6 +127,7 @@ impl Rig {
             gpu,
             audio,
             camera,
+            record,
         }
     }
 
@@ -2063,4 +2068,168 @@ fn audio_meters_without_an_analysis_say_so() {
         assert!(error.contains(says), "{path}: {error}");
         assert!(!s.has_output, "{path}");
     }
+}
+
+/// Waits until `node`'s recording has finished its file.
+fn recorded(rig: &Rig, node: NodeId) -> penumbra_record::Status {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let s = rig.record.status(node).expect("a recording");
+        if s.done {
+            return s;
+        }
+        assert!(Instant::now() < deadline, "the recording did not finish: {s:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Mean 8-bit luma of the left and the right quarter of a decoded frame.
+fn luma_sides(frame: &penumbra_video::Frame) -> (f64, f64) {
+    let px = frame.pixels().unwrap();
+    let w = px.width as usize;
+    let (plane, scale): (Vec<f64>, f64) = match &px.data {
+        penumbra_video::PixelData::Yuv8 { planes, .. } => {
+            (planes[0].iter().map(|&v| f64::from(v)).collect(), 1.0)
+        }
+        penumbra_video::PixelData::Yuv16 { planes, bits, .. } => {
+            (planes[0].iter().map(|&v| f64::from(v)).collect(), f64::from(1u32 << (bits - 8)))
+        }
+        other => panic!("unexpected pixels {other:?}"),
+    };
+    let side = |left: bool| {
+        let vals: Vec<f64> = plane
+            .chunks(w)
+            .flat_map(|row| if left { &row[..w / 4] } else { &row[w - w / 4..] })
+            .copied()
+            .collect();
+        vals.iter().sum::<f64>() / vals.len() as f64 / scale
+    };
+    (side(true), side(false))
+}
+
+#[test]
+fn out_video_records_what_it_is_shown() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("video_out");
+    for (codec, file) in [("h264", "ramp.mp4"), ("prores_4444", "ramp")] {
+        let mut rig = Rig::new(
+            gpu.clone(),
+            Some(&dir),
+            &[
+                create("/ramp", "tex.ramp", &size()),
+                create(
+                    "/rec",
+                    "out.video",
+                    &[("codec", codec.into()), ("file", file.into()), ("rate", Value::Float(30.0))],
+                ),
+                connect("/ramp", "/rec", 0),
+            ],
+        );
+        rig.clock.play();
+        let rec = rig.id("/rec");
+        rig.cook("/rec");
+        assert_eq!(rig.record.status(rec), None, "not recording before `record` turns on");
+        rig.edit(&[set("/rec.record", Value::Bool(true))]);
+        // 20 show frames at 60 Hz: 10 frames at 30.
+        for _ in 0..20 {
+            rig.cook("/rec");
+            rig.clock.advance(1);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        rig.edit(&[set("/rec.record", Value::Bool(false))]);
+        rig.cook("/rec");
+        let s = recorded(&rig, rec);
+        assert_eq!(s.error, None, "{codec}");
+        assert_eq!((s.frames, s.dropped, s.skipped), (10, 0, 0), "{codec}: {s:?}");
+        let path = PathBuf::from(&s.file);
+        let ext = if codec == "h264" { "mp4" } else { "mov" };
+        assert_eq!(path, dir.join(format!("ramp.{ext}")), "an extension is added when missing");
+        let mut d = penumbra_video::open(&path, &penumbra_video::Limits::default()).unwrap();
+        let info = d.info().clone();
+        assert_eq!((info.width, info.height, info.frames), (W as u32, H as u32, 10), "{codec}: {info:?}");
+        assert!((info.rate() - 30.0).abs() < 1e-6);
+        // The ramp runs from black to white in linear light: sRGB-encoded, the left quarter
+        // averages about 0.39 (luma 101), the right one about 0.94 (222).
+        let (left, right) = luma_sides(&d.frame(5).unwrap());
+        assert!(
+            (left - 101.0).abs() < 8.0 && (right - 222.0).abs() < 5.0,
+            "{codec}: left {left}, right {right}"
+        );
+        // Read back through tex.video, the recording is the ramp again.
+        let mut rig2 = Rig::new(
+            gpu.clone(),
+            Some(&dir),
+            &[create("/play", "tex.video", &[("file", s.file.clone().into()), ("play", Value::Bool(false))])],
+        );
+        let back = rig2.pixels("/play");
+        let want = rig.pixels("/ramp");
+        let worst = back
+            .data
+            .iter()
+            .zip(&want.data)
+            .map(|(a, b)| (0..3).map(|c| (a[c] - b[c]).abs()).fold(0.0f32, f32::max))
+            .fold(0.0f32, f32::max);
+        assert!(worst < 0.03, "{codec}: off by up to {worst} (linear)");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn out_video_stops_harmlessly_and_reports_bad_paths() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("video_out_errors");
+    std::fs::write(dir.join("blocker"), b"a file, not a folder").unwrap();
+    let mut rig = Rig::new(
+        gpu,
+        Some(&dir),
+        &[
+            create("/noise", "tex.noise", &size()),
+            create("/rec", "out.video", &[("file", "blocker/x.mp4".into())]),
+            connect("/noise", "/rec", 0),
+        ],
+    );
+    rig.clock.play();
+    let rec = rig.id("/rec");
+    rig.cook("/rec");
+    // Stopping what never started does nothing.
+    rig.record.request(rec, penumbra_record::Request::Stop).unwrap();
+    rig.cook("/rec");
+    assert_eq!(rig.record.status(rec), None);
+    assert!(rig.cooker.status(rec).unwrap().error.is_none());
+    // A file below a file cannot be created: the node shows why.
+    rig.record.request(rec, penumbra_record::Request::Start).unwrap();
+    rig.cook("/rec");
+    let s = recorded(&rig, rec);
+    assert!(s.error.as_deref().unwrap_or("").contains("cannot create"), "{s:?}");
+    rig.clock.advance(1);
+    rig.cook("/rec");
+    let error = rig.cooker.status(rec).unwrap().error.clone().unwrap_or_default();
+    assert!(error.contains("cannot create"), "{error}");
+    // Odd sizes are rounded down, too large ones refused.
+    rig.edit(&[
+        set("/rec.file", "ok.mov".into()),
+        set("/rec.codec", "prores_422".into()),
+        set("/rec.size", "fixed".into()),
+        set("/rec.width", Value::Int(33)),
+        set("/rec.height", Value::Int(17)),
+    ]);
+    rig.record.request(rec, penumbra_record::Request::Start).unwrap();
+    for _ in 0..3 {
+        rig.clock.advance(1);
+        rig.cook("/rec");
+    }
+    rig.record.request(rec, penumbra_record::Request::Stop).unwrap();
+    rig.cook("/rec");
+    let s = recorded(&rig, rec);
+    assert_eq!((s.width, s.height, s.error.clone()), (32, 16, None), "{s:?}");
+    rig.edit(&[
+        set("/rec.codec", "prores_4444".into()),
+        set("/rec.width", Value::Int(8192)),
+        set("/rec.height", Value::Int(8192)),
+    ]);
+    rig.record.request(rec, penumbra_record::Request::Start).unwrap();
+    rig.cook("/rec");
+    let error = rig.cooker.status(rec).unwrap().error.clone().unwrap_or_default();
+    assert!(error.contains("too large"), "{error}");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -1,6 +1,6 @@
 //! The GPU side of penumbra: one wgpu device shared by the cook thread, the UI and the projector
 //! outputs; textures as they flow between `tex` nodes; fullscreen shader passes with declared
-//! parameters; readback to the CPU for snapshots; image files; video planes.
+//! parameters; readback to the CPU for snapshots; image files; video planes, in and out.
 //!
 //! Conventions every `tex` node follows:
 //! - textures are [`FORMAT`] (RGBA, 16-bit float), **linear light, premultiplied alpha**;
@@ -28,6 +28,7 @@ pub mod stack;
 pub mod tex;
 pub mod video;
 pub mod vram;
+pub mod yuv;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -46,6 +47,7 @@ pub use shapes::{ShapeMode, ShapePoly, Shapes};
 pub use stack::Stack;
 pub use tex::{Tex, TexRing};
 pub use vram::Vram;
+pub use yuv::{MappedPlanes, PlaneLayout, YuvReader};
 
 /// The format of every texture flowing between nodes.
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -97,6 +99,7 @@ struct Inner {
     layouts: pass::Layouts,
     passes: Mutex<HashMap<u64, Arc<Pass>>>,
     video: Mutex<Option<Arc<video::Pipeline>>>,
+    yuv: Mutex<Option<Arc<yuv::Pipeline>>>,
     bc: Mutex<Option<Arc<bc::Pipeline>>>,
     canvas: Mutex<Option<Arc<canvas::Pipelines>>>,
     render: Mutex<Option<Arc<render::Pipelines>>>,
@@ -190,6 +193,7 @@ impl Gpu {
                 layouts,
                 passes: Mutex::new(HashMap::new()),
                 video: Mutex::new(None),
+                yuv: Mutex::new(None),
                 bc: Mutex::new(None),
                 canvas: Mutex::new(None),
                 render: Mutex::new(None),

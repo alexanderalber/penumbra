@@ -1630,7 +1630,7 @@ Outputs:
 
 ## out
 
-[out.dmx](#outdmx), [out.projector](#outprojector)
+[out.dmx](#outdmx), [out.projector](#outprojector), [out.video](#outvideo)
 
 ### out.dmx
 
@@ -1671,6 +1671,29 @@ Outputs: none.
 | `fit` | fit \| fill \| stretch | `"fit"` |  | How the picture sits in the viewport when their aspects differ; fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted |
 | `viewport` *(more)* | vec4 | `[0, 0, 1, 1]` | 0 to 1 | x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5) |
 | `test` | bool | `false` |  | A test pattern in the projector's own pixels instead of the input: square cells, centre, circle, and the image's edge in this projector's colour |
+
+### out.video
+
+Records its input to a movie file (H.264 or ProRes)
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `in` (tex): The picture to record
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `record` | bool | `false` |  | Recording while on: turning it on starts a new file, turning it off finishes it. Bind it to a channel to start and stop from OSC or a button; video_out.start and .stop do the same without it |
+| `codec` | h264 \| prores_422 \| prores_422_hq \| prores_4444 | `"h264"` |  | What the picture is encoded as (the file's extension follows it); h264: H.264 in MP4: small files any player opens; 4:2:0, 8 bits, high constant quality; prores_422: Apple ProRes 422 in MOV: for editing, every frame a keyframe; about 37 MB/s at 1080p60; prores_422_hq: Apple ProRes 422 HQ in MOV: as 422 at a higher rate, about 55 MB/s at 1080p60; prores_4444: Apple ProRes 4444 in MOV with alpha: 4:4:4, 12 bits, the transparency kept; the largest files |
+| `file` | text |  |  | The movie file, relative to the project; empty records to recordings/<node name>. A file that exists is never overwritten: the recording gets the next free name with _2, _3, ... |
+| `rate` | float | `0` | 0 to 120 Hz (soft) | Frames per second of the file; 0 takes the show's rate. Frames follow the show clock, so a slower show makes frames last longer, a faster one leaves some out |
+| `size` | input \| fixed | `"input"` |  | The picture size of the file, fixed when the recording starts; input: the input's size when recording starts (rounded down to even); fixed: width x height; the input is scaled to it, aspect not kept |
+| `width` | int | `1920` | 16 to 3840 (soft) | Width of the file in pixels with `size` fixed (rounded down to even) |
+| `height` | int | `1080` | 16 to 2160 (soft) | Height of the file in pixels with `size` fixed (rounded down to even) |
+| `threads` *(more)* | int | `0` | 0 to 16 (soft) | Encoder threads; 0 takes all of this machine's logical cores but two. Fewer leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner |
 
 ## comp
 
