@@ -1,5 +1,5 @@
-//! sACN (ANSI E1.31-2018): the data packet. Sent to the universe's multicast group unless a
-//! host is given.
+//! sACN (ANSI E1.31-2018): the data packet, built for sending and read when receiving. Sent to
+//! the universe's multicast group unless a host is given.
 
 use std::net::Ipv4Addr;
 
@@ -74,9 +74,70 @@ pub fn data_packet(
     p
 }
 
+/// Option bit: preview data, not meant for live output.
+pub const PREVIEW: u8 = 0x80;
+/// Option bit: the source stops sending this universe.
+pub const TERMINATED: u8 = 0x40;
+
+/// What a data packet carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Data<'a> {
+    pub cid: [u8; 16],
+    pub priority: u8,
+    pub sequence: u8,
+    pub options: u8,
+    pub universe: u16,
+    /// The slots after the start code, at most 512.
+    pub data: &'a [u8],
+}
+
+/// Reads a data packet with start code 0; `None` for anything else (synchronization and
+/// discovery packets, other start codes such as per-slot priorities, malformed packets).
+pub fn parse_data(p: &[u8]) -> Option<Data<'_>> {
+    let u16_at = |at: usize| Some(u16::from_be_bytes([*p.get(at)?, *p.get(at + 1)?]));
+    let u32_at = |at: usize| Some(u32::from_be_bytes(p.get(at..at + 4)?.try_into().ok()?));
+    if u16_at(0)? != 0x0010 || p.get(4..16)? != b"ASC-E1.17\0\0\0" {
+        return None;
+    }
+    if u32_at(18)? != 4 || u32_at(40)? != 2 || *p.get(117)? != 0x02 || *p.get(118)? != 0xa1 {
+        return None;
+    }
+    if *p.get(HEADER - 1)? != 0 {
+        return None;
+    }
+    // The property count includes the start code.
+    let count = usize::from(u16_at(123)?.checked_sub(1)?).min(SLOTS);
+    let rest = p.get(HEADER..)?;
+    Some(Data {
+        cid: p.get(22..38)?.try_into().ok()?,
+        priority: (*p.get(108)?).min(200),
+        sequence: *p.get(111)?,
+        options: *p.get(112)?,
+        universe: u16_at(113)?,
+        data: rest.get(..count.min(rest.len()))?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packets_read_back() {
+        let cid = [0xab; 16];
+        let p = data_packet(&cid, "penumbra", 120, 7, 9, &[1, 2, 3]);
+        let d = parse_data(&p).unwrap();
+        assert_eq!((d.cid, d.priority, d.sequence, d.options, d.universe), (cid, 120, 9, 0, 7));
+        assert_eq!(d.data, &[1, 2, 3]);
+        assert!(parse_data(&p[..HEADER - 1]).is_none());
+        let mut other = p.clone();
+        other[HEADER - 1] = 0xdd;
+        assert!(parse_data(&other).is_none());
+        let mut sync = p.clone();
+        sync[21] = 8;
+        assert!(parse_data(&sync).is_none());
+        assert!(parse_data(&[0; 4]).is_none());
+    }
 
     #[test]
     fn packet_layout() {

@@ -64,9 +64,9 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `dmx.config` | DMX settings for this run: {enabled?, blackout?}; blackout sends zeros on every output |
+| `dmx.config` | DMX output settings for this run: {enabled?, blackout?}; blackout sends zeros on every output |
 | `dmx.ports` | The serial ports of this machine (name, USB ids, whether it is an FT232R like the Open DMX USB) |
-| `dmx.status` | DMX outputs: target, writers, device, open, error, frames, rate asked and measured, timings in ms |
+| `dmx.status` | DMX outputs (target, writers, device, open, error, frames, rate asked and measured, timings in ms) and inputs (listen, readers, open, error, packets, universes with their sources) |
 
 ## edit
 

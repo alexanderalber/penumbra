@@ -894,7 +894,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.constant](#chanconstant), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed), [chan.trail](#chantrail)
 
 ### chan.audio_analysis
 
@@ -956,6 +956,26 @@ Outputs: `out` (chan).
 | `value0` | float | `0` | -1 to 1 (soft) | The channel's value; the slider spans -1 to 1, any number can be typed |
 | `name0` | text | `"chan0"` |  | Name of the channel this row makes, as other nodes and bindings see it |
 | `rows` *(more)* | int | `1` | 1 to 64 | How many rows; row k is the params `name<k>` and `value<k>`, counted from 0 |
+
+### chan.dmx_in
+
+DMX slots from the network (Art-Net or sACN) as channels, from a lighting desk say
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): ch1 to chN: the slots from `address` on, the last values held
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `protocol` | art_net \| sacn | `"art_net"` |  | What the sender speaks; art_net: Art-Net, sent to this machine or as a broadcast; sacn: sACN (E1.31), to the universe's multicast group or to this machine |
+| `universe` | int | `1` | 0 to 16 (soft) | Universe of the first slot, as the protocol counts (Art-Net from 0, sACN from 1); channels past its end read on in the next |
+| `address` | int | `1` | 1 to 512 (soft) | DMX address (slot, from 1) that becomes ch1 |
+| `count` | int | `512` | 1 to 512 (soft) | Channels made: ch1 is slot `address`, ch2 the next and so on |
+| `values` | unit \| byte | `"unit"` |  | What the channels hold; unit: 0 to 1, from 0 to 255; byte: 0 to 255, as the slots are |
+| `interface` *(more)* | text |  |  | IP address of this machine's network card to listen on; empty listens on all (sACN multicast then joins on the system's default one) |
+| `port` *(more)* | int | `0` (the protocol's port) | 1024 to 65535 (soft) | UDP port to listen on; 0 is the protocol's own (Art-Net 6454, sACN 5568); 0: the protocol's port |
 
 ### chan.filter
 
