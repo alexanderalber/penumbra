@@ -46,6 +46,8 @@ pub struct Inputs<'a> {
     pub audio: &'a penumbra_audio::Hub,
     /// The engine's recordings: an `out.video` shows its own and has start and stop.
     pub record: &'a penumbra_record::Hub,
+    /// The show's frame rate, when known: a special value standing for it shows it.
+    pub show_rate: Option<f64>,
 }
 
 #[derive(Default)]
@@ -169,7 +171,7 @@ impl ParamPanel {
             });
         }
         if node.kind == penumbra_ops::out::video::VIDEO_OUT {
-            record_row(ui, input, auto, actions);
+            record_row(ui, input, node, auto, actions);
         }
         ui.separator();
 
@@ -636,6 +638,7 @@ impl ParamPanel {
                 if let Some(r) = spec.range {
                     dv = dv.range(r.min as i64..=r.max as i64).clamp_existing_to_range(r.hard);
                 }
+                let dv = with_specials(dv, spec, input.show_rate);
                 let r = ui.add_enabled(!whole_bound, dv);
                 track(&r);
                 if r.changed() {
@@ -645,7 +648,8 @@ impl ParamPanel {
             ParamKind::Float => {
                 let mut f = value.as_f64().unwrap_or(0.0);
                 if spec.range.is_none() {
-                    let r = ui.add_enabled(!whole_bound, float_drag(&mut f, spec, whole_bound));
+                    let r =
+                        ui.add_enabled(!whole_bound, float_drag(&mut f, spec, whole_bound, input.show_rate));
                     track(&r);
                     if r.changed() {
                         *new = Some(Value::Float(f));
@@ -658,13 +662,13 @@ impl ParamPanel {
                 // another value, which changed the text again (the field flickered between two
                 // numbers).
                 let pos = spec.to_slider(f).unwrap_or(0.0);
-                let number_w = number_width(ui, spec);
+                let number_w = number_width(ui, spec, input.show_rate);
                 let one = ui.spacing().interact_size.y;
                 line(ui, one, egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let size = [number_w, ui.spacing().interact_size.y];
                     let number = ui
                         .add_enabled_ui(!whole_bound, |ui| {
-                            ui.add_sized(size, float_drag(&mut f, spec, whole_bound))
+                            ui.add_sized(size, float_drag(&mut f, spec, whole_bound, input.show_rate))
                         })
                         .inner;
                     let mut pos = pos;
@@ -1129,6 +1133,17 @@ fn help_body(ui: &mut Ui, help: &penumbra_core::ParamHelp, inactive: Option<&str
             }
         });
     }
+    if !help.specials.is_empty() {
+        ui.add_space(4.0);
+        egui::Grid::new("param_help_specials").num_columns(2).spacing([10.0, 3.0]).show(ui, |ui| {
+            for line in &help.specials {
+                let (value, label) = line.split_once(": ").unwrap_or((line.as_str(), ""));
+                ui.label(RichText::new(value).small().family(egui::FontFamily::Monospace).color(theme::TEXT));
+                ui.add(egui::Label::new(RichText::new(label).small()).wrap());
+                ui.end_row();
+            }
+        });
+    }
     ui.add_space(4.0);
     ui.separator();
     let facts = help_facts(help);
@@ -1326,24 +1341,74 @@ fn share(ui: &Ui, n: usize) -> f32 {
 }
 
 /// A width for a ranged float's number field that holds its usual values: the widest of the
-/// range's ends with four decimals and the unit.
-fn number_width(ui: &Ui, spec: &ParamSpec) -> f32 {
+/// range's ends with four decimals and the unit, and of its special values' labels.
+fn number_width(ui: &Ui, spec: &ParamSpec, show_rate: Option<f64>) -> f32 {
     let unit = spec.unit.symbol();
     let unit = if unit.is_empty() { String::new() } else { format!(" {unit}") };
     let (lo, hi) = spec.range.map_or((0.0, 1.0), |r| (r.min, r.max));
     let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let widest = [lo, hi]
-        .iter()
-        .map(|v| {
-            let text = format!("{v:.3}{unit}");
-            ui.fonts_mut(|f| f.layout_no_wrap(text, font.clone(), egui::Color32::WHITE).size().x)
-        })
-        .fold(0.0, f32::max);
-    (widest + 2.0 * ui.spacing().button_padding.x).clamp(48.0, 110.0)
+    let width =
+        |text: String| ui.fonts_mut(|f| f.layout_no_wrap(text, font.clone(), egui::Color32::WHITE).size().x);
+    let numbers = [lo, hi].iter().map(|v| width(format!("{v:.3}{unit}"))).fold(0.0, f32::max);
+    let labels = spec.specials.iter().map(|s| width(special_text(s, show_rate))).fold(0.0, f32::max);
+    let max = if spec.specials.is_empty() { 110.0 } else { 170.0 };
+    (numbers.max(labels) + 2.0 * ui.spacing().button_padding.x).clamp(48.0, max)
+}
+
+/// What a number field shows for special value `s`: its label, and in brackets what it comes
+/// out as when that is known (`show rate (60 Hz)`).
+fn special_text(s: &penumbra_core::Special, show_rate: Option<f64>) -> String {
+    match (s.resolves, show_rate) {
+        (Some(penumbra_core::Resolves::ShowRate), Some(rate)) => {
+            let rate = egui::emath::format_with_decimals_in_range(rate, 0..=2);
+            format!("{} ({rate} Hz)", s.label)
+        }
+        _ => s.label.clone(),
+    }
+}
+
+/// `dv` showing `spec`'s special values by name (typing the name sets them, numbers still
+/// work) and its unit after any other value. Without special values only the unit.
+fn with_specials<'a>(
+    dv: egui::DragValue<'a>,
+    spec: &ParamSpec,
+    show_rate: Option<f64>,
+) -> egui::DragValue<'a> {
+    let unit = spec.unit.symbol();
+    if spec.specials.is_empty() {
+        return if unit.is_empty() { dv } else { dv.suffix(format!(" {unit}")) };
+    }
+    let shown: Vec<(f64, String)> =
+        spec.specials.iter().map(|s| (s.value, special_text(s, show_rate))).collect();
+    let unit = if unit.is_empty() { String::new() } else { format!(" {unit}") };
+    let named = spec.clone();
+    let symbol = spec.unit.symbol().to_string();
+    dv.custom_formatter(move |n, decimals| match shown.iter().find(|(v, _)| *v == n) {
+        Some((_, text)) => text.clone(),
+        None => format!("{}{unit}", egui::emath::format_with_decimals_in_range(n, decimals)),
+    })
+    .custom_parser(move |text| {
+        if let Some(s) = named.special_named(text) {
+            return Some(s.value);
+        }
+        let text = text.trim();
+        let text = if symbol.is_empty() { text } else { text.strip_suffix(symbol.as_str()).unwrap_or(text) };
+        let digits: String = text
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .map(|c| if c == '\u{2212}' { '-' } else { c })
+            .collect();
+        digits.parse().ok()
+    })
 }
 
 /// The number field of a float param.
-fn float_drag<'a>(f: &'a mut f64, spec: &ParamSpec, live: bool) -> egui::DragValue<'a> {
+fn float_drag<'a>(
+    f: &'a mut f64,
+    spec: &ParamSpec,
+    live: bool,
+    show_rate: Option<f64>,
+) -> egui::DragValue<'a> {
     let speed = spec.range.map_or(0.01, |r| (r.max - r.min) / 300.0);
     let mut dv = egui::DragValue::new(f).speed(speed).max_decimals(4);
     if live {
@@ -1354,11 +1419,7 @@ fn float_drag<'a>(f: &'a mut f64, spec: &ParamSpec, live: bool) -> egui::DragVal
     if let Some(r) = spec.range.filter(|r| r.hard) {
         dv = dv.range(r.min..=r.max);
     }
-    let unit = spec.unit.symbol();
-    if !unit.is_empty() {
-        dv = dv.suffix(format!(" {unit}"));
-    }
-    dv
+    with_specials(dv, spec, show_rate)
 }
 
 /// A menu of `options` as wide as `ui` offers. A value not among them (a font that is not
@@ -1780,21 +1841,52 @@ pub fn values(net: &Network, types: &NodeTypes, id: NodeId) -> BTreeMap<String, 
     out
 }
 
-/// An `out.video`'s start or stop button and how its recording stands. Not an edit (`record`
-/// stays as it is), so allowed while Claude edits too.
-fn record_row(ui: &mut Ui, input: &Inputs<'_>, auto: &mut automation::Registry, actions: &mut Vec<Action>) {
+/// An `out.video`'s record or stop button and how its recording stands. The button switches
+/// the `record` param (an edit, one undo step), so button and param always agree; while a
+/// channel drives `record` the button is off.
+fn record_row(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
     let status = input.record.status(input.node);
-    let recording = status.as_ref().is_some_and(|s| s.recording);
+    let bound = node.binds.keys().any(|k| k.param.as_str() == "record");
+    let stored = node.params.get("record").and_then(Value::as_bool).unwrap_or(false);
+    let live = input.status.and_then(|s| s.bound.get("record")).and_then(Value::as_bool);
+    let on = if bound { live.unwrap_or(stored) } else { stored };
     ui.horizontal(|ui| {
-        let (label, tip, id) = if recording {
-            ("stop", "Stop recording and finish the file (video_out.stop)", "param.record_stop")
+        let (label, tip, id) = if on {
+            (
+                "stop",
+                "Turn record off: stop recording and finish the file (video_out.stop)",
+                "param.record_stop",
+            )
         } else {
-            ("record", "Start recording to a new file (video_out.start)", "param.record_start")
+            (
+                "record",
+                "Turn record on: start recording to a new file (video_out.start)",
+                "param.record_start",
+            )
         };
-        let r = ui.button(label).on_hover_text(tip);
+        let tip = if bound { "record follows a channel; unbind it to switch it here" } else { tip };
+        let r = ui
+            .add_enabled(input.can_edit && !bound, egui::Button::new(label))
+            .on_hover_text(tip)
+            .on_disabled_hover_text(tip);
         auto.add(id, r.rect, label);
-        if r.clicked() {
-            actions.push(Action::Record { node: input.node, start: !recording });
+        if r.clicked()
+            && let Some(path) = input.net.path_of(input.node)
+            && let Ok(name) = "record".parse::<Name>()
+            && let Ok(param) = ParamPath::new(path, name)
+        {
+            actions.push(Action::Edit {
+                ops: vec![Op::Set { param, value: Value::Bool(!on) }],
+                label: if on { "stop recording" } else { "start recording" }.into(),
+                group: None,
+                place: None,
+            });
         }
         let Some(s) = &status else {
             ui.label(RichText::new("not recording").color(theme::TEXT_WEAK).small());

@@ -25,7 +25,7 @@ use filmcraft_isobmff as iso;
 use penumbra_core::lock;
 
 use crate::hub::Status;
-use crate::{Codec, Fps, Frame, Layout};
+use crate::{Codec, Fps, Frame, H264Preset, Layout};
 
 /// How long the thread waits for one frame's planes (a GPU readback) before giving up on it.
 pub const PLANES_TIMEOUT: Duration = Duration::from_secs(5);
@@ -49,6 +49,8 @@ pub struct Settings {
     pub threads: usize,
     /// Frames the queue holds before [`Recording::push`] drops (at least 1).
     pub queue: usize,
+    /// How hard the H.264 encoder works; ignored by ProRes.
+    pub h264: H264Preset,
 }
 
 impl Settings {
@@ -418,9 +420,7 @@ impl Encoder {
             Codec::H264 => {
                 use filmcraft_h264enc as h;
                 let mut cfg = h::EncoderConfig::new(s.width, s.height, s.fps.num, s.fps.den);
-                cfg.profile = h::Profile::High;
-                cfg.preset = h::Preset::Speed;
-                cfg.rate = h::RateControl::Crf(18.0);
+                s.h264.apply(&mut cfg);
                 // A keyframe every 2 s, so a player can seek; no B-frames, so packets come in
                 // the order they are shown and a frame can last any number of frames.
                 cfg.keyint = (s.fps.as_f64() * 2.0).round().clamp(1.0, 600.0) as u32;

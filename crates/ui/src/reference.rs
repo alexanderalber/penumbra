@@ -50,7 +50,14 @@ fn param_default(spec: &ParamSpec) -> String {
         return "an example script".into();
     }
     let text = spec.default.to_string();
-    if text == "\"\"" { String::new() } else { format!("`{}`", text.replace('`', "'")) }
+    if text == "\"\"" {
+        return String::new();
+    }
+    let special = spec.default.as_f64().and_then(|v| spec.special_of(v));
+    match special {
+        Some(s) => format!("`{}` ({})", text.replace('`', "'"), s.label),
+        None => format!("`{}`", text.replace('`', "'")),
+    }
 }
 
 fn node_section(out: &mut String, desc: &NodeDesc) {

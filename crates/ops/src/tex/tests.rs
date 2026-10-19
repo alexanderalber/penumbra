@@ -2203,21 +2203,29 @@ fn out_video_stops_harmlessly_and_reports_bad_paths() {
     rig.clock.play();
     let rec = rig.id("/rec");
     rig.cook("/rec");
+    let record = |rig: &mut Rig, on: bool| {
+        rig.edit(&[set("/rec.record", Value::Bool(on))]);
+        rig.clock.advance(1);
+        rig.cook("/rec");
+    };
     // Stopping what never started does nothing.
-    rig.record.request(rec, penumbra_record::Request::Stop).unwrap();
-    rig.cook("/rec");
+    record(&mut rig, false);
     assert_eq!(rig.record.status(rec), None);
     assert!(rig.cooker.status(rec).unwrap().error.is_none());
-    // A file below a file cannot be created: the node shows why.
-    rig.record.request(rec, penumbra_record::Request::Start).unwrap();
-    rig.cook("/rec");
-    let s = recorded(&rig, rec);
-    assert!(s.error.as_deref().unwrap_or("").contains("cannot create"), "{s:?}");
+    // A file below a file cannot be created: the node shows why while `record` stays on, and
+    // does not try again by itself.
+    record(&mut rig, true);
     rig.clock.advance(1);
     rig.cook("/rec");
     let error = rig.cooker.status(rec).unwrap().error.clone().unwrap_or_default();
     assert!(error.contains("cannot create"), "{error}");
-    // Odd sizes are rounded down, too large ones refused.
+    let tries = rig.record.status(rec).map(|s| s.file);
+    rig.clock.advance(1);
+    rig.cook("/rec");
+    assert_eq!(rig.record.status(rec).map(|s| s.file), tries, "not tried again");
+    // Odd sizes are rounded down, too large ones refused; off and on tries again.
+    record(&mut rig, false);
+    assert!(rig.cooker.status(rec).unwrap().error.is_none(), "off clears the error");
     rig.edit(&[
         set("/rec.file", "ok.mov".into()),
         set("/rec.codec", "prores_422".into()),
@@ -2225,13 +2233,12 @@ fn out_video_stops_harmlessly_and_reports_bad_paths() {
         set("/rec.width", Value::Int(33)),
         set("/rec.height", Value::Int(17)),
     ]);
-    rig.record.request(rec, penumbra_record::Request::Start).unwrap();
+    record(&mut rig, true);
     for _ in 0..3 {
         rig.clock.advance(1);
         rig.cook("/rec");
     }
-    rig.record.request(rec, penumbra_record::Request::Stop).unwrap();
-    rig.cook("/rec");
+    record(&mut rig, false);
     let s = recorded(&rig, rec);
     assert_eq!((s.width, s.height, s.error.clone()), (32, 16, None), "{s:?}");
     rig.edit(&[
@@ -2239,8 +2246,7 @@ fn out_video_stops_harmlessly_and_reports_bad_paths() {
         set("/rec.width", Value::Int(8192)),
         set("/rec.height", Value::Int(8192)),
     ]);
-    rig.record.request(rec, penumbra_record::Request::Start).unwrap();
-    rig.cook("/rec");
+    record(&mut rig, true);
     let error = rig.cooker.status(rec).unwrap().error.clone().unwrap_or_default();
     assert!(error.contains("too large"), "{error}");
     std::fs::remove_dir_all(&dir).unwrap();

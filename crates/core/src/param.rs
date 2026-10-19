@@ -1,8 +1,9 @@
 //! Parameter metadata.
 //!
 //! Every node declares its parameters as [`ParamSpec`]s: type, default, range, unit, slider curve,
-//! the group the UI shows it in (main rows, or a section folded away), a one-line doc and, for a
-//! choice, what each value does. The spec is the single source for validation (every edit passes
+//! the group the UI shows it in (main rows, or a section folded away), a one-line doc, for a
+//! choice what each value does, and for a number the values that stand for something else
+//! (`rate` 0: the show rate), which the panel shows by name. The spec is the single source for validation (every edit passes
 //! [`ParamSpec::check`]), for the param panel, its help overlay ([`ParamSpec::help`]) and for what
 //! `node.kinds` and `node.info` report.
 
@@ -130,6 +131,34 @@ pub struct ParamSpec {
     /// ([`ParamSpec::full_doc`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub choice_docs: Vec<ChoiceDoc>,
+    /// Values of a number that do not mean their number (`0`: automatic); the panel shows the
+    /// label instead of the number while the value is one of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub specials: Vec<Special>,
+    /// The value the project file holds is not taken when a project opens: the param opens at
+    /// its default. For params that start something (a recording), so opening a project never
+    /// starts it by itself.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub opens_at_default: bool,
+}
+
+/// A value of a number param that stands for something other than its number.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Special {
+    pub value: f64,
+    /// What the value means, in a word or two (`show rate`, `automatic`).
+    pub label: String,
+    /// What the panel adds to the label in brackets, when it knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolves: Option<Resolves>,
+}
+
+/// What a special value comes out as, which only the running app knows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Resolves {
+    /// The show's frame rate, e.g. `60 Hz`.
+    ShowRate,
 }
 
 /// What one value of a choice param does.
@@ -166,6 +195,9 @@ pub struct ParamHelp {
     pub bindable: bool,
     /// For a choice: every value, with what it does where that is written down.
     pub choices: Vec<ChoiceHelp>,
+    /// Values of a number that stand for something else, as `0: show rate`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub specials: Vec<String>,
 }
 
 /// One value of a choice in [`ParamHelp`].
@@ -192,6 +224,8 @@ impl ParamSpec {
             code: false,
             doc: String::new(),
             choice_docs: Vec::new(),
+            specials: Vec::new(),
+            opens_at_default: false,
         }
     }
 
@@ -291,13 +325,55 @@ impl ParamSpec {
         self
     }
 
+    /// Value `value` of a number stands for `label` ([`ParamSpec::specials`]); the param's
+    /// doc says what it does. A value outside a hard range or not whole for an int, a label
+    /// with digits, a value or label given twice, or a param that is not a number fail
+    /// [`ParamSpec::validate_spec`].
+    pub fn special(mut self, value: f64, label: &str) -> Self {
+        self.specials.push(Special { value, label: label.to_string(), resolves: None });
+        self
+    }
+
+    /// As [`ParamSpec::special`], and the panel adds what the value comes out as in brackets
+    /// (`show rate (60 Hz)`).
+    pub fn special_resolved(mut self, value: f64, label: &str, resolves: Resolves) -> Self {
+        self.specials.push(Special { value, label: label.to_string(), resolves: Some(resolves) });
+        self
+    }
+
+    /// The param opens at its default ([`ParamSpec::opens_at_default`]).
+    pub fn opens_at_default(mut self) -> Self {
+        self.opens_at_default = true;
+        self
+    }
+
+    /// The special value `value` is, if it is one.
+    pub fn special_of(&self, value: f64) -> Option<&Special> {
+        self.specials.iter().find(|s| s.value == value)
+    }
+
+    /// The special value a typed text names: its label, case and surrounding spaces aside, also
+    /// with more after it (`show rate (60 Hz)`).
+    pub fn special_named(&self, text: &str) -> Option<&Special> {
+        let t = text.trim().to_lowercase();
+        self.specials.iter().find(|s| {
+            let l = s.label.to_lowercase();
+            t.strip_prefix(&l).is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '(']))
+        })
+    }
+
+    /// The special values as `0: show rate`, in the order declared.
+    pub fn special_lines(&self) -> Vec<String> {
+        self.specials.iter().map(|s| format!("{}: {}", s.value, s.label)).collect()
+    }
+
     /// What the choice `value` does, when written down.
     pub fn doc_of_choice(&self, value: &str) -> Option<&str> {
         self.choice_docs.iter().find(|c| c.value == value).map(|c| c.doc.as_str())
     }
 
     /// The doc with what each choice does after it, in the order of the choices, as one line:
-    /// `doc; a: ...; b: ...`.
+    /// `doc; a: ...; b: ...`; special values after that as `0: show rate`.
     pub fn full_doc(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if !self.doc.is_empty() {
@@ -310,6 +386,7 @@ impl ParamSpec {
                 }
             }
         }
+        parts.extend(self.special_lines());
         parts.join("; ")
     }
 
@@ -342,14 +419,18 @@ impl ParamSpec {
         }
     }
 
-    /// The default as one would type it: `0.5`, `[0, 0, 1]`, `over`; `None` for empty text and
-    /// `several lines` for a text of several lines (a script's example).
+    /// The default as one would type it: `0.5`, `[0, 0, 1]`, `over`, with a special value's
+    /// label after it (`0 (show rate)`); `None` for empty text and `several lines` for a text of
+    /// several lines (a script's example).
     pub fn default_label(&self) -> Option<String> {
         match &self.default {
             Value::Text(t) if t.is_empty() => None,
             Value::Text(t) if t.contains('\n') => Some("several lines".into()),
             Value::Text(t) => Some(t.clone()),
-            v => Some(v.to_string()),
+            v => match v.as_f64().and_then(|x| self.special_of(x)) {
+                Some(s) => Some(format!("{v} ({})", s.label)),
+                None => Some(v.to_string()),
+            },
         }
     }
 
@@ -388,6 +469,7 @@ impl ParamSpec {
             group: self.group.clone(),
             bindable: self.bind_components() > 0,
             choices,
+            specials: self.special_lines(),
         }
     }
 
@@ -527,6 +609,41 @@ impl ParamSpec {
             }
             if self.choice_docs.iter().take(i).any(|e| e.value == d.value) {
                 return Err(Error::new(format!("choice `{}` described twice", d.value)).context(ctx()));
+            }
+        }
+        for (i, sp) in self.specials.iter().enumerate() {
+            let value = match self.kind {
+                // `as` saturates; a whole value that big is outside any range anyway.
+                ParamKind::Int if sp.value.fract() == 0.0 => Value::Int(sp.value as i64),
+                ParamKind::Float => Value::Float(sp.value),
+                _ => {
+                    return Err(Error::new(format!(
+                        "special value {} on {}; only floats and ints (whole values) have them",
+                        sp.value,
+                        self.kind_label()
+                    ))
+                    .context(ctx()));
+                }
+            };
+            if self.check(&value).ok().as_ref() != Some(&value) {
+                return Err(
+                    Error::new(format!("special value {} is outside the range", sp.value)).context(ctx())
+                );
+            }
+            let label = sp.label.trim();
+            if label.is_empty()
+                || label != sp.label
+                || label.chars().any(|c| c.is_ascii_digit() || c.is_control() || c == '(')
+            {
+                return Err(Error::new(format!(
+                    "special label `{}` must be words, without digits, brackets or surrounding spaces",
+                    sp.label.escape_debug()
+                ))
+                .context(ctx()));
+            }
+            if self.specials.iter().take(i).any(|o| o.value == sp.value || o.label == sp.label) {
+                return Err(Error::new(format!("special value {} or `{}` given twice", sp.value, sp.label))
+                    .context(ctx()));
             }
         }
         let checked = self.check(&self.default).map_err(|e| e.context(format!("{}: default", ctx())))?;
@@ -741,6 +858,40 @@ mod tests {
         assert_eq!((h.clamped, h.unit.as_str(), h.default.as_str()), (false, "s", "1"));
         assert!(h.bindable && h.choices.is_empty());
         assert_eq!(ParamSpec::text("t", "").help().default, "");
+    }
+
+    #[test]
+    fn special_values() {
+        let rate = ParamSpec::float("rate", 0.0).clamp(0.0, 240.0).doc("Frames per second").special_resolved(
+            0.0,
+            "show rate",
+            Resolves::ShowRate,
+        );
+        rate.validate_spec().unwrap();
+        assert_eq!(rate.special_of(0.0).map(|s| s.label.as_str()), Some("show rate"));
+        assert!(rate.special_of(30.0).is_none());
+        assert_eq!(rate.full_doc(), "Frames per second; 0: show rate");
+        let h = rate.help();
+        assert_eq!(
+            (h.default.as_str(), h.specials.clone()),
+            ("0 (show rate)", vec!["0: show rate".to_string()])
+        );
+        for typed in ["show rate", " Show Rate ", "show rate (60 Hz)"] {
+            assert_eq!(rate.special_named(typed).map(|s| s.value), Some(0.0), "{typed}");
+        }
+        assert!(rate.special_named("show rates").is_none());
+        assert!(rate.special_named("30").is_none());
+
+        let threads = ParamSpec::int("threads", 0).clamp(0.0, 64.0).special(0.0, "automatic");
+        threads.validate_spec().unwrap();
+        assert!(ParamSpec::int("n", 0).special(0.5, "half").validate_spec().is_err(), "an int's is whole");
+        assert!(ParamSpec::float("x", 1.0).clamp(1.0, 2.0).special(0.0, "off").validate_spec().is_err());
+        assert!(ParamSpec::bool("b", false).special(0.0, "off").validate_spec().is_err());
+        assert!(ParamSpec::float("x", 0.0).special(0.0, "").validate_spec().is_err());
+        assert!(ParamSpec::float("x", 0.0).special(0.0, "the 2nd").validate_spec().is_err());
+        assert!(ParamSpec::float("x", 0.0).special(0.0, "a").special(0.0, "b").validate_spec().is_err());
+        assert!(ParamSpec::float("x", 0.0).special(0.0, "a").special(1.0, "a").validate_spec().is_err());
+        assert!(ParamSpec::float("x", 0.0).special(0.0, "a").special(-1.0, "b").validate_spec().is_ok());
     }
 
     #[test]

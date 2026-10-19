@@ -35,6 +35,13 @@ pub fn test_types() -> NodeTypes {
     );
     register(
         &mut t,
+        NodeDesc::new("test.armed", "Has a param that opens at its default")
+            .param(ParamSpec::float("armed", 0.0).opens_at_default())
+            .param(ParamSpec::float("kept", 0.0))
+            .output("out", DataKind::Chan),
+    );
+    register(
+        &mut t,
         NodeDesc::new("test.add", "a + b")
             .input("a", DataKind::Chan)
             .input("b", DataKind::Chan)

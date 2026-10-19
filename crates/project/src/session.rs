@@ -84,9 +84,41 @@ pub struct Session {
     state: Mutex<State>,
 }
 
-/// The network with `content`, built from scratch.
+/// The network with `content`, built from scratch, as a project opens: params that open at
+/// their default ([`penumbra_core::ParamSpec::opens_at_default`], a recording's `record`) are
+/// reset, so opening never starts what they start. The content (the merge base) keeps the
+/// file's values, so an edit of the file that sets one again still counts as a change.
 fn build(content: &Content, types: &NodeTypes) -> Result<Network, Error> {
-    Ok(Network::new().apply_with(types, &diff(&Content::default(), content), Params::Keep)?.network)
+    let net = Network::new().apply_with(types, &diff(&Content::default(), content), Params::Keep)?.network;
+    let resets: Vec<Op> = net
+        .nodes()
+        .flat_map(|node| {
+            let specs = types.desc(&node.kind).map(|d| d.params.as_slice()).unwrap_or_default();
+            specs
+                .iter()
+                .filter(|s| {
+                    s.opens_at_default && node.params.get(s.name.as_str()).is_some_and(|v| *v != s.default)
+                })
+                .filter_map(|s| {
+                    let path = net.path_of(node.id)?;
+                    let name = s.name.parse().ok()?;
+                    Some(Op::Reset { param: penumbra_core::ParamPath::new(path, name).ok()? })
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if resets.is_empty() {
+        return Ok(net);
+    }
+    match net.apply(types, &resets) {
+        Ok(applied) => Ok(applied.network),
+        Err(e) => {
+            // Opening matters more; the operators' own guards still keep a recording from
+            // starting by itself.
+            log::warn!("params that open at their default stay as stored: {e}");
+            Ok(net)
+        }
+    }
 }
 
 /// The file's text, `None` if it does not exist.
@@ -480,6 +512,30 @@ mod tests {
         drop(s);
         let again = open(&dir);
         assert_eq!(again.doc().snapshot().len(), 1);
+    }
+
+    #[test]
+    fn params_that_open_at_their_default_do_so_and_the_file_keeps_them() {
+        let dir = TempDir::new("opens_at_default");
+        let template = content(&[("/r", "test.armed", &[("kept", 2.0)], &[], false)]);
+        let s = Session::open(&dir.0, Arc::new(test_types()), &template).unwrap();
+        let text = file(&s).replace(r#"{"kept": 2.0}"#, r#"{"armed": 1.0, "kept": 2.0}"#);
+        drop(s);
+        std::fs::write(dir.0.join(FILE_NAME), text).unwrap();
+        let s = Session::open(&dir.0, Arc::new(test_types()), &template).unwrap();
+        let net = s.doc().snapshot();
+        let r = net.node(net.resolve(&"/r".parse::<NodePath>().unwrap()).unwrap()).unwrap().clone();
+        assert_eq!(r.params.get("armed"), None, "reset on opening");
+        assert_eq!(r.params.get("kept"), Some(&Value::Float(2.0)));
+        assert!(file(&s).contains(r#""armed": 1.0"#), "the file is left alone: {}", file(&s));
+        assert!(!s.status(Instant::now()).unsaved);
+        // Setting it in the file while open is a change, so it arrives.
+        let t0 = Instant::now();
+        std::fs::write(s.file(), file(&s).replace(r#""armed": 1.0"#, r#""armed": 3.0"#)).unwrap();
+        s.poll(t0);
+        let net = s.doc().snapshot();
+        let r = net.node(net.resolve(&"/r".parse::<NodePath>().unwrap()).unwrap()).unwrap().clone();
+        assert_eq!(r.params.get("armed"), Some(&Value::Float(3.0)));
     }
 
     #[test]

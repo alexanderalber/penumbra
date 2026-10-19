@@ -11,26 +11,53 @@
 //! the start. While the clock stands still nothing is recorded; a jump back in time or of more
 //! than a second forward continues the file without a gap.
 //!
-//! A recording starts when `record` turns on (by hand, a binding or `video_out.start`) and
-//! stops when it turns off, on `video_out.stop`, when the node is deleted, its project closed or
-//! the app quit; stopping finishes the file. A project opened with `record` already on does not
-//! start recording until it turns off and on again.
+//! `record` is the one switch: the panel's record button and `video_out.start` / `.stop` set it
+//! (as edits), a binding drives it. A recording starts when it is on and stops when it turns
+//! off, the node is deleted, its project closed or the app quit; stopping finishes the file.
+//! `record` opens off whatever the project file says, so opening a project never starts a
+//! recording by itself. A recording that could not start or ended by itself (an error) is not
+//! tried again until `record` turns off and on.
 
-use penumbra_core::{Error, NodeId, ParamSpec, Rate, Tick, Unit, Value};
+use penumbra_core::{Error, NodeId, ParamSpec, Rate, Resolves, Tick, Unit, Value};
 use penumbra_gpu::{Gpu, MappedPlanes, PlaneLayout, Tex, YuvReader};
 use penumbra_graph::{
     CookContext, CookError, Cooked, DataKind, FnNodeType, NodeDef, NodeDesc, NodeTypes, Operator,
 };
-use penumbra_record::{Codec, Fps, Frame, Hub, Layout, Planes, Recording, Request, Settings};
+use penumbra_record::{Codec, Fps, Frame, H264Preset, Hub, Layout, Planes, Recording, Settings};
 
 /// Kind of the movie recording node.
 pub const VIDEO_OUT: &str = "out.video";
 /// Bytes the readback ring of one recording may hold (the ring has 3 to 10 frames).
 const RING_BYTES: usize = 256 << 20;
+/// The H.264 preset a node has unless set: the fastest. Recording busy 1080p60 pictures inside
+/// the running show on an 8-core, 16-thread CPU, it ran at 75 to 105 frames per second where
+/// balanced ran at 62 to 74, with files no larger.
+pub const DEFAULT_PRESET: H264Preset = H264Preset::Fast;
 /// Where recordings go when `file` is empty, relative to the project.
 pub const FOLDER: &str = "recordings";
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
+    let preset = H264Preset::NAMES.iter().fold(
+        ParamSpec::choice("preset", &H264Preset::NAMES).doc(
+            "How hard the H.264 encoder works per frame: faster drops fewer frames of a busy picture, \
+             slower keeps more fine detail",
+        ),
+        |spec, name| {
+            let doc = match *name {
+                "fast" => {
+                    "the fastest: Baseline profile, constant quality 23; files no larger than balanced's, \
+                     fine detail a little softer; 20 to 45 % faster than balanced on busy pictures"
+                }
+                "balanced" => "High profile, constant quality 18, the encoder's quickest search",
+                _ => {
+                    "High profile, quality 18, a wider search: slightly smaller files, a third slower than \
+                     balanced; for calm pictures, smaller sizes or lower rates"
+                }
+            };
+            spec.choice_doc(name, doc)
+        },
+    );
+    let preset = ParamSpec { default: Value::Text(DEFAULT_PRESET.name().to_string()), ..preset };
     let codec = Codec::NAMES.iter().fold(
         ParamSpec::choice("codec", &Codec::NAMES).doc("What the picture is encoded as (the file's extension follows it)"),
         |spec, name| {
@@ -45,19 +72,28 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     );
     types.register(FnNodeType::new(
         NodeDesc::new(VIDEO_OUT, "Records its input to a movie file (H.264 or ProRes)")
-            .param(ParamSpec::bool("record", false).doc(
-                "Recording while on: turning it on starts a new file, turning it off finishes it. Bind it to a \
-                 channel to start and stop from OSC or a button; video_out.start and .stop do the same without it",
+            .param(ParamSpec::bool("record", false).opens_at_default().doc(
+                "Recording while on: turning it on starts a new file, turning it off finishes it. The record \
+                 button above and video_out.start / .stop switch it; bind it to a channel to start and stop \
+                 from OSC or a button. A project always opens with it off",
             ))
             .param(codec)
+            .param(preset)
             .param(ParamSpec::text("file", "").doc(
                 "The movie file, relative to the project; empty records to recordings/<node name>. A file that \
                  exists is never overwritten: the recording gets the next free name with _2, _3, ...",
             ))
-            .param(ParamSpec::float("rate", 0.0).clamp(0.0, 240.0).range(0.0, 120.0).unit(Unit::Hertz).doc(
-                "Frames per second of the file; 0 takes the show's rate. Frames follow the show clock, so a \
-                 slower show makes frames last longer, a faster one leaves some out",
-            ))
+            .param(
+                ParamSpec::float("rate", 0.0)
+                    .clamp(0.0, 240.0)
+                    .range(0.0, 120.0)
+                    .unit(Unit::Hertz)
+                    .special_resolved(0.0, "show rate", Resolves::ShowRate)
+                    .doc(
+                        "Frames per second of the file. Frames follow the show \
+                         clock, so a slower show makes frames last longer, a faster one leaves some out",
+                    ),
+            )
             .param(
                 ParamSpec::choice("size", &["input", "fixed"])
                     .doc("The picture size of the file, fixed when the recording starts")
@@ -70,8 +106,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(ParamSpec::int("height", 1080).clamp(16.0, 8192.0).range(16.0, 2160.0).doc(
                 "Height of the file in pixels with `size` fixed (rounded down to even)",
             ))
-            .param(ParamSpec::int("threads", 0).clamp(0.0, 64.0).range(0.0, 16.0).more().doc(
-                "Encoder threads; 0 takes all of this machine's logical cores but two. Fewer leave more to \
+            .param(ParamSpec::int("threads", 0).clamp(0.0, 64.0).range(0.0, 16.0).more().special(0.0, "automatic").doc(
+                "Encoder threads; automatic is all of this machine's logical cores but two. Fewer leave more to \
                  the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner",
             ))
             .input("in", DataKind::Tex)
@@ -90,8 +126,10 @@ pub fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static 
         return None;
     }
     let size = node.param(desc, "size").and_then(Value::as_str).unwrap_or("input");
+    let codec = node.param(desc, "codec").and_then(Value::as_str).unwrap_or("h264");
     match (size, name) {
         ("input", "width" | "height") => Some("`size` is input: the file takes the input's size"),
+        _ if name == "preset" && codec != "h264" => Some("only the h264 codec has presets"),
         _ => None,
     }
 }
@@ -147,8 +185,11 @@ struct Take {
 struct VideoOut {
     hub: Option<(Hub, NodeId)>,
     take: Option<Take>,
-    /// `record` at the last cook; `None` before the first.
-    record: Option<bool>,
+    /// A recording was started (or tried) since `record` last turned on: not again until it
+    /// turns off.
+    tried: bool,
+    /// Why the last start failed, shown while `record` stays on.
+    failed: Option<String>,
 }
 
 impl Drop for VideoOut {
@@ -211,6 +252,7 @@ impl VideoOut {
         if path.extension().is_none() {
             path.set_extension(codec.extension());
         }
+        let h264 = cx.text("preset").ok().and_then(H264Preset::parse).unwrap_or(DEFAULT_PRESET);
         let threads = match usize::try_from(cx.int("threads")?).unwrap_or(0) {
             0 => penumbra_record::writer::default_threads(),
             n => n,
@@ -219,7 +261,7 @@ impl VideoOut {
         layout.check().map_err(CookError::failed)?;
         let ring = ring_frames(&layout);
         let queue = ring.saturating_sub(1).max(1);
-        let settings = Settings { path, codec, width: w, height: h, fps, threads, queue };
+        let settings = Settings { path, codec, width: w, height: h, fps, threads, queue, h264 };
         let recording = hub.start(node, settings).map_err(CookError::failed)?;
         self.take = Some(Take {
             planes: plane_layout(&recording.layout()),
@@ -285,38 +327,39 @@ impl Operator for VideoOut {
         if self.hub.is_none() {
             self.hub = Some((hub.clone(), node));
         }
-        hub.attach(node, cx.def().name.as_str(), || {
-            let waker = cx.waker();
-            std::sync::Arc::new(move || waker.wake())
-        });
+        hub.attach(node, cx.def().name.as_str());
         let record = cx.bool("record")?;
-        // Only a change counts, so a project saved while recording does not record on opening.
-        let mut wanted = match self.record.replace(record) {
-            Some(before) if before != record => Some(record),
-            _ => None,
-        };
-        match hub.take_request(node) {
-            Some(Request::Start) => wanted = Some(true),
-            Some(Request::Stop) => wanted = Some(false),
-            None => {}
-        }
         let now = cx.time().tick;
         if self.take.as_ref().is_some_and(|t| !t.recording.is_running()) {
             // Ended by itself (an error): its status says why.
             self.take = None;
         }
-        match wanted {
-            Some(true) => self.start(cx, hub, node, now)?,
-            Some(false) => self.take = None,
-            None => {}
+        if !record {
+            self.take = None;
+            self.tried = false;
+            self.failed = None;
+        } else if !self.tried {
+            self.tried = true;
+            match self.start(cx, hub, node, now) {
+                Ok(()) => {}
+                Err(CookError::Failed(e)) => self.failed = Some(e),
+                Err(CookError::Pending) => self.tried = false,
+            }
+        }
+        if let Some(e) = &self.failed {
+            return Err(CookError::failed(format!(
+                "not recording: {e}; turn record off and on to try again"
+            )));
         }
         if let Some(take) = self.take.as_mut() {
             let gpu = cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU yet"))?;
             take.frame(gpu, cx.input_as::<Tex>(0), now)?;
         }
-        if let Some(s) = hub.status(node) {
+        // The last recording's error and drops count while `record` is on; once off, the status
+        // line of the panel and video_out.status still tell.
+        if let Some(s) = hub.status(node).filter(|_| record) {
             if let Some(e) = s.error {
-                return Err(CookError::failed(e));
+                return Err(CookError::failed(format!("{e}; turn record off and on to try again")));
             }
             if s.dropped > 0 {
                 cx.warn(format!("{} frames dropped: the encoder did not keep up", s.dropped));
