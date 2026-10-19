@@ -22,11 +22,13 @@ mod ramp;
 pub mod render;
 mod shader;
 pub mod shapes;
+pub mod spout_in;
 mod text;
 mod time_machine;
 mod video;
 pub mod video_in;
 
+pub use spout_in::SPOUT_IN;
 pub use text::{DEFAULT_FONT, TEXT, families as font_families};
 pub use video::VIDEO;
 pub use video_in::VIDEO_IN;
@@ -457,6 +459,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     render::register(types)?;
     shader::register(types)?;
     shapes::register(types)?;
+    spout_in::register(types)?;
     text::register(types)?;
     time_machine::register(types)?;
     video::register(types)?;

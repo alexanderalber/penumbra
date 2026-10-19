@@ -19,6 +19,7 @@ penumbra-mesh.workspace = true
 penumbra-osc.workspace = true
 penumbra-record.workspace = true
 penumbra-script.workspace = true
+penumbra-spout.workspace = true
 penumbra-track.workspace = true
 penumbra-video.workspace = true
 log.workspace = true

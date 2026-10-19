@@ -179,6 +179,12 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `spacenav.status` | The 3D mouse: state (searching, connected, failed), raw counts, resting offset, shaped axes, buttons; opens it if not yet |
 
+## spout
+
+| command | |
+|---|---|
+| `spout.senders` | The Spout senders running on this machine, this process's out.spout nodes included (name, width, height, format, program), and the one a tex.spout_in without a name takes |
+
 ## state
 
 | command | |

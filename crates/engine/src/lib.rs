@@ -20,6 +20,7 @@ pub mod navigation;
 pub mod osc;
 pub mod pictures;
 pub mod projects;
+pub mod spout;
 pub mod state;
 pub mod state_commands;
 pub mod ticker;
@@ -55,6 +56,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     osc::register(&mut registry, engine);
     audio::register(&mut registry, engine);
     dmx::register(&mut registry, engine);
+    spout::register(&mut registry);
     video_in::register(&mut registry, engine);
     video_out::register(&mut registry, engine);
     blob_track::register(&mut registry, engine);
