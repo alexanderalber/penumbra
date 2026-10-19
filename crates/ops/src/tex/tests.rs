@@ -580,6 +580,11 @@ fn every_builtin_cooks_without_warnings() {
             // Needs a Python; without one its error is the expected outcome.
             continue;
         }
+        // On the network, which makes Windows ask about the firewall for every new test binary:
+        // `ndi_round_trip` (ignored) covers both.
+        if kind == "tex.ndi_in" || kind == "out.ndi" {
+            continue;
+        }
         rig.clock.advance(1);
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
@@ -2309,6 +2314,48 @@ fn spout_round_trip() {
     for p in &px.data {
         assert!(p.iter().zip([0.0, 1.0, 0.0, 1.0]).all(|(a, b)| (a - b).abs() < 3e-3), "{p:?}");
     }
+    let status = rig.cooker.status(rig.id("/out")).unwrap();
+    assert_eq!((status.error, status.warning), (None, None));
+}
+
+/// `out.ndi` to `tex.ndi_in` in one process through the installed NDI runtime: straight alpha
+/// both ways, so colour and transparency come back.
+#[test]
+#[ignore = "needs the NDI runtime and the local network"]
+fn ndi_round_trip() {
+    let Some(gpu) = gpu() else { return };
+    let name = format!("penumbra test round trip {}", std::process::id());
+    let color = |c: [f64; 4]| set("/c.color", Value::Vec4(c));
+    let mut rig = Rig::new(
+        gpu,
+        None,
+        &[
+            create("/c", "tex.constant", &[("width", Value::Int(64)), ("height", Value::Int(32))]),
+            create("/out", "out.ndi", &[("name", name.as_str().into()), ("alpha", "straight".into())]),
+            connect("/c", "/out", 0),
+            create("/in", "tex.ndi_in", &[("source", name.as_str().into())]),
+        ],
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut i = 0u32;
+    loop {
+        // A slightly different picture every frame, so the sender keeps sending.
+        i += 1;
+        rig.edit(&[color([1.0, 0.5, 0.25, if i.is_multiple_of(2) { 0.5 } else { 0.501 }])]);
+        rig.cook("/out");
+        rig.gpu.poll();
+        rig.cook("/in");
+        if rig.tex("/in").is_some() {
+            break;
+        }
+        assert!(Instant::now() < deadline, "nothing received: {:?}", rig.cooker.status(rig.id("/in")));
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    let px = rig.gpu.read(&rig.tex("/in").unwrap()).unwrap();
+    assert_eq!((px.width, px.height), (64, 32));
+    let p = px.get(31, 15).unwrap();
+    let want = [0.5, 0.25, 0.125, 0.5];
+    assert!(p.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.02), "{p:?}, expected {want:?}");
     let status = rig.cooker.status(rig.id("/out")).unwrap();
     assert_eq!((status.error, status.warning), (None, None));
 }

@@ -17,6 +17,7 @@ pub mod dmx;
 pub mod engine;
 pub mod meter;
 pub mod navigation;
+pub mod ndi;
 pub mod osc;
 pub mod pictures;
 pub mod projects;
@@ -56,6 +57,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     osc::register(&mut registry, engine);
     audio::register(&mut registry, engine);
     dmx::register(&mut registry, engine);
+    ndi::register(&mut registry);
     spout::register(&mut registry);
     video_in::register(&mut registry, engine);
     video_out::register(&mut registry, engine);

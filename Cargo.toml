@@ -22,6 +22,7 @@ penumbra-gpu = { path = "crates/gpu" }
 penumbra-graph = { path = "crates/graph" }
 penumbra-mesh = { path = "crates/mesh" }
 penumbra-ops = { path = "crates/ops" }
+penumbra-ndi = { path = "crates/ndi" }
 penumbra-osc = { path = "crates/osc" }
 penumbra-output = { path = "crates/output" }
 penumbra-project = { path = "crates/project" }

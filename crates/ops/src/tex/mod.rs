@@ -17,6 +17,7 @@ mod image;
 mod layer;
 pub mod mapper;
 pub(crate) mod meters_picture;
+pub mod ndi_in;
 mod optical_flow;
 mod ramp;
 pub mod render;
@@ -28,6 +29,7 @@ mod time_machine;
 mod video;
 pub mod video_in;
 
+pub use ndi_in::NDI_IN;
 pub use spout_in::SPOUT_IN;
 pub use text::{DEFAULT_FONT, TEXT, families as font_families};
 pub use video::VIDEO;
@@ -454,6 +456,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     image::register(types)?;
     layer::register(types)?;
     mapper::register(types)?;
+    ndi_in::register(types)?;
     optical_flow::register(types)?;
     ramp::register(types)?;
     render::register(types)?;

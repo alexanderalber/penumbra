@@ -7,7 +7,7 @@ penumbra's picture into OBS for streaming, to take clips from Resolume into a pe
 or to run two penumbra instances side by side.
 
 Spout is Windows only, and both programs must run on the same graphics card (see
-[Laptops](#laptops-with-two-graphics-chips)). Between machines, use NDI (not built in yet).
+[Laptops](#laptops-with-two-graphics-chips)). Between machines, use [NDI](ndi.md).
 
 ## Sending: `out.spout`
 

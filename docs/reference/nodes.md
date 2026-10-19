@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
 
 ### tex.blob_track
 
@@ -474,6 +474,23 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `method` | luminance \| average \| maximum \| red \| green \| blue \| alpha | `"luminance"` |  | How the grey is made from the colour; luminance: brightness as the eye weighs it (Rec. 709): green counts most, blue least; average: red, green and blue equally; maximum: the brightest of red, green and blue; red: the red channel only; green: the green channel only; blue: the blue channel only; alpha: the opacity, as grey |
 | `opaque` | bool | `false` |  | Alpha 1 instead of the input's |
+
+### tex.ndi_in
+
+An NDI® source on the network (needs the NDI runtime, ndi.video); resolution of the source's
+
+Inputs: none.
+
+Outputs:
+
+- `out` (tex): The source's picture
+- `audio` (chan): The source's audio since the last cook: ch1, ch2, ... at its sample rate
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `source` | text |  |  | The source's name as `PC (Source)` or a part of it, e.g. `OBS` (the ... menu lists those on the network); empty: the first source |
+| `bandwidth` | full \| low | `"full"` |  | Which of the sender's streams to take; full: the stream as sent; low: a smaller, lower-quality stream the sender offers beside it, for previews |
+| `alpha` | straight \| premultiplied \| opaque | `"straight"` |  | How the source's transparency is taken (NDI's alpha is straight); straight: colour and alpha apart, as most programs take it; premultiplied: colour multiplied by alpha; opaque: no transparency: sent over black, or a received alpha ignored |
 
 ### tex.noise
 
@@ -1647,7 +1664,7 @@ Outputs:
 
 ## out
 
-[out.dmx](#outdmx), [out.projector](#outprojector), [out.spout](#outspout), [out.video](#outvideo)
+[out.dmx](#outdmx), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.video](#outvideo)
 
 ### out.dmx
 
@@ -1668,6 +1685,21 @@ Outputs: none.
 | `address` | int | `1` | 1 to 512 (soft) | DMX address (slot, from 1) the first channel goes to; for DDP the byte, from 1 |
 | `values` | unit \| byte | `"unit"` |  | What the channel values mean; unit: 0 to 1, sent as 0 to 255; byte: 0 to 255, sent as they are (rounded) |
 | `rate` | float | `30` | 1 to 60 Hz (soft) | Frames per second, sent whether or not anything changed; the Open DMX USB manages about 35 |
+
+### out.ndi
+
+Offers its input on the network as an NDI® source (needs the NDI runtime, ndi.video)
+
+Inputs:
+
+- `in` (tex): The picture to send
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `name` | text |  |  | The source name receivers pick; NDI puts the machine's name before it, as in `PC (name)`. Empty: `penumbra` and the node's name, such as `penumbra ndi1` |
+| `alpha` | straight \| premultiplied \| opaque | `"opaque"` |  | How transparency travels to the receivers. With alpha, NDI sends an extra plane, which costs about twice the CPU and some latency; straight: colour and alpha apart, as most programs take it; premultiplied: colour multiplied by alpha; opaque: no transparency: sent over black, or a received alpha ignored |
 
 ### out.projector
 

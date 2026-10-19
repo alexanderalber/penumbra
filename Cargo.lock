@@ -3240,6 +3240,7 @@ dependencies = [
  "penumbra-gpu",
  "penumbra-graph",
  "penumbra-mesh",
+ "penumbra-ndi",
  "penumbra-ops",
  "penumbra-osc",
  "penumbra-project",
@@ -3290,6 +3291,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "penumbra-ndi"
+version = "0.2.0"
+dependencies = [
+ "half",
+ "libloading",
+ "log",
+ "penumbra-core",
+ "penumbra-gpu",
+ "wgpu",
+]
+
+[[package]]
 name = "penumbra-ops"
 version = "0.2.0"
 dependencies = [
@@ -3304,6 +3317,7 @@ dependencies = [
  "penumbra-gpu",
  "penumbra-graph",
  "penumbra-mesh",
+ "penumbra-ndi",
  "penumbra-osc",
  "penumbra-record",
  "penumbra-script",
@@ -3440,6 +3454,7 @@ dependencies = [
  "penumbra-engine",
  "penumbra-gpu",
  "penumbra-graph",
+ "penumbra-ndi",
  "penumbra-ops",
  "penumbra-osc",
  "penumbra-project",

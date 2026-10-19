@@ -52,6 +52,41 @@ pub use yuv::{MappedPlanes, PlaneLayout, YuvReader};
 /// The format of every texture flowing between nodes.
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
+/// How alpha travels to and from other programs (Spout, NDI), which exchange sRGB-encoded
+/// colour: penumbra's own textures are always premultiplied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum Alpha {
+    /// Colour and alpha separate, as most programs expect.
+    #[default]
+    Straight,
+    /// Colour multiplied by alpha (after encoding).
+    Premultiplied,
+    /// No transparency: sending composites over black, receiving ignores the alpha.
+    Opaque,
+}
+
+impl Alpha {
+    pub const NAMES: [&'static str; 3] = ["straight", "premultiplied", "opaque"];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "straight" => Self::Straight,
+            "premultiplied" => Self::Premultiplied,
+            "opaque" => Self::Opaque,
+            _ => return None,
+        })
+    }
+
+    /// The value of the `ALPHA` override constant in the conversion shaders.
+    pub fn shader_constant(self) -> f64 {
+        match self {
+            Self::Straight => 0.0,
+            Self::Premultiplied => 1.0,
+            Self::Opaque => 2.0,
+        }
+    }
+}
+
 /// Errors raised outside an error scope (see [`Gpu::errors`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ErrorLog {
@@ -464,7 +499,7 @@ impl Gpu {
     /// `DeviceExt::create_buffer_init`: that maps the buffer at creation and panics when the
     /// device cannot create it (out of GPU memory, as when another program holds the VRAM);
     /// here a failure goes to the error scope like any other.
-    pub(crate) fn uniform_buffer(&self, label: &str, contents: &[u8]) -> wgpu::Buffer {
+    pub fn uniform_buffer(&self, label: &str, contents: &[u8]) -> wgpu::Buffer {
         let align = wgpu::COPY_BUFFER_ALIGNMENT as usize;
         let size = contents.len().next_multiple_of(align).max(align);
         let buffer = self.inner.device.create_buffer(&wgpu::BufferDescriptor {

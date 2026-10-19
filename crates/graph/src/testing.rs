@@ -177,6 +177,17 @@ pub fn test_types() -> NodeTypes {
         },
     ))
     .unwrap();
+    // Outputs `a` and `b` as their params; an output whose param did not change is handed on
+    // as the same data.
+    t.register(FnNodeType::new(
+        NodeDesc::new("test.pair", "Two numbers, each kept while its param stays")
+            .param(ParamSpec::float("a", 0.0))
+            .param(ParamSpec::float("b", 0.0))
+            .output("a", DataKind::Chan)
+            .output("b", DataKind::Chan),
+        || Box::new(Pair::default()) as Box<dyn Operator>,
+    ))
+    .unwrap();
     // `out` is `value`; the lazy `extra` is `value + 100` while read, skipped otherwise.
     simple(
         &mut t,
@@ -297,5 +308,26 @@ impl Operator for Slow {
 
     fn job_status(&self) -> Option<JobStatus> {
         Some(self.slot.status())
+    }
+}
+
+#[derive(Default)]
+struct Pair {
+    last: [Option<(f64, Data)>; 2],
+}
+
+impl Operator for Pair {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let mut outs = Vec::new();
+        for (i, name) in ["a", "b"].into_iter().enumerate() {
+            let v = cx.float(name)?;
+            let data = match &self.last[i] {
+                Some((old, d)) if *old == v => d.clone(),
+                _ => Data::new(DataKind::Chan, chans(v)),
+            };
+            self.last[i] = Some((v, data.clone()));
+            outs.push(data);
+        }
+        Ok(Cooked::Outputs(outs))
     }
 }

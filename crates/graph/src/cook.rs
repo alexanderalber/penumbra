@@ -425,6 +425,9 @@ struct Runtime {
     op: Option<Box<dyn Operator>>,
     outputs: Option<Vec<Data>>,
     version: u64,
+    /// Per output, the version it last changed at: an output a cook hands on as it was (the
+    /// same data, not merely equal) keeps its version, so its readers do not recook.
+    output_versions: Vec<u64>,
     seen_inputs: Vec<Option<(Port, u64)>>,
     /// Values of bound parameters at the last cook; a change counts as a parameter change.
     seen_bound: BTreeMap<Name, Value>,
@@ -468,6 +471,11 @@ impl Runtime {
         self.blank_previous = true;
     }
 
+    /// The version output `output` last changed at.
+    fn output_version(&self, output: u32) -> u64 {
+        self.output_versions.get(output as usize).copied().unwrap_or(self.version)
+    }
+
     fn new(def: Arc<NodeDef>, types: &NodeTypes) -> Self {
         let ty = types.get(&def.kind).cloned();
         Self {
@@ -476,6 +484,7 @@ impl Runtime {
             op: None,
             outputs: None,
             version: 0,
+            output_versions: Vec::new(),
             seen_inputs: Vec::new(),
             seen_bound: BTreeMap::new(),
             seen_tick: None,
@@ -817,7 +826,8 @@ impl Cooker {
             inputs.push(data.filter(|_| !(rt.blank_previous && rt.def.is_previous(i))));
             // A previous-result input does not recook the node when its source changes (the
             // node is time-dependent; otherwise a loop would recook itself forever).
-            let version = if rt.def.is_previous(i) { 0 } else { src.map_or(0, |s| s.version) };
+            let version =
+                if rt.def.is_previous(i) { 0 } else { src.map_or(0, |s| s.output_version(port.output)) };
             signature.push(Some((*port, version)));
         }
         let refs = self.refs(rt);
@@ -901,8 +911,18 @@ impl Cooker {
             Ok(Ok(Cooked::Outputs(outs))) => match check_outputs(desc, &outs) {
                 Ok(()) => {
                     self.next_version += 1;
+                    let version = self.next_version;
+                    let before = rt.outputs.as_deref().unwrap_or(&[]);
+                    rt.output_versions = outs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, d)| match (before.get(i), rt.output_versions.get(i)) {
+                            (Some(old), Some(&v)) if old.same(d) => v,
+                            _ => version,
+                        })
+                        .collect();
                     rt.outputs = Some(outs);
-                    rt.version = self.next_version;
+                    rt.version = version;
                     rt.error = None;
                 }
                 Err(e) => rt.error = Some(e),
@@ -1017,7 +1037,10 @@ impl Cooker {
                     (Some(port), Some((seen_port, seen_version))) => {
                         port == seen_port
                             && known.get(&port.node) == Some(&true)
-                            && self.runtimes.get(&port.node).is_some_and(|s| s.version == *seen_version)
+                            && self
+                                .runtimes
+                                .get(&port.node)
+                                .is_some_and(|s| s.output_version(port.output) == *seen_version)
                     }
                     _ => false,
                 });
@@ -1172,6 +1195,7 @@ impl Cooker {
                 let ty = rt.ty.as_ref().ok_or_else(|| format!("unknown node kind `{}`", rt.def.kind))?;
                 check_outputs(ty.desc(), &outs)?;
                 self.next_version += 1;
+                rt.output_versions = vec![self.next_version; outs.len()];
                 rt.outputs = Some(outs);
                 rt.version = self.next_version;
                 rt.error = None;
@@ -1442,6 +1466,23 @@ mod tests {
         // (The reader of `out` recooks too: a node's outputs share one version.)
         assert_eq!(report.cooked, [f.id("/l"), f.id("/use_out")]);
         assert_eq!(extra(&f), (false, Some(100.0)));
+    }
+
+    #[test]
+    fn an_output_handed_on_unchanged_does_not_recook_its_readers() {
+        let mut f = Fixture::new(&[
+            create("/p", "test.pair"),
+            create("/use_a", "test.sink"),
+            create("/use_b", "test.sink"),
+            connect("/p", "/use_a", 0),
+            Op::Connect { from: pp("/p"), output: 1, to: pp("/use_b"), input: 0 },
+        ]);
+        f.cook(&["/use_a", "/use_b"]);
+        f.set("/p.b", Value::Float(2.0));
+        assert_eq!(f.cook(&["/use_a", "/use_b"]), ["/p", "/use_b"]);
+        f.set("/p.a", Value::Float(3.0));
+        assert_eq!(f.cook(&["/use_a", "/use_b"]), ["/p", "/use_a"]);
+        assert!(f.cooker.current(&[f.id("/use_a"), f.id("/use_b")], f.clock.now()).len() == 2);
     }
 
     #[test]
