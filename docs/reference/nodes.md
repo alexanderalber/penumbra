@@ -30,7 +30,7 @@ Outputs:
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
-| `background` | colour | `[0, 0, 0, 1]` |  | Colour behind the meters, linear RGBA with straight alpha; alpha 0 leaves only the meters, to lay over a picture |
+| `background` | colour | `[0, 0, 0, 0]` |  | Colour behind the meters, linear RGBA with straight alpha; the default (alpha 0) leaves only the meters, to lay over a picture |
 
 ### tex.blob_track
 
