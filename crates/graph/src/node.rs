@@ -51,6 +51,17 @@ impl Data {
         self.value.downcast_ref()
     }
 
+    /// What a lazy output ([`NodeDesc::lazy_output`]) holds while nothing reads it: of the
+    /// declared kind, but with no value ([`Data::get`] gives `None`).
+    pub fn skipped(kind: DataKind) -> Self {
+        Self::new(kind, Skipped)
+    }
+
+    /// Whether this is a [`Data::skipped`] placeholder.
+    pub fn is_skipped(&self) -> bool {
+        self.value.is::<Skipped>()
+    }
+
     /// Whether both are the same cooked result (not merely equal).
     pub fn same(&self, other: &Data) -> bool {
         Arc::ptr_eq(&self.value, &other.value)
@@ -63,6 +74,9 @@ impl Data {
         Arc::as_ptr(&self.value).cast::<()>() as usize
     }
 }
+
+/// The value of [`Data::skipped`].
+struct Skipped;
 
 impl fmt::Debug for Data {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -94,11 +108,14 @@ pub struct OutputSpec {
     /// What the output holds, for the reference and the editor's port tooltip; worth writing
     /// for every output of a node with several.
     pub doc: String,
+    /// Made only while something reads it ([`NodeDesc::lazy_output`]).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub lazy: bool,
 }
 
 impl OutputSpec {
     pub fn new(name: &str, kind: DataKind) -> Self {
-        Self { name: name.to_string(), kind, doc: String::new() }
+        Self { name: name.to_string(), kind, doc: String::new(), lazy: false }
     }
 }
 
@@ -188,6 +205,16 @@ impl NodeDesc {
     pub fn describe_output(mut self, name: &str, doc: &str) -> Self {
         if let Some(o) = self.outputs.iter_mut().find(|o| o.name == name) {
             o.doc = doc.to_string();
+        }
+        self
+    }
+
+    /// Marks the output `name` declared before as lazy: costly to make and often unused, so the
+    /// node makes it only while something reads it ([`CookContext::output_wanted`]) and puts
+    /// [`Data::skipped`] there otherwise. A change in whether it is read recooks the node.
+    pub fn lazy_output(mut self, name: &str) -> Self {
+        if let Some(o) = self.outputs.iter_mut().find(|o| o.name == name) {
+            o.lazy = true;
         }
         self
     }

@@ -30,7 +30,7 @@ a 3D room lit by a projector, lamps and its surroundings.
 ![The projection-room example: a room with a stained-glass panel, a cube and a chrome ball](assets/gallery/projection-room.jpg)
 
 The meters of an audio analysis, as the viewer shows them and as a picture in the network
-(`tex.audio_meters`, to project or lay over a show): levels with their peaks, the tempo and
+(the analysis' `meters` output, to project or lay over a show): levels with their peaks, the tempo and
 how sure it is, a light on every beat (amber on the bar's first), the bar, the last four seconds
 of kicks, onsets and beats, and the spectrum. Here a Python script node plays a 124 BPM pattern
 into the analysis; see [Audio](docs/audio.md).

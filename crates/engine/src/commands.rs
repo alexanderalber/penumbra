@@ -894,8 +894,9 @@ pub(crate) fn cook_now(e: &Engine, id: NodeId, output: u32) -> Result<(Option<Da
         let session = e.session().clone();
         let (data, status) = e.on_cook(move |st| {
             let net = session.doc().snapshot();
-            st.cooker.cook(&net, st.clock.now(), &[id], &[]);
-            (st.cooker.output(Port { node: id, output }).cloned(), st.cooker.status(id))
+            let port = Port { node: id, output };
+            st.cooker.cook_showing(&net, st.clock.now(), &[id], &[], &[port]);
+            (st.cooker.output(port).cloned(), st.cooker.status(id))
         })?;
         let busy = status
             .as_ref()

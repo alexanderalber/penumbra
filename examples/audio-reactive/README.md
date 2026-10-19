@@ -15,8 +15,9 @@ the top row is bound to the results (the dashed green lines):
 - `/turn` turns the bar phase (0 to 1 over a bar) into degrees of hue for `/tint`, so the
   colours go round once per bar once a tempo is found.
 
-`/meters` (below, on its own) draws the analysis' meters as a picture: view it, or send it to a
-second output as a monitor during the sound check. With its `background` alpha at 0 it can be
-laid over `/show` with a `tex.composite`.
+`/meters` (below, on its own) takes the analysis' third output, `meters`: its meters as a
+picture, drawn only while something reads it. View it, or send it to a second output as a
+monitor during the sound check. It is transparent around the meters, so a `tex.composite` lays
+it over `/show` (or over a `tex.constant` for a solid backdrop).
 
 Play music with a clear beat; the tempo is found after a few seconds.

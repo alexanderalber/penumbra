@@ -8,7 +8,9 @@
 //!   `mid`, `high`), events (`onset`, `kick`, `tick` are 1 in the frame they happen), the
 //!   tempo (`bpm`, `confidence`) and the phases (`beat`, `bar` rising from 0 to 1, `bar_beat`
 //!   counting). Its second output is a spectrum: one channel whose samples are log-spaced bands
-//!   from 30 Hz to 16 kHz. See `penumbra-audio`'s `analysis` module for how.
+//!   from 30 Hz to 16 kHz. See `penumbra-audio`'s `analysis` module for how. Its third, `meters`,
+//!   is the viewer's meters as a texture ([`crate::tex::meters_picture`]), drawn only while
+//!   something reads it.
 //!
 //! The device streams belong to the engine's [`Hub`], which opens what [`wants`] lists after
 //! every change of the network.
@@ -16,21 +18,26 @@
 use penumbra_audio::{Analyzer, Cursor, Hub, Settings, Watch};
 use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, SampleAxis, Unit};
 use penumbra_graph::{
-    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes, Operator,
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, Network, NodeDef, NodeDesc, NodeTypes,
+    Operator,
 };
+
+use crate::tex::meters_picture::{self, MetersPicture};
 use std::sync::Arc;
 
 /// Kind of the audio input node.
 pub const AUDIO_IN: &str = "chan.audio_in";
 /// Kind of the analysis node.
 pub const AUDIO_ANALYSIS: &str = "chan.audio_analysis";
+/// The index of the analysis' `meters` output.
+const METERS: usize = 2;
 /// Most seconds of audio one cook of `chan.audio_in` hands on (after a long pause, the rest is
 /// dropped).
 pub const MAX_BLOCK_SECONDS: f64 = 0.5;
 
 /// The channels `chan.audio_analysis` outputs, in order. The last three repeat params
-/// (`beats_per_bar`, `low`, `high`), so what draws the analysis (`tex.audio_meters`, the
-/// viewer) knows them without the node, also while a param is bound to a channel.
+/// (`beats_per_bar`, `low`, `high`), so what draws the analysis (its `meters` output, the
+/// viewer) knows them from the channels alone, also while a param is bound to a channel.
 pub const FEATURES: [&str; 17] = [
     "level",
     "low",
@@ -65,6 +72,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Chan),
         || Box::new(AudioIn::default()) as Box<dyn Operator>,
     ))?;
+    let [width, height, keep_size] = meters_picture::params();
     types.register(FnNodeType::new(
         NodeDesc::new(
             AUDIO_ANALYSIS,
@@ -135,14 +143,23 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .group("levels")
                 .doc("Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame"),
         )
+        .param(width)
+        .param(height)
+        .param(keep_size)
         .input("audio", DataKind::Chan)
         .output("out", DataKind::Chan)
         .output("spectrum", DataKind::Chan)
+        .output("meters", DataKind::Tex)
+        .lazy_output("meters")
         .describe_output(
             "out",
             "Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them",
         )
-        .describe_output("spectrum", "One channel whose samples are log-spaced bands from 30 Hz to 16 kHz"),
+        .describe_output("spectrum", "One channel whose samples are log-spaced bands from 30 Hz to 16 kHz")
+        .describe_output(
+            "meters",
+            "The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum; drawn only while something reads it",
+        ),
         || Box::new(Analysis::default()) as Box<dyn Operator>,
     ))?;
     Ok(())
@@ -233,6 +250,10 @@ struct Analysis {
     names: Vec<Name>,
     spectrum_name: Option<Name>,
     mono: Vec<f32>,
+    /// The `out` and `spectrum` made last, to hand on again when only the meters are drawn anew.
+    last: Option<(Data, Data)>,
+    /// The `meters` output's drawing state, made when it is first read.
+    picture: Option<Box<MetersPicture>>,
 }
 
 impl Analysis {
@@ -252,13 +273,53 @@ impl Analysis {
     }
 }
 
+impl Analysis {
+    /// The `meters` output: drawn while something reads it, else [`Data::skipped`]. A failure
+    /// to draw is a warning, so the channels keep flowing.
+    fn meters(&mut self, cx: &CookContext<'_>, out: &Data, spectrum: &Data, fresh: bool) -> Data {
+        if !cx.output_wanted(METERS) {
+            // Nobody reads it: the textures and the glyph atlas go too.
+            self.picture = None;
+            return Data::skipped(DataKind::Tex);
+        }
+        let (Some(out), Some(spectrum)) = (out.get::<Chans>(), spectrum.get::<Chans>()) else {
+            return Data::skipped(DataKind::Tex);
+        };
+        let bands = spectrum.channels().first().map(|c| c.samples.as_slice());
+        match self.picture.get_or_insert_with(Box::default).draw(cx, out, bands, fresh) {
+            Ok(tex) => Data::new(DataKind::Tex, tex),
+            Err(e) => {
+                let why = match e {
+                    CookError::Failed(m) => m,
+                    CookError::Pending => "not ready".to_string(),
+                };
+                cx.warn(format!("the meters output is not drawn: {why}"));
+                Data::skipped(DataKind::Tex)
+            }
+        }
+    }
+}
+
 impl Operator for Analysis {
+    fn sets_size(&self, _def: &NodeDef, _desc: &NodeDesc) -> bool {
+        true
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let Some(audio) = cx.input_as::<Chans>(0) else {
             return Err(crate::chan::waiting(cx));
         };
         if !cx.inputs_changed() && !cx.params_changed() && !cx.first_cook() {
-            return Ok(Cooked::Unchanged);
+            // No new audio: only the meters may want drawing, because they came to be read or
+            // their text arrived.
+            let redraw = cx.outputs_wanted_changed() || self.picture.as_ref().is_some_and(|p| p.job_done());
+            return match self.last.clone() {
+                Some((out, spectrum)) if redraw => {
+                    let meters = self.meters(cx, &out, &spectrum, false);
+                    Ok(Cooked::Outputs(vec![out, spectrum, meters]))
+                }
+                _ => Ok(Cooked::Unchanged),
+            };
         }
         let settings = Self::settings(cx)?;
         let rate = audio.rate();
@@ -329,6 +390,9 @@ impl Operator for Analysis {
         let spectrum = if f.spectrum.is_empty() { vec![0.0] } else { f.spectrum };
         let spectrum = Chans::new(cx.rate().as_f64(), vec![Channel { name, samples: spectrum }])?
             .with_axis(SampleAxis::Index);
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, out), Data::new(DataKind::Chan, spectrum)]))
+        let (out, spectrum) = (Data::new(DataKind::Chan, out), Data::new(DataKind::Chan, spectrum));
+        let meters = self.meters(cx, &out, &spectrum, true);
+        self.last = Some((out.clone(), spectrum.clone()));
+        Ok(Cooked::Outputs(vec![out, spectrum, meters]))
     }
 }

@@ -1,6 +1,6 @@
 //! The viewer's view of a `chan.audio_analysis`: the meters [`penumbra_ops::meters`] lays out
 //! (levels with peaks, tempo, beat light, bar, recent hits, spectrum), painted with egui. The
-//! `tex.audio_meters` node draws the same shapes into a texture, so both look alike.
+//! analysis' `meters` output draws the same shapes into a texture, so both look alike.
 //!
 //! The meters' short memory (peaks, recent hits, when the last beat came) is kept here, per
 //! viewed node, not in the op.

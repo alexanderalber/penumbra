@@ -98,7 +98,7 @@ pub fn channel_color(i: usize) -> Color32 {
     COLORS.get(i % COLORS.len()).copied().unwrap_or(Color32::WHITE)
 }
 
-/// The colours of the audio meters (the viewer's and `tex.audio_meters`' alike).
+/// The colours of the audio meters (the viewer's and the analysis' `meters` output alike).
 pub fn meters_palette() -> penumbra_ops::meters::Palette {
     penumbra_ops::meters::Palette {
         text: TEXT.to_array(),
@@ -185,7 +185,7 @@ pub fn lock_glyph(painter: &egui::Painter, c: Pos2, zoom: f32) {
 mod tests {
     #[test]
     fn the_meters_texture_has_the_ui_colours() {
-        // tex.audio_meters draws outside the UI with the standard set; it must not drift.
+        // The analysis' meters output draws outside the UI with the standard set; it must not drift.
         assert_eq!(super::meters_palette(), penumbra_ops::meters::Palette::STANDARD);
     }
 }

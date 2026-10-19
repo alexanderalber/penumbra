@@ -10,7 +10,14 @@
 //! - an input now points elsewhere or its source produced new outputs since this node last
 //!   cooked (every successful cook stamps the outputs with a version unique in this cooker);
 //! - it is time-dependent and the show time moved;
-//! - its asynchronous job finished.
+//! - its asynchronous job finished;
+//! - one of its lazy outputs ([`NodeDesc::lazy_output`]) came to be read or stopped being read.
+//!
+//! A lazy output counts as read in a pass when it is wired into a node that the pass may cook
+//! (anything upstream of the wanted nodes and, with thumbnails cooking, of the thumbnails;
+//! input choosers are not consulted, so a branch a switch skips still counts), when its node is
+//! named by a node reference param of such a node, or when the caller shows it
+//! ([`Cooker::cook_showing`]).
 //!
 //! Failing nodes keep their last good outputs, so downstream (and the projectors) keep showing
 //! the last working frame while the error is shown in the editor. A panicking operator is caught,
@@ -59,6 +66,9 @@ pub struct CookContext<'a> {
     first_cook: bool,
     params_changed: bool,
     inputs_changed: bool,
+    /// Per output: whether it is to be made ([`CookContext::output_wanted`]).
+    wanted: &'a [bool],
+    wanted_changed: bool,
     spawner: &'a Spawner,
     services: &'a Services,
     warning: RefCell<Option<String>>,
@@ -143,6 +153,19 @@ impl<'a> CookContext<'a> {
 
     pub fn inputs_changed(&self) -> bool {
         self.inputs_changed
+    }
+
+    /// Whether output `index` is to be made in this cook: always for an ordinary output; for a
+    /// lazy one ([`NodeDesc::lazy_output`]) only while something reads it. An output not
+    /// wanted is best given as [`Data::skipped`].
+    pub fn output_wanted(&self, index: usize) -> bool {
+        self.wanted.get(index).copied().unwrap_or(false)
+    }
+
+    /// Whether [`CookContext::output_wanted`] changed for some output since the last cook (the
+    /// reason for this cook, when nothing else changed).
+    pub fn outputs_wanted_changed(&self) -> bool {
+        self.wanted_changed
     }
 
     /// A shared service the host provided with [`Cooker::provide`], e.g. the GPU.
@@ -419,6 +442,8 @@ struct Runtime {
     /// The next cook sees nothing on inputs that read a previous result, so a loop whose
     /// state was forgotten starts from its initial input ([`Cooker::forget_state`]).
     blank_previous: bool,
+    /// Which outputs were wanted at the last cook ([`CookContext::output_wanted`]).
+    seen_wanted: Vec<bool>,
 }
 
 impl Runtime {
@@ -464,6 +489,7 @@ impl Runtime {
             stats: CookStats::default(),
             blank_previous: false,
             restored: None,
+            seen_wanted: Vec::new(),
         }
     }
 }
@@ -480,6 +506,13 @@ pub struct Cooker {
     next_version: u64,
     thumbs: ThumbnailPolicy,
     thumb_cursor: usize,
+    /// Whether the last synced network has a node with lazy outputs; while it has none,
+    /// nothing is worked out about which outputs are read.
+    lazy: bool,
+    /// The ports read in this pass, and the nodes whose every output is (named by a node
+    /// reference). Only kept while [`Cooker::lazy`] holds.
+    read: BTreeSet<Port>,
+    read_all: BTreeSet<NodeId>,
 }
 
 impl Cooker {
@@ -497,6 +530,9 @@ impl Cooker {
             next_version: 0,
             thumbs: ThumbnailPolicy::default(),
             thumb_cursor: 0,
+            lazy: false,
+            read: BTreeSet::new(),
+            read_all: BTreeSet::new(),
         }
     }
 
@@ -536,6 +572,20 @@ impl Cooker {
         outputs: &[NodeId],
         thumbnails: &[NodeId],
     ) -> CookReport {
+        self.cook_showing(net, time, outputs, thumbnails, &[])
+    }
+
+    /// [`Cooker::cook`], where `shown` are outputs someone looks at (a viewer, a snapshot):
+    /// they count as read, so lazy ones among them are made ([`NodeDesc::lazy_output`]). Their
+    /// nodes are cooked as `outputs` are.
+    pub fn cook_showing(
+        &mut self,
+        net: &Arc<Network>,
+        time: FrameTime,
+        outputs: &[NodeId],
+        thumbnails: &[NodeId],
+        shown: &[Port],
+    ) -> CookReport {
         let start = Instant::now();
         self.pass += 1;
         let mut report = CookReport { pass: self.pass, ..CookReport::default() };
@@ -545,7 +595,8 @@ impl Cooker {
                 rt.notified = true;
             }
         }
-        for &id in outputs {
+        self.find_reads(outputs, thumbnails, shown);
+        for &id in outputs.iter().chain(shown.iter().map(|p| &p.node)) {
             self.evaluate(id, time, &mut report);
         }
         self.cook_thumbnails(thumbnails, time, &mut report);
@@ -616,7 +667,60 @@ impl Cooker {
                 }
             }
         }
+        self.lazy = self
+            .runtimes
+            .values()
+            .any(|rt| rt.ty.as_ref().is_some_and(|t| t.desc().outputs.iter().any(|o| o.lazy)));
         self.last_net = Some(net.clone());
+    }
+
+    /// Works out which ports this pass reads ([`Cooker::read`]): everything wired into a node
+    /// upstream of the roots, plus what is shown. Choosers are not asked (their choice depends
+    /// on bound values not cooked yet), so this may count a branch they skip as read.
+    fn find_reads(&mut self, outputs: &[NodeId], thumbnails: &[NodeId], shown: &[Port]) {
+        self.read.clear();
+        self.read_all.clear();
+        if !self.lazy {
+            return;
+        }
+        let mut read: BTreeSet<Port> = shown.iter().copied().collect();
+        let mut read_all = BTreeSet::new();
+        let mut stack: Vec<NodeId> = outputs.iter().chain(shown.iter().map(|p| &p.node)).copied().collect();
+        if self.thumbs.mode == ThumbnailMode::Always {
+            stack.extend(thumbnails.iter().copied());
+        }
+        let mut seen = BTreeSet::new();
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(rt) = self.runtimes.get(&id) else { continue };
+            for port in rt.def.inputs.iter().flatten() {
+                read.insert(*port);
+                stack.push(port.node);
+            }
+            stack.extend(rt.def.binds.values().map(|b| b.node));
+            for target in self.current_refs(rt) {
+                read_all.insert(target);
+                stack.push(target);
+            }
+        }
+        self.read = read;
+        self.read_all = read_all;
+    }
+
+    /// Per output of node `id`: whether it is to be made in this pass.
+    fn wanted(&self, id: NodeId, desc: &NodeDesc) -> Vec<bool> {
+        let all = self.read_all.contains(&id);
+        desc.outputs
+            .iter()
+            .enumerate()
+            .map(|(i, o)| {
+                !o.lazy
+                    || all
+                    || u32::try_from(i).is_ok_and(|output| self.read.contains(&Port { node: id, output }))
+            })
+            .collect()
     }
 
     /// Cook `root` and whatever it depends on, upstream first. A node whose type chooses its
@@ -729,6 +833,12 @@ impl Cooker {
             ref_data.insert(name, data);
         }
 
+        let wanted = match rt.ty.as_ref().map(|t| t.desc()) {
+            Some(desc) if self.lazy && desc.outputs.iter().any(|o| o.lazy) => self.wanted(id, desc),
+            Some(desc) => vec![true; desc.outputs.len()],
+            None => Vec::new(),
+        };
+
         let Some(rt) = self.runtimes.get_mut(&id) else { return };
         rt.evaluated_pass = self.pass;
         // A locked node holds what it has. Its seen inputs stay as they were, so after
@@ -744,12 +854,13 @@ impl Cooker {
         let desc = ty.desc();
         let time_moved = time_dependent(desc, rt.op.as_deref()) && rt.seen_tick != Some(time.tick);
         let inputs_changed = rt.seen_inputs != signature;
+        let wanted_changed = !rt.fresh && rt.seen_wanted != wanted;
         // A channel driving a parameter is a parameter change, but only when the value moved:
         // a source that recooked to the same number does not recook this node.
         let params_changed = rt.params_changed || rt.seen_bound != bound;
         // A node whose operator panicked is not retried until something changes, so a
         // deterministic panic does not repeat every frame.
-        if !(rt.fresh || params_changed || rt.notified || time_moved || inputs_changed) {
+        if !(rt.fresh || params_changed || rt.notified || time_moved || inputs_changed || wanted_changed) {
             return;
         }
 
@@ -774,6 +885,8 @@ impl Cooker {
             first_cook,
             params_changed,
             inputs_changed,
+            wanted: &wanted,
+            wanted_changed,
             spawner: &self.spawner,
             services: &self.services,
             warning: RefCell::new(None),
@@ -821,6 +934,7 @@ impl Cooker {
         rt.seen_inputs = signature;
         rt.seen_bound = bound;
         rt.seen_tick = Some(time.tick);
+        rt.seen_wanted = wanted;
         rt.fresh = false;
         rt.params_changed = false;
         rt.notified = false;
@@ -1294,6 +1408,40 @@ mod tests {
         assert!(!current.contains(&f.id("/k")) && !current.contains(&f.id("/k2")), "{current:?}");
         f.cook(&["/k2"]);
         assert!(f.cooker.current(&[f.id("/k2")], f.clock.now()).contains(&f.id("/k2")));
+    }
+
+    #[test]
+    fn a_lazy_output_is_made_only_while_read() {
+        let mut f = Fixture::new(&[
+            create("/l", "test.lazy"),
+            create("/use_out", "test.sink"),
+            create("/use_extra", "test.sink"),
+            connect("/l", "/use_out", 0),
+        ]);
+        let extra = |f: &Fixture| {
+            let d = f.cooker.output(Port { node: f.id("/l"), output: 1 }).unwrap().clone();
+            (d.is_skipped(), d.get::<Chans>().and_then(|c| c.value(None)))
+        };
+        // Only `out` is wired: `extra` is skipped.
+        assert_eq!(f.cook(&["/use_out"]), ["/l", "/use_out"]);
+        assert_eq!(extra(&f), (true, None));
+        // A thumbnail of the node shows its first output and does not read `extra`.
+        f.cooker.set_thumbnail_policy(ThumbnailPolicy { mode: ThumbnailMode::Always, ..Default::default() });
+        assert!(f.cook_with(&["/use_out"], &["/l"]).0.is_empty());
+        // Wired into a node the pass cooks: made, with nothing else changed.
+        f.edit(&[Op::Connect { from: pp("/l"), output: 1, to: pp("/use_extra"), input: 0 }]);
+        assert_eq!(f.cook(&["/use_out", "/use_extra"]), ["/l", "/use_out", "/use_extra"]);
+        assert_eq!(extra(&f), (false, Some(100.0)));
+        assert!(f.cook(&["/use_out", "/use_extra"]).is_empty(), "nothing changed");
+        // The reader no longer cooks: skipped again.
+        assert_eq!(f.cook(&["/use_out"]), ["/l", "/use_out"]);
+        assert_eq!(extra(&f), (true, None));
+        // Shown (a viewer, a snapshot): made.
+        let shown = [Port { node: f.id("/l"), output: 1 }];
+        let report = f.cooker.cook_showing(&f.net, f.clock.now(), &[f.id("/use_out")], &[], &shown);
+        // (The reader of `out` recooks too: a node's outputs share one version.)
+        assert_eq!(report.cooked, [f.id("/l"), f.id("/use_out")]);
+        assert_eq!(extra(&f), (false, Some(100.0)));
     }
 
     #[test]

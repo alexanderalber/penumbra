@@ -6,7 +6,6 @@
 //! premultiplied alpha, origin top left. Without a GPU (headless tools, tests of other crates)
 //! these nodes fail with a clear error instead of producing anything.
 
-mod audio_meters;
 pub mod blob_track;
 mod blur;
 mod cache;
@@ -17,6 +16,7 @@ mod flow;
 mod image;
 mod layer;
 pub mod mapper;
+pub(crate) mod meters_picture;
 mod optical_flow;
 mod ramp;
 pub mod render;
@@ -27,7 +27,6 @@ mod time_machine;
 mod video;
 pub mod video_in;
 
-pub use audio_meters::AUDIO_METERS;
 pub use text::{DEFAULT_FONT, TEXT, families as font_families};
 pub use video::VIDEO;
 pub use video_in::VIDEO_IN;
@@ -444,7 +443,6 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 as Box<dyn Operator>
         }))?;
     }
-    audio_meters::register(types)?;
     blob_track::register(types)?;
     blur::register(types)?;
     cache::register(types)?;
@@ -475,8 +473,8 @@ pub fn warm_up(gpu: &Gpu) {
             log::error!("built-in shader {} does not compile: {e}", b.desc.kind);
         }
     }
-    if let Err(e) = audio_meters::warm_up(gpu) {
-        log::error!("built-in shader tex.audio_meters does not compile: {e}");
+    if let Err(e) = meters_picture::warm_up(gpu) {
+        log::error!("the audio meters' canvas does not compile: {e}");
     }
     if let Err(e) = blob_track::warm_up(gpu) {
         log::error!("built-in shader tex.blob_track does not compile: {e}");

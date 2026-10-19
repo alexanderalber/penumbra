@@ -85,7 +85,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("ui.type", "Type text into the focused field; {text}"),
     ("ui.select", "Select nodes in the editor (it shows the component they sit in); {paths}"),
     ("ui.enter", "Show the inside of a component in the editor, the top level without a path; {path?}"),
-    ("ui.view", "Pin the viewer to a node, or unpin without a path; {path?}"),
+    ("ui.view", "Pin the viewer to a node, or unpin without a path; {path?, output?: name or index}"),
     (
         "ui.camera",
         "The viewer's 3D view of a render or geometry: {mode?: picture|free|steer, home?, camera?: {eye, target, roll, fov, ortho?}, \

@@ -231,7 +231,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.select` | Select nodes in the editor (it shows the component they sit in); {paths} |
 | `ui.state` | Selection, viewer, pan and zoom, editing mode, the status bar's message; {positions?} |
 | `ui.type` | Type text into the focused field; {text} |
-| `ui.view` | Pin the viewer to a node, or unpin without a path; {path?} |
+| `ui.view` | Pin the viewer to a node, or unpin without a path; {path?, output?: name or index} |
 
 ## video_in
 
