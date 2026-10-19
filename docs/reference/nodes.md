@@ -8,7 +8,29 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+[tex.audio_meters](#texaudio_meters), [tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+
+### tex.audio_meters
+
+The meters of a chan.audio_analysis as a picture: levels, tempo, beat, bar, hits, spectrum
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+
+Inputs:
+
+- `in` (chan): The out output of a chan.audio_analysis
+- `spectrum` (chan): Its spectrum output; unconnected, the spectrum is left out
+
+Outputs:
+
+- `out` (tex): The meters as in the viewer: level and band bars with peaks, tempo, beat light, bar, hits, spectrum
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `background` | colour | `[0, 0, 0, 1]` |  | Colour behind the meters, linear RGBA with straight alpha; alpha 0 leaves only the meters, to lay over a picture |
 
 ### tex.blob_track
 
@@ -893,7 +915,7 @@ Inputs:
 
 Outputs:
 
-- `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat
+- `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them
 - `spectrum` (chan): One channel whose samples are log-spaced bands from 30 Hz to 16 kHz
 
 | param | type | default | range | meaning |

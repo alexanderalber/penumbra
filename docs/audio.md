@@ -37,6 +37,7 @@ All values are channels of the `out` output, in this order:
 | `bpm` | the tempo, 0 until one is found |
 | `confidence` | 0 to 1: how clearly the music repeats at that tempo |
 | `rms`, `peak` | the raw level, full scale is 1 |
+| `beats_per_bar`, `low_hz`, `high_hz` | the params `beats_per_bar`, `low` and `high` as they are (bound ones evaluated), for what draws the analysis |
 
 With `normalize` on (the default), `level`, the bands and the spectrum are measured against
 the loudest of the last seconds, so a quiet microphone still spans 0 to 1. Sounds below
@@ -55,18 +56,34 @@ Selected, the analysis shows meters in the viewer, made to be read at a glance d
   the dimmer the number; the bar below it is `confidence` (red when unsure, amber, green).
 - **Beat light:** a disc that flashes on each beat, amber on a bar's first, blue on the others,
   in a ring that fills with `beat` from one beat to the next.
-- **Bar:** a cell per beat of the bar (`beats_per_bar`), the first outlined in amber; the
+- **Bar:** a cell per beat of the bar (the `beats_per_bar` channel), the first outlined in amber; the
   current one (`bar_beat`) is lit and fills with `beat`. The line below fills with `bar`.
 - **Hits:** the last four seconds of kicks, onsets and beats as marks moving left, a row each
   (a bar's first beat amber); the dot before each row flashes on its hit.
 - **Spectrum:** the `spectrum` output as bars, low to high, coloured as the low, mid and high
-  bands (by the `low` and `high` params).
+  bands (by the `low_hz` and `high_hz` channels).
 
 In a narrow column the spectrum and the rows' names are left out. `view: meters` in the
 viewer's header switches to the plot of the channels and back (`ui.options {audio_view:
 "meters" | "plot"}`); the choice is kept with the project and holds for every analysis. The
 meters keep their short memory (peaks, recent hits) in the viewer: switching nodes starts it
 over.
+
+## The meters as a picture
+
+`tex.audio_meters` draws the same meters into a texture, to project during a sound check, put
+on a monitor output or lay over the show. Connect the analysis' `out` to its `in` and its
+`spectrum` to `spectrum` (left unconnected, the spectrum is left out). `width` and `height`
+(1920 x 1080) set the picture's size; it is laid out as the viewer would draw it at about 640 x
+360 and enlarged, so type and lines keep their proportions at any size, and below about 150
+pixels of height the spectrum and the rows' names go, as in a narrow viewer. `background`
+(black) is the colour behind the meters; with alpha 0 only the meters are drawn, ready for a
+`tex.composite`.
+
+The node keeps its own short memory (peaks, recent hits) on the show clock: a paused show
+stands still, a jump back in time starts it over, and `node.reset` (or R) clears it. It draws
+on the GPU every frame; a cook takes about a quarter of a millisecond at 1080p. The text is
+set in Inter; a size seen for the first time shows its characters a frame or two later.
 
 ## Tempo and beat
 

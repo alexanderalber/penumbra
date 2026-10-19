@@ -10,6 +10,7 @@ pub mod geo;
 pub mod light;
 pub mod mapping;
 pub mod mat;
+pub mod meters;
 pub mod osc;
 pub mod out;
 pub mod res;

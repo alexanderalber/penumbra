@@ -273,7 +273,7 @@ fn rasterise(gpu: &Gpu, key: &Key) -> Result<Raster, String> {
     Ok(Raster { tex, anchor: [ax - x0, ay - y0], size, missing_font: resolved.missing })
 }
 
-fn to_skia(path: &BezPath) -> Option<tiny_skia::Path> {
+pub(super) fn to_skia(path: &BezPath) -> Option<tiny_skia::Path> {
     let mut pb = tiny_skia::PathBuilder::new();
     // Non-finite coordinates would poison the fill; such a glyph is dropped instead.
     let f = |x: f64| if x.is_finite() { Some(x as f32) } else { None };

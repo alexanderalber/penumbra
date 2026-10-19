@@ -25,18 +25,87 @@ EXE = ROOT / "target" / "release" / "penumbra.exe"
 WIDTH = 1280
 JPG_QUALITY = 90
 
-# name, project folder (None: the demo the app opens without arguments), node whose picture
-# is saved, seconds of show time before the shots, whether the window is kept too (only worth
-# it where the network fits the screen readably)
+# name, project folder (None: the demo the app opens without arguments, or the network the
+# setup below builds), node whose picture is saved, seconds of show time before the shots,
+# whether the window is kept too (only worth it where the network fits the screen readably)
 SHOWCASE = [
     ("demo", None, "/show", 45, False),
     ("curl-noise", ROOT / "examples" / "curl-noise", "/out", 45, True),
     ("projection-room", ROOT / "examples" / "projection-room", "/view", 10, False),
+    ("audio-meters", None, "/meters", 9, False),
 ]
 
+# A Python script node playing a 124 BPM pattern (kick on every beat, louder on the bar's first,
+# a snare on two and four, hats between, a bass note per bar), so the audio meters have a
+# steady beat to lock on without a microphone.
+AUDIO_SYNTH = r'''
+import math, random
+BPM = 124.0
+RATE = 48000
+last = None
+def cook(cx):
+    global last
+    t = cx.time
+    if t is None:
+        return
+    if last is None or t < last or t - last > 0.5:
+        last = t - 1.0 / 60.0
+    n = int((t - last) * RATE)
+    start = last
+    last = start + n / RATE
+    out = []
+    beat_len = 60.0 / BPM
+    chords = [110.0, 123.47, 98.0, 87.31]
+    for k in range(n):
+        s = start + k / RATE
+        b = s / beat_len
+        beat = int(b)
+        ph = (b - beat) * beat_len
+        bar = beat // 4
+        in_bar = beat % 4
+        v = 0.0
+        # kick on every beat, louder on the bar's first
+        amp = 0.9 if in_bar == 0 else 0.6
+        v += amp * math.exp(-ph * 18.0) * math.sin(2 * math.pi * (50.0 + 90.0 * math.exp(-ph * 30.0)) * ph)
+        # snare-ish noise on 2 and 4
+        if in_bar in (1, 3):
+            v += 0.35 * math.exp(-ph * 25.0) * (random.random() * 2 - 1)
+        # hat on the off-beat
+        ph2 = ph - beat_len / 2
+        if ph2 >= 0:
+            v += 0.12 * math.exp(-ph2 * 60.0) * (random.random() * 2 - 1)
+        # a bass tone that changes with each bar
+        f = chords[bar % 4]
+        v += 0.15 * math.sin(2 * math.pi * f * s)
+        out.append(v)
+    if not out:
+        out = [0.0]
+    cx.out_rate = RATE
+    cx.out["ch1"] = out
+'''
 
-def script_lines(output: str, wait: float, picture: Path, window: Path) -> str:
-    steps = [
+
+def setup(name: str, work: Path) -> list[dict]:
+    """Commands that build a showcase's network before the shots, for those without a project."""
+    if name != "audio-meters":
+        return []
+
+    def call(method: str, **params) -> dict:
+        return {"method": method, "params": params}
+
+    return [
+        call("project.new", dir=(work / name).as_posix()),
+        call("node.create", path="/synth", kind="script.python", params={"code": AUDIO_SYNTH, "cook": "every frame"}),
+        call("node.create", path="/analysis", kind="chan.audio_analysis"),
+        call("node.connect", **{"from": "/synth", "to": "/analysis"}),
+        call("node.create", path="/meters", kind="tex.audio_meters"),
+        call("node.connect", **{"from": "/analysis", "output": "out", "to": "/meters", "input": "in"}),
+        call("node.connect", **{"from": "/analysis", "output": "spectrum", "to": "/meters", "input": "spectrum"}),
+    ]
+
+
+def script_lines(output: str, wait: float, picture: Path, window: Path, before: list[dict]) -> str:
+    steps = before + [
         {"method": "ui.view", "params": {"path": output}},
         {"wait": wait},
         {"method": "node.snapshot", "params": {"path": output, "file": picture.as_posix()}},
@@ -55,7 +124,7 @@ def to_jpg(png: Path, jpg: Path) -> None:
 def shoot(name: str, project: Path | None, output: str, wait: float, network: bool, work: Path) -> None:
     picture, window = work / f"{name}.png", work / f"{name}-window.png"
     script = work / f"{name}.jsonl"
-    script.write_text(script_lines(output, wait, picture, window), encoding="utf-8")
+    script.write_text(script_lines(output, wait, picture, window, setup(name, work)), encoding="utf-8")
     command = [str(EXE), "--headless", str(script)]
     if project is not None:
         copy = work / name
