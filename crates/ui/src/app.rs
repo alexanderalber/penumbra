@@ -397,6 +397,35 @@ impl PenumbraApp {
                         Err(e) => Err(e),
                     }
                 }
+                Action::Trace { node, from } => {
+                    let net = self.engine.session().doc().snapshot();
+                    match net.path_of(node) {
+                        Some(path) => {
+                            let args = penumbra_engine::shapes::TraceArgs::new(path, &from);
+                            penumbra_engine::shapes::trace_into(&self.engine, Actor::User, &args, now)
+                                .map(|r| {
+                                    let text = r
+                                        .get("message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("traced")
+                                        .to_string();
+                                    let warnings: Vec<&str> = r
+                                        .get("warnings")
+                                        .and_then(|w| w.as_array())
+                                        .map(|w| w.iter().filter_map(|v| v.as_str()).collect())
+                                        .unwrap_or_default();
+                                    let text = if warnings.is_empty() {
+                                        text
+                                    } else {
+                                        format!("{text}; {}", warnings.join("; "))
+                                    };
+                                    self.message = Some((text, now));
+                                })
+                                .map_err(|e| penumbra_core::Error::new(e.0))
+                        }
+                        None => Err(penumbra_core::Error::new("the node is gone")),
+                    }
+                }
                 Action::LearnOsc(param) => {
                     let timeout = penumbra_engine::osc::LEARN_TIMEOUT;
                     match self.engine.osc().learn(&self.engine.session(), &param, timeout) {

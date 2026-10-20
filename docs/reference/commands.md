@@ -179,6 +179,12 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `script.bench` | Measure a script call: GIL attach, request round trip, trivial and 200-channel calls; {runs?} |
 | `script.info` | The script node's Python: where it was found (or why not), version, state, call times, timeouts |
 
+## shapes
+
+| command | |
+|---|---|
+| `shapes.trace` | Outlines of a mask or label texture as poly lines in a tex.shapes (one undo step), replacing its lines with that tag; {path, from (node: path or name beside path), output?, tag? (trace), channel? (auto \| red \| green \| blue \| alpha \| luma), threshold? (0.5), invert? (inside is below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?} |
+
 ## spacenav
 
 | command | |

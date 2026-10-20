@@ -6,6 +6,9 @@
 //!
 //! With its `table` input connected, the shapes come from that table instead (any table with
 //! the columns the `table` output has), so a second node can mask other tags of the same shapes.
+//!
+//! `shapes.trace` (the trace row in its params) writes the outlines of a mask or label texture
+//! into `shapes` as `poly` lines ([`crate::trace`]), to be edited by hand like drawn ones.
 
 use penumbra_core::{Curve, Error, ParamSpec, Unit};
 use penumbra_gpu::{ShapeMode, ShapePoly, Shapes as Drawer, Tex, TexRing};
@@ -64,7 +67,9 @@ fn desc() -> NodeDesc {
     .describe_output("table", "Every shape as a row; another tex.shapes can read it at its `table` input")
     .describe_output(
         "id",
-        "Data, not a picture: per pixel the shape of the tags in `tag` it is inside (else the nearest):          red its id (the table's `id`), green a random value 0..1 per shape, blue where along its          outline (0..1, clockwise), alpha the signed distance to its edge in pixels; for tex.shape_content",
+        "Data, not a picture: per pixel the shape of the tags in `tag` it is inside (else the nearest): \
+         red its id (the table's `id`), green a random value 0..1 per shape, blue where along its \
+         outline (0..1, clockwise), alpha the signed distance to its edge in pixels; for tex.shape_content",
     )
     .describe_input("table", "Shapes from a table (as the `table` output has them) instead of the node's own")
 }

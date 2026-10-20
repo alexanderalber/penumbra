@@ -736,7 +736,7 @@ Outputs:
 - `sdf` (tex): Signed distance to the edge of those shapes
 - `outline` (tex): Outlines of all shapes in their tag colours, to see them while placing them
 - `table` (table): Every shape as a row; another tex.shapes can read it at its `table` input
-- `id` (tex): Data, not a picture: per pixel the shape of the tags in `tag` it is inside (else the nearest):          red its id (the table's `id`), green a random value 0..1 per shape, blue where along its          outline (0..1, clockwise), alpha the signed distance to its edge in pixels; for tex.shape_content
+- `id` (tex): Data, not a picture: per pixel the shape of the tags in `tag` it is inside (else the nearest): red its id (the table's `id`), green a random value 0..1 per shape, blue where along its outline (0..1, clockwise), alpha the signed distance to its edge in pixels; for tex.shape_content
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|

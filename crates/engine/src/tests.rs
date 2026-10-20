@@ -1102,3 +1102,76 @@ fn save_a_copy_and_reopen_a_project_afresh() {
         f.call("node.info", json!({"path": "/m"}))["status"]["cooks"].as_u64().unwrap_or(0) > 2
     });
 }
+
+#[test]
+fn trace_a_mask_into_shapes() {
+    let f = Fixture::new("trace");
+    let gpu = match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        Ok(g) => g,
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(_) => return,
+    };
+    f.engine.attach_gpu(gpu).unwrap();
+    // The mask of a rectangle and an ellipse, traced into a second node of the same size.
+    f.call(
+        "node.create",
+        json!({"path": "/src", "kind": "tex.shapes", "params": {"width": 64, "height": 48,
+            "shapes": "a rect 0.25,0.25 0.5,0.25\nb ellipse 0.1,0.6 0.3,0.3\n"}}),
+    );
+    f.call(
+        "node.create",
+        json!({"path": "/t", "kind": "tex.shapes", "params": {"width": 64, "height": 48,
+            "shapes": "# drawn by hand\nkeep rect 0,0 0.1,0.1\n"}}),
+    );
+    let r = f.call("shapes.trace", json!({"path": "/t", "from": "src", "tag": "book"}));
+    assert_eq!(r["shapes"], 2, "{r}");
+    // The mask is transparent outside the shapes.
+    assert_eq!(r["channel"], "alpha", "{r}");
+    let text = |f: &Fixture| {
+        let info = f.call("node.info", json!({"path": "/t"}));
+        let param =
+            info["params"].as_array().unwrap().iter().find(|p| p["name"] == "shapes").unwrap().clone();
+        param["value"].as_str().unwrap().to_string()
+    };
+    let traced = penumbra_ops::shapes::parse(&text(&f)).unwrap();
+    assert_eq!(traced.len(), 3);
+    assert!(text(&f).starts_with("# drawn by hand\nkeep rect"));
+    // The rectangle comes back where it was, in the same surface coordinates.
+    let b = traced[1].geom.bounds();
+    let want = [0.25, 0.25, 0.5, 0.25];
+    assert!(b.iter().zip(want).all(|(a, e)| (a - e).abs() < 0.02), "{b:?}");
+    assert_eq!(traced[1].geom.kind(), "poly");
+    let e = traced[2].geom.bounds();
+    assert!(e.iter().zip([0.1, 0.6, 0.3, 0.3]).all(|(a, w)| (a - w).abs() < 0.03), "{e:?}");
+
+    // Again: the lines with the tag are replaced, not added to; with append they are added.
+    f.call("shapes.trace", json!({"path": "/t", "from": "/src", "tag": "book"}));
+    assert_eq!(penumbra_ops::shapes::parse(&text(&f)).unwrap().len(), 3);
+    let r = f.call("shapes.trace", json!({"path": "/t", "from": "/src", "tag": "book", "append": true}));
+    assert_eq!(r["replaced"], 0);
+    assert_eq!(penumbra_ops::shapes::parse(&text(&f)).unwrap().len(), 5);
+    // One undo step each.
+    f.call("history.undo", json!({}));
+    assert_eq!(penumbra_ops::shapes::parse(&text(&f)).unwrap().len(), 3);
+
+    // The id output as a label picture: one shape per id, even where shapes touch.
+    f.call(
+        "node.set",
+        json!({"path": "/src", "params": {"shapes": "a rect 0,0 0.5,1\nb rect 0.5,0 0.5,1\n"}}),
+    );
+    let r = f.call("shapes.trace", json!({"path": "/t", "from": "/src", "output": "mask", "tag": "half"}));
+    assert_eq!(r["shapes"], 1, "{r}");
+    let r = f.call(
+        "shapes.trace",
+        json!({"path": "/t", "from": "/src", "output": "id", "channel": "red", "labels": true, "tag": "half"}),
+    );
+    // Id 0 is the background of a label picture, so only the second half.
+    assert_eq!(r["shapes"], 1, "{r}");
+    assert_eq!(r["replaced"], 1, "{r}");
+
+    assert!(f.fail("shapes.trace", json!({"path": "/src", "from": "/t", "tag": "2x"})).contains("tag"));
+    assert!(f.fail("shapes.trace", json!({"path": "/t", "from": "/nope"})).contains("no node"));
+    assert!(f.fail("shapes.trace", json!({"path": "/t", "from": "/t", "channel": "hue"})).contains("one of"));
+    f.call("node.create", json!({"path": "/l", "kind": "chan.lfo"}));
+    assert!(f.fail("shapes.trace", json!({"path": "/l", "from": "/t"})).contains("not a tex.shapes"));
+}

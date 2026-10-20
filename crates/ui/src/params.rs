@@ -175,6 +175,10 @@ impl ParamPanel {
         if node.kind == penumbra_ops::out::video::VIDEO_OUT {
             record_row(ui, input, node, auto, actions);
         }
+        if node.kind == penumbra_ops::tex::shapes::SHAPES {
+            let from = self.buffers.entry(format!("{path}#trace")).or_default();
+            trace_row(ui, input, node, from, auto, actions);
+        }
         ui.separator();
 
         let Some(desc) = desc else {
@@ -1890,6 +1894,40 @@ pub fn values(net: &Network, types: &NodeTypes, id: NodeId) -> BTreeMap<String, 
         out.entry(name.to_string()).or_insert_with(|| value.clone());
     }
     out
+}
+
+/// A `tex.shapes`'s trace row: the node whose picture is traced (typed, or picked from the
+/// menu) and the button that writes its outlines into `shapes` with the tag `trace`, replacing
+/// the lines traced before (`shapes.trace` with its defaults; one undo step).
+fn trace_row(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    from: &mut String,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(input.can_edit, |ui| {
+            let tip = "Outlines of this node's picture become `poly` lines tagged `trace`, replacing \
+                       those traced before: alpha of a cut-out, else brightness, above 0.5; specks \
+                       under 64 pixels dropped, holes filled. shapes.trace has the other settings";
+            let r = ui.add_enabled(!from.trim().is_empty(), egui::Button::new("trace")).on_hover_text(tip);
+            auto.add("param.trace", r.rect, "trace");
+            if r.clicked() {
+                actions.push(Action::Trace { node: input.node, from: from.trim().to_string() });
+            }
+            let mut picked = None;
+            node_menu(ui, input, node, "trace", auto, &mut picked);
+            if let Some(Value::Text(p)) = picked {
+                *from = p;
+            }
+            let r = ui.add(
+                egui::TextEdit::singleline(from).hint_text("mask node").desired_width(ui.available_width()),
+            );
+            auto.add("param.trace_from", r.rect, "trace from");
+        });
+    });
 }
 
 /// An `out.video`'s record or stop button and how its recording stands. The button switches

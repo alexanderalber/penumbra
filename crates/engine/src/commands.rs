@@ -596,7 +596,7 @@ fn node_set(e: &Engine, p: &Json) -> Result<Json> {
 /// An input or output named by index or by name.
 #[derive(Deserialize)]
 #[serde(untagged)]
-enum Slot {
+pub(crate) enum Slot {
     Index(u32),
     Name(String),
 }
@@ -616,7 +616,7 @@ impl Default for Slot {
     }
 }
 
-fn slot_index(slot: &Slot, names: &[&str], what: &str, path: &NodePath) -> Result<u32> {
+pub(crate) fn slot_index(slot: &Slot, names: &[&str], what: &str, path: &NodePath) -> Result<u32> {
     match slot {
         Slot::Index(i) => Ok(*i),
         Slot::Name(n) => {
@@ -627,7 +627,7 @@ fn slot_index(slot: &Slot, names: &[&str], what: &str, path: &NodePath) -> Resul
     }
 }
 
-fn kind_at<'e>(e: &'e Engine, net: &Network, path: &NodePath) -> Result<&'e NodeDesc> {
+pub(crate) fn kind_at<'e>(e: &'e Engine, net: &Network, path: &NodePath) -> Result<&'e NodeDesc> {
     let id = require(net, path)?;
     let kind = net.node(id).map(|n| n.kind.clone()).unwrap_or_default();
     desc_of(e, &kind)
@@ -909,7 +909,7 @@ pub(crate) fn cook_now(e: &Engine, id: NodeId, output: u32) -> Result<(Option<Da
     }
 }
 
-fn result_of(path: &NodePath, data: Option<Data>, error: Option<String>) -> Result<Data> {
+pub(crate) fn result_of(path: &NodePath, data: Option<Data>, error: Option<String>) -> Result<Data> {
     data.ok_or_else(|| match error {
         Some(e) => format!("{path} has no result: {e}").into(),
         None => format!("{path} has no result yet").into(),
