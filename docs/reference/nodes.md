@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
 
 ### tex.blob_track
 
@@ -272,6 +272,44 @@ Outputs: `out` (tex).
 | `flip_x` | bool | `false` |  | Mirror left to right: the left edge becomes the right |
 | `flip_y` | bool | `false` |  | Mirror top to bottom: the top edge becomes the bottom |
 | `flop` | bool | `false` |  | Swap the axes (transpose); the output is as wide as the input is high |
+
+### tex.fluid
+
+A 2D fluid: motion pushes it, dye flows with it (Stable Fluids)
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+
+Inputs:
+
+- `force` (tex): Motion that pushes the fluid, in image sizes per input frame (red x in widths, green y in heights, down positive): tex.optical_flow's output as it is
+- `dye` (tex): Colour poured in (see `inject`); unwired, `color` where it moves
+- `obstacles` (tex): Solid where brighter than half: the fluid flows around it
+- `splats` (table): Pushes and dye at points, one per row (at most 64): columns x, y (0 to 1, top left), optional vx, vy (image sizes per second), r, g, b and radius (image heights); tex.blob_track's table as it is
+
+Outputs:
+
+- `out` (tex): The dye, at width x height
+- `velocity` (tex): The fluid's velocity at the grid's size, in image sizes per second (red x in widths, green y in heights, down positive); tex.displace with midpoint 0 moves a picture along it
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `force` | float | `4` | 0 to 20 (soft) | How strongly motion pushes the fluid: per second of motion, this many times its speed is added to the fluid's (the force input and the splats) |
+| `velocity_fade` | float | `2` | 0.05 to 30 s (soft) | Time in which the fluid loses half its speed; longer keeps it swirling |
+| `dye_fade` | float | `3` | 0.05 to 60 s (soft) | Time in which the dye loses half its strength |
+| `inject` | moving \| everywhere | `"moving"` |  | Where dye comes in; moving: where the force input or a splat moves, the faster the more: the dye input's colours, or `color` when nothing is wired there; everywhere: the dye input everywhere, splats whether they move or not |
+| `amount` | float | `4` | 0 to 30 (soft) | How fast the dye takes on the colour poured in, per second (where it moves fast): at 4 about two thirds in a quarter of a second; it paints over, so the dye never gets brighter than its colours |
+| `color` | colour | `[0.35, 0.7, 1, 1]` |  | The dye's colour where the dye input is not wired (its alpha slows the pouring), and of splats without r, g, b |
+| `vorticity` | float | `0.3` | 0 to 2 (soft) | Brings back the small swirls the coarse grid smooths away; 0: off |
+| `viscosity` *(more)* | float | `0` | 0 to 0.01 (soft) | Thickness: neighbouring parts take on each other's motion (honey rather than smoke), in image heights squared per second; 0: off, costs nothing |
+| `size` *(more)* | int | `256` | 64 to 512 px (soft) | Width of the simulation grid (the height follows the picture's shape); more gives finer swirls and costs more; the dye keeps the output's size |
+| `iterations` *(more)* | int | `20` | 4 to 60 (soft) | Steps that keep the fluid from being squeezed together; fewer cost less and let it bulge and leak |
+| `splat_radius` *(more)* | float | `0.05` | 0.005 to 0.3 (soft) | Radius of a splat from the table without a radius column, in image heights |
+| `edges` *(more)* | walls \| open | `"walls"` |  | What the picture's edges are to the fluid; walls: it turns along them; open: it flows out, with the dye |
+| `reset` | bool | `false` |  | Starts over from a still fluid without dye, every frame while on |
+| `persist` *(more)* | bool | `true` |  | Keep velocity and dye in the state snapshots, so a restart carries on from them |
 
 ### tex.from_chan
 
