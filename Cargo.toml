@@ -141,6 +141,10 @@ opt-level = 2
 [profile.dev.package.penumbra-camera]
 opt-level = 2
 
+# Structured light decoding runs per camera pixel and bit (46 pictures of 1080p).
+[profile.dev.package.penumbra-calib]
+opt-level = 2
+
 [profile.dev.package.penumbra-gpu]
 opt-level = 2
 

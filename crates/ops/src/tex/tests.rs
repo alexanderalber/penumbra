@@ -2418,3 +2418,40 @@ fn ndi_round_trip() {
     let status = rig.cooker.status(rig.id("/out")).unwrap();
     assert_eq!((status.error, status.warning), (None, None));
 }
+
+#[test]
+fn scan_pattern_matches_the_decoders_patterns_pixel_for_pixel() {
+    let Some(gpu) = gpu() else { return };
+    // An odd size, so the codes run past the edges: 6 column bits, 5 row bits, 24 pictures.
+    let (w, h) = (37u32, 21u32);
+    let patterns = penumbra_calib::scan::Patterns::new(w, h).unwrap();
+    assert_eq!(patterns.count(), 24);
+    let mut rig = Rig::new(
+        gpu,
+        None,
+        &[create(
+            "/p",
+            "tex.scan_pattern",
+            &[("width", Value::Int(w.into())), ("height", Value::Int(h.into()))],
+        )],
+    );
+    for k in 0..=patterns.count() {
+        if k > 0 {
+            rig.edit(&[set("/p.pattern", Value::Int(k as i64))]);
+        }
+        let after = if k == 0 { 0 } else { rig.version("/p") };
+        let tex = rig.cook_until_new("/p", after);
+        let px = rig.gpu.read(&tex).unwrap();
+        for y in 0..h {
+            for x in 0..w {
+                let want = patterns.get(k).is_some_and(|p| patterns.lit(p, x, y));
+                let got = px.get(x, y).unwrap();
+                assert_eq!(
+                    got,
+                    if want { [1.0; 4] } else { [0.0, 0.0, 0.0, 1.0] },
+                    "picture {k} at {x}, {y}"
+                );
+            }
+        }
+    }
+}

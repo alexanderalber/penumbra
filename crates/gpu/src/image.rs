@@ -37,6 +37,13 @@ pub struct Decoded {
     pub source: String,
 }
 
+impl Decoded {
+    /// The pixels as 32-bit floats, for CPU work on a picture (here, in an optimised crate).
+    pub fn to_rgba32f(&self) -> Vec<[f32; 4]> {
+        self.rgba.as_chunks::<4>().0.iter().map(|c| c.map(f16::to_f32)).collect()
+    }
+}
+
 /// Reads and decodes `path` for a texture at most `max_side` pixels on each side.
 pub fn decode_file(path: &std::path::Path, max_side: u32) -> Result<Decoded, Error> {
     let len = std::fs::metadata(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?.len();
@@ -108,6 +115,20 @@ fn to_linear(image: &Image) -> Result<Decoded, Error> {
     Ok(Decoded { width, height, rgba: out, source })
 }
 
+/// An OpenEXR file of 32-bit float RGBA rows (linear, as stored; no alpha conversion): data such
+/// as a `tex.remap` map, which 8- and 16-bit files would take as sRGB and too coarse.
+pub fn encode_exr_rgba32f(width: u32, height: u32, rgba: &[[f32; 4]]) -> Result<Vec<u8>, Error> {
+    let flat: Vec<f32> = rgba.iter().flatten().copied().collect();
+    let image = Image::from_f32(width, height, ChannelLayout::Rgba, &flat)
+        .map_err(|e| Error::new(format!("cannot build the image: {e}")))?;
+    photocraft_codecs::encode(
+        &image,
+        photocraft_codecs::Format::OpenExr,
+        &photocraft_codecs::EncodeOptions::default(),
+    )
+    .map_err(|e| Error::new(format!("cannot encode the EXR: {e}")))
+}
+
 impl Gpu {
     /// A texture holding `image`. Safe to call off the cook thread.
     pub fn upload(&self, image: &Decoded, label: &str) -> Result<Tex, Error> {
@@ -159,6 +180,16 @@ mod tests {
         assert!((v[2] - 0.5).abs() < 1e-3);
         assert!((v[3] - 0.5).abs() < 1e-3);
         assert_eq!(d.source, "rgba 16-bit");
+    }
+
+    #[test]
+    fn float_exr_keeps_values_outside_0_to_1() {
+        let px = [[0.25, -1.0, 0.75, 1.0], [2.5, 0.5, 0.0, 1.0]];
+        let d = decode(&encode_exr_rgba32f(2, 1, &px).unwrap(), 64).unwrap();
+        let v: Vec<f32> = d.rgba.iter().map(|h| h.to_f32()).collect();
+        assert_eq!(v[..4], [0.25, -1.0, 0.75, 1.0]);
+        assert_eq!(v[4..], [2.5, 0.5, 0.0, 1.0]);
+        assert_eq!(d.source, "rgba float");
     }
 
     #[test]

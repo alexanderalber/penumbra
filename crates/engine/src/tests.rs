@@ -1175,3 +1175,63 @@ fn trace_a_mask_into_shapes() {
     f.call("node.create", json!({"path": "/l", "kind": "chan.lfo"}));
     assert!(f.fail("shapes.trace", json!({"path": "/l", "from": "/t"})).contains("not a tex.shapes"));
 }
+
+#[test]
+fn decode_a_scan_from_pictures_in_a_folder() {
+    let f = Fixture::new("scan");
+    let r = f.call("scan.patterns", json!({}));
+    assert_eq!(r["count"], 46);
+    assert_eq!(r["patterns"][3], "column 0 inverse");
+    // A camera seeing a 40 x 24 projector at twice its size, shifted by (6, 4) camera pixels, in
+    // a 96 x 64 picture: grey 0.1 where the projector does not reach.
+    let (pw, ph) = (40u32, 24u32);
+    let patterns = penumbra_calib::scan::Patterns::new(pw, ph).unwrap();
+    let frames = f.engine.session().dir().join("captures");
+    std::fs::create_dir_all(&frames).unwrap();
+    for k in 0..patterns.count() {
+        let p = patterns.get(k).unwrap();
+        let mut rgba = Vec::new();
+        for y in 0..64u32 {
+            for x in 0..96u32 {
+                let (u, v) = ((x as i64 - 6) / 2, (y as i64 - 4) / 2);
+                let inside = x >= 6 && y >= 4 && u < pw as i64 && v < ph as i64;
+                let lit = inside && patterns.lit(p, u as u32, v as u32);
+                let c = if lit { 200 } else { 60 };
+                rgba.extend([c, c, c, 255]);
+            }
+        }
+        let png = penumbra_gpu::encode_png_rgba8(96, 64, rgba).unwrap();
+        // Numbered without padding: the sort must take 10 after 9.
+        std::fs::write(frames.join(format!("shot{k}.png")), png).unwrap();
+    }
+    let r = f.call("scan.decode", json!({"frames": "captures", "projector": [pw, ph], "fill": 4}));
+    assert_eq!(r["camera"], json!([96, 64]), "{r}");
+    assert_eq!(r["camera_pixels"]["valid"], 80 * 48, "{r}");
+    assert_eq!(r["camera_pixels"]["dark"], 96 * 64 - 80 * 48, "{r}");
+    assert_eq!(r["projector_pixels"]["measured"], pw * ph, "{r}");
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    // The maps read back as tex.image would: camera pixel (6, 4) sees projector pixel 0, 0.
+    let map = penumbra_gpu::image::decode_file(&frames.join("decoded/cam_to_proj.exr"), 8192).unwrap();
+    let at = |x: usize, y: usize, c: usize| map.rgba[(y * 96 + x) * 4 + c].to_f32();
+    assert!((at(6, 4, 0) - 0.5 / pw as f32).abs() < 1e-3 && (at(6, 4, 1) - 0.5 / ph as f32).abs() < 1e-3);
+    assert_eq!(at(0, 0, 0), -1.0);
+    let inv = penumbra_gpu::image::decode_file(&frames.join("decoded/proj_to_cam.exr"), 8192).unwrap();
+    assert_eq!((inv.width, inv.height), (pw, ph));
+    // Projector pixel 0, 0 is camera pixels 6..8 x 4..6: centre (7, 5).
+    assert!((inv.rgba[0].to_f32() - 7.0 / 96.0).abs() < 1e-3, "{}", inv.rgba[0]);
+    assert!(frames.join("decoded/scene.png").exists() && frames.join("decoded/quality.png").exists());
+
+    // A picture missing, one of another size, hostile arguments.
+    std::fs::remove_file(frames.join("shot23.png")).unwrap();
+    assert!(
+        f.fail("scan.decode", json!({"frames": "captures", "projector": [pw, ph]})).contains("23 picture")
+    );
+    let small = penumbra_gpu::encode_png_rgba8(4, 4, vec![0; 64]).unwrap();
+    std::fs::write(frames.join("shot23.png"), small).unwrap();
+    assert!(f.fail("scan.decode", json!({"frames": "captures", "projector": [pw, ph]})).contains("4 x 4"));
+    assert!(f.fail("scan.decode", json!({"frames": "nowhere"})).contains("nowhere"));
+    assert!(f.fail("scan.decode", json!({"frames": "captures", "projector": [0, 5]})).contains("projector"));
+    assert!(f.fail("scan.decode", json!({"frames": "captures", "fill": 100000})).contains("fill"));
+    let e = f.fail("scan.decode", json!({"frames": "captures", "options": {"min_contrast": 7}}));
+    assert!(e.contains("min_contrast"), "{e}");
+}

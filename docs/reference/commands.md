@@ -172,6 +172,13 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `res.optimize` | Give the nodes the suggested sizes, one undoable entry; {paths?, dry_run?} (paths: only these) |
 | `res.overlay` | Colour the mappers' and render nodes' pictures by resolution (green 1:1, red coarse, blue wasted); {on?} |
 
+## scan
+
+| command | |
+|---|---|
+| `scan.decode` | Decode a structured light scan: the camera's pictures of tex.scan_pattern 0, 1, 2, ... as files in a folder (sorted by name, numbers by value), written as cam_to_proj.exr and proj_to_cam.exr (maps for tex.remap), scene.png (the scene as the projector sees it) and quality.png; {frames (folder, relative to the project), projector?: [w, h] (1920, 1080), out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, saturation?, min_confidence?, tolerance?}} |
+| `scan.patterns` | The pictures of a structured light scan in the order tex.scan_pattern shows them; {projector?: [w, h] (1920, 1080)} |
+
 ## script
 
 | command | |
