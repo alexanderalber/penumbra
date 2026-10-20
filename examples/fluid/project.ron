@@ -1,0 +1,13 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 1,
+    nodes: {
+        "/black": (kind: "tex.constant"),
+        "/flow": (kind: "tex.optical_flow", inputs: {"in": "movers"}),
+        "/fluid": (kind: "tex.fluid", inputs: {"dye": "movers", "force": "flow", "splats": "track:blobs"}),
+        "/movers": (kind: "tex.shader", params: {"file": "movers.wgsl", "height": 720, "width": 1280}),
+        "/track": (kind: "tex.blob_track", params: {"detect": "bright", "threshold": 0.2}, inputs: {"in": "movers"}),
+        "/view": (kind: "tex.composite", inputs: {"layer1": "black", "layer2": "fluid"}),
+    },
+)
