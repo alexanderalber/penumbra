@@ -1,4 +1,4 @@
-// Shapes as a mask, a signed distance field or outlines (crates/gpu/src/shapes.rs). Every
+// Shapes as a mask, a signed distance field, outlines or ids (crates/gpu/src/shapes.rs). Every
 // shape is a closed polygon in target pixels; each pixel finds its signed distance to the
 // nearest one by walking their edges, skipping shapes whose bounding box is farther away than
 // the best distance so far.
@@ -19,8 +19,9 @@ struct Poly {
     bounds: vec4f,
     first: u32,
     n: u32,
-    _p0: u32,
-    _p1: u32,
+    // The shape's id and a random value in 0..1 from it (ids).
+    id: u32,
+    random: f32,
     color: vec4f,
 }
 
@@ -31,9 +32,12 @@ struct Poly {
 const MODE_MASK: u32 = 0u;
 const MODE_SDF: u32 = 1u;
 const MODE_OUTLINE: u32 = 2u;
+const MODE_ID: u32 = 3u;
 const FAR: f32 = 1e9;
 // Largest |distance| written, in the SDF's unit (16-bit float textures end at 65504).
 const SDF_LIMIT: f32 = 1000.0;
+// Largest |distance| in pixels in the ids' alpha.
+const ID_LIMIT: f32 = 60000.0;
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
@@ -52,19 +56,29 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     // Unsigned distance to the nearest edge of any shape, and that shape's colour (outlines).
     var near = FAR;
     var near_color = vec4f(0.0);
+    // Ids: the last shape the pixel is inside, else the nearest; where along its outline the
+    // nearest point lies (0..1).
+    var owner = -1;
+    var owner_inside = false;
+    var owner_d = FAR;
+    var owner_along = 0.0;
+    var owner_random = 0.0;
     for (var i = 0u; i < u.count; i++) {
         let poly = polys[i];
         let lo = poly.bounds.xy;
         let hi = poly.bounds.zw;
         let outside = max(max(lo - p, p - hi), vec2f(0.0));
         let lower = length(outside);
-        let bound = select(best, near, u.mode == MODE_OUTLINE);
+        let bound = select(best, near, u.mode == MODE_OUTLINE || u.mode == MODE_ID);
         if (lower > 0.0 && lower >= bound) {
             continue;
         }
         var d2 = FAR;
         var closest = p;
         var inside = false;
+        // Outline length so far, and at the closest point.
+        var walked = 0.0;
+        var at = 0.0;
         let n = poly.n;
         for (var k = 0u; k < n; k++) {
             let a = points[poly.first + k];
@@ -78,10 +92,13 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
             let c = a + e * t;
             let q = p - c;
             let dd = dot(q, q);
+            let len = sqrt(len2);
             if (dd < d2) {
                 d2 = dd;
                 closest = c;
+                at = walked + len * t;
             }
+            walked += len;
             if ((a.y > p.y) != (b.y > p.y)) {
                 let x = a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x);
                 if (p.x < x) {
@@ -90,6 +107,14 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
             }
         }
         let d = sqrt(d2);
+        // Inside wins over near; among shapes the pixel is inside, the later one.
+        if (inside || (!owner_inside && d < near)) {
+            owner = i32(poly.id);
+            owner_inside = inside;
+            owner_d = d;
+            owner_along = select(0.0, at / walked, walked > 0.0);
+            owner_random = poly.random;
+        }
         if (d < near) {
             near = d;
             near_color = poly.color;
@@ -107,6 +132,10 @@ fn fs(@builtin(position) pos: vec4f) -> @location(0) vec4f {
     switch u.mode {
         case MODE_SDF: {
             return vec4f(clamp(best * u.unit, -SDF_LIMIT, SDF_LIMIT), grad, 1.0);
+        }
+        case MODE_ID: {
+            let sd = select(owner_d, -owner_d, owner_inside);
+            return vec4f(f32(owner), owner_random, owner_along, clamp(sd, -ID_LIMIT, ID_LIMIT));
         }
         case MODE_OUTLINE: {
             let a = clamp(u.width * 0.5 + 0.5 - near, 0.0, 1.0) * near_color.a;

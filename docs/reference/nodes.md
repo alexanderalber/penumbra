@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
 
 ### tex.blob_track
 
@@ -696,6 +696,32 @@ Outputs: `out` (tex).
 | `height` | int | `1080` | 1 to 16384 px | Height of the output in pixels, for resolution custom or without in0; res.optimize may change it unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
 
+### tex.shape_content
+
+Pulses, chases or ripples per shape, from tex.shapes' id output
+
+Inputs:
+
+- `id` (tex): tex.shapes' `id` output; the result has its size
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `mode` | pulse \| chase \| ripple \| fill | `"pulse"` |  | What each shape shows; pulse: the whole shape fades up and down; chase: lit segments run clockwise along the outline; ripple: rings run inwards from the edge; fill: the shape in its colour, still |
+| `color_a` | colour | `[1, 0.45, 0.1, 1]` |  | Colour of the shapes; with variety, one end of their range |
+| `color_b` | colour | `[0.15, 0.35, 1, 1]` |  | The other end of the shapes' colour range |
+| `variety` | float | `1` | 0 to 1 (soft) | How far each shape's colour lies from color_a towards color_b, at random: 0 all color_a, 1 anywhere between |
+| `speed` | float | `0.5` | -4 to 4 Hz (soft) | Cycles per second: pulses, segments passing a point, rings starting; negative runs backwards |
+| `stagger` | float | `0` | 0 to 1 (soft) | Phase added per shape id, in cycles: 0.1 makes shapes follow one another in table order |
+| `scatter` | float | `1` | 0 to 1 (soft) | Random phase per shape, in cycles: 0 all in step, 1 all out of step |
+| `depth` | float | `1` | 0 to 1 (soft) | Pulse: how far it fades, 0 not at all, 1 to nothing |
+| `segments` | float | `2` | 1 to 12 (soft) | Chase: lit segments per outline |
+| `line` | float | `6` | 0.5 to 32 px (soft) | Chase: width of the line on the edge, in pixels of the id input |
+| `spacing` | float | `24` | 2 to 200 px (soft) | Ripple: distance between rings, in pixels of the id input |
+| `duty` | float | `0.3` | 0 to 1 (soft) | Chase and ripple: lit part of each segment or ring |
+| `softness` *(more)* | float | `0.3` | 0 to 1 (soft) | Chase and ripple: how soft the ends of segments and rings are; 0 hard |
+
 ### tex.shapes
 
 Tagged shapes on the surface: a mask and a distance field per tag, outlines, a table
@@ -710,6 +736,7 @@ Outputs:
 - `sdf` (tex): Signed distance to the edge of those shapes
 - `outline` (tex): Outlines of all shapes in their tag colours, to see them while placing them
 - `table` (table): Every shape as a row; another tex.shapes can read it at its `table` input
+- `id` (tex): Data, not a picture: per pixel the shape of the tags in `tag` it is inside (else the nearest):          red its id (the table's `id`), green a random value 0..1 per shape, blue where along its          outline (0..1, clockwise), alpha the signed distance to its edge in pixels; for tex.shape_content
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|

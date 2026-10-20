@@ -1,7 +1,8 @@
 //! `tex.shapes`: the shape layer. Tagged rectangles, ellipses and polygons in surface coordinates,
 //! stored as text in `shapes` (see [`crate::shapes`]) and drawn in the viewer, become a mask and a
 //! signed distance field of the tags `tag` names, outlines of all of them in their tag colours (to
-//! see them on the wall while placing them), and a table of every shape.
+//! see them on the wall while placing them), a table of every shape, and per pixel which of those
+//! shapes it belongs to (what `tex.shape_content` animates).
 //!
 //! With its `table` input connected, the shapes come from that table instead (any table with
 //! the columns the `table` output has), so a second node can mask other tags of the same shapes.
@@ -56,10 +57,15 @@ fn desc() -> NodeDesc {
     .output("sdf", DataKind::Tex)
     .output("outline", DataKind::Tex)
     .output("table", DataKind::Table)
+    .output("id", DataKind::Tex)
     .describe_output("mask", "White inside the shapes of the tags in `tag`")
     .describe_output("sdf", "Signed distance to the edge of those shapes")
     .describe_output("outline", "Outlines of all shapes in their tag colours, to see them while placing them")
     .describe_output("table", "Every shape as a row; another tex.shapes can read it at its `table` input")
+    .describe_output(
+        "id",
+        "Data, not a picture: per pixel the shape of the tags in `tag` it is inside (else the nearest):          red its id (the table's `id`), green a random value 0..1 per shape, blue where along its          outline (0..1, clockwise), alpha the signed distance to its edge in pixels; for tex.shape_content",
+    )
     .describe_input("table", "Shapes from a table (as the `table` output has them) instead of the node's own")
 }
 
@@ -86,21 +92,33 @@ pub fn source(cx: &CookContext<'_>) -> Result<Vec<shapes::Shape>, CookError> {
 
 #[derive(Default)]
 struct ShapesOp {
-    rings: [TexRing; 3],
+    rings: [TexRing; 4],
     drawer: Option<Drawer>,
 }
 
-fn as_drawn(polys: &[(Vec<[f32; 2]>, [f32; 4])]) -> Vec<ShapePoly<'_>> {
-    polys.iter().map(|(points, color)| ShapePoly { points, color: *color }).collect()
+/// A shape as drawn: its outline in target pixels, its colour and its id.
+type Drawn = (Vec<[f32; 2]>, [f32; 4], u32);
+
+fn as_drawn(polys: &[Drawn]) -> Vec<ShapePoly<'_>> {
+    polys.iter().map(|(points, color, id)| ShapePoly { points, color: *color, id: *id }).collect()
 }
 
-/// Outlines in target pixels.
-fn outlines(instances: &[&Instance], size: (u32, u32)) -> Vec<Vec<[f32; 2]>> {
+/// An outline in target pixels, clockwise on screen (y down), so that runs along outlines
+/// (`tex.shape_content`'s chase) go the same way round every shape.
+fn outline(instance: &Instance, size: (u32, u32)) -> Vec<[f32; 2]> {
     let (w, h) = (f64::from(size.0), f64::from(size.1));
-    instances
+    let mut points: Vec<[f32; 2]> =
+        instance.geom.outline().into_iter().map(|p| [(p[0] * w) as f32, (p[1] * h) as f32]).collect();
+    // Twice the signed area; positive is clockwise with y down.
+    let area: f64 = points
         .iter()
-        .map(|i| i.geom.outline().into_iter().map(|p| [(p[0] * w) as f32, (p[1] * h) as f32]).collect())
-        .collect()
+        .zip(points.iter().cycle().skip(1))
+        .map(|(a, b)| f64::from(a[0]) * f64::from(b[1]) - f64::from(b[0]) * f64::from(a[1]))
+        .sum();
+    if area < 0.0 {
+        points.reverse();
+    }
+    points
 }
 
 impl Operator for ShapesOp {
@@ -120,21 +138,21 @@ impl Operator for ShapesOp {
                 cx.warn(format!("no shape has the tag `{f}`"));
             }
         }
-        let every: Vec<&Instance> = instances.iter().collect();
-        let chosen: Vec<&Instance> = instances.iter().filter(|i| shapes::matches(&filter, &i.tag)).collect();
-        let (lines_all, lines_chosen) = (outlines(&every, size), outlines(&chosen, size));
-        let polys = |lines: &[Vec<[f32; 2]>], of: &[&Instance]| -> Vec<(Vec<[f32; 2]>, [f32; 4])> {
-            lines
-                .iter()
-                .zip(of)
-                .map(|(l, i)| {
-                    let [r, g, b] = shapes::tag_color(&tags, &i.tag);
-                    (l.clone(), [r, g, b, 1.0])
-                })
-                .collect()
-        };
-        let chosen_polys = polys(&lines_chosen, &chosen);
-        let all_polys = polys(&lines_all, &every);
+        // Ids are row numbers of the table: positions among all instances.
+        let all_polys: Vec<Drawn> = instances
+            .iter()
+            .zip(0u32..)
+            .map(|(i, id)| {
+                let [r, g, b] = shapes::tag_color(&tags, &i.tag);
+                (outline(i, size), [r, g, b, 1.0], id)
+            })
+            .collect();
+        let chosen_polys: Vec<Drawn> = all_polys
+            .iter()
+            .zip(&instances)
+            .filter(|(_, i)| shapes::matches(&filter, &i.tag))
+            .map(|(p, _)| p.clone())
+            .collect();
         let width = cx.float("outline")? as f32;
         let drawer = self.drawer.get_or_insert_with(Drawer::new);
         let modes = [
@@ -142,14 +160,16 @@ impl Operator for ShapesOp {
             // Distances in surface widths: one pixel is 1 / width.
             (ShapeMode::Sdf { unit: 1.0 / size.0 as f32 }, as_drawn(&chosen_polys)),
             (ShapeMode::Outline { width }, as_drawn(&all_polys)),
+            (ShapeMode::Id, as_drawn(&chosen_polys)),
         ];
-        let mut outputs = Vec::with_capacity(4);
+        let mut outputs = Vec::with_capacity(5);
         for (ring, (mode, polys)) in self.rings.iter_mut().zip(modes) {
             let target: Tex = ring.next(gpu, size.0, size.1, SHAPES)?;
             drawer.render(gpu, &target, &polys, mode)?;
             outputs.push(Data::new(DataKind::Tex, target));
         }
-        outputs.push(Data::new(DataKind::Table, shapes::table(&instances)?));
+        // The table goes between the outline and the ids (outputs keep their numbers).
+        outputs.insert(3, Data::new(DataKind::Table, shapes::table(&instances)?));
         Ok(Cooked::Outputs(outputs))
     }
 }
