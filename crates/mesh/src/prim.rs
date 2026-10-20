@@ -1,6 +1,6 @@
-//! Primitives: a box, a UV sphere, a plane. Each is one part named after it, with normals and
-//! texture coordinates (origin top left). World z is up; the front is -y (seen from a viewer
-//! standing at -y looking towards +y).
+//! Primitives: a box, a UV sphere, a plane (whole or split into a grid). Each is one part named
+//! after it, with normals and texture coordinates (origin top left). World z is up; the front is
+//! -y (seen from a viewer standing at -y looking towards +y).
 
 use crate::{Builder, Error, Limits, Mesh, Vertex};
 
@@ -86,17 +86,42 @@ pub fn sphere(radius: f32, segments: u32) -> Result<Mesh, Error> {
 /// An upright rectangle in the xz plane facing -y, `size[0]` wide (x) and `size[1]` high (z),
 /// centred on the origin: a wall seen from the front, the texture upright.
 pub fn plane(size: [f32; 2]) -> Result<Mesh, Error> {
+    grid(size, 1)
+}
+
+/// Most cells along each side of a [`grid`].
+pub const MAX_CELLS: u32 = 1024;
+
+/// [`plane`] split into `cells` by `cells` quads (1 to [`MAX_CELLS`]), the texture over the
+/// whole. Each quad's diagonal is marked as inside its polygon, so a wireframe draws the grid's
+/// lines, not its triangles.
+pub fn grid(size: [f32; 2], cells: u32) -> Result<Mesh, Error> {
     let limits = Limits::default();
     let mut b = Builder::new(&limits);
     let part = b.part("plane")?;
-    let [w, h] = size.map(|s| 0.5 * s);
-    let n = [0.0, -1.0, 0.0];
-    let a = b.vertex(Vertex { position: [-w, 0.0, h], normal: n, uv: [0.0, 0.0] })?;
-    let c1 = b.vertex(Vertex { position: [w, 0.0, h], normal: n, uv: [1.0, 0.0] })?;
-    let c2 = b.vertex(Vertex { position: [w, 0.0, -h], normal: n, uv: [1.0, 1.0] })?;
-    let d = b.vertex(Vertex { position: [-w, 0.0, -h], normal: n, uv: [0.0, 1.0] })?;
-    b.triangle([a, d, c2], part, 0)?;
-    b.triangle([a, c2, c1], part, 0)?;
+    let [w, h] = size;
+    let n = cells.clamp(1, MAX_CELLS);
+    let normal = [0.0, -1.0, 0.0];
+    let row = n + 1;
+    for j in 0..=n {
+        let v = j as f32 / n as f32;
+        for i in 0..=n {
+            let u = i as f32 / n as f32;
+            b.vertex(Vertex { position: [(u - 0.5) * w, 0.0, (0.5 - v) * h], normal, uv: [u, v] })?;
+        }
+    }
+    for j in 0..n {
+        for i in 0..n {
+            let a = j * row + i;
+            let (c1, d) = (a + 1, a + row);
+            let c2 = d + 1;
+            // Counter-clockwise seen from the front; the diagonal a-c2 lies opposite d, then c1.
+            b.triangle([a, d, c2], part, 0)?;
+            b.inner_edges(0b010);
+            b.triangle([a, c2, c1], part, 0)?;
+            b.inner_edges(0b100);
+        }
+    }
     Ok(b.finish())
 }
 

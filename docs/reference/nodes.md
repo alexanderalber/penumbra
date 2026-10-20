@@ -1456,6 +1456,7 @@ Outputs: `out` (geo).
 | `shape` | box \| sphere \| plane | `"box"` |  | Which shape, centred on the origin; size sets its measures; box: a cuboid of size x by y by z; sphere: a ball as wide as size x; plane: an upright rectangle facing -y, size x wide and size z high |
 | `size` | vec3 | `[1, 1, 1]` | 0 to 10 (soft) | Box: x, y, z; sphere: the diameter is x; plane (upright, facing -y): x wide, z high |
 | `segments` *(more)* | int | `48` | 3 to 128 (soft) | Steps around the sphere (half as many from pole to pole); more is rounder and costs more |
+| `cells` | int | `1` | 1 to 128 (soft) | Plane: quads along each side; with mat.wireframe a grid of lines (a floor to fly over) |
 
 ### geo.tex_instance
 
