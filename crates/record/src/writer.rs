@@ -15,7 +15,7 @@ use std::fs::{File, OpenOptions};
 use std::io::BufWriter;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -75,6 +75,8 @@ pub(crate) struct Shared {
     queued: AtomicUsize,
     dropped: AtomicU64,
     skipped: AtomicU64,
+    /// The highest frame index that came due, -1 before the first.
+    due: AtomicI64,
 }
 
 impl Shared {
@@ -85,6 +87,7 @@ impl Shared {
             queued: AtomicUsize::new(0),
             dropped: AtomicU64::new(0),
             skipped: AtomicU64::new(0),
+            due: AtomicI64::new(-1),
         }
     }
 
@@ -149,6 +152,13 @@ impl Recording {
     /// recording's rate); the frame before lasts longer instead.
     pub fn skipped(&self, n: u64) {
         self.shared.skipped.fetch_add(n, Ordering::AcqRel);
+    }
+
+    /// Says frame `index` came due, whether it was queued, dropped or skipped: the file lasts at
+    /// least until that frame's end, so frames dropped at the very end make the last frame
+    /// longer as they do anywhere else.
+    pub fn due(&self, index: i64) {
+        self.shared.due.fetch_max(index, Ordering::AcqRel);
     }
 
     pub fn status(&self) -> Status {
@@ -242,7 +252,10 @@ fn record(s: &Settings, rx: &Receiver<Frame>, shared: &Shared) -> Result<(), Str
             .map_err(|e| format!("cannot create the folder {}: {e}", dir.display()))?;
     }
     let (file, path) = create(path)?;
-    shared.update(|st| st.file = path.display().to_string());
+    shared.update(|st| {
+        st.file = path.display().to_string();
+        st.opened = true;
+    });
     let mut encoder = Encoder::new(s)?;
     let mp4 = s.codec == Codec::H264
         && path
@@ -302,9 +315,11 @@ fn record(s: &Settings, rx: &Receiver<Frame>, shared: &Shared) -> Result<(), Str
             failure = Some(e);
         }
     }
-    // The last frame lasts one frame.
+    // The last frame lasts one frame, or until the end of the last frame that came due.
     if let Some(h) = held.take() {
-        let next = h.index + 1;
+        let next = (h.index + 1).max(shared.due.load(Ordering::Acquire).saturating_add(1));
+        let seconds = next as f64 / s.fps.as_f64();
+        shared.update(|st| st.seconds = seconds);
         if let Err(e) = written.put(&mut mux, track, s.fps, h, next)
             && failure.is_none()
         {

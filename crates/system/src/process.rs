@@ -1,5 +1,6 @@
 //! This process's memory, handles and threads (`system.process`, the soak test), and a memory cap
-//! for measurement runs, and whether the process owns its console window.
+//! for measurement runs, whether the process owns its console window, and a raised priority for
+//! threads that must wake on time.
 
 use penumbra_core::Error;
 use serde::Serialize;
@@ -41,6 +42,21 @@ pub fn cap_memory(bytes: u64) -> Result<(), Error> {
     {
         let _ = bytes;
         Err(Error::new("a memory cap is only implemented on Windows (use ulimit -v elsewhere)"))
+    }
+}
+
+/// Raises the calling thread's scheduling priority above the normal threads' (Windows:
+/// `THREAD_PRIORITY_HIGHEST`), for a thread that mostly sleeps and must wake on time even while
+/// every core is busy. Returns whether it worked; false outside Windows, where raising a
+/// thread's priority needs privileges a show machine should not grant.
+pub fn raise_thread_priority() -> bool {
+    #[cfg(windows)]
+    {
+        crate::windows::raise_thread_priority()
+    }
+    #[cfg(not(windows))]
+    {
+        false
     }
 }
 

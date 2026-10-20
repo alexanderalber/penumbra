@@ -197,6 +197,7 @@ fn a_full_queue_drops_frames_instead_of_waiting() {
     let started = Instant::now();
     let mut refused = 0;
     for k in 0..20 {
+        rec.due(k);
         let f = Frame { index: k, planes: Box::new(Slow(flat(&layout, 100, 128, 128))) };
         if rec.push(f).is_err() {
             refused += 1;
@@ -210,6 +211,10 @@ fn a_full_queue_drops_frames_instead_of_waiting() {
     let s = wait_done(&hub, node);
     assert_eq!(s.error, None);
     assert_eq!(s.frames + s.dropped, 20, "{s:?}");
+    // The frames dropped at the end make the last frame written longer: the file lasts 20.
+    assert!((s.seconds - 20.0 / 30.0).abs() < 1e-9, "{s:?}");
+    let d = penumbra_video::open(&dir.join("slow.mov"), &Limits::default()).unwrap();
+    assert_eq!(d.info().frames, 20, "{:?}", d.info());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
