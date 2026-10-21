@@ -194,6 +194,13 @@ impl Helpers {
                 ui.end_row();
             }
         });
+        if !board.windows.is_empty() {
+            if board.keeps_display_awake {
+                ui.label(RichText::new("The displays are kept from sleeping.").color(theme::TEXT_WEAK));
+            } else {
+                ui.colored_label(theme::WARNING, "The OS may turn the displays off when idle (see the log).");
+            }
+        }
         if board.projectors.is_empty() {
             ui.label(RichText::new("No active projector nodes (out.projector).").color(theme::TEXT_WEAK));
         }

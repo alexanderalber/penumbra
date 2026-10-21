@@ -1228,6 +1228,7 @@ fn output_list(e: &Engine, p: &Json) -> Result<Json> {
         "windows_supported": board.managed,
         "displays": board.displays,
         "windows": board.windows,
+        "keeps_display_awake": board.keeps_display_awake,
         "projectors": projectors,
         "pace": pace,
     }))

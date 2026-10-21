@@ -4,7 +4,8 @@
 //! size and refresh rate, the system crate for stable ids), resolve every active projector's
 //! display, open a window for each display that has a projector and close the others, choose
 //! the window that paces the show clock, and report everything to the [`OutputBoard`], where
-//! the projector nodes and `output.list` read it.
+//! the projector nodes and `output.list` read it. While windows are open the displays are kept
+//! from sleeping.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use penumbra_core::NodeId;
 use penumbra_engine::Engine;
 use penumbra_gpu::Gpu;
 use penumbra_ops::out::{DisplayInfo, OutputBoard, ProjectorState};
-use penumbra_system::{DisplayDetails, Resolved};
+use penumbra_system::{DisplayDetails, KeepAwake, Resolved};
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
@@ -37,6 +38,9 @@ pub struct Outputs {
     /// cleared when the display set changes.
     failed: BTreeMap<String, String>,
     last_displays: Vec<String>,
+    /// Keeps the displays from sleeping while windows are open: Windows would otherwise turn
+    /// the projectors off after its idle timeout, in the middle of a show.
+    awake: KeepAwake,
 }
 
 impl Outputs {
@@ -49,6 +53,7 @@ impl Outputs {
             last_tick: None,
             failed: BTreeMap::new(),
             last_displays: Vec::new(),
+            awake: KeepAwake::new(),
         }
     }
 
@@ -211,10 +216,12 @@ impl Outputs {
             w.set_paces(Some(&w.display) == pacer.as_ref());
         }
 
+        let awake = self.awake.update(self.windows.len());
         let windows = self.windows.iter().map(OutputWindow::info).collect();
         self.board().update(|s| {
             s.displays = infos;
             s.windows = windows;
+            s.keeps_display_awake = awake;
             s.projectors = states;
         });
     }
@@ -251,8 +258,10 @@ impl Outputs {
         for mut w in self.windows.drain(..) {
             w.stop();
         }
+        self.awake.update(0);
         self.board().update(|s| {
             s.windows.clear();
+            s.keeps_display_awake = false;
             s.managed = false;
         });
     }
