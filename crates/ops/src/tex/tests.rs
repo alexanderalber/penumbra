@@ -1410,6 +1410,65 @@ fn shapes_give_masks_per_tag_a_distance_field_outlines_and_a_table() {
 }
 
 #[test]
+fn shape_content_fills_and_chases_shapes_by_their_ids() {
+    let Some(gpu) = gpu() else { return };
+    // 96 x 64: the window is pixels 24..48 x 16..32, the book 60..84 x 32..48.
+    let text = "window rect 0.25,0.25 0.25,0.25
+book rect 0.625,0.5 0.25,0.25
+";
+    let white = Value::Vec4([1.0; 4]);
+    let mut rig = Rig::new(
+        gpu,
+        None,
+        &[
+            create(
+                "/s",
+                "tex.shapes",
+                &[size()[0].clone(), size()[1].clone(), ("shapes", Value::Text(text.into()))],
+            ),
+            create(
+                "/c",
+                "tex.shape_content",
+                &[
+                    ("mode", Value::Text("fill".into())),
+                    ("color_a", white.clone()),
+                    ("variety", Value::Float(0.0)),
+                ],
+            ),
+            Op::Connect { from: "/s".parse().unwrap(), output: 4, to: "/c".parse().unwrap(), input: 0 },
+        ],
+    );
+    let fill = rig.pixels("/c");
+    let ids = rig.cooker.output(Port { node: rig.id("/s"), output: 4 }).cloned().unwrap();
+    let ids = rig.gpu.read(ids.get::<Tex>().unwrap()).unwrap();
+    // The id is the table's row; alpha the distance to the own edge (4.5 below the top).
+    let v = ids.get(30, 20).unwrap();
+    assert!(v[0] == 0.0 && (v[3] + 4.5).abs() < 0.01, "{v:?}");
+    assert_eq!(ids.get(70, 40).unwrap()[0], 1.0);
+    assert_eq!(fill.get(30, 20).unwrap(), [1.0; 4]);
+    assert_eq!(fill.get(70, 40).unwrap(), [1.0; 4]);
+    assert_eq!(fill.get(5, 5).unwrap(), [0.0; 4]);
+
+    // Standing still, one segment over the first half of the outline: from the top left
+    // clockwise, the top edge is lit, the bottom edge is not, the inside is off the line.
+    rig.edit(&[
+        set("/c.mode", Value::Text("chase".into())),
+        set("/c.speed", Value::Float(0.0)),
+        set("/c.scatter", Value::Float(0.0)),
+        set("/c.segments", Value::Float(1.0)),
+        set("/c.duty", Value::Float(0.5)),
+        set("/c.softness", Value::Float(0.0)),
+        set("/c.line", Value::Float(4.0)),
+    ]);
+    let after = rig.version("/c");
+    let chase = rig.cook_until_new("/c", after);
+    let chase = rig.gpu.read(&chase).unwrap();
+    assert_eq!(chase.get(30, 16).unwrap()[3], 1.0, "top edge");
+    assert_eq!(chase.get(30, 31).unwrap()[3], 0.0, "bottom edge");
+    assert_eq!(chase.get(36, 24).unwrap()[3], 0.0, "inside");
+}
+
+#[test]
 fn resolution_analysis_walks_back_from_the_projectors() {
     use crate::out::{BoardState, DisplayInfo, ProjectorState};
     use crate::res::{Scene, Verdict, analyze, pixel_params};

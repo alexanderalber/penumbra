@@ -43,7 +43,7 @@ pub use pass::{Batch, Pass, PassInput};
 pub use projection::{MeshVertex, Projection};
 pub use readback::{PendingRead, Pixels, ReadPool, ReadState, RowsError, encode_png_rgba8};
 pub use render::Lights;
-pub use shapes::{ShapeMode, ShapePoly, Shapes};
+pub use shapes::{ShapeMode, ShapePoly, Shapes, shape_random};
 pub use stack::Stack;
 pub use tex::{Tex, TexRing};
 pub use vram::Vram;

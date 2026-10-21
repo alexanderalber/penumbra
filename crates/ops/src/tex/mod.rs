@@ -22,6 +22,7 @@ mod optical_flow;
 mod ramp;
 pub mod render;
 mod shader;
+mod shape_content;
 pub mod shapes;
 pub mod spout_in;
 mod text;
@@ -112,6 +113,7 @@ fn same(_: &NodeDef, _: &NodeDesc, _: usize, _: Option<Sizes>) -> Density {
 fn builtins() -> Vec<Builtin> {
     let mut all = core_builtins();
     all.extend(filters::builtins());
+    all.push(shape_content::builtin());
     all
 }
 

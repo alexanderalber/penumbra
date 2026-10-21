@@ -1,5 +1,5 @@
-//! Draws shapes (closed polygons in target pixels) as a mask, a signed distance field or
-//! outlines, exactly per pixel in `shapes.wgsl`: the `tex.shapes` node's three pictures. The
+//! Draws shapes (closed polygons in target pixels) as a mask, a signed distance field, outlines
+//! or ids, exactly per pixel in `shapes.wgsl`: the `tex.shapes` node's pictures. The
 //! shapes go to the GPU as two storage buffers; each pixel walks the edges of the shapes whose
 //! bounding box is near enough, so a facade of a hundred windows costs about what a few do.
 
@@ -21,13 +21,32 @@ pub enum ShapeMode {
     Sdf { unit: f32 },
     /// Every shape's edge, `width` pixels wide, in its colour.
     Outline { width: f32 },
+    /// Which shape a pixel belongs to: the last one it is inside, else the nearest. Red: that
+    /// shape's id (-1 without shapes; exact up to 2048); green: a random value in 0..1 fixed by
+    /// the id; blue: where the nearest point of its outline lies along it, 0..1 from its first
+    /// point, clockwise on screen when the points are; alpha: the signed distance to its edge in
+    /// pixels (negative inside).
+    Id,
 }
 
-/// One shape: its outline in target pixels (closed; the last point is not repeated) and its
-/// colour for outlines (linear, straight alpha).
+/// One shape: its outline in target pixels (closed; the last point is not repeated), its
+/// colour for outlines (linear, straight alpha) and its id for ids.
 pub struct ShapePoly<'a> {
     pub points: &'a [[f32; 2]],
     pub color: [f32; 4],
+    pub id: u32,
+}
+
+/// A value in 0..1 that looks random and depends only on `id` (lowbias32 by Chris Wellons).
+pub fn shape_random(id: u32) -> f32 {
+    let mut x = id;
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x7feb_352d);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x846c_a68b);
+    x ^= x >> 16;
+    // 24 bits fit an f32 exactly, so the value stays below 1.
+    (x >> 8) as f32 / (1u32 << 24) as f32
 }
 
 /// The pipeline; one per thread that draws.
@@ -122,7 +141,7 @@ impl Shapes {
             for v in [lo[0], lo[1], hi[0], hi[1]] {
                 records.extend_from_slice(&v.to_le_bytes());
             }
-            for v in [first, n32, 0, 0] {
+            for v in [first, n32, poly.id, shape_random(poly.id).to_bits()] {
                 records.extend_from_slice(&v.to_le_bytes());
             }
             for v in poly.color {
@@ -142,6 +161,7 @@ impl Shapes {
             ShapeMode::Mask => (0u32, 0.0, 0.0),
             ShapeMode::Sdf { unit } => (1, 0.0, unit),
             ShapeMode::Outline { width } => (2, width, 0.0),
+            ShapeMode::Id => (3, 0.0, 0.0),
         };
         let mut u = Vec::with_capacity(UNIFORM_SIZE as usize);
         for v in [target.width() as f32, target.height() as f32] {
@@ -230,7 +250,7 @@ mod tests {
         let Some(gpu) = gpu() else { return };
         let target = Tex::new(&gpu, 40, 20, "shapes").unwrap();
         let square = [[10.0, 5.0], [20.0, 5.0], [20.0, 15.0], [10.0, 15.0]];
-        let polys = [ShapePoly { points: &square, color: [1.0, 0.5, 0.0, 1.0] }];
+        let polys = [ShapePoly { points: &square, color: [1.0, 0.5, 0.0, 1.0], id: 0 }];
         let mut drawer = Shapes::new();
 
         drawer.render(&gpu, &target, &polys, ShapeMode::Mask).unwrap();
@@ -257,5 +277,43 @@ mod tests {
         assert_eq!(gpu.read(&target).unwrap().get(15, 10).unwrap(), [0.0; 4]);
         drawer.render(&gpu, &target, &[], ShapeMode::Sdf { unit: 1.0 }).unwrap();
         assert!(gpu.read(&target).unwrap().get(15, 10).unwrap()[0] >= 999.0);
+    }
+
+    #[test]
+    fn ids_name_the_shape_its_random_value_the_place_on_its_outline_and_its_distance() {
+        let Some(gpu) = gpu() else { return };
+        let target = Tex::new(&gpu, 40, 20, "shapes").unwrap();
+        // Clockwise on screen from the top left; the second overlaps the first's right part.
+        let a = [[2.0, 2.0], [18.0, 2.0], [18.0, 18.0], [2.0, 18.0]];
+        let b = [[14.0, 6.0], [30.0, 6.0], [30.0, 14.0], [14.0, 14.0]];
+        let polys = [
+            ShapePoly { points: &a, color: [1.0; 4], id: 7 },
+            ShapePoly { points: &b, color: [1.0; 4], id: 9 },
+        ];
+        Shapes::new().render(&gpu, &target, &polys, ShapeMode::Id).unwrap();
+        let px = gpu.read(&target).unwrap();
+        // Pixel (5, 10) is inside a only, 3.5 from its left edge, which is the last of its four
+        // sides of 16: the nearest point (2, 10.5) lies at 48 + 7.5 of 64.
+        let v = px.get(5, 10).unwrap();
+        assert_eq!(v[0], 7.0);
+        assert!((v[1] - shape_random(7)).abs() < 1e-3, "{v:?}");
+        assert!((v[2] - 55.5 / 64.0).abs() < 1e-3 && (v[3] + 3.5).abs() < 0.01, "{v:?}");
+        // Inside both: the later shape.
+        assert_eq!(px.get(16, 10).unwrap()[0], 9.0);
+        // Outside both: the nearest, 2.5 px right of b, at a positive distance.
+        let v = px.get(32, 10).unwrap();
+        assert!(v[0] == 9.0 && (v[3] - 2.5).abs() < 0.01, "{v:?}");
+        // No shapes: no id.
+        Shapes::new().render(&gpu, &target, &[], ShapeMode::Id).unwrap();
+        assert_eq!(gpu.read(&target).unwrap().get(5, 10).unwrap()[0], -1.0);
+    }
+
+    #[test]
+    fn shape_randoms_stay_below_one_and_differ() {
+        let values: Vec<f32> = (0..1000).map(shape_random).collect();
+        assert!(values.iter().all(|v| (0.0..1.0).contains(v)));
+        assert!(values.windows(2).all(|w| w[0] != w[1]));
+        let mean = values.iter().sum::<f32>() / values.len() as f32;
+        assert!((mean - 0.5).abs() < 0.05, "{mean}");
     }
 }
