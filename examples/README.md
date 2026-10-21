@@ -21,3 +21,4 @@ saves into it.)
 | [channels-and-pictures](channels-and-pictures/README.md) | a picture turned into channels and back | `/view` | |
 | [projection-room](projection-room/README.md) | a 3D room lit by a projector, lamps and its surroundings | `/view`, `/through_beamer` | |
 | [fluid](fluid/README.md) | a fluid stirred by motion: optical flow and blobs push it, the picture colours it | `/view` | |
+| [synthwave](synthwave/README.md) | a retro flight: wireframe grids and an instanced city through a noise nebula, warm and cold palettes | `/out` | |
