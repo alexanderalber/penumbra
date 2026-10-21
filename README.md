@@ -21,8 +21,8 @@ lists every one.
 
 - **Pictures:** noise, ramps, text, shapes, images, PSD layers and video as sources; level, HSV,
   blur, edge, displace, lookup, threshold, chroma key, matte, composite and others as filters;
-  feedback loops, a per-pixel time machine, a frame cache; a shader node in WGSL whose params
-  come from the shader file, reloaded on save.
+  feedback loops, a per-pixel time machine, a frame cache, a 2D fluid pushed by motion or
+  blobs; a shader node in WGSL whose params come from the shader file, reloaded on save.
 - **3D:** meshes from OBJ, STL and glTF, primitives, instancing from a table or from a texture
   (tens of thousands of instances on the GPU), Phong, PBR, wireframe and occluder materials,
   ambient, directional, point, spot and environment lights, shadows, transparency, ambient
