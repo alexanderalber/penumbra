@@ -398,6 +398,34 @@ pub fn gaussian(w: usize, h: usize, data: &[f32], sigma: f32) -> Vec<f32> {
     out
 }
 
+/// The length of the gradient per pixel: central differences inside, one-sided at the border
+/// (numpy's `gradient`).
+pub fn gradient(w: usize, h: usize, data: &[f32]) -> Vec<f32> {
+    if data.len() != w * h {
+        return vec![0.0; data.len()];
+    }
+    let at = |x: usize, y: usize| data.get(y * w + x).copied().unwrap_or(0.0);
+    let mut out = vec![0f32; data.len()];
+    par_rows(w, h, &mut out, |y, row| {
+        for (x, o) in row.iter_mut().enumerate() {
+            let gx = match (x > 0, x + 1 < w) {
+                (true, true) => (at(x + 1, y) - at(x - 1, y)) / 2.0,
+                (false, true) => at(x + 1, y) - at(x, y),
+                (true, false) => at(x, y) - at(x - 1, y),
+                (false, false) => 0.0,
+            };
+            let gy = match (y > 0, y + 1 < h) {
+                (true, true) => (at(x, y + 1) - at(x, y - 1)) / 2.0,
+                (false, true) => at(x, y + 1) - at(x, y),
+                (true, false) => at(x, y) - at(x, y - 1),
+                (false, false) => 0.0,
+            };
+            *o = gx.hypot(gy);
+        }
+    });
+    out
+}
+
 /// A rectangle of a picture: `x0..x1`, `y0..y1`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {

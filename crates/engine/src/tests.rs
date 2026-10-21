@@ -1322,3 +1322,76 @@ fn objects_and_blend_from_decoded_scans() {
     );
     assert!(e.contains("threshold"), "{e}");
 }
+
+#[test]
+fn relief_heights_and_masks_from_two_scans() {
+    let f = Fixture::new("scan_relief");
+    let dir = f.engine.session().dir().to_path_buf();
+    // Two 160 x 120 projectors seen by a 200 x 150 camera alike, a panel with a bump standing in
+    // front of the wall; the second sees twice the first one's parallax.
+    let (pw, ph, cw, ch) = (160usize, 120usize, 200usize, 150usize);
+    let on_panel = |x: usize, y: usize| (14..146).contains(&x) && (12..108).contains(&y);
+    let bump = |x: usize, y: usize| {
+        let (dx, dy) = (x as f32 - 80.0, y as f32 - 60.0);
+        4.0 * (-(dx * dx + dy * dy) / 450.0).exp()
+    };
+    let write_scan = |name: &str, gain: f32| {
+        let folder = dir.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut p2c = Vec::new();
+        for y in 0..ph {
+            for x in 0..pw {
+                let d = if on_panel(x, y) { bump(x, y) } else { -12.0 } * gain;
+                let (cx, cy) = (x as f32 * 1.1 + 15.0 + d, y as f32 * 1.1 + 5.0);
+                p2c.push([cx / cw as f32, cy / ch as f32, 1.0, 1.0]);
+            }
+        }
+        let mut c2p = Vec::new();
+        for y in 0..ch {
+            for x in 0..cw {
+                let (u, v) = ((x as f32 + 0.5 - 15.0) / 1.1, (y as f32 + 0.5 - 5.0) / 1.1);
+                let inside = (0.0..pw as f32).contains(&u) && (0.0..ph as f32).contains(&v);
+                c2p.push(if inside {
+                    [u / pw as f32, v / ph as f32, 1.0, 1.0]
+                } else {
+                    [-1.0, -1.0, 0.0, 1.0]
+                });
+            }
+        }
+        let exr = |w: usize, h: usize, d: &[[f32; 4]]| {
+            penumbra_gpu::image::encode_exr_rgba32f(w as u32, h as u32, d).unwrap()
+        };
+        std::fs::write(folder.join("proj_to_cam.exr"), exr(pw, ph, &p2c)).unwrap();
+        std::fs::write(folder.join("cam_to_proj.exr"), exr(cw, ch, &c2p)).unwrap();
+    };
+    write_scan("a", 1.0);
+    write_scan("b", 2.0);
+    let r = f.call("scan.relief", json!({"scans": ["a", "b"]}));
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    let p = &r["projectors"];
+    assert_eq!(p[0]["sign"]["heuristic"]["by"], "wall behind", "{r}");
+    let k = p[1]["to_first"]["scale"].as_f64().unwrap();
+    assert!((k - 0.5).abs() < 0.03, "{r}");
+    assert!(p[1]["to_first"]["overlap"].as_u64().unwrap() > 8000, "{r}");
+    // Peak up, the mask on the panel only.
+    let h = penumbra_gpu::image::decode_file_raw(&dir.join("relief/height_0.exr"), 8192, 1 << 24).unwrap();
+    let at = |x: usize, y: usize| h.rgba[y * pw + x][0];
+    assert!(at(80, 60) > 0.9 && at(25, 100) < 0.3, "{} {}", at(80, 60), at(25, 100));
+    let m = penumbra_gpu::image::decode_file_raw(&dir.join("relief/mask_1.png"), 8192, 1 << 24).unwrap();
+    assert_eq!(m.rgba[60 * pw + 80][0] * m.scale, 255.0);
+    assert_eq!(m.rgba[2 * pw + 2][0], 0.0);
+    assert!(dir.join("relief/height_camera.exr").exists() && dir.join("relief/relief_view.png").exists());
+    // The sign pinned the other way turns both over.
+    let r = f.call(
+        "scan.relief",
+        json!({"scans": ["a", "b"], "sign": -p[0]["sign"]["as_param"].as_f64().unwrap(), "out": "flipped"}),
+    );
+    let h = penumbra_gpu::image::decode_file_raw(&dir.join("flipped/height_1.exr"), 8192, 1 << 24).unwrap();
+    assert!(h.rgba[60 * pw + 80][0] < 0.1, "{r}");
+
+    assert!(f.fail("scan.relief", json!({"scans": []})).contains("scans"));
+    assert!(f.fail("scan.relief", json!({"scans": ["nowhere"]})).contains("nowhere"));
+    assert!(f.fail("scan.relief", json!({"scans": ["a"], "sign": 2})).contains("sign"));
+    assert!(f.fail("scan.relief", json!({"scans": ["a"], "scale": "median"})).contains("symmetric"));
+    assert!(f.fail("scan.relief", json!({"scans": ["a"], "jump": -1})).contains("jump"));
+}
