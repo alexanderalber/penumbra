@@ -18,6 +18,7 @@ pub mod script;
 pub mod shapes;
 pub mod table;
 pub mod tex;
+pub mod trace;
 pub mod view;
 
 use penumbra_core::Error;

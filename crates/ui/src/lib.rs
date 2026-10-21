@@ -109,6 +109,12 @@ pub enum Action {
         node: NodeId,
         delay: f64,
     },
+    /// The outlines of `from`'s picture (a path, or a name beside `node`) become `poly` lines
+    /// in the `tex.shapes` `node` (`shapes.trace`).
+    Trace {
+        node: NodeId,
+        from: String,
+    },
 }
 
 impl Action {
