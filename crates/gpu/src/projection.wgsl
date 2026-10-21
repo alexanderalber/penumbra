@@ -13,7 +13,7 @@ struct Look {
     // 1: encode to sRGB, 2: blend, 4: pattern instead of the input, 8: the projector's test
     // pattern instead of anything, 16: the resolution overlay over the input, 32: the flat
     // signal instead of anything, 64: colour correction, 128: structured light stripes instead of
-    // anything but the flat signal.
+    // anything but the flat signal, 256: the gain map, 512: the black lift (both with 64).
     flags: u32,
     peer_count: u32,
     overlay_factor: f32,
@@ -35,11 +35,16 @@ struct Look {
     // Structured light: the projector's width and height in pixels, the lit stripes' signal,
     // the pattern's index.
     stripes: vec4f,
+    // How much of the gain map and of the black lift apply.
+    field: vec4f,
 }
 
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var smp: sampler;
 @group(0) @binding(2) var<uniform> u: Look;
+// Per projector pixel: a factor on the drive, and a lift of the black (see `correct`).
+@group(0) @binding(3) var gain_map: texture_2d<f32>;
+@group(0) @binding(4) var black_map: texture_2d<f32>;
 
 struct V {
     @builtin(position) pos: vec4f,
@@ -205,9 +210,21 @@ fn stripe_lit(p: vec2u, size: vec2u, i: u32) -> bool {
     return on != ((k & 1u) == 1u);
 }
 
-// Linear light to the projector's signal: matrix, clamp, sRGB encoding, tone curves.
-fn correct(c: vec3f) -> vec3f {
-    let d = clamp(vec3f(dot(u.m0.xyz, c), dot(u.m1.xyz, c), dot(u.m2.xyz, c)), vec3f(0.0), vec3f(1.0));
+// Linear light to the projector's signal: matrix, clamp, the gain map and the black lift at
+// projector position `q` (0..1 over the viewport), sRGB encoding, tone curves. The gain works
+// on the drive in the projector's own channels, after the matrix: the hot spot and the colour
+// cast belong to the projector's light, which the drive scales; and before the curves, which
+// only bend the drive into the projector's response.
+fn correct(c: vec3f, q: vec2f) -> vec3f {
+    var d = clamp(vec3f(dot(u.m0.xyz, c), dot(u.m1.xyz, c), dot(u.m2.xyz, c)), vec3f(0.0), vec3f(1.0));
+    if (u.flags & 256u) != 0u {
+        let g = clamp(textureSampleLevel(gain_map, smp, q, 0.0).rgb, vec3f(0.0), vec3f(1.0));
+        d *= mix(vec3f(1.0), g, clamp(u.field.x, 0.0, 1.0));
+    }
+    if (u.flags & 512u) != 0u {
+        let l = clamp(textureSampleLevel(black_map, smp, q, 0.0).rgb * u.field.y, vec3f(0.0), vec3f(1.0));
+        d = l + (vec3f(1.0) - l) * d;
+    }
     let e = srgb(d);
     return vec3f(tone(e.r, 0u), tone(e.g, 1u), tone(e.b, 2u));
 }
@@ -244,7 +261,8 @@ fn fs(v: V) -> @location(0) vec4f {
             rgb = overlay(r, rgb);
         }
         if (u.flags & 64u) != 0u {
-            rgb = correct(rgb);
+            let q = (v.pos.xy - u.viewport.xy) / max(u.viewport.zw, vec2f(1.0));
+            rgb = correct(rgb, clamp(q, vec2f(0.0), vec2f(1.0)));
             signal = true;
         }
     }

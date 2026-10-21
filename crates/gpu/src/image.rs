@@ -183,6 +183,19 @@ pub fn encode_png_gray16(width: u32, height: u32, values: &[u16]) -> Result<Vec<
     .map_err(|e| Error::new(format!("cannot encode the PNG: {e}")))
 }
 
+/// A three-channel 16-bit PNG of `values` (red, green, blue per pixel, as written): colour data
+/// finer than 8 bits, such as a projector's gain map.
+pub fn encode_png_rgb16(width: u32, height: u32, values: &[u16]) -> Result<Vec<u8>, Error> {
+    let image = Image::from_u16(width, height, ChannelLayout::Rgb, values)
+        .map_err(|e| Error::new(format!("cannot build the image: {e}")))?;
+    photocraft_codecs::encode(
+        &image,
+        photocraft_codecs::Format::Png,
+        &photocraft_codecs::EncodeOptions::default(),
+    )
+    .map_err(|e| Error::new(format!("cannot encode the PNG: {e}")))
+}
+
 /// An OpenEXR file of 32-bit float RGBA rows (linear, as stored; no alpha conversion): data such
 /// as a `tex.remap` map, which 8- and 16-bit files would take as sRGB and too coarse.
 pub fn encode_exr_rgba32f(width: u32, height: u32, rgba: &[[f32; 4]]) -> Result<Vec<u8>, Error> {

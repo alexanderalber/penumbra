@@ -11,10 +11,12 @@
 //!   the objects in front of a surface from two such scans, and the blend of projectors on them;
 //!   [`relief`]: height maps of a mostly flat object from one scan, without a reference.
 //! - Colour ([`colour`]): matching projectors to each other from a camera's pictures of their
-//!   red, green and blue ramps.
+//!   red, green and blue ramps; [`flatfield`]: brightness and colour that vary across one
+//!   projector's picture, and the black level where projectors overlap.
 
 mod camera;
 pub mod colour;
+pub mod flatfield;
 mod homography;
 pub mod objects;
 mod raster;
@@ -26,6 +28,8 @@ pub use camera::{Camera, Intrinsics, MAX_COORDINATE, Pose, unproject_clip};
 pub use homography::{Homography, MAX_PAIRS, ROBUST_SAMPLE, RobustFit};
 pub use solve::{MAX_ITERATIONS, Options, Solution, Spread, Start, calibrate};
 
+#[cfg(test)]
+mod flatfield_tests;
 #[cfg(test)]
 mod objects_tests;
 #[cfg(test)]
