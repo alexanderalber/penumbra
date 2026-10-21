@@ -11,16 +11,33 @@ project, read by `tex.image`. Nothing of it runs per frame: during the show what
 
 Paths in the commands are relative to the project directory.
 
-## 1. Scan: `scan.patterns` and `scan.decode`
+## 1. Scan: `scan.capture`
 
-Per projector: a `tex.scan_pattern` into the projector, stepped through its `pattern` 0, 1, 2,
-... (`scan.patterns` lists them, 46 at 1920 x 1080), the camera taking one picture of each into
-a folder. The room dark, camera exposure fixed and not clipping the white pattern, nothing
-moving. Then
+The room dark, the camera's exposure fixed (no auto exposure, no DRO / auto HDR) and not
+clipping white, nothing moving, the camera running as a `tex.video_in` node. Then
 
-    penumbra-cli ctl scan.decode '{"frames": "scan/a"}'
+    penumbra-cli ctl scan.capture '{"camera": "/cam", "projectors": ["/proj_a", "/proj_b"]}'
 
-writes into `scan/a/decoded/`:
+scans one projector after the other (without `projectors`: every active `out.projector`). The
+projector being scanned shows the patterns, the others black; what they show is replaced on
+the output board, the network is not changed, and when the command ends (however it ends) they
+show their pictures again. The patterns are drawn in the projector's own pixels, past its
+colour correction (a projector dimmed by `projector.match` still shows full contrast). Each
+projector takes 2 + 2 (log2 width + log2 height) pictures, 46 at 1920 x 1080, about a quarter
+of a second each.
+
+A picture is taken once the pattern was presented, `settle` (s, 0.05) passed, the camera's
+picture changed from the one taken before (stripes finer than the camera resolves change
+nothing it sees: those once twice the latency passed), and two camera frames in a row agree
+(`verify`, on; at most `retries`, 3, frames may disagree before the picture is taken anyway,
+with a warning). The latency is measured on
+the way, from black to white and white to black, and reported as `latency_ms` (`rise`, `fall`):
+the time from the output window presenting a change to the first camera frame showing it. The
+coarsest stripes are checked: where the projector reaches, pattern and inverse must differ
+clearly, otherwise the pair is taken again once.
+
+The results go into `out` (default `scan/`), one folder per projector named by its path
+(`/proj_a` is `scan/proj_a/`):
 
 | file | what |
 |---|---|
@@ -28,18 +45,56 @@ writes into `scan/a/decoded/`:
 | `proj_to_cam.exr` | projector size; per projector pixel the camera position, blue 1 where measured, 0.5 where filled in from a neighbour, -1 where none |
 | `scene.png` | the scene as the projector sees it |
 | `quality.png` | per camera pixel what was decoded (grey by confidence; black: not reached; magenta: clipped; blue: ambiguous; red: outliers) |
+| `frames/00.png` ... | the camera's pictures, with `frames: true` only |
+
+The reply has per projector the camera pixels decoded, the projector pixels measured, the bits
+the camera resolves (`resolved_bits` of `bits`), the median margin of every bit's pattern
+against its inverse, the latency, the frames that had to be taken again, the times and the
+warnings. `level` (1) lowers the lit stripes if the camera clips even with its exposure down;
+`fill` and `options` are those of `scan.decode`.
+
+Without a camera node (photos from another camera), the same files come from the pictures in a
+folder: a `tex.scan_pattern` into the projector, stepped through its `pattern` 0, 1, 2, ...
+(`scan.patterns` lists them), one picture of each, then
+
+    penumbra-cli ctl scan.decode '{"frames": "scan/a"}'
+
+writes them into `scan/a/decoded/`. That folder is a scan like the ones `scan.capture` writes.
 
 `proj_to_cam.exr` through `tex.image` into `tex.remap`'s `map`, with the camera's picture as
 `in`: the camera's view in the projector's pixels.
 
-## 2. Objects: `scan.objects`
+## 2. Line projectors up: `scan.align`
+
+Projectors standing side by side on one surface, each feeding from a `tex.mapper` of the same
+content:
+
+    penumbra-cli ctl scan.align '{"scans": ["scan/proj_a", "scan/proj_b"], "mappers": ["/map_a", "/map_b"]}'
+
+fits per scan a homography from camera pixels to projector positions (robustly, outliers
+dropped; `error_px` says how well it fits), which gives each projector's frame in the camera's
+picture. The content is the rectangle, in the camera's axes, from the left edge of the leftmost
+frame to the right edge of the rightmost, between the lowest top edge and the highest bottom
+edge. Each mapper gets its projector's share of it as `region` (its frame's left to right edge,
+the outer ones to the content's edge), the corners of that share as `corner_tl` ...
+`corner_bl` and `fit` stretch, all as one undo step. The content's `aspect` (camera pixels)
+is in the reply: content of that aspect fills it without distortion. Where the frames overlap,
+the mappers' soft edges blend.
+
+The camera should look at the surface roughly square-on: the content is a rectangle in its
+picture. A camera turned by a quarter, upside down or mirrored is fine (`camera_turned` says
+which); projectors turned against each other are not. `apply: false`, or no `mappers`, only
+reports. A mesh warp on a mapper stays and moves the aligned picture (a warning says so).
+
+## 3. Objects: `scan.objects`
 
 Scan every projector twice: once of the empty scene (the wall alone, the **reference**), once
-with the objects in place. Camera and projectors must not move in between.
+with the objects in place (`scan.capture` with `"out": "wall"`, then with the default `scan`).
+Camera and projectors must not move in between.
 
     penumbra-cli ctl scan.objects '{"projectors": [
-        {"reference": "scan/wall_a/decoded", "scan": "scan/a/decoded"},
-        {"reference": "scan/wall_b/decoded", "scan": "scan/b/decoded"}]}'
+        {"reference": "wall/proj_a", "scan": "scan/proj_a"},
+        {"reference": "wall/proj_b", "scan": "scan/proj_b"}]}'
 
 Because the camera sits beside each projector's lens, a projector pixel landing on something
 nearer than the wall shows up somewhere else in the camera picture: the parallax. On the wall it
@@ -71,7 +126,7 @@ is fine) and in the camera.
 Limits: black or very dark surfaces do not decode, so they are neither found nor lit. Faces of
 one object at an angle to each other usually stay one part.
 
-## 3. Blend: `scan.blend`
+## 4. Blend: `scan.blend`
 
 Where two projectors light the same spot it is twice as bright, and any misregistration
 doubles. `scan.blend` gives each projector a weight: where another projector also lands on the
@@ -80,7 +135,7 @@ same camera pixel (inside its mask), the weight falls towards the projector's ow
 (projector pixels, 200); elsewhere 1; blurred by `blur` (3), 0 outside the mask. The weights
 of all projectors at one camera pixel add up to 1; the reply says how closely.
 
-    penumbra-cli ctl scan.blend '{"scans": ["scan/a/decoded", "scan/b/decoded"],
+    penumbra-cli ctl scan.blend '{"scans": ["scan/proj_a", "scan/proj_b"],
         "masks": ["objects/labels_0.png", "objects/labels_1.png"]}'
 
 `masks` is optional (one file or `null` per scan); without it the whole frame counts. Also
@@ -96,7 +151,7 @@ Written into `out` (default `objects/`):
 | `weight_N.png` | 16-bit, projector size; stored sRGB-encoded so that `tex.image` gives back the weight itself |
 | `proj_to_cam_smooth_N.exr` | the projector's `proj_to_cam` map, smoothed |
 
-## 4. The network
+## 5. The network
 
 Content is made once, in the camera's picture, and each projector takes its share:
 

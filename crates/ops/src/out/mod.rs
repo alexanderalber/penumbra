@@ -21,7 +21,9 @@
 //! A projector's colour correction (params in group *colour*, [`correct`]) is the last step of
 //! that draw, so projectors of different models can be matched to each other; `projector.match`
 //! measures it with a camera. While it measures, the [`OutputBoard`] holds a flat signal per
-//! projector ([`BoardState::flat`]) that replaces the picture without touching the network.
+//! projector ([`BoardState::flat`]) that replaces the picture without touching the network;
+//! `scan.capture` shows its structured light patterns the same way ([`BoardState::stripes`]).
+//! Neither goes through the colour correction.
 
 pub mod correct;
 pub mod ndi;
@@ -34,7 +36,7 @@ use std::sync::{Arc, Mutex};
 
 use penumbra_core::{Error, NodeId, ParamSpec, Value, lock};
 use penumbra_gpu::Tex;
-use penumbra_gpu::projection::Correction;
+use penumbra_gpu::projection::{Correction, Stripes};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Cooker, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes,
     Operator,
@@ -96,6 +98,9 @@ pub struct ProjectorFrame {
     pub correction: Option<Arc<Correction>>,
     /// A flat signal shown instead of anything, uncorrected (a measurement running).
     pub flat: Option<[f32; 3]>,
+    /// A structured light pattern shown instead of anything but `flat`, uncorrected (a scan
+    /// running).
+    pub stripes: Option<Stripes>,
 }
 
 /// A display as the output side sees it (named by the system crate, sized by winit).
@@ -156,6 +161,10 @@ pub struct BoardState {
     /// set by a measurement (`projector.match`) and cleared when it ends.
     #[serde(skip)]
     pub flat: BTreeMap<NodeId, [f32; 3]>,
+    /// Structured light patterns shown instead of these projectors' pictures, uncorrected: set
+    /// by a scan (`scan.capture`) and cleared when it ends. A flat signal wins over them.
+    #[serde(skip)]
+    pub stripes: BTreeMap<NodeId, Stripes>,
     /// The newest output pass each projector's window presented.
     #[serde(skip)]
     pub presented: BTreeMap<NodeId, u64>,
@@ -331,7 +340,10 @@ pub fn collect(
         let source = node.inputs.first().copied().flatten().and_then(|port| cooker.output(port).cloned());
         let size = source.as_ref().and_then(|d| d.get::<Tex>()).map(Tex::size);
         // The test pattern covers the whole viewport: a stretched placeholder.
-        let whole = test || board.as_ref().is_some_and(|b| b.flat.contains_key(&node.id));
+        let whole = test
+            || board
+                .as_ref()
+                .is_some_and(|b| b.flat.contains_key(&node.id) || b.stripes.contains_key(&node.id));
         let placed = if whole { Some((Fit::Stretch, (1, 1))) } else { size.map(|s| (fit, s)) };
         let mapping = placed.and_then(|(fit, size)| {
             let key = (fit, raster(board.as_ref(), node.id, viewport), size);
@@ -345,6 +357,7 @@ pub fn collect(
             Some(m)
         });
         let flat = board.as_ref().and_then(|b| b.flat.get(&node.id).copied());
+        let stripes = board.as_ref().and_then(|b| b.stripes.get(&node.id).copied());
         let correction = {
             let key: Vec<Option<Value>> = correct::PARAMS.iter().map(|n| param(n).cloned()).collect();
             match cache.1.get(&node.id) {
@@ -371,6 +384,7 @@ pub fn collect(
             tint: tint(rank),
             correction,
             flat,
+            stripes,
         });
     }
     let alive: Vec<NodeId> = out.iter().map(|p| p.node).collect();
@@ -418,13 +432,14 @@ pub fn item_for<'a>(
             tint,
             correction: None,
             flat: None,
+            stripes: None,
         },
     }
 }
 
 /// How a projector draws: its input placed by `fit` into `viewport` (target pixels) and colour
-/// corrected, or its test pattern, or a flat signal (`blank` stands in for the texture, which
-/// neither reads). `None` without an input.
+/// corrected, or its test pattern, or a flat signal or structured light stripes (`blank` stands
+/// in for the texture, which none of those reads). `None` without an input.
 pub fn item<'a>(
     frame: &'a ProjectorFrame,
     blank: &'a Tex,
@@ -434,6 +449,11 @@ pub fn item<'a>(
     if let Some(flat) = frame.flat {
         let mut item = item_for(blank, mapping, &[], [1.0; 3], viewport);
         item.look.flat = Some(flat);
+        return Some(item);
+    }
+    if let Some(stripes) = frame.stripes {
+        let mut item = item_for(blank, mapping, &[], [1.0; 3], viewport);
+        item.look.stripes = Some(stripes);
         return Some(item);
     }
     if frame.test {

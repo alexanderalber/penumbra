@@ -23,6 +23,8 @@ pub mod pictures;
 pub mod projector;
 pub mod projects;
 pub mod scan;
+pub mod scan_align;
+pub mod scan_capture;
 pub mod shapes;
 pub mod spout;
 pub mod state;
@@ -67,6 +69,8 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     blob_track::register(&mut registry, engine);
     shapes::register(&mut registry, engine);
     scan::register(&mut registry, engine);
+    scan_capture::register(&mut registry, engine);
+    scan_align::register(&mut registry, engine);
     projector::register(&mut registry, engine);
     projects::register(&mut registry, engine);
     navigation::register(&mut registry, engine);

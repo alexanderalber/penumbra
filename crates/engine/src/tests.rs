@@ -926,6 +926,9 @@ mod video_out_tests;
 #[path = "projector_tests.rs"]
 mod projector_tests;
 
+#[path = "scan_capture_tests.rs"]
+mod scan_capture_tests;
+
 #[test]
 fn copy_and_paste_nodes() {
     let f = Fixture::new("clipboard");

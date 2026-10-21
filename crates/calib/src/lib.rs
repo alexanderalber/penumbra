@@ -21,7 +21,7 @@ pub mod scan;
 mod solve;
 
 pub use camera::{Camera, Intrinsics, MAX_COORDINATE, Pose, unproject_clip};
-pub use homography::{Homography, MAX_PAIRS};
+pub use homography::{Homography, MAX_PAIRS, ROBUST_SAMPLE, RobustFit};
 pub use solve::{MAX_ITERATIONS, Options, Solution, Spread, Start, calibrate};
 
 #[cfg(test)]
