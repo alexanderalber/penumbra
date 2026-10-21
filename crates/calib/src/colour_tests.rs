@@ -90,7 +90,7 @@ fn an_srgb_projector_gets_straight_curves() {
             })
             .collect()
     });
-    let m = match_projectors(&[Measured { levels, ramps }], &[None], 17).unwrap();
+    let m = match_projectors(&[Measured { levels, ramps }], &[None], 17, Target::Srgb).unwrap();
     assert_eq!(m.reference, 0);
     assert!((m.alpha - 1.0).abs() < 1e-9);
     let c = &m.projectors[0];
@@ -112,7 +112,7 @@ fn synthetic_projectors_match_after_correction() {
     let set = synth_set();
     let measured: Vec<Measured> = set.iter().map(|s| s.measure(8)).collect();
     let whites: Vec<Option<[f64; 3]>> = set.iter().map(|s| Some(s.light([1.0; 3]))).collect();
-    let m = match_projectors(&measured, &whites, 17).unwrap();
+    let m = match_projectors(&measured, &whites, 17, Target::Srgb).unwrap();
     assert!(m.alpha > 0.3 && m.alpha <= 1.0, "{}", m.alpha);
     // The target: alpha times the reference's primaries.
     let q = set[m.reference].p.map(|r| r.map(|v| v * m.alpha));
@@ -145,7 +145,7 @@ fn synthetic_projectors_match_after_correction() {
 fn unreachable_primaries_are_clamped_and_keep_grey() {
     let set = wide_set();
     let measured: Vec<Measured> = set.iter().map(|s| s.measure(8)).collect();
-    let m = match_projectors(&measured, &[], 17).unwrap();
+    let m = match_projectors(&measured, &[], 17, Target::Srgb).unwrap();
     assert!(m.warnings.iter().any(|w| w.contains("clamped")), "{:?}", m.warnings);
     let q = set[m.reference].p.map(|r| r.map(|v| v * m.alpha));
     let white = luminance(apply(&q, [1.0; 3]));
@@ -176,21 +176,21 @@ fn bad_measurements_are_errors() {
     let good = synth_set()[0].measure(4);
     let mut short = good.clone();
     short.ramps[1].pop();
-    assert!(match_projectors(&[short], &[], 17).is_err());
+    assert!(match_projectors(&[short], &[], 17, Target::Srgb).is_err());
     let mut nan = good.clone();
     nan.ramps[0][1][2] = f64::NAN;
-    assert!(match_projectors(&[nan], &[], 17).is_err());
+    assert!(match_projectors(&[nan], &[], 17, Target::Srgb).is_err());
     let mut dark = good.clone();
     dark.ramps[2] = vec![[0.0; 3]; 4];
-    assert!(match_projectors(&[dark], &[], 17).unwrap_err().contains("not brighter"));
+    assert!(match_projectors(&[dark], &[], 17, Target::Srgb).unwrap_err().contains("not brighter"));
     let mut alike = good.clone();
     alike.ramps[1] = alike.ramps[0].clone();
-    assert!(match_projectors(&[alike], &[], 17).unwrap_err().contains("alike"));
-    assert!(match_projectors(std::slice::from_ref(&good), &[], 1).is_err());
-    assert!(match_projectors(&[], &[], 17).is_err());
+    assert!(match_projectors(&[alike], &[], 17, Target::Srgb).unwrap_err().contains("alike"));
+    assert!(match_projectors(std::slice::from_ref(&good), &[], 1, Target::Srgb).is_err());
+    assert!(match_projectors(&[], &[], 17, Target::Srgb).is_err());
     let mut levels = good;
     levels.levels = vec![0.5, 0.25, 0.75, 1.0];
-    assert!(match_projectors(&[levels], &[], 17).is_err());
+    assert!(match_projectors(&[levels], &[], 17, Target::Srgb).is_err());
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn a_noisy_ramp_still_gives_a_monotone_curve() {
     let mut m = s.measure(8);
     // A mid level reads brighter than the next (camera noise).
     m.ramps[1][3] = m.ramps[1][5];
-    let r = match_projectors(&[m], &[], 17).unwrap();
+    let r = match_projectors(&[m], &[], 17, Target::Srgb).unwrap();
     for curve in &r.projectors[0].curves {
         assert!(curve.windows(2).all(|w| w[1] >= w[0]), "{curve:?}");
         assert_eq!(curve[0], 0.0);
@@ -270,4 +270,43 @@ fn camera_planes_to_linear() {
     assert!((f64::from(pic.rgb[0][1]) - decode(128.0 / 255.0)).abs() < 1e-5);
     let short = Planes { y: &y[..3], ..p };
     assert!(linear_picture(&short, 1).is_err());
+}
+
+/// The camera's own tone curve per channel on top of the light (an uncalibrated camera).
+fn through_camera(m: &Measured, gamma: [f64; 3]) -> Measured {
+    let ramps = m
+        .ramps
+        .clone()
+        .map(|r| r.into_iter().map(|v| [0, 1, 2].map(|c| v[c].max(0.0).powf(gamma[c]))).collect());
+    Measured { levels: m.levels.clone(), ramps }
+}
+
+#[test]
+fn reference_target_holds_through_a_nonlinear_camera() {
+    // Same primaries (no crosstalk), different tone curves per channel.
+    let p = [[0.6, 0.0, 0.0], [0.0, 0.7, 0.0], [0.0, 0.0, 0.5]];
+    let a = Synth { p, gamma: [2.2, 2.2, 2.2] };
+    let b = Synth { p, gamma: [2.6, 1.9, 3.0] };
+    let camera = [1.6, 1.3, 1.9];
+    let measured: Vec<Measured> = [&a, &b].iter().map(|s| through_camera(&s.measure(8), camera)).collect();
+    let m = match_projectors(&measured, &[], 17, Target::Reference).unwrap();
+    let r = m.reference;
+    for (i, v) in m.projectors[r].curves.iter().flatten().enumerate() {
+        assert!((v - (i % 17) as f64 / 16.0).abs() < 1e-12, "the reference keeps straight curves");
+    }
+    let mut worst: f64 = 0.0;
+    for i in 0..=8 {
+        for c in [[1.0, 1.0, 1.0], [1.0, 0.0, 0.0], [0.2, 0.5, 0.9]] {
+            let c = c.map(|v| v * i as f64 / 8.0);
+            let la = a.corrected(&m.projectors[0], c);
+            let lb = b.corrected(&m.projectors[1], c);
+            for (x, y) in la.iter().zip(lb) {
+                worst = worst.max((x - y).abs() / 0.5);
+            }
+        }
+    }
+    assert!(worst < 0.02, "worst {worst}");
+    // The sRGB target bends the reference too, by the camera's curve.
+    let s = match_projectors(&measured, &[], 17, Target::Srgb).unwrap();
+    assert!((s.projectors[r].curves[0][8] - 0.5).abs() > 0.05, "{:?}", s.projectors[r].curves[0]);
 }
