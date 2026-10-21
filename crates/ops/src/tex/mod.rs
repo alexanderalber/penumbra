@@ -13,6 +13,7 @@ mod convert;
 mod denoise;
 mod filters;
 mod flow;
+mod fluid;
 mod image;
 mod layer;
 pub mod mapper;
@@ -457,6 +458,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     convert::register(types)?;
     denoise::register(types)?;
     flow::register(types)?;
+    fluid::register(types)?;
     image::register(types)?;
     layer::register(types)?;
     mapper::register(types)?;
@@ -497,6 +499,9 @@ pub fn warm_up(gpu: &Gpu) {
     }
     if let Err(e) = denoise::warm_up(gpu) {
         log::error!("built-in shader tex.denoise does not compile: {e}");
+    }
+    if let Err(e) = fluid::warm_up(gpu) {
+        log::error!("built-in shader tex.fluid does not compile: {e}");
     }
     if let Err(e) = optical_flow::warm_up(gpu) {
         log::error!("built-in shader tex.optical_flow does not compile: {e}");
