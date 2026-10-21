@@ -1,9 +1,11 @@
 //! Draws projectors: each a textured triangle mesh (from the surface onto the projector image,
 //! computed on the CPU by `ops::out::mapping`) inside its viewport, with soft-edge blending
-//! and the alignment grid done per pixel in `projection.wgsl`. Used by the output windows (into
+//! and the alignment grid done per pixel in `projection.wgsl`, and a projector's colour
+//! correction ([`Correction`]) last. Used by the output windows (into
 //! their surfaces) and by the engine (into a [`Tex`], for the viewer and `node.snapshot`).
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use penumbra_core::Error;
 
@@ -11,7 +13,23 @@ use crate::{FORMAT, Gpu, Tex};
 
 /// Most other projectors one projector blends with.
 pub const MAX_PEERS: usize = 8;
-const UNIFORM_SIZE: u64 = 224;
+/// Most samples per tone curve of a [`Correction`].
+pub const MAX_CURVE: usize = 64;
+const UNIFORM_SIZE: u64 = 304 + 16 * MAX_CURVE as u64;
+
+/// A projector's colour correction, the last step before its signal: a matrix in linear light
+/// (`drive = matrix * colour`, clamped to 0..1), then per channel a tone curve from the drive,
+/// sRGB-encoded, to the signal. Without one the output encodes to sRGB as usual; an identity
+/// correction gives the same signal (within rounding) at a little more cost, so callers pass
+/// `None` for it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Correction {
+    /// Row by row.
+    pub matrix: [[f32; 3]; 3],
+    /// Per channel (red, green, blue) the signal at encoded drives `i / (n - 1)`, 2 to
+    /// [`MAX_CURVE`] samples each (fewer: the straight line, more: cut).
+    pub curves: [Vec<f32>; 3],
+}
 
 /// One vertex of a projector's mesh: its position in the projector's clip space (homogeneous,
 /// so the surface is interpolated perspective-correctly) and its point on the surface.
@@ -38,6 +56,11 @@ pub struct Look {
     pub tint: [f32; 3],
     /// Colours the picture by how fine the surface is per projector pixel (`res.overlay`).
     pub overlay: Option<Overlay>,
+    /// The projector's colour correction, applied to everything but `test` and `flat`.
+    pub correction: Option<Arc<Correction>>,
+    /// A flat signal (sRGB-encoded, 0..1) instead of anything else, uncorrected: what a
+    /// measurement shows.
+    pub flat: Option<[f32; 3]>,
 }
 
 /// The resolution overlay: green where a surface pixel covers about one projector pixel, red where
@@ -300,7 +323,9 @@ fn uniform_bytes(look: &Look, tex: (u32, u32), viewport: [f32; 4], encode: bool)
         | (u32::from(look.blend) << 1)
         | (u32::from(look.pattern) << 2)
         | (u32::from(look.test) << 3)
-        | (u32::from(look.overlay.is_some()) << 4);
+        | (u32::from(look.overlay.is_some()) << 4)
+        | (u32::from(look.flat.is_some()) << 5)
+        | (u32::from(look.correction.is_some() && look.flat.is_none() && !look.test) << 6);
     let peers: Vec<[f32; 4]> = look.peers.iter().take(MAX_PEERS).copied().collect();
     let finite = |v: f32| if v.is_finite() { v } else { 1.0 };
     let overlay =
@@ -316,12 +341,50 @@ fn uniform_bytes(look: &Look, tex: (u32, u32), viewport: [f32; 4], encode: bool)
             b.extend_from_slice(&v.to_le_bytes());
         }
     }
-    b.resize(UNIFORM_SIZE as usize - 32, 0);
+    // Offsets as in projection.wgsl's Look: viewport at 192, overlay_cap at 208, the flat
+    // signal and the correction from 224.
+    b.resize(192, 0);
     for v in viewport {
         b.extend_from_slice(&v.to_le_bytes());
     }
     let cap = look.overlay.map_or(f32::MAX, |o| if o.cap.is_nan() { f32::MAX } else { o.cap });
     b.extend_from_slice(&cap.to_le_bytes());
+    b.resize(224, 0);
+    let unit = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
+    let flat = look.flat.unwrap_or([0.0; 3]);
+    for v in flat {
+        b.extend_from_slice(&unit(v).to_le_bytes());
+    }
+    b.extend_from_slice(&0f32.to_le_bytes());
+    let identity = Correction {
+        matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        curves: [vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]],
+    };
+    let c = look.correction.as_deref().unwrap_or(&identity);
+    for row in c.matrix {
+        for v in row {
+            let v = if v.is_finite() { v } else { 0.0 };
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(&0f32.to_le_bytes());
+    }
+    let curves = c.curves.clone().map(|mut curve| {
+        if curve.len() < 2 {
+            curve = vec![0.0, 1.0];
+        }
+        curve.truncate(MAX_CURVE);
+        curve
+    });
+    for curve in &curves {
+        b.extend_from_slice(&(curve.len() as u32).to_le_bytes());
+    }
+    b.extend_from_slice(&0u32.to_le_bytes());
+    for i in 0..MAX_CURVE {
+        for curve in &curves {
+            b.extend_from_slice(&unit(curve.get(i).copied().unwrap_or(0.0)).to_le_bytes());
+        }
+        b.extend_from_slice(&0f32.to_le_bytes());
+    }
     b.resize(UNIFORM_SIZE as usize, 0);
     b
 }
@@ -374,6 +437,8 @@ mod tests {
                     test: false,
                     overlay: None,
                     tint: [1.0; 3],
+                    correction: None,
+                    flat: None,
                 },
             };
             drawer.render(&gpu, &target, &[item]).unwrap();
@@ -411,6 +476,8 @@ mod tests {
             test: true,
             overlay: None,
             tint: [1.0, 0.0, 0.0],
+            correction: None,
+            flat: None,
         };
         // The right half of the target is this projector's viewport.
         let item = Item {
@@ -446,6 +513,8 @@ mod tests {
             test: false,
             overlay: None,
             tint: [1.0; 3],
+            correction: None,
+            flat: None,
         };
         let item = Item {
             key: 9,
@@ -472,11 +541,74 @@ mod tests {
                 test: false,
                 overlay: None,
                 tint: [1.0; 3],
+                correction: None,
+                flat: None,
             },
             (4, 4),
             [0.0; 4],
             true,
         );
         assert_eq!(bytes.len(), UNIFORM_SIZE as usize);
+    }
+
+    #[test]
+    fn correction_and_flat_signal() {
+        let Some(gpu) = gpu() else { return };
+        let src = white(&gpu);
+        let mut drawer = Projection::new(&gpu);
+        let (vertices, indices) = quad([0.0, 0.0, 1.0, 1.0]);
+        let mut shot = |correction: Option<Correction>, flat: Option<[f32; 3]>| {
+            let target = Tex::new(&gpu, 8, 8, "projector").unwrap();
+            let look = Look {
+                region: [0.0, 0.0, 1.0, 1.0],
+                peers: vec![],
+                blend: false,
+                gamma: 1.0,
+                pattern: false,
+                test: false,
+                overlay: None,
+                tint: [1.0; 3],
+                correction: correction.map(Arc::new),
+                flat,
+            };
+            let item = Item {
+                key: 5,
+                tex: &src,
+                vertices: &vertices,
+                indices: &indices,
+                viewport: [0.0, 0.0, 8.0, 8.0],
+                look,
+            };
+            drawer.render(&gpu, &target, &[item]).unwrap();
+            let px = gpu.read(&target).unwrap();
+            let p = px.get(4, 4).unwrap();
+            [p[0], p[1], p[2]]
+        };
+        let identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let straight = || [vec![0.0, 1.0], vec![0.0, 0.5, 1.0], vec![0.0; 1]];
+        let plain = shot(None, None);
+        let same = shot(Some(Correction { matrix: identity, curves: straight() }), None);
+        for (a, b) in plain.iter().zip(same) {
+            assert!((a - b).abs() < 2e-3, "{plain:?} {same:?}");
+        }
+        // Half the drive in linear light, the straight curve: half the light.
+        let half =
+            shot(Some(Correction { matrix: identity.map(|r| r.map(|v| v * 0.5)), curves: straight() }), None);
+        assert!(half.iter().all(|v| (v - 0.5).abs() < 2e-3), "{half:?}");
+        // Red's curve halves its signal: full drive is signal 0.5, light 0.214 on an sRGB display.
+        let curved = shot(
+            Some(Correction { matrix: identity, curves: [vec![0.0, 0.5], vec![0.0, 1.0], vec![0.0, 1.0]] }),
+            None,
+        );
+        assert!((curved[0] - 0.2140).abs() < 2e-3 && (curved[1] - 1.0).abs() < 2e-3, "{curved:?}");
+        // A flat signal bypasses the correction.
+        let flat = shot(
+            Some(Correction { matrix: identity.map(|r| r.map(|v| v * 0.5)), curves: straight() }),
+            Some([0.5, 0.0, 1.0]),
+        );
+        assert!(
+            (flat[0] - 0.2140).abs() < 2e-3 && flat[1].abs() < 1e-3 && (flat[2] - 1.0).abs() < 2e-3,
+            "{flat:?}"
+        );
     }
 }
