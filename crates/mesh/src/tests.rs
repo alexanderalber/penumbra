@@ -37,6 +37,7 @@ fn primitives_are_consistent_and_face_outwards() {
         prim::cuboid([2.0, 1.0, 0.5]).unwrap(),
         prim::sphere(1.0, 16).unwrap(),
         prim::plane([1.0, 1.0]).unwrap(),
+        prim::grid([1.0, 2.0], 3).unwrap(),
     ] {
         m.check().unwrap();
         let c = m.bounds().unwrap().center();
@@ -55,6 +56,34 @@ fn primitives_are_consistent_and_face_outwards() {
     assert_eq!(prim::cuboid([1.0; 3]).unwrap().triangle_count(), 12);
     let b = prim::cuboid([2.0, 1.0, 0.5]).unwrap().bounds().unwrap();
     assert!(close(b.min, [-1.0, -0.5, -0.25]) && close(b.max, [1.0, 0.5, 0.25]));
+}
+
+#[test]
+fn a_grid_keeps_its_cell_edges_and_hides_the_diagonals() {
+    let m = prim::grid([4.0, 2.0], 4).unwrap();
+    m.check().unwrap();
+    assert_eq!((m.vertices.len(), m.triangle_count()), (25, 32));
+    let b = m.bounds().unwrap();
+    assert!(close(b.min, [-2.0, 0.0, -1.0]) && close(b.max, [2.0, 0.0, 1.0]));
+    // The edges not marked as inside a quad are exactly the grid's lines: 5 rows and 5 columns
+    // of 4 segments each, every one of them axis-aligned.
+    let mut lines = std::collections::HashSet::new();
+    for (t, mask) in m.indices.as_chunks::<3>().0.iter().zip(&m.inner_edges) {
+        for k in 0..3 {
+            let (a, b) = (t[(k + 1) % 3], t[(k + 2) % 3]);
+            let (pa, pb) = (m.vertices[a as usize].position, m.vertices[b as usize].position);
+            if mask & (1 << k) == 0 {
+                assert!(pa[0] == pb[0] || pa[2] == pb[2], "{pa:?} {pb:?}");
+                lines.insert((a.min(b), a.max(b)));
+            } else {
+                assert!(pa[0] != pb[0] && pa[2] != pb[2], "a cell edge marked inside");
+            }
+        }
+    }
+    assert_eq!(lines.len(), 2 * 5 * 4);
+    // One cell is the plane as before.
+    let one = prim::grid([4.0, 2.0], 1).unwrap();
+    assert_eq!(one.triangle_count(), prim::plane([4.0, 2.0]).unwrap().triangle_count());
 }
 
 #[test]

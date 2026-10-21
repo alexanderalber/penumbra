@@ -90,6 +90,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .more()
                     .doc("Steps around the sphere (half as many from pole to pole); more is rounder and costs more"),
             )
+            .param(
+                ParamSpec::int("cells", 1)
+                    .clamp(1.0, f64::from(prim::MAX_CELLS))
+                    .range(1.0, 128.0)
+                    .curve(Curve::Log)
+                    .doc("Plane: quads along each side; with mat.wireframe a grid of lines (a floor to fly over)"),
+            )
             .output("out", DataKind::Geo),
         || Box::new(Primitive) as Box<dyn Operator>,
     ))?;
@@ -407,7 +414,7 @@ impl Operator for Primitive {
         let size = vec3(cx, "size")?.map(|v| v.abs() as f32);
         let mesh = match cx.text("shape")? {
             "sphere" => prim::sphere(0.5 * size[0], u32::try_from(cx.int("segments")?).unwrap_or(48))?,
-            "plane" => prim::plane([size[0], size[2]])?,
+            "plane" => prim::grid([size[0], size[2]], u32::try_from(cx.int("cells")?).unwrap_or(1))?,
             _ => prim::cuboid(size)?,
         };
         let (model, _) = Model::upload(gpu, mesh, "primitive")?;
