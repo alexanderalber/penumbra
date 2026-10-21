@@ -3,6 +3,8 @@
 //! ```text
 //! penumbra-cli ctl <method> [params]   send one request to a running app, print the reply
 //! penumbra-cli [--port N] ...          control channel port (default: PENUMBRA_PORT or 9880)
+//! penumbra-cli [--timeout S] ...       longest wait for a reply in seconds (default 300; some
+//!                                      commands, like projector.match, take a minute)
 //! penumbra-cli soak [options]          run the engine headless for a while, report leaks and stalls
 //! ```
 //!
@@ -27,9 +29,11 @@ use std::time::Duration;
 use penumbra_engine::control;
 use serde_json::{Map, Value};
 
-const USAGE: &str = "usage: penumbra-cli [--port N] ctl <method> [{json} | key=value ...]
+const USAGE: &str = "usage: penumbra-cli [--port N] [--timeout S] ctl <method> [{json} | key=value ...]
        penumbra-cli soak --help";
-const TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a reply may take unless `--timeout` says otherwise: commands that measure (a camera
+/// looking at every projector) legitimately run for a minute or more.
+const TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Shown when the tool is started by a double-click instead of from a terminal.
 const DOUBLE_CLICKED: &str = "This is penumbra-cli, the command-line tool of penumbra. It sends commands to a
@@ -68,11 +72,14 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
         return soak::run(rest);
     }
     let mut port = None;
+    let mut timeout = TIMEOUT;
     let mut rest = args.as_slice();
-    if let [flag, value, tail @ ..] = rest
-        && flag == "--port"
-    {
-        port = Some(control::parse_port(value)?);
+    while let [flag, value, tail @ ..] = rest {
+        match flag.as_str() {
+            "--port" => port = Some(control::parse_port(value)?),
+            "--timeout" => timeout = parse_timeout(value)?,
+            _ => break,
+        }
         rest = tail;
     }
     let port = match port {
@@ -82,16 +89,24 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
     match rest {
         [] => {
             eprintln!("{USAGE}\nno command given, pinging the app");
-            ctl(port, "ping", &[])
+            ctl(port, "ping", &[], timeout)
         }
-        [cmd, method, params @ ..] if cmd == "ctl" => ctl(port, method, params),
+        [cmd, method, params @ ..] if cmd == "ctl" => ctl(port, method, params, timeout),
         _ => Err(USAGE.into()),
     }
 }
 
-fn ctl(port: u16, method: &str, params: &[String]) -> Result<ExitCode, String> {
+/// Seconds, more than 0, at most a day.
+fn parse_timeout(text: &str) -> Result<Duration, String> {
+    match text.trim().parse::<f64>() {
+        Ok(s) if s > 0.0 && s <= 86_400.0 => Ok(Duration::from_secs_f64(s)),
+        _ => Err(format!("--timeout: `{text}` is not a number of seconds (0 to 86400)")),
+    }
+}
+
+fn ctl(port: u16, method: &str, params: &[String], timeout: Duration) -> Result<ExitCode, String> {
     let params = parse_params(params)?;
-    let reply = control::call(port, method, params, TIMEOUT)?;
+    let reply = control::call(port, method, params, timeout)?;
     let text = serde_json::to_string_pretty(&reply).map_err(|e| e.to_string())?;
     println!("{text}");
     Ok(if reply.get("ok") == Some(&Value::Bool(true)) { ExitCode::SUCCESS } else { ExitCode::FAILURE })
@@ -125,6 +140,14 @@ fn parse_params(args: &[String]) -> Result<Value, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn timeouts_parse() {
+        assert_eq!(parse_timeout("2.5").unwrap(), Duration::from_millis(2500));
+        for bad in ["0", "-1", "x", "NaN", "inf", "1e9"] {
+            assert!(parse_timeout(bad).is_err(), "{bad}");
+        }
+    }
 
     fn strings(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
