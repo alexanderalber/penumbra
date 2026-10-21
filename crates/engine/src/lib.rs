@@ -21,6 +21,7 @@ pub mod ndi;
 pub mod osc;
 pub mod pictures;
 pub mod projects;
+pub mod scan;
 pub mod shapes;
 pub mod spout;
 pub mod state;
@@ -64,6 +65,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     video_out::register(&mut registry, engine);
     blob_track::register(&mut registry, engine);
     shapes::register(&mut registry, engine);
+    scan::register(&mut registry, engine);
     projects::register(&mut registry, engine);
     navigation::register(&mut registry, engine);
     registry

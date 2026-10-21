@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
 
 ### tex.blob_track
 
@@ -659,6 +659,22 @@ Outputs: `out` (tex).
 | `width` *(more)* | int | `1920` | 1 to 16384 px | Width of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(more)* | int | `1080` | 1 to 16384 px | Height of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+
+### tex.scan_pattern
+
+Structured light: Gray-code stripes by index (white, black, then columns and rows, each bit with its inverse); 46 pictures at 1920 x 1080
+
+Inputs: none.
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `pattern` | int | `0` | 0 to 45 (soft) | Which picture: 0 white, 1 black, then a column bit (coarsest first) and its inverse in turn, then the row bits; black past the last (scan.patterns lists them) |
+| `level` *(more)* | float | `1` | 0 to 1 (soft) | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
 
 ### tex.select
 

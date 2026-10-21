@@ -21,6 +21,7 @@ pub mod ndi_in;
 mod optical_flow;
 mod ramp;
 pub mod render;
+mod scan_pattern;
 mod shader;
 mod shape_content;
 pub mod shapes;
@@ -114,6 +115,7 @@ fn builtins() -> Vec<Builtin> {
     let mut all = core_builtins();
     all.extend(filters::builtins());
     all.push(shape_content::builtin());
+    all.push(scan_pattern::builtin());
     all
 }
 

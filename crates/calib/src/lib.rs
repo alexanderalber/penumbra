@@ -6,14 +6,19 @@
 //!   from world and picture point pairs ([`calibrate`]): the normalised DLT of the 3x4
 //!   projection (or a plane's homography) as the starting point, then Levenberg-Marquardt over
 //!   pose and intrinsics.
+//! - Structured light ([`scan`]): Gray-code patterns for a projector and the decoding of a
+//!   camera's pictures of them into maps between camera and projector pixels.
 
 mod camera;
 mod homography;
+pub mod scan;
 mod solve;
 
 pub use camera::{Camera, Intrinsics, MAX_COORDINATE, Pose, unproject_clip};
 pub use homography::{Homography, MAX_PAIRS};
 pub use solve::{MAX_ITERATIONS, Options, Solution, Spread, Start, calibrate};
 
+#[cfg(test)]
+mod scan_tests;
 #[cfg(test)]
 mod tests;
