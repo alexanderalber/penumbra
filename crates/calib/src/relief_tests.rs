@@ -320,12 +320,13 @@ fn wall_hidden_from_the_camera_stays_dark() {
 
 #[test]
 fn unmeasured_panel_edge_stays_lit() {
-    // Dark paint along the panel's right edge in A's frame (x above 4, away from the corners): neither the camera's pictures of A
-    // nor A's map decode there, the decode fills A's pixels in from their neighbours. Nothing
-    // hides it from the camera, so it is panel and stays lit.
+    // Patches of dark paint along the panel's right edge in A's frame (x above 4, away from the
+    // corners, every other stripe of rows): neither the camera's pictures of A nor A's map
+    // decode there, the decode fills A's pixels in from their neighbours. They are notches in
+    // the measured outline, nothing hides them from the camera, so they are panel and stay lit.
     let ox = OFFSETS[0];
     let (pw, ph) = PROJECTOR;
-    let dark = |p: [f32; 3], on: bool| on && p[0] > 4.0 && p[1].abs() < 3.0;
+    let dark = |p: [f32; 3], on: bool| on && p[0] > 4.0 && p[1].abs() < 3.0 && (p[1] * 2.0).sin() > 0.0;
     let (map, truth) = to_camera(ox);
     let mut rgba = map.rgba.clone();
     let mut band = Vec::new();
@@ -354,10 +355,41 @@ fn unmeasured_panel_edge_stays_lit() {
     }
     let cam = Map::new(cw, ch, c).unwrap();
     let r = analyse(&map, &cam, &ReliefOptions::default()).unwrap();
-    assert!(band.len() > 1000, "{}", band.len());
-    // The band runs to the frame edge, where erosion takes nothing.
+    assert!(band.len() > 500, "{}", band.len());
+    // The patches run to the frame edge, where erosion takes nothing.
     let lit = band.iter().filter(|i| r.mask[**i]).count();
     assert!(lit as f64 > 0.95 * band.len() as f64, "{lit} of {} band pixels lit", band.len());
+    let off = r.mask.iter().zip(&truth).filter(|(m, t)| **m && t.is_none()).count();
+    assert_eq!(off, 0, "mask pixels off the panel");
+}
+
+#[test]
+fn wall_beside_the_panel_stays_dark_when_the_camera_decodes_nothing_there() {
+    // As in the hidden-wall case, but the camera decodes no wall at all (too dark, or out of
+    // focus): the occlusion test finds no other projector pixel where the strip's light would
+    // land, so only the measured outline keeps it dark.
+    let ox = OFFSETS[1];
+    let (map, truth) = to_camera(ox);
+    let (pw, ph) = PROJECTOR;
+    let hidden: Vec<usize> = (0..pw * ph)
+        .filter(|i| truth[*i].is_none() && map.uv(*i).is_none() && (i % pw) > pw / 2 && (i % pw) + 2 < pw)
+        .collect();
+    let filled = filled_like_decode(&map);
+    let cam = from_camera(ox);
+    let (cw, ch) = CAMERA;
+    let mut c = cam.rgba.clone();
+    for y in 0..ch {
+        for x in 0..cw {
+            let d = [(x as f32 + 0.5 - cw as f32 / 2.0) / FOCAL, (y as f32 + 0.5 - ch as f32 / 2.0) / FOCAL];
+            if !hit(0.0, d).1 {
+                c[y * cw + x] = [-1.0, -1.0, 0.0, 1.0];
+            }
+        }
+    }
+    let cam = Map::new(cw, ch, c).unwrap();
+    let r = analyse(&filled, &cam, &ReliefOptions::default()).unwrap();
+    let lit_hidden = hidden.iter().filter(|i| r.mask[**i]).count();
+    assert_eq!(lit_hidden, 0, "hidden wall pixels lit");
     let off = r.mask.iter().zip(&truth).filter(|(m, t)| **m && t.is_none()).count();
     assert_eq!(off, 0, "mask pixels off the panel");
 }

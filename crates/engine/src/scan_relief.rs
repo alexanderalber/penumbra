@@ -49,8 +49,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          relief), sign? (\"auto\" | 1 | -1, the first projector's, the others follow it by the overlap: auto is a \
          heuristic, the wall around the panel taken as behind it; 1 and -1 are fixed to the camera's \
          axes, the reply's sign.as_param pins what a run found), scale? (\"symmetric\" | \"least_squares\"), jump? (camera px per \
-         projector px, 4), erode? (projector px, 4), reach? (projector px the light may go past the \
-         measured panel, 60)}",
+         projector px, 4), erode? (projector px, 4), reach? (projector px: notches in the measured \
+         panel's outline up to twice this wide are lit, nothing past it, 60)}",
         move |p| {
             let a: ReliefArgs = args(p)?;
             run(e.session().dir(), &a)

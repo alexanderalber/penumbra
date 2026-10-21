@@ -155,14 +155,15 @@ neighbours, in the projector's own pixels. The plane takes up any tilt of the pa
 the broadest part of the relief itself: a panel that is one big dome comes out flatter.
 
 The light mask is the panel with its holes filled, so unmeasured self-shadows inside stay lit.
-Pixels without a measurement count only within `reach` (projector pixels, 60) of measured
-panel pixels: past those the scan knows nothing, and an edge of the panel the camera cannot
-see looks the same as wall beside the panel that the panel hides from the camera. Within
-`reach`, an unmeasured pixel is also tested: where the plane and its filled height put its light
+Pixels without a measurement are lit only inside the outline of the measured panel pixels:
+in notches and gaps of that outline up to about twice `reach` wide (projector pixels, 60).
+Nothing past the outline is lit. There the scan knows nothing: a strip along the panel's edge
+the camera could not decode looks the same as wall or floor beside the panel. An unmeasured
+pixel in a notch is also tested: where the plane and its filled height put its light
 in the camera's picture, does the camera see another projector pixel there? Then the panel's
 edge stands in front of that spot and the pixel's light lands on the wall behind it, so it stays
-dark. Raise `reach` if the panel's edge stays dark, lower it if a stripe of wall beside the panel
-is lit. Also left out is light the plane predicts outside the camera's picture (never seen); the
+dark. Raise `reach` if dark gaps stay along the panel's edge. A strip along the edge that was
+not decoded at all stays dark whatever `reach` is; scan again with more light there. Also left out is light the plane predicts outside the camera's picture (never seen); the
 mask is then shrunk by `erode` (projector pixels, 4) so nothing spills onto the wall.
 
 **Sign.** The scan does not tell near from far: the same data comes from a mirrored depth with

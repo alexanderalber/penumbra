@@ -71,6 +71,25 @@ pub fn close(w: usize, h: usize, mask: &[bool], r: u32) -> Vec<bool> {
     erode(w, h, &dilate(w, h, mask, r), r)
 }
 
+/// Closing with the outside of the picture empty: notches and gaps up to about `2 r` wide in the
+/// mask's outline are filled, but nothing grows past the outline, also not out to the frame.
+pub fn close_inside(w: usize, h: usize, mask: &[bool], r: u32) -> Vec<bool> {
+    if r == 0 || mask.len() != w * h {
+        return mask.to_vec();
+    }
+    let p = r as usize + 1;
+    let (pw, ph) = (w + 2 * p, h + 2 * p);
+    let mut padded = vec![false; pw * ph];
+    for (y, row) in mask.chunks(w.max(1)).enumerate() {
+        let at = (y + p) * pw + p;
+        if let Some(dst) = padded.get_mut(at..at + w) {
+            dst.copy_from_slice(row);
+        }
+    }
+    let closed = close(pw, ph, &padded, r);
+    (0..h).flat_map(|y| closed.get((y + p) * pw + p..(y + p) * pw + p + w).unwrap_or(&[]).to_vec()).collect()
+}
+
 /// The mask with every hole filled: background not connected (4 neighbours) to the border.
 pub fn fill_holes(w: usize, h: usize, mask: &[bool]) -> Vec<bool> {
     let mut reached = vec![false; mask.len()];
