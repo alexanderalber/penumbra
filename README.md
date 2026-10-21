@@ -30,7 +30,8 @@ lists every one.
 - **Projection mapping:** one output per display or per part of a display (for 4K splitters),
   corner pin, mesh warp, soft-edge blending between projectors, a test pattern per projector,
   drawn masks, and content per drawn shape (pulses, chases along outlines, ripples, each shape
-  with its own colour and phase). A projector light throws a picture onto a 3D model of the room, so a mapping can
+  with its own colour and phase); shapes traced from any mask or label picture (a
+  background-removed photo, a threshold), simplified and editable by hand. A projector light throws a picture onto a 3D model of the room, so a mapping can
   be tried before going on site. Projector and camera calibration (DLT, Levenberg-Marquardt)
   exists as commands; the interactive calibration UI does not exist yet.
 - **Camera:** live input from webcams and capture cards, denoising, optical flow, blob tracking
