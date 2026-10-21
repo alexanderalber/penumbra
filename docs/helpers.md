@@ -21,6 +21,52 @@ takes; the monitor name alone is enough when it is unique. The `test` param of a
 shows a test pattern in the projector's own pixels, in its colour, so overlapping projectors
 can be told apart.
 
+While at least one output window is open, penumbra tells the operating system that the displays
+are in use, so Windows does not turn them (and the projectors) off after its idle timeout. The
+Outputs section shows this as one line; `output.list` reports it as `keeps_display_awake`. The
+request ends when the last output window closes or penumbra exits.
+
+## Matching projectors
+
+Projectors of different models, or of different age, differ in brightness, white point, tone
+curve and primaries. `projector.match` measures them with a camera and writes each projector's
+colour correction (the *colour* params of `out.projector`), so all of them show the same greys
+and whites, as bright as the weakest allows.
+
+Set up a `tex.video_in` that sees the projections, with the camera's automatic exposure, white
+balance and any dynamic-range processing (Sony: DRO / Auto HDR) off, and an exposure where a
+projector's white is not clipped. Let the projectors overlap in the camera's view if they
+overlap on the wall: then all of them are measured on the same patch of wall, which cancels the
+wall's colour and the camera's vignetting. Then run, for example:
+
+    penumbra-cli ctl projector.match '{"camera": "/cam", "projectors": ["/proj_a", "/proj_b"]}'
+
+It takes about 50 seconds for two projectors; nobody should walk through the picture meanwhile.
+Each projector shows flat colours while the others are black; the network is not changed while
+it measures. One projector is the reference (the one that keeps the most brightness for all);
+the others are bent to respond like it. Through an ordinary camera only comparisons can be
+trusted, not absolute values, so the match works in rounds: every other projector shows white
+and then a few greys (`grey_levels`, default 3) through its new correction, and the correction
+is adjusted until the camera reads them as it reads the reference (`refine` rounds, default 5).
+The result lists what was measured, the reference, each round with the remaining difference in
+camera codes, a final check of red, green, blue and the greys, and per projector how much peak
+brightness the match costs (`peak`). It writes `matrix` and `curves` as one undo step.
+
+The params of `out.projector`: `matrix` mixes the colour (it brings the white points together
+and holds back the brighter projector); `curves` maps the result to the signal per channel.
+`strength` blends the whole correction: 1 is the full match, 0 the projector as it is; lower
+keeps more of a brighter projector's brightness and leaves more of the difference, which across
+a soft edge is often hard to see. `gain` dims a projector by hand. `correct` off shows the plain
+picture for comparison. The test pattern is never corrected.
+
+`target: "srgb"` makes every projector follow the sRGB curve instead of the reference; use it
+only with a camera known to be linear, through an ordinary camera it bakes the camera's own
+curve into every projector and tints the whole picture.
+
+Not done yet: black level (in an overlap black is brighter), saturated colours match only
+approximately, and brightness that varies across one projector's picture (hot spot, colour
+shift towards an edge) is not corrected.
+
 ## Resolution
 
 What each picture shown on a projector needs: enough pixels that one of them lands on about one
