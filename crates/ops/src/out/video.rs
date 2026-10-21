@@ -298,6 +298,7 @@ impl Take {
             self.recording.skipped(u64::try_from(gap).unwrap_or(0));
         }
         self.last = index;
+        self.recording.due(index);
         let Some(tex) = tex else {
             self.recording.dropped(1);
             return Ok(());

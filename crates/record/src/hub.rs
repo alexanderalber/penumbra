@@ -30,6 +30,10 @@ pub struct Status {
     /// Ended: the file is finished (or failed, see `error`).
     pub done: bool,
     pub file: String,
+    /// The file is created and `file` is its final name; until then `file` is the name asked
+    /// for, which gets a number when it is taken.
+    #[serde(skip)]
+    pub opened: bool,
     pub codec: String,
     pub width: u32,
     pub height: u32,

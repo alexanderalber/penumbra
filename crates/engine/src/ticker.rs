@@ -37,7 +37,17 @@ impl Ticker {
     /// The thread's loop: calls `tick` at every tick until stopped or `tick` says the cook
     /// thread is gone. A tick more than a period late starts the count afresh, so a stall is
     /// not made up by a burst.
+    ///
+    /// The thread runs at a raised priority: it sleeps nearly all the time, but at normal
+    /// priority a machine with every core busy (software rendering, an encoder, a compile) wakes
+    /// it a scheduler quantum late, 15 to 40 ms, which drops ticks and stutters the show clock.
     pub fn run(&self, tick: impl Fn(Instant) -> bool) {
+        if self.stop.load(Ordering::Relaxed) {
+            return;
+        }
+        if !penumbra_system::process::raise_thread_priority() {
+            log::debug!("the ticker runs at normal priority");
+        }
         let mut next: Option<Instant> = None;
         while !self.stop.load(Ordering::Relaxed) {
             let ns = self.period_ns.load(Ordering::Relaxed);
@@ -94,8 +104,9 @@ mod tests {
         let ticks = ticks.lock().unwrap();
         assert_eq!(ticks.len(), 30);
         let span = ticks.last().unwrap().duration_since(*ticks.first().unwrap()).as_secs_f64();
-        // Never faster than the rate; slower only by what a machine busy with the rest of the
-        // test suite costs single ticks.
+        // Never faster than the rate (the first tick may be late, which shortens the span a
+        // little); slower only by what a machine busy with the rest of the test suite costs
+        // single ticks at the ticker's raised priority.
         assert!((0.27..0.38).contains(&span), "29 periods of 10 ms took {span} s");
         // Off and stopped: the loop ends.
         ticker.set(None);

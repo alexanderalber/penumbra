@@ -133,13 +133,18 @@ fn switch(e: &Engine, p: &Json, on: bool) -> CmdResult<Json> {
     } else {
         set_record(e, &a.path, on)?;
     }
-    // The node acts at its next cook: wait until its status moves.
+    // The node acts at its next cook: wait until its status moves. A new recording's thread
+    // creates the file, numbered when the name is taken, so the answer waits for that too and
+    // names the file actually written.
     let already = stored && recording;
     let deadline = Instant::now() + ANSWER;
     loop {
         let now = hub.status(id);
         let settled = if on {
-            already || now.as_ref().is_some_and(|s| (s.recording || s.error.is_some()) && now != before)
+            now.as_ref().is_some_and(|s| {
+                let ended = s.error.is_some() || s.done;
+                (already || now != before) && (ended || (s.recording && s.opened))
+            })
         } else {
             now.as_ref().is_none_or(|s| !s.recording)
         };
