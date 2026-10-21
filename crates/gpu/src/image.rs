@@ -115,6 +115,74 @@ fn to_linear(image: &Image) -> Result<Decoded, Error> {
     Ok(Decoded { width, height, rgba: out, source })
 }
 
+/// An image as data rather than colour: samples as stored (integers scaled to 0..1, no sRGB
+/// decode, alpha not premultiplied), RGBA as 32-bit floats. For maps and label pictures, whose
+/// values must come back exactly as written.
+pub struct Raw {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<[f32; 4]>,
+    /// The largest integer sample of the file's type (255, 65535), 1 for float files: a sample
+    /// times this is the integer written.
+    pub scale: f32,
+}
+
+/// Reads `path` as data (see [`Raw`]), at most `max_side` pixels on each side and `max_pixels`
+/// in all.
+pub fn decode_file_raw(path: &std::path::Path, max_side: u32, max_pixels: u64) -> Result<Raw, Error> {
+    let len = std::fs::metadata(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?.len();
+    if len > MAX_FILE_BYTES {
+        return Err(Error::new(format!("{}: {len} bytes is too large", path.display())));
+    }
+    let bytes = std::fs::read(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
+    let mut limits = limits(max_side);
+    limits.max_pixels = limits.max_pixels.min(max_pixels);
+    let opts = DecodeOptions { limits, keep_orientation: false };
+    let image = photocraft_codecs::decode_with(&bytes, &opts)
+        .map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
+    let (width, height) = image.dimensions();
+    let scale = match image.sample_type() {
+        SampleType::U8 => 255.0,
+        SampleType::U16 => 65535.0,
+        SampleType::F16 | SampleType::F32 => 1.0,
+    };
+    let flat = image.to_rgba_f32();
+    let rgba: Vec<[f32; 4]> = flat.as_chunks::<4>().0.to_vec();
+    if rgba.len() as u64 != u64::from(width) * u64::from(height) {
+        return Err(Error::new(format!(
+            "{}: decoded {} pixels, expected {width} x {height}",
+            path.display(),
+            rgba.len()
+        )));
+    }
+    Ok(Raw { width, height, rgba, scale })
+}
+
+/// A one-channel 8-bit PNG of `values` (one per pixel, as written): label pictures.
+pub fn encode_png_gray8(width: u32, height: u32, values: Vec<u8>) -> Result<Vec<u8>, Error> {
+    let image = Image::from_u8(width, height, ChannelLayout::Gray, values)
+        .map_err(|e| Error::new(format!("cannot build the image: {e}")))?;
+    photocraft_codecs::encode(
+        &image,
+        photocraft_codecs::Format::Png,
+        &photocraft_codecs::EncodeOptions::default(),
+    )
+    .map_err(|e| Error::new(format!("cannot encode the PNG: {e}")))
+}
+
+/// A one-channel 16-bit PNG of `values` (one per pixel, as written): weights and other data
+/// finer than 8 bits.
+pub fn encode_png_gray16(width: u32, height: u32, values: &[u16]) -> Result<Vec<u8>, Error> {
+    let image = Image::from_u16(width, height, ChannelLayout::Gray, values)
+        .map_err(|e| Error::new(format!("cannot build the image: {e}")))?;
+    photocraft_codecs::encode(
+        &image,
+        photocraft_codecs::Format::Png,
+        &photocraft_codecs::EncodeOptions::default(),
+    )
+    .map_err(|e| Error::new(format!("cannot encode the PNG: {e}")))
+}
+
 /// An OpenEXR file of 32-bit float RGBA rows (linear, as stored; no alpha conversion): data such
 /// as a `tex.remap` map, which 8- and 16-bit files would take as sRGB and too coarse.
 pub fn encode_exr_rgba32f(width: u32, height: u32, rgba: &[[f32; 4]]) -> Result<Vec<u8>, Error> {

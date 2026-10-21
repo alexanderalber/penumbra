@@ -17,6 +17,7 @@ explained here.
 - [NDI](ndi.md): pictures (and sound in) over the network, to and from OBS, vMix, cameras or another machine, with `out.ndi` and `tex.ndi_in`.
 - [Camera](camera.md): a live camera or capture card with `tex.video_in`, calmed with `tex.denoise`, its motion with `tex.optical_flow`.
 - [Tracking](tracking.md): blobs with ids that stay, from a camera, with `tex.blob_track`.
+- [Scanning](scanning.md): structured light: which camera pixel each projector pixel lands on, the objects in front of a wall, blend weights, content on objects across projectors.
 - [Looking around in 3D](navigation.md): the viewer's free view, steering a camera, the 3D mouse.
 - [Shaders](shaders.md): writing a `tex.shader` in WGSL.
 - [Scripts](scripts.md): writing a `script.python` node.
