@@ -567,6 +567,8 @@ pub struct Engine {
     camera: CameraHub,
     /// The movie recordings of `out.video` nodes.
     record: RecordHub,
+    /// The structured light scans of `tex.scan` nodes (`scan.run`).
+    scans: penumbra_ops::tex::scan::Scans,
     /// The 3D mouse; its reader starts when the UI first asks for it.
     spacenav: SpaceNav,
     /// The timer pacing the show clock while no output does, one thread per open project.
@@ -645,6 +647,7 @@ impl Engine {
             dmx_in: DmxInputs::new(),
             camera: CameraHub::new(),
             record: RecordHub::new(),
+            scans: penumbra_ops::tex::scan::Scans::new(),
             spacenav: SpaceNav::new(),
             ticker: Arc::new(Ticker::default()),
             load: LoadMeter::new(),
@@ -670,6 +673,7 @@ impl Engine {
         cooker.provide(self.dmx_in.clone());
         cooker.provide(self.camera.clone());
         cooker.provide(self.record.clone());
+        cooker.provide(self.scans.clone());
         cooker.provide(penumbra_ops::tex::blob_track::BlobTracks::new());
         let gpu = self.gpu.get().cloned();
         if let Some(gpu) = &gpu {
@@ -796,6 +800,8 @@ impl Engine {
             return Err(Error::new("the app is closing"));
         }
         let pass_base = self.view().pass.max(self.output().pass);
+        // Node ids of the next project mean other nodes; a scan going on stops.
+        self.scans.clear();
         self.stop_threads(save_state);
         let session = match make() {
             Ok(session) => session,
@@ -1025,6 +1031,11 @@ impl Engine {
     /// The movie recordings.
     pub fn record(&self) -> &RecordHub {
         &self.record
+    }
+
+    /// The scans of `tex.scan` nodes.
+    pub fn scans(&self) -> &penumbra_ops::tex::scan::Scans {
+        &self.scans
     }
 
     /// The 3D mouse; [`SpaceNav::start`] opens it.

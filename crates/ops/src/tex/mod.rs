@@ -22,6 +22,7 @@ pub mod ndi_in;
 mod optical_flow;
 mod ramp;
 pub mod render;
+pub mod scan;
 mod scan_pattern;
 mod shader;
 mod shape_content;
@@ -466,6 +467,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     optical_flow::register(types)?;
     ramp::register(types)?;
     render::register(types)?;
+    scan::register(types)?;
     shader::register(types)?;
     shapes::register(types)?;
     spout_in::register(types)?;

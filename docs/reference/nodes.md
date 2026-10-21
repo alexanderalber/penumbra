@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
 
 ### tex.blob_track
 
@@ -717,6 +717,29 @@ Outputs: `out` (tex).
 | `width` *(more)* | int | `1920` | 1 to 16384 px | Width of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(more)* | int | `1080` | 1 to 16384 px | Height of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+
+### tex.scan
+
+One projector's structured light scan, held: the scan button measures it with the camera (scan.run), the outputs are the maps it wrote, kept until the next scan
+
+Inputs: none.
+
+Outputs:
+
+- `proj_to_cam` (tex): Projector size: per projector pixel the camera position (red, green, 0 to 1; blue 1 measured, 0.5 filled in, -1 none), for tex.remap's map with the camera's picture as in; -1 before a scan
+- `weight` (tex): Projector size: the blend weight against the other projectors of the run (1 alone, or before a blend); multiply the projector's picture by it
+- `scene` (tex): Projector size: the scene as the projector sees it (black before a scan)
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `projector` | text |  |  | The out.projector scanned (a path, or a name beside this node) |
+| `camera` | text |  |  | The tex.video_in that films the projectors; the scan button scans every tex.scan naming the same camera |
+| `folder` | text | `"scan"` |  | Where scans go, relative to the project: the projector's scan is the folder named after its path inside |
+| `mapper` | text |  |  | The tex.mapper feeding the projector; when every tex.scan of a run names one, the run lines them up (scan.align) |
+| `smooth` | bool | `true` |  | proj_to_cam is the map smoothed within the decoded area (written by the run's blend), which keeps remapped edges clean; off: the map as decoded |
+| `settle` *(more)* | float | `0.05` | 0 to 0.5 (soft) | Seconds waited past the measured light-to-camera latency before a picture is taken |
+| `level` *(more)* | float | `1` | 0.05 to 1 | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
+| `fill` *(more)* | int | `32` | 0 to 128 (soft) | Projector pixels the decode fills in from measured neighbours |
 
 ### tex.scan_pattern
 

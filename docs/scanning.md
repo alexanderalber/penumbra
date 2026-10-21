@@ -14,6 +14,43 @@ project, read by `tex.image`. Nothing of it runs per frame: during the show what
 
 Paths in the commands are relative to the project directory.
 
+## The scan button: `tex.scan`
+
+The quickest way: one `tex.scan` node per projector. Its params name the `projector`
+(`out.projector`), the `camera` (`tex.video_in`), the `folder` scans go to (`scan`, the
+projector's scan is the folder named after its path inside, `scan/proj_a`) and, optionally, the
+`mapper` (`tex.mapper`) feeding the projector. Under *more*: `settle`, `level` and `fill`, as
+for `scan.capture` below.
+
+The **scan** button in its param panel scans the projectors of every `tex.scan` naming the same
+camera, one after another; then, if every one of them names its mapper, lines them up
+(`scan.align`, one undo step), and writes blend weights and smoothed maps into the scan folders
+(`scan.blend`). The show keeps running meanwhile: the projectors being scanned show the
+patterns, the others black, and everything else keeps cooking. While it runs, the param panel
+shows the step and a progress bar (the node a bar along its bottom edge) and **cancel** stops it
+before the next picture; the files of earlier scans stay. How it ended stays in the param
+panel; a failure shows on the node too, and goes to the log.
+
+The node's outputs are the scan, held until the next one replaces it:
+
+| output | what |
+|---|---|
+| `proj_to_cam` | the projector-size map into the camera's picture, for `tex.remap`'s `map`; smoothed within the decoded area (`smooth`, on) |
+| `weight` | the blend weight (1 everywhere for a projector alone, or before a blend); multiply the projector's picture by it |
+| `scene` | the scene as the projector sees it, for drawing or tracing masks |
+
+They are read from the files in the scan folder, so a project opened later has them without
+scanning again, and they follow the files: a rerun of `scan.blend` with masks and
+`"into_scans": true` (see below) gives the nodes those weights. Nothing of it runs per frame.
+
+The same as a command: `scan.run` (every `tex.scan`, or `{"nodes": [...]}`; `"wait": true`
+returns the report when done), `scan.status` and `scan.cancel`:
+
+    penumbra-cli ctl scan.run '{"nodes": ["/scan_a", "/scan_b"], "wait": true}'
+
+The steps after the scan (relief, objects) stay commands: their results (heights, masks) are
+files for `tex.image`, written by the sections below from the same scan folders.
+
 ## 1. Scan: `scan.capture`
 
 The room dark, the camera's exposure fixed (no auto exposure, no DRO / auto HDR) and not
@@ -225,7 +262,9 @@ of all projectors at one camera pixel add up to 1; the reply says how closely.
     penumbra-cli ctl scan.blend '{"scans": ["scan/proj_a", "scan/proj_b"],
         "masks": ["objects/labels_0.png", "objects/labels_1.png"]}'
 
-`masks` is optional (one file or `null` per scan); without it the whole frame counts. Also
+`masks` is optional (one file or `null` per scan); without it the whole frame counts.
+`"into_scans": true` writes `weight.png` and `proj_to_cam_smooth.exr` into each scan's own
+folder instead (where a `tex.scan` reads them). Also
 written per projector is `proj_to_cam_smooth_N.exr`: the camera is usually coarser than the
 projector, so only some projector pixels have a measured camera position and content remapped
 through the raw map has jagged edges. The smoothed map averages the measured positions with a

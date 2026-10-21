@@ -46,6 +46,8 @@ pub struct Inputs<'a> {
     pub audio: &'a penumbra_audio::Hub,
     /// The engine's recordings: an `out.video` shows its own and has start and stop.
     pub record: &'a penumbra_record::Hub,
+    /// The engine's scans: a `tex.scan` shows how its scan stands and has scan and cancel.
+    pub scans: &'a penumbra_ops::tex::scan::Scans,
     /// The show's frame rate, when known: a special value standing for it shows it.
     pub show_rate: Option<f64>,
 }
@@ -174,6 +176,9 @@ impl ParamPanel {
         }
         if node.kind == penumbra_ops::out::video::VIDEO_OUT {
             record_row(ui, input, node, auto, actions);
+        }
+        if node.kind == penumbra_ops::tex::scan::SCAN {
+            scan_row(ui, input, node, auto, actions);
         }
         if node.kind == penumbra_ops::tex::shapes::SHAPES {
             let from = self.buffers.entry(format!("{path}#trace")).or_default();
@@ -1928,6 +1933,73 @@ fn trace_row(
             auto.add("param.trace_from", r.rect, "trace from");
         });
     });
+}
+
+/// A `tex.scan`'s scan button (cancel while a scan runs) and how its scan stands: the step and
+/// a progress bar while running, then how the last run ended, its error or its warnings.
+fn scan_row(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    let state = input.scans.state(input.node).unwrap_or_default();
+    let busy = input.scans.running();
+    ui.horizontal(|ui| {
+        if state.running {
+            let r = ui.button("cancel").on_hover_text("Stop the scan before its next picture (scan.cancel)");
+            auto.add("param.scan_cancel", r.rect, "cancel scan");
+            if r.clicked() {
+                actions.push(Action::CancelScan);
+            }
+            let bar = egui::ProgressBar::new(state.progress.unwrap_or(0.0))
+                .text(RichText::new(&state.step).small())
+                .desired_width(ui.available_width());
+            let r = ui.add(bar);
+            auto.add("param.scan_progress", r.rect, "scan progress");
+            return;
+        }
+        let tip = "Scan the projector of every tex.scan naming the same camera, one after another \
+                   (about 20 s each; the projectors show the patterns, the others black), then line \
+                   them up if each names its mapper, and blend them (scan.run). Keep the room dark \
+                   and nothing moving";
+        let tip = if busy { "Another scan is running" } else { tip };
+        let r = ui
+            .add_enabled(input.can_edit && !busy, egui::Button::new("scan"))
+            .on_hover_text(tip)
+            .on_disabled_hover_text(tip);
+        auto.add("param.scan", r.rect, "scan");
+        if r.clicked() {
+            actions.push(Action::Scan(input.node));
+        }
+        let (text, colour) = match &state.error {
+            Some(e) => (e.clone(), theme::ERROR),
+            None if state.step.is_empty() => {
+                // Before any run in this session: what the node holds from the files.
+                let desc = input.types.desc(&node.kind);
+                let text = |name: &str| {
+                    desc.and_then(|d| node.param(d, name)).and_then(Value::as_str).unwrap_or("").to_string()
+                };
+                let dir = input.project_dir.unwrap_or(Path::new("."));
+                let folder = penumbra_ops::tex::scan::scan_folder(dir, &text("folder"), &text("projector"));
+                let shown =
+                    folder.strip_prefix(dir).unwrap_or(&folder).display().to_string().replace('\\', "/");
+                if text("projector").trim().is_empty() {
+                    ("name the projector to scan".to_string(), theme::WARNING)
+                } else if penumbra_ops::tex::scan::has_scan(&folder) {
+                    (format!("holds the scan in {shown}"), theme::TEXT_WEAK)
+                } else {
+                    (format!("no scan in {shown} yet"), theme::WARNING)
+                }
+            }
+            None => (state.step.clone(), theme::TEXT_WEAK),
+        };
+        ui.add(egui::Label::new(RichText::new(text).color(colour).small()).wrap());
+    });
+    for w in &state.warnings {
+        ui.add(egui::Label::new(RichText::new(w).color(theme::WARNING).small()).wrap());
+    }
 }
 
 /// An `out.video`'s record or stop button and how its recording stands. The button switches

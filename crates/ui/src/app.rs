@@ -426,6 +426,23 @@ impl PenumbraApp {
                         None => Err(penumbra_core::Error::new("the node is gone")),
                     }
                 }
+                Action::Scan(node) => {
+                    let nodes = penumbra_engine::scan_run::rig_of(&self.engine, node);
+                    let args = penumbra_engine::scan_run::RunArgs { nodes: Some(nodes), wait: None };
+                    penumbra_engine::scan_run::start(&self.engine, &args, Actor::User)
+                        .map(|r| {
+                            let text =
+                                r.get("message").and_then(|m| m.as_str()).unwrap_or("scanning").to_string();
+                            self.message = Some((text, now));
+                        })
+                        .map_err(|e| penumbra_core::Error::new(e.0))
+                }
+                Action::CancelScan => {
+                    if self.engine.scans().cancel() {
+                        self.message = Some(("the scan stops before its next picture".into(), now));
+                    }
+                    Ok(())
+                }
                 Action::LearnOsc(param) => {
                     let timeout = penumbra_engine::osc::LEARN_TIMEOUT;
                     match self.engine.osc().learn(&self.engine.session(), &param, timeout) {
@@ -905,6 +922,7 @@ impl PenumbraApp {
                                 cameras: self.engine.camera(),
                                 audio: self.engine.audio(),
                                 record: self.engine.record(),
+                                scans: self.engine.scans(),
                                 show_rate: view.time.map(|t| t.rate.as_f64()),
                             };
                             self.params.show(ui, &input, &mut self.auto, &mut actions);
