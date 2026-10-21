@@ -48,8 +48,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          relief_view.png (the same in camera space, to look at); {scans: [folder, ...], out? (folder, \
          relief), sign? (\"auto\" | 1 | -1, the first projector's, the others follow it by the overlap: auto is a \
          heuristic, the wall around the panel taken as behind it; 1 and -1 are fixed to the camera's \
-         axes, the reply's sign.as_param pins what a run found),scale? (\"symmetric\" | \"least_squares\"), jump? (camera px per projector px, 4), erode? \
-         (projector px, 4)}",
+         axes, the reply's sign.as_param pins what a run found), scale? (\"symmetric\" | \"least_squares\"), jump? (camera px per \
+         projector px, 4), erode? (projector px, 4), reach? (projector px the light may go past the \
+         measured panel, 60)}",
         move |p| {
             let a: ReliefArgs = args(p)?;
             run(e.session().dir(), &a)
@@ -66,6 +67,7 @@ pub struct ReliefArgs {
     pub scale: Option<ScaleKind>,
     pub jump: Option<f32>,
     pub erode: Option<u32>,
+    pub reach: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -112,7 +114,11 @@ pub fn run(dir: &Path, a: &ReliefArgs) -> CmdResult<Json> {
         return Err(CommandError(format!("`scans` lists 1 to {} folders", objects::MAX_PROJECTORS)));
     }
     let defaults = ReliefOptions::default();
-    let o = ReliefOptions { jump: a.jump.unwrap_or(defaults.jump), erode: a.erode.unwrap_or(defaults.erode) };
+    let o = ReliefOptions {
+        jump: a.jump.unwrap_or(defaults.jump),
+        erode: a.erode.unwrap_or(defaults.erode),
+        reach: a.reach.unwrap_or(defaults.reach),
+    };
     o.check().map_err(CommandError)?;
     let asked = sign(a.sign.as_ref())?;
     let kind = a.scale.unwrap_or_default();
@@ -144,8 +150,8 @@ pub fn run(dir: &Path, a: &ReliefArgs) -> CmdResult<Json> {
     let t = Instant::now();
     let mut warnings: Vec<String> = Vec::new();
     let mut reliefs: Vec<Relief> = Vec::new();
-    for (map, folder) in to_camera.iter().zip(&a.scans) {
-        let r = relief::analyse(map, camera, &o)
+    for ((map, cam), folder) in to_camera.iter().zip(&from_camera).zip(&a.scans) {
+        let r = relief::analyse(map, cam, &o)
             .map_err(|e| CommandError(format!("{}: {e}", dir.join(folder).display())))?;
         reliefs.push(r);
     }
@@ -327,7 +333,7 @@ pub fn run(dir: &Path, a: &ReliefArgs) -> CmdResult<Json> {
         "range": {"low": round(f64::from(lo)), "high": round(f64::from(hi)), "units": "camera px of parallax, projector 0's", "quantiles": RANGE},
         "projectors": per_projector,
         "files": {"camera": camera_file, "view": view_file},
-        "options": {"jump": o.jump, "erode": o.erode, "sign": asked.map_or(json!("auto"), |s| json!(s)), "scale": kind.name()},
+        "options": {"jump": o.jump, "erode": o.erode, "reach": o.reach, "sign": asked.map_or(json!("auto"), |s| json!(s)), "scale": kind.name()},
         "ms": {"read": ms(read), "work": ms(work), "write": ms(written), "total": ms(started.elapsed())},
         "warnings": warnings,
         "next": "per projector: tex.image of height_N.exr into tex.lookup's in, a tex.ramp as its lut (the colours by \
