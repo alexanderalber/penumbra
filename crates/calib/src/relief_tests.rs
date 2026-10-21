@@ -270,3 +270,50 @@ fn cauchy_fit_ignores_a_minority_elsewhere() {
     assert!(Homography::fit_cauchy(&from[..3], &to[..3], 10).is_err());
     assert!(Homography::fit_cauchy(&from, &to[..5], 10).is_err());
 }
+
+/// `map` with every pixel without a camera position given its row's nearest one within 32
+/// pixels, marked as filled in, as `scan.decode` fills holes.
+fn filled_like_decode(map: &Map) -> Map {
+    let (w, h) = (map.width, map.height);
+    let mut rgba = map.rgba.clone();
+    for y in 0..h {
+        for x in 0..w {
+            if map.uv(y * w + x).is_some() {
+                continue;
+            }
+            let near = (1..=32usize).find_map(|d| {
+                [x.checked_sub(d), Some(x + d).filter(|v| *v < w)]
+                    .into_iter()
+                    .flatten()
+                    .find(|xx| map.measured(y * w + xx))
+            });
+            if let Some(xx) = near {
+                let p = map.rgba[y * w + xx];
+                rgba[y * w + x] = [p[0], p[1], 0.5, 1.0];
+            }
+        }
+    }
+    Map::new(w, h, rgba).unwrap()
+}
+
+#[test]
+fn wall_hidden_from_the_camera_stays_dark() {
+    // Projector B, right of the camera, lights a strip of wall beside the panel's right edge
+    // that the panel hides from the camera; the decode fills it in from the panel's edge.
+    let (map, truth) = to_camera(OFFSETS[1]);
+    let (pw, ph) = PROJECTOR;
+    let hidden: Vec<usize> = (0..pw * ph)
+        .filter(|i| truth[*i].is_none() && map.uv(*i).is_none() && (i % pw) > pw / 2 && (i % pw) + 2 < pw)
+        .collect();
+    assert!(hidden.len() > 1000, "the scene has a hidden strip: {}", hidden.len());
+    let filled = filled_like_decode(&map);
+    assert!(hidden.iter().filter(|i| filled.uv(**i).is_some()).count() * 2 > hidden.len());
+    let r = analyse(&filled, CAMERA, &ReliefOptions::default()).unwrap();
+    let lit_hidden = hidden.iter().filter(|i| r.mask[**i]).count();
+    assert_eq!(lit_hidden, 0, "hidden wall pixels lit");
+    let off = r.mask.iter().zip(&truth).filter(|(m, t)| **m && t.is_none()).count();
+    assert_eq!(off, 0, "mask pixels off the panel");
+    let panel = truth.iter().filter(|t| t.is_some()).count();
+    let lit = r.mask.iter().filter(|m| **m).count();
+    assert!(lit as f64 > 0.8 * panel as f64, "{lit} of {panel} panel pixels lit");
+}
