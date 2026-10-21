@@ -46,15 +46,37 @@ fn frame(luma: Vec<u8>) -> CameraFrame {
 }
 
 /// What the camera sees of the projectors showing `stripes` (and nothing else).
-fn picture(stripes: &[Option<Stripes>]) -> Vec<u8> {
+/// `fine`: a projector pixel is half a camera pixel (each camera pixel averages 2 x 2), so the
+/// finest stripes of each axis are a flat grey to the camera. Also returns where a camera pixel
+/// sees lit and dark projector pixels at once (where a real camera flickers).
+fn picture(stripes: &[Option<Stripes>], fine: bool) -> (Vec<u8>, Vec<bool>) {
     let mut luma = vec![40u8; W * H];
+    let mut mixed = vec![false; W * H];
     for (s, (ox, oy)) in stripes.iter().zip(OFFSETS) {
         let Some(s) = s else { continue };
         let patterns = Patterns::new(s.size[0], s.size[1]).unwrap();
         let Some(pattern) = patterns.get(s.pattern as usize) else { continue };
-        for (i, v) in luma.iter_mut().enumerate() {
+        for (i, (v, m)) in luma.iter_mut().zip(mixed.iter_mut()).enumerate() {
             let (x, y) = (i % W, i / W);
             if x < ox || y < oy {
+                continue;
+            }
+            if fine {
+                let (u, w) = (((x - ox) * 2) as u32, ((y - oy) * 2) as u32);
+                let mut lit = 0;
+                for (du, dw) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let (pu, pw) = (u + du, w + dw);
+                    if pu < s.size[0] && pw < s.size[1] && patterns.lit(pattern, pu, pw) {
+                        lit += 1;
+                    }
+                }
+                *v = v.saturating_add((40.0 * f64::from(lit) * f64::from(s.level)) as u8);
+                *m |= (1..4).contains(&lit);
+                // Moire: the grey of stripes too fine differs a little between pattern and
+                // inverse, too little to decode, enough to look like a change.
+                if (1..4).contains(&lit) && s.pattern % 2 == 1 {
+                    *v = v.saturating_add(20);
+                }
                 continue;
             }
             let (u, w) = (((x - ox) / 2) as u32, ((y - oy) / 2) as u32);
@@ -63,7 +85,24 @@ fn picture(stripes: &[Option<Stripes>]) -> Vec<u8> {
             }
         }
     }
-    luma
+    (luma, mixed)
+}
+
+/// How the simulated camera misbehaves.
+#[derive(Clone, Copy, Default)]
+struct Flaws {
+    /// Instead of [`LATENCY`].
+    latency: Option<Duration>,
+    /// Up to this much later than the latency, at random per frame.
+    jitter: Duration,
+    /// Two frames in every four a noise burst over a random half of the camera pixels that see
+    /// stripes finer than themselves (the same in both), as such stripes flicker in a real
+    /// camera.
+    flicker: bool,
+    /// Projector pixels half a camera pixel.
+    fine: bool,
+    /// Between frames.
+    interval: Option<Duration>,
 }
 
 /// Feeds the camera `key` every few milliseconds with what the projectors showed [`LATENCY`]
@@ -75,10 +114,21 @@ struct Camera {
 
 impl Camera {
     fn start(engine: Arc<Engine>, key: Key, projectors: Vec<NodeId>) -> Self {
+        Self::with(engine, key, projectors, Flaws::default())
+    }
+
+    fn with(engine: Arc<Engine>, key: Key, projectors: Vec<NodeId>, flaws: Flaws) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let s = stop.clone();
         let thread = std::thread::spawn(move || {
             let mut history: VecDeque<(Instant, Vec<Option<Stripes>>)> = VecDeque::new();
+            let mut seed = 0x2545_f491_4f6c_dd1du64;
+            let mut random = move || {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (seed >> 11) as f64 / (1u64 << 53) as f64
+            };
+            let mut count = 0u64;
+            let mut burst: Vec<bool> = Vec::new();
             while !s.load(Ordering::Relaxed) {
                 let now = Instant::now();
                 // What the outputs draw: the frame the cook thread published last.
@@ -87,18 +137,40 @@ impl Camera {
                     .iter()
                     .map(|id| {
                         let p = out.projectors.iter().find(|p| p.node == *id)?;
-                        if p.flat.is_some() { None } else { p.stripes }
+                        // Without an override a projector shows its content: all lit here.
+                        let content = Stripes { pattern: 0, level: 1.0, size: [PW, PH] };
+                        if p.flat.is_some() { None } else { Some(p.stripes.unwrap_or(content)) }
                     })
                     .collect();
                 history.push_back((now, shown));
-                while history.len() > 1
-                    && history.get(1).is_some_and(|(t, _)| now.duration_since(*t) >= LATENCY)
+                let latency = flaws.latency.unwrap_or(LATENCY);
+                let keep = latency + flaws.jitter + Duration::from_millis(50);
+                while history.len() > 1 && history.front().is_some_and(|(t, _)| now.duration_since(*t) > keep)
                 {
                     history.pop_front();
                 }
-                let seen = history.front().map(|(_, s)| s.clone()).unwrap_or_default();
-                engine.camera().feed(&key, frame(picture(&seen)));
-                std::thread::sleep(Duration::from_millis(4));
+                let delay = latency + flaws.jitter.mul_f64(random());
+                let seen = history
+                    .iter()
+                    .rev()
+                    .find(|(t, _)| now.duration_since(*t) >= delay)
+                    .or(history.front())
+                    .map(|(_, s)| s.clone())
+                    .unwrap_or_default();
+                let (mut luma, mixed) = picture(&seen, flaws.fine);
+                count += 1;
+                if flaws.flicker && count % 4 == 2 {
+                    burst = (0..W * H).map(|_| random() < 0.5).collect();
+                }
+                if flaws.flicker && count % 4 >= 2 {
+                    for ((v, b), m) in luma.iter_mut().zip(&burst).zip(&mixed) {
+                        if *b && *m {
+                            *v = if *v > 128 { *v - 40 } else { *v + 40 };
+                        }
+                    }
+                }
+                engine.camera().feed(&key, frame(luma));
+                std::thread::sleep(flaws.interval.unwrap_or(Duration::from_millis(4)));
             }
         });
         Self { stop, thread: Some(thread) }
@@ -171,6 +243,11 @@ fn scan_capture_and_align_with_a_simulated_camera() {
     assert_eq!(frames, pictures);
     let d = f.call("scan.decode", json!({"frames": "scan/proj_a/frames", "projector": [PW, PH]}));
     assert_eq!(d["camera_pixels"]["valid"], r["projectors"][0]["camera_pixels"]["valid"], "{d}");
+
+    // A scan of B alone: A, overlapping it, shows black meanwhile instead of its content.
+    let r = f.call("scan.capture", json!({"camera": "/cam", "projectors": ["/proj_b"], "out": "alone"}));
+    let valid = r["projectors"][0]["camera_pixels"]["valid"].as_u64().unwrap();
+    assert!((3700..=3840).contains(&valid), "{valid}: {r}");
 
     // Alignment: A covers camera x 6..86, y 4..52; B x 14..94, y 8..56. Content: x 6..94, y 8..52.
     for m in ["/map_a", "/map_b"] {
@@ -278,4 +355,90 @@ fn scan_align_with_a_camera_turned_a_quarter() {
     assert!(close(&b["region"], &[8.0 / 88.0, 0.0, 80.0 / 88.0, 1.0]), "{r}");
     assert!(close(&a["corners"]["corner_tl"], &[0.0, 4.0 / 48.0]), "{r}");
     assert!(close(&b["corners"]["corner_bl"], &[0.0, -4.0 / 48.0]), "{r}");
+}
+
+#[test]
+fn scan_capture_keeps_in_step_through_a_flickering_late_camera() {
+    let f = Fixture::new("scan-capture-flicker");
+    let key = Key::new("sim", "");
+    f.engine.camera().feed(&key, frame(vec![40; W * H]));
+    f.call("node.create", json!({"path": "/cam", "kind": "tex.video_in", "params": {"device": "sim"}}));
+    // 80 x 48 projector pixels on 40 x 24 camera pixels: the finest stripes are grey.
+    let viewport = json!([0.0, 0.0, f64::from(2 * PW) / 1920.0, f64::from(2 * PH) / 1080.0]);
+    f.call(
+        "node.create",
+        json!({"path": "/proj_a", "kind": "out.projector", "params": {"viewport": viewport}}),
+    );
+    f.call("cook.play", json!({"playing": true}));
+    let net = f.engine.session().doc().snapshot();
+    let a = net.resolve(&"/proj_a".parse().unwrap()).unwrap();
+    // Noise bursts that look like changes, a latency that varies by more than a frame.
+    let flaws = Flaws {
+        latency: Some(Duration::from_millis(120)),
+        jitter: Duration::from_millis(20),
+        flicker: true,
+        fine: true,
+        interval: Some(Duration::from_millis(16)),
+    };
+    let _camera = Camera::with(f.engine.clone(), key, vec![a], flaws);
+    let r = f.call("scan.capture", json!({"camera": "/cam", "settle": 0.05, "retries": 6}));
+    let p = &r["projectors"][0];
+    // Every pair of pattern and inverse in step: one picture of the pattern before would shift
+    // all after it, and the codes would no longer fit together.
+    for axis in ["columns", "rows"] {
+        let margins = p["margins"][axis].as_array().unwrap();
+        for (bit, m) in margins.iter().enumerate().take(margins.len() - 1) {
+            assert!(m.as_f64().unwrap() > 0.8, "{axis} bit {bit}: {r}");
+        }
+    }
+    let valid = p["camera_pixels"]["valid"].as_u64().unwrap();
+    assert!(valid >= 800, "{valid} of 960: {r}");
+}
+
+#[test]
+fn scan_align_with_projectors_one_above_the_other() {
+    let f = Fixture::new("scan-align-column");
+    // A 64 x 96 camera, one camera pixel per projector pixel: A at (10, 6), B at (14, 26), so they
+    // overlap by 4 rows and the column runs from row 6 to 50 between columns 14 and 50.
+    let (cw, ch) = (64usize, 96usize);
+    let dir = f.engine.session().dir().to_path_buf();
+    for (k, (ox, oy)) in [(10usize, 6usize), (14, 26)].into_iter().enumerate() {
+        let mut cam = Vec::new();
+        for y in 0..ch {
+            for x in 0..cw {
+                let inside = x >= ox && y >= oy && x - ox < PW as usize && y - oy < PH as usize;
+                cam.push(if inside {
+                    [((x - ox) as f32 + 0.5) / PW as f32, ((y - oy) as f32 + 0.5) / PH as f32, 1.0, 1.0]
+                } else {
+                    [-1.0, -1.0, 0.0, 1.0]
+                });
+            }
+        }
+        let folder = dir.join(format!("column/{k}"));
+        std::fs::create_dir_all(&folder).unwrap();
+        let exr = penumbra_gpu::image::encode_exr_rgba32f(cw as u32, ch as u32, &cam).unwrap();
+        std::fs::write(folder.join("cam_to_proj.exr"), exr).unwrap();
+        let proj = vec![[0.0f32, 0.0, 1.0, 1.0]; (PW * PH) as usize];
+        let exr = penumbra_gpu::image::encode_exr_rgba32f(PW, PH, &proj).unwrap();
+        std::fs::write(folder.join("proj_to_cam.exr"), exr).unwrap();
+    }
+    let r = f.call("scan.align", json!({"scans": ["column/0", "column/1"]}));
+    assert_eq!(r["content"]["layout"], "column", "{r}");
+    assert_eq!(r["content"]["camera_turned"], "none", "{r}");
+    let close = |v: &serde_json::Value, want: &[f64]| {
+        want.iter().enumerate().all(|(i, w)| (v[i].as_f64().unwrap() - w).abs() < 0.02)
+    };
+    let (a, b) = (&r["projectors"][0], &r["projectors"][1]);
+    assert!(close(&a["region"], &[0.0, 0.0, 1.0, 24.0 / 44.0]), "{r}");
+    assert!(close(&b["region"], &[0.0, 20.0 / 44.0, 1.0, 24.0 / 44.0]), "{r}");
+    // A's share starts 4 columns into it, B's ends 4 columns before its right edge.
+    assert!(
+        close(&a["corners"]["corner_tl"], &[0.1, 0.0]) && close(&a["corners"]["corner_tr"], &[0.0, 0.0]),
+        "{r}"
+    );
+    assert!(
+        close(&b["corners"]["corner_tr"], &[-0.1, 0.0]) && close(&b["corners"]["corner_bl"], &[0.0, 0.0]),
+        "{r}"
+    );
+    assert!((r["content"]["aspect"].as_f64().unwrap() - 36.0 / 44.0).abs() < 0.02, "{r}");
 }

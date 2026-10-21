@@ -2,13 +2,14 @@
 //!
 //! Per projector a homography from camera pixels to projector positions is fitted robustly to
 //! its `cam_to_proj.exr` ([`penumbra_calib::Homography::fit_robust`]); its inverse is the
-//! projector's frame in the camera's picture. The projectors stand side by side, left to right
-//! as the camera sees them; the content is the rectangle (in the camera's axes) from the left
-//! edge of the leftmost frame to the right edge of the rightmost, between the lowest top edge and
-//! the highest bottom edge of all. Each projector shows the part of it from its own left edge to
-//! its own right edge (the outer ones from the content's edges): that part is its mapper's
-//! `region`, and the four corners of that part, through the projector's homography, are where
-//! the mapper's corners go (`corner_*`, offsets from the frame's corners, `fit` stretch).
+//! projector's frame in the camera's picture. The projectors stand in a row (side by side) or a
+//! column (one above the other), whichever way their frames' centres spread more; the content is
+//! the rectangle (in the camera's axes) along the row from the near edge of the first frame to the
+//! far edge of the last, and across it the band all frames cover. Each projector shows the part
+//! of it between its own edges along the row (the outer ones to the content's ends): that part is
+//! its mapper's `region`, and the four corners of that part, through the projector's homography,
+//! are where the mapper's corners go (`corner_*`, offsets from the frame's corners, `fit`
+//! stretch).
 //!
 //! That assumes the camera looks at the surface roughly square-on: the content is a rectangle
 //! in the camera's picture. A camera turned by a quarter, upside down or mirrored is fine; the
@@ -43,7 +44,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.align",
-        "Line projectors side by side up from their scans (folders scan.capture or scan.decode wrote): a \
+        "Line projectors in a row or a column up from their scans (folders scan.capture or scan.decode wrote): a \
          homography camera -> projector per scan, the content as the camera-axis rectangle spanning all \
          their frames, and per projector its mapper's region (its share of the content) and corners \
          (where that share lands in the projector), fit stretch, written as one undo step; {scans: \
@@ -217,43 +218,63 @@ pub fn align(e: &Engine, a: &AlignArgs) -> CmdResult<Json> {
     }
 
     // Edges in the turned camera: left, right, top, bottom of each frame.
-    struct Edges {
-        left: f64,
-        right: f64,
-        top: f64,
-        bottom: f64,
-    }
-    let edges: Vec<Edges> = fits
+    let edges: Vec<[f64; 4]> = fits
         .iter()
         .map(|f| {
             let [tl, tr, br, bl] = f.frame.map(|p| turn(&m, p));
-            Edges {
-                left: tl[0].max(bl[0]),
-                right: tr[0].min(br[0]),
-                top: tl[1].max(tr[1]),
-                bottom: bl[1].min(br[1]),
-            }
+            [tl[0].max(bl[0]), tr[0].min(br[0]), tl[1].max(tr[1]), bl[1].min(br[1])]
         })
         .collect();
+    // In a row (side by side) or a column (one above the other), as the frames' centres spread.
+    let spread = |vertical: bool| {
+        let c: Vec<f64> =
+            edges.iter().map(|[l, r, t, b]| if vertical { (t + b) / 2.0 } else { (l + r) / 2.0 }).collect();
+        c.iter().copied().fold(f64::MIN, f64::max) - c.iter().copied().fold(f64::MAX, f64::min)
+    };
+    let column = spread(true) > spread(false);
+    // Per frame its interval along the row (or column) and across it.
+    let along = |k: usize| edges.get(k).map(|e| if column { [e[2], e[3]] } else { [e[0], e[1]] });
+    let across = |k: usize| edges.get(k).map(|e| if column { [e[0], e[1]] } else { [e[2], e[3]] });
     let mut order: Vec<usize> = (0..fits.len()).collect();
     order.sort_by(|x, y| {
-        let c = |k: usize| edges.get(k).map_or(0.0, |e| e.left + e.right);
+        let c = |k: usize| along(k).map_or(0.0, |a| a[0] + a[1]);
         c(*x).total_cmp(&c(*y))
     });
     let (Some(&lo), Some(&hi)) = (order.first(), order.last()) else { return Err("no scans".into()) };
-    let edge = |k: usize| edges.get(k).ok_or_else(|| CommandError("lost a scan".into()));
-    let left = edge(lo)?.left;
-    let right = edge(hi)?.right;
-    let top = edges.iter().map(|e| e.top).fold(f64::MIN, f64::max);
-    let bottom = edges.iter().map(|e| e.bottom).fold(f64::MAX, f64::min);
-    let (width, height) = (right - left, bottom - top);
-    if !(width > 1.0 && height > 1.0) {
-        return Err("the projectors' frames share no rectangle in the camera's picture".into());
+    let get = |v: Option<[f64; 2]>| v.ok_or_else(|| CommandError("lost a scan".into()));
+    let start = get(along(lo))?[0];
+    let end = get(along(hi))?[1];
+    let mut band = [f64::MIN, f64::MAX];
+    for k in 0..fits.len() {
+        let c = get(across(k))?;
+        band = [band[0].max(c[0]), band[1].min(c[1])];
+    }
+    let (length, breadth) = (end - start, band[1] - band[0]);
+    if !(length > 1.0 && breadth > 1.0) {
+        let frames: Vec<String> = fits
+            .iter()
+            .map(|f| {
+                let c = f.frame.map(|p| format!("({:.0}, {:.0})", p[0], p[1]));
+                format!(
+                    "{}: frame in the camera {} (top left, top right, bottom right, bottom left), fit error median {} p90 {} projector px",
+                    f.scan.display(),
+                    c.join(" "),
+                    f.error_px[0],
+                    f.error_px[1]
+                )
+            })
+            .collect();
+        return Err(format!(
+            "the projectors' frames share no rectangle in the camera's picture (taken as a {}, camera turned {turned}); {}",
+            if column { "column" } else { "row" },
+            frames.join("; ")
+        )
+        .into());
     }
     let mut warnings: Vec<String> = Vec::new();
     for pair in order.windows(2) {
         if let [x, y] = *pair
-            && edge(x)?.right <= edge(y)?.left
+            && get(along(x))?[1] <= get(along(y))?[0]
         {
             warnings.push(format!(
                 "{} and {} do not overlap: the content has a gap between them",
@@ -262,22 +283,37 @@ pub fn align(e: &Engine, a: &AlignArgs) -> CmdResult<Json> {
             ));
         }
     }
+    for f in &fits {
+        if f.error_px[0] > 3.0 {
+            warnings.push(format!(
+                "{}: the homography fits with a median error of {} projector px: the surface is not flat (or the scan is noisy), so the corners line the projectors up only roughly",
+                f.scan.display(),
+                f.error_px[0]
+            ));
+        }
+    }
+    // A point of the content, `t` along and `c` across, in the turned camera.
+    let point = |t: f64, c: f64| if column { [c, t] } else { [t, c] };
 
     let mapper_desc = e.types().desc(MAPPER);
     let mut ops = Vec::new();
     let mut report = Vec::new();
     for (k, f) in fits.iter().enumerate() {
-        let own = edge(k)?;
-        let u0 = if k == lo { 0.0 } else { ((own.left - left) / width).clamp(0.0, 1.0) };
-        let u1 = if k == hi { 1.0 } else { ((own.right - left) / width).clamp(0.0, 1.0) };
+        let own = get(along(k))?;
+        let u0 = if k == lo { 0.0 } else { ((own[0] - start) / length).clamp(0.0, 1.0) };
+        let u1 = if k == hi { 1.0 } else { ((own[1] - start) / length).clamp(0.0, 1.0) };
         if u1 <= u0 {
             return Err(format!("{}: this projector has no share of the content", f.scan.display()).into());
         }
-        let (x0, x1) = (left + u0 * width, left + u1 * width);
+        let (t0, t1) = (start + u0 * length, start + u1 * length);
+        let (c0, c1) = (band[0], band[1]);
+        let share = if column {
+            [point(t0, c0), point(t0, c1), point(t1, c1), point(t1, c0)]
+        } else {
+            [point(t0, c0), point(t1, c0), point(t1, c1), point(t0, c1)]
+        };
         let mut corners = [[0.0; 2]; 4];
-        for (c, (p, base)) in
-            corners.iter_mut().zip([[x0, top], [x1, top], [x1, bottom], [x0, bottom]].into_iter().zip(UNIT))
-        {
+        for (c, (p, base)) in corners.iter_mut().zip(share.into_iter().zip(UNIT)) {
             let q = f.h.apply(unturn(&m, p)).ok_or("a corner maps to infinity")?;
             *c = [round(q[0] - base[0]), round(q[1] - base[1])];
         }
@@ -287,7 +323,11 @@ pub fn align(e: &Engine, a: &AlignArgs) -> CmdResult<Json> {
                 f.scan.display()
             ));
         }
-        let region = [round(u0), 0.0, round(u1 - u0), 1.0];
+        let region = if column {
+            [0.0, round(u0), 1.0, round(u1 - u0)]
+        } else {
+            [round(u0), 0.0, round(u1 - u0), 1.0]
+        };
         let mapper = a.mappers.as_ref().and_then(|m| m.get(k));
         if let Some(path) = mapper {
             let set = |name: &str, value: Value| -> CmdResult<Op> {
@@ -326,10 +366,14 @@ pub fn align(e: &Engine, a: &AlignArgs) -> CmdResult<Json> {
     }
     let apply = a.apply.unwrap_or(true) && a.mappers.is_some();
     let history = if apply { Some(outcome(&edit(e, &ops, "scan.align")?)) } else { None };
+    let (width, height) = if column { (breadth, length) } else { (length, breadth) };
     let aspect = width / height;
     // The content's corners back in the camera's own axes: x, y, x, y of its bounding box.
     let back: Vec<[f64; 2]> =
-        [[left, top], [right, top], [right, bottom], [left, bottom]].iter().map(|p| unturn(&m, *p)).collect();
+        [point(start, band[0]), point(end, band[0]), point(end, band[1]), point(start, band[1])]
+            .iter()
+            .map(|p| unturn(&m, *p))
+            .collect();
     let camera_rect = [
         back.iter().map(|p| p[0]).fold(f64::MAX, f64::min).round(),
         back.iter().map(|p| p[1]).fold(f64::MAX, f64::min).round(),
@@ -350,6 +394,7 @@ pub fn align(e: &Engine, a: &AlignArgs) -> CmdResult<Json> {
             "camera_rect": camera_rect,
             "aspect": (aspect * 1e4).round() / 1e4,
             "camera_turned": turned,
+            "layout": if column { "column" } else { "row" },
         },
         "applied": apply,
         "history": history,

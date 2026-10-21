@@ -19,16 +19,18 @@ clipping white, nothing moving, the camera running as a `tex.video_in` node. The
     penumbra-cli ctl scan.capture '{"camera": "/cam", "projectors": ["/proj_a", "/proj_b"]}'
 
 scans one projector after the other (without `projectors`: every active `out.projector`). The
-projector being scanned shows the patterns, the others black; what they show is replaced on
+projector being scanned shows the patterns, every other active projector black (also those not
+listed, whose light would fall on the scene); what they show is replaced on
 the output board, the network is not changed, and when the command ends (however it ends) they
 show their pictures again. The patterns are drawn in the projector's own pixels, past its
 colour correction (a projector dimmed by `projector.match` still shows full contrast). Each
 projector takes 2 + 2 (log2 width + log2 height) pictures, 46 at 1920 x 1080, about a quarter
 of a second each.
 
-A picture is taken once the pattern was presented, `settle` (s, 0.05) passed, the camera's
-picture changed from the one taken before (stripes finer than the camera resolves change
-nothing it sees: those once twice the latency passed), and two camera frames in a row agree
+A picture is taken once the pattern was presented, the camera's latency (measured below, plus a
+frame) and `settle` (s, 0.05) passed, the camera's picture changed from the one taken before
+(stripes finer than the camera resolves change nothing it sees: those once twice the latency
+passed), and two camera frames in a row agree
 (`verify`, on; at most `retries`, 3, frames may disagree before the picture is taken anyway,
 with a warning). The latency is measured on
 the way, from black to white and white to black, and reported as `latency_ms` (`rise`, `fall`):
@@ -66,8 +68,8 @@ writes them into `scan/a/decoded/`. That folder is a scan like the ones `scan.ca
 
 ## 2. Line projectors up: `scan.align`
 
-Projectors standing side by side on one surface, each feeding from a `tex.mapper` of the same
-content:
+Projectors standing side by side (or one above the other) on one surface, each feeding from a
+`tex.mapper` of the same content:
 
     penumbra-cli ctl scan.align '{"scans": ["scan/proj_a", "scan/proj_b"], "mappers": ["/map_a", "/map_b"]}'
 
@@ -75,14 +77,17 @@ fits per scan a homography from camera pixels to projector positions (robustly, 
 dropped; `error_px` says how well it fits), which gives each projector's frame in the camera's
 picture. The content is the rectangle, in the camera's axes, from the left edge of the leftmost
 frame to the right edge of the rightmost, between the lowest top edge and the highest bottom
-edge. Each mapper gets its projector's share of it as `region` (its frame's left to right edge,
-the outer ones to the content's edge), the corners of that share as `corner_tl` ...
+edge (for projectors one above the other, `layout` column, the same turned: top to bottom,
+between the innermost left and right edges). Each mapper gets its projector's share of it as
+`region` (its frame's left to right edge, the outer ones to the content's edge), the corners of that share as `corner_tl` ...
 `corner_bl` and `fit` stretch, all as one undo step. The content's `aspect` (camera pixels)
 is in the reply: content of that aspect fills it without distortion. Where the frames overlap,
 the mappers' soft edges blend.
 
 The camera should look at the surface roughly square-on: the content is a rectangle in its
-picture. A camera turned by a quarter, upside down or mirrored is fine (`camera_turned` says
+picture. On a surface that is not flat the homography fits only roughly (a warning gives the
+median error); if the frames share no rectangle, the error lists each frame in the camera and
+its fit error. A camera turned by a quarter, upside down or mirrored is fine (`camera_turned` says
 which); projectors turned against each other are not. `apply: false`, or no `mappers`, only
 reports. A mesh warp on a mapper stays and moves the aligned picture (a warning says so).
 
