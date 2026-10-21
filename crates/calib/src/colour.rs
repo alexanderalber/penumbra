@@ -428,26 +428,75 @@ pub fn signal(matrix: &Mat3, curves: &[Vec<f64>; 3], c: [f64; 3]) -> [f64; 3] {
     out
 }
 
-/// Largest change of `ln(scale)` in one [`secant`] step.
+/// Largest change of a log scale in one [`Broyden`] step.
 pub const MAX_STEP: f64 = 0.7;
 
-/// The next `x` for a root of `f`, from the points tried so far (`(x, f(x))`, oldest first):
-/// a secant step through the last two, a step with slope 1 from a single one (`f` is a log
-/// ratio of camera readings and `x` a log scale, which a linear camera relates by slope 1).
-/// A slope that is not clearly positive (noise, a clipped camera) falls back to 1; steps are
-/// at most [`MAX_STEP`], the result within `lo..=hi`.
-pub fn secant(history: &[(f64, f64)], lo: f64, hi: f64) -> f64 {
-    let (x, step) = match history {
-        [] => return 0.0_f64.clamp(lo, hi),
-        [.., (x0, f0), (x1, f1)] => {
-            let slope = (f1 - f0) / (x1 - x0);
-            let slope = if (x1 - x0).abs() > 1e-6 && slope.is_finite() && slope > 0.1 { slope } else { 1.0 };
-            (*x1, -f1 / slope)
+/// Finds where three coupled functions of three unknowns are all zero, from their values alone
+/// (Broyden's method: a secant step in several dimensions). Here the unknowns are the log
+/// scales of a matrix's rows and the functions the log ratios of the camera's reading of white
+/// to the reference's, per channel; they are coupled where the camera's channels see each
+/// other's light. The first step assumes a linear camera without crosstalk (the identity);
+/// each value seen corrects that estimate.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Broyden {
+    jacobian: Mat3,
+    last: Option<([f64; 3], [f64; 3])>,
+}
+
+impl Default for Broyden {
+    fn default() -> Self {
+        Self { jacobian: IDENTITY, last: None }
+    }
+}
+
+impl Broyden {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The next `x` after seeing `f` at `x`: each unknown moves at most [`MAX_STEP`] and stays
+    /// within `lo..=hi`. A step that cannot be computed (a singular estimate, not finite) falls
+    /// back to the first-step assumption.
+    pub fn step(&mut self, x: [f64; 3], f: [f64; 3], lo: f64, hi: [f64; 3]) -> [f64; 3] {
+        let finite = |v: &[f64; 3]| v.iter().all(|x| x.is_finite());
+        if let Some((x0, f0)) = self.last
+            && finite(&f)
+        {
+            let dx = [x[0] - x0[0], x[1] - x0[1], x[2] - x0[2]];
+            let df = [f[0] - f0[0], f[1] - f0[1], f[2] - f0[2]];
+            let dd = dot(dx, dx);
+            if dd > 1e-12 {
+                let jdx = apply(&self.jacobian, dx);
+                let u = [df[0] - jdx[0], df[1] - jdx[1], df[2] - jdx[2]];
+                let mut next = self.jacobian;
+                for (row, ui) in next.iter_mut().zip(u) {
+                    for (v, dxj) in row.iter_mut().zip(dx) {
+                        *v += ui * dxj / dd;
+                    }
+                }
+                // Brighter rows must read brighter: an estimate that says otherwise is noise.
+                if finite(&next[0])
+                    && finite(&next[1])
+                    && finite(&next[2])
+                    && next[0][0] > 0.1
+                    && next[1][1] > 0.1
+                    && next[2][2] > 0.1
+                {
+                    self.jacobian = next;
+                }
+            }
         }
-        [(x, f)] => (*x, -f),
-    };
-    let next = x + if step.is_finite() { step.clamp(-MAX_STEP, MAX_STEP) } else { 0.0 };
-    next.clamp(lo, hi)
+        if finite(&f) {
+            self.last = Some((x, f));
+        }
+        let f = f.map(|v| if v.is_finite() { v } else { 0.0 });
+        let delta = inverse(&self.jacobian).map(|inv| apply(&inv, f)).filter(|d| finite(d)).unwrap_or(f);
+        let mut out = x;
+        for ((o, d), h) in out.iter_mut().zip(delta).zip(hi) {
+            *o = (*o - d.clamp(-MAX_STEP, MAX_STEP)).clamp(lo, h.max(lo));
+        }
+        out
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

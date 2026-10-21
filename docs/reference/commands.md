@@ -162,7 +162,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `projector.match` | Measure the projectors with a camera (each alone: black, white, red, green and blue ramps) and write their colour correction (matrix, curves) so they look alike; blocks for several seconds per projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference projector, which keeps straight curves; works through any camera \| srgb: every projector follows the sRGB curve; only with a camera known to be linear), apply? (true: write the params as one undo step), refine? (rounds of closed-loop correction of the matrix against the reference, 3; 0 off)} |
+| `projector.match` | Measure the projectors with a camera (each alone: black, white, red, green and blue ramps) and write their colour correction (matrix, curves) so they look alike; blocks for several seconds per projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference projector, which keeps straight curves; works through any camera \| srgb: every projector follows the sRGB curve; only with a camera known to be linear), apply? (true: write the params as one undo step), refine? (rounds of closed-loop correction of the matrix against the reference's white, 5; 0 off)} |
 
 ## render
 

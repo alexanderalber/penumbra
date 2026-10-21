@@ -8,10 +8,12 @@
 //! and clears them when it ends, however it ends.
 //!
 //! The matrix comes from camera values taken as linear light, which an ordinary camera is not;
-//! so it is then refined in a closed loop (`refine` rounds): every other projector shows full
-//! red, green and blue through its correction, and each row of its matrix is scaled until the
-//! camera reads the same as of the reference, by a secant search in the log of the scale. That
-//! holds whatever monotone curve the camera applies.
+//! so it is then refined in a closed loop (`refine` rounds): every other projector shows white
+//! through its correction, and each row of its matrix is scaled until the camera reads that
+//! channel of white as it reads the reference's, by a secant search (Broyden's, the channels interact through the camera) in the log of
+//! the scales.
+//! That holds whatever monotone curve the camera applies; white rather than each primary,
+//! because cameras do not add up. The primaries and a grey are read once more and reported.
 //!
 //! Each picture is taken only after the change reached the projectors: the cook thread
 //! published an output frame with it, every output window presented that frame, `settle`
@@ -40,7 +42,7 @@ pub const DEFAULT_LEVELS: u32 = 8;
 pub const DEFAULT_SETTLE: f64 = 0.5;
 pub const DEFAULT_SAMPLES: usize = 17;
 pub const DEFAULT_TIMEOUT: f64 = 5.0;
-pub const DEFAULT_REFINE: u32 = 3;
+pub const DEFAULT_REFINE: u32 = 5;
 /// Refining stops early when every channel reads within this (log ratio, about 0.5 %).
 const REFINED: f64 = 0.005;
 /// Widest camera picture measured; larger frames are sampled every few pixels.
@@ -58,7 +60,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          write their colour correction (matrix, curves) so they look alike; blocks for several seconds per \
          projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), \
          levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera \
-         picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference          projector, which keeps straight curves; works through any camera | srgb: every projector follows          the sRGB curve; only with a camera known to be linear), apply? (true: write the params as one          undo step), refine? (rounds of closed-loop correction of the matrix against the reference, 3; 0 off)}",
+         picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference          projector, which keeps straight curves; works through any camera | srgb: every projector follows          the sRGB curve; only with a camera known to be linear), apply? (true: write the params as one          undo step), refine? (rounds of closed-loop correction of the matrix against the reference's white, 5; 0 off)}",
         move |p| {
             let a: MatchArgs = args(p)?;
             run(&e, &a)
@@ -216,13 +218,14 @@ impl Rig<'_> {
 
 const NAMES: [&str; 3] = ["red", "green", "blue"];
 
-/// Channel c of reading c: red of red, green of green, blue of blue.
-fn diagonal(r: &[[f64; 3]; 4]) -> [f64; 3] {
-    [r[0][0], r[1][1], r[2][2]]
-}
+/// What refining shows: white first (adjusted against), then full red, green, blue and grey at
+/// half the drive (reported only).
+const WHITE: [f64; 3] = [1.0; 3];
+const CHECKS: [[f64; 3]; 4] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.5; 3]];
+const CHECK_NAMES: [&str; 4] = ["red", "green", "blue", "grey"];
 
-/// What the camera reads (black subtracted, in the spot) of projector `k` alone showing full
-/// red, green, blue and white through `matrix` and `curves`.
+/// What the camera reads (black subtracted, in the spot) of projector `k` alone showing each of
+/// `contents` (linear light) through `matrix` and `curves`.
 fn read_through(
     rig: &mut Rig<'_>,
     k: usize,
@@ -230,16 +233,41 @@ fn read_through(
     black: [f64; 3],
     matrix: &Mat3,
     curves: &[Vec<f64>; 3],
-) -> CmdResult<[[f64; 3]; 4]> {
-    let mut out = [[0.0; 3]; 4];
-    let contents = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0; 3]];
-    for (o, content) in out.iter_mut().zip(contents) {
-        let s = colour::signal(matrix, curves, content).map(|v| v as f32);
+    contents: &[[f64; 3]],
+) -> CmdResult<Vec<[f64; 3]>> {
+    let mut out = Vec::with_capacity(contents.len());
+    for content in contents {
+        let s = colour::signal(matrix, curves, *content).map(|v| v as f32);
         let pic = rig.shot(|j| if j == k { s } else { [0.0; 3] })?;
         let m = colour::trimmed_mean(&pic, spot).ok_or("an empty measuring spot")?;
-        *o = [m[0] - black[0], m[1] - black[1], m[2] - black[2]];
+        out.push([m[0] - black[0], m[1] - black[1], m[2] - black[2]]);
     }
     Ok(out)
+}
+
+/// Per channel the camera's reading `got` over `want`, as a log ratio and as the difference in
+/// 8-bit camera codes (with each one's black added back); `None` where either is not light.
+fn compare(
+    got: [f64; 3],
+    want: [f64; 3],
+    black_got: [f64; 3],
+    black_want: [f64; 3],
+) -> Option<([f64; 3], [f64; 3])> {
+    let code = |v: f64| colour::encode(v) * 255.0;
+    let mut f = [0.0; 3];
+    let mut codes = [0.0; 3];
+    for ((fc, cc), ((g, w), (bg, bw))) in f
+        .iter_mut()
+        .zip(codes.iter_mut())
+        .zip(got.into_iter().zip(want).zip(black_got.into_iter().zip(black_want)))
+    {
+        if !(g > 1e-6 && w > 1e-6) {
+            return None;
+        }
+        *fc = (g / w).ln();
+        *cc = code(bg + g) - code(bw + w);
+    }
+    Some((f, codes))
 }
 
 fn text_param(net: &Network, e: &Engine, id: NodeId, kind: &str, name: &str) -> String {
@@ -421,8 +449,10 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         w
     }));
 
-    // Closed loop: each other projector's matrix rows scaled until the camera reads its full
-    // red, green and blue as it reads the reference's.
+    // Closed loop: each other projector's matrix rows scaled until the camera reads its white,
+    // channel by channel, as it reads the reference's. White and not the primaries one by one:
+    // cameras do not add up (white reads less than red + green + blue), so matched primaries
+    // leave white off.
     let mut matrices: Vec<Mat3> = matched.projectors.iter().map(|c| c.matrix).collect();
     let mut refined: Vec<Json> = vec![Json::Null; projectors.len()];
     let r = matched.reference;
@@ -431,7 +461,11 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         let black_of = |k: usize| blacks.get(k).copied().unwrap_or([0.0; 3]);
         let curves_of = |k: usize| matched.projectors.get(k).map(|c| c.curves.clone()).unwrap_or_default();
         let ref_matrix = matrices.get(r).copied().ok_or("no reference")?;
-        let want = read_through(&mut rig, r, spot(r), black_of(r), &ref_matrix, &curves_of(r))?;
+        let mut contents = vec![WHITE];
+        contents.extend(CHECKS);
+        let want_all =
+            read_through(&mut rig, r, spot(r), black_of(r), &ref_matrix, &curves_of(r), &contents)?;
+        let want = want_all.first().copied().ok_or("no reference reading")?;
         for (k, (_, path)) in projectors.iter().enumerate() {
             if k == r {
                 continue;
@@ -445,7 +479,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
                 if sum > 1e-9 { (1.0 / sum).ln().max(lo) } else { 0.0 }
             });
             let mut x = [0.0_f64; 3];
-            let mut history: [Vec<(f64, f64)>; 3] = Default::default();
+            let mut solver = colour::Broyden::new();
             let mut rounds = Vec::new();
             let mut best: Option<(f64, Mat3, [f64; 3], [f64; 3])> = None;
             for round in 0..=refine {
@@ -453,31 +487,18 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
                 for (row, xc) in m.iter_mut().zip(x) {
                     *row = row.map(|v| v * xc.exp());
                 }
-                let got = read_through(&mut rig, k, spot(k), black_of(k), &m, &curves)?;
-                let mut f = [0.0; 3];
-                let mut codes = [0.0; 3];
-                let code = |v: f64| colour::encode(v) * 255.0;
-                let channels = NAMES.iter().zip(diagonal(&got).into_iter().zip(diagonal(&want)));
-                let blacks_kr = black_of(k).into_iter().zip(black_of(r));
-                for (((name, (g, w)), (fc, cc)), (bk, br)) in
-                    channels.zip(f.iter_mut().zip(codes.iter_mut())).zip(blacks_kr)
-                {
-                    if !(g > 1e-6 && w > 1e-6) {
-                        return Err(format!(
-                            "{path}: the camera sees no {name} through the correction (or of the reference)"
-                        )
-                        .into());
-                    }
-                    *fc = (g / w).ln();
-                    *cc = code(bk + g) - code(br + w);
-                }
+                let got = read_through(&mut rig, k, spot(k), black_of(k), &m, &curves, &[WHITE])?;
+                let got = got.first().copied().ok_or("no reading")?;
+                let (f, codes) = compare(got, want, black_of(k), black_of(r)).ok_or_else(|| {
+                    format!("{path}: the camera sees no white in a channel through the correction (or of the reference)")
+                })?;
                 let err = f.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
                 rounds.push(json!({
                     "round": round,
                     "scale": x.map(f64::exp),
                     "ratio": f.map(f64::exp),
                     "residual_codes": codes,
-                    "white": got[3],
+                    "white": got,
                 }));
                 if best.as_ref().is_none_or(|(e, _, _, _)| err < *e) {
                     best = Some((err, m, f, x));
@@ -485,16 +506,30 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
                 if round == refine || err < REFINED {
                     break;
                 }
-                for (((h, xc), fc), hc) in history.iter_mut().zip(x.iter_mut()).zip(f).zip(hi) {
-                    h.push((*xc, fc));
-                    *xc = colour::secant(h, lo, hc);
+                x = solver.step(x, f, lo, hi);
+            }
+            // Reported, not adjusted: the primaries and a grey through the result.
+            let mut check = serde_json::Map::new();
+            if let Some((_, m, _, _)) = &best {
+                let got = read_through(&mut rig, k, spot(k), black_of(k), m, &curves, &CHECKS)?;
+                for ((name, g), w) in CHECK_NAMES.iter().zip(&got).zip(want_all.iter().skip(1)) {
+                    // Per channel; a channel the colour does not light (blue of red) has no ratio.
+                    let mut ratio = [None; 3];
+                    let mut codes = [0.0; 3];
+                    let code = |v: f64| colour::encode(v) * 255.0;
+                    let pairs = g.iter().zip(w).zip(black_of(k).into_iter().zip(black_of(r)));
+                    for ((rc, cc), ((g, w), (bk, br))) in ratio.iter_mut().zip(codes.iter_mut()).zip(pairs) {
+                        *rc = (*g > 1e-4 && *w > 1e-4).then(|| g / w);
+                        *cc = code(bk + g) - code(br + w);
+                    }
+                    check.insert((*name).to_string(), json!({"ratio": ratio, "residual_codes": codes}));
                 }
             }
             if let Some((_, m, f, bx)) = best {
                 for ((name, fc), (xc, hc)) in NAMES.iter().zip(f).zip(bx.into_iter().zip(hi)) {
                     if fc < -0.02 && (xc - hc).abs() < 1e-9 {
                         warnings.push(format!(
-                            "{path}: cannot show {name} as bright as the reference ({:.0} %); lower the reference's gain",
+                            "{path}: cannot show the {name} of white as bright as the reference ({:.0} %); lower the reference's gain",
                             fc.exp() * 100.0
                         ));
                     }
@@ -504,7 +539,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
                 }
             }
             if let Some(slot) = refined.get_mut(k) {
-                *slot = json!({"reference_reading": want, "rounds": rounds});
+                *slot = json!({"reference_white": want, "rounds": rounds, "check": check});
             }
         }
     }

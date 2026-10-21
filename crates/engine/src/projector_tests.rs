@@ -269,12 +269,14 @@ fn projector_match_refines_through_a_nonlinear_camera() {
         let light = synth.light(s);
         [0, 1, 2].map(|c| (0.02 + light[c]).powf(curve[c]) - 0.02_f64.powf(curve[c]))
     };
+    let (wa, wb) = (read(a, &synths[0], [1.0; 3]), read(b, &synths[1], [1.0; 3]));
     for c in 0..3 {
-        let mut content = [0.0; 3];
-        content[c] = 1.0;
-        let ra = read(a, &synths[0], content)[c];
-        let rb = read(b, &synths[1], content)[c];
-        assert!((ra / rb - 1.0).abs() < 0.03, "channel {c}: {ra} vs {rb}: {r}");
+        // 8-bit camera codes: a code is several per cent of a dark blue.
+        assert!((wa[c] / wb[c] - 1.0).abs() < 0.04, "white, channel {c}: {wa:?} vs {wb:?}: {r}");
+    }
+    let check = &r["projectors"][other]["refine"]["check"];
+    for name in ["red", "green", "blue", "grey"] {
+        assert!(check[name]["ratio"].is_array(), "{r}");
     }
     assert!(f.engine.board().state().flat.is_empty());
     assert!(f.fail("projector.match", json!({"camera": "/cam", "refine": 11})).contains("refine"));
