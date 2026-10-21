@@ -20,6 +20,7 @@ pub mod navigation;
 pub mod ndi;
 pub mod osc;
 pub mod pictures;
+pub mod projector;
 pub mod projects;
 pub mod scan;
 pub mod shapes;
@@ -66,6 +67,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     blob_track::register(&mut registry, engine);
     shapes::register(&mut registry, engine);
     scan::register(&mut registry, engine);
+    projector::register(&mut registry, engine);
     projects::register(&mut registry, engine);
     navigation::register(&mut registry, engine);
     registry
