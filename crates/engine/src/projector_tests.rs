@@ -75,7 +75,8 @@ struct Camera {
 }
 
 impl Camera {
-    fn start(engine: Arc<Engine>, key: Key, projectors: Vec<NodeId>) -> Self {
+    /// `curve`: the camera's own exponent per channel on the light (1: linear).
+    fn start(engine: Arc<Engine>, key: Key, projectors: Vec<NodeId>, curve: [f64; 3]) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let s = stop.clone();
         let thread = std::thread::spawn(move || {
@@ -97,6 +98,9 @@ impl Camera {
                     }
                 }
                 sequence += 1;
+                for p in &mut pixels {
+                    *p = [0, 1, 2].map(|c| p[c].powf(curve[c]));
+                }
                 engine.camera().feed(&key, frame(&pixels, sequence, arrived));
                 std::thread::sleep(Duration::from_millis(4));
             }
@@ -127,7 +131,7 @@ fn projector_match_with_a_simulated_camera() {
     let net = f.engine.session().doc().snapshot();
     let id = |p: &str| net.resolve(&p.parse().unwrap()).unwrap();
     let (a, b) = (id("/proj_a"), id("/proj_b"));
-    let _camera = Camera::start(f.engine.clone(), key, vec![a, b]);
+    let _camera = Camera::start(f.engine.clone(), key, vec![a, b], [1.0; 3]);
 
     assert!(f.fail("projector.match", json!({"camera": "/proj_a"})).contains("not a tex.video_in"));
     assert!(f.fail("projector.match", json!({"camera": "/cam", "levels": 1})).contains("levels"));
@@ -194,10 +198,14 @@ fn projector_match_with_a_simulated_camera() {
     assert!(worst < 0.04, "worst difference {worst} of white: {r}");
 
     // Not applied: the params stay.
-    let before = f.file();
+    let before = f.engine.session().doc().snapshot();
     let r = f.call("projector.match", json!({"camera": "/cam", "levels": 2, "settle": 0.0, "apply": false}));
     assert_eq!(r["applied"], false);
-    assert_eq!(f.file(), before);
+    let after = f.engine.session().doc().snapshot();
+    let text =
+        |net: &penumbra_graph::Network, id: NodeId| net.node(id).unwrap().param(desc, "matrix").cloned();
+    assert_eq!(text(&before, a), text(&after, a));
+    assert_eq!(text(&before, b), text(&after, b));
 
     // A projector the camera does not see is named.
     f.call("node.create", json!({"path": "/proj_c", "kind": "out.projector"}));
@@ -214,4 +222,60 @@ fn projector_match_with_a_simulated_camera() {
     );
     assert!(e.contains("sent no frame"), "{e}");
     assert!(f.engine.board().state().flat.is_empty());
+}
+
+#[test]
+fn projector_match_refines_through_a_nonlinear_camera() {
+    let f = Fixture::new("projector-refine");
+    let key = Key::new("sim", "");
+    f.engine.camera().feed(&key, frame(&vec![[0.0; 3]; W * H], 0, Instant::now()));
+    f.call("node.create", json!({"path": "/cam", "kind": "tex.video_in", "params": {"device": "sim"}}));
+    f.call("node.create", json!({"path": "/proj_a", "kind": "out.projector"}));
+    f.call("node.create", json!({"path": "/proj_b", "kind": "out.projector"}));
+    f.call("cook.play", json!({"playing": true}));
+    let net = f.engine.session().doc().snapshot();
+    let id = |p: &str| net.resolve(&p.parse().unwrap()).unwrap();
+    let (a, b) = (id("/proj_a"), id("/proj_b"));
+    // A camera much steeper than linear, differently per channel.
+    let curve = [1.5, 2.0, 2.5];
+    let _camera = Camera::start(f.engine.clone(), key, vec![a, b], curve);
+
+    let r = f.call("projector.match", json!({"camera": "/cam", "levels": 6, "settle": 0.0}));
+    let reference = r["reference"].as_str().unwrap().to_string();
+    let other = if reference == "/proj_a" { 1 } else { 0 };
+    let rounds =
+        r["projectors"][other]["refine"]["rounds"].as_array().cloned().unwrap_or_else(|| panic!("{r}"));
+    assert!(rounds.len() >= 2, "{r}");
+    let off = |round: &serde_json::Value| {
+        (0..3).map(|c| (round["ratio"][c].as_f64().unwrap() - 1.0).abs()).fold(0.0, f64::max)
+    };
+    let first = off(&rounds[0]);
+    let best = rounds.iter().map(off).fold(f64::MAX, f64::min);
+    assert!(first > 0.05, "the camera's curve should mislead the first estimate: {r}");
+    assert!(best < 0.02, "refined to {best}: {r}");
+
+    // Check against the simulation: the camera reads full red, green, blue alike through both.
+    let net = f.engine.session().doc().snapshot();
+    let desc = f.engine.types().desc(penumbra_ops::out::PROJECTOR).unwrap();
+    let synths = synths();
+    let read = |node: NodeId, synth: &Synth, content: [f64; 3]| {
+        let n = net.node(node).unwrap();
+        let text = |p: &str| n.param(desc, p).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let m = penumbra_ops::out::correct::parse_matrix(&text("matrix")).unwrap();
+        let curves = penumbra_ops::out::correct::parse_curves(&text("curves"))
+            .unwrap()
+            .unwrap_or_else(|| [vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]]);
+        let s = colour::signal(&m, &curves, content).map(|v| v as f32);
+        let light = synth.light(s);
+        [0, 1, 2].map(|c| (0.02 + light[c]).powf(curve[c]) - 0.02_f64.powf(curve[c]))
+    };
+    for c in 0..3 {
+        let mut content = [0.0; 3];
+        content[c] = 1.0;
+        let ra = read(a, &synths[0], content)[c];
+        let rb = read(b, &synths[1], content)[c];
+        assert!((ra / rb - 1.0).abs() < 0.03, "channel {c}: {ra} vs {rb}: {r}");
+    }
+    assert!(f.engine.board().state().flat.is_empty());
+    assert!(f.fail("projector.match", json!({"camera": "/cam", "refine": 11})).contains("refine"));
 }

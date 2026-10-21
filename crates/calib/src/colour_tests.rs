@@ -310,3 +310,35 @@ fn reference_target_holds_through_a_nonlinear_camera() {
     let s = match_projectors(&measured, &[], 17, Target::Srgb).unwrap();
     assert!((s.projectors[r].curves[0][8] - 0.5).abs() > 0.05, "{:?}", s.projectors[r].curves[0]);
 }
+
+#[test]
+fn secant_finds_a_scale_through_a_nonlinear_camera() {
+    // The camera reads a channel as (0.6 * scale)^2.7, the reference reads 0.4^2.7.
+    let read = |x: f64| (0.6 * x.exp()).powf(2.7);
+    let want = 0.4_f64.powf(2.7);
+    let mut history = Vec::new();
+    let mut x = 0.0;
+    for _ in 0..4 {
+        history.push((x, (read(x) / want).ln()));
+        x = secant(&history, -3.0, 0.0);
+    }
+    assert!((read(x) / want - 1.0).abs() < 0.02, "{}", read(x) / want);
+    assert!((0.6 * x.exp() - 0.4).abs() < 0.01);
+    // Limits hold; nonsense does not move it.
+    assert_eq!(secant(&[(0.0, -5.0)], -1.0, 0.2), 0.2);
+    assert_eq!(secant(&[(0.0, f64::NAN)], -1.0, 1.0), 0.0);
+    assert_eq!(secant(&[], -1.0, -0.5), -0.5);
+    // A flat slope falls back to 1.
+    assert!((secant(&[(0.0, 0.5), (0.1, 0.5)], -1.0, 1.0) - (0.1 - 0.5)).abs() < 1e-12);
+}
+
+#[test]
+fn signal_follows_the_output_pass() {
+    let curves = [vec![0.0, 1.0], vec![0.0, 0.5], vec![0.0, 1.0]];
+    let s = signal(&[[0.5, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 2.0]], &curves, [1.0, 1.0, 0.25]);
+    assert!(
+        (s[0] - encode(0.5)).abs() < 1e-12
+            && (s[1] - 0.5).abs() < 1e-12
+            && (s[2] - encode(0.5)).abs() < 1e-12
+    );
+}

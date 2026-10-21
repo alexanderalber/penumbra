@@ -298,7 +298,7 @@ pub fn luminance(c: [f64; 3]) -> f64 {
 
 /// The luminance of white through matrix `m` (drive clamped to 0..1) on primaries `p`, over
 /// that of white uncorrected.
-fn peak(p: &Mat3, m: &Mat3) -> f64 {
+pub fn peak(p: &Mat3, m: &Mat3) -> f64 {
     let drive = apply(m, [1.0; 3]).map(|d| d.clamp(0.0, 1.0));
     let full = luminance(apply(p, [1.0; 3]));
     if full > 1e-12 { luminance(apply(p, drive)) / full } else { 0.0 }
@@ -415,6 +415,39 @@ pub fn lookup(table: &[f64], e: f64) -> f64 {
         (Some(a), Some(b)) => a + (b - a) * f,
         _ => e,
     }
+}
+
+/// The signal (sRGB-encoded, uncorrected) that content `c` (linear light) becomes through
+/// `matrix` and `curves`, as the output pass computes it.
+pub fn signal(matrix: &Mat3, curves: &[Vec<f64>; 3], c: [f64; 3]) -> [f64; 3] {
+    let d = apply(matrix, c);
+    let mut out = [0.0; 3];
+    for ((o, d), curve) in out.iter_mut().zip(d).zip(curves) {
+        *o = lookup(curve, encode(d.clamp(0.0, 1.0)));
+    }
+    out
+}
+
+/// Largest change of `ln(scale)` in one [`secant`] step.
+pub const MAX_STEP: f64 = 0.7;
+
+/// The next `x` for a root of `f`, from the points tried so far (`(x, f(x))`, oldest first):
+/// a secant step through the last two, a step with slope 1 from a single one (`f` is a log
+/// ratio of camera readings and `x` a log scale, which a linear camera relates by slope 1).
+/// A slope that is not clearly positive (noise, a clipped camera) falls back to 1; steps are
+/// at most [`MAX_STEP`], the result within `lo..=hi`.
+pub fn secant(history: &[(f64, f64)], lo: f64, hi: f64) -> f64 {
+    let (x, step) = match history {
+        [] => return 0.0_f64.clamp(lo, hi),
+        [.., (x0, f0), (x1, f1)] => {
+            let slope = (f1 - f0) / (x1 - x0);
+            let slope = if (x1 - x0).abs() > 1e-6 && slope.is_finite() && slope > 0.1 { slope } else { 1.0 };
+            (*x1, -f1 / slope)
+        }
+        [(x, f)] => (*x, -f),
+    };
+    let next = x + if step.is_finite() { step.clamp(-MAX_STEP, MAX_STEP) } else { 0.0 };
+    next.clamp(lo, hi)
 }
 
 // ---------------------------------------------------------------------------------------------
