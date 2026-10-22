@@ -12,7 +12,9 @@ Everything here is a command (see [Control](control.md)); the results are plain 
 project, read by `tex.image`. Nothing of it runs per frame: during the show what remains is a
 `tex.remap` lookup and a multiply per projector.
 
-Paths in the commands are relative to the project directory.
+Paths in the commands are relative to the project directory. The last section walks through
+the whole chain once, from an empty project to a relief lit by two projectors, along the
+example projection-onto-objects.
 
 ## The scan button: `tex.scan`
 
@@ -297,3 +299,102 @@ Then, optionally, even out each projector's light and the black around overlaps 
 `projector.flatfield` and the same scan folders (see [Even light across a projector, and black in
 overlaps](helpers.md#even-light-across-a-projector-and-black-in-overlaps)): it connects a gain map
 and a black lift to each `out.projector`.
+
+## Example: a relief from scan to picture
+
+The example **projection-onto-objects** (status bar folder button, **Examples**) is a relief
+lit by two projectors stacked one above the other, with the maps of one scan. It shows its
+picture without camera or projectors (`/view`). The steps below make the same thing for your
+own object and room, in the order they are done at the object. Each is a command (see
+[Control](control.md)) or a button.
+
+**0. A project.** Either the example, kept as your own: **Save copy as** in the status bar's
+folder menu, into a folder beside the installation, then open that. Or an empty one:
+
+    penumbra-cli ctl project.new '{"dir": "D:/shows/relief"}'
+
+**1. Projectors and camera.** One `out.projector` per projector, its `display` from
+`output.list` (the example's `/proj_a` and `/proj_b` have none, so they open no window until
+you set it), and a `tex.video_in` for the camera:
+
+    penumbra-cli ctl output.list
+    penumbra-cli ctl node.set '{"path": "/proj_a", "params": {"display": "EPSON PJ @ port 4"}}'
+    penumbra-cli ctl node.set '{"path": "/proj_b", "params": {"display": "EPSON PJ @ port 3"}}'
+    penumbra-cli ctl node.create '{"path": "/cam", "kind": "tex.video_in", "params": {"device": "Cam Link"}}'
+
+In an empty project create the projectors first, with `node.create` and `kind`
+`out.projector`. Fix the camera's exposure, white balance and focus on the camera itself.
+
+**2. Scan.** One `tex.scan` per projector, naming projector and camera (the example has
+`/scan_a` and `/scan_b`, naming `/cam`):
+
+    penumbra-cli ctl node.create '{"path": "/scan_a", "kind": "tex.scan", "params": {"projector": "/proj_a", "camera": "/cam"}}'
+    penumbra-cli ctl node.create '{"path": "/scan_b", "kind": "tex.scan", "params": {"projector": "/proj_b", "camera": "/cam"}}'
+
+Room dark, then the **scan** button in either node's param panel, or
+
+    penumbra-cli ctl scan.run '{"wait": true}'
+
+Both projectors are scanned into `scan/proj_a` and `scan/proj_b`, about 20 s each. (With
+`tex.mapper`s named in the nodes, the run also lines the projectors up for flat content,
+`scan.align`; a relief does not need that.)
+
+**3. Heights and masks.**
+
+    penumbra-cli ctl scan.relief '{"scans": ["scan/proj_a", "scan/proj_b"]}'
+
+writes `relief/height_0.exr`, `height_1.exr`, the masks and `relief/relief_view.png`. Look at
+the view: valleys dark, peaks bright. If it is the wrong way round, run it again with
+`"sign": -1` (or `1`, the opposite of the `sign.as_param` the reply gave).
+
+**4. Blend weights** where both projectors reach, inside the masks:
+
+    penumbra-cli ctl scan.blend '{"scans": ["scan/proj_a", "scan/proj_b"], "masks": ["relief/mask_0.png", "relief/mask_1.png"], "out": "relief"}'
+
+writes `relief/weight_0.png` and `weight_1.png`. In the example these replace the shipped
+weights, and the `tex.image` nodes reload them. Point the height nodes at the new heights:
+
+    penumbra-cli ctl node.set '{"path": "/height_a", "params": {"file": "relief/height_0.exr"}}'
+    penumbra-cli ctl node.set '{"path": "/height_b", "params": {"file": "relief/height_1.exr"}}'
+
+**5. Colour (optional).** Make the projectors look alike, then even out the colour across each
+(on a relief only the colour: its shading would be taken for a hot spot):
+
+    penumbra-cli ctl projector.match '{"camera": "/cam", "projectors": ["/proj_a", "/proj_b"]}'
+    penumbra-cli ctl projector.flatfield '{"camera": "/cam", "projectors": ["/proj_a", "/proj_b"], "scans": ["scan/proj_a", "scan/proj_b"], "even": "colour"}'
+
+`projector.flatfield` connects a gain map and a black lift to each `out.projector`.
+
+**6. Content.** In the example it is there already: the projectors show it as soon as their
+displays are set. In an empty project the base, for projector A (B the same with `_b`,
+`height_1`, `weight_1`):
+
+    penumbra-cli ctl node.batch '{"ops": [
+      {"op": "create", "path": "/land_keys", "kind": "tex.ramp", "params": {"width": 256, "height": 1, "keep_size": true,
+        "keys": "0 0.02 0.16 0.03\n0.3 0.188 0.402 0.061\n0.55 0.578 0.456 0.102\n0.75 0.305 0.127 0.045\n0.9 0.42 0.4 0.38\n1 0.6 0.6 0.6"}},
+      {"op": "create", "path": "/height_a", "kind": "tex.image", "params": {"file": "relief/height_0.exr"}},
+      {"op": "create", "path": "/weight_a", "kind": "tex.image", "params": {"file": "relief/weight_0.png"}},
+      {"op": "create", "path": "/land_a", "kind": "tex.lookup"},
+      {"op": "create", "path": "/contour_a", "kind": "tex.contour", "params": {"mode": "alpha", "color": [0, 0, 0, 0.6]}},
+      {"op": "create", "path": "/map_a", "kind": "tex.composite"},
+      {"op": "create", "path": "/out_a", "kind": "tex.composite", "params": {"op": "multiply"}}]}'
+    penumbra-cli ctl node.connect '{"from": "/height_a", "to": "/land_a", "input": "in"}'
+    penumbra-cli ctl node.connect '{"from": "/land_keys", "to": "/land_a", "input": "lut"}'
+    penumbra-cli ctl node.connect '{"from": "/height_a", "to": "/contour_a"}'
+    penumbra-cli ctl node.connect '{"from": "/land_a", "to": "/map_a", "input": "layer1"}'
+    penumbra-cli ctl node.connect '{"from": "/contour_a", "to": "/map_a", "input": "layer2"}'
+    penumbra-cli ctl node.connect '{"from": "/map_a", "to": "/out_a", "input": "layer1"}'
+    penumbra-cli ctl node.connect '{"from": "/weight_a", "to": "/out_a", "input": "layer2"}'
+    penumbra-cli ctl node.connect '{"from": "/out_a", "to": "/proj_a", "input": "in"}'
+
+The moving layers of the example (sun, tide, snow line; its README says how they are made) are
+copied over with copy and paste in the editor, or by opening the example's `project.ron` beside
+your own.
+
+**Looking without the room.** The example's `/view` puts both projectors' pictures into the
+camera's picture (`tex.remap` through each scan's `cam_to_proj`) and multiplies them by a photo
+of the relief lit white by each projector. For your own scan, point `/cam_to_proj_a` and
+`/cam_to_proj_b` at `scan/proj_a/cam_to_proj.exr` and `scan/proj_b/cam_to_proj.exr`; the
+photos are the first camera picture of a scan with `"frames": true` (`scan.capture`).
+`/upright` turns the camera's picture by a quarter (the example's camera stood on its side);
+set its `flop`, `flip_x` and `flip_y` for yours. At the object itself, look at the object.
