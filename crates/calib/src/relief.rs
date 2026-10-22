@@ -82,9 +82,9 @@ pub struct ReliefOptions {
     pub jump: f32,
     /// The light mask shrinks by this, projector pixels.
     pub erode: u32,
-    /// How far past the panel's measured pixels its light may reach, projector pixels. Beyond
-    /// them the scan knows nothing: the panel's edge where the camera cannot see it, or wall it
-    /// hides from the camera.
+    /// Notches in the outline of the panel's measured pixels up to about twice this wide are lit,
+    /// projector pixels. Past the outline the scan knows nothing: an undecoded strip along the
+    /// panel's edge looks the same as wall the panel hides from the camera, so it stays dark.
     pub reach: u32,
 }
 
@@ -102,8 +102,8 @@ impl ReliefOptions {
         if self.erode > 64 {
             return Err("`erode` is 0 to 64 projector pixels".into());
         }
-        if self.reach > 4096 {
-            return Err("`reach` is 0 to 4096 projector pixels".into());
+        if self.reach > 256 {
+            return Err("`reach` is 0 to 256 projector pixels".into());
         }
         Ok(())
     }
@@ -275,10 +275,12 @@ pub fn analyse(map: &Map, from_camera: &Map, o: &ReliefOptions) -> Result<Relief
     // Unmeasured pixels the piece took in from their nearest measured neighbour are either panel
     // that did not decode (dark paint, steep flanks, an edge the camera cannot see) or wall
     // beside the panel's edge that the panel hides from the camera. The measured pixels, closed
-    // over the gaps a coarser camera leaves, are panel. Any other pixel is lit only within
-    // `reach` of them, and only when the camera, where the plane and its filled height put the
-    // pixel's light, does not see another projector pixel there (then the panel's edge stands
-    // in front of it and its light lands on the wall behind).
+    // over the gaps a coarser camera leaves, are panel. Any other pixel is lit only inside a
+    // notch of their outline (closed by `reach`): a band past the outline is as likely wall or
+    // floor as panel, and the camera saw nothing there to tell. A notch pixel is also left dark
+    // when the camera, where the plane and its filled height put the pixel's light, sees another
+    // projector pixel there (then the panel's edge stands in front of it and its light lands on
+    // the wall behind).
     let measured_piece: Vec<bool> = measured.iter().zip(&piece).map(|(a, b)| *a && *b).collect();
     let sure = raster::close(w, h, &measured_piece, MEASURED_CLOSE);
     let closed = raster::fill_holes(w, h, &raster::close(w, h, &piece, MASK_CLOSE));
@@ -299,12 +301,11 @@ pub fn analyse(map: &Map, from_camera: &Map, o: &ReliefOptions) -> Result<Relief
             None => false,
         }
     };
-    let (reach, _) = raster::distance(w, h, &measured_piece);
+    let notches = raster::close_inside(w, h, &measured_piece, o.reach);
     let m: Vec<bool> = (0..n)
         .map(|i| {
             let at = |v: &[bool]| v.get(i) == Some(&true);
-            let near = reach.get(i).is_some_and(|d| *d <= o.reach as f32);
-            at(&closed) && at(&seen) && (at(&sure) || (near && !hidden(i)))
+            at(&closed) && at(&seen) && (at(&sure) || (at(&notches) && !hidden(i)))
         })
         .collect();
     let m = raster::fill_holes(w, h, &largest(w, h, &m));
