@@ -36,7 +36,7 @@ lists every one.
   ([scanning](docs/scanning.md)): `scan.capture` scans the projectors with a live camera (or
   `scan.decode` from photos of `tex.scan_pattern`'s Gray-code stripes) into maps for
   `tex.remap`, plus a picture of the scene as the projector sees it, for drawing masks in
-  projector pixels. `scan.align` lines projectors up side by side. A projector light throws a
+  projector pixels. `scan.align` lines projectors up side by side or stacked. A projector light throws a
   picture onto a 3D model of the room, to try a mapping before going on site. Projector and
   camera calibration (DLT, Levenberg-Marquardt) exists as commands; the interactive calibration
   UI does not exist yet.
