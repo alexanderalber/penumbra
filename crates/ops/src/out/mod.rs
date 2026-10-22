@@ -146,6 +146,8 @@ pub struct BoardState {
     pub managed: bool,
     pub displays: Vec<DisplayInfo>,
     pub windows: Vec<WindowInfo>,
+    /// The OS is told the displays are required (no sleep) because output windows are open.
+    pub keeps_display_awake: bool,
     pub projectors: BTreeMap<NodeId, ProjectorState>,
     /// Where the editor window is (`x, y, w, h` in physical desktop pixels), set by the UI;
     /// projectors are not opened on the display that shows it.

@@ -1,7 +1,7 @@
-//! The Windows calls behind [`crate::display`] and [`crate::checks`]: display configuration
-//! (`QueryDisplayConfig`) and the current user's registry. With NVML's loader the crate's only
-//! `unsafe`; every call checks its status code and every buffer is sized by the API or by its
-//! type.
+//! The Windows calls behind [`crate::display`], [`crate::checks`] and [`crate::awake`]: display
+//! configuration (`QueryDisplayConfig`), the current user's registry and power requests. With
+//! NVML's loader the crate's only `unsafe`; every call checks its status code and every buffer is
+//! sized by the API or by its type.
 #![allow(unsafe_code)]
 
 use std::ffi::c_void;
@@ -427,5 +427,69 @@ impl Drop for Pdh {
     fn drop(&mut self) {
         // SAFETY: the query from PdhOpenQueryW, closed once; it closes its counters too.
         unsafe { windows_sys::Win32::System::Performance::PdhCloseQuery(self.query) };
+    }
+}
+
+/// A power request that keeps the displays (and the machine) on while set, for
+/// [`crate::awake`]. Closing the handle ends it too.
+pub struct DisplayRequest {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+impl DisplayRequest {
+    /// Creates the request (not yet set); `reason` is what `powercfg /requests` shows.
+    pub fn new(reason: &str) -> Result<Self, Error> {
+        use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+        use windows_sys::Win32::System::Power::PowerCreateRequest;
+        use windows_sys::Win32::System::Threading::{POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT};
+
+        // POWER_REQUEST_CONTEXT_VERSION, the only version there is.
+        const VERSION: u32 = 0;
+        let mut text = to_wide(reason);
+        let mut context = REASON_CONTEXT {
+            Version: VERSION,
+            Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING,
+            ..Default::default()
+        };
+        context.Reason.SimpleReasonString = text.as_mut_ptr();
+        // SAFETY: a valid context whose string is NUL-terminated (`to_wide`) and outlives the
+        // call; Windows copies it.
+        let handle = unsafe { PowerCreateRequest(&context) };
+        if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+            return Err(Error::new(format!(
+                "PowerCreateRequest failed: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        Ok(Self { handle })
+    }
+
+    /// Sets (display and system required) or clears the request.
+    pub fn set(&self, on: bool) -> Result<(), Error> {
+        use windows_sys::Win32::System::Power::{
+            PowerClearRequest, PowerRequestDisplayRequired, PowerRequestSystemRequired, PowerSetRequest,
+        };
+
+        for kind in [PowerRequestDisplayRequired, PowerRequestSystemRequired] {
+            // SAFETY: the handle from PowerCreateRequest, open until drop.
+            let ok = unsafe {
+                if on { PowerSetRequest(self.handle, kind) } else { PowerClearRequest(self.handle, kind) }
+            };
+            if ok == 0 {
+                return Err(Error::new(format!(
+                    "{} failed: {}",
+                    if on { "PowerSetRequest" } else { "PowerClearRequest" },
+                    std::io::Error::last_os_error()
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for DisplayRequest {
+    fn drop(&mut self) {
+        // SAFETY: the handle from PowerCreateRequest, closed once.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.handle) };
     }
 }
