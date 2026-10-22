@@ -212,7 +212,9 @@ fn read(text: &str, types: &NodeTypes, what: &str, outside: bool, tolerant: bool
         log::warn!("{path} did not load and is kept as it is in {what}: {error}");
         let mut params = BTreeMap::new();
         params.insert(Name::new(broken::ENTRY)?, Value::Text(entry));
-        params.insert(Name::new(broken::ERROR)?, Value::Text(error.0));
+        // The placeholder is shown with its path already; the error alone goes into it.
+        let message = error.0.strip_prefix(&format!("{path}: ")).map(str::to_string).unwrap_or(error.0);
+        params.insert(Name::new(broken::ERROR)?, Value::Text(message));
         if let Some(names) = outputs.get(path).filter(|n| !n.is_empty()) {
             params.insert(Name::new(broken::OUTPUTS)?, Value::Text(names.join("\n")));
         }
@@ -377,7 +379,7 @@ fn parse_source(
         let output = match output {
             None => 0,
             Some(o) => o.parse::<u32>().map_err(|_| {
-                Error::new(format!("{path} is not in the text, so its output is given by number, not `{o}`"))
+                Error::new(format!("{path} is not in the text; give its output by number, not as `{o}`"))
             })?,
         };
         return Ok((PortRef { node: path, output }, None));
