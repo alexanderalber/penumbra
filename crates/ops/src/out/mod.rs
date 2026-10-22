@@ -216,7 +216,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "Apply the colour correction below (off: the plain picture, to compare; the test pattern is never corrected)",
         ))
         .param(ParamSpec::float("strength", 1.0).clamp(0.0, 1.0).group(COLOUR).doc(
-            "How much of the matching matrix applies: 1 all of it, 0 none. Lower keeps more of a brighter              projector's brightness and leaves more of the colour and brightness difference. The tone              curves always apply in full: they cost no peak brightness and make soft edges add up",
+            "How much of the correction applies, matrix and curves alike: 1 all of it, 0 the projector \
+             uncorrected. Lower keeps more of a brighter projector's brightness and leaves more of the \
+             colour and brightness difference",
         ))
         .param(ParamSpec::float("gain", 1.0).clamp(0.0, 1.0).group(COLOUR).doc(
             "Brightness by hand, in linear light, on top of the matrix (0.8: a fifth less light)",

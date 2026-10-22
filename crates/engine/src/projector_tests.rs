@@ -275,9 +275,24 @@ fn projector_match_refines_through_a_nonlinear_camera() {
         assert!((wa[c] / wb[c] - 1.0).abs() < 0.04, "white, channel {c}: {wa:?} vs {wb:?}: {r}");
     }
     let check = &r["projectors"][other]["refine"]["check"];
-    for name in ["red", "green", "blue", "grey"] {
+    for name in ["red", "green", "blue"] {
         assert!(check[name]["ratio"].is_array(), "{r}");
     }
+    // The greys refined read alike; one between them nearly so.
+    let off = |name: &str| {
+        (0..3).map(|c| (check[name]["ratio"][c].as_f64().unwrap() - 1.0).abs()).fold(0.0, f64::max)
+    };
+    for name in ["grey 0.5", "grey 0.75"] {
+        assert!(off(name) < 0.03, "{name}: {}: {r}", off(name));
+    }
+    // Dark greys through a steep camera: a code is many per cent, so judged in codes.
+    let codes = |name: &str| {
+        (0..3).map(|c| check[name]["residual_codes"][c].as_f64().unwrap().abs()).fold(0.0, f64::max)
+    };
+    for name in ["grey 0.25", "grey 0.375"] {
+        assert!(codes(name) <= 2.5, "{name}: {} codes: {r}", codes(name));
+    }
+    assert!(r["projectors"][other]["refine"]["grey_rounds"].as_array().unwrap().len() >= 2, "{r}");
     assert!(f.engine.board().state().flat.is_empty());
     assert!(f.fail("projector.match", json!({"camera": "/cam", "refine": 11})).contains("refine"));
 }

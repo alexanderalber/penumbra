@@ -3,7 +3,8 @@
 //! ([`penumbra_gpu::projection::Correction`]).
 //!
 //! The matrix works in linear light: `drive = gain * ((1 - strength) I + strength M) * colour`,
-//! clamped to 0..1. Each channel's tone curve then maps the drive, sRGB-encoded, to the signal
+//! clamped to 0..1; `strength` likewise blends the curves toward the straight line, so 0 is the
+//! projector uncorrected. Each channel's tone curve then maps the drive, sRGB-encoded, to the signal
 //! sent to the projector: a table of samples at evenly spaced encoded drives, straight from 0
 //! to 1 for a projector that follows the sRGB curve (and for no curve at all).
 //! `projector.match` measures both with a camera and writes them.
@@ -132,7 +133,18 @@ pub fn correction<'a>(param: impl Fn(&str) -> Option<&'a Value>) -> Result<Optio
         return Ok(None);
     }
     let gain = float("gain").clamp(0.0, 1.0);
-    let m = blend_matrix(&matrix, float("strength")).map(|row| row.map(|v| v * gain));
+    let strength = float("strength").clamp(0.0, 1.0);
+    let m = blend_matrix(&matrix, strength).map(|row| row.map(|v| v * gain));
+    let curves = curves.map(|c| {
+        c.map(|curve| {
+            let n = curve.len().saturating_sub(1).max(1) as f64;
+            curve
+                .iter()
+                .enumerate()
+                .map(|(i, v)| (1.0 - strength) * i as f64 / n + strength * v)
+                .collect::<Vec<f64>>()
+        })
+    });
     let straight = |c: &[f64]| {
         let n = c.len().saturating_sub(1).max(1) as f64;
         c.iter().enumerate().all(|(i, v)| (v - i as f64 / n).abs() < 1e-6)
@@ -216,6 +228,15 @@ mod tests {
         let m = Value::Text("0.5 0 0/0 0.5 0/0 0 0.5".into());
         assert!(none(params(&[("matrix", m.clone()), ("correct", Value::Bool(false))])));
         assert!(none(params(&[("matrix", m.clone()), ("strength", Value::Float(0.0))])));
+        let bent = Value::Text("0 0.1 1".into());
+        assert!(none(params(&[
+            ("matrix", m.clone()),
+            ("curves", bent.clone()),
+            ("strength", Value::Float(0.0))
+        ])));
+        let p = params(&[("curves", bent), ("strength", Value::Float(0.5))]);
+        let c = correction(|n| p.get(n)).unwrap().unwrap();
+        assert!((c.curves[1][1] - 0.3).abs() < 1e-6, "{c:?}");
         // A broken text is an error even while off.
         let p = params(&[("matrix", Value::Text("oops".into())), ("correct", Value::Bool(false))]);
         assert!(correction(|n| p.get(n)).is_err());

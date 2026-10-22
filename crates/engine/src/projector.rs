@@ -43,6 +43,9 @@ pub const DEFAULT_SETTLE: f64 = 0.5;
 pub const DEFAULT_SAMPLES: usize = 17;
 pub const DEFAULT_TIMEOUT: f64 = 5.0;
 pub const DEFAULT_REFINE: u32 = 5;
+pub const DEFAULT_GREY_LEVELS: u32 = 3;
+/// A grey between the refined ones, read for the report only: how well the curves interpolate.
+const PROBE: f64 = 0.375;
 /// Refining stops early when every channel reads within this (log ratio, about 0.5 %).
 const REFINED: f64 = 0.005;
 /// Widest camera picture measured; larger frames are sampled every few pixels.
@@ -57,10 +60,15 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     registry.register(FnCommand::new(
         "projector.match",
         "Measure the projectors with a camera (each alone: black, white, red, green and blue ramps) and \
-         write their colour correction (matrix, curves) so they look alike; blocks for several seconds per \
-         projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), \
-         levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera \
-         picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference          projector, which keeps straight curves; works through any camera | srgb: every projector follows          the sRGB curve; only with a camera known to be linear), apply? (true: write the params as one          undo step), refine? (rounds of closed-loop correction of the matrix against the reference's white, 5; 0 off)}",
+         write their colour correction (matrix, curves) so they look alike; blocks for about half a minute \
+         per projector; {camera (tex.video_in path), projectors? (paths, default every active \
+         out.projector), levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] \
+         of the camera picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the \
+         reference projector, which keeps straight curves; works through any camera | srgb: every \
+         projector follows the sRGB curve; only with a camera known to be linear), refine? (rounds of \
+         closed-loop correction against the reference: the matrix on white, then the curves on greys; \
+         5; 0 off), grey_levels? (greys the curves are refined on, evenly spaced; 3), apply? (true: \
+         write the params as one undo step)}",
         move |p| {
             let a: MatchArgs = args(p)?;
             run(&e, &a)
@@ -80,6 +88,7 @@ pub struct MatchArgs {
     pub timeout: Option<f64>,
     pub apply: Option<bool>,
     pub refine: Option<u32>,
+    pub grey_levels: Option<u32>,
     #[serde(default)]
     pub target: Target,
 }
@@ -221,8 +230,42 @@ const NAMES: [&str; 3] = ["red", "green", "blue"];
 /// What refining shows: white first (adjusted against), then full red, green, blue and grey at
 /// half the drive (reported only).
 const WHITE: [f64; 3] = [1.0; 3];
-const CHECKS: [[f64; 3]; 4] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.5; 3]];
-const CHECK_NAMES: [&str; 4] = ["red", "green", "blue", "grey"];
+const PRIMARIES: [[f64; 3]; 3] = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+/// `curves` bent at the grey levels: channel c by `e^y[j][c]` at encoded drive `knots[j][c]`,
+/// back to unchanged at `ends[c]` (white, matched by the matrix) and at black.
+fn bend(curves: &[Vec<f64>; 3], knots: &[[f64; 3]], ends: [f64; 3], y: &[[f64; 3]]) -> [Vec<f64>; 3] {
+    let mut out: [Vec<f64>; 3] = Default::default();
+    for (c, (o, curve)) in out.iter_mut().zip(curves).enumerate() {
+        // Unchanged from the table sample at or below white on: white falls between two samples,
+        // and both must stay as they were for white to.
+        let n = curve.len().saturating_sub(1).max(1) as f64;
+        let end = (ends.get(c).copied().unwrap_or(1.0) * n).floor() / n;
+        let mut points: Vec<(f64, f64)> = knots
+            .iter()
+            .zip(y)
+            .filter_map(|(k, y)| Some((*k.get(c)?, *y.get(c)?)))
+            .filter(|(k, _)| *k < end)
+            .collect();
+        points.push((end, 0.0));
+        *o = colour::reshape(curve, &points);
+    }
+    out
+}
+
+/// Per channel the ratio of `got` to `want` (`None` where either is too dark to read) and the
+/// difference in 8-bit camera codes.
+fn ratios(got: [f64; 3], want: [f64; 3], black_got: [f64; 3], black_want: [f64; 3]) -> Json {
+    let mut ratio = [None; 3];
+    let mut codes = [0.0; 3];
+    let code = |v: f64| colour::encode(v) * 255.0;
+    let pairs = got.iter().zip(want).zip(black_got.into_iter().zip(black_want));
+    for ((rc, cc), ((g, w), (bg, bw))) in ratio.iter_mut().zip(codes.iter_mut()).zip(pairs) {
+        *rc = (*g > 1e-4 && w > 1e-4).then(|| g / w);
+        *cc = code(bg + g) - code(bw + w);
+    }
+    json!({"ratio": ratio, "residual_codes": codes})
+}
 
 /// What the camera reads (black subtracted, in the spot) of projector `k` alone showing each of
 /// `contents` (linear light) through `matrix` and `curves`.
@@ -294,6 +337,11 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         return Err(format!("`samples` is 2 to {}", penumbra_gpu::projection::MAX_CURVE).into());
     }
     let refine = a.refine.unwrap_or(DEFAULT_REFINE);
+    let grey_levels = a.grey_levels.unwrap_or(DEFAULT_GREY_LEVELS);
+    if grey_levels > 8 {
+        return Err("`grey_levels` is 0 to 8".into());
+    }
+    let greys: Vec<f64> = (1..=grey_levels).map(|j| f64::from(j) / f64::from(grey_levels + 1)).collect();
     if refine > 10 {
         return Err("`refine` is 0 to 10 rounds".into());
     }
@@ -454,6 +502,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     // cameras do not add up (white reads less than red + green + blue), so matched primaries
     // leave white off.
     let mut matrices: Vec<Mat3> = matched.projectors.iter().map(|c| c.matrix).collect();
+    let mut curve_sets: Vec<[Vec<f64>; 3]> = matched.projectors.iter().map(|c| c.curves.clone()).collect();
     let mut refined: Vec<Json> = vec![Json::Null; projectors.len()];
     let r = matched.reference;
     if refine > 0 && projectors.len() > 1 {
@@ -461,8 +510,12 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         let black_of = |k: usize| blacks.get(k).copied().unwrap_or([0.0; 3]);
         let curves_of = |k: usize| matched.projectors.get(k).map(|c| c.curves.clone()).unwrap_or_default();
         let ref_matrix = matrices.get(r).copied().ok_or("no reference")?;
+        // White, the primaries, the greys, the probe: what the others are compared with.
+        let grey = |g: f64| [g; 3];
         let mut contents = vec![WHITE];
-        contents.extend(CHECKS);
+        contents.extend(PRIMARIES);
+        contents.extend(greys.iter().map(|g| grey(*g)));
+        contents.push(grey(PROBE));
         let want_all =
             read_through(&mut rig, r, spot(r), black_of(r), &ref_matrix, &curves_of(r), &contents)?;
         let want = want_all.first().copied().ok_or("no reference reading")?;
@@ -508,22 +561,76 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
                 }
                 x = solver.step(x, f, lo, hi);
             }
-            // Reported, not adjusted: the primaries and a grey through the result.
-            let mut check = serde_json::Map::new();
-            if let Some((_, m, _, _)) = &best {
-                let got = read_through(&mut rig, k, spot(k), black_of(k), m, &curves, &CHECKS)?;
-                for ((name, g), w) in CHECK_NAMES.iter().zip(&got).zip(want_all.iter().skip(1)) {
-                    // Per channel; a channel the colour does not light (blue of red) has no ratio.
-                    let mut ratio = [None; 3];
-                    let mut codes = [0.0; 3];
-                    let code = |v: f64| colour::encode(v) * 255.0;
-                    let pairs = g.iter().zip(w).zip(black_of(k).into_iter().zip(black_of(r)));
-                    for ((rc, cc), ((g, w), (bk, br))) in ratio.iter_mut().zip(codes.iter_mut()).zip(pairs) {
-                        *rc = (*g > 1e-4 && *w > 1e-4).then(|| g / w);
-                        *cc = code(bk + g) - code(br + w);
+            // The greys: with white matched by the matrix, each channel's curve is bent at every
+            // grey level until the camera reads that grey as of the reference (one solver per
+            // level, the channels interact through the camera; between the levels the bend is
+            // interpolated).
+            let m_final = best.as_ref().map_or(base, |b| b.1);
+            let mut final_curves = curves.clone();
+            let mut grey_rounds = Vec::new();
+            let want_greys: Vec<[f64; 3]> =
+                want_all.iter().skip(1 + PRIMARIES.len()).take(greys.len()).copied().collect();
+            if !greys.is_empty() && want_greys.len() == greys.len() {
+                let rows = m_final.map(|row| row.iter().sum::<f64>().clamp(0.0, 1.0));
+                let knots: Vec<[f64; 3]> =
+                    greys.iter().map(|g| rows.map(|s| colour::encode(s * g))).collect();
+                let ends = rows.map(colour::encode);
+                let contents: Vec<[f64; 3]> = greys.iter().map(|g| grey(*g)).collect();
+                let mut y = vec![[0.0_f64; 3]; greys.len()];
+                // Starting from the slopes white taught: the same camera, the same channels.
+                let mut solvers: Vec<colour::Broyden> = greys.iter().map(|_| solver.restart()).collect();
+                let mut best_curves: Option<(f64, [Vec<f64>; 3])> = None;
+                let lo = 0.2_f64.ln();
+                for round in 0..=refine {
+                    let now = bend(&curves, &knots, ends, &y);
+                    let got = read_through(&mut rig, k, spot(k), black_of(k), &m_final, &now, &contents)?;
+                    let mut err: f64 = 0.0;
+                    let mut fs = Vec::with_capacity(greys.len());
+                    let mut levels = Vec::with_capacity(greys.len());
+                    for ((g, w), level) in got.iter().zip(&want_greys).zip(&greys) {
+                        // A grey too dark to read in a channel is left as it is.
+                        let f = compare(*g, *w, black_of(k), black_of(r)).map_or([0.0; 3], |(f, _)| f);
+                        err = f.iter().fold(err, |a, v| a.max(v.abs()));
+                        fs.push(f);
+                        let mut level_json = ratios(*g, *w, black_of(k), black_of(r));
+                        if let Some(o) = level_json.as_object_mut() {
+                            o.insert("grey".into(), json!(level));
+                        }
+                        levels.push(level_json);
                     }
-                    check.insert((*name).to_string(), json!({"ratio": ratio, "residual_codes": codes}));
+                    grey_rounds.push(json!({"round": round, "levels": levels}));
+                    if best_curves.as_ref().is_none_or(|(e, _)| err < *e) {
+                        best_curves = Some((err, now));
+                    }
+                    if round == refine || err < REFINED {
+                        break;
+                    }
+                    for ((yj, f), (solver, kj)) in y.iter_mut().zip(fs).zip(solvers.iter_mut().zip(&knots)) {
+                        // At most full signal where the bend peaks.
+                        let mut hi = [0.0; 3];
+                        for ((h, curve), e) in hi.iter_mut().zip(&curves).zip(kj) {
+                            *h = (1.0 / colour::lookup(curve, *e).max(1e-3)).ln().max(lo);
+                        }
+                        *yj = solver.step(*yj, f, lo, hi);
+                    }
                 }
+                if let Some((_, c)) = best_curves {
+                    final_curves = c;
+                }
+            }
+
+            // Reported, not adjusted: the primaries, the greys and a grey between them, through the
+            // result.
+            let mut check = serde_json::Map::new();
+            let mut names: Vec<String> = NAMES.iter().map(|n| (*n).to_string()).collect();
+            names.extend(greys.iter().chain([PROBE].iter()).map(|g| format!("grey {g}")));
+            let contents: Vec<[f64; 3]> = contents.iter().skip(1).copied().collect();
+            let got = read_through(&mut rig, k, spot(k), black_of(k), &m_final, &final_curves, &contents)?;
+            for ((name, g), w) in names.iter().zip(&got).zip(want_all.iter().skip(1)) {
+                check.insert(name.clone(), ratios(*g, *w, black_of(k), black_of(r)));
+            }
+            if let Some(slot) = curve_sets.get_mut(k) {
+                *slot = final_curves;
             }
             if let Some((_, m, f, bx)) = best {
                 for ((name, fc), (xc, hc)) in NAMES.iter().zip(f).zip(bx.into_iter().zip(hi)) {
@@ -539,7 +646,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
                 }
             }
             if let Some(slot) = refined.get_mut(k) {
-                *slot = json!({"reference_white": want, "rounds": rounds, "check": check});
+                *slot = json!({"reference_white": want, "rounds": rounds, "grey_rounds": grey_rounds, "check": check});
             }
         }
     }
@@ -551,7 +658,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         let refined_matrix = matrices.get(k).copied().unwrap_or(c.matrix);
         let peak = [1.0, 0.5].map(|s| colour::peak(&c.primaries, &colour::blend_matrix(&refined_matrix, s)));
         let matrix = correct::matrix_text(&refined_matrix);
-        let curves = correct::curves_text(&c.curves);
+        let curves = correct::curves_text(curve_sets.get(k).unwrap_or(&c.curves));
         let node = NodePath::parse(path)?;
         for (name, value) in [
             ("matrix", Value::Text(matrix.clone())),

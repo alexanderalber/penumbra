@@ -428,6 +428,25 @@ pub fn signal(matrix: &Mat3, curves: &[Vec<f64>; 3], c: [f64; 3]) -> [f64; 3] {
     out
 }
 
+/// A tone curve table with its signal scaled by `e^y` around encoded drives: `knots` are
+/// `(encoded drive, y)`, increasing; the factor is interpolated linearly between them, 1 below
+/// the first and held from the last. Kept within 0..1 and non-decreasing.
+pub fn reshape(curve: &[f64], knots: &[(f64, f64)]) -> Vec<f64> {
+    let n = curve.len().saturating_sub(1).max(1) as f64;
+    let points: Vec<(f64, f64)> = std::iter::once((0.0, 0.0)).chain(knots.iter().copied()).collect();
+    let mut top: f64 = 0.0;
+    curve
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let y = interpolate(&points, i as f64 / n);
+            let v = (v * if y.is_finite() { y.exp() } else { 1.0 }).clamp(0.0, 1.0);
+            top = top.max(v);
+            top
+        })
+        .collect()
+}
+
 /// Largest change of a log scale in one [`Broyden`] step.
 pub const MAX_STEP: f64 = 0.7;
 
@@ -452,6 +471,11 @@ impl Default for Broyden {
 impl Broyden {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A solver for a similar problem: what this one learnt of the slopes, none of its points.
+    pub fn restart(&self) -> Self {
+        Self { jacobian: self.jacobian, last: None }
     }
 
     /// The next `x` after seeing `f` at `x`: each unknown moves at most [`MAX_STEP`] and stays

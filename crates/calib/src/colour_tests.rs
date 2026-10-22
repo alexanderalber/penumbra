@@ -348,3 +348,20 @@ fn signal_follows_the_output_pass() {
             && (s[2] - encode(0.5)).abs() < 1e-12
     );
 }
+
+#[test]
+fn reshape_scales_around_knots_and_stays_monotone() {
+    let straight: Vec<f64> = (0..=16).map(|i| i as f64 / 16.0).collect();
+    assert_eq!(reshape(&straight, &[]), straight);
+    assert_eq!(reshape(&straight, &[(0.5, 0.0), (1.0, 0.0)]), straight);
+    // Half again as much at 0.5 (in log, so the square root of that halfway), nothing at 0 and
+    // from 0.75 on.
+    let r = reshape(&straight, &[(0.5, 1.5_f64.ln()), (0.75, 0.0)]);
+    assert!((r[8] - 0.75).abs() < 1e-12 && (r[4] - 0.25 * 1.5_f64.sqrt()).abs() < 1e-9, "{r:?}");
+    assert_eq!(r[13], 0.8125);
+    assert_eq!(r[16], 1.0);
+    assert!(r.windows(2).all(|w| w[1] >= w[0]), "{r:?}");
+    // Too much is clipped to 1, NaN changes nothing.
+    assert!(reshape(&straight, &[(0.9, 3.0)]).iter().all(|v| *v <= 1.0));
+    assert_eq!(reshape(&straight, &[(0.5, f64::NAN)]), straight);
+}
