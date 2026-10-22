@@ -149,6 +149,8 @@ mod tests {
             let e = net.apply(&types, std::slice::from_ref(&op)).unwrap_err();
             assert!(e.0.contains("did not load") || e.0.contains("cannot hold nodes"), "{op:?}: {e}");
         }
+        let moved = net.apply(&types, &[Op::Place { path: p("/x"), pos: Some([5.0, 6.0]) }]).unwrap();
+        assert_eq!(moved.network.node(x).unwrap().pos, Some([5.0, 6.0]), "a placeholder moves like any node");
         let renamed = net.apply(&types, &[Op::Rename { path: p("/x"), name: "y".parse().unwrap() }]).unwrap();
         assert_eq!(renamed.network.resolve(&p("/y")), Some(x));
         let deleted = net.apply(&types, &[Op::Delete { path: p("/x") }]).unwrap().network;

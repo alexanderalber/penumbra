@@ -80,10 +80,13 @@ pub fn replace(net: &Network, types: &NodeTypes, path: &NodePath, kind: &str) ->
             _ => lost.push(format!("param {name}")),
         }
     }
-    let base = vec![
+    let mut base = vec![
         Op::Delete { path: path.clone() },
         Op::Create { path: path.clone(), kind: kind.to_string(), params },
     ];
+    if node.pos.is_some() {
+        base.push(Op::Place { path: path.clone(), pos: node.pos });
+    }
     let mut work = net.apply(types, &base)?.network;
     let mut ops = base;
     // Keeps `op` when the network takes it, else reports `what` as lost.
@@ -229,6 +232,7 @@ mod tests {
                 from: p("/c"),
                 channel: None,
             },
+            Op::Place { path: p("/c"), pos: Some([120.0, -40.0]) },
         ];
         let net = Network::new().apply(&types, &ops).unwrap().network;
         let r = replace(&net, &types, &p("/c"), "test.fail").unwrap();
@@ -238,6 +242,7 @@ mod tests {
         let node = after.node(c).unwrap();
         assert_eq!(node.kind, "test.fail");
         assert_eq!(node.params.get("value"), Some(&Value::Float(3.0)));
+        assert_eq!(node.pos, Some([120.0, -40.0]), "the new node takes the old one's place");
         let add = after.node(after.resolve(&p("/add")).unwrap()).unwrap();
         assert_eq!(add.inputs, vec![None, Some(Port { node: c, output: 0 })]);
         let sink = after.node(after.resolve(&p("/sink")).unwrap()).unwrap();

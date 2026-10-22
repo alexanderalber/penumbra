@@ -18,6 +18,10 @@
 //!   overwritten. The next change to the file is tried again; `project.save` overwrites it on
 //!   purpose, after copying it to [`BACKUP_NAME`].
 //!
+//! - **Positions from an older build:** a project none of whose nodes has a position takes
+//!   them from the editor's old `layout.ron` as it opens ([`crate::legacy`]); that makes no
+//!   history entry, and the document counts as unsaved, so autosave writes them into the file.
+//!
 //! File IO happens outside the state lock, so a slow disk never stalls an edit from the UI.
 
 use std::io::{Read, Write};
@@ -25,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use penumbra_core::{Error, GroupId, lock};
+use penumbra_core::{Error, GroupId, NodeId, lock};
 use penumbra_graph::{Document, EditOutcome, Network, NodeTypes, Op, Params, Source};
 use serde::Serialize;
 
@@ -196,8 +200,27 @@ impl Session {
                 (Network::new(), Content::default(), None, Some(e.0))
             }
         };
+        // Positions from an older build's layout file: in the document, not yet in the file.
+        let migrated = match file_text {
+            Some(_) => crate::legacy::positions(dir, &net),
+            None => Vec::new(),
+        };
+        let (net, written) = if migrated.is_empty() {
+            (net, None)
+        } else {
+            match net.apply_with(&types, &migrated, Params::Keep) {
+                Ok(applied) => {
+                    log::info!("took {} node positions over from the old layout file", migrated.len());
+                    (applied.network, Some(Arc::new(net)))
+                }
+                Err(e) => {
+                    log::warn!("node positions from the old layout file not taken over: {e}");
+                    (net, None)
+                }
+            }
+        };
         let doc = Document::new(types, net);
-        let written = doc.snapshot();
+        let written = written.unwrap_or_else(|| doc.snapshot());
         Ok(Session {
             dir: dir.to_path_buf(),
             file,
@@ -265,6 +288,13 @@ impl Session {
         let mut state = lock(&self.state);
         state.gate.user_edit(now)?;
         self.doc.edit_live(ops)
+    }
+
+    /// Gives nodes without a position the one the editor picked for them
+    /// ([`Document::place_unplaced`]): no history entry, and not gated, since it is nobody's
+    /// edit (it must neither wait for Claude's claim nor count as the user editing).
+    pub fn place_unplaced(&self, at: &[(NodeId, [f32; 2])]) -> Result<Arc<Network>, Error> {
+        self.doc.place_unplaced(at)
     }
 
     /// Undo one history entry; returns its label, `None` when there is nothing to undo.
@@ -634,13 +664,13 @@ mod tests {
         let s = open(&dir);
         let t0 = Instant::now();
         let good = file(&s);
-        std::fs::write(s.file(), "(version: 2, nodes: {\"/a\": (kind: \"test.const\")})").unwrap();
+        std::fs::write(s.file(), "(version: 3, nodes: {\"/a\": (kind: \"test.const\")})").unwrap();
         s.poll(t0);
         let err = s.status(t0).file_error.unwrap();
-        assert!(err.contains("version 2"), "{err}");
+        assert!(err.contains("version 3"), "{err}");
         s.edit(Actor::User, &[set(3.0)], None, "", t0).unwrap();
         s.poll(t0 + 5 * S);
-        assert!(file(&s).contains("version: 2"), "the broken file is someone's work; keep it");
+        assert!(file(&s).contains("version: 3"), "the broken file is someone's work; keep it");
 
         let fixed =
             good.replace(r#"(kind: "test.const")"#, r#"(kind: "test.const", params: {"value": 4.0})"#);
@@ -708,6 +738,60 @@ mod tests {
         s.poll(Instant::now());
         assert_eq!(s.save(), Ok(true));
         assert_eq!(std::fs::read_to_string(&bak).unwrap(), "more garbage");
+    }
+
+    #[test]
+    fn positions_from_an_old_layout_file_are_taken_over_once() {
+        let dir = TempDir::new("legacy");
+        std::fs::create_dir_all(&dir.0).unwrap();
+        std::fs::write(dir.0.join(FILE_NAME), WITH_BROKEN).unwrap();
+        let layout = r#"// penumbra editor layout: node positions, pan and zoom. Not part of the project content.
+(
+    version: 1,
+    view: Some((
+        pan: (-39.6, -283.2),
+        zoom: 1.0,
+    )),
+    nodes: {
+        "/a": (10.0, 20.0),
+        "/gone": (5.0, 5.0),
+        "/x": (400.0, 0.0),
+    },
+    sections: Some((params: true, viewer: true, changes: true)),
+    options: Some((chan_bars: true, thumbnails: when_free)),
+    column: Some(0.3),
+)
+"#;
+        std::fs::write(dir.0.join(crate::legacy::LAYOUT_FILE), layout).unwrap();
+        let s = open(&dir);
+        let t0 = Instant::now();
+        let pos = |s: &Session, p: &str| {
+            let net = s.doc().snapshot();
+            net.node(net.resolve(&p.parse::<NodePath>().unwrap()).unwrap()).unwrap().pos
+        };
+        assert_eq!(pos(&s, "/a"), Some([10.0, 20.0]));
+        assert_eq!(pos(&s, "/x"), Some([400.0, 0.0]), "a placeholder too");
+        assert_eq!(pos(&s, "/s"), None, "the layout had none for it");
+        assert!(!s.status(t0).can_undo, "no history entry");
+        assert!(s.status(t0).unsaved);
+        s.poll(t0);
+        s.poll(t0 + S);
+        let text = file(&s);
+        assert!(text.contains(r#""/a": (kind: "test.const", pos: [10.0, 20.0]),"#), "{text}");
+        assert!(
+            text.contains(
+                r#""/x": (kind: "gone.kind", params: {"rate": 2}, inputs: {"in": "a"}, pos: [400.0, 0.0]),"#
+            ),
+            "{text}"
+        );
+        assert!(!s.status(t0 + S).unsaved);
+        drop(s);
+        // Once the file has positions, the layout file's are not looked at again.
+        std::fs::write(dir.0.join(crate::legacy::LAYOUT_FILE), layout.replace("10.0, 20.0", "99.0, 99.0"))
+            .unwrap();
+        let again = open(&dir);
+        assert_eq!(pos(&again, "/a"), Some([10.0, 20.0]));
+        assert!(!again.status(t0).unsaved);
     }
 
     const WITH_BROKEN: &str = r#"(version: 1, nodes: {

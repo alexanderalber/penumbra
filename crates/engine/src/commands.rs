@@ -84,6 +84,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("node.disconnect", "Clear an input; {to, input}", node_disconnect);
     add("node.lock", "Lock (hold outputs) or unlock a node; {path, locked?}", node_lock);
     add(
+        "node.place",
+        "Move nodes in the editor (top left corner, graph units on their component's plane; one undo step); null leaves a node to the editor to place; {nodes: {path: [x, y]}}",
+        node_place,
+    );
+    add(
         "node.bind",
         "Drive a param (or one component, /t.translate.0) with a channel; {param, from, channel?}",
         node_bind,
@@ -492,6 +497,7 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
         "kind": node.kind,
         "summary": desc.summary,
         "locked": node.locked,
+        "pos": node.pos,
         "params": params,
         "binds": binds,
         "instance_params": instance,
@@ -717,6 +723,22 @@ fn node_lock(e: &Engine, p: &Json) -> Result<Json> {
     }
     let a: A = args(p)?;
     Ok(outcome(&edit(e, &[Op::Lock { path: a.path, locked: a.locked }], "")?))
+}
+
+fn node_place(e: &Engine, p: &Json) -> Result<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        nodes: BTreeMap<NodePath, Option<[f32; 2]>>,
+    }
+    let a: A = args(p)?;
+    let ops: Vec<Op> = a.nodes.into_iter().map(|(path, pos)| Op::Place { path, pos }).collect();
+    let label = match ops.as_slice() {
+        [] => return Err("`nodes` is empty".into()),
+        [one] => one.label(),
+        many => format!("move {} nodes", many.len()),
+    };
+    Ok(outcome(&edit(e, &ops, &label)?))
 }
 
 /// `/node.param` or `/node.param.N` (component N of a vector or colour).

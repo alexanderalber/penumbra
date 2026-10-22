@@ -124,6 +124,33 @@ fn build_a_network_and_watch_it_cook() {
 }
 
 #[test]
+fn moves_are_edits_and_undo_takes_them_back() {
+    let f = Fixture::new("place");
+    f.call("node.create", json!({"path": "/a", "kind": "chan.constant"}));
+    f.call("node.create", json!({"path": "/b", "kind": "chan.constant"}));
+    let r = f.call("node.place", json!({"nodes": {"/a": [100.4, -20], "/b": [300, 0]}}));
+    assert_eq!(r["history"], "new");
+    let pos = |p: &str| f.call("node.info", json!({"path": p}))["pos"].clone();
+    assert_eq!((pos("/a"), pos("/b")), (json!([100.0, -20.0]), json!([300.0, 0.0])));
+    let list = f.call("history.list", json!({}));
+    assert_eq!(list["entries"][0]["label"], "move 2 nodes");
+    assert_eq!(f.call("history.undo", json!({}))["undone"], "move 2 nodes");
+    assert_eq!(pos("/a"), Json::Null);
+    f.call("history.redo", json!({}));
+    assert_eq!(pos("/a"), json!([100.0, -20.0]));
+    // null leaves a node to the editor to place.
+    f.call("node.place", json!({"nodes": {"/b": null}}));
+    assert_eq!(pos("/b"), Json::Null);
+    // Replacing a node keeps its place.
+    f.call("node.replace", json!({"path": "/a", "kind": "chan.noise"}));
+    assert_eq!(pos("/a"), json!([100.0, -20.0]));
+    assert!(f.fail("node.place", json!({"nodes": {"/a": [1, "x"]}})).contains("invalid"));
+    assert!(f.fail("node.place", json!({"nodes": {"/a": [1e30, 0]}})).contains("finite"));
+    assert!(f.fail("node.place", json!({"nodes": {"/nope": [0, 0]}})).contains("no node"));
+    assert!(f.fail("node.place", json!({"nodes": {}})).contains("empty"));
+}
+
+#[test]
 fn replace_a_node_keeping_what_fits() {
     let f = Fixture::new("replace");
     f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo", "params": {"rate": 2}}));

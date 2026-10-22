@@ -97,6 +97,7 @@ pub fn content(rows: &[Spec<'_>]) -> Content {
                 inputs,
                 binds: BTreeMap::new(),
                 locked: *locked,
+                pos: None,
             },
         );
     }
