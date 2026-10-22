@@ -253,3 +253,8 @@ Content is made once, in the camera's picture, and each projector takes its shar
 4. `tex.composite` with `op` multiply: the remap as layer1, a `tex.image` of
    `objects/weight_N.png` as layer2.
 5. Into that projector's `out.projector`.
+
+Then, optionally, even out each projector's light and the black around overlaps with
+`projector.flatfield` and the same scan folders (see [Even light across a projector, and black in
+overlaps](helpers.md#even-light-across-a-projector-and-black-in-overlaps)): it connects a gain map
+and a black lift to each `out.projector`.

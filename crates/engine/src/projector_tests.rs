@@ -14,8 +14,8 @@ use serde_json::json;
 use super::Fixture;
 use crate::Engine;
 
-const W: usize = 64;
-const H: usize = 32;
+pub(super) const W: usize = 64;
+pub(super) const H: usize = 32;
 
 struct Synth {
     p: Mat3,
@@ -41,7 +41,7 @@ fn synths() -> [Synth; 2] {
 }
 
 /// A full-range BT.709 4:4:4 frame of linear RGB per pixel.
-fn frame(pixels: &[[f64; 3]], sequence: u64, arrived: Instant) -> CameraFrame {
+pub(super) fn frame(pixels: &[[f64; 3]], sequence: u64, arrived: Instant) -> CameraFrame {
     let (kr, kb) = (0.2126, 0.0722);
     let q = |v: f64| (v * 255.0).round().clamp(0.0, 255.0) as u8;
     let (mut y, mut cb, mut cr) = (Vec::new(), Vec::new(), Vec::new());

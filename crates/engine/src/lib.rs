@@ -15,6 +15,7 @@ pub mod control;
 pub mod crash;
 pub mod dmx;
 pub mod engine;
+pub mod flatfield;
 pub mod meter;
 pub mod navigation;
 pub mod ndi;
@@ -74,6 +75,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     scan_align::register(&mut registry, engine);
     scan_relief::register(&mut registry, engine);
     projector::register(&mut registry, engine);
+    flatfield::register(&mut registry, engine);
     projects::register(&mut registry, engine);
     navigation::register(&mut registry, engine);
     registry

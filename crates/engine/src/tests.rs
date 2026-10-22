@@ -926,6 +926,9 @@ mod video_out_tests;
 #[path = "projector_tests.rs"]
 mod projector_tests;
 
+#[path = "flatfield_tests.rs"]
+mod flatfield_tests;
+
 #[path = "scan_capture_tests.rs"]
 mod scan_capture_tests;
 

@@ -24,6 +24,10 @@
 //! projector ([`BoardState::flat`]) that replaces the picture without touching the network;
 //! `scan.capture` shows its structured light patterns the same way ([`BoardState::stripes`]).
 //! Neither goes through the colour correction.
+//!
+//! Two more inputs belong to the correction, both in the projector's own pixels: `gain`, a
+//! factor per pixel and channel that evens out a hot spot and a colour cast, and `black`, a lift
+//! of the black where another projector does not reach; `projector.flatfield` measures them.
 
 pub mod correct;
 pub mod ndi;
@@ -96,6 +100,13 @@ pub struct ProjectorFrame {
     pub tint: [f32; 3],
     /// Its colour correction; `None` when off or the identity.
     pub correction: Option<Arc<Correction>>,
+    /// What its `gain` and `black` inputs carry (per projector pixel: a factor on the drive, a
+    /// lift of the black); `None` when unconnected or not cooked.
+    pub gain: Option<Data>,
+    pub black: Option<Data>,
+    /// How much of them applies (its `flatten` and `lift` params; 0 with `correct` off).
+    pub flatten: f32,
+    pub lift: f32,
     /// A flat signal shown instead of anything, uncorrected (a measurement running).
     pub flat: Option<[f32; 3]>,
     /// A structured light pattern shown instead of anything but `flat`, uncorrected (a scan
@@ -238,7 +249,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(ParamSpec::text("curves", "").multiline().group(COLOUR).doc(
             "Tone curve per channel, from drive (sRGB-encoded, evenly spaced from 0 to 1) to the signal sent:              lines `r: 0 0.06 ... 1`, `g: ...`, `b: ...` (2 to 64 samples each, one line for all three); a straight              line 0..1 or empty is none. projector.match writes it",
         ))
+        .param(ParamSpec::float("flatten", 1.0).clamp(0.0, 1.0).group(COLOUR).doc(
+            "How much of the gain map at the `gain` input applies: 1 all of it (even brightness and colour              across the picture), 0 none. projector.flatfield measures the map",
+        ))
+        .param(ParamSpec::float("lift", 1.0).clamp(0.0, 4.0).group(COLOUR).doc(
+            "Scales the black lift at the `black` input: 1 as measured, 0 none, more where the camera              underrated the black (black outside an overlap still darker than inside). projector.flatfield              measures it",
+        ))
         .input("in", DataKind::Tex)
+        .input("gain", DataKind::Tex)
+        .input("black", DataKind::Tex)
         // Not reading the clock; declared so the node picks up what the output side reports
         // (a display plugged in or out) every frame. Cooking it costs nothing.
         .time_dependent();
@@ -371,6 +390,15 @@ pub fn collect(
                 },
             }
         };
+        let on = !matches!(param("correct"), Some(Value::Bool(false)));
+        let amount = |name: &str| match param(name).and_then(Value::as_f64) {
+            Some(v) if on && v.is_finite() => v as f32,
+            Some(_) => 0.0,
+            None if on => 1.0,
+            None => 0.0,
+        };
+        let input =
+            |k: usize| node.inputs.get(k).copied().flatten().and_then(|port| cooker.output(port).cloned());
         out.push(ProjectorFrame {
             node: node.id,
             path: net.path_of(node.id).map(|p| p.to_string()).unwrap_or_default(),
@@ -383,6 +411,10 @@ pub fn collect(
             test,
             tint: tint(rank),
             correction,
+            gain: input(1),
+            black: input(2),
+            flatten: amount("flatten"),
+            lift: amount("lift"),
             flat,
             stripes,
         });
@@ -431,9 +463,13 @@ pub fn item_for<'a>(
             overlay: None,
             tint,
             correction: None,
+            flatten: 0.0,
+            lift: 0.0,
             flat: None,
             stripes: None,
         },
+        gain: None,
+        black: None,
     }
 }
 
@@ -464,6 +500,10 @@ pub fn item<'a>(
     let tex = frame.source.as_ref()?.get::<Tex>()?;
     let mut item = item_for(tex, mapping, &[], [1.0; 3], viewport);
     item.look.correction = frame.correction.clone();
+    item.gain = frame.gain.as_ref().and_then(|d| d.get::<Tex>());
+    item.black = frame.black.as_ref().and_then(|d| d.get::<Tex>());
+    item.look.flatten = frame.flatten;
+    item.look.lift = frame.lift;
     Some(item)
 }
 

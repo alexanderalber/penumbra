@@ -15,7 +15,7 @@ use crate::{FORMAT, Gpu, Tex};
 pub const MAX_PEERS: usize = 8;
 /// Most samples per tone curve of a [`Correction`].
 pub const MAX_CURVE: usize = 64;
-const UNIFORM_SIZE: u64 = 304 + 16 * MAX_CURVE as u64 + 16;
+const UNIFORM_SIZE: u64 = 304 + 16 * MAX_CURVE as u64 + 32;
 
 /// A projector's colour correction, the last step before its signal: a matrix in linear light
 /// (`drive = matrix * colour`, clamped to 0..1), then per channel a tone curve from the drive,
@@ -58,6 +58,10 @@ pub struct Look {
     pub overlay: Option<Overlay>,
     /// The projector's colour correction, applied to everything but `test` and `flat`.
     pub correction: Option<Arc<Correction>>,
+    /// How much of the item's gain map ([`Item::gain`]) applies: 0 none, 1 all of it.
+    pub flatten: f32,
+    /// How much of the item's black lift ([`Item::black`]) applies: 0 none, 1 as measured.
+    pub lift: f32,
     /// A flat signal (sRGB-encoded, 0..1) instead of anything else, uncorrected: what a
     /// measurement shows.
     pub flat: Option<[f32; 3]>,
@@ -106,6 +110,13 @@ pub struct Item<'a> {
     /// x, y, width, height in target pixels.
     pub viewport: [f32; 4],
     pub look: Look,
+    /// Per projector pixel (the viewport stretched over it) a factor per channel on the
+    /// corrected drive, in linear light, after the matrix and before the tone curves: evens out
+    /// brightness and colour across the projector's picture.
+    pub gain: Option<&'a Tex>,
+    /// Per projector pixel a lift of the black per channel, in the same drive after the gain:
+    /// `drive = lift + (1 - lift) drive`, so black outside an overlap matches the black inside.
+    pub black: Option<&'a Tex>,
 }
 
 struct Geometry {
@@ -261,7 +272,14 @@ impl Projection {
                 continue;
             }
             let Some(buffer) = self.uniform(gpu, i) else { continue };
-            let bytes = uniform_bytes(&item.look, item.tex.size(), item.viewport, encode);
+            let bytes = uniform_bytes(
+                &item.look,
+                item.tex.size(),
+                item.viewport,
+                encode,
+                item.gain.is_some(),
+                item.black.is_some(),
+            );
             gpu.queue().write_buffer(&buffer, 0, &bytes);
             let group = gpu.device().create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("projection"),
@@ -276,6 +294,15 @@ impl Projection {
                         resource: wgpu::BindingResource::Sampler(&self.sampler),
                     },
                     wgpu::BindGroupEntry { binding: 2, resource: buffer.as_entire_binding() },
+                    // Without a map the input stands in; the shader does not read it then.
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(item.gain.unwrap_or(item.tex).view()),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::TextureView(item.black.unwrap_or(item.tex).view()),
+                    },
                 ],
             });
             let scissor = [x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32];
@@ -323,7 +350,17 @@ impl Projection {
     }
 }
 
-fn uniform_bytes(look: &Look, tex: (u32, u32), viewport: [f32; 4], encode: bool) -> Vec<u8> {
+fn uniform_bytes(
+    look: &Look,
+    tex: (u32, u32),
+    viewport: [f32; 4],
+    encode: bool,
+    gain: bool,
+    black: bool,
+) -> Vec<u8> {
+    let amount = |v: f32| if v.is_finite() { v.clamp(0.0, 4.0) } else { 0.0 };
+    let gain = gain && amount(look.flatten) > 0.0;
+    let black = black && amount(look.lift) > 0.0;
     let mut b = Vec::with_capacity(UNIFORM_SIZE as usize);
     let mut f = |v: f32| b.extend_from_slice(&v.to_le_bytes());
     for v in look.region {
@@ -343,9 +380,14 @@ fn uniform_bytes(look: &Look, tex: (u32, u32), viewport: [f32; 4], encode: bool)
         | (u32::from(look.overlay.is_some()) << 4)
         | (u32::from(look.flat.is_some()) << 5)
         | (u32::from(
-            look.correction.is_some() && look.flat.is_none() && look.stripes.is_none() && !look.test,
+            (look.correction.is_some() || gain || black)
+                && look.flat.is_none()
+                && look.stripes.is_none()
+                && !look.test,
         ) << 6)
-        | (u32::from(look.stripes.is_some() && look.flat.is_none()) << 7);
+        | (u32::from(look.stripes.is_some() && look.flat.is_none()) << 7)
+        | (u32::from(gain) << 8)
+        | (u32::from(black) << 9);
     let peers: Vec<[f32; 4]> = look.peers.iter().take(MAX_PEERS).copied().collect();
     let finite = |v: f32| if v.is_finite() { v } else { 1.0 };
     let overlay =
@@ -415,6 +457,10 @@ fn uniform_bytes(look: &Look, tex: (u32, u32), viewport: [f32; 4], encode: bool)
     ] {
         b.extend_from_slice(&v.to_le_bytes());
     }
+    // Then how much of the gain map and of the black lift apply.
+    for v in [amount(look.flatten).min(1.0), amount(look.lift), 0.0, 0.0] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
     b.resize(UNIFORM_SIZE as usize, 0);
     b
 }
@@ -468,9 +514,13 @@ mod tests {
                     overlay: None,
                     tint: [1.0; 3],
                     correction: None,
+                    flatten: 1.0,
+                    lift: 1.0,
                     flat: None,
                     stripes: None,
                 },
+                gain: None,
+                black: None,
             };
             drawer.render(&gpu, &target, &[item]).unwrap();
             gpu.read(&target).unwrap()
@@ -508,6 +558,8 @@ mod tests {
             overlay: None,
             tint: [1.0, 0.0, 0.0],
             correction: None,
+            flatten: 1.0,
+            lift: 1.0,
             flat: None,
             stripes: None,
         };
@@ -519,6 +571,8 @@ mod tests {
             indices: &indices,
             viewport: [100.0, 0.0, 100.0, 90.0],
             look,
+            gain: None,
+            black: None,
         };
         drawer.render(&gpu, &target, &[item]).unwrap();
         let px = gpu.read(&target).unwrap();
@@ -546,6 +600,8 @@ mod tests {
             overlay: None,
             tint: [1.0; 3],
             correction: None,
+            flatten: 1.0,
+            lift: 1.0,
             flat: None,
             stripes: None,
         };
@@ -556,6 +612,8 @@ mod tests {
             indices: &indices,
             viewport: [20.0, 0.0, 20.0, 20.0],
             look,
+            gain: None,
+            black: None,
         };
         drawer.render(&gpu, &target, &[item]).unwrap();
         let px = gpu.read(&target).unwrap();
@@ -575,12 +633,16 @@ mod tests {
                 overlay: None,
                 tint: [1.0; 3],
                 correction: None,
+                flatten: 1.0,
+                lift: 1.0,
                 flat: None,
                 stripes: None,
             },
             (4, 4),
             [0.0; 4],
             true,
+            false,
+            false,
         );
         assert_eq!(bytes.len(), UNIFORM_SIZE as usize);
     }
@@ -603,6 +665,8 @@ mod tests {
                 overlay: None,
                 tint: [1.0; 3],
                 correction: correction.map(Arc::new),
+                flatten: 1.0,
+                lift: 1.0,
                 flat,
                 stripes: None,
             };
@@ -613,6 +677,8 @@ mod tests {
                 indices: &indices,
                 viewport: [0.0, 0.0, 8.0, 8.0],
                 look,
+                gain: None,
+                black: None,
             };
             drawer.render(&gpu, &target, &[item]).unwrap();
             let px = gpu.read(&target).unwrap();
@@ -646,6 +712,81 @@ mod tests {
             "{flat:?}"
         );
     }
+    /// A texture of `rgb(uv)` written as WGSL.
+    fn painted(gpu: &Gpu, w: u32, h: u32, rgb: &str) -> Tex {
+        let tex = Tex::new(gpu, w, h, "painted").unwrap();
+        let source = format!(
+            "@fragment fn main(v: PnVertex) -> @location(0) vec4f {{ let uv = v.uv; return vec4f({rgb}, 1.0); }}"
+        );
+        let pass = crate::Pass::compile(gpu, "painted", &source, &[]).unwrap();
+        pass.render(gpu, &tex, &crate::PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &|_| None });
+        tex
+    }
+
+    #[test]
+    fn gain_map_and_black_lift_in_the_projectors_pixels() {
+        let Some(gpu) = gpu() else { return };
+        // Input: mid grey on the left half of the surface, black on the right.
+        let src = painted(&gpu, 16, 16, "vec3f(select(0.0, 0.5, uv.x < 0.5))");
+        // Gain: 0.5 in red over the top half of the projector, 1 elsewhere. Black lift: 0.1 in
+        // blue over the bottom half.
+        let gain = painted(&gpu, 4, 4, "vec3f(select(1.0, 0.5, uv.y < 0.5), 1.0, 1.0)");
+        let black = painted(&gpu, 4, 4, "vec3f(0.0, 0.0, select(0.0, 0.1, uv.y > 0.5))");
+        let mut drawer = Projection::new(&gpu);
+        let (vertices, indices) = quad([0.0, 0.0, 1.0, 1.0]);
+        let mut shot = |gain_on: Option<&Tex>, black_on: Option<&Tex>, flatten: f32, lift: f32| {
+            // The projector is the right half of the target: its own pixels decide, not the target's.
+            let target = Tex::new(&gpu, 16, 8, "projector").unwrap();
+            let look = Look {
+                region: [0.0, 0.0, 1.0, 1.0],
+                peers: vec![],
+                blend: false,
+                gamma: 1.0,
+                pattern: false,
+                test: false,
+                overlay: None,
+                tint: [1.0; 3],
+                correction: None,
+                flatten,
+                lift,
+                flat: None,
+                stripes: None,
+            };
+            let item = Item {
+                key: 7,
+                tex: &src,
+                vertices: &vertices,
+                indices: &indices,
+                viewport: [8.0, 0.0, 8.0, 8.0],
+                look,
+                gain: gain_on,
+                black: black_on,
+            };
+            drawer.render(&gpu, &target, &[item]).unwrap();
+            gpu.read(&target).unwrap()
+        };
+        let at = |px: &crate::Pixels, x: u32, y: u32| {
+            let p = px.get(x, y).unwrap();
+            [p[0], p[1], p[2]]
+        };
+        let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 3e-3);
+        let px = shot(Some(&gain), Some(&black), 1.0, 1.0);
+        // Top left: grey, red halved in linear light.
+        assert!(near(at(&px, 9, 1), [0.25, 0.5, 0.5]), "{:?}", at(&px, 9, 1));
+        // Bottom right: black, blue lifted to a tenth of full drive.
+        assert!(near(at(&px, 14, 6), [0.0, 0.0, 0.1]), "{:?}", at(&px, 14, 6));
+        // Bottom left: grey lifted, 0.1 + 0.9 * 0.5.
+        assert!(near(at(&px, 9, 6), [0.5, 0.5, 0.55]), "{:?}", at(&px, 9, 6));
+        // Half of the gain, double the lift.
+        let px = shot(Some(&gain), Some(&black), 0.5, 2.0);
+        assert!(near(at(&px, 9, 1), [0.375, 0.5, 0.5]), "{:?}", at(&px, 9, 1));
+        assert!(near(at(&px, 14, 6), [0.0, 0.0, 0.2]), "{:?}", at(&px, 14, 6));
+        // Off by amount or by having no map: the plain picture.
+        for px in [shot(Some(&gain), Some(&black), 0.0, 0.0), shot(None, None, 1.0, 1.0)] {
+            assert!(near(at(&px, 9, 1), [0.5; 3]) && near(at(&px, 14, 6), [0.0; 3]));
+        }
+    }
+
     #[test]
     fn stripes_in_the_projectors_pixels_uncorrected() {
         let Some(gpu) = gpu() else { return };
@@ -669,6 +810,8 @@ mod tests {
                     matrix: [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.5]],
                     curves: [vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]],
                 })),
+                flatten: 1.0,
+                lift: 1.0,
                 flat: None,
                 stripes: Some(Stripes { pattern, level: 1.0, size: [20, 6] }),
             };
@@ -679,6 +822,8 @@ mod tests {
                 indices: &indices,
                 viewport: [0.0, 0.0, 40.0, 12.0],
                 look,
+                gain: None,
+                black: None,
             };
             drawer.render(&gpu, &target, &[item]).unwrap();
             gpu.read(&target).unwrap()

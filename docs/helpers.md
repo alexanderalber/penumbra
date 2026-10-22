@@ -63,9 +63,54 @@ picture for comparison. The test pattern is never corrected.
 only with a camera known to be linear, through an ordinary camera it bakes the camera's own
 curve into every projector and tints the whole picture.
 
-Not done yet: black level (in an overlap black is brighter), saturated colours match only
-approximately, and brightness that varies across one projector's picture (hot spot, colour
-shift towards an edge) is not corrected.
+Saturated colours match only approximately.
+
+### Even light across a projector, and black in overlaps
+
+Within one projector's picture brightness and colour vary too: brighter in the middle (a hot
+spot), a colour cast towards an edge. And where projectors overlap, their blacks add up, so
+black there is brighter than beside it. `projector.flatfield` measures both with the camera
+and writes per projector two pictures, which `out.projector` takes at its `gain` and `black`
+inputs:
+
+    penumbra-cli ctl projector.flatfield '{"camera": "/cam", "projectors": ["/proj_a", "/proj_b"], "scans": ["scan/proj_a", "scan/proj_b"]}'
+
+`scans` are the projectors' scan folders (from `scan.capture`, see [scanning](scanning.md)):
+they tell which camera pixel each projector pixel lands on, so they must fit the current
+setup. It takes about 40 seconds for two projectors. All projectors show black, then each one
+white alone, then each primary at a few levels (`levels`, from `low` up to full). Per camera
+pixel the readings are compared with the projector's typical pixel: at which drive does this
+pixel read what the typical one reads? Only comparisons, so the camera's own curve does not
+matter. A smooth surface is fitted to that over the projector's picture, since a hot spot and a
+cast are smooth while the surface's own pattern is not; then everything is scaled so the
+dimmest part of the picture (all but `floor`, 2 %) still reaches it at full drive. The gain is
+the same at the spot where `projector.match` measures, for every projector and channel, so a
+match stays valid. It costs brightness: the report's `scale` is the gain there, the share of
+light the projectors keep at that spot.
+
+The gain map (`flatfield/gain_NAME.png`) multiplies the drive per pixel and channel, in linear
+light, after the colour matrix and before the tone curves: the hot spot and the cast belong to
+the projector's light, which its drive scales, and the curves only bend the drive into the
+projector's response. The black lift (`flatfield/black_NAME.png`) raises the drive where some
+projector does not reach, by that projector's black, shared among those that do:
+`drive = lift + (1 - lift) drive`. The command connects both through `tex.image` nodes (one undo
+step; `apply: false` only writes the files). The params `flatten` (0 to 1, how much of the gain
+applies) and `lift` (a factor on the black lift) are in the projector's *colour* group; `correct`
+off turns them off with the rest.
+
+Measure on a flat, evenly coloured surface (the wall before objects go up, or a white sheet in
+front of them): on a relief or objects the brightness also changes with the surface's slope,
+and the gain would undo that shading too. The map lives in the projector's own pixels, so it
+stays valid when objects are placed later, as long as the projector, its zoom and its lens shift
+stay put. Where the surface is not even, `even: "colour"` measures only the colour cast (the
+balance of red, green and blue, which shading does not change) and leaves the brightness alone;
+the command warns when it sees an uneven surface with the default `even: "all"`.
+
+The camera reads black poorly (dark values sit in the toe of its curve), so the measured lift
+tends to be too small. Judge it by eye with everything black: if black beside the overlap is
+still darker, raise `lift` (with an ordinary camera about 2). `contrast` estimates a
+black the camera cannot see at all (white over contrast). `measured_NAME.png` shows what was
+measured per camera pixel before the fit, `pictures: true` keeps the camera's pictures.
 
 ## Resolution
 

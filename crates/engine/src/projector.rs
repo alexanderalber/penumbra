@@ -50,7 +50,7 @@ const PROBE: f64 = 0.375;
 /// Refining stops early when every channel reads within this (log ratio, about 0.5 %).
 const REFINED: f64 = 0.005;
 /// Widest camera picture measured; larger frames are sampled every few pixels.
-const MAX_WIDTH: usize = 640;
+pub(crate) const MAX_WIDTH: usize = 640;
 
 /// The engines (by address) measuring now: one measurement (`projector.match`, `scan.capture`)
 /// per engine at a time, two would fight over the projectors.
@@ -272,20 +272,22 @@ pub(crate) fn wait_shown(
 }
 
 /// What a measurement needs while it runs.
-struct Rig<'a> {
-    engine: &'a Engine,
-    projectors: Vec<(NodeId, String)>,
-    camera: CameraStream,
-    settle: Duration,
-    timeout: Duration,
+pub(crate) struct Rig<'a> {
+    pub engine: &'a Engine,
+    pub projectors: Vec<(NodeId, String)>,
+    pub camera: CameraStream,
+    pub settle: Duration,
+    pub timeout: Duration,
     /// The output pass last waited for.
-    pass: u64,
+    pub pass: u64,
+    /// Camera frames averaged per picture (at least 1).
+    pub frames: usize,
 }
 
 impl Rig<'_> {
     /// Shows `signal(k)` on projector `k` (sRGB-encoded, uncorrected) and returns the camera's
-    /// picture of it.
-    fn shot(&mut self, signal: impl Fn(usize) -> [f32; 3]) -> CmdResult<Picture> {
+    /// picture of it: the mean of `frames` consecutive frames.
+    pub(crate) fn shot(&mut self, signal: impl Fn(usize) -> [f32; 3]) -> CmdResult<Picture> {
         let wanted: BTreeMap<NodeId, [f32; 3]> =
             self.projectors.iter().enumerate().map(|(k, (id, _))| (*id, signal(k))).collect();
         self.engine.board().update(|b| b.flat.extend(wanted.iter().map(|(k, v)| (*k, *v))));
@@ -294,10 +296,34 @@ impl Rig<'_> {
         })?;
         std::thread::sleep(self.settle);
         let after = Instant::now();
-        let f = self.camera.next(self.engine, self.timeout, |f| f.arrived >= after)?;
+        let mut f = self.camera.next(self.engine, self.timeout, |f| f.arrived >= after)?;
         let step = (f.width as usize).div_ceil(MAX_WIDTH).max(1);
-        colour::linear_picture(&self.camera.planes(&f), step)
-            .map_err(|e| format!("{}: {e}", self.camera.name).into())
+        let read = |f: &CameraFrame| -> CmdResult<Picture> {
+            colour::linear_picture(&self.camera.planes(f), step)
+                .map_err(|e| format!("{}: {e}", self.camera.name).into())
+        };
+        let mut sum = read(&f)?;
+        let n = self.frames.max(1);
+        for _ in 1..n {
+            let last = f.arrived;
+            f = self.camera.next(self.engine, self.timeout, |g| g.arrived > last)?;
+            let more = read(&f)?;
+            if (more.width, more.height) != (sum.width, sum.height) {
+                return Err(format!("{}: the frame size changed while measuring", self.camera.name).into());
+            }
+            for (s, m) in sum.rgb.iter_mut().zip(&more.rgb) {
+                for (a, b) in s.iter_mut().zip(m) {
+                    *a += *b;
+                }
+            }
+        }
+        let scale = 1.0 / n as f32;
+        for p in &mut sum.rgb {
+            for v in p.iter_mut() {
+                *v *= scale;
+            }
+        }
+        Ok(sum)
     }
 }
 
@@ -473,6 +499,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         settle: Duration::from_secs_f64(settle),
         timeout: Duration::from_secs_f64(timeout),
         pass: e.output().pass,
+        frames: 1,
     };
 
     // Where each projector lights the camera picture.
