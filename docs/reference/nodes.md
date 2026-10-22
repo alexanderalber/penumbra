@@ -4,7 +4,7 @@
 
 Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range is only the slider's; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
 
-Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp)
+Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp), [node](#node)
 
 ## tex
 
@@ -1912,4 +1912,22 @@ Outputs: none.
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `expose` *(more)* | text |  |  | Inner params shown on the component, one per line: `name = node.param` or `node.param` |
+
+## node
+
+[node.broken](#nodebroken)
+
+### node.broken
+
+A node whose entry in the project file did not load, kept as it was
+
+Inputs: none.
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `entry` | text |  |  | The node's entry from the project file, written back unchanged on every save |
+| `error` | text |  |  | Why the entry did not load as a node |
+| `outputs` | text |  |  | Names of the outputs other nodes read from this one, one per line |
 

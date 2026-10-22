@@ -559,7 +559,12 @@ impl PenumbraApp {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title = title;
         }
-        if !claude && status.file_error.is_none() && status.write_error.is_none() && !status.merge_waiting {
+        if !claude
+            && status.file_error.is_none()
+            && status.write_error.is_none()
+            && !status.merge_waiting
+            && status.broken.is_empty()
+        {
             return;
         }
         egui::Panel::top("mode").show(ui, |ui| {
@@ -598,6 +603,26 @@ impl PenumbraApp {
                         ui.separator();
                     }
                     ui.colored_label(theme::FILE, "a file edit waits until you pause");
+                }
+                if !status.broken.is_empty() {
+                    if claude
+                        || status.file_error.is_some()
+                        || status.write_error.is_some()
+                        || status.merge_waiting
+                    {
+                        ui.separator();
+                    }
+                    let paths: Vec<&str> = status.broken.iter().map(|b| b.path.as_str()).collect();
+                    let r = ui.colored_label(
+                        theme::ERROR,
+                        format!("did not load, kept as written in the project file: {}", paths.join(", ")),
+                    );
+                    let why: Vec<String> = status
+                        .broken
+                        .iter()
+                        .map(|b| format!("{} ({}): {}", b.path, b.kind, b.error))
+                        .collect();
+                    r.on_hover_text(why.join("\n"));
                 }
             });
         });

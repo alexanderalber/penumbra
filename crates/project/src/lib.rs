@@ -15,6 +15,6 @@ pub mod session;
 mod testing;
 
 pub use content::{Content, NodeContent, PortRef, diff};
-pub use file::{FILE_NAME, FORMAT_VERSION, parse, print};
+pub use file::{BrokenNode, FILE_NAME, FORMAT_VERSION, load, parse, print};
 pub use gate::{Gate, GateStatus};
-pub use session::{AUTOSAVE_DELAY, Actor, Session, SessionStatus};
+pub use session::{AUTOSAVE_DELAY, Actor, BACKUP_NAME, Session, SessionStatus};

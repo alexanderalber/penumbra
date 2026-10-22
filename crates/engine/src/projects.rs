@@ -633,6 +633,28 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    /// The shipped examples and the demo load whole: no node of theirs is kept as a
+    /// placeholder of a node that did not load.
+    #[test]
+    fn the_shipped_examples_and_the_demo_load_whole() {
+        use penumbra_graph::{Network, Params};
+        let types = penumbra_ops::builtin_types().unwrap();
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples");
+        let names = list_examples(&source);
+        assert!(names.len() >= 5, "{names:?}");
+        let mut texts: Vec<(String, String)> = names
+            .iter()
+            .map(|n| (n.clone(), std::fs::read_to_string(source.join(n).join(FILE_NAME)).unwrap()))
+            .collect();
+        texts.push(("demo".into(), DEMO.to_string()));
+        for (name, text) in texts {
+            let content = penumbra_project::parse(&text, &types).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(penumbra_project::load(&text, &types).unwrap(), content, "{name}");
+            let ops = penumbra_project::diff(&Content::default(), &content);
+            Network::new().apply_with(&types, &ops, Params::Keep).unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+    }
+
     #[test]
     fn a_broken_recent_file_is_an_empty_list() {
         let root = temp("broken");

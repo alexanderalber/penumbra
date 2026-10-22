@@ -81,6 +81,7 @@ fn groups(types: &NodeTypes) -> Vec<Vec<String>> {
         GROUPS.iter().map(|g| g.iter().map(|f| (*f).to_string()).collect()).collect();
     let mut extra: Vec<String> = types
         .kinds()
+        .filter(|k| *k != penumbra_graph::broken::BROKEN_KIND)
         .filter_map(|k| k.split_once('.').map(|(f, _)| f.to_string()))
         .filter(|f| !out.iter().flatten().any(|g| g == f))
         .collect();
@@ -119,6 +120,8 @@ fn kinds_of(types: &NodeTypes, family: &str, library: &[Offered]) -> Vec<String>
     let mut kinds: Vec<String> = types
         .kinds()
         .filter(|k| k.split_once('.').is_some_and(|(f, _)| f == family))
+        // Only loading a project makes a placeholder of a node that did not load.
+        .filter(|k| *k != penumbra_graph::broken::BROKEN_KIND)
         .map(str::to_string)
         .collect();
     kinds.sort_by_key(|k| (*k != penumbra_ops::comp::COMP_KIND, short(k).to_lowercase()));
