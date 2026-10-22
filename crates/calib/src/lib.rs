@@ -8,8 +8,11 @@
 //!   pose and intrinsics.
 //! - Structured light ([`scan`]): Gray-code patterns for a projector and the decoding of a
 //!   camera's pictures of them into maps between camera and projector pixels.
+//! - Colour ([`colour`]): matching projectors to each other from a camera's pictures of their
+//!   red, green and blue ramps.
 
 mod camera;
+pub mod colour;
 mod homography;
 pub mod scan;
 mod solve;

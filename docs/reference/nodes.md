@@ -1802,6 +1802,11 @@ Outputs: none.
 | `fit` | fit \| fill \| stretch | `"fit"` |  | How the picture sits in the viewport when their aspects differ; fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted |
 | `viewport` *(more)* | vec4 | `[0, 0, 1, 1]` | 0 to 1 | x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5) |
 | `test` | bool | `false` |  | A test pattern in the projector's own pixels instead of the input: square cells, centre, circle, and the image's edge in this projector's colour |
+| `correct` *(colour)* | bool | `true` |  | Apply the colour correction below (off: the plain picture, to compare; the test pattern is never corrected) |
+| `strength` *(colour)* | float | `1` | 0 to 1 | How much of the matching matrix applies: 1 all of it, 0 none. Lower keeps more of a brighter projector's brightness and leaves more of the colour and brightness difference. The tone curves always apply in full: they cost no peak brightness and make soft edges add up |
+| `gain` *(colour)* | float | `1` | 0 to 1 | Brightness by hand, in linear light, on top of the matrix (0.8: a fifth less light) |
+| `matrix` *(colour)* | text |  |  | 3x3 matrix in linear light, drive = matrix x colour: three rows of three numbers (`1 0 0 / 0 1 0 / 0 0 1`); empty is none. projector.match writes it |
+| `curves` *(colour)* | text |  |  | Tone curve per channel, from drive (sRGB-encoded, evenly spaced from 0 to 1) to the signal sent: lines `r: 0 0.06 ... 1`, `g: ...`, `b: ...` (2 to 64 samples each, one line for all three); a straight line 0..1 or empty is none. projector.match writes it |
 
 ### out.spout
 

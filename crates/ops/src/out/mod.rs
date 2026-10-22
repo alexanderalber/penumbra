@@ -17,7 +17,13 @@
 //! Mapping a surface onto a projector (corners, mesh, soft edges) is `tex.mapper`'s job; a
 //! projector only places its input into its viewport by `fit`. The outputs draw that with the
 //! same drawer the mapper uses ([`penumbra_gpu::Projection`]), from a plain [`Mapping`].
+//!
+//! A projector's colour correction (params in group *colour*, [`correct`]) is the last step of
+//! that draw, so projectors of different models can be matched to each other; `projector.match`
+//! measures it with a camera. While it measures, the [`OutputBoard`] holds a flat signal per
+//! projector ([`BoardState::flat`]) that replaces the picture without touching the network.
 
+pub mod correct;
 pub mod ndi;
 pub mod place;
 pub mod spout;
@@ -28,6 +34,7 @@ use std::sync::{Arc, Mutex};
 
 use penumbra_core::{Error, NodeId, ParamSpec, Value, lock};
 use penumbra_gpu::Tex;
+use penumbra_gpu::projection::Correction;
 use penumbra_graph::{
     CookContext, CookError, Cooked, Cooker, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes,
     Operator,
@@ -40,6 +47,8 @@ use crate::mapping::{Mapping, Setup};
 pub const DEFAULT_RASTER: (u32, u32) = (1920, 1080);
 
 pub const PROJECTOR: &str = "out.projector";
+/// The param group of a projector's colour correction.
+pub const COLOUR: &str = "colour";
 
 /// How a projector's texture fills its viewport.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -83,6 +92,10 @@ pub struct ProjectorFrame {
     pub test: bool,
     /// Its colour in the test pattern (by its rank among the projectors).
     pub tint: [f32; 3],
+    /// Its colour correction; `None` when off or the identity.
+    pub correction: Option<Arc<Correction>>,
+    /// A flat signal shown instead of anything, uncorrected (a measurement running).
+    pub flat: Option<[f32; 3]>,
 }
 
 /// A display as the output side sees it (named by the system crate, sized by winit).
@@ -137,6 +150,13 @@ pub struct BoardState {
     /// Where the editor window is (`x, y, w, h` in physical desktop pixels), set by the UI;
     /// projectors are not opened on the display that shows it.
     pub editor: Option<[i32; 4]>,
+    /// Flat signals (sRGB-encoded) shown instead of these projectors' pictures, uncorrected:
+    /// set by a measurement (`projector.match`) and cleared when it ends.
+    #[serde(skip)]
+    pub flat: BTreeMap<NodeId, [f32; 3]>,
+    /// The newest output pass each projector's window presented.
+    #[serde(skip)]
+    pub presented: BTreeMap<NodeId, u64>,
 }
 
 /// The [`BoardState`] behind a lock; cheap to clone.
@@ -190,6 +210,21 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "A test pattern in the projector's own pixels instead of the input: square cells, centre, \
              circle, and the image's edge in this projector's colour",
         ))
+        .param(ParamSpec::bool("correct", true).group(COLOUR).doc(
+            "Apply the colour correction below (off: the plain picture, to compare; the test pattern is never corrected)",
+        ))
+        .param(ParamSpec::float("strength", 1.0).clamp(0.0, 1.0).group(COLOUR).doc(
+            "How much of the matching matrix applies: 1 all of it, 0 none. Lower keeps more of a brighter              projector's brightness and leaves more of the colour and brightness difference. The tone              curves always apply in full: they cost no peak brightness and make soft edges add up",
+        ))
+        .param(ParamSpec::float("gain", 1.0).clamp(0.0, 1.0).group(COLOUR).doc(
+            "Brightness by hand, in linear light, on top of the matrix (0.8: a fifth less light)",
+        ))
+        .param(ParamSpec::text("matrix", "").multiline().group(COLOUR).doc(
+            "3x3 matrix in linear light, drive = matrix x colour: three rows of three numbers (`1 0 0 / 0 1 0 / 0 0 1`);              empty is none. projector.match writes it",
+        ))
+        .param(ParamSpec::text("curves", "").multiline().group(COLOUR).doc(
+            "Tone curve per channel, from drive (sRGB-encoded, evenly spaced from 0 to 1) to the signal sent:              lines `r: 0 0.06 ... 1`, `g: ...`, `b: ...` (2 to 64 samples each, one line for all three); a straight              line 0..1 or empty is none. projector.match writes it",
+        ))
         .input("in", DataKind::Tex)
         // Not reading the clock; declared so the node picks up what the output side reports
         // (a display plugged in or out) every frame. Cooking it costs nothing.
@@ -227,6 +262,8 @@ impl Operator for Projector {
         if !active {
             return Ok(Cooked::Outputs(Vec::new()));
         }
+        // A broken text is an error here; the outputs keep the last good correction.
+        correct::correction(|name| cx.param(name)).map_err(CookError::Failed)?;
         if cx.text("display")?.trim().is_empty() {
             cx.warn("no display chosen (see output.list)");
             return Ok(Cooked::Outputs(Vec::new()));
@@ -257,7 +294,13 @@ impl Operator for Projector {
 /// The plain mappings computed so far, kept across cook passes so unchanged projectors keep
 /// their geometry (and the outputs need not upload it again).
 #[derive(Default)]
-pub struct Mappings(HashMap<NodeId, (PlainKey, Arc<Mapping>)>);
+pub struct Mappings(
+    HashMap<NodeId, (PlainKey, Arc<Mapping>)>,
+    /// The last good colour correction of each projector, with the params it came from.
+    HashMap<NodeId, (Vec<Option<Value>>, CorrectionRef)>,
+);
+
+type CorrectionRef = Option<Arc<Correction>>;
 
 /// What a plain mapping depends on: fit, projector size, input size.
 type PlainKey = (Fit, (u32, u32), (u32, u32));
@@ -284,7 +327,8 @@ pub fn collect(
         let source = node.inputs.first().copied().flatten().and_then(|port| cooker.output(port).cloned());
         let size = source.as_ref().and_then(|d| d.get::<Tex>()).map(Tex::size);
         // The test pattern covers the whole viewport: a stretched placeholder.
-        let placed = if test { Some((Fit::Stretch, (1, 1))) } else { size.map(|s| (fit, s)) };
+        let whole = test || board.as_ref().is_some_and(|b| b.flat.contains_key(&node.id));
+        let placed = if whole { Some((Fit::Stretch, (1, 1))) } else { size.map(|s| (fit, s)) };
         let mapping = placed.and_then(|(fit, size)| {
             let key = (fit, raster(board.as_ref(), node.id, viewport), size);
             if let Some((k, m)) = cache.0.get(&node.id)
@@ -296,6 +340,20 @@ pub fn collect(
             cache.0.insert(node.id, (key, m.clone()));
             Some(m)
         });
+        let flat = board.as_ref().and_then(|b| b.flat.get(&node.id).copied());
+        let correction = {
+            let key: Vec<Option<Value>> = correct::PARAMS.iter().map(|n| param(n).cloned()).collect();
+            match cache.1.get(&node.id) {
+                Some((k, c)) if *k == key => c.clone(),
+                last => match correct::correction(param) {
+                    Ok(c) => {
+                        cache.1.insert(node.id, (key, c.clone()));
+                        c
+                    }
+                    Err(_) => last.and_then(|(_, c)| c.clone()),
+                },
+            }
+        };
         out.push(ProjectorFrame {
             node: node.id,
             path: net.path_of(node.id).map(|p| p.to_string()).unwrap_or_default(),
@@ -307,10 +365,13 @@ pub fn collect(
             mapping,
             test,
             tint: tint(rank),
+            correction,
+            flat,
         });
     }
     let alive: Vec<NodeId> = out.iter().map(|p| p.node).collect();
     cache.0.retain(|id, _| alive.contains(id));
+    cache.1.retain(|id, _| alive.contains(id));
     out
 }
 
@@ -351,26 +412,35 @@ pub fn item_for<'a>(
             test: false,
             overlay: None,
             tint,
+            correction: None,
+            flat: None,
         },
     }
 }
 
-/// How a projector draws: its input placed by `fit` into `viewport` (target pixels), or its
-/// test pattern (`blank` stands in for the texture, which the pattern does not read). `None`
-/// without an input.
+/// How a projector draws: its input placed by `fit` into `viewport` (target pixels) and colour
+/// corrected, or its test pattern, or a flat signal (`blank` stands in for the texture, which
+/// neither reads). `None` without an input.
 pub fn item<'a>(
     frame: &'a ProjectorFrame,
     blank: &'a Tex,
     viewport: [f32; 4],
 ) -> Option<penumbra_gpu::projection::Item<'a>> {
     let mapping = frame.mapping.as_deref()?;
+    if let Some(flat) = frame.flat {
+        let mut item = item_for(blank, mapping, &[], [1.0; 3], viewport);
+        item.look.flat = Some(flat);
+        return Some(item);
+    }
     if frame.test {
         let mut item = item_for(blank, mapping, &[], frame.tint, viewport);
         item.look.test = true;
         return Some(item);
     }
     let tex = frame.source.as_ref()?.get::<Tex>()?;
-    Some(item_for(tex, mapping, &[], [1.0; 3], viewport))
+    let mut item = item_for(tex, mapping, &[], [1.0; 3], viewport);
+    item.look.correction = frame.correction.clone();
+    Some(item)
 }
 
 #[cfg(test)]

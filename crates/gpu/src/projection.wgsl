@@ -1,8 +1,8 @@
 // Draws one projector's share of the surface into its viewport. The triangles come from the CPU,
 // already through the homography and the mesh warp; each vertex carries its surface position. Here:
 // the soft-edge share where other projectors show the same part of the surface (mirrors
-// `blend_weight` in crates/ops/src/out/mapping.rs), the alignment grid, and sRGB encoding for
-// surfaces that do not encode themselves. The input is linear light with premultiplied alpha; over
+// `blend_weight` in crates/ops/src/out/mapping.rs), the alignment grid, the projector's colour
+// correction, and sRGB encoding for surfaces that do not encode themselves. The input is linear light with premultiplied alpha; over
 // black that is just its colour, clipped to 1.
 
 struct Look {
@@ -11,7 +11,8 @@ struct Look {
     tex_size: vec2f,
     gamma: f32,
     // 1: encode to sRGB, 2: blend, 4: pattern instead of the input, 8: the projector's test
-    // pattern instead of anything, 16: the resolution overlay over the input.
+    // pattern instead of anything, 16: the resolution overlay over the input, 32: the flat
+    // signal instead of anything, 64: colour correction.
     flags: u32,
     peer_count: u32,
     overlay_factor: f32,
@@ -21,6 +22,15 @@ struct Look {
     viewport: vec4f,
     // The most the target shows, in its own pixels per needed projector pixel.
     overlay_cap: f32,
+    // A flat signal (sRGB-encoded), uncorrected.
+    flat: vec4f,
+    // The correction's matrix, row by row (xyz), and the sample count of each tone curve.
+    m0: vec4f,
+    m1: vec4f,
+    m2: vec4f,
+    counts: vec4u,
+    // The tone curves: sample i of red, green, blue in xyz.
+    curve: array<vec4f, 64>,
 }
 
 @group(0) @binding(0) var src: texture_2d<f32>;
@@ -146,13 +156,39 @@ fn srgb(c: vec3f) -> vec3f {
     return select(hi, lo, c <= vec3f(0.0031308));
 }
 
+fn linear(c: vec3f) -> vec3f {
+    let lo = c / 12.92;
+    let hi = pow((c + 0.055) / 1.055, vec3f(2.4));
+    return select(hi, lo, c <= vec3f(0.04045));
+}
+
+// Tone curve `ch` at encoded drive `x`, piecewise linear between its samples.
+fn tone(x: f32, ch: u32) -> f32 {
+    let n = max(u.counts[ch], 2u);
+    let t = clamp(x, 0.0, 1.0) * f32(n - 1u);
+    let i = min(u32(t), n - 2u);
+    return mix(u.curve[i][ch], u.curve[i + 1u][ch], t - f32(i));
+}
+
+// Linear light to the projector's signal: matrix, clamp, sRGB encoding, tone curves.
+fn correct(c: vec3f) -> vec3f {
+    let d = clamp(vec3f(dot(u.m0.xyz, c), dot(u.m1.xyz, c), dot(u.m2.xyz, c)), vec3f(0.0), vec3f(1.0));
+    let e = srgb(d);
+    return vec3f(tone(e.r, 0u), tone(e.g, 1u), tone(e.b, 2u));
+}
+
 @fragment
 fn fs(v: V) -> @location(0) vec4f {
     var rgb: vec3f;
+    // The colour is already the signal (flat, corrected): not encoded again.
+    var signal = false;
     // Derivatives in uniform control flow, before any branch.
     let g = grid(v.uv);
     let r = density(v.uv);
-    if (u.flags & 8u) != 0u {
+    if (u.flags & 32u) != 0u {
+        rgb = clamp(u.flat.rgb, vec3f(0.0), vec3f(1.0));
+        signal = true;
+    } else if (u.flags & 8u) != 0u {
         rgb = test_pattern(v.pos.xy - u.viewport.xy, u.viewport.zw);
     } else if (u.flags & 4u) != 0u {
         rgb = u.tint.rgb * g;
@@ -165,8 +201,18 @@ fn fs(v: V) -> @location(0) vec4f {
         if (u.flags & 16u) != 0u {
             rgb = overlay(r, rgb);
         }
+        if (u.flags & 64u) != 0u {
+            rgb = correct(rgb);
+            signal = true;
+        }
     }
-    if (u.flags & 1u) != 0u {
+    if signal {
+        // A target that encodes itself (or a linear texture) gets the light that encodes to
+        // the signal.
+        if (u.flags & 1u) == 0u {
+            rgb = linear(rgb);
+        }
+    } else if (u.flags & 1u) != 0u {
         rgb = srgb(rgb);
     }
     return vec4f(rgb, 1.0);

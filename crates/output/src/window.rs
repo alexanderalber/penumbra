@@ -286,6 +286,12 @@ fn present_loop(
         }
         drop(view);
         gpu.present(frame);
+        // Which pass each projector shows, for measurements that wait for their change.
+        engine.board().update(|b| {
+            for p in out.projectors.iter().filter(|p| p.active && nodes.contains(&p.node)) {
+                b.presented.insert(p.node, out.pass);
+            }
+        });
     }
     Ok(())
 }
