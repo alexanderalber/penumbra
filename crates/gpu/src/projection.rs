@@ -15,7 +15,7 @@ use crate::{FORMAT, Gpu, Tex};
 pub const MAX_PEERS: usize = 8;
 /// Most samples per tone curve of a [`Correction`].
 pub const MAX_CURVE: usize = 64;
-const UNIFORM_SIZE: u64 = 304 + 16 * MAX_CURVE as u64;
+const UNIFORM_SIZE: u64 = 304 + 16 * MAX_CURVE as u64 + 16;
 
 /// A projector's colour correction, the last step before its signal: a matrix in linear light
 /// (`drive = matrix * colour`, clamped to 0..1), then per channel a tone curve from the drive,
@@ -61,6 +61,23 @@ pub struct Look {
     /// A flat signal (sRGB-encoded, 0..1) instead of anything else, uncorrected: what a
     /// measurement shows.
     pub flat: Option<[f32; 3]>,
+    /// A structured light pattern instead of anything but `flat`, uncorrected: what a scan
+    /// shows.
+    pub stripes: Option<Stripes>,
+}
+
+/// One picture of a structured light scan in a projector's own pixels, in the order and with the
+/// stripes of `penumbra_calib::scan::Patterns` (and `tex.scan_pattern`): 0 white, 1 black, then
+/// per column bit (most significant first) its Gray-code stripes and their inverse, then the
+/// rows; black past the last.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stripes {
+    pub pattern: u32,
+    /// The signal of the lit stripes (sRGB-encoded, 0..1).
+    pub level: f32,
+    /// The projector's size in pixels the stripes are counted in; the viewport is divided into
+    /// that many (one to one when it is the viewport's own size).
+    pub size: [u32; 2],
 }
 
 /// The resolution overlay: green where a surface pixel covers about one projector pixel, red where
@@ -325,7 +342,10 @@ fn uniform_bytes(look: &Look, tex: (u32, u32), viewport: [f32; 4], encode: bool)
         | (u32::from(look.test) << 3)
         | (u32::from(look.overlay.is_some()) << 4)
         | (u32::from(look.flat.is_some()) << 5)
-        | (u32::from(look.correction.is_some() && look.flat.is_none() && !look.test) << 6);
+        | (u32::from(
+            look.correction.is_some() && look.flat.is_none() && look.stripes.is_none() && !look.test,
+        ) << 6)
+        | (u32::from(look.stripes.is_some() && look.flat.is_none()) << 7);
     let peers: Vec<[f32; 4]> = look.peers.iter().take(MAX_PEERS).copied().collect();
     let finite = |v: f32| if v.is_finite() { v } else { 1.0 };
     let overlay =
@@ -385,6 +405,16 @@ fn uniform_bytes(look: &Look, tex: (u32, u32), viewport: [f32; 4], encode: bool)
         }
         b.extend_from_slice(&0f32.to_le_bytes());
     }
+    // The stripes after the curves: projector width and height, level, pattern.
+    let stripes = look.stripes.unwrap_or(Stripes { pattern: 0, level: 0.0, size: [1, 1] });
+    for v in [
+        stripes.size[0].max(1) as f32,
+        stripes.size[1].max(1) as f32,
+        unit(stripes.level),
+        stripes.pattern.min(1 << 20) as f32,
+    ] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
     b.resize(UNIFORM_SIZE as usize, 0);
     b
 }
@@ -439,6 +469,7 @@ mod tests {
                     tint: [1.0; 3],
                     correction: None,
                     flat: None,
+                    stripes: None,
                 },
             };
             drawer.render(&gpu, &target, &[item]).unwrap();
@@ -478,6 +509,7 @@ mod tests {
             tint: [1.0, 0.0, 0.0],
             correction: None,
             flat: None,
+            stripes: None,
         };
         // The right half of the target is this projector's viewport.
         let item = Item {
@@ -515,6 +547,7 @@ mod tests {
             tint: [1.0; 3],
             correction: None,
             flat: None,
+            stripes: None,
         };
         let item = Item {
             key: 9,
@@ -543,6 +576,7 @@ mod tests {
                 tint: [1.0; 3],
                 correction: None,
                 flat: None,
+                stripes: None,
             },
             (4, 4),
             [0.0; 4],
@@ -570,6 +604,7 @@ mod tests {
                 tint: [1.0; 3],
                 correction: correction.map(Arc::new),
                 flat,
+                stripes: None,
             };
             let item = Item {
                 key: 5,
@@ -610,5 +645,63 @@ mod tests {
             (flat[0] - 0.2140).abs() < 2e-3 && flat[1].abs() < 1e-3 && (flat[2] - 1.0).abs() < 2e-3,
             "{flat:?}"
         );
+    }
+    #[test]
+    fn stripes_in_the_projectors_pixels_uncorrected() {
+        let Some(gpu) = gpu() else { return };
+        let src = white(&gpu);
+        let mut drawer = Projection::new(&gpu);
+        let (vertices, indices) = quad([0.0, 0.0, 1.0, 1.0]);
+        // A 20 x 6 projector drawn into a viewport twice its size: each projector pixel is 2 x 2.
+        let mut shot = |pattern: u32| {
+            let target = Tex::new(&gpu, 40, 12, "projector").unwrap();
+            let look = Look {
+                region: [0.0, 0.0, 1.0, 1.0],
+                peers: vec![],
+                blend: false,
+                gamma: 1.0,
+                pattern: false,
+                test: false,
+                overlay: None,
+                tint: [1.0; 3],
+                // Halves everything it applies to: the stripes must not go through it.
+                correction: Some(Arc::new(Correction {
+                    matrix: [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.5]],
+                    curves: [vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]],
+                })),
+                flat: None,
+                stripes: Some(Stripes { pattern, level: 1.0, size: [20, 6] }),
+            };
+            let item = Item {
+                key: 6,
+                tex: &src,
+                vertices: &vertices,
+                indices: &indices,
+                viewport: [0.0, 0.0, 40.0, 12.0],
+                look,
+            };
+            drawer.render(&gpu, &target, &[item]).unwrap();
+            gpu.read(&target).unwrap()
+        };
+        let gray = |v: u32| v ^ (v >> 1);
+        // 20 columns: 5 bits; 6 rows: 3 bits. Pattern 2 + 2 * bit (+1 for the inverse).
+        for (pattern, lit) in [
+            (0u32, Box::new(|_: u32, _: u32| true) as Box<dyn Fn(u32, u32) -> bool>),
+            (1, Box::new(|_, _| false)),
+            (2, Box::new(move |x, _| (gray(x) >> 4) & 1 == 1)),
+            (7, Box::new(move |x, _| (gray(x) >> 2) & 1 == 0)),
+            (12, Box::new(move |_, y| (gray(y) >> 2) & 1 == 1)),
+            (17, Box::new(move |_, y| gray(y) & 1 == 0)),
+            (18, Box::new(|_, _| false)),
+        ] {
+            let px = shot(pattern);
+            for y in 0..6u32 {
+                for x in 0..20u32 {
+                    let v = px.get(2 * x + 1, 2 * y + 1).unwrap()[0];
+                    let want = if lit(x, y) { 1.0 } else { 0.0 };
+                    assert!((v - want).abs() < 2e-3, "pattern {pattern} at {x}, {y}: {v}");
+                }
+            }
+        }
     }
 }

@@ -32,9 +32,10 @@ lists every one.
   drawn masks, and content per drawn shape (pulses, chases along outlines, ripples, each shape
   with its own colour and phase); shapes traced from any mask or label picture (a
   background-removed photo, a threshold), simplified and editable by hand. Structured light:
-  `tex.scan_pattern` shows Gray-code stripes, `scan.decode` turns the camera's photos of them
-  into maps for `tex.remap` and a picture of the scene as the projector sees it, so masks drawn
-  on it are already in projector pixels (the live scan is still to come). A projector light throws a picture onto a 3D model of the room, so a mapping can
+  `scan.capture` scans the projectors with a live camera (or `scan.decode` takes photos of
+  `tex.scan_pattern`'s Gray-code stripes) into maps for `tex.remap` and a picture of the scene
+  as the projector sees it, so masks drawn on it are already in projector pixels; `scan.align`
+  lines projectors up side by side from their scans. A projector light throws a picture onto a 3D model of the room, so a mapping can
   be tried before going on site. Projector and camera calibration (DLT, Levenberg-Marquardt)
   exists as commands; the interactive calibration UI does not exist yet.
 - **Camera:** live input from webcams and capture cards, denoising, optical flow, blob tracking

@@ -1,12 +1,29 @@
 //! Planar homographies: the 3x3 projective map between two planes, e.g. from a flat surface to
 //! a projector's image, estimated from point pairs.
 
-use nalgebra::{DMatrix, Matrix3, Vector3};
+use nalgebra::{DMatrix, Matrix3, SMatrix, SymmetricEigen, Vector3};
 use penumbra_core::Error;
 
 /// Most point pairs [`Homography::from_pairs`] accepts (the matrix it decomposes has twice as
 /// many rows).
 pub const MAX_PAIRS: usize = 10_000;
+
+/// Most point pairs one round of [`Homography::fit_robust`] fits; more are thinned evenly.
+pub const ROBUST_SAMPLE: usize = 60_000;
+/// Rounds of [`Homography::fit_robust`].
+const ROBUST_ROUNDS: usize = 5;
+/// The share of the kept pairs whose error bounds the next round's.
+const ROBUST_QUANTILE: f64 = 0.9;
+
+/// What [`Homography::fit_robust`] found.
+#[derive(Clone, Debug)]
+pub struct RobustFit {
+    pub homography: Homography,
+    /// Per pair the distance between `H(from)` and `to` (infinite where `from` maps to infinity).
+    pub errors: Vec<f64>,
+    /// Pairs the last round fitted (before thinning).
+    pub kept: usize,
+}
 
 /// A projective map of the plane, `p' ~ H p` in homogeneous coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -106,6 +123,55 @@ impl Homography {
         Self::scaled(m).ok_or_else(|| Error::new("the points are degenerate (the map collapses the plane)"))
     }
 
+    /// The homography taking each `from` to its `to` for many pairs with outliers (a decoded
+    /// structured light map): the normalised DLT over all pairs (by its normal equations, so any
+    /// number of them), then five rounds that keep only the pairs whose error is within the 90th
+    /// percentile of the pairs kept before (and always those within `floor`), each round fitting
+    /// at most [`ROBUST_SAMPLE`] of them, evenly thinned. Fails on fewer than four pairs, lists of
+    /// different lengths, and degenerate configurations; pairs with non-finite coordinates are
+    /// left out.
+    pub fn fit_robust(from: &[[f64; 2]], to: &[[f64; 2]], floor: f64) -> Result<RobustFit, Error> {
+        if from.len() != to.len() {
+            return Err(Error::new(format!("{} points to map, {} images", from.len(), to.len())));
+        }
+        let finite = |p: &[f64; 2]| p.iter().all(|v| v.is_finite());
+        let mut keep: Vec<bool> = from.iter().zip(to).map(|(a, b)| finite(a) && finite(b)).collect();
+        let floor = if floor.is_finite() { floor.max(0.0) } else { 0.0 };
+        let mut fit: Option<(Homography, Vec<f64>, usize)> = None;
+        for _ in 0..ROBUST_ROUNDS {
+            let kept: Vec<usize> = keep.iter().enumerate().filter(|(_, k)| **k).map(|(i, _)| i).collect();
+            if kept.len() < 4 {
+                break;
+            }
+            let stride = kept.len().div_ceil(ROBUST_SAMPLE).max(1);
+            let sample: Vec<usize> = kept.iter().copied().step_by(stride).collect();
+            let h = match normal_dlt(&sample, from, to) {
+                Ok(h) => h,
+                Err(e) if fit.is_none() => return Err(e),
+                Err(_) => break,
+            };
+            let errors: Vec<f64> = from
+                .iter()
+                .zip(to)
+                .map(|(p, q)| match h.apply(*p) {
+                    Some(r) if finite(q) => ((r[0] - q[0]).powi(2) + (r[1] - q[1]).powi(2)).sqrt(),
+                    _ => f64::INFINITY,
+                })
+                .collect();
+            let mut kept_errors: Vec<f64> = kept.iter().filter_map(|i| errors.get(*i).copied()).collect();
+            kept_errors.sort_by(f64::total_cmp);
+            let at = ((kept_errors.len() as f64 - 1.0) * ROBUST_QUANTILE).round() as usize;
+            let bound = kept_errors.get(at).copied().unwrap_or(f64::INFINITY).max(floor);
+            for (k, e) in keep.iter_mut().zip(&errors) {
+                *k = *e < bound;
+            }
+            fit = Some((h, errors, kept.len()));
+        }
+        let (homography, errors, kept) =
+            fit.ok_or_else(|| Error::new("a homography needs at least 4 point pairs"))?;
+        Ok(RobustFit { homography, errors, kept })
+    }
+
     /// The homography taking the unit square's corners (top left, top right, bottom right,
     /// bottom left: (0,0), (1,0), (1,1), (0,1)) to `quad`. Fails unless `quad` is a convex,
     /// non-degenerate quadrilateral in that order (either winding), because otherwise the square
@@ -172,6 +238,60 @@ impl Homography {
         let m = if m.m33.abs() > 1e-9 { m / m.m33 } else { m };
         m.iter().all(|v| v.is_finite()).then_some(Self { m })
     }
+}
+
+/// The normalised DLT over the pairs `indices` of `from` and `to`, by the normal equations (the
+/// 9 x 9 matrix of the stacked constraints times itself) and its smallest eigenvector.
+fn normal_dlt(indices: &[usize], from: &[[f64; 2]], to: &[[f64; 2]]) -> Result<Homography, Error> {
+    let pick = |points: &[[f64; 2]]| -> Vec<[f64; 2]> {
+        indices.iter().filter_map(|i| points.get(*i).copied()).collect()
+    };
+    let (a, b) = (pick(from), pick(to));
+    if a.len() < 4 || a.len() != b.len() {
+        return Err(Error::new("a homography needs at least 4 point pairs"));
+    }
+    let t_from = normalising(&a)?;
+    let t_to = normalising(&b)?;
+    let mut m = SMatrix::<f64, 9, 9>::zeros();
+    for (p, q) in a.iter().zip(&b) {
+        let p = t_from * Vector3::new(p[0], p[1], 1.0);
+        let q = t_to * Vector3::new(q[0], q[1], 1.0);
+        let (x, y) = (p.x / p.z, p.y / p.z);
+        let (u, v) = (q.x / q.z, q.y / q.z);
+        for row in
+            [[-x, -y, -1.0, 0.0, 0.0, 0.0, u * x, u * y, u], [0.0, 0.0, 0.0, -x, -y, -1.0, v * x, v * y, v]]
+        {
+            for (i, ri) in row.iter().enumerate() {
+                for (j, rj) in row.iter().enumerate() {
+                    if let Some(e) = m.get_mut((i, j)) {
+                        *e += ri * rj;
+                    }
+                }
+            }
+        }
+    }
+    if m.iter().any(|v| !v.is_finite()) {
+        return Err(Error::new("point coordinates must be finite numbers"));
+    }
+    let eigen = SymmetricEigen::new(m);
+    let mut order: Vec<(usize, f64)> = eigen.eigenvalues.iter().copied().enumerate().collect();
+    order.sort_by(|x, y| x.1.total_cmp(&y.1));
+    let (smallest, second, largest) = match order.as_slice() {
+        [s, t, .., l] => (s.0, t.1, l.1),
+        _ => return Err(Error::new("the decomposition failed")),
+    };
+    // Eigenvalues are squared singular values: a second (near) zero leaves the map open.
+    if largest.is_nan() || largest <= 0.0 || second <= largest * 1e-18 {
+        return Err(Error::new("the points are degenerate (on one line, or coincident)"));
+    }
+    let h: Vec<f64> = eigen.eigenvectors.column(smallest).iter().copied().collect();
+    let n = match h.as_slice() {
+        &[a, b, c, d, e, f, g, h, i] => Matrix3::new(a, b, c, d, e, f, g, h, i),
+        _ => return Err(Error::new("the decomposition failed")),
+    };
+    let back = t_to.try_inverse().ok_or_else(|| Error::new("the points are degenerate"))?;
+    Homography::scaled(back * n * t_from)
+        .ok_or_else(|| Error::new("the points are degenerate (the map collapses the plane)"))
 }
 
 /// The similarity moving `points` to their centroid with a mean distance of √2 from it.
@@ -334,5 +454,36 @@ mod tests {
         let h = Homography::from_rows([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]);
         assert_eq!(h.apply([0.0, 5.0]), None);
         assert!(h.rms_error(&[([0.0, 5.0], [0.0, 0.0])]).is_infinite());
+    }
+    #[test]
+    fn robust_fit_ignores_outliers_among_many_pairs() {
+        let h = truth();
+        let mut rng = Lcg(11);
+        let mut from = Vec::new();
+        let mut to = Vec::new();
+        for k in 0..80_000 {
+            let p = [rng.range(0.0, 4.0), rng.range(0.0, 2.25)];
+            let q = h.apply(p).unwrap();
+            // A tenth wildly off, the rest within a quarter pixel.
+            let q = if k % 10 == 0 {
+                [rng.range(0.0, 1920.0), rng.range(0.0, 1080.0)]
+            } else {
+                [q[0] + rng.range(-0.25, 0.25), q[1] + rng.range(-0.25, 0.25)]
+            };
+            from.push(p);
+            to.push(q);
+        }
+        from.push([f64::NAN, 0.0]);
+        to.push([0.0, 0.0]);
+        let fit = Homography::fit_robust(&from, &to, 1.0).unwrap();
+        assert_eq!(fit.errors.len(), from.len());
+        for p in [[0.0, 0.0], [4.0, 2.25], [2.0, 1.0]] {
+            assert!(close(fit.homography.apply(p).unwrap(), h.apply(p).unwrap(), 0.1), "{p:?}");
+        }
+        assert!(fit.kept < 80_000 && fit.kept > 60_000, "{}", fit.kept);
+        assert!(Homography::fit_robust(&from[..3], &to[..3], 1.0).is_err());
+        assert!(Homography::fit_robust(&from, &to[..5], 1.0).is_err());
+        let line: Vec<[f64; 2]> = (0..10).map(|k| [f64::from(k), 0.0]).collect();
+        assert!(Homography::fit_robust(&line, &line, 1.0).is_err());
     }
 }

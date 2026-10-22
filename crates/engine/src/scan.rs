@@ -156,16 +156,33 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
     }
     let read = started.elapsed();
     let decoder = decoder.ok_or("no pictures")?;
-    let t = Instant::now();
-    let result = decoder.finish(&a.options).map_err(CommandError)?;
-    let inverse = result.inverse(fill);
-    let decoded = t.elapsed();
-
     let out = match &a.out {
         Some(o) => dir.join(o),
         None => frames.join("decoded"),
     };
-    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let mut reply = write_decoded(&decoder, &a.options, fill, &out)?;
+    if let Some(o) = reply.as_object_mut() {
+        let decoded = o.remove("ms").unwrap_or(Json::Null);
+        o.insert(
+            "ms".into(),
+            json!({"read": ms(read), "decode": decoded.get("decode"), "total": ms(started.elapsed())}),
+        );
+    }
+    Ok(reply)
+}
+
+/// Decodes what `decoder` collected and writes `scan.decode`'s files into `out`; the reply
+/// counts what was found (`ms.decode` the decoding's time, `ms.write` the writing's).
+pub(crate) fn write_decoded(decoder: &Decoder, options: &Options, fill: u32, out: &Path) -> CmdResult<Json> {
+    let patterns = decoder.patterns();
+    let (pw, ph) = patterns.size();
+    let t = Instant::now();
+    let result = decoder.finish(options).map_err(CommandError)?;
+    let inverse = result.inverse(fill);
+    let decoded = t.elapsed();
+
+    let t = Instant::now();
+    std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
     let write = |name: &str, bytes: Vec<u8>| -> CmdResult<String> {
         let file = out.join(name);
         std::fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
@@ -179,6 +196,7 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
         "scene": write(SCENE, png(pw, ph, inverse.scene())?)?,
         "quality": write(QUALITY, png(cw, ch, result.quality())?)?,
     });
+    let written = t.elapsed();
 
     let stats = &result.stats;
     let total = result.status.len().max(1);
@@ -215,7 +233,7 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
         "resolved_bits": stats.resolved,
         "step": stats.step,
         "files": files,
-        "ms": {"read": ms(read), "decode": ms(decoded), "total": ms(started.elapsed())},
+        "ms": {"decode": ms(decoded), "write": ms(written)},
         "warnings": warnings,
         "next": format!(
             "tex.image of {PROJECTOR_MAP} into tex.remap's map, the camera into its in: the camera's view in projector pixels"
@@ -267,7 +285,7 @@ pub struct ObjectsArgs {
 }
 
 /// A map file `scan.decode` wrote.
-fn read_map(file: &Path) -> CmdResult<objects::Map> {
+pub(crate) fn read_map(file: &Path) -> CmdResult<objects::Map> {
     let raw = penumbra_gpu::image::decode_file_raw(file, scan::MAX_SIDE, objects::MAX_PIXELS as u64)?;
     objects::Map::new(raw.width as usize, raw.height as usize, raw.rgba)
         .map_err(|e| CommandError(format!("{}: {e}", file.display())))
@@ -308,7 +326,7 @@ fn colour(k: u16) -> [u8; 3] {
     [r, g, b].map(|t| ((t + m) * 255.0).round() as u8)
 }
 
-fn ms(d: std::time::Duration) -> f64 {
+pub(crate) fn ms(d: std::time::Duration) -> f64 {
     (d.as_secs_f64() * 1000.0).round()
 }
 

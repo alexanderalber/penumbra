@@ -17,17 +17,18 @@
 //!
 //! Each picture is taken only after the change reached the projectors: the cook thread
 //! published an output frame with it, every output window presented that frame, `settle`
-//! passed, and then the camera delivered a frame that arrived after all that.
+//! passed, and then the camera delivered a frame that arrived after all that. `scan.capture`
+//! waits the same way ([`wait_shown`], [`CameraStream`]).
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use penumbra_calib::colour::{self, Mat3, Measured, Picture, Planes, Target};
-use penumbra_camera::{Key, Matrix};
+use penumbra_camera::{CameraFrame, Key, Matrix};
 use penumbra_core::{Name, NodeId, NodePath, ParamPath, Value, lock};
 use penumbra_graph::{Network, Op};
-use penumbra_ops::out::{OutputBoard, PROJECTOR, correct};
+use penumbra_ops::out::{OutputBoard, PROJECTOR, ProjectorFrame, correct};
 use penumbra_ops::tex::video_in::VIDEO_IN;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
@@ -51,8 +52,8 @@ const REFINED: f64 = 0.005;
 /// Widest camera picture measured; larger frames are sampled every few pixels.
 const MAX_WIDTH: usize = 640;
 
-/// The engines (by address) measuring now: one measurement per engine at a time, two would
-/// fight over the projectors.
+/// The engines (by address) measuring now: one measurement (`projector.match`, `scan.capture`)
+/// per engine at a time, two would fight over the projectors.
 static RUNNING: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
@@ -93,21 +94,180 @@ pub struct MatchArgs {
     pub target: Target,
 }
 
-/// Clears the flat signals of the projectors measured and the running flag when dropped.
-struct Restore<'a> {
+/// The projectors a measurement holds: while it lives no other measurement runs on the engine,
+/// and when dropped (however the measurement ends) their flat signals and stripes are cleared.
+pub(crate) struct Claim<'a> {
     engine: usize,
     board: &'a OutputBoard,
     nodes: Vec<NodeId>,
 }
 
-impl Drop for Restore<'_> {
+impl<'a> Claim<'a> {
+    pub(crate) fn new(e: &'a Engine, nodes: Vec<NodeId>) -> CmdResult<Self> {
+        let engine = std::ptr::from_ref(e) as usize;
+        let mut running = lock(&RUNNING);
+        if running.contains(&engine) {
+            return Err("a measurement (projector.match or scan.capture) is already running".into());
+        }
+        running.push(engine);
+        Ok(Self { engine, board: e.board(), nodes })
+    }
+}
+
+impl Drop for Claim<'_> {
     fn drop(&mut self) {
         self.board.update(|b| {
             for n in &self.nodes {
                 b.flat.remove(n);
+                b.stripes.remove(n);
             }
         });
         lock(&RUNNING).retain(|e| *e != self.engine);
+    }
+}
+
+/// The camera of a measurement: a running `tex.video_in`'s stream.
+pub(crate) struct CameraStream {
+    pub key: Key,
+    /// Its node path, for messages.
+    pub name: String,
+    /// The node's `range` param (`auto`, `limited`, `full`).
+    range: String,
+}
+
+impl CameraStream {
+    /// The stream of the `tex.video_in` at `path`; fails unless it is open.
+    pub(crate) fn open(e: &Engine, net: &Network, path: &NodePath) -> CmdResult<Self> {
+        let cam = require(net, path)?;
+        if net.node(cam).is_none_or(|n| n.kind != VIDEO_IN) {
+            return Err(format!("{path} is not a {VIDEO_IN}").into());
+        }
+        let key = Key::new(
+            &text_param(net, e, cam, VIDEO_IN, "device"),
+            &text_param(net, e, cam, VIDEO_IN, "mode"),
+        );
+        match e.camera().stream_status(&key) {
+            None => {
+                return Err(
+                    format!("camera {path} is not running (video_in.status; is camera input on?)").into()
+                );
+            }
+            Some(st) if !st.open => {
+                let why = st.error.unwrap_or_else(|| "not open yet".into());
+                return Err(format!("camera {path}: {why}").into());
+            }
+            Some(_) => {}
+        }
+        Ok(Self { key, name: path.to_string(), range: text_param(net, e, cam, VIDEO_IN, "range") })
+    }
+
+    /// The latest frame once `accept` takes it, waiting up to `timeout`.
+    pub(crate) fn next(
+        &self,
+        e: &Engine,
+        timeout: Duration,
+        accept: impl Fn(&CameraFrame) -> bool,
+    ) -> CmdResult<Arc<CameraFrame>> {
+        let deadline = Instant::now() + timeout;
+        let hub = e.camera();
+        loop {
+            if let Some(f) = hub.latest(&self.key).filter(|f| accept(f)) {
+                return Ok(f);
+            }
+            if let Some(st) = hub.stream_status(&self.key)
+                && let (false, Some(err)) = (st.open, st.error)
+            {
+                return Err(format!("camera {}: {err}", self.name).into());
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "camera {} sent no frame for {:.1} s (stalled? video_in.status)",
+                    self.name,
+                    timeout.as_secs_f64()
+                )
+                .into());
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// The planes of `f` as the node reads them (its `range` param over the frame's own).
+    pub(crate) fn planes<'f>(&self, f: &'f CameraFrame) -> Planes<'f> {
+        let full = match self.range.as_str() {
+            "limited" => false,
+            "full" => true,
+            _ => f.full_range,
+        };
+        Planes {
+            width: f.width,
+            height: f.height,
+            y: &f.y,
+            cb: &f.cb,
+            cr: &f.cr,
+            shift: f.shift,
+            kr_kb: match f.matrix {
+                Matrix::Bt601 => (0.299, 0.114),
+                Matrix::Bt709 => (0.2126, 0.0722),
+            },
+            full_range: full,
+        }
+    }
+}
+
+/// Waits until the cook thread published an output frame in which `ready` holds for every one
+/// of `projectors` (each still there and active) and every output window presented it; returns
+/// when that was seen. `pass` is the newest pass waited for so far, and is advanced.
+pub(crate) fn wait_shown(
+    e: &Engine,
+    projectors: &[(NodeId, String)],
+    pass: &mut u64,
+    timeout: Duration,
+    ready: impl Fn(&ProjectorFrame) -> bool,
+) -> CmdResult<Instant> {
+    let deadline = Instant::now() + timeout;
+    // The cook thread published a frame with it.
+    let shown = loop {
+        let frame = e.wait_output(*pass, Duration::from_millis(50));
+        *pass = (*pass).max(frame.pass);
+        let mut done = true;
+        for (id, path) in projectors {
+            match frame.projectors.iter().find(|p| p.node == *id) {
+                None => return Err(format!("{path} is gone").into()),
+                Some(p) if !p.active => return Err(format!("{path} was switched off").into()),
+                Some(p) => done &= ready(p),
+            }
+        }
+        if done {
+            break frame.pass;
+        }
+        if Instant::now() >= deadline {
+            return Err("the cook thread published no frame in time".into());
+        }
+    };
+
+    // Every window presented it.
+    let board = e.board();
+    loop {
+        let state = board.state();
+        if !state.managed {
+            return Ok(Instant::now());
+        }
+        let late: Vec<&str> = projectors
+            .iter()
+            .filter(|(id, _)| state.presented.get(id).is_none_or(|p| *p < shown))
+            .map(|(_, path)| path.as_str())
+            .collect();
+        if late.is_empty() {
+            return Ok(Instant::now());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "{} did not show the measurement (no output window presented it; see output.list)",
+                late.join(", ")
+            )
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(2));
     }
 }
 
@@ -115,9 +275,7 @@ impl Drop for Restore<'_> {
 struct Rig<'a> {
     engine: &'a Engine,
     projectors: Vec<(NodeId, String)>,
-    camera: String,
-    key: Key,
-    range: String,
+    camera: CameraStream,
     settle: Duration,
     timeout: Duration,
     /// The output pass last waited for.
@@ -130,98 +288,16 @@ impl Rig<'_> {
     fn shot(&mut self, signal: impl Fn(usize) -> [f32; 3]) -> CmdResult<Picture> {
         let wanted: BTreeMap<NodeId, [f32; 3]> =
             self.projectors.iter().enumerate().map(|(k, (id, _))| (*id, signal(k))).collect();
-        let board = self.engine.board();
-        board.update(|b| b.flat.extend(wanted.iter().map(|(k, v)| (*k, *v))));
-        let deadline = Instant::now() + self.timeout;
-
-        // The cook thread published a frame with it.
-        let pass = loop {
-            let frame = self.engine.wait_output(self.pass, Duration::from_millis(50));
-            self.pass = self.pass.max(frame.pass);
-            let mut done = true;
-            for (id, path) in &self.projectors {
-                match frame.projectors.iter().find(|p| p.node == *id) {
-                    None => return Err(format!("{path} is gone").into()),
-                    Some(p) if !p.active => return Err(format!("{path} was switched off").into()),
-                    Some(p) => done &= p.flat == wanted.get(id).copied(),
-                }
-            }
-            if done {
-                break frame.pass;
-            }
-            if Instant::now() >= deadline {
-                return Err("the cook thread published no frame in time".into());
-            }
-        };
-
-        // Every window presented it.
-        loop {
-            let state = board.state();
-            if !state.managed {
-                break;
-            }
-            let late: Vec<&str> = self
-                .projectors
-                .iter()
-                .filter(|(id, _)| state.presented.get(id).is_none_or(|p| *p < pass))
-                .map(|(_, path)| path.as_str())
-                .collect();
-            if late.is_empty() {
-                break;
-            }
-            if Instant::now() >= deadline {
-                return Err(format!(
-                    "{} did not show the measurement (no output window presented it; see output.list)",
-                    late.join(", ")
-                )
-                .into());
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-
+        self.engine.board().update(|b| b.flat.extend(wanted.iter().map(|(k, v)| (*k, *v))));
+        wait_shown(self.engine, &self.projectors, &mut self.pass, self.timeout, |p| {
+            p.flat == wanted.get(&p.node).copied()
+        })?;
         std::thread::sleep(self.settle);
         let after = Instant::now();
-        let deadline = after + self.timeout;
-        let hub = self.engine.camera();
-        loop {
-            if let Some(f) = hub.latest(&self.key).filter(|f| f.arrived >= after) {
-                let full = match self.range.as_str() {
-                    "limited" => false,
-                    "full" => true,
-                    _ => f.full_range,
-                };
-                let planes = Planes {
-                    width: f.width,
-                    height: f.height,
-                    y: &f.y,
-                    cb: &f.cb,
-                    cr: &f.cr,
-                    shift: f.shift,
-                    kr_kb: match f.matrix {
-                        Matrix::Bt601 => (0.299, 0.114),
-                        Matrix::Bt709 => (0.2126, 0.0722),
-                    },
-                    full_range: full,
-                };
-                let step = (f.width as usize).div_ceil(MAX_WIDTH).max(1);
-                return colour::linear_picture(&planes, step)
-                    .map_err(|e| format!("{}: {e}", self.camera).into());
-            }
-            if let Some(st) = hub.stream_status(&self.key)
-                && let (false, Some(e)) = (st.open, st.error)
-            {
-                return Err(format!("camera {}: {e}", self.camera).into());
-            }
-            if Instant::now() >= deadline {
-                return Err(format!(
-                    "camera {} sent no frame for {:.1} s (stalled? video_in.status)",
-                    self.camera,
-                    self.timeout.as_secs_f64()
-                )
-                .into());
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
+        let f = self.camera.next(self.engine, self.timeout, |f| f.arrived >= after)?;
+        let step = (f.width as usize).div_ceil(MAX_WIDTH).max(1);
+        colour::linear_picture(&self.camera.planes(&f), step)
+            .map_err(|e| format!("{}: {e}", self.camera.name).into())
     }
 }
 
@@ -313,7 +389,39 @@ fn compare(
     Some((f, codes))
 }
 
-fn text_param(net: &Network, e: &Engine, id: NodeId, kind: &str, name: &str) -> String {
+/// The `out.projector`s at `paths` (each once), or every active one; with their paths.
+pub(crate) fn projector_list(
+    e: &Engine,
+    net: &Network,
+    paths: Option<&[NodePath]>,
+) -> CmdResult<Vec<(NodeId, String)>> {
+    Ok(match paths {
+        Some(paths) => {
+            let mut out = Vec::new();
+            for path in paths {
+                let id = require(net, path)?;
+                if net.node(id).is_none_or(|n| n.kind != PROJECTOR) {
+                    return Err(format!("{path} is not an {PROJECTOR}").into());
+                }
+                if out.iter().any(|(o, _)| *o == id) {
+                    return Err(format!("{path} is listed twice").into());
+                }
+                out.push((id, path.to_string()));
+            }
+            out
+        }
+        None => {
+            let desc = e.types().desc(PROJECTOR);
+            net.nodes()
+                .filter(|n| n.kind == PROJECTOR)
+                .filter(|n| !matches!(desc.and_then(|d| n.param(d, "active")), Some(Value::Bool(false))))
+                .map(|n| (n.id, net.path_of(n.id).map(|p| p.to_string()).unwrap_or_default()))
+                .collect()
+        }
+    })
+}
+
+pub(crate) fn text_param(net: &Network, e: &Engine, id: NodeId, kind: &str, name: &str) -> String {
     let (Some(node), Some(desc)) = (net.node(id), e.types().desc(kind)) else { return String::new() };
     node.param(desc, name).and_then(Value::as_str).map(str::to_string).unwrap_or_default()
 }
@@ -352,67 +460,16 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     }
 
     let net = e.session().doc().snapshot();
-    let projectors: Vec<(NodeId, String)> = match &a.projectors {
-        Some(paths) => {
-            let mut out = Vec::new();
-            for path in paths {
-                let id = require(&net, path)?;
-                if net.node(id).is_none_or(|n| n.kind != PROJECTOR) {
-                    return Err(format!("{path} is not an {PROJECTOR}").into());
-                }
-                if out.iter().any(|(o, _)| *o == id) {
-                    return Err(format!("{path} is listed twice").into());
-                }
-                out.push((id, path.to_string()));
-            }
-            out
-        }
-        None => {
-            let desc = e.types().desc(PROJECTOR);
-            net.nodes()
-                .filter(|n| n.kind == PROJECTOR)
-                .filter(|n| !matches!(desc.and_then(|d| n.param(d, "active")), Some(Value::Bool(false))))
-                .map(|n| (n.id, net.path_of(n.id).map(|p| p.to_string()).unwrap_or_default()))
-                .collect()
-        }
-    };
+    let projectors = projector_list(e, &net, a.projectors.as_deref())?;
     if projectors.is_empty() {
         return Err(format!("no active {PROJECTOR} to measure").into());
     }
-    let cam = require(&net, &a.camera)?;
-    if net.node(cam).is_none_or(|n| n.kind != VIDEO_IN) {
-        return Err(format!("{} is not a {VIDEO_IN}", a.camera).into());
-    }
-    let key =
-        Key::new(&text_param(&net, e, cam, VIDEO_IN, "device"), &text_param(&net, e, cam, VIDEO_IN, "mode"));
-    match e.camera().stream_status(&key) {
-        None => {
-            return Err(
-                format!("camera {} is not running (video_in.status; is camera input on?)", a.camera).into()
-            );
-        }
-        Some(st) if !st.open => {
-            let why = st.error.unwrap_or_else(|| "not open yet".into());
-            return Err(format!("camera {}: {why}", a.camera).into());
-        }
-        Some(_) => {}
-    }
-
-    let engine = std::ptr::from_ref(e) as usize;
-    {
-        let mut running = lock(&RUNNING);
-        if running.contains(&engine) {
-            return Err("a projector.match is already running".into());
-        }
-        running.push(engine);
-    }
-    let restore = Restore { engine, board: e.board(), nodes: projectors.iter().map(|(id, _)| *id).collect() };
+    let camera = CameraStream::open(e, &net, &a.camera)?;
+    let claim = Claim::new(e, projectors.iter().map(|(id, _)| *id).collect())?;
     let mut rig = Rig {
         engine: e,
         projectors: projectors.clone(),
-        camera: a.camera.to_string(),
-        key,
-        range: text_param(&net, e, cam, VIDEO_IN, "range"),
+        camera,
         settle: Duration::from_secs_f64(settle),
         timeout: Duration::from_secs_f64(timeout),
         pass: e.output().pass,
@@ -650,7 +707,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
             }
         }
     }
-    drop(restore);
+    drop(claim);
 
     let mut ops = Vec::new();
     let mut report = Vec::new();

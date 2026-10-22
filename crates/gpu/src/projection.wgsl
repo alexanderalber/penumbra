@@ -12,7 +12,8 @@ struct Look {
     gamma: f32,
     // 1: encode to sRGB, 2: blend, 4: pattern instead of the input, 8: the projector's test
     // pattern instead of anything, 16: the resolution overlay over the input, 32: the flat
-    // signal instead of anything, 64: colour correction.
+    // signal instead of anything, 64: colour correction, 128: structured light stripes instead of
+    // anything but the flat signal.
     flags: u32,
     peer_count: u32,
     overlay_factor: f32,
@@ -31,6 +32,9 @@ struct Look {
     counts: vec4u,
     // The tone curves: sample i of red, green, blue in xyz.
     curve: array<vec4f, 64>,
+    // Structured light: the projector's width and height in pixels, the lit stripes' signal,
+    // the pattern's index.
+    stripes: vec4f,
 }
 
 @group(0) @binding(0) var src: texture_2d<f32>;
@@ -170,6 +174,37 @@ fn tone(x: f32, ch: u32) -> f32 {
     return mix(u.curve[i][ch], u.curve[i + 1u][ch], t - f32(i));
 }
 
+fn bits(side: u32) -> u32 {
+    if side <= 1u {
+        return 1u;
+    }
+    return firstLeadingBit(side - 1u) + 1u;
+}
+
+// Whether projector pixel `p` of a `size` image is lit in scan pattern `i`, as
+// `penumbra_calib::scan::Patterns::lit` and `tex.scan_pattern` have it.
+fn stripe_lit(p: vec2u, size: vec2u, i: u32) -> bool {
+    if i == 0u {
+        return true;
+    }
+    if i == 1u {
+        return false;
+    }
+    let bx = bits(size.x);
+    let by = bits(size.y);
+    let k = i - 2u;
+    let bit = k / 2u;
+    var on = false;
+    if bit < bx {
+        on = (((p.x ^ (p.x >> 1u)) >> (bx - 1u - bit)) & 1u) == 1u;
+    } else if bit < bx + by {
+        on = (((p.y ^ (p.y >> 1u)) >> (by - 1u - (bit - bx))) & 1u) == 1u;
+    } else {
+        return false;
+    }
+    return on != ((k & 1u) == 1u);
+}
+
 // Linear light to the projector's signal: matrix, clamp, sRGB encoding, tone curves.
 fn correct(c: vec3f) -> vec3f {
     let d = clamp(vec3f(dot(u.m0.xyz, c), dot(u.m1.xyz, c), dot(u.m2.xyz, c)), vec3f(0.0), vec3f(1.0));
@@ -187,6 +222,13 @@ fn fs(v: V) -> @location(0) vec4f {
     let r = density(v.uv);
     if (u.flags & 32u) != 0u {
         rgb = clamp(u.flat.rgb, vec3f(0.0), vec3f(1.0));
+        signal = true;
+    } else if (u.flags & 128u) != 0u {
+        let size = max(u.stripes.xy, vec2f(1.0));
+        let q = (v.pos.xy - u.viewport.xy) / max(u.viewport.zw, vec2f(1.0)) * size;
+        let p = vec2u(clamp(floor(q), vec2f(0.0), size - 1.0));
+        let lit = stripe_lit(p, vec2u(size), u32(u.stripes.w + 0.5));
+        rgb = vec3f(select(0.0, clamp(u.stripes.z, 0.0, 1.0), lit));
         signal = true;
     } else if (u.flags & 8u) != 0u {
         rgb = test_pattern(v.pos.xy - u.viewport.xy, u.viewport.zw);
