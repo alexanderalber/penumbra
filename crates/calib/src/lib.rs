@@ -7,13 +7,16 @@
 //!   projection (or a plane's homography) as the starting point, then Levenberg-Marquardt over
 //!   pose and intrinsics.
 //! - Structured light ([`scan`]): Gray-code patterns for a projector and the decoding of a
-//!   camera's pictures of them into maps between camera and projector pixels.
+//!   camera's pictures of them into maps between camera and projector pixels; [`objects`]:
+//!   the objects in front of a surface from two such scans, and the blend of projectors on them.
 //! - Colour ([`colour`]): matching projectors to each other from a camera's pictures of their
 //!   red, green and blue ramps.
 
 mod camera;
 pub mod colour;
 mod homography;
+pub mod objects;
+mod raster;
 pub mod scan;
 mod solve;
 
@@ -21,6 +24,8 @@ pub use camera::{Camera, Intrinsics, MAX_COORDINATE, Pose, unproject_clip};
 pub use homography::{Homography, MAX_PAIRS};
 pub use solve::{MAX_ITERATIONS, Options, Solution, Spread, Start, calibrate};
 
+#[cfg(test)]
+mod objects_tests;
 #[cfg(test)]
 mod scan_tests;
 #[cfg(test)]

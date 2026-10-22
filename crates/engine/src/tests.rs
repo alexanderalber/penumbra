@@ -1238,3 +1238,84 @@ fn decode_a_scan_from_pictures_in_a_folder() {
     let e = f.fail("scan.decode", json!({"frames": "captures", "options": {"min_contrast": 7}}));
     assert!(e.contains("min_contrast"), "{e}");
 }
+
+#[test]
+fn objects_and_blend_from_decoded_scans() {
+    let f = Fixture::new("scan_objects");
+    let dir = f.engine.session().dir().to_path_buf();
+    // One 64 x 48 projector seen 1:1 by a 160 x 48 camera; with the objects, a 24 x 20 box
+    // shows 40 camera pixels further right.
+    let (pw, ph, cw, ch) = (64usize, 48usize, 160usize, 48usize);
+    let in_box = |x: usize, y: usize| (20..44).contains(&x) && (10..30).contains(&y);
+    let write_scan = |name: &str, objects: bool| {
+        let folder = dir.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut p2c = Vec::new();
+        for y in 0..ph {
+            for x in 0..pw {
+                let shift = if objects && in_box(x, y) { 40.0 } else { 0.0 };
+                p2c.push([(x as f32 + 0.5 + shift) / cw as f32, (y as f32 + 0.5) / ch as f32, 1.0, 1.0]);
+            }
+        }
+        let mut c2p = Vec::new();
+        for y in 0..ch {
+            for x in 0..cw {
+                c2p.push(if x < pw {
+                    [(x as f32 + 0.5) / pw as f32, (y as f32 + 0.5) / ph as f32, 1.0, 1.0]
+                } else {
+                    [-1.0, -1.0, 0.0, 1.0]
+                });
+            }
+        }
+        let exr = |w: usize, h: usize, d: &[[f32; 4]]| {
+            penumbra_gpu::image::encode_exr_rgba32f(w as u32, h as u32, d).unwrap()
+        };
+        std::fs::write(folder.join("proj_to_cam.exr"), exr(pw, ph, &p2c)).unwrap();
+        std::fs::write(folder.join("cam_to_proj.exr"), exr(cw, ch, &c2p)).unwrap();
+    };
+    write_scan("wall", false);
+    write_scan("with", true);
+    let r =
+        f.call("scan.objects", json!({"projectors": [{"reference": "wall", "scan": "with"}], "out": "obj"}));
+    assert_eq!(r["objects"].as_array().unwrap().len(), 1, "{r}");
+    let px = r["projectors"][0]["pixels"][0].as_u64().unwrap();
+    assert!((400..=480).contains(&px), "{r}");
+    let labels = penumbra_gpu::image::decode_file_raw(&dir.join("obj/labels_0.png"), 8192, 1 << 24).unwrap();
+    assert_eq!(labels.rgba[20 * pw + 32][0] * labels.scale, 1.0);
+    assert_eq!(labels.rgba[5 * pw + 5][0], 0.0);
+    let cam =
+        penumbra_gpu::image::decode_file_raw(&dir.join("obj/objects_camera.png"), 8192, 1 << 24).unwrap();
+    assert_eq!((cam.width, cam.height), (cw as u32, ch as u32));
+    assert_eq!(cam.rgba[20 * cw + 72][0] * cam.scale, 1.0, "the box in camera space");
+    assert!(dir.join("obj/parts_0.png").exists() && dir.join("obj/objects_camera_view.png").exists());
+
+    let r = f.call("scan.blend", json!({"scans": ["with"], "masks": ["obj/labels_0.png"], "out": "obj"}));
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    // Read as tex.image reads it: the weight itself, 1 on the box, 0 outside.
+    let w = penumbra_gpu::image::decode_file(&dir.join("obj/weight_0.png"), 8192).unwrap();
+    assert!((w.rgba[(20 * pw + 32) * 4].to_f32() - 1.0).abs() < 1e-3);
+    assert_eq!(w.rgba[(5 * pw + 5) * 4].to_f32(), 0.0);
+    let m = penumbra_gpu::image::decode_file_raw(&dir.join("obj/proj_to_cam_smooth_0.exr"), 8192, 1 << 24)
+        .unwrap();
+    // Within half a camera pixel (near its edge, a part pulls its positions inwards a little).
+    assert!(
+        (m.rgba[20 * pw + 32][0] - 72.5 / cw as f32).abs() < 0.5 / cw as f32,
+        "{:?}",
+        m.rgba[20 * pw + 32]
+    );
+
+    assert!(f.fail("scan.blend", json!({"scans": ["with"], "masks": []})).contains("masks"));
+    assert!(f.fail("scan.blend", json!({"scans": ["nowhere"]})).contains("nowhere"));
+    assert!(f.fail("scan.blend", json!({"scans": ["with"], "ramp": -1})).contains("ramp"));
+    assert!(f.fail("scan.objects", json!({"projectors": []})).contains("projectors"));
+    let e = f.fail(
+        "scan.objects",
+        json!({"projectors": [{"reference": "wall", "scan": "with"}], "threshold": "x"}),
+    );
+    assert!(e.contains("f32"), "{e}");
+    let e = f.fail(
+        "scan.objects",
+        json!({"projectors": [{"reference": "wall", "scan": "with"}], "threshold": -1}),
+    );
+    assert!(e.contains("threshold"), "{e}");
+}
