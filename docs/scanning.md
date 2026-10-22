@@ -245,9 +245,10 @@ warnings.
    range), `mode` alpha, `color` dark; `tex.composite` (over) lays them onto the colours. The
    lines keep their width on steep and flat parts, and a valley clipped at 0 gets no outline.
    A measured map is noisy (scan residuals, tile edges) and the lines wobble and break into
-   small islands; `smooth` (a few pixels: the example uses 4 on its 960 x 540 map, a larger map
-   wants proportionally more) blurs the height inside the node before the lines are found,
-   while the colours stay sharp.
+   small islands; `smooth` blurs the height inside the node before the lines are found, while
+   the colours stay sharp. The example uses 4 on its 960 x 540 map; a full-resolution scan
+   wants about 10, and thick lines need it most: without smoothing their edges follow the
+   noise and plateau pixels punch holes into them.
 4. `tex.composite` multiply with `tex.image` of `relief/mask_N.png` (or run `scan.blend` with
    `"masks": ["relief/mask_0.png", ...]` and multiply by its `weight_N.png` instead, where the
    projectors overlap).
