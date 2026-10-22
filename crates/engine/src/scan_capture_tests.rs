@@ -442,3 +442,102 @@ fn scan_align_with_projectors_one_above_the_other() {
     );
     assert!((r["content"]["aspect"].as_f64().unwrap() - 36.0 / 44.0).abs() < 0.02, "{r}");
 }
+
+/// `scan.run`, the scan button of `tex.scan` nodes: both projectors scanned into the nodes'
+/// folders, lined up through the mappers the nodes name, blended into the folders; the nodes then
+/// hold the maps. A run can be cancelled and only one runs at a time.
+#[test]
+fn scan_run_from_tex_scan_nodes_with_a_simulated_camera() {
+    let f = Fixture::new("scan-run");
+    let key = Key::new("sim", "");
+    f.engine.camera().feed(&key, frame(vec![40; W * H]));
+    f.call("node.create", json!({"path": "/cam", "kind": "tex.video_in", "params": {"device": "sim"}}));
+    let viewport = json!([0.0, 0.0, f64::from(PW) / 1920.0, f64::from(PH) / 1080.0]);
+    for (p, m, s) in [("/proj_a", "/map_a", "/scan_a"), ("/proj_b", "/map_b", "/scan_b")] {
+        f.call("node.create", json!({"path": p, "kind": "out.projector", "params": {"viewport": viewport}}));
+        f.call("node.create", json!({"path": m, "kind": "tex.mapper"}));
+        f.call(
+            "node.create",
+            json!({"path": s, "kind": "tex.scan", "params": {"projector": p, "camera": "cam", "mapper": m, "settle": 0.0}}),
+        );
+    }
+    f.call("cook.play", json!({"playing": true}));
+    let net = f.engine.session().doc().snapshot();
+    let id = |p: &str| net.resolve(&p.parse().unwrap()).unwrap();
+    let _camera = Camera::start(f.engine.clone(), key, vec![id("/proj_a"), id("/proj_b")]);
+
+    let status = f.call("scan.status", json!({}));
+    assert_eq!(status["running"], false, "{status}");
+    assert_eq!(status["nodes"].as_array().unwrap().len(), 2, "{status}");
+    assert!(f.fail("scan.run", json!({"nodes": ["/cam"]})).contains("not a tex.scan"));
+    f.call("node.create", json!({"path": "/scan_c", "kind": "tex.scan", "params": {"projector": "/proj_a", "camera": "/proj_b"}}));
+    assert!(f.fail("scan.run", json!({})).contains("not a tex.video_in"));
+    f.call("node.set", json!({"path": "/scan_c", "params": {"camera": "/cam"}}));
+    assert!(f.fail("scan.run", json!({})).contains("both scan /proj_a"));
+    f.call("node.delete", json!({"path": "/scan_c"}));
+
+    let r = f.call("scan.run", json!({"wait": true}));
+    assert_eq!(r["scans"].as_array().unwrap().len(), 2, "{r}");
+    assert!(r["scans"][0]["projector_pixels"].as_u64().unwrap() >= u64::from(PW * PH) * 95 / 100, "{r}");
+    assert!((r["align"]["aspect"].as_f64().unwrap() - 88.0 / 44.0).abs() < 0.05, "{r}");
+    assert!(r["blend"]["camera_pixels"].as_u64().unwrap() > 0, "{r}");
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    let dir = f.engine.session().dir().to_path_buf();
+    for p in ["proj_a", "proj_b"] {
+        for file in
+            ["proj_to_cam.exr", "cam_to_proj.exr", "scene.png", "weight.png", "proj_to_cam_smooth.exr"]
+        {
+            assert!(dir.join("scan").join(p).join(file).exists(), "{p}/{file}");
+        }
+    }
+    let region = f.call("node.info", json!({"path": "/map_b"}))["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "region")
+        .unwrap()["value"]
+        .clone();
+    assert!((region[0].as_f64().unwrap() - 8.0 / 88.0).abs() < 0.02, "{region}");
+    assert!(f.engine.board().state().stripes.is_empty() && f.engine.board().state().flat.is_empty());
+    let status = f.call("scan.status", json!({}));
+    for n in status["nodes"].as_array().unwrap() {
+        let st = &n["state"];
+        assert_eq!(st["running"], false, "{status}");
+        assert_eq!(st["finished"], 1, "{status}");
+        assert!(st["step"].as_str().unwrap().starts_with("scanned"), "{status}");
+        assert!(st["error"].is_null(), "{status}");
+    }
+
+    // The node holds the maps: projector size, the weight between 0 and 1.
+    if let Ok(gpu) = penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        f.engine.attach_gpu(gpu).unwrap();
+        let mut shot = serde_json::Value::Null;
+        super::eventually("the scan node's weight", || {
+            let r = f.registry.dispatch("node.snapshot", &json!({"path": "/scan_a", "output": "weight"}));
+            shot = r["result"].clone();
+            r["ok"] == true
+        });
+        assert_eq!(
+            (shot["width"].as_u64(), shot["height"].as_u64()),
+            (Some(u64::from(PW)), Some(u64::from(PH)))
+        );
+        let mean = shot["stats"]["mean"][0].as_f64().unwrap();
+        assert!(mean > 0.4 && mean < 1.0, "{shot}");
+        let map = f.call("node.snapshot", json!({"path": "/scan_a", "output": "proj_to_cam"}));
+        assert_eq!(map["width"].as_u64(), Some(u64::from(PW)), "{map}");
+    }
+
+    // Cancelled: stops soon, the projectors show their pictures again, the nodes say so.
+    let r = f.call("scan.run", json!({"nodes": ["/scan_a"]}));
+    assert_eq!(r["started"], true, "{r}");
+    assert!(f.fail("scan.run", json!({"nodes": ["/scan_b"]})).contains("already running"));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(f.call("scan.cancel", json!({}))["cancelled"], true);
+    super::eventually("the scan to stop", || f.call("scan.status", json!({}))["running"] == false);
+    let status = f.call("scan.status", json!({}));
+    let a = status["nodes"].as_array().unwrap().iter().find(|n| n["path"] == "/scan_a").unwrap();
+    assert_eq!(a["state"]["error"], "cancelled", "{status}");
+    assert_eq!(a["state"]["finished"], 2, "{status}");
+    assert!(f.engine.board().state().stripes.is_empty() && f.engine.board().state().flat.is_empty());
+    assert_eq!(f.call("scan.cancel", json!({}))["cancelled"], false);
+}

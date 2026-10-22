@@ -26,6 +26,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use penumbra_calib::colour;
@@ -110,11 +111,17 @@ pub struct CaptureArgs {
     pub options: Options,
 }
 
-/// The folder name of a projector's scan: its path without the leading slash, slashes as `_`.
-pub fn folder_name(path: &str) -> String {
-    let name = path.trim_start_matches('/').replace(['/', '\\', ':'], "_");
-    if name.is_empty() { "projector".into() } else { name }
+pub use penumbra_ops::tex::scan::folder_name;
+
+/// How a caller follows a capture running on its thread: a flag that stops it (checked before
+/// each picture) and a report of the share done, 0 to 1, per projector in turn.
+pub struct Watch<'a> {
+    pub cancel: &'a AtomicBool,
+    pub progress: &'a dyn Fn(usize, f32),
 }
+
+/// What a cancelled capture fails with.
+pub const CANCELLED: &str = "cancelled";
 
 /// Every [`SAMPLE`]-th luma code across and down.
 fn luma(f: &CameraFrame) -> Vec<u8> {
@@ -202,12 +209,16 @@ struct Scanner<'a> {
     pass: u64,
     /// Time between consecutive camera frames, as seen.
     intervals: Vec<Duration>,
+    watch: Option<&'a Watch<'a>>,
 }
 
 impl Scanner<'_> {
     /// Shows `pattern` of a `size` projector on projector `lit`, black on every other active
     /// one, and waits until all are presented.
     fn show(&mut self, lit: NodeId, pattern: usize, size: (u32, u32)) -> CmdResult<Instant> {
+        if self.watch.is_some_and(|w| w.cancel.load(Ordering::Relaxed)) {
+            return Err(CANCELLED.into());
+        }
         let stripes = Stripes {
             pattern: u32::try_from(pattern).unwrap_or(u32::MAX),
             level: self.level,
@@ -419,6 +430,11 @@ fn seconds(d: Duration) -> f64 {
 }
 
 pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
+    capture_watched(e, a, None)
+}
+
+/// [`capture`], stopped by and reporting to `watch`.
+pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -> CmdResult<Json> {
     let started = Instant::now();
     let settle = a.settle.unwrap_or(DEFAULT_SETTLE);
     if !(settle.is_finite() && (0.0..=10.0).contains(&settle)) {
@@ -484,6 +500,7 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
         level,
         pass: e.output().pass,
         intervals: Vec::new(),
+        watch,
     };
 
     let mut collected = Vec::new();
@@ -571,6 +588,9 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
             let shot =
                 s.take(path, shown, latency, Some((&previous, Way::Any)), Some(&lit), Some(latency))?;
             c.add(&s.camera, index, &shot)?;
+            if let Some(w) = watch {
+                (w.progress)(k, index as f32 / patterns.count().max(1) as f32);
+            }
             if shot.changed_at.is_none() {
                 unchanged += 1;
             }

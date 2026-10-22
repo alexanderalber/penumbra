@@ -115,6 +115,11 @@ pub enum Action {
         node: NodeId,
         from: String,
     },
+    /// Scan the projectors of this `tex.scan` and of every other naming the same camera
+    /// (`scan.run`).
+    Scan(NodeId),
+    /// Stop the scan going on (`scan.cancel`).
+    CancelScan,
 }
 
 impl Action {

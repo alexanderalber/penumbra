@@ -92,7 +92,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.blend",
-        "Blend weights for projectors lighting the same surface, from their scans (folders          scan.decode wrote): weight_N.png (16-bit, sRGB-encoded so tex.image gives the weight;          multiply the projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed,          for tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects'          labels_N.png), out? (folder, objects), ramp? (projector px, 200), blur? (projector px, 3),          reach? (camera px, 6), sigma? (projector px, 6)}",
+        "Blend weights for projectors lighting the same surface, from their scans (folders          scan.decode wrote): weight_N.png (16-bit, sRGB-encoded so tex.image gives the weight;          multiply the projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed,          for tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects'          labels_N.png), out? (folder, objects), ramp? (projector px, 200), blur? (projector px, 3),          reach? (camera px, 6), sigma? (projector px, 6), into_scans? (write weight.png and          proj_to_cam_smooth.exr into each scan's folder, where tex.scan reads them, false)}",
         move |p| {
             let a: BlendArgs = args(p)?;
             blend(e.session().dir(), &a)
@@ -510,6 +510,9 @@ pub struct BlendArgs {
     pub blur: Option<f32>,
     pub reach: Option<f32>,
     pub sigma: Option<f32>,
+    /// Write `weight.png` and `proj_to_cam_smooth.exr` into each scan's folder (where a
+    /// `tex.scan` reads them) instead of numbered files into `out`.
+    pub into_scans: Option<bool>,
 }
 
 /// Blend weights and smoothed maps for the scans of `a` (paths relative to `dir`).
@@ -569,12 +572,29 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
     let smoothing = t.elapsed();
 
     let t = Instant::now();
+    let into_scans = a.into_scans.unwrap_or(false);
+    if into_scans && a.out.is_some() {
+        return Err("`out` and `into_scans` exclude each other".into());
+    }
     let out = dir.join(a.out.as_deref().unwrap_or(Path::new(DEFAULT_OBJECTS_OUT)));
-    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let write = |name: &str, bytes: Vec<u8>| -> CmdResult<String> {
-        let file = out.join(name);
+    if !into_scans {
+        std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    }
+    let write = |file: PathBuf, bytes: Vec<u8>| -> CmdResult<String> {
         std::fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
         Ok(file.display().to_string())
+    };
+    let files = |n: usize| -> (PathBuf, PathBuf) {
+        match a.scans.get(n).filter(|_| into_scans) {
+            Some(scan) => {
+                let folder = dir.join(scan);
+                (
+                    folder.join(penumbra_ops::tex::scan::WEIGHT),
+                    folder.join(penumbra_ops::tex::scan::SMOOTH_MAP),
+                )
+            }
+            None => (out.join(weight_file(n)), out.join(smooth_file(n))),
+        }
     };
     let mut per_projector = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -584,8 +604,9 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
         let encode =
             |v: f32| (penumbra_gpu::readback::linear_to_srgb(v) * 65535.0).round().clamp(0.0, 65535.0) as u16;
         let values: Vec<u16> = w.iter().map(|v| encode(*v)).collect();
-        let weight = write(&weight_file(n), penumbra_gpu::image::encode_png_gray16(pw, ph, &values)?)?;
-        let map_file = write(&smooth_file(n), penumbra_gpu::image::encode_exr_rgba32f(pw, ph, smooth)?)?;
+        let (weight_path, map_path) = files(n);
+        let weight = write(weight_path, penumbra_gpu::image::encode_png_gray16(pw, ph, &values)?)?;
+        let map_file = write(map_path, penumbra_gpu::image::encode_exr_rgba32f(pw, ph, smooth)?)?;
         let shared = b.shared.get(n).copied().unwrap_or(0);
         if shared == 0 && a.scans.len() > 1 {
             warnings.push(format!(

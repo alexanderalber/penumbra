@@ -23,11 +23,12 @@ use penumbra_calib::Homography;
 use penumbra_core::{Name, NodePath, ParamPath, Value};
 use penumbra_graph::Op;
 use penumbra_ops::tex::mapper::{CORNERS, MAPPER};
+use penumbra_project::Actor;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
-use crate::commands::{edit, outcome, require};
+use crate::commands::{outcome, require};
 use crate::engine::Engine;
 use crate::scan::{CAMERA_MAP, PROJECTOR_MAP, ms, read_map};
 
@@ -159,6 +160,11 @@ fn fit(dir: &Path, scan: &Path) -> CmdResult<Fitted> {
 }
 
 pub fn align(e: &Engine, a: &AlignArgs) -> CmdResult<Json> {
+    align_as(e, a, Actor::Claude)
+}
+
+/// [`align`], the mappers' edit made as `actor` (the user's scan button edits as the user).
+pub fn align_as(e: &Engine, a: &AlignArgs, actor: Actor) -> CmdResult<Json> {
     let started = Instant::now();
     if a.scans.is_empty() || a.scans.len() > 16 {
         return Err("`scans` lists 1 to 16 folders".into());
@@ -365,7 +371,12 @@ pub fn align(e: &Engine, a: &AlignArgs) -> CmdResult<Json> {
         }));
     }
     let apply = a.apply.unwrap_or(true) && a.mappers.is_some();
-    let history = if apply { Some(outcome(&edit(e, &ops, "scan.align")?)) } else { None };
+    let history = if apply {
+        let out = e.session().edit(actor, &ops, None, "scan.align", Instant::now()).map_err(|e| e.0)?;
+        Some(outcome(&out))
+    } else {
+        None
+    };
     let (width, height) = if column { (breadth, length) } else { (length, breadth) };
     let aspect = width / height;
     // The content's corners back in the camera's own axes: x, y, x, y of its bounding box.
