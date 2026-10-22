@@ -84,7 +84,7 @@ impl Fit {
 pub struct ProjectorFrame {
     pub node: NodeId,
     pub path: String,
-    /// The display id as set (`EPSON PJ @ port 4`); empty when none is chosen.
+    /// The display id as set (`EPSON PJ [SECA519] @ target 168194`); empty when none is chosen.
     pub display: String,
     pub active: bool,
     /// x, y, width, height in display sizes (0..1).
@@ -115,11 +115,16 @@ pub struct ProjectorFrame {
 }
 
 /// A display as the output side sees it (named by the system crate, sized by winit).
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct DisplayInfo {
     pub id: String,
     pub monitor: String,
-    pub port: String,
+    /// Manufacturer and product from the EDID as a PnP id (`SECA519`).
+    pub edid: Option<String>,
+    /// The EDID serial number, when the display has a usable one.
+    pub serial: Option<String>,
+    /// The connector it is on (`target 168194`); empty where the OS reports none.
+    pub target: String,
     /// The connector type the OS reports (informative, not always right).
     pub connector: String,
     pub os_name: String,
@@ -209,7 +214,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let desc = NodeDesc::new(PROJECTOR, "A projector: shows its input fullscreen on a display, or in a part of it")
         .param(
             ParamSpec::text("display", "")
-                .doc("Display id from output.list, e.g. `EPSON PJ @ port 4`; the monitor name alone works when unique"),
+                .doc("Display id from output.list, e.g. `EPSON PJ [SECA519] @ target 168194` (model and connector) or `AW3225QF [DELA246 #BY4BYZ3]` (model and serial number); the monitor name alone works when unique"),
         )
         .param(
             ParamSpec::bool("active", true)

@@ -528,13 +528,8 @@ fn render_nodes_ask_of_their_texture_what_their_cameras_see() {
         displays: vec![DisplayInfo {
             id: "d".into(),
             monitor: "test".into(),
-            port: "0".into(),
-            connector: String::new(),
-            os_name: String::new(),
             size: [192, 108],
-            position: [0, 0],
-            refresh_hz: None,
-            editor: false,
+            ..DisplayInfo::default()
         }],
         projectors: [(rig.id("/p_far"), shown.clone()), (rig.id("/p_near"), shown)].into(),
         ..BoardState::default()

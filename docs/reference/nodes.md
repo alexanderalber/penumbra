@@ -1842,7 +1842,7 @@ Outputs: none.
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `display` | text |  |  | Display id from output.list, e.g. `EPSON PJ @ port 4`; the monitor name alone works when unique |
+| `display` | text |  |  | Display id from output.list, e.g. `EPSON PJ [SECA519] @ target 168194` (model and connector) or `AW3225QF [DELA246 #BY4BYZ3]` (model and serial number); the monitor name alone works when unique |
 | `active` | bool | `true` |  | Open the output window on its display; off closes it and the node does nothing |
 | `fit` | fit \| fill \| stretch | `"fit"` |  | How the picture sits in the viewport when their aspects differ; fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted |
 | `viewport` *(more)* | vec4 | `[0, 0, 1, 1]` | 0 to 1 | x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5) |

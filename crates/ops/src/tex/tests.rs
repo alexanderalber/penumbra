@@ -1581,13 +1581,8 @@ fn resolution_analysis_walks_back_from_the_projectors() {
         displays: vec![DisplayInfo {
             id: "d".into(),
             monitor: "test".into(),
-            port: "0".into(),
-            connector: String::new(),
-            os_name: String::new(),
             size: [192, 108],
-            position: [0, 0],
-            refresh_hz: None,
-            editor: false,
+            ..DisplayInfo::default()
         }],
         projectors: [(rig.id("/p"), shown.clone()), (rig.id("/p2"), shown)].into(),
         ..BoardState::default()

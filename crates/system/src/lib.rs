@@ -20,6 +20,6 @@ mod windows;
 
 pub use awake::KeepAwake;
 pub use checks::{Check, CheckStatus, Previous};
-pub use display::{DisplayDetails, Resolved, displays, resolve};
+pub use display::{DisplayDetails, Problem, Resolved, displays, resolve};
 pub use load::{GpuSensors, Load, LoadMeter};
 pub use process::ProcessStats;

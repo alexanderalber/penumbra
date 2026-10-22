@@ -163,8 +163,13 @@ impl Helpers {
             ui.end_row();
             for d in &board.displays {
                 ui.label(&d.id).on_hover_text(format!(
-                    "{} ({}, reported as {})\n{}",
-                    d.monitor, d.port, d.connector, d.os_name
+                    "{} ({}, {})\n{}, reported as {}\n{}",
+                    d.monitor,
+                    d.edid.as_deref().unwrap_or("no EDID"),
+                    d.serial.as_deref().map_or("no serial number".to_string(), |s| format!("serial {s}")),
+                    if d.target.is_empty() { "connector unknown" } else { d.target.as_str() },
+                    d.connector,
+                    d.os_name
                 ));
                 let hz = d.refresh_hz.map_or(String::new(), |hz| format!(" @ {hz:.2} Hz"));
                 ui.label(format!("{}x{}{hz}", d.size[0], d.size[1]));
