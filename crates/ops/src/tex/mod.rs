@@ -9,6 +9,7 @@
 pub mod blob_track;
 mod blur;
 mod cache;
+mod contour;
 mod convert;
 mod denoise;
 mod filters;
@@ -469,6 +470,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     blob_track::register(types)?;
     blur::register(types)?;
     cache::register(types)?;
+    contour::register(types)?;
     convert::register(types)?;
     denoise::register(types)?;
     flow::register(types)?;

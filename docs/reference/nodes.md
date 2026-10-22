@@ -163,6 +163,7 @@ Outputs: `out` (tex).
 | `interval` | float | `0.05` | 0.005 to 0.25 (soft) | Step in the channel's value from one line to the next |
 | `offset` | float | `0` | 0 to 0.25 (soft) | Value of one of the lines; the others lie whole intervals above and below |
 | `thickness` | float | `1.5` | 0.5 to 8 px (soft) | Width of the lines in pixels, the same on steep and gentle slopes |
+| `smooth` | float | `0` | 0 to 16 px (soft) | Blurs the channel before the lines are found (radius in pixels, as tex.blur's size), so a noisy height map gives calm lines without islands; the picture under mode over stays sharp; 0: off |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the lines |
 | `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | Channel the lines follow, on straight colour (a height map: any of the colours); luminance: the brightness as the eye weighs it (Rec. 709); red: the red channel only; green: the green channel only; blue: the blue channel only; alpha: the opacity |
 | `range` *(more)* | vec2 | `[0, 1]` |  | Only values strictly between these get a line: a map clipped at 0 or 1 gets none around its flat parts |

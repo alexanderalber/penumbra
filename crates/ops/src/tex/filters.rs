@@ -29,7 +29,7 @@ fn push(name: &str, default: &str, doc: &str) -> ParamSpec {
 }
 
 /// A `channel` param ([`CHANNEL`]): which value of the picture a filter reads.
-fn channel(doc: &str) -> ParamSpec {
+pub(super) fn channel(doc: &str) -> ParamSpec {
     ParamSpec::choice("channel", &CHANNEL)
         .doc(doc)
         .choice_doc("luminance", "the brightness as the eye weighs it (Rec. 709)")
@@ -226,40 +226,6 @@ pub(super) fn builtins() -> Vec<Builtin> {
                         .choice_doc("over", "over the input"),
                 ),
             include_str!("edge.wgsl"),
-        ),
-        pass(
-            filter("tex.contour", "Contour lines of a channel: a line at every multiple of an interval")
-                .param(
-                    ParamSpec::float("interval", 0.05)
-                        .range(0.005, 0.25)
-                        .doc("Step in the channel's value from one line to the next"),
-                )
-                .param(
-                    ParamSpec::float("offset", 0.0)
-                        .range(0.0, 0.25)
-                        .doc("Value of one of the lines; the others lie whole intervals above and below"),
-                )
-                .param(
-                    ParamSpec::float("thickness", 1.5)
-                        .range(0.5, 8.0)
-                        .unit(Unit::Pixels)
-                        .doc("Width of the lines in pixels, the same on steep and gentle slopes"),
-                )
-                .param(ParamSpec::color("color", [1.0; 4]).doc("Colour of the lines"))
-                .param(channel("Channel the lines follow, on straight colour (a height map: any of the colours)"))
-                .param(
-                    ParamSpec::vec2("range", [0.0, 1.0])
-                        .more()
-                        .doc("Only values strictly between these get a line: a map clipped at 0 or 1 gets none around its flat parts"),
-                )
-                .param(
-                    ParamSpec::choice("mode", &["lines", "alpha", "over"])
-                        .doc("What the lines are drawn on")
-                        .choice_doc("lines", "on opaque black")
-                        .choice_doc("alpha", "on transparent, to lay over a picture with tex.composite")
-                        .choice_doc("over", "over the input"),
-                ),
-            include_str!("contour.wgsl"),
         ),
         Builtin {
             size: Size::Own,

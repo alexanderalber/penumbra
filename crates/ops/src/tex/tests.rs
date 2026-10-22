@@ -366,6 +366,12 @@ lumen"
         create("/threshold", "tex.threshold", &[("soft", Value::Float(0.1))]),
         create("/tile", "tex.tile", &[("repeat", Value::Vec2([3.0, 2.0])), ("mirror", Value::Bool(true))]),
         create("/blur", "tex.blur", &[("size", Value::Float(6.0))]),
+        create("/contour", "tex.contour", &[("interval", Value::Float(0.1))]),
+        create(
+            "/contour_smooth",
+            "tex.contour",
+            &[("interval", Value::Float(0.1)), ("smooth", Value::Float(4.0)), ("mode", "over".into())],
+        ),
         create("/hsv", "tex.hsv", &[("hue", Value::Float(120.0)), ("saturation", Value::Float(0.5))]),
         create("/cut", "tex.threshold", &[("output", "alpha".into())]),
         create("/outside", "tex.composite", &[("op", "outside".into())]),
@@ -411,6 +417,8 @@ lumen"
         connect("/noise", "/threshold", 0),
         connect("/image", "/tile", 0),
         connect("/noise_value", "/blur", 0),
+        connect("/noise", "/contour", 0),
+        connect("/noise", "/contour_smooth", 0),
         connect("/noise_value", "/hsv", 0),
         connect("/noise", "/cut", 0),
         connect("/cut", "/outside", 0),
@@ -467,6 +475,8 @@ lumen"
         "threshold",
         "tile",
         "blur",
+        "contour",
+        "contour_smooth",
         "hsv",
         "outside",
         "atop",
@@ -1129,6 +1139,146 @@ fn contour_draws_a_line_per_interval_and_none_around_clipped_flats() {
     let clipped = row(&mut rig, "/clipped");
     assert!(clipped[..100].iter().all(|v| *v < 0.01), "{:?}", &clipped[..110]);
     assert_eq!(runs(&clipped).len(), 9, "{:?}", runs(&clipped));
+}
+
+/// A grey rise from 0 at the left to 1 at the right (linear) plus fine noise of +-0.03: the
+/// value crosses every level back and forth a few times.
+fn write_noisy_rise(path: &Path, w: u32, h: u32) {
+    let encode = |v: f32| if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+    let mut samples = Vec::new();
+    let mut seed = 7u32;
+    for _ in 0..h {
+        for x in 0..w {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = ((seed >> 8) as f32 / 16_777_216.0 - 0.5) * 0.06;
+            let v = encode((x as f32 / (w - 1) as f32 + noise).clamp(0.0, 1.0));
+            let g = (v * 65535.0).round() as u16;
+            samples.extend([g, g, g, 65535]);
+        }
+    }
+    let img =
+        photocraft_codecs::Image::from_u16(w, h, photocraft_codecs::ChannelLayout::Rgba, &samples).unwrap();
+    let png = photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &Default::default()).unwrap();
+    std::fs::write(path, png).unwrap();
+}
+
+/// Starts of runs of lit pixels (red above 0.5) in row `y`.
+fn lit_runs(px: &Pixels, y: u32) -> Vec<u32> {
+    let lit = |x: u32| px.get(x, y).is_some_and(|p| p[0] > 0.5);
+    (0..px.width).filter(|&x| lit(x) && (x == 0 || !lit(x - 1))).collect()
+}
+
+#[test]
+fn contour_smooth_calms_noise_and_ignores_transparent_parts() {
+    let Some(gpu) = gpu() else { return };
+    let (w, h) = (200, 24);
+    let dir = scratch("contour_smooth");
+    write_noisy_rise(&dir.join("noisy.png"), w as u32, h as u32);
+    let ops = [
+        create("/noisy", "tex.image", &[("file", "noisy.png".into())]),
+        create("/raw", "tex.contour", &[("interval", Value::Float(0.1))]),
+        create("/calm", "tex.contour", &[("interval", Value::Float(0.1)), ("smooth", Value::Float(8.0))]),
+        connect("/noisy", "/raw", 0),
+        connect("/noisy", "/calm", 0),
+        // Opaque up to 0.55 of the width, transparent after: the blur must not pull the values
+        // near that edge towards the zeros of the transparent part.
+        create(
+            "/cut",
+            "tex.ramp",
+            &[
+                ("width", Value::Int(w)),
+                ("height", Value::Int(h)),
+                (
+                    "keys",
+                    "0 0 0 0 1
+0.55 0.55 0.55 0.55 1
+0.551 0.55 0.55 0.55 0
+1 1 1 1 0"
+                        .into(),
+                ),
+            ],
+        ),
+        create(
+            "/cut_lines",
+            "tex.contour",
+            &[("interval", Value::Float(0.1)), ("smooth", Value::Float(8.0)), ("mode", "alpha".into())],
+        ),
+        connect("/cut", "/cut_lines", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let raw = rig.pixels("/raw");
+    let calm = rig.pixels("/calm");
+    let mut raw_runs = 0;
+    for y in [6, 12, 18] {
+        raw_runs += lit_runs(&raw, y).len();
+        let starts = lit_runs(&calm, y);
+        assert_eq!(starts.len(), 9, "row {y}: {starts:?}");
+        for (i, x) in starts.iter().enumerate() {
+            let want = 20.0 * (i + 1) as f32;
+            assert!((*x as f32 - want).abs() <= 4.0, "row {y}: line {i} at {x}, not near {want}");
+        }
+    }
+    assert!(raw_runs > 27, "the noise breaks the unsmoothed lines: {raw_runs} runs in three rows");
+    let cut = rig.pixels("/cut_lines");
+    let alpha = |x: u32| cut.get(x, 12).map_or(0.0, |p| p[3]);
+    let lit: Vec<u32> =
+        (0..w as u32).filter(|&x| alpha(x) > 0.5 && (x == 0 || alpha(x - 1) <= 0.5)).collect();
+    assert_eq!(lit.len(), 5, "levels 0.1 to 0.5, none along the transparent edge: {lit:?}");
+    assert!((104..200).all(|x| alpha(x) < 0.1), "{:?}", (104..120).map(alpha).collect::<Vec<_>>());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn contour_lines_are_as_wide_on_a_diagonal_as_across() {
+    let Some(gpu) = gpu() else { return };
+    // One level crossed by a horizontal ramp and by a radial one: the lit area per unit of line
+    // length must match whatever the direction.
+    let ops = [
+        create(
+            "/across",
+            "tex.ramp",
+            &[
+                ("width", Value::Int(128)),
+                ("height", Value::Int(128)),
+                (
+                    "keys",
+                    "0 0 0 0
+1 1 1 1"
+                        .into(),
+                ),
+            ],
+        ),
+        create(
+            "/round",
+            "tex.ramp",
+            &[
+                ("width", Value::Int(128)),
+                ("height", Value::Int(128)),
+                (
+                    "keys",
+                    "0 0 0 0
+1 1 1 1"
+                        .into(),
+                ),
+                ("shape", "radial".into()),
+            ],
+        ),
+        create("/a", "tex.contour", &[("interval", Value::Float(0.5)), ("thickness", Value::Float(3.0))]),
+        create("/r", "tex.contour", &[("interval", Value::Float(0.5)), ("thickness", Value::Float(3.0))]),
+        connect("/across", "/a", 0),
+        connect("/round", "/r", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let sum = |px: &Pixels| px.data.iter().map(|p| f64::from(p[0])).sum::<f64>();
+    let across = sum(&rig.pixels("/a")) / 128.0;
+    assert!((across - 3.0).abs() < 0.3, "a line 3 px wide: {across}");
+    // The radial ramp's level 0.5 is a circle; its length from the lit area at the right width.
+    let round = rig.pixels("/r");
+    let lit = sum(&round);
+    let rows: Vec<u32> = (0..128).filter(|&y| (0..128).any(|x| round.get(x, y).unwrap()[0] > 0.5)).collect();
+    let diameter = f64::from(rows.len() as u32);
+    let width = lit / (std::f64::consts::PI * diameter);
+    assert!((width - 3.0).abs() < 0.45, "the circle's line is {width} px wide (diameter {diameter})");
 }
 
 #[test]
