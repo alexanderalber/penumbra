@@ -143,6 +143,10 @@ fn projector_match_with_a_simulated_camera() {
     assert_eq!(r["shared_spot"], true, "{r}");
     assert_eq!(r["reference"], "/proj_b", "{r}");
     assert_eq!(r["applied"], true);
+    assert_eq!(r["target"], "reference");
+    let straight = (0..17).map(|i| format!("{}", f64::from(i) / 16.0)).collect::<Vec<_>>().join(" ");
+    assert!(r["projectors"][1]["curves"].as_str().unwrap().starts_with(&format!("r: {straight}")), "{r}");
+    assert!(f.fail("projector.match", json!({"camera": "/cam", "target": "nope"})).contains("srgb"));
     assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
     let peak = &r["projectors"][0]["peak"];
     assert!(peak["strength_1"].as_f64().unwrap() < peak["strength_0_5"].as_f64().unwrap(), "{r}");
@@ -154,7 +158,14 @@ fn projector_match_with_a_simulated_camera() {
     let synths = synths();
     let corrected = |node: NodeId, synth: &Synth, c: [f64; 3]| {
         let n = net.node(node).unwrap();
-        let corr = penumbra_ops::out::correct::correction(|p| n.param(desc, p)).unwrap().unwrap();
+        // None: the identity (the reference with target reference).
+        let corr =
+            penumbra_ops::out::correct::correction(|p| n.param(desc, p)).unwrap().unwrap_or_else(|| {
+                Arc::new(penumbra_gpu::projection::Correction {
+                    matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+                    curves: [vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]],
+                })
+            });
         let m = corr.matrix.map(|r| r.map(f64::from));
         let d = apply(&m, c).map(|v| v.clamp(0.0, 1.0));
         let s = [0, 1, 2].map(|i| {

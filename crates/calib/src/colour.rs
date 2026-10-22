@@ -9,8 +9,11 @@
 //! reach (drive within 0..1 for every content in the unit cube).
 //!
 //! The tone curve is a table of signal values at drives evenly spaced in the sRGB-encoded
-//! drive, so a projector that responds like the sRGB curve gets the straight line `0..1`. It
-//! inverts the measured response of the channel, made monotone.
+//! drive, so a projector that responds like the sRGB curve gets the straight line `0..1`. What
+//! it aims at is the [`Target`]: by default the reference projector's own response (the
+//! reference keeps the straight line, the others are bent to respond like it), which holds
+//! through any monotone tone curve of the camera, since only responses are compared; or the
+//! sRGB curve itself, which needs a camera known to be linear.
 //!
 //! Approximations, all reported in the result where they bite: channels add up (white is
 //! red + green + blue; [`Matched`] reports how far off white is); a target that needs a
@@ -133,6 +136,20 @@ pub struct Matched {
     pub warnings: Vec<String>,
 }
 
+/// What the tone curves aim at.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Target {
+    /// Respond like the reference projector: it keeps straight curves, the others map each
+    /// drive to the signal at which they give the light the reference gives (both normalised to
+    /// full). Relative only, so the camera's own tone curve and colour processing cancel.
+    #[default]
+    Reference,
+    /// Respond like the sRGB curve: each projector's measured response is inverted. Trusts the
+    /// camera's values as linear light.
+    Srgb,
+}
+
 /// Most samples per tone curve.
 pub const MAX_SAMPLES: usize = 64;
 
@@ -142,6 +159,7 @@ pub fn match_projectors(
     measured: &[Measured],
     whites: &[Option<[f64; 3]>],
     samples: usize,
+    target: Target,
 ) -> Result<Matched, String> {
     if measured.is_empty() {
         return Err("no projectors to match".into());
@@ -212,14 +230,31 @@ pub fn match_projectors(
         ));
     }
 
+    let reference_points: Option<[Vec<(f64, f64)>; 3]> = match target {
+        Target::Srgb => None,
+        Target::Reference => {
+            let m = measured.get(reference).ok_or("no reference")?;
+            let r = responses.get(reference).ok_or("no reference")?;
+            Some([0, 1, 2].map(|c| points(&m.levels, r.get(c).map(Vec::as_slice).unwrap_or(&[]))))
+        }
+    };
     let mut projectors = Vec::with_capacity(measured.len());
     for (k, ((m, p), (a, response))) in
         measured.iter().zip(&primaries).zip(mats.iter().zip(responses)).enumerate()
     {
         let matrix = a.map(|row| row.map(|v| v * alpha));
         let curves = [0, 1, 2].map(|c| {
-            let g = response.get(c).map(Vec::as_slice).unwrap_or(&[]);
-            curve(&m.levels, g, samples)
+            let own = points(&m.levels, response.get(c).map(Vec::as_slice).unwrap_or(&[]));
+            let at = |i: usize| i as f64 / (samples - 1).max(1) as f64;
+            match &reference_points {
+                // The reference as it is; the others to its response at each signal.
+                Some(_) if k == reference => (0..samples).map(at).collect(),
+                Some(r) => {
+                    let r = r.get(c).map(Vec::as_slice).unwrap_or(&[]);
+                    (0..samples).map(|i| invert(&own, interpolate(r, at(i)))).collect()
+                }
+                None => (0..samples).map(|i| invert(&own, at(i))).collect(),
+            }
         });
         let additivity = whites.get(k).copied().flatten().map(|w| {
             let sum = apply(p, [1.0; 3]);
@@ -329,13 +364,24 @@ fn clamp_rows(m: &Mat3) -> (Mat3, usize) {
     (out, clamped)
 }
 
-/// The tone curve table: for encoded drive `i / (n - 1)` the signal that makes the light
-/// `decode(drive)` of full, by the response `g` (at signal 0 and `levels`). Interpolated in the
-/// encoded light, which is close to straight for projectors near the sRGB curve.
-fn curve(levels: &[f64], g: &[f64], n: usize) -> Vec<f64> {
-    let points: Vec<(f64, f64)> =
-        std::iter::once(0.0).chain(levels.iter().copied()).zip(g.iter().map(|v| encode(*v))).collect();
-    (0..n).map(|i| invert(&points, i as f64 / (n - 1).max(1) as f64)).collect()
+/// The response `g` (at signal 0 and `levels`) as points of signal and encoded light, so a
+/// projector near the sRGB curve gives nearly a straight line and interpolates well. With
+/// [`Target::Srgb`], the curve for encoded drive `e` is where these points reach `e`.
+fn points(levels: &[f64], g: &[f64]) -> Vec<(f64, f64)> {
+    std::iter::once(0.0).chain(levels.iter().copied()).zip(g.iter().map(|v| encode(*v))).collect()
+}
+
+/// The piecewise linear `points` (increasing `x`) at `x`.
+fn interpolate(points: &[(f64, f64)], x: f64) -> f64 {
+    for w in points.windows(2) {
+        if let [(x0, h0), (x1, h1)] = *w
+            && x <= x1
+        {
+            let t = if x1 > x0 { ((x - x0) / (x1 - x0)).clamp(0.0, 1.0) } else { 1.0 };
+            return h0 + t * (h1 - h0);
+        }
+    }
+    points.last().map_or(x, |p| p.1)
 }
 
 /// The smallest `x` where the piecewise linear, non-decreasing `points` reach `e`.

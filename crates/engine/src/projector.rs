@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use penumbra_calib::colour::{self, Measured, Picture, Planes};
+use penumbra_calib::colour::{self, Measured, Picture, Planes, Target};
 use penumbra_camera::{Key, Matrix};
 use penumbra_core::{Name, NodeId, NodePath, ParamPath, Value};
 use penumbra_graph::{Network, Op};
@@ -49,7 +49,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          write their colour correction (matrix, curves) so they look alike; blocks for several seconds per \
          projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), \
          levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera \
-         picture, 0..1), timeout? (s, 5), apply? (true: write the params as one undo step)}",
+         picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference          projector, which keeps straight curves; works through any camera | srgb: every projector follows          the sRGB curve; only with a camera known to be linear), apply? (true: write the params as one          undo step)}",
         move |p| {
             let a: MatchArgs = args(p)?;
             run(&e, &a)
@@ -68,6 +68,8 @@ pub struct MatchArgs {
     pub area: Option<[f64; 4]>,
     pub timeout: Option<f64>,
     pub apply: Option<bool>,
+    #[serde(default)]
+    pub target: Target,
 }
 
 /// Clears the flat signals of the projectors measured and the running flag when dropped.
@@ -357,7 +359,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     }
     drop(restore);
 
-    let matched = colour::match_projectors(&measured, &white_means, samples).map_err(|err| {
+    let matched = colour::match_projectors(&measured, &white_means, samples, a.target).map_err(|err| {
         // Name the projector instead of its index.
         let mut err = err;
         for (k, (_, path)) in projectors.iter().enumerate() {
@@ -415,6 +417,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         ),
         "reference": reference,
         "alpha": matched.alpha,
+        "target": a.target,
         "shared_spot": spots.shared,
         "spot_pixels": spots.masks.iter().map(|m| colour::count(m)).collect::<Vec<_>>(),
         "camera_picture": [black.width, black.height],
