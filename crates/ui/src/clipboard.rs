@@ -82,7 +82,7 @@ pub fn paste(
         // Joins the paste's entry: one undo step for both.
         engine.session().edit(Actor::User, &ops, Some(pasted.outcome.group), "", now)?;
     }
-    editor.selection = top.into_iter().collect();
+    editor.select(top);
     if pasted.dropped.is_empty() {
         return Ok(None);
     }

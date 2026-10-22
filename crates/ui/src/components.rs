@@ -95,7 +95,7 @@ pub fn group(
     }
     place(engine, &g.outcome, at, now)?;
     if let Some(id) = engine.session().doc().snapshot().resolve(&g.path) {
-        editor.selection = [id].into();
+        editor.select([id]);
     }
     Ok(())
 }
@@ -140,11 +140,12 @@ pub fn dissolve(
         .collect();
     place(engine, &out, at, now)?;
     let net = engine.session().doc().snapshot();
-    editor.selection = moved
-        .iter()
-        .filter(|(old, _)| old.parent().as_ref() == Some(&path))
-        .filter_map(|(_, new)| net.resolve(new))
-        .collect();
+    editor.select(
+        moved
+            .iter()
+            .filter(|(old, _)| old.parent().as_ref() == Some(&path))
+            .filter_map(|(_, new)| net.resolve(new)),
+    );
     Ok(())
 }
 
@@ -185,7 +186,7 @@ pub fn add(
     let (path, out) = comps::load(engine, Actor::User, name, None, &level_path).map_err(err)?;
     place(engine, &out, [(path.clone(), at)], now)?;
     if let Some(id) = engine.session().doc().snapshot().resolve(&path) {
-        editor.selection = [id].into();
+        editor.select([id]);
     }
     Ok(())
 }

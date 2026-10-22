@@ -288,8 +288,8 @@ pub struct Layout {
     /// its own), so overlap checks and bounds look at one level only.
     parents: HashMap<NodeId, Option<NodeId>>,
     /// The component whose inside the editor shows (`None`: the top level); `visible` and
-    /// `bounds` refer to it.
-    pub level: Option<NodeId>,
+    /// `bounds` refer to it. The one place that says which level is shown ([`Layout::enter`]).
+    level: Option<NodeId>,
     /// Pan and zoom of the levels not shown, for coming back.
     level_views: HashMap<Option<NodeId>, View>,
     pub view: View,
@@ -421,6 +421,11 @@ impl Layout {
             self.sections = sections;
             self.touch(now);
         }
+    }
+
+    /// The component whose inside the editor shows; `None` for the top level.
+    pub fn level(&self) -> Option<NodeId> {
+        self.level
     }
 
     /// Shows the inside of `level`; returns whether it had a view to come back to (otherwise the
@@ -944,7 +949,7 @@ mod tests {
         // node outside holds too.
         assert_eq!(layout.get(id("/g/x")), layout.get(id("/a")));
         let outside = layout.bounds().unwrap();
-        layout.level = Some(id("/g"));
+        layout.enter(Some(id("/g")), Instant::now());
         assert_eq!(layout.bounds(), Some(Rect::from_min_size(layout.get(id("/g/x")).unwrap(), NODE_SIZE)));
         assert!(outside.width() > NODE_SIZE.x);
     }

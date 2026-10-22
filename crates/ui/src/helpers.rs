@@ -631,12 +631,10 @@ fn resolution(
              (res.overlay)",
         );
         auto.add("helpers.overlay", r.rect, "overlay");
-        if r.changed() {
-            let session = input.engine.session().clone();
-            input.engine.post_cook(move |st| {
-                let net = session.doc().snapshot();
-                st.set_overlay(on, &net, session.types());
-            });
+        if r.changed()
+            && let Err(e) = penumbra_engine::commands::set_overlay(input.engine, on)
+        {
+            actions.push(Action::Message(e.0));
         }
     });
     let Some(report) = input.view.resolution.as_deref() else {
