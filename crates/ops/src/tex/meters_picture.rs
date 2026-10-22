@@ -46,10 +46,10 @@ const MAX_CHARS: usize = 512;
 pub(crate) fn params() -> [ParamSpec; 3] {
     [
         ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).group(GROUP).doc(
-            "Width of the meters output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on",
+            "Width of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on",
         ),
         ParamSpec::int("height", 1080).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).group(GROUP).doc(
-            "Height of the meters output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on",
+            "Height of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on",
         ),
         ParamSpec::bool(KEEP_SIZE, false)
             .group(GROUP)

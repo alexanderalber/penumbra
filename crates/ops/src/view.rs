@@ -201,9 +201,9 @@ fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str>
         return Some("The calibration replaces this while it is set");
     }
     match (text("projection").as_str(), name) {
-        ("orthographic", "fov") => Some("Orthographic: `size` says how much it sees"),
+        ("orthographic", "fov") => Some("Orthographic: `size` says how much the camera sees"),
         ("orthographic", _) => None,
-        (_, "size") => Some("Perspective: `fov` says how much it sees"),
+        (_, "size") => Some("Perspective: `fov` says how much the camera sees"),
         _ => None,
     }
 }
@@ -220,7 +220,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     .param(
         ParamSpec::vec3("target", [0.0; 3])
             .range(-10.0, 10.0)
-            .doc("The point it looks at, in metres; it stays in the picture's centre (unless shift moves it)"),
+            .doc("The point the camera looks at, in metres. The target stays in the picture's centre unless shift moves it"),
     )
     .param(
         ParamSpec::choice("projection", &PROJECTIONS)
@@ -257,7 +257,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .doc("Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height"),
     )
     .param(ParamSpec::text("calibration", "").group(more).doc(
-        "A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, projection, fov, size, roll and shift",
+        "A camera calibration as JSON (the `camera` that calib.solve returns). When set, the calibration replaces position, target, projection, fov, size, roll and shift",
     ))
     .param(
         ParamSpec::float("near", 0.05)

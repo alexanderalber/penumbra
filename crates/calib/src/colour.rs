@@ -209,7 +209,7 @@ pub fn match_projectors(
         return Err("no projectors to match".into());
     }
     if !(2..=MAX_SAMPLES).contains(&samples) {
-        return Err(format!("a tone curve has 2 to {MAX_SAMPLES} samples, not {samples}").into());
+        return Err(format!("a tone curve has 2 to {MAX_SAMPLES} samples, got {samples}").into());
     }
     let mut primaries = Vec::with_capacity(measured.len());
     let mut responses = Vec::with_capacity(measured.len());
@@ -270,7 +270,7 @@ pub fn match_projectors(
     }
     if clamped > 0 {
         warnings.push(Note::from(format!(
-            "{clamped} matrix entr{} needed a negative drive and were clamped to zero: saturated colours match only approximately",
+            "saturated colours match only approximately: {clamped} matrix entr{} needed a negative drive and were clamped to zero",
             if clamped == 1 { "y" } else { "ies" }
         )));
     }

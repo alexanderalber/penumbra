@@ -43,22 +43,22 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             SCAN,
-            "One projector's structured light scan, held: the scan button measures it with the camera \
-             (scan.run), the outputs are the maps it wrote, kept until the next scan",
+            "One projector's structured light scan, held. The scan button (scan.run) measures the projector \
+             with the camera; the outputs are the maps the scan wrote, kept until the next scan",
         )
         .param(ParamSpec::text("projector", "").doc("The out.projector scanned (a path, or a name beside this node)"))
         .param(ParamSpec::text("camera", "").doc(
             "The tex.video_in that films the projectors; the scan button scans every tex.scan naming the same camera",
         ))
         .param(ParamSpec::text("folder", DEFAULT_FOLDER).doc(
-            "Where scans go, relative to the project: the projector's scan is the folder named after its path inside",
+            "Where scans go, relative to the project. Inside, the projector's scan is the folder named after the projector's path",
         ))
         .param(ParamSpec::text("mapper", "").doc(
-            "The tex.mapper feeding the projector; when every tex.scan of a run names one, the run lines them up (scan.align)",
+            "The tex.mapper feeding the projector. When every tex.scan of a run names its mapper, the run lines the mappers up (scan.align)",
         ))
         .param(ParamSpec::bool("smooth", true).doc(
-            "proj_to_cam is the map smoothed within the decoded area (written by the run's blend), \
-             which keeps remapped edges clean; off: the map as decoded",
+            "proj_to_cam is the map smoothed within the decoded area, for clean remapped edges. The run's \
+             blend writes the smoothed map. Off: the map as decoded",
         ))
         .param(
             ParamSpec::float("settle", 0.05)
@@ -83,14 +83,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("proj_to_cam", DataKind::Tex)
         .describe_output(
             "proj_to_cam",
-            "Projector size: per projector pixel the camera position (red, green, 0 to 1; blue 1 measured, \
-             0.5 filled in, -1 none), for tex.remap's map with the camera's picture as in; -1 before a scan",
+            "Projector size: per projector pixel, the camera position in red and green (0 to 1). Blue: 1 \
+             measured, 0.5 filled in, -1 none; -1 everywhere before a scan. Use as tex.remap's map with the \
+             camera's picture as in",
         )
         .output("weight", DataKind::Tex)
         .describe_output(
             "weight",
-            "Projector size: the blend weight against the other projectors of the run (1 alone, or before a \
-             blend); multiply the projector's picture by it",
+            "Projector size: the blend weight against the other projectors of the run; multiply the \
+             projector's picture by it. 1 everywhere for a projector alone, or before a blend",
         )
         .output("scene", DataKind::Tex)
         .describe_output("scene", "Projector size: the scene as the projector sees it (black before a scan)"),

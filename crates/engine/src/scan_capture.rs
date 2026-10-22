@@ -76,11 +76,12 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.capture",
-        "Scan projectors with a camera, live: each alone shows the structured light patterns (in its own \
-         pixels, past its colour correction, the network untouched) while the others show black; the \
-         camera's frames are decoded and written as scan.decode writes them, into out/<projector> (the \
-         path without its leading slash, slashes as _); measures the light-to-camera latency on the way; \
-         blocks about 15 s per projector; {camera (tex.video_in path), projectors? (paths, default every \
+        "Scan projectors with a camera, live. Each projector alone shows the structured light patterns \
+         (in its own pixels, past its colour correction, the network untouched) while the others show \
+         black. The camera's frames are decoded and written as scan.decode writes them, into \
+         out/<projector> (the path without its leading slash, slashes as _). Measures the \
+         light-to-camera latency on the way. Blocks about 15 s per projector; {camera (tex.video_in \
+         path), projectors? (paths, default every \
          active out.projector), out? (folder, scan), settle? (s after the latency, 0.05), timeout? (s, 5), \
          level? (signal of the lit stripes, 1), frames? (keep the camera frames as PNG in \
          out/<projector>/frames, false), verify? (take a picture only when two frames agree, true), \

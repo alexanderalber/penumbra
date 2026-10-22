@@ -225,7 +225,7 @@ impl ShapeEditor {
             Self::edit(actions, input.replace(i, &[s]), "repeat", None);
         }
         if shape.repeat.is_some() {
-            let r = ui.button("explode").on_hover_text("Every copy a shape of its own");
+            let r = ui.button("explode").on_hover_text("Splits the copies into shapes of their own");
             auto.add("viewer.explode", r.rect, "explode");
             if r.clicked() {
                 Self::edit(actions, input.replace(i, &shape.explode()), "explode", None);

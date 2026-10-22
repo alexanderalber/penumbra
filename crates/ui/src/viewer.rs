@@ -146,8 +146,8 @@ impl Viewer {
                     (AudioView::Plot, true) => "plot",
                 };
                 let r = ui.button(text).on_hover_text(
-                    "What the analysis shows; click for the other. meters: levels, beat and bar, \
-                     tempo, hits and spectrum at a glance; plot: its channels as curves",
+                    "Click to switch. meters: levels, beat and bar, tempo, hits and spectrum at a \
+                     glance. plot: the analysis channels as curves",
                 );
                 auto.add("viewer.audio_view", r.rect, text);
                 if r.clicked() {
@@ -178,9 +178,9 @@ impl Viewer {
                     (ChanScale::PerChannel, true) => "lanes",
                 };
                 let r = ui.button(text).on_hover_text(
-                    "How several channels are scaled; click for the next. shared: one scale for all, \
-                     to compare them; per channel (lanes): a lane each with its own scale; auto: per \
-                     channel when one that moves would be flat on the shared scale",
+                    "Click to switch. shared: one scale for all channels, to compare them. lanes: a \
+                     lane per channel, each with its own scale. auto: lanes when a moving channel \
+                     would look flat on the shared scale",
                 );
                 auto.add("viewer.scale", r.rect, text);
                 if r.clicked() {

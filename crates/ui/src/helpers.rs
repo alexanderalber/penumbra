@@ -248,8 +248,8 @@ impl Helpers {
         let r = ui
             .add_enabled(input.can_edit, egui::Checkbox::new(&mut persist, "keep node state across restarts"))
             .on_hover_text(
-                "Feedback loops, held caches and other nodes continue where they were at the next \
-                 start (project setting persist_state). Locked nodes keep their outputs either way",
+                "At the next start, feedback loops, caches and other stateful nodes continue where \
+                 they were (project setting persist_state). Locked nodes keep their outputs either way",
             );
         auto.add("helpers.state.persist", r.rect, "keep node state across restarts");
         if r.changed()
@@ -292,7 +292,7 @@ impl Helpers {
         }
         ui.horizontal(|ui| {
             ui.label("every").on_hover_text(
-                "How often what the nodes hold is written to the project's state folder (and when closing)",
+                "How often the nodes' state is written to the project's state folder (also when closing)",
             );
             let mut seconds = config.interval.as_secs_f64();
             let d = ui.add(egui::DragValue::new(&mut seconds).range(1.0..=86_400.0).suffix(" s").speed(1.0));
@@ -316,7 +316,7 @@ impl Helpers {
                 });
             }
             let r = ui.button("Restore").on_hover_text(
-                "Give feedback loops, caches and locked nodes what was saved last (state.restore)",
+                "Loads the last saved state into feedback loops, caches and locked nodes (state.restore)",
             );
             auto.add("helpers.state.restore", r.rect, "Restore");
             if r.clicked() {
@@ -331,8 +331,8 @@ impl Helpers {
                 });
             }
             let r = ui.button("Start fresh").on_hover_text(
-                "Feedback loops, caches and other nodes forget what they hold, here and in the state \
-                 folder; locked nodes keep their outputs (state.discard; --fresh at the start)",
+                "Clears the state of feedback loops, caches and other nodes, here and in the state \
+                 folder. Locked nodes keep their outputs (state.discard; --fresh at the start)",
             );
             auto.add("helpers.state.discard", r.rect, "Start fresh");
             if r.clicked() {
@@ -370,7 +370,7 @@ impl Helpers {
         ui.horizontal(|ui| {
             let mut config = hub.config();
             let r = ui.checkbox(&mut config.enabled, "listen").on_hover_text(
-                "Off closes every OSC port for this run (osc.config enabled); the chan.osc_in nodes stay",
+                "Off: every OSC port closes for this run; the chan.osc_in nodes stay (osc.config enabled)",
             );
             auto.add("helpers.osc.enabled", r.rect, "listen");
             if r.changed() {
@@ -381,7 +381,7 @@ impl Helpers {
                 None => "no network found".to_string(),
             };
             ui.label(RichText::new(text).color(weak)).on_hover_text(
-                "The address to enter on a phone or another computer; it reaches a chan.osc_in only with lan on",
+                "Enter this address on a phone or another computer. It reaches a chan.osc_in only while that node's lan is on",
             );
         });
         if status.listeners.is_empty() && status.senders.is_empty() {
@@ -495,7 +495,7 @@ impl Helpers {
         let hub = engine.audio();
         let mut config = hub.config();
         let r = ui.checkbox(&mut config.enabled, "listen").on_hover_text(
-            "Off closes every audio input for this run (audio.config enabled); the nodes stay",
+            "Off: every audio input closes for this run; the nodes stay (audio.config enabled)",
         );
         auto.add("helpers.audio.enabled", r.rect, "listen");
         if r.changed() {
@@ -631,9 +631,9 @@ fn resolution(
         ui.heading("Resolution");
         let mut on = input.view.overlay;
         let r = ui.checkbox(&mut on, "overlay").on_hover_text(
-            "Colour the mappers' and render nodes' pictures: green where a surface or texture pixel meets \
-             about one projector pixel, red where it is too coarse, blue where it is finer than shown \
-             (res.overlay)",
+            "Colours the pictures of mappers and render nodes by resolution: green where one surface or \
+             texture pixel meets about one projector pixel, red where the source is too coarse, blue where \
+             the source is finer than shown (res.overlay)",
         );
         auto.add("helpers.overlay", r.rect, "overlay");
         if r.changed()

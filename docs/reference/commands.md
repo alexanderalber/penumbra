@@ -87,7 +87,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `gpu.info` | GPU adapter, texture size limit, memory, errors raised so far, whether lost |
-| `gpu.simulate_loss` | Test aid: end the GPU device as if the driver had lost it; the app then closes as after a real loss and the next start opens paused; {confirm: true} |
+| `gpu.simulate_loss` | Test aid: end the GPU device as if the driver had lost it. The app then closes as after a real loss, and the next start opens paused; {confirm: true} |
 
 ## history
 
@@ -116,14 +116,14 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `node.delete` | Delete a node and everything inside it; {path} |
 | `node.disconnect` | Clear an input; {to, input} |
 | `node.info` | One node: params, connections, cook status; {path} |
-| `node.kinds` | Node types with their params, inputs and outputs; with a param, its help (what it does, type, default, range, unit, what each choice does); {kind?, param?} |
+| `node.kinds` | Node types with their params, inputs and outputs. With a param: its help (what it does, type, default, range, unit, what each choice does); {kind?, param?} |
 | `node.list` | Nodes under a path; {path?, recursive?} |
 | `node.lock` | Lock (hold outputs) or unlock a node; {path, locked?} |
 | `node.paste` | Paste the nodes copied last (or `text`) into a component or the root; {into?, text?} |
-| `node.place` | Move nodes in the editor (top left corner, graph units on their component's plane; one undo step); null leaves a node to the editor to place; {nodes: {path: [x, y]}} |
+| `node.place` | Move nodes in the editor; top left corner, graph units on their component's plane, one undo step. null leaves a node to the editor to place; {nodes: {path: [x, y]}} |
 | `node.rename` | Rename a node; {path, name} |
-| `node.replace` | Replace a node with one of another kind under the same name, keeping the params, wires and bindings that fit (one undo step); lists what was not kept; {path, kind} |
-| `node.reset` | Start stateful nodes over (feedback, cache, time machine, tracker, filter...); a component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path} |
+| `node.replace` | Replace a node with one of another kind under the same name (one undo step). Keeps the params, wires and bindings that fit and lists what was not kept; {path, kind} |
+| `node.reset` | Start stateful nodes over (feedback, cache, time machine, tracker, filter...). A component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path} |
 | `node.set` | Set params, null resets to the default; {path, params: {name: value}} |
 | `node.snapshot` | Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file?} |
 | `node.unbind` | Back to the param's stored value; {param} |
@@ -149,7 +149,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `project.demo` | Open the demo project, made afresh: changes, state and layout from before are gone |
-| `project.example` | Open a shipped example from a fresh copy in the user's data folder (the shipped one stays as it is); changes last until it is opened again, project.save_as keeps them; {name} |
+| `project.example` | Open a shipped example from a fresh copy in the user's data folder (the shipped one stays as it is). Changes last until the example is opened again; project.save_as keeps them; {name} |
 | `project.examples` | The examples shipped with penumbra, by name, and where they lie |
 | `project.info` | Project directory, unsaved changes, file errors, nodes that did not load (broken), who is editing |
 | `project.new` | Make an empty project in dir (created if missing, must hold no project.ron) and open it; {dir} |
@@ -163,20 +163,20 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `projector.flatfield` | Measure how brightness and colour vary across each projector's picture (hot spot, a colour cast towards an edge) and the brighter black where projectors overlap, with a camera; write per projector a gain map and a black lift (gain_NAME.png, black_NAME.png) and connect them to out.projector's gain and black inputs; blocks for about 20 s per projector; {camera (tex.video_in path), projectors (out.projector paths), scans (one scan folder per projector, with cam_to_proj.exr and proj_to_cam.exr, relative to the project; they must fit the current setup), even? (all: brightness and colour, measured on a flat evenly coloured surface \| colour: the colour cast only, which a relief's shading does not change), levels? (drive levels per primary, 5), low? (lowest level, sRGB-encoded drive, 0.6), frames? (camera frames averaged per picture, 4), settle? (s, 0.5), timeout? (s, 5), degree? (of the smooth surface fitted over the projector, 3), trim? (share of samples the fit may ignore: the surface's own pattern, 0.25), floor? (share of the picture allowed to stay dimmer than the target, 0.02), cover? (share of a projector's brightest that counts as lit for the black, 0.1), blur? (of the black lift, projector px, 6), contrast? (projector contrast, black = white / contrast, where the camera cannot read the black), out? (folder in the project, flatfield), apply? (true: connect the maps, one undo step), pictures? (false: also keep the camera's pictures, 16-bit sRGB PNGs, in out/pictures)} |
-| `projector.match` | Measure the projectors with a camera (each alone: black, white, red, green and blue ramps) and write their colour correction (matrix, curves) so they look alike; blocks for about half a minute per projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference projector, which keeps straight curves; works through any camera \| srgb: every projector follows the sRGB curve; only with a camera known to be linear), refine? (rounds of closed-loop correction against the reference: the matrix on white, then the curves on greys; 5; 0 off), grey_levels? (greys the curves are refined on, evenly spaced; 3), apply? (true: write the params as one undo step)} |
+| `projector.flatfield` | Measure with a camera how brightness and colour vary across each projector's picture (hot spot, a colour cast towards an edge), and the brighter black where projectors overlap. Writes per projector a gain map and a black lift (gain_NAME.png, black_NAME.png) and connects them to out.projector's gain and black inputs. Blocks for about 20 s per projector; {camera (tex.video_in path), projectors (out.projector paths), scans (one scan folder per projector, with cam_to_proj.exr and proj_to_cam.exr, relative to the project; they must fit the current setup), even? (all: brightness and colour, measured on a flat evenly coloured surface \| colour: the colour cast only, which a relief's shading does not change), levels? (drive levels per primary, 5), low? (lowest level, sRGB-encoded drive, 0.6), frames? (camera frames averaged per picture, 4), settle? (s, 0.5), timeout? (s, 5), degree? (of the smooth surface fitted over the projector, 3), trim? (share of samples the fit may ignore, the surface's own pattern, 0.25), floor? (share of the picture allowed to stay dimmer than the target, 0.02), cover? (share of a projector's brightest that counts as lit for the black, 0.1), blur? (of the black lift, projector px, 6), contrast? (projector contrast, black = white / contrast, where the camera cannot read the black), out? (folder in the project, flatfield), apply? (true: connect the maps, one undo step), pictures? (false: also keep the camera's pictures, 16-bit sRGB PNGs, in out/pictures)} |
+| `projector.match` | Measure the projectors with a camera (each alone: black, white, red, green and blue ramps) and write their colour correction (matrix, curves) so they look alike. Blocks for about half a minute per projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference projector, the reference keeps straight curves, works through any camera \| srgb: every projector follows the sRGB curve, only with a camera known to be linear), refine? (rounds of closed-loop correction against the reference, the matrix on white, then the curves on greys; 5; 0 off), grey_levels? (greys the curves are refined on, evenly spaced; 3), apply? (true: write the params as one undo step)} |
 
 ## render
 
 | command | |
 |---|---|
-| `render.frame` | Move the view.camera wired into a tex.render so its geometry fills the picture, keeping the direction (orthographic: sets its size); {path} |
+| `render.frame` | Move the view.camera wired into a tex.render so its geometry fills the picture; the direction stays (orthographic: sets its size); {path} |
 
 ## res
 
 | command | |
 |---|---|
-| `res.analyze` | What the projectors need of every node they show: size, needed, verdict, suggestion; waits up to 3 s for render nodes to measure (pending: those that did not) |
+| `res.analyze` | What the projectors need of every node they show: size, needed, verdict, suggestion. Waits up to 3 s for render nodes to measure (pending: those that did not) |
 | `res.optimize` | Give the nodes the suggested sizes, one undoable entry; {paths?, dry_run?} (paths: only these) |
 | `res.overlay` | Colour the mappers' and render nodes' pictures by resolution (green 1:1, red coarse, blue wasted); {on?} |
 
@@ -184,15 +184,15 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `scan.align` | Line projectors in a row or a column up from their scans (folders scan.capture or scan.decode wrote): a homography camera -> projector per scan, the content as the camera-axis rectangle spanning all their frames, and per projector its mapper's region (its share of the content) and corners (where that share lands in the projector), fit stretch, written as one undo step; {scans: [folder, ...], mappers? ([tex.mapper path, ...], one per scan; without them only the report), apply? (true; false: report only)} |
-| `scan.blend` | Blend weights for projectors lighting the same surface, from their scans (folders scan.decode wrote): weight_N.png (16-bit, sRGB-encoded so tex.image gives the weight; multiply the projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed, for tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? (folder, objects), ramp? (projector px, 200), blur? (projector px, 3), reach? (camera px, 6), sigma? (projector px, 6), into_scans? (write weight.png and proj_to_cam_smooth.exr into each scan's folder, where tex.scan reads them, false)} |
-| `scan.cancel` | Stops the scan going on (scan.run) before its next picture; the projectors show their pictures again and the files of earlier scans stay; {} |
-| `scan.capture` | Scan projectors with a camera, live: each alone shows the structured light patterns (in its own pixels, past its colour correction, the network untouched) while the others show black; the camera's frames are decoded and written as scan.decode writes them, into out/<projector> (the path without its leading slash, slashes as _); measures the light-to-camera latency on the way; blocks about 15 s per projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), out? (folder, scan), settle? (s after the latency, 0.05), timeout? (s, 5), level? (signal of the lit stripes, 1), frames? (keep the camera frames as PNG in out/<projector>/frames, false), verify? (take a picture only when two frames agree, true), retries? (frames that may disagree, 3), fill? (projector px, 32), options?: {min_contrast?, saturation?, min_confidence?, tolerance?}} |
-| `scan.decode` | Decode a structured light scan: the camera's pictures of tex.scan_pattern 0, 1, 2, ... as files in a folder (sorted by name, numbers by value), written as cam_to_proj.exr and proj_to_cam.exr (maps for tex.remap), scene.png (the scene as the projector sees it) and quality.png; {frames (folder, relative to the project), projector?: [w, h] (1920, 1080), out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, saturation?, min_confidence?, tolerance?}} |
-| `scan.objects` | The objects in front of a surface, from a scan of the empty scene (reference) and one with the objects, per projector (folders scan.decode wrote): parts by parallax, numbered alike in every projector (top of the camera picture first); writes labels_N.png (8-bit, 0 background, k the object) and parts_N.png per projector, objects_camera.png (the same labels in camera space, for shapes.trace with labels) and objects_camera_view.png; {projectors: [{reference, scan}, ...], out? (folder, objects), threshold? (camera px, 25), split? (camera px per projector px, 2), min_area? (projector px, 1/256 of the projector), erode? (projector px, 2), unmeasured? (projector px, 4), rim? (projector px, 25)} |
+| `scan.align` | Line projectors in a row or a column up from their scans (folders scan.capture or scan.decode wrote). Fits a homography camera -> projector per scan; the content is the camera-axis rectangle spanning all their frames. Writes per projector its mapper's region (its share of the content) and corners (where that share lands in the projector), fit stretch, as one undo step; {scans: [folder, ...], mappers? ([tex.mapper path, ...], one per scan; without them only the report), apply? (true; false: report only)} |
+| `scan.blend` | Blend weights for projectors lighting the same surface, from their scans (folders scan.decode wrote). Writes weight_N.png (16-bit, sRGB-encoded so tex.image gives the weight; multiply the projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed, for tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? (folder, objects), ramp? (projector px, 200), blur? (projector px, 3), reach? (camera px, 6), sigma? (projector px, 6), into_scans? (write weight.png and proj_to_cam_smooth.exr into each scan's folder, where tex.scan reads them, false)} |
+| `scan.cancel` | Stop the scan going on (scan.run) before its next picture. The projectors show their pictures again; the files of earlier scans stay; {} |
+| `scan.capture` | Scan projectors with a camera, live. Each projector alone shows the structured light patterns (in its own pixels, past its colour correction, the network untouched) while the others show black. The camera's frames are decoded and written as scan.decode writes them, into out/<projector> (the path without its leading slash, slashes as _). Measures the light-to-camera latency on the way. Blocks about 15 s per projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), out? (folder, scan), settle? (s after the latency, 0.05), timeout? (s, 5), level? (signal of the lit stripes, 1), frames? (keep the camera frames as PNG in out/<projector>/frames, false), verify? (take a picture only when two frames agree, true), retries? (frames that may disagree, 3), fill? (projector px, 32), options?: {min_contrast?, saturation?, min_confidence?, tolerance?}} |
+| `scan.decode` | Decode a structured light scan from the camera's pictures of tex.scan_pattern 0, 1, 2, ... (files in a folder, sorted by name, numbers by value). Writes cam_to_proj.exr and proj_to_cam.exr (maps for tex.remap), scene.png (the scene as the projector sees it) and quality.png; {frames (folder, relative to the project), projector?: [w, h] (1920, 1080), out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, saturation?, min_confidence?, tolerance?}} |
+| `scan.objects` | Find the objects in front of a surface by parallax, per projector, between a scan of the empty scene (reference) and a scan with the objects (folders scan.decode wrote). The objects are numbered alike in every projector, top of the camera picture first. Writes per projector labels_N.png (8-bit, 0 background, k the object) and parts_N.png, plus objects_camera.png (the same labels in camera space, for shapes.trace with labels) and objects_camera_view.png; {projectors: [{reference, scan}, ...], out? (folder, objects), threshold? (camera px, 25), split? (camera px per projector px, 2), min_area? (projector px, 1/256 of the projector), erode? (projector px, 2), unmeasured? (projector px, 4), rim? (projector px, 25)} |
 | `scan.patterns` | The pictures of a structured light scan in the order tex.scan_pattern shows them; {projector?: [w, h] (1920, 1080)} |
-| `scan.relief` | Height maps of a mostly flat object (a relief panel) from its scans (folders scan.capture or scan.decode wrote), no reference scan needed: per projector a robust plane projector -> camera, the residual along its main direction as the height, the panel cut out at jumps, holes filled; every projector brought to the first one's units over the camera pixels both light (symmetric fit); writes height_N.exr (0 to 1 over the heights' 1st to 99.5th percentile, for tex.lookup), mask_N.png (the light mask, for tex.image or scan.blend's masks), height_camera.exr and relief_view.png (the same in camera space, to look at); {scans: [folder, ...], out? (folder, relief), sign? ("auto" \| 1 \| -1, the first projector's, the others follow it by the overlap: auto is a heuristic, the wall around the panel taken as behind it; 1 and -1 are fixed to the camera's axes, the reply's sign.as_param pins what a run found), scale? ("symmetric" \| "least_squares"), jump? (camera px per projector px, 4), erode? (projector px, 4), reach? (projector px: notches in the measured panel's outline up to twice this wide are lit, nothing past it, 60)} |
-| `scan.run` | The scan button of tex.scan nodes: scans their projectors one after another with their camera (scan.capture, each into the node's folder), lines them up if every node names its mapper (scan.align, one undo step) and writes blend weights and smoothed maps into the scan folders (scan.blend), which the nodes then show; runs in the background (scan.status, scan.cancel); {nodes? (tex.scan paths, default every tex.scan; all must name the same camera), wait? (return when done, with the report, false)} |
+| `scan.relief` | Height maps of a mostly flat object (a relief panel) from its scans (folders scan.capture or scan.decode wrote), no reference scan needed. Per projector: a robust plane projector -> camera, the residual along its main direction as the height, the panel cut out at jumps, holes filled. Every projector is brought to the first one's units over the camera pixels both light (symmetric fit). Writes height_N.exr (0 to 1 over the heights' 1st to 99.5th percentile, for tex.lookup), mask_N.png (the light mask, for tex.image or scan.blend's masks), height_camera.exr and relief_view.png (the same in camera space, to look at); {scans: [folder, ...], out? (folder, relief), sign? ("auto" \| 1 \| -1: the first projector's sign, the others follow it by the overlap; auto is a heuristic, the wall around the panel taken as behind it; 1 and -1 are fixed to the camera's axes; the reply's sign.as_param pins what a run found), scale? ("symmetric" \| "least_squares"), jump? (camera px per projector px, 4), erode? (projector px, 4), reach? (projector px, 60: notches in the measured panel's outline up to twice this wide are lit, nothing past it)} |
+| `scan.run` | The scan button of tex.scan nodes. Scans their projectors one after another with their camera (scan.capture, each into the node's folder), lines them up if every node names its mapper (scan.align, one undo step) and writes blend weights and smoothed maps into the scan folders (scan.blend); the nodes then show them. Runs in the background (scan.status, scan.cancel); {nodes? (tex.scan paths, default every tex.scan; all must name the same camera), wait? (return when done, with the report, false)} |
 | `scan.status` | How the scans of the tex.scan nodes stand: running, progress (0 to 1), step, the last run's error and warnings; {} |
 
 ## script
@@ -206,7 +206,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `shapes.trace` | Outlines of a mask or label texture as poly lines in a tex.shapes (one undo step), replacing its lines with that tag; {path, from (node: path or name beside path), output?, tag? (trace), channel? (auto \| red \| green \| blue \| alpha \| luma), threshold? (0.5), invert? (inside is below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?} |
+| `shapes.trace` | Trace the outlines of a mask or label texture as poly lines into a tex.shapes (one undo step). Replaces the lines of that tag; {path, from (node: path or name beside path), output?, tag? (trace), channel? (auto \| red \| green \| blue \| alpha \| luma), threshold? (0.5), invert? (inside is below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?} |
 
 ## spacenav
 
@@ -236,7 +236,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `system.check` | Show-machine settings that can ruin a show (gaming overlay, notifications) |
 | `system.fix` | Apply one check's fix; replies with what it replaced; {id} |
-| `system.load` | CPU over all cores and the busiest GPU engine in percent, sampled once a second while asked for (the first call waits for a sample); on NVIDIA GPUs `nvidia`: power_w, power_limit_w, temperature_c, clock_mhz, limited_by of the GPU penumbra renders on (`matched`), else the first |
+| `system.load` | CPU over all cores and the busiest GPU engine in percent, sampled once a second while asked for (the first call waits for a sample). On NVIDIA GPUs `nvidia`: power_w, power_limit_w, temperature_c, clock_mhz, limited_by of the GPU penumbra renders on (`matched`), else the first |
 | `system.process` | This process: working set, private bytes, handles, threads; GPU memory through wgpu's allocator |
 | `system.restore` | Write back what system.fix replaced; {previous} as system.fix returned it |
 
@@ -257,18 +257,18 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `ui.arrange` | Arrange the nodes so wires cross little and run straight (one undo step): {nodes?: [path]}, else every level |
-| `ui.camera` | The viewer's 3D view of a render or geometry: {mode?: picture\|free\|steer, home?, camera?: {eye, target, roll, fov, ortho?}, orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; moves go to the free view's camera, or in steer mode to the camera node (orthographic: dolly scales its size); take puts the free view into it |
+| `ui.camera` | The viewer's 3D view of a render or geometry: {mode?: picture\|free\|steer, home?, camera?: {eye, target, roll, fov, ortho?}, orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; moves go to the free view's camera, in steer mode to the camera node (orthographic: dolly scales the view's size); take copies the free view into the camera node |
 | `ui.click` | Click an element or a point; {id \| x, y, button?, double?, ctrl?, shift?, alt?} |
 | `ui.drag` | Drag between elements or points; {from: {id \| x, y}, to: {id \| x, y}, button?, steps?} |
 | `ui.elements` | Automation ids with rects in points; {prefix?} |
 | `ui.enter` | Show the inside of a component in the editor, the top level without a path; {path?} |
 | `ui.frame` | Fit all nodes into the editor |
 | `ui.key` | Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?} |
-| `ui.measure` | How tidy the level shown is, in graph units: the nodes' width and height, total and longest wire length, crossings, wire length running on top of a wire from another output (overlap, and where: overlaps) or through nodes |
-| `ui.options` | The editor's options (right-click on empty space) and the viewer's channel options; {chan_bars?, viewer_background?, binding_lines?, chan_scale?: auto\|shared\|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale), audio_view?: meters\|plot (what the viewer shows of a chan.audio_analysis: meters, beat and spectrum, or the channel plot), viewer_aspect?: auto\|number (the viewer's picture area, width over height; its height follows the column's width; dragging the viewer's edge sets it, auto is 16:9)} |
+| `ui.measure` | How tidy the level shown is, in graph units: width and height of the nodes, total and longest wire length, crossings, wire length on top of a wire from another output (overlap; where: overlaps), wire length through nodes |
+| `ui.options` | The editor's options (right-click on empty space) and the viewer's channel options; {chan_bars?, viewer_background?, binding_lines?, chan_scale?: auto\|shared\|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale), audio_view?: meters\|plot (what the viewer shows of a chan.audio_analysis: meters, beat and spectrum, or the channel plot), viewer_aspect?: auto\|number (width over height of the viewer's picture area; the height follows the column's width; dragging the viewer's edge sets the aspect, auto is 16:9)} |
 | `ui.screenshot` | PNG of the window; {file?} (default %TEMP%/penumbra/ui.png) |
 | `ui.scroll` | Mouse wheel over an element or point; {id \| x, y, dy} |
-| `ui.select` | Select nodes in the editor (it shows the component they sit in); {paths} |
+| `ui.select` | Select nodes in the editor (the editor shows the component they sit in); {paths} |
 | `ui.state` | Selection, viewer, pan and zoom, editing mode, the status bar's message; {positions?} |
 | `ui.type` | Type text into the focused field; {text} |
 | `ui.view` | Pin the viewer to a node, or unpin without a path; {path?, output?: name or index} |
@@ -285,12 +285,12 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `video_out.start` | Start recording an out.video node to a new file (its params say which and how) by turning its record param on (an edit); {path}; answers with the status once recording |
+| `video_out.start` | Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit); {path}; answers with the status once recording |
 | `video_out.status` | Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error; {path?} |
-| `video_out.stop` | Stop an out.video's recording and finish the file by turning record off (an edit); {path}; answers with the status |
+| `video_out.stop` | Stop an out.video's recording and finish the file: turns record off (an edit); {path}; answers with the status |
 
 ## view
 
 | command | |
 |---|---|
-| `view.free` | A render's or a geometry's scene from any camera, as the viewer's free view draws it (without its lines); {path, output?, camera?: {eye, target, roll, fov, ortho?: height}, width?, height?, file?}; no camera starts where the viewer does |
+| `view.free` | A render's or a geometry's scene from any camera, as the viewer's free view draws it (without its lines); {path, output?, camera?: {eye, target, roll, fov, ortho?: height}, width?, height?, file?}; without camera, the view starts where the viewer does |

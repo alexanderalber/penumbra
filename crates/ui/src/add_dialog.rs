@@ -498,7 +498,7 @@ impl<'a> Grid<'a> {
             painter.text(cross.center(), Align2::CENTER_CENTER, "×", FontId::proportional(15.0), theme::TEXT);
             let from = if place == "project" { "the project's components" } else { "the library" };
             x.clone().on_hover_text(format!(
-                "Take `{name}` out of {from}; the file moves into a `removed` folder beside it"
+                "Removes `{name}` from {from}. The file moves into a `removed` folder beside it"
             ));
         } else {
             painter.text(

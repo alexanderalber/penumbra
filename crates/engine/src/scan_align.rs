@@ -46,10 +46,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.align",
-        "Line projectors in a row or a column up from their scans (folders scan.capture or scan.decode wrote): a \
-         homography camera -> projector per scan, the content as the camera-axis rectangle spanning all \
-         their frames, and per projector its mapper's region (its share of the content) and corners \
-         (where that share lands in the projector), fit stretch, written as one undo step; {scans: \
+        "Line projectors in a row or a column up from their scans (folders scan.capture or scan.decode \
+         wrote). Fits a homography camera -> projector per scan; the content is the camera-axis rectangle \
+         spanning all their frames. Writes per projector its mapper's region (its share of the content) \
+         and corners (where that share lands in the projector), fit stretch, as one undo step; {scans: \
          [folder, ...], mappers? ([tex.mapper path, ...], one per scan; without them only the report), \
          apply? (true; false: report only)}",
         move |p| {
@@ -344,7 +344,8 @@ fn layout_warnings(fits: &[Fitted], layout: &Layout) -> CmdResult<Vec<String>> {
     for f in fits {
         if f.error_px[0] > 3.0 {
             warnings.push(format!(
-                "{}: the homography fits with a median error of {} projector px: the surface is not flat (or the scan is noisy), so the corners line the projectors up only roughly",
+                "{}: the corners line the projectors up only roughly. The homography fits with a median \
+                 error of {} projector px: the surface is not flat, or the scan is noisy",
                 f.scan.display(),
                 f.error_px[0]
             ));

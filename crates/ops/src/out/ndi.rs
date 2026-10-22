@@ -31,8 +31,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "Offers its input on the network as an NDI\u{ae} source (needs the NDI runtime, ndi.video)",
         )
         .param(ParamSpec::text("name", "").doc(
-            "The source name receivers pick; NDI puts the machine's name before it, as in `PC (name)`. \
-             Empty: `penumbra` and the node's name, such as `penumbra ndi1`",
+            "The source name receivers pick. NDI puts the machine's name before the source name, as in \
+             `PC (name)`. Empty: `penumbra` and the node's name, such as `penumbra ndi1`",
         ))
         .param(alpha)
         .input("in", DataKind::Tex)

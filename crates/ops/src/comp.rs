@@ -24,12 +24,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             (
                 PortRole::In,
                 "in",
-                "An input of the component it sits in: what is wired to it outside comes out here",
+                "An input port of the component this node sits in: what is wired to that port outside comes out here",
             ),
             (
                 PortRole::Out,
                 "out",
-                "An output of the component it sits in: what is wired into it here comes out there",
+                "An output port of the component this node sits in: what is wired into this node comes out of that port outside",
             ),
         ] {
             types.register(FnNodeType::new(

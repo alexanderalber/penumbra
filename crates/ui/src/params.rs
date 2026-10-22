@@ -141,7 +141,7 @@ impl ParamPanel {
             if desc.is_some_and(|d| d.stateful || d.container) {
                 // Not an edit, so allowed while Claude edits too.
                 let tip = if desc.is_some_and(|d| d.container) {
-                    "Start the stateful nodes inside over (R over the editor)"
+                    "Start over every stateful node inside this component (R over the editor)"
                 } else {
                     "Start over: forget what this node holds from earlier frames (R over the editor)"
                 };
@@ -167,7 +167,8 @@ impl ParamPanel {
                 if r.clicked() {
                     actions.push(Action::LearnBackground { node: input.node, delay: 0.0 });
                 }
-                let r = ui.button("in 5 s").on_hover_text("Time to leave the picture first");
+                let r =
+                    ui.button("in 5 s").on_hover_text("Learns in 5 s: time to step out of the picture first");
                 auto.add("param.learn_later", r.rect, "learn in 5 s");
                 if r.clicked() {
                     actions.push(Action::LearnBackground { node: input.node, delay: 5.0 });
@@ -1235,7 +1236,10 @@ fn help_facts(help: &penumbra_core::ParamHelp) -> Vec<(&'static str, String)> {
         _ => {}
     }
     if help.bindable {
-        facts.push(("channels", "can drive it: the link button, or drop a chan wire on it".to_string()));
+        facts.push((
+            "channels",
+            "can drive this param: the chain-link button, or drop a chan wire on it".to_string(),
+        ));
     }
     facts
 }
@@ -1533,7 +1537,7 @@ fn display_menu(
             }
             let mut r = ui.button(text);
             if d.editor {
-                r = r.on_hover_text("shows the editor; a projector there stays closed");
+                r = r.on_hover_text("This display shows the editor; a projector on it stays closed");
             }
             auto.add(format!("display.{i}"), r.rect, d.id.clone());
             if r.clicked() {
@@ -1912,9 +1916,10 @@ fn trace_row(
 ) {
     ui.horizontal(|ui| {
         ui.add_enabled_ui(input.can_edit, |ui| {
-            let tip = "Outlines of this node's picture become `poly` lines tagged `trace`, replacing \
-                       those traced before: alpha of a cut-out, else brightness, above 0.5; specks \
-                       under 64 pixels dropped, holes filled. shapes.trace has the other settings";
+            let tip = "Traces the outlines of this node's picture into `poly` lines tagged `trace`; \
+                       lines traced before are replaced. Threshold 0.5 on alpha (a cut-out), else on \
+                       brightness; specks under 64 pixels dropped, holes filled. shapes.trace has the \
+                       other settings";
             let r = ui.add_enabled(!from.trim().is_empty(), egui::Button::new("trace")).on_hover_text(tip);
             auto.add("param.trace", r.rect, "trace");
             if r.clicked() {
@@ -1958,10 +1963,10 @@ fn scan_row(
             auto.add("param.scan_progress", r.rect, "scan progress");
             return;
         }
-        let tip = "Scan the projector of every tex.scan naming the same camera, one after another \
-                   (about 20 s each; the projectors show the patterns, the others black), then line \
-                   them up if each names its mapper, and blend them (scan.run). Keep the room dark \
-                   and nothing moving";
+        let tip = "Scans every tex.scan that names the same camera as this one, one projector after \
+                   another (about 20 s each; the projector being scanned shows the patterns, the others \
+                   black). Then lines the projectors up (when each tex.scan names its mapper) and \
+                   blends them (scan.run). Keep the room dark and nothing moving";
         let tip = if busy { "Another scan is running" } else { tip };
         let r = ui
             .add_enabled(input.can_edit && !busy, egui::Button::new("scan"))
@@ -2029,7 +2034,7 @@ fn record_row(
                 "param.record_start",
             )
         };
-        let tip = if bound { "record follows a channel; unbind it to switch it here" } else { tip };
+        let tip = if bound { "record is bound to a channel; unbind record to switch it here" } else { tip };
         let r = ui
             .add_enabled(input.can_edit && !bound, egui::Button::new(label))
             .on_hover_text(tip)

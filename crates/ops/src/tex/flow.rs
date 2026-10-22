@@ -30,7 +30,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(
             ParamSpec::float("index", 0.0)
                 .range(0.0, (SWITCH_INPUTS - 1) as f64)
-                .doc("Which connected input, counted from 0; past the last, the last"),
+                .doc("Which connected input, counted from 0. Past the last input: the last input"),
         )
         .param(ParamSpec::bool("blend", false).doc("A fractional index mixes the two inputs either side"))
         .param(
@@ -39,11 +39,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .choice_doc("cook", "their chains keep cooking as if shown")
                 .choice_doc(
                     "skip",
-                    "only the shown input's chain cooks, the others stand still and cost nothing. \
-                     Switching to a skipped input cooks its chain in that frame (a slow chain makes the \
-                     frame late, a video may need a moment to catch up), and a feedback loop, cache or \
-                     time machine in it carries on from where it stopped. An input counts as connected \
-                     as soon as it is wired",
+                    "only the shown input's chain cooks; the other chains stand still and cost nothing. \
+                     Switching to a skipped input cooks its chain in that frame: a slow chain makes the \
+                     frame late, a video may need a moment to catch up. A feedback loop, cache or time \
+                     machine in a skipped chain carries on from where it stopped. An input counts as \
+                     connected as soon as it is wired",
                 ),
         );
     for i in 0..SWITCH_INPUTS {
@@ -57,7 +57,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     )?;
 
     types.register(FnNodeType::new(
-        NodeDesc::new("tex.select", "The output of another node, named by path: a wire without the wire")
+        NodeDesc::new("tex.select", "The output of another node, named by path instead of wired")
             .param(
                 ParamSpec::node("node")
                     .doc("Path of the node (/name), or the name of a node beside this one"),
@@ -75,7 +75,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "tex.feedback",
-            "A loop: wire the end of the chain back into `previous`; `initial` until that has a frame",
+            "A loop: wire the end of the chain back into `previous`. Until `previous` has a frame, `initial` is passed",
         )
         .stateful()
         .param(ParamSpec::bool("reset", false).doc("Pass `initial` instead, while on"))

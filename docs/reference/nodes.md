@@ -2,7 +2,7 @@
 
 # Node reference
 
-Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range is only the slider's; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
+Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range limits only the slider; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
 
 Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp), [node](#node)
 
@@ -14,7 +14,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 Finds blobs (people, hands, spots of light) and follows them with ids that stay
 
-Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
@@ -39,7 +39,7 @@ Outputs:
 | `size` *(more)* | int | `320` | 64 to 960 px (soft) | Width the input is analysed at; more finds smaller things and costs more |
 | `open` *(more)* | int | `1` | 0 to 6 px (soft) | Removes specks and lines thinner than twice this (at the analysed size) |
 | `close` *(more)* | int | `2` | 0 to 6 px (soft) | Fills holes and joins parts closer than twice this |
-| `reach` *(more)* | float | `0.15` | 0 to 0.5 (soft) | How far a blob may jump between frames and keep its id, beyond where its speed puts it (of the width) |
+| `reach` *(more)* | float | `0.15` | 0 to 0.5 (soft) | How far a blob may jump between frames and keep its id, as a share of the width. Measured from where the blob's speed puts it |
 | `hold` *(more)* | float | `0.5` | 0 to 5 s (soft) | A blob gone for less keeps its id when it comes back |
 | `slots` *(more)* | int | `4` | 0 to 8 (soft) | Blobs in `chans`, each as id, x, y, area with the slot's number (id 0: empty) |
 
@@ -63,7 +63,7 @@ Outputs: `out` (tex).
 
 The last frames of the input; outputs one of them, some frames back
 
-Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
@@ -145,7 +145,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `color` | colour | `[0, 0, 0, 1]` |  | The colour, linear RGBA with straight alpha; above 1 is brighter than white |
 
 ### tex.contour
@@ -163,7 +163,7 @@ Outputs: `out` (tex).
 | `interval` | float | `0.05` | 0.005 to 0.25 (soft) | Step in the channel's value from one line to the next |
 | `offset` | float | `0` | 0 to 0.25 (soft) | Value of one of the lines; the others lie whole intervals above and below |
 | `thickness` | float | `1.5` | 0.5 to 8 px (soft) | Width of the lines in pixels, the same on steep and gentle slopes |
-| `smooth` | float | `0` | 0 to 16 px (soft) | Blurs the channel before the lines are found (radius in pixels, as tex.blur's size), so a noisy height map gives calm lines without islands; the picture under mode over stays sharp; 0: off |
+| `smooth` | float | `0` | 0 to 16 px (soft) | Smooths a noisy height map so the lines come out calm, without islands. Radius in pixels, like tex.blur's size. Under mode over the picture itself stays sharp; 0: off |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the lines |
 | `channel` | luminance \| red \| green \| blue \| alpha | `"luminance"` |  | Channel the lines follow, on straight colour (a height map: any of the colours); luminance: the brightness as the eye weighs it (Rec. 709); red: the red channel only; green: the green channel only; blue: the blue channel only; alpha: the opacity |
 | `range` *(more)* | vec2 | `[0, 1]` |  | Only values strictly between these get a line: a map clipped at 0 or 1 gets none around its flat parts |
@@ -186,9 +186,9 @@ Outputs: `out` (tex).
 
 ### tex.denoise
 
-Calms a noisy picture (a camera in the dark): averages over frames where it is still
+Calms a noisy picture (a camera in the dark): averages over frames where the picture is still
 
-Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
@@ -200,8 +200,8 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `frames` | float | `8` | 1 to 64 (soft) | About how many frames are averaged where the picture is still, for brightness noise; more is calmer; 1: off |
 | `color_frames` | float | `8` | 1 to 64 (soft) | The same for colour noise (coloured speckles) |
-| `motion` | float | `0.06` | 0 to 0.3 (soft) | A change from which a pixel counts as moving and shows the new frame at once (on the square root of the values, so it means about the same in dark and bright parts). Raise it when the noise still flickers, lower it when moving things leave trails |
-| `spatial` | float | `0.5` | 0 to 1 (soft) | Smooths the brightness of what moves, where the average cannot help, keeping edges stronger than `motion`; 0: off |
+| `motion` | float | `0.06` | 0 to 0.3 (soft) | Change above which a pixel counts as moving and shows the new frame at once. Raise it when the noise still flickers, lower it when moving things leave trails. Measured on the square root of the values, so it means about the same in dark and bright parts |
+| `spatial` | float | `0.5` | 0 to 1 (soft) | Smooths the brightness of moving parts, where the average cannot help. Edges stronger than `motion` are kept; 0: off |
 | `color_spatial` | float | `0.5` | 0 to 1 (soft) | The same for the colour; the eye forgives soft colour more than soft brightness |
 | `reset` *(more)* | bool | `false` |  | Forget the average, while on |
 
@@ -243,9 +243,9 @@ Outputs: `out` (tex).
 
 ### tex.feedback
 
-A loop: wire the end of the chain back into `previous`; `initial` until that has a frame
+A loop: wire the end of the chain back into `previous`. Until `previous` has a frame, `initial` is passed
 
-Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
@@ -273,7 +273,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `fit` | fit \| fill \| stretch \| native | `"fit"` |  | How the input sits in the frame; fit: whole and as large as fits, aspect kept; bars where it does not fill; fill: covering the frame, aspect kept; what sticks out is cropped; stretch: covering the frame, distorted to its aspect; native: pixel for pixel, unscaled |
 | `justify` | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Where the image sits in the frame: 0 left or top, 1 right or bottom |
 | `extend` | zero \| hold \| repeat \| mirror | `"zero"` |  | What fills the frame where the input does not reach (the bars of fit or native); zero: transparent black; hold: the input's edge pixels continue outwards; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
@@ -298,37 +298,37 @@ Outputs: `out` (tex).
 
 A 2D fluid: motion pushes it, dye flows with it (Stable Fluids)
 
-Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
-- `force` (tex): Motion that pushes the fluid, in image sizes per input frame (red x in widths, green y in heights, down positive): tex.optical_flow's output as it is
-- `dye` (tex): Colour poured in (see `inject`); unwired, `color` where it moves
+- `force` (tex): Motion that pushes the fluid: tex.optical_flow's output as it is. Red x in widths, green y in heights, down positive, per input frame
+- `dye` (tex): Colour poured in, where `inject` says. Unwired: `color` where the fluid moves
 - `obstacles` (tex): Solid where brighter than half: the fluid flows around it
-- `splats` (table): Pushes and dye at points, one per row (at most 64): columns x, y (0 to 1, top left), optional vx, vy (image sizes per second), r, g, b and radius (image heights); tex.blob_track's table as it is
+- `splats` (table): Pushes and dye at points, one per row, at most 64: tex.blob_track's table as it is. Columns x, y (0 to 1, from the top left); optional vx, vy (image sizes per second), r, g, b and radius (image heights)
 
 Outputs:
 
 - `out` (tex): The dye, at width x height
-- `velocity` (tex): The fluid's velocity at the grid's size, in image sizes per second (red x in widths, green y in heights, down positive); tex.displace with midpoint 0 moves a picture along it
+- `velocity` (tex): The fluid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second. tex.displace with midpoint 0 moves a picture along it
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
-| `force` | float | `4` | 0 to 20 (soft) | How strongly motion pushes the fluid: per second of motion, this many times its speed is added to the fluid's (the force input and the splats) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
+| `force` | float | `4` | 0 to 20 (soft) | How strongly motion (the force input and the splats) pushes the fluid. Per second, this many times the motion's speed is added to the fluid's speed |
 | `velocity_fade` | float | `2` | 0.05 to 30 s (soft) | Time in which the fluid loses half its speed; longer keeps it swirling |
 | `dye_fade` | float | `3` | 0.05 to 60 s (soft) | Time in which the dye loses half its strength |
-| `inject` | moving \| everywhere | `"moving"` |  | Where dye comes in; moving: where the force input or a splat moves, the faster the more: the dye input's colours, or `color` when nothing is wired there; everywhere: the dye input everywhere, splats whether they move or not |
-| `amount` | float | `4` | 0 to 30 (soft) | How fast the dye takes on the colour poured in, per second (where it moves fast): at 4 about two thirds in a quarter of a second; it paints over, so the dye never gets brighter than its colours |
-| `color` | colour | `[0.35, 0.7, 1, 1]` |  | The dye's colour where the dye input is not wired (its alpha slows the pouring), and of splats without r, g, b |
+| `inject` | moving \| everywhere | `"moving"` |  | Where dye comes in; moving: where the force input or a splat moves, the faster the more; the dye input's colours, or `color` while the dye input is unwired; everywhere: the dye input everywhere, splats whether they move or not |
+| `amount` | float | `4` | 0 to 30 (soft) | How fast the dye takes on the poured colour, per second, where the fluid moves fast. At 4, about two thirds in a quarter of a second. Pouring paints over, so the dye never gets brighter than the poured colour |
+| `color` | colour | `[0.35, 0.7, 1, 1]` |  | Colour of the dye while the dye input is unwired, and of splats without r, g, b columns. The colour's alpha slows the pouring |
 | `vorticity` | float | `0.3` | 0 to 2 (soft) | Brings back the small swirls the coarse grid smooths away; 0: off |
-| `viscosity` *(more)* | float | `0` | 0 to 0.01 (soft) | Thickness: neighbouring parts take on each other's motion (honey rather than smoke), in image heights squared per second; 0: off, costs nothing |
-| `size` *(more)* | int | `256` | 64 to 512 px (soft) | Width of the simulation grid (the height follows the picture's shape); more gives finer swirls and costs more; the dye keeps the output's size |
-| `iterations` *(more)* | int | `20` | 4 to 60 (soft) | Steps that keep the fluid from being squeezed together; fewer cost less and let it bulge and leak |
+| `viscosity` *(more)* | float | `0` | 0 to 0.01 (soft) | Thickness, honey instead of smoke: neighbouring parts take on each other's motion. In image heights squared per second; 0: off, costs nothing |
+| `size` *(more)* | int | `256` | 64 to 512 px (soft) | Width of the simulation grid; the height follows the picture's shape. More gives finer swirls and costs more. The dye keeps the output's size |
+| `iterations` *(more)* | int | `20` | 4 to 60 (soft) | Steps that keep the fluid from being squeezed together. Fewer cost less and let the fluid bulge and leak |
 | `splat_radius` *(more)* | float | `0.05` | 0.005 to 0.3 (soft) | Radius of a splat from the table without a radius column, in image heights |
-| `edges` *(more)* | walls \| open | `"walls"` |  | What the picture's edges are to the fluid; walls: it turns along them; open: it flows out, with the dye |
+| `edges` *(more)* | walls \| open | `"walls"` |  | What the picture's edges are to the fluid; walls: the fluid turns along them; open: the fluid flows out, with the dye |
 | `reset` | bool | `false` |  | Starts over from a still fluid without dye, every frame while on |
 | `persist` *(more)* | bool | `true` |  | Keep velocity and dye in the state snapshots, so a restart carries on from them |
 
@@ -360,7 +360,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `hue` | float | `0` | -180 to 180° (soft) | Added to the hue: 120 turns red into green; any angle, it wraps |
+| `hue` | float | `0` | -180 to 180° (soft) | Added to the hue: 120 turns red into green. Any angle works, the hue wraps around |
 | `saturation` | float | `1` | 0 to 2 (soft) | Multiplies the saturation: 0 is grey, 1 unchanged, 2 more vivid (clipped at full) |
 | `value` | float | `1` | 0 to 2 (soft) | Multiplies the value (the brightest channel): 0 is black, 2 twice as bright |
 
@@ -378,7 +378,7 @@ Outputs: `out` (tex).
 
 ### tex.in
 
-An input of the component it sits in: what is wired to it outside comes out here
+An input port of the component this node sits in: what is wired to that port outside comes out here
 
 Inside a component: one of its inputs.
 
@@ -403,7 +403,7 @@ Outputs:
 |---|---|---|---|---|
 | `file` | file (psd, psb) |  |  | A .psd or .psb, or a directory of images (layers bottom first by name); relative to the project |
 | `layer` | text |  |  | A layer's name, its path (Group/Layer) or #index from the layers table; empty: the whole picture |
-| `placed` *(more)* | bool | `true` |  | The layer where it sits on the canvas (the canvas's size); off: only its own rectangle |
+| `placed` *(more)* | bool | `true` |  | The layer at its place on the canvas, at the canvas's size; off: only the layer's own rectangle |
 
 ### tex.lens_distort
 
@@ -419,7 +419,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `k1` | float | `0.1` | -1 to 1 (soft) | Main term; positive pulls the edges in (barrel), negative pushes them out |
 | `k2` | float | `0` | -1 to 1 (soft) | Fourth-order term, for the far edges |
-| `scale` | float | `1` | 0.25 to 4 (soft) | Zoom after the distortion: above 1 enlarges, to hide the edges barrel distortion pulls in |
+| `scale` | float | `1` | 0.25 to 4 (soft) | Zoom after the distortion: above 1 enlarges and hides the edges that barrel distortion pulls in |
 | `center` *(more)* | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Optical centre; 0, 0 is the top left |
 | `extend` | hold \| zero \| repeat \| mirror | `"zero"` |  | What shows where the picture is fetched from beyond the input's edges; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
@@ -490,7 +490,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `region` | vec4 | `[0, 0, 1, 1]` | 0 to 1 | The part of the input (the surface) shown: x, y, width, height in input sizes |
 | `fit` | fit \| fill \| stretch | `"fit"` |  | How the region sits in the picture before the corners move; fit: whole, aspect kept, with bars; fill: covering the picture, aspect kept, cropped; stretch: covering the picture, distorted to its aspect |
 | `blend` | bool | `true` |  | Soft edges where other mappers of the same input overlap this one (off for stacked projectors) |
@@ -563,7 +563,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `basis` | gradient \| value | `"gradient"` |  | The kind of noise each octave is made of; gradient: smooth, round blobs (Perlin-like); value: blockier, with a visible grid of cells |
 | `seed` | int | `0` | 0 to 100 (soft) | Picks another noise of the same look; each number gives the same picture every time |
 | `frequency` | float | `4` | 0.1 to 100 (soft) | Size of the pattern: noise cells per image height; higher is finer |
@@ -572,7 +572,7 @@ Outputs: `out` (tex).
 | `lacunarity` *(more)* | float | `2` | 1 to 4 (soft) | How much finer each octave is than the one before (2: twice the cells) |
 | `amplitude` | float | `0.5` | 0 to 2 (soft) | Contrast: the noise (about -1 to 1) is multiplied by this, then offset is added |
 | `offset` | float | `0.5` | -1 to 1 (soft) | Added after amplitude: the mean grey. With 0.5 and 0.5 the values span about 0 to 1 |
-| `speed` | float | `0` | 0 to 4 (soft) | How fast the pattern changes, in cells per second; it moves through a third dimension, so it morphs rather than slides. 0 is still |
+| `speed` | float | `0` | 0 to 4 (soft) | How fast the pattern morphs, in cells per second; 0 is still. The noise moves through a third dimension, so the picture does not slide |
 | `translate` *(more)* | vec3 | `[0, 0, 0]` |  | Position in the noise, in cells: x and y slide the picture, z morphs it as speed does |
 | `color` | bool | `false` |  | Three independent channels instead of grey |
 | `alpha` *(more)* | float | `1` | 0 to 1 | Opacity of the whole picture; below 1, what lies under it in a composite shows through |
@@ -591,7 +591,7 @@ Outputs: `out` (tex).
 
 How far each part of the picture moved since the previous frame (optical flow)
 
-Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
@@ -601,10 +601,10 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `colors` | bool | `false` |  | Show the motion as colours instead of passing the numbers on: direction as hue, speed as brightness. For looking at it; nodes that use the motion want this off |
-| `confidence` *(more)* | bool | `false` |  | Blue says how well the motion is pinned down, 0 to 1: high where there is texture, moving or not, low on a plain wall; off, blue is 0 and a still picture black |
-| `fill` | int | `4` | 0 to 6 (soft) | Rounds of filling in: the motion found at edges and texture spreads into plain parts of the same thing (skin, a shirt), not across edges; each round reaches twice as far. 0: off |
-| `threshold` | float | `0.25` | 0 to 4 px (soft) | Slower motion than this fades out (none below half of it), so camera noise does not shimmer; in pixels at the analysed size per frame |
+| `colors` | bool | `false` |  | Show the motion as colours: direction as hue, speed as brightness. For looking at the motion; nodes that use the motion want this off |
+| `confidence` *(more)* | bool | `false` |  | Blue says how well the motion is pinned down, 0 to 1: high where there is texture (moving or not), low on a plain wall. Off: blue is 0, and a still picture is black |
+| `fill` | int | `4` | 0 to 6 (soft) | Rounds of filling in. Motion found at edges and texture spreads into plain parts of the same thing (skin, a shirt) and stops at edges. Each round reaches twice as far; 0: off |
+| `threshold` | float | `0.25` | 0 to 4 px (soft) | Slower motion than this fades out, so camera noise does not shimmer. In pixels per frame at the analysed size; below half of it nothing is left |
 | `size` *(more)* | int | `320` | 64 to 960 px (soft) | Width the input is analysed at, and the output's; more sees finer motion and costs more |
 | `levels` *(more)* | int | `4` | 1 to 6 (soft) | Pyramid levels, each half the size of the one before; each one doubles the fastest motion followed |
 | `iterations` *(more)* | int | `3` | 1 to 6 (soft) | Refining steps per level; more is more exact and costs more |
@@ -612,7 +612,7 @@ Outputs: `out` (tex).
 
 ### tex.out
 
-An output of the component it sits in: what is wired into it here comes out there
+An output port of the component this node sits in: what is wired into this node comes out of that port outside
 
 Inside a component: one of its outputs.
 
@@ -652,7 +652,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `keys` | text | an example script |  | One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; 1 when left out) |
 | `shape` | horizontal \| vertical \| radial \| circular | `"horizontal"` |  | How the key positions 0 to 1 lie on the picture; horizontal: left (0) to right (1); vertical: bottom (0) to top (1); radial: the centre (0) out to the middle of the top edge (1), in rings; circular: once around the centre, counter-clockwise from the right (0) |
 
@@ -678,32 +678,32 @@ Geometry through a camera: the picture, and a data pass (uv, part id + 1, depth)
 Inputs:
 
 - `geo` (geo): What to render
-- `texture` (tex): Put on the geometry where its surface is texture (or auto without a material)
+- `texture` (tex): Put on the geometry when `surface` is texture or auto
 - `lights` (light): Without lights, phong materials are black
 - `camera` (view): A view.camera; needed
 
 Outputs:
 
 - `out` (tex): The rendered picture
-- `data` (tex): Not a picture to look at: texture coordinates in red and green, part id + 1 in blue (0 where nothing was drawn), distance along the view in metres in alpha; for shaders and masks
+- `data` (tex): Texture coordinates in red and green, part id + 1 in blue (0 where nothing was drawn), distance along the view in metres in alpha. Data for shaders and masks, not something to look at
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
-| `surface` | auto \| material \| texture \| parts \| uv \| normals | `"auto"` |  | What the geometry is coloured with; auto: the texture input where connected, else material; material: the material put on by geo.assign_material; without one, each part's from the file (colour times texture), unlit; texture: the texture input, by the mesh's texture coordinates, shaded by the material; parts: a colour per part id, to tell the parts apart; uv: the texture coordinates as red and green, to check an unwrap; normals: which way each point faces, as a colour |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
+| `surface` | auto \| material \| texture \| parts \| uv \| normals | `"auto"` |  | What the geometry is coloured with; auto: the texture input where connected, else material; material: the material put on by geo.assign_material; without one, each part's material from the file (colour times texture), unlit; texture: the texture input, by the mesh's texture coordinates, shaded by the material; parts: a colour per part id, to tell the parts apart; uv: the texture coordinates as red and green, to check an unwrap; normals: which way each point faces, as a colour |
 | `background` | colour | `[0, 0, 0, 0]` |  | Colour where no geometry is drawn; the default is transparent black |
 | `antialias` | bool | `true` |  | Four samples per pixel for smooth edges; off is faster and shows stair steps |
 | `cull` *(more)* | bool | `false` |  | Leave out faces turned away (counter-clockwise is the front) |
-| `shadow_size` *(more)* | int | `2048` | 256 to 4096 (soft) | Texels across each light's shadow map: sharper shadows, more memory |
+| `shadow_size` *(more)* | int | `2048` | 256 to 4096 (soft) | Texels across each light's shadow map; more gives sharper shadows and takes more memory |
 | `ao` *(occlusion)* | bool | `false` |  | Ambient occlusion: less ambient and environment light in creases and where objects meet; direct light and unlit surfaces stay as they are |
 | `ao_radius` *(occlusion)* | float | `0.5` | 0.01 to 2 m (soft) | How far around a point geometry darkens it |
 | `ao_strength` *(occlusion)* | float | `1` | 0 to 3 (soft) | How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker |
 
 ### tex.resolution
 
-The input at another resolution; shrinking averages, so it does not alias
+The input at another resolution. Shrinking averages the pixels, so nothing aliases
 
 Inputs:
 
@@ -717,27 +717,27 @@ Outputs: `out` (tex).
 | `multiply` | float | `0.5` | 0.125 to 4 (soft) | Factor on the input's width and height (mode multiply): 0.5 halves both |
 | `width` *(more)* | int | `1920` | 1 to 16384 px | Width of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(more)* | int | `1080` | 1 to 16384 px | Height of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 
 ### tex.scan
 
-One projector's structured light scan, held: the scan button measures it with the camera (scan.run), the outputs are the maps it wrote, kept until the next scan
+One projector's structured light scan, held. The scan button (scan.run) measures the projector with the camera; the outputs are the maps the scan wrote, kept until the next scan
 
 Inputs: none.
 
 Outputs:
 
-- `proj_to_cam` (tex): Projector size: per projector pixel the camera position (red, green, 0 to 1; blue 1 measured, 0.5 filled in, -1 none), for tex.remap's map with the camera's picture as in; -1 before a scan
-- `weight` (tex): Projector size: the blend weight against the other projectors of the run (1 alone, or before a blend); multiply the projector's picture by it
+- `proj_to_cam` (tex): Projector size: per projector pixel, the camera position in red and green (0 to 1). Blue: 1 measured, 0.5 filled in, -1 none; -1 everywhere before a scan. Use as tex.remap's map with the camera's picture as in
+- `weight` (tex): Projector size: the blend weight against the other projectors of the run; multiply the projector's picture by it. 1 everywhere for a projector alone, or before a blend
 - `scene` (tex): Projector size: the scene as the projector sees it (black before a scan)
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `projector` | text |  |  | The out.projector scanned (a path, or a name beside this node) |
 | `camera` | text |  |  | The tex.video_in that films the projectors; the scan button scans every tex.scan naming the same camera |
-| `folder` | text | `"scan"` |  | Where scans go, relative to the project: the projector's scan is the folder named after its path inside |
-| `mapper` | text |  |  | The tex.mapper feeding the projector; when every tex.scan of a run names one, the run lines them up (scan.align) |
-| `smooth` | bool | `true` |  | proj_to_cam is the map smoothed within the decoded area (written by the run's blend), which keeps remapped edges clean; off: the map as decoded |
+| `folder` | text | `"scan"` |  | Where scans go, relative to the project. Inside, the projector's scan is the folder named after the projector's path |
+| `mapper` | text |  |  | The tex.mapper feeding the projector. When every tex.scan of a run names its mapper, the run lines the mappers up (scan.align) |
+| `smooth` | bool | `true` |  | proj_to_cam is the map smoothed within the decoded area, for clean remapped edges. The run's blend writes the smoothed map. Off: the map as decoded |
 | `settle` *(more)* | float | `0.05` | 0 to 0.5 (soft) | Seconds waited past the measured light-to-camera latency before a picture is taken |
 | `level` *(more)* | float | `1` | 0.05 to 1 | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
 | `fill` *(more)* | int | `32` | 0 to 128 (soft) | Projector pixels the decode fills in from measured neighbours |
@@ -754,13 +754,13 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
-| `pattern` | int | `0` | 0 to 45 (soft) | Which picture: 0 white, 1 black, then a column bit (coarsest first) and its inverse in turn, then the row bits; black past the last (scan.patterns lists them) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
+| `pattern` | int | `0` | 0 to 45 (soft) | Which picture: 0 white, 1 black, then each column bit (coarsest first) followed by its inverse, then the row bits the same way. Past the last: black. scan.patterns lists them |
 | `level` *(more)* | float | `1` | 0 to 1 (soft) | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
 
 ### tex.select
 
-The output of another node, named by path: a wire without the wire
+The output of another node, named by path instead of wired
 
 Inputs: none.
 
@@ -790,9 +790,9 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `file` | file (wgsl) |  |  | The WGSL file, relative to the project directory; saving it reloads the node |
 | `resolution` | input \| custom | `"input"` |  | Where the output's size comes from; input: in0's size; width and height while in0 is unconnected; custom: width and height, whatever is wired |
-| `width` | int | `1920` | 1 to 16384 px | Width of the output in pixels, for resolution custom or without in0; res.optimize may change it unless keep_size is on |
-| `height` | int | `1080` | 1 to 16384 px | Height of the output in pixels, for resolution custom or without in0; res.optimize may change it unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `width` | int | `1920` | 1 to 16384 px | Width of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 
 ### tex.shape_content
 
@@ -800,7 +800,7 @@ Pulses, chases or ripples per shape, from tex.shapes' id output
 
 Inputs:
 
-- `id` (tex): tex.shapes' `id` output; the result has its size
+- `id` (tex): tex.shapes' `id` output; the output has the same size
 
 Outputs: `out` (tex).
 
@@ -813,7 +813,7 @@ Outputs: `out` (tex).
 | `speed` | float | `0.5` | -4 to 4 Hz (soft) | Cycles per second: pulses, segments passing a point, rings starting; negative runs backwards |
 | `stagger` | float | `0` | 0 to 1 (soft) | Phase added per shape id, in cycles: 0.1 makes shapes follow one another in table order |
 | `scatter` | float | `1` | 0 to 1 (soft) | Random phase per shape, in cycles: 0 all in step, 1 all out of step |
-| `depth` | float | `1` | 0 to 1 (soft) | Pulse: how far it fades, 0 not at all, 1 to nothing |
+| `depth` | float | `1` | 0 to 1 (soft) | Pulse: how far the shape fades; 0 not at all, 1 to nothing |
 | `segments` | float | `2` | 1 to 12 (soft) | Chase: lit segments per outline |
 | `line` | float | `6` | 0.5 to 32 px (soft) | Chase: width of the line on the edge, in pixels of the id input |
 | `spacing` | float | `24` | 2 to 200 px (soft) | Ripple: distance between rings, in pixels of the id input |
@@ -834,13 +834,13 @@ Outputs:
 - `sdf` (tex): Signed distance to the edge of those shapes
 - `outline` (tex): Outlines of all shapes in their tag colours, to see them while placing them
 - `table` (table): Every shape as a row; another tex.shapes can read it at its `table` input
-- `id` (tex): Data, not a picture: per pixel the shape of the tags in `tag` it is inside (else the nearest): red its id (the table's `id`), green a random value 0..1 per shape, blue where along its outline (0..1, clockwise), alpha the signed distance to its edge in pixels; for tex.shape_content
+- `id` (tex): Per pixel, the shape (of the tags in `tag`) the pixel is inside, else the nearest shape. Red: the shape's id (the table's `id`). Green: a random value 0..1 per shape. Blue: where along the outline, 0..1 clockwise. Alpha: signed distance to the edge in pixels. Data for tex.shape_content, not something to look at
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the surface in pixels (the mappers' input); shape coordinates are in these pixels |
 | `height` | int | `1080` | 1 to 16384 px | Height of the surface in pixels; shape coordinates are in these pixels |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `shapes` | text |  |  | One per line: `tag rect x,y w,h`, `tag ellipse x,y w,h` or `tag poly x,y x,y ...`, optionally `repeat CxR dx,dy`; surface coordinates (draw them in the viewer) |
 | `tag` | text |  |  | Tags in the mask and the distance field, separated by spaces; empty: all |
 | `outline` *(more)* | float | `2` | 0.5 to 8 px (soft) | Width of the lines in the outline output, in surface pixels |
@@ -895,9 +895,9 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `index` | float | `0` | 0 to 7 (soft) | Which connected input, counted from 0; past the last, the last |
+| `index` | float | `0` | 0 to 7 (soft) | Which connected input, counted from 0. Past the last input: the last input |
 | `blend` | bool | `false` |  | A fractional index mixes the two inputs either side |
-| `inactive` | cook \| skip | `"cook"` |  | What the inputs not shown do; cook: their chains keep cooking as if shown; skip: only the shown input's chain cooks, the others stand still and cost nothing. Switching to a skipped input cooks its chain in that frame (a slow chain makes the frame late, a video may need a moment to catch up), and a feedback loop, cache or time machine in it carries on from where it stopped. An input counts as connected as soon as it is wired |
+| `inactive` | cook \| skip | `"cook"` |  | What the inputs not shown do; cook: their chains keep cooking as if shown; skip: only the shown input's chain cooks; the other chains stand still and cost nothing. Switching to a skipped input cooks its chain in that frame: a slow chain makes the frame late, a video may need a moment to catch up. A feedback loop, cache or time machine in a skipped chain carries on from where it stopped. An input counts as connected as soon as it is wired |
 
 ### tex.text
 
@@ -909,16 +909,16 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `text` | text | `"Text"` |  | What is written; line breaks are kept, align lines the lines up |
+| `text` | text | `"Text"` |  | What is written. Line breaks are kept; align sets how the lines line up |
 | `size` | float | `100` | 4 to 500 px (soft) | Font size in pixels of the output picture (the font's em, a little more than a capital's height) |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the text, linear RGBA with straight alpha; the rest is transparent |
 | `position` | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Where the text's anchor sits, in image sizes; 0, 0 is the top left |
 | `align` | center \| left \| right | `"center"` |  | How the lines line up with each other, and which point of the block sits at position; center: centred; the block's centre at position; left: flush left; the block's left edge at position; right: flush right; the block's right edge at position |
 | `font` | text | `"Inter"` |  | Family name; Inter, JetBrains Mono, Noto Serif are bundled |
-| `style` | text | `"Regular"` |  | Style within the family: Regular, Bold, Italic, Light, ...; the menu lists the family's |
+| `style` | text | `"Regular"` |  | Style within the family: Regular, Bold, Italic, Light, ... The menu lists the family's styles |
 | `width` *(more)* | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(more)* | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look) |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 
 ### tex.threshold
 
@@ -958,7 +958,7 @@ Outputs: `out` (tex).
 
 Per pixel, a frame from the past: the map says how far back (black now, white oldest)
 
-Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
@@ -971,12 +971,12 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `length` | int | `120` | 1 to 1800 f (soft) | How far back white reaches, in input frames (a camera at 30 fps: 600 are 20 s) |
 | `offset` | float | `0` | 0 to 600 f (soft) | Frames back added everywhere; without a map, the delay of the whole picture |
-| `blend` | bool | `true` |  | Mixes the two frames around a map value between them; off takes the nearer one (sharper, but a smooth map shows steps) |
+| `blend` | bool | `true` |  | Mixes the two frames nearest to the map's value. Off takes the nearer frame alone: sharper, but a smooth map shows steps |
 | `scale` | float | `1` | 0.1 to 1 (soft) | Resolution of the kept frames relative to the input; 0.5 needs a quarter of the memory |
 | `precision` | 16bit \| 8bit | `"16bit"` |  | How the kept frames are stored; 16bit: as they come; 8bit: in half the memory, with values above 1 clipped |
-| `step` | int | `1` | 1 to 8 (soft) | Keeps only every n-th input frame, for n times the length in the same memory; between kept frames the picture is blended, which smears fast motion |
+| `step` | int | `1` | 1 to 8 (soft) | Keeps only every n-th input frame: n times the length in the same memory. Between kept frames the picture is blended, and fast motion smears |
 | `record` | bool | `true` |  | Take new frames; off holds what is kept |
-| `budget` *(more)* | float | `0` (automatic) | 0 to 20 (soft) | Most GPU memory the kept frames take, in GiB; automatic is half of what the GPU grants penumbra. Never more than the GPU has free; past either, fewer frames are kept, with a warning; 0: automatic |
+| `budget` *(more)* | float | `0` (automatic) | 0 to 20 (soft) | Most GPU memory the kept frames take, in GiB; automatic: half of what the GPU grants penumbra. Over the budget or over what the GPU has free, fewer frames are kept, with a warning; 0: automatic |
 
 ### tex.transform
 
@@ -1032,7 +1032,7 @@ Outputs:
 |---|---|---|---|---|
 | `device` | text |  |  | Part of the camera's name (the ... menu lists them), e.g. `Cam Link`; empty: the first camera |
 | `mode` | text |  |  | Size, rate and pixel format, each optional, e.g. `1920x1080@60 NV12` or `@30`; empty: the largest, fastest the camera offers |
-| `range` *(more)* | auto \| limited \| full | `"auto"` |  | Whether black is 16 or 0 in the camera's Y'CbCr. Raised blacks mean the camera sends full range while limited is assumed; auto: believe the camera (limited when it does not say); limited: black is 16, white 235 (video range); full: black is 0, white 255 |
+| `range` *(more)* | auto \| limited \| full | `"auto"` |  | Whether black is 16 or 0 in the camera's Y'CbCr. Raised blacks mean the camera sends full range while limited is assumed: pick full; auto: believe the camera (limited when it does not say); limited: black is 16, white 235 (video range); full: black is 0, white 255 |
 
 ## chan
 
@@ -1042,7 +1042,7 @@ Outputs:
 
 Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audio_in)
 
-Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
@@ -1052,7 +1052,7 @@ Outputs:
 
 - `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them
 - `spectrum` (chan): One channel whose samples are log-spaced bands from 30 Hz to 16 kHz
-- `meters` (tex): The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum; drawn only while something reads it
+- `meters` (tex): The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum. Drawn only while something reads this output
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -1060,15 +1060,15 @@ Outputs:
 | `offset` | float | `0` | -200 to 200 (soft) | Milliseconds to move beat and bar ahead by, to make up for the projector's delay |
 | `beats_per_bar` | int | `4` | 2 to 8 (soft) | Beats in one bar (4 for 4/4, 3 for a waltz): how often bar and bar_beat come round |
 | `sensitivity` | float | `0.5` | 0 to 1 | How readily an onset or kick counts: higher finds quieter ones |
-| `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered; with max_bpm less than an octave apart, so a half or double tempo is not taken |
+| `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered, in beats per minute. Keep min_bpm and max_bpm less than an octave apart: then a half or double tempo cannot be taken |
 | `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered, in beats per minute; see min_bpm |
-| `normalize` | bool | `true` |  | Levels and spectrum relative to the loudest of the last seconds, so a quiet input still spans 0 to 1 |
+| `normalize` | bool | `true` |  | A quiet input still spans 0 to 1: levels and spectrum are measured relative to the loudest of the last seconds |
 | `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence and is not raised by normalize |
 | `low` *(levels)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends: the low channel is the level below this frequency |
-| `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts: the high channel is the level above this; mid lies between low and high |
+| `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high |
 | `bands` *(levels)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame |
-| `width` *(meters)* | int | `1920` | 1 to 16384 px | Width of the meters output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `height` *(meters)* | int | `1080` | 1 to 16384 px | Height of the meters output in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `width` *(meters)* | int | `1920` | 1 to 16384 px | Width of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` *(meters)* | int | `1080` | 1 to 16384 px | Height of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(meters)* | bool | `false` |  | res.optimize leaves the width and height of the meters output alone |
 
 ### chan.audio_in
@@ -1123,7 +1123,7 @@ Outputs:
 
 Smooths each channel over time, rising and falling at their own pace
 
-Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
@@ -1149,12 +1149,12 @@ Outputs: `out` (chan).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `columns` | int | `1` | 1 to 256 (soft) | Samples per channel: the picture is averaged down to this many columns |
-| `rows` | int | `1` | 1 to 64 (soft) | Rows averaged to; more than one numbers the channels by row from the top (r0, r1, ..) |
+| `rows` | int | `1` | 1 to 64 (soft) | Rows the picture is averaged down to. With more than one row, the channels are numbered by row from the top (r0, r1, ...) |
 | `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives; values are linear and premultiplied, as the picture holds them; rgba: r, g, b and a; rgb: r, g and b; red: r only; luminance: lum, the brightness as the eye weighs it (Rec. 709) |
 
 ### chan.in
 
-An input of the component it sits in: what is wired to it outside comes out here
+An input port of the component this node sits in: what is wired to that port outside comes out here
 
 Inside a component: one of its inputs.
 
@@ -1185,7 +1185,7 @@ Outputs: `out` (chan).
 
 ### chan.math
 
-a op b per channel; b's channel of the same name, else its first; `b` while input b is unconnected
+a op b per channel. Each channel of a meets b's channel of the same name, else b's first channel. While input b is unconnected, the param `b` stands in
 
 Inputs:
 
@@ -1224,11 +1224,11 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `frequency` | float | `1` | 0.01 to 50 Hz (soft) | How fast it wanders: about this many rises and falls per second |
+| `frequency` | float | `1` | 0.01 to 50 Hz (soft) | How fast the noise wanders: about this many rises and falls per second |
 | `amplitude` | float | `1` | 0 to 2 (soft) | Half the swing: the value stays within about offset - amplitude to offset + amplitude |
 | `offset` | float | `0` | -1 to 1 (soft) | The centre the noise wanders around |
 | `seed` | int | `0` | 0 to 100 (soft) | Picks another motion of the same character; one seed always gives the same motion |
-| `octaves` *(more)* | int | `2` | 1 to 8 | Layers of ever faster wiggle added up, each twice the frequency of the one before; 1 is smoothest |
+| `octaves` *(more)* | int | `2` | 1 to 8 | How much fine wiggle rides on the motion: 1 is smoothest. Each octave adds a layer at twice the frequency of the one before |
 | `roughness` *(more)* | float | `0.5` | 0 to 1 (soft) | Strength of each octave relative to the one before; higher is more jittery |
 | `name` | text | `"value"` |  | Name of the channel it makes, as bindings and other nodes see it |
 
@@ -1256,9 +1256,9 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `port` | int | `8000` | 1024 to 65535 (soft) | UDP port to listen on; osc.status says which port it got; 0: any free port |
-| `lan` | bool | `false` |  | Listen on every network interface (phones, other computers), not only this machine |
+| `lan` | bool | `false` |  | Also take OSC from other devices (phones, other computers): listens on every network interface. Off: this machine only |
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
-| `params` | bool | `false` |  | Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, outside the undo history). Binding to the channels is the better way for continuous control |
+| `params` | bool | `false` |  | Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, outside the undo history). For continuous control, bind params to the channels instead |
 
 ### chan.osc_out
 
@@ -1284,7 +1284,7 @@ Outputs: none.
 
 ### chan.out
 
-An output of the component it sits in: what is wired into it here comes out there
+An output port of the component this node sits in: what is wired into this node comes out of that port outside
 
 Inside a component: one of its outputs.
 
@@ -1320,13 +1320,13 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `channels` | text | `"*"` |  | Space-separated names, `*` matches any run of characters: `x y pos*`; `^name` leaves channels out. Renaming is chan.rename's job |
+| `channels` | text | `"*"` |  | Space-separated names, `*` matches any run of characters: `x y pos*`; `^name` leaves channels out. To rename, add a chan.rename |
 
 ### chan.speed
 
 Adds up each channel over time, as a rate per second: a speed becomes a position
 
-Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
@@ -1336,7 +1336,7 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `limit` | none \| loop \| clamp | `"none"` |  | Whether the sum is kept within min and max; none: it grows without end; loop: past max it starts again from min (and the other way round): an angle, a scroll; clamp: it stops at min and max |
+| `limit` | none \| loop \| clamp | `"none"` |  | Whether the sum is kept within min and max; none: the sum grows without end; loop: past max it starts again from min (and the other way round): an angle, a scroll; clamp: the sum stops at min and max |
 | `min` | float | `0` | -10 to 10 (soft) | Lower end of the range the sum stays in (limit loop or clamp) |
 | `max` | float | `1` | -10 to 10 (soft) | Upper end of the range the sum stays in (limit loop or clamp) |
 | `reset` | bool | `false` |  | Hold the sum at 0 (or min) while on |
@@ -1345,21 +1345,21 @@ Outputs: `out` (chan).
 
 The recent history of each input channel as samples, oldest first: a time graph to look at or to feed on
 
-Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame: `node.reset`, the reset button or R starts it over.
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
-- `in` (chan): The channels to record; of each, its value now (its last sample) is taken
+- `in` (chan): The channels to record. Of each channel the trail takes its current value (the last sample)
 
 Outputs:
 
-- `out` (chan): The input's channels by name, the newest sample last: one sample when the trail starts (made, reset or sought back), one more per sample taken, up to length times rate
+- `out` (chan): The input's channels by name, the newest sample last. The trail starts with one sample (when made, reset or sought back) and grows by one per sample taken, up to length times rate
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `length` | float | `5` | 0.1 to 60 s (soft) | How far back the trail reaches once it is full; older values drop off its start |
 | `rate` | float | `60` | 1 to 240 Hz (soft) | Samples taken per second of show time, whatever the frame rate; length times rate is the number of samples of a full trail |
-| `active` | bool | `true` |  | Records while on; off holds the trail as it is, and recording resumes from the moment it is on again |
+| `active` | bool | `true` |  | Records while on. Off holds the trail as it is; recording resumes from the moment active is on again |
 
 ## table
 
@@ -1380,7 +1380,7 @@ Outputs: `out` (table).
 
 ### table.in
 
-An input of the component it sits in: what is wired to it outside comes out here
+An input port of the component this node sits in: what is wired to that port outside comes out here
 
 Inside a component: one of its inputs.
 
@@ -1402,7 +1402,7 @@ Outputs: `out` (table).
 
 ### table.out
 
-An output of the component it sits in: what is wired into it here comes out there
+An output port of the component this node sits in: what is wired into this node comes out of that port outside
 
 Inside a component: one of its outputs.
 
@@ -1461,7 +1461,7 @@ Outputs:
 
 ### geo.instance
 
-A copy of the input per table row, placed by the columns the first row names: tx ty tz, rx ry rz (degrees), sx sy sz; part ids continue from copy to copy
+One copy of the input per table row. The first row names the columns that place each copy: tx ty tz, rx ry rz (degrees), sx sy sz. Part ids continue from copy to copy
 
 Inputs:
 
@@ -1504,7 +1504,7 @@ Outputs: `out` (geo).
 
 ### geo.tex_instance
 
-A copy of the input per texel of position, drawn on the GPU: scaled by scale's rgb, its +y turned to aim's rgb (+z kept up), moved to position's rgb, its colour times color's rgb; texel i % width, i / width of each texture is copy i's
+One copy of the input per texel of position, drawn on the GPU. Copy i reads texel (i % width, i / width) of each texture: position's rgb moves the copy, scale's rgb scales it, aim's rgb turns its +y that way (+z kept up), color's rgb multiplies its colour
 
 Inputs:
 
@@ -1518,7 +1518,7 @@ Outputs: `out` (geo).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `extent` *(more)* | float | `10` | 0.1 to 1000 (soft) | Half the side of a box around the origin that holds every copy (the positions stay on the GPU): framing and shadow maps |
+| `extent` *(more)* | float | `10` | 0.1 to 1000 (soft) | Half the side of a box around the origin that holds every copy. Framing and shadow maps use this box, since the positions stay on the GPU |
 
 ### geo.transform
 
@@ -1534,7 +1534,7 @@ Outputs: `out` (geo).
 |---|---|---|---|---|
 | `translate` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | Move along x, y, z (z up), in scene units (metres), after scale and rotate |
 | `rotate` | vec3 | `[0, 0, 0]` | -180 to 180° (soft) | Turn about x, then y, then z, after scale and before translate |
-| `scale` | vec3 | `[1, 1, 1]` | 0 to 4 (soft) | Size along x, y, z around the origin, first of the steps: 1 keeps it, negative mirrors |
+| `scale` | vec3 | `[1, 1, 1]` | 0 to 4 (soft) | Size along x, y, z around the origin, applied first: 1 keeps the size, negative mirrors |
 | `uniform` | float | `1` | 0.001 to 1000 (soft) | Times the scale: 0.001 turns millimetres into metres |
 
 ## mat
@@ -1543,7 +1543,7 @@ Outputs: `out` (geo).
 
 ### mat.constant
 
-A colour as it is, unlit: what projection content wants
+A colour as it is, unlit: the usual choice for projection content
 
 Inputs:
 
@@ -1611,8 +1611,8 @@ Outputs: `out` (mat).
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | The lines' colour: linear RGBA, straight alpha; times the texture input |
 | `line_width` | float | `1.5` | 0.5 to 8 px (soft) | The lines' width in pixels of the render |
-| `edges` | polygons \| triangles | `"polygons"` |  | Which edges get a line; polygons: leave out edges inside the file's polygons (OBJ faces), or inside flat faces where it has only triangles (a quad's diagonal); triangles: every edge |
-| `faces` | open \| filled \| hidden | `"open"` |  | What the faces between the lines show; open: nothing: the lines behind show through; filled: the fill colour, hiding what lies behind; hidden: only the lines filled faces would leave, the faces see-through |
+| `edges` | polygons \| triangles | `"polygons"` |  | Which edges get a line; polygons: only the outlines of the file's polygons (OBJ faces); in a mesh of plain triangles, diagonals across flat faces are left out too; triangles: every edge |
+| `faces` | open \| filled \| hidden | `"open"` |  | What the faces between the lines show; open: nothing: the lines behind show through; filled: the fill colour, hiding what lies behind; hidden: the lines as filled faces would leave them, but the faces are see-through |
 | `fill` | colour | `[0, 0, 0, 1]` |  | The faces' colour where `faces` is filled: linear RGBA, straight alpha |
 | `shadows` | bool | `true` |  | Lines and filled faces cast shadows from the lights that cast them; off: none |
 
@@ -1643,12 +1643,12 @@ Outputs: `out` (light).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `position` | vec3 | `[-2, -3, 4]` | -10 to 10 (soft) | Where it shines from; only the direction to the target counts |
-| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point it shines at, in metres (z up) |
+| `position` | vec3 | `[-2, -3, 4]` | -10 to 10 (soft) | Where the light shines from; only the direction to the target counts |
+| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point the light shines at, in metres (z up) |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
 | `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
-| `shadows` | bool | `false` |  | What stands in its way casts a shadow |
-| `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual: more against stripes on lit surfaces, less against light leaking where objects touch |
+| `shadows` | bool | `false` |  | What stands in the light's way casts a shadow |
+| `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch |
 
 ### light.environment
 
@@ -1693,7 +1693,7 @@ Outputs: `out` (light).
 | `position` | vec3 | `[1.5, -2.5, 2.5]` | -10 to 10 (soft) | Where the light is, in metres (z up) |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
 | `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
-| `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance from it; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
+| `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
 
 ### light.projector
 
@@ -1710,9 +1710,9 @@ Outputs: `out` (light).
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
 | `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
-| `shadows` | bool | `true` |  | What stands in its way casts a shadow |
-| `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance from it; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
-| `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual: more against stripes on lit surfaces, less against light leaking where objects touch |
+| `shadows` | bool | `true` |  | What stands in the light's way casts a shadow |
+| `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
+| `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch |
 
 ### light.spot
 
@@ -1725,14 +1725,14 @@ Outputs: `out` (light).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `position` | vec3 | `[0, -3, 3]` | -10 to 10 (soft) | Where the light is, in metres (z up) |
-| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point it shines at, in metres (z up) |
+| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point the light shines at, in metres (z up) |
 | `angle` | float | `45` | 5 to 120° (soft) | The whole cone, edge to edge |
 | `softness` | float | `0.2` | 0 to 1 | How much of the cone fades towards its edge; 0 is a hard edge |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the light, linear; intensity scales it, alpha is unused |
 | `intensity` | float | `1` | 0 to 4 (soft) | Brightness: multiplies the colour; 0 is off, 2 twice as bright |
-| `shadows` | bool | `false` |  | What stands in its way casts a shadow |
-| `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance from it; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
-| `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual: more against stripes on lit surfaces, less against light leaking where objects touch |
+| `shadows` | bool | `false` |  | What stands in the light's way casts a shadow |
+| `falloff` *(more)* | none \| inverse square | `"none"` |  | How the light weakens with distance; none: as bright at any distance; inverse square: as bright as colour and intensity say at 1 m, a quarter of that at 2 m |
+| `bias` *(more)* | float | `1` | 0 to 4 (soft) | Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch |
 
 ## view
 
@@ -1749,13 +1749,13 @@ Outputs: `out` (view).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `position` | vec3 | `[2.4, -3.2, 1.6]` | -10 to 10 (soft) | Where the camera is, in metres (z up) |
-| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point it looks at, in metres; it stays in the picture's centre (unless shift moves it) |
+| `target` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | The point the camera looks at, in metres. The target stays in the picture's centre unless shift moves it |
 | `projection` | perspective \| orthographic | `"perspective"` |  | How the scene is flattened into the picture; a calibration is always perspective; perspective: rays from one point, farther things smaller (fov sets the angle); orthographic: parallel rays, sizes kept at any distance (size sets the height seen) |
 | `fov` | float | `40` | 5 to 120° (soft) | Vertical field of view (perspective): smaller zooms in, larger sees more |
 | `size` | float | `2` | 0.1 to 20 m (soft) | How much the picture sees from bottom to top (orthographic); the width follows the picture's aspect |
 | `roll` | float | `0` | -180 to 180° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
 | `shift` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
-| `calibration` *(more)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns); when set, it replaces position, target, projection, fov, size, roll and shift |
+| `calibration` *(more)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns). When set, the calibration replaces position, target, projection, fov, size, roll and shift |
 | `near` *(more)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn, in metres from the camera; anything closer is cut away (orthographic too: nothing behind the camera is drawn) |
 | `far` *(more)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn, in metres from the camera; anything beyond is left out |
 
@@ -1785,7 +1785,7 @@ Outputs:
 |---|---|---|---|---|
 | `file` | file (py) |  |  | A .py file used instead of `code`, relative to the project; reloads when saved |
 | `cook` | auto \| every frame \| on change | `"auto"` |  | When cook(cx) runs; auto: every frame if the code mentions `time` or `frame`, else as on change; every frame: every frame, for scripts that keep changing on their own; on change: only when an input or a param changes |
-| `timeout` | float | `0.1` | 0.01 to 1 s (soft) | A call running longer is stopped, and the node with it until the script changes |
+| `timeout` | float | `0.1` | 0.01 to 1 s (soft) | A call running longer than this is stopped. The node then stays stopped until the script or `timeout` changes |
 | `code` | text | an example script |  | The script while `file` is empty |
 
 ## out
@@ -1806,7 +1806,7 @@ Outputs: none.
 |---|---|---|---|---|
 | `protocol` | open_dmx \| art_net \| sacn \| ddp | `"open_dmx"` |  | How the slots leave this machine; open_dmx: an Enttec Open DMX USB on a serial port, one universe; art_net: Art-Net over UDP, to a node or as a broadcast; sacn: sACN (E1.31) over UDP, to each universe's multicast group or a host; ddp: DDP over UDP to a pixel controller such as WLED, no universes |
 | `port` | text |  |  | Serial port of the Open DMX USB, such as COM5 or /dev/ttyUSB0; empty takes the first FTDI FT232R plugged in (dmx.ports lists them) |
-| `host` | text |  |  | IP address to send to, optionally with :port; empty broadcasts Art-Net and sends sACN to the multicast groups; DDP needs one |
+| `host` | text |  |  | IP address to send to, optionally with :port. Empty broadcasts Art-Net and sends sACN to the multicast groups. DDP needs an address |
 | `universe` | int | `1` | 0 to 16 (soft) | Universe of the first slot, as the protocol counts (Art-Net from 0, sACN from 1); more than 512 slots spill into the next. Not used by the Open DMX USB and DDP |
 | `address` | int | `1` | 1 to 512 (soft) | DMX address (slot, from 1) the first channel goes to; for DDP the byte, from 1 |
 | `values` | unit \| byte | `"unit"` |  | What the channel values mean; unit: 0 to 1, sent as 0 to 255; byte: 0 to 255, sent as they are (rounded) |
@@ -1824,7 +1824,7 @@ Outputs: none.
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `name` | text |  |  | The source name receivers pick; NDI puts the machine's name before it, as in `PC (name)`. Empty: `penumbra` and the node's name, such as `penumbra ndi1` |
+| `name` | text |  |  | The source name receivers pick. NDI puts the machine's name before the source name, as in `PC (name)`. Empty: `penumbra` and the node's name, such as `penumbra ndi1` |
 | `alpha` | straight \| premultiplied \| opaque | `"opaque"` |  | How transparency travels to the receivers. With alpha, NDI sends an extra plane, which costs about twice the CPU and some latency; straight: colour and alpha apart, as most programs take it; premultiplied: colour multiplied by alpha; opaque: no transparency: sent over black, or a received alpha ignored |
 
 ### out.projector
@@ -1843,18 +1843,18 @@ Outputs: none.
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `display` | text |  |  | Display id from output.list, e.g. `EPSON PJ [SECA519] @ target 168194` (model and connector) or `AW3225QF [DELA246 #BY4BYZ3]` (model and serial number); the monitor name alone works when unique |
-| `active` | bool | `true` |  | Open the output window on its display; off closes it and the node does nothing |
+| `display` | text |  |  | Display id from output.list, e.g. `EPSON PJ [SECA519] @ target 168194` (model and connector) or `AW3225QF [DELA246 #BY4BYZ3]` (model and serial number). The monitor name alone works when unique |
+| `active` | bool | `true` |  | Open the output window on its display. Off closes the window and the node does nothing |
 | `fit` | fit \| fill \| stretch | `"fit"` |  | How the picture sits in the viewport when their aspects differ; fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted |
 | `viewport` *(more)* | vec4 | `[0, 0, 1, 1]` | 0 to 1 | x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5) |
 | `test` | bool | `false` |  | A test pattern in the projector's own pixels instead of the input: square cells, centre, circle, and the image's edge in this projector's colour |
-| `correct` *(colour)* | bool | `true` |  | Apply the colour correction below (off: the plain picture, to compare; the test pattern is never corrected) |
-| `strength` *(colour)* | float | `1` | 0 to 1 | How much of the correction applies, matrix and curves alike: 1 all of it, 0 the projector uncorrected. Lower keeps more of a brighter projector's brightness and leaves more of the colour and brightness difference |
+| `correct` *(colour)* | bool | `true` |  | Apply the colour correction below. Off shows the plain picture, to compare. The test pattern is never corrected |
+| `strength` *(colour)* | float | `1` | 0 to 1 | How much of the correction applies, matrix and curves alike: 1 all of it, 0 the projector uncorrected. A lower value keeps more of a brighter projector's brightness, but leaves more of the difference in colour and brightness between projectors |
 | `gain` *(colour)* | float | `1` | 0 to 1 | Brightness by hand, in linear light, on top of the matrix (0.8: a fifth less light) |
-| `matrix` *(colour)* | text |  |  | 3x3 matrix in linear light, drive = matrix x colour: three rows of three numbers (`1 0 0 / 0 1 0 / 0 0 1`); empty is none. projector.match writes it |
-| `curves` *(colour)* | text |  |  | Tone curve per channel, from drive (sRGB-encoded, evenly spaced from 0 to 1) to the signal sent: lines `r: 0 0.06 ... 1`, `g: ...`, `b: ...` (2 to 64 samples each, one line for all three); a straight line 0..1 or empty is none. projector.match writes it |
+| `matrix` *(colour)* | text |  |  | 3x3 matrix in linear light, drive = matrix x colour. Three rows of three numbers (`1 0 0 / 0 1 0 / 0 0 1`); empty is none. projector.match writes this matrix |
+| `curves` *(colour)* | text |  |  | Tone curve per channel, from drive (sRGB-encoded, evenly spaced from 0 to 1) to the signal sent. Lines `r: 0 0.06 ... 1`, `g: ...`, `b: ...` with 2 to 64 samples each, or one line for all three. A straight line 0..1 or empty is none. projector.match writes these curves |
 | `flatten` *(colour)* | float | `1` | 0 to 1 | How much of the gain map at the `gain` input applies: 1 all of it (even brightness and colour across the picture), 0 none. projector.flatfield measures the map |
-| `lift` *(colour)* | float | `1` | 0 to 4 | Scales the black lift at the `black` input: 1 as measured, 0 none, more where the camera underrated the black (black outside an overlap still darker than inside). projector.flatfield measures it |
+| `lift` *(colour)* | float | `1` | 0 to 4 | Scales the black lift at the `black` input: 1 as measured, 0 none. Raise it where the camera underrated the black (black outside an overlap still darker than inside). projector.flatfield measures the lift |
 
 ### out.spout
 
@@ -1868,7 +1868,7 @@ Outputs: none.
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `name` | text |  |  | The sender name receivers pick, ASCII only; empty: `penumbra` and the node's name, such as `penumbra spout1`. Taken by another program, it gets a number (`name_1`) |
+| `name` | text |  |  | The sender name receivers pick, ASCII only; empty: `penumbra` and the node's name, such as `penumbra spout1`. A name another program has taken gets a number (`name_1`) |
 | `format` | 8bit \| 16bit_float | `"8bit"` |  | The pixel format of the shared texture; 8bit: BGRA, 8 bits per channel: what every Spout program takes; 16bit_float: RGBA, 16-bit float: finer steps and values above 1, for receivers that take it (TouchDesigner does) |
 | `alpha` | straight \| premultiplied \| opaque | `"straight"` |  | How transparency travels to the receivers; straight: colour and alpha apart, as most programs take it; premultiplied: colour multiplied by alpha; opaque: no transparency: sent over black, or a received alpha ignored |
 
@@ -1886,15 +1886,15 @@ Outputs: none.
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `record` | bool | `false` |  | Recording while on: turning it on starts a new file, turning it off finishes it. The record button above and video_out.start / .stop switch it; bind it to a channel to start and stop from OSC or a button. A project always opens with it off |
+| `record` | bool | `false` |  | Recording while on: turning record on starts a new file, turning record off finishes the file. The record button above and video_out.start / .stop switch this param; bind it to a channel to start and stop from OSC or a button. A project always opens with record off |
 | `codec` | h264 \| prores_422 \| prores_422_hq \| prores_4444 | `"h264"` |  | What the picture is encoded as (the file's extension follows it); h264: H.264 in MP4: small files any player opens; 4:2:0, 8 bits, high constant quality; prores_422: Apple ProRes 422 in MOV: for editing, every frame a keyframe; about 37 MB/s at 1080p60; prores_422_hq: Apple ProRes 422 HQ in MOV: as 422 at a higher rate, about 55 MB/s at 1080p60; prores_4444: Apple ProRes 4444 in MOV with alpha: 4:4:4, 12 bits, the transparency kept; the largest files |
 | `preset` | fast \| balanced \| best | `"fast"` |  | How hard the H.264 encoder works per frame: faster drops fewer frames of a busy picture, slower keeps more fine detail; fast: the fastest: Baseline profile, constant quality 23; files no larger than balanced's, fine detail a little softer; 20 to 45 % faster than balanced on busy pictures; balanced: High profile, constant quality 18, the encoder's quickest search; best: High profile, quality 18, a wider search: slightly smaller files, a third slower than balanced; for calm pictures, smaller sizes or lower rates |
 | `file` | text |  |  | The movie file, relative to the project; empty records to recordings/<node name>. A file that exists is never overwritten: the recording gets the next free name with _2, _3, ... |
-| `rate` | float | `0` (show rate) | 0 to 120 Hz (soft) | Frames per second of the file. Frames follow the show clock, so a slower show makes frames last longer, a faster one leaves some out; 0: show rate |
+| `rate` | float | `0` (show rate) | 0 to 120 Hz (soft) | Frames per second of the file. Frames follow the show clock: a slower show makes frames last longer, a faster show leaves some out; 0: show rate |
 | `size` | input \| fixed | `"input"` |  | The picture size of the file, fixed when the recording starts; input: the input's size when recording starts (rounded down to even); fixed: width x height; the input is scaled to it, aspect not kept |
 | `width` | int | `1920` | 16 to 3840 (soft) | Width of the file in pixels with `size` fixed (rounded down to even) |
 | `height` | int | `1080` | 16 to 2160 (soft) | Height of the file in pixels with `size` fixed (rounded down to even) |
-| `threads` *(more)* | int | `0` (automatic) | 0 to 16 (soft) | Encoder threads; automatic is all of this machine's logical cores but two. Fewer leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner; 0: automatic |
+| `threads` *(more)* | int | `0` (automatic) | 0 to 16 (soft) | Encoder threads; automatic is all of this machine's logical cores but two. Fewer threads leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner; 0: automatic |
 
 ## comp
 

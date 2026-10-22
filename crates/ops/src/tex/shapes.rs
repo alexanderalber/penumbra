@@ -68,9 +68,10 @@ fn desc() -> NodeDesc {
     .describe_output("table", "Every shape as a row; another tex.shapes can read it at its `table` input")
     .describe_output(
         "id",
-        "Data, not a picture: per pixel the shape of the tags in `tag` it is inside (else the nearest): \
-         red its id (the table's `id`), green a random value 0..1 per shape, blue where along its \
-         outline (0..1, clockwise), alpha the signed distance to its edge in pixels; for tex.shape_content",
+        "Per pixel, the shape (of the tags in `tag`) the pixel is inside, else the nearest shape. Red: the \
+         shape's id (the table's `id`). Green: a random value 0..1 per shape. Blue: where along the \
+         outline, 0..1 clockwise. Alpha: signed distance to the edge in pixels. Data for \
+         tex.shape_content, not something to look at",
     )
     .describe_input("table", "Shapes from a table (as the `table` output has them) instead of the node's own")
 }

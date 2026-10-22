@@ -131,7 +131,7 @@ fn desc() -> NodeDesc {
                 .clamp(0.0, 2.0)
                 .range(0.0, 0.5)
                 .more()
-                .doc("How far a blob may jump between frames and keep its id, beyond where its speed puts it (of the width)"),
+                .doc("How far a blob may jump between frames and keep its id, as a share of the width. Measured from where the blob's speed puts it"),
         )
         .param(
             ParamSpec::float("hold", 0.5)

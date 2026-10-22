@@ -31,12 +31,12 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let mut add = engine_commands(registry, engine);
     add(
         "video_out.start",
-        "Start recording an out.video node to a new file (its params say which and how) by turning its record param on (an edit); {path}; answers with the status once recording",
+        "Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit); {path}; answers with the status once recording",
         start,
     );
     add(
         "video_out.stop",
-        "Stop an out.video's recording and finish the file by turning record off (an edit); {path}; answers with the status",
+        "Stop an out.video's recording and finish the file: turns record off (an edit); {path}; answers with the status",
         stop,
     );
     add(

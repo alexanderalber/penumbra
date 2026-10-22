@@ -304,7 +304,7 @@ impl Capture {
             (stride, matrix, full)
         };
         if stride < 0 {
-            return Err(close("the camera delivers bottom-up rows, which are not read".into()));
+            return Err(close("cannot read this camera: it delivers bottom-up rows".into()));
         }
         let stride = usize::try_from(stride).unwrap_or(0).max(mode.format.min_stride(mode.width));
         sort(&mut modes);

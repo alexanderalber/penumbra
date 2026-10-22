@@ -41,10 +41,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.run",
-        "The scan button of tex.scan nodes: scans their projectors one after another with their camera \
+        "The scan button of tex.scan nodes. Scans their projectors one after another with their camera \
          (scan.capture, each into the node's folder), lines them up if every node names its mapper \
          (scan.align, one undo step) and writes blend weights and smoothed maps into the scan folders \
-         (scan.blend), which the nodes then show; runs in the background (scan.status, scan.cancel); \
+         (scan.blend); the nodes then show them. Runs in the background (scan.status, scan.cancel); \
          {nodes? (tex.scan paths, default every tex.scan; all must name the same camera), wait? (return \
          when done, with the report, false)}",
         move |p| {
@@ -68,8 +68,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.cancel",
-        "Stops the scan going on (scan.run) before its next picture; the projectors show their pictures again \
-         and the files of earlier scans stay; {}",
+        "Stop the scan going on (scan.run) before its next picture. The projectors show their pictures \
+         again; the files of earlier scans stay; {}",
         move |p| {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]

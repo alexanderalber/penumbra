@@ -22,7 +22,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(ParamSpec::text("name", "").doc(
             "The sender name receivers pick, ASCII only; empty: `penumbra` and the node's name, such as \
-                 `penumbra spout1`. Taken by another program, it gets a number (`name_1`)",
+                 `penumbra spout1`. A name another program has taken gets a number (`name_1`)",
         ))
         .param(
             ParamSpec::choice("format", &Format::NAMES)

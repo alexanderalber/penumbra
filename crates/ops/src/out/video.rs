@@ -75,9 +75,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(VIDEO_OUT, "Records its input to a movie file (H.264 or ProRes)")
             .param(ParamSpec::bool("record", false).opens_at_default().doc(
-                "Recording while on: turning it on starts a new file, turning it off finishes it. The record \
-                 button above and video_out.start / .stop switch it; bind it to a channel to start and stop \
-                 from OSC or a button. A project always opens with it off",
+                "Recording while on: turning record on starts a new file, turning record off finishes the \
+                 file. The record button above and video_out.start / .stop switch this param; bind it to a \
+                 channel to start and stop from OSC or a button. A project always opens with record off",
             ))
             .param(codec)
             .param(preset)
@@ -92,8 +92,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .unit(Unit::Hertz)
                     .special_resolved(0.0, "show rate", Resolves::ShowRate)
                     .doc(
-                        "Frames per second of the file. Frames follow the show \
-                         clock, so a slower show makes frames last longer, a faster one leaves some out",
+                        "Frames per second of the file. Frames follow the show clock: a slower show makes \
+                         frames last longer, a faster show leaves some out",
                     ),
             )
             .param(
@@ -109,8 +109,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 "Height of the file in pixels with `size` fixed (rounded down to even)",
             ))
             .param(ParamSpec::int("threads", 0).clamp(0.0, 64.0).range(0.0, 16.0).more().special(0.0, "automatic").doc(
-                "Encoder threads; automatic is all of this machine's logical cores but two. Fewer leave more to \
-                 the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner",
+                "Encoder threads; automatic is all of this machine's logical cores but two. Fewer threads \
+                 leave more to the rest of the show (video decoding, scripts) but drop frames of busy \
+                 pictures sooner",
             ))
             .input("in", DataKind::Tex)
             .describe_input("in", "The picture to record")

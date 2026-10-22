@@ -189,7 +189,7 @@ fn core_builtins() -> Vec<Builtin> {
             .param(
                 ParamSpec::float("speed", 0.0)
                     .range(0.0, 4.0)
-                    .doc("How fast the pattern changes, in cells per second; it moves through a third dimension, so it morphs rather than slides. 0 is still"),
+                    .doc("How fast the pattern morphs, in cells per second; 0 is still. The noise moves through a third dimension, so the picture does not slide"),
             )
             .param(
                 ParamSpec::vec3("translate", [0.0; 3])
@@ -442,7 +442,7 @@ pub const KEEP_SIZE: &str = "keep_size";
 
 fn keep_size() -> ParamSpec {
     ParamSpec::bool(KEEP_SIZE, false).more().doc(
-        "res.optimize leaves width and height alone (a deliberate resolution: a simulation, a pixel look)",
+        "res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look",
     )
 }
 

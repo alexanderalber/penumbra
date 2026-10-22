@@ -42,7 +42,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(
                 ParamSpec::choice("range", &["auto", "limited", "full"])
                     .more()
-                    .doc("Whether black is 16 or 0 in the camera's Y'CbCr. Raised blacks mean the camera sends full range while limited is assumed")
+                    .doc("Whether black is 16 or 0 in the camera's Y'CbCr. Raised blacks mean the camera sends full range while limited is assumed: pick full")
                     .choice_doc("auto", "believe the camera (limited when it does not say)")
                     .choice_doc("limited", "black is 16, white 235 (video range)")
                     .choice_doc("full", "black is 0, white 255"),

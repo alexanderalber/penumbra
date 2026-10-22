@@ -43,7 +43,7 @@ pub(super) fn builtin() -> Builtin {
             .param(
                 ParamSpec::float("depth", 1.0)
                     .range(0.0, 1.0)
-                    .doc("Pulse: how far it fades, 0 not at all, 1 to nothing"),
+                    .doc("Pulse: how far the shape fades; 0 not at all, 1 to nothing"),
             )
             .param(
                 ParamSpec::float("segments", 2.0)
@@ -78,7 +78,7 @@ pub(super) fn builtin() -> Builtin {
             )
             .input("id", DataKind::Tex)
             .output("out", DataKind::Tex)
-            .describe_input("id", "tex.shapes' `id` output; the result has its size"),
+            .describe_input("id", "tex.shapes' `id` output; the output has the same size"),
         source: include_str!("shape_content.wgsl"),
         size: Size::Input,
         animated: Some(|cx| cx.text("mode").is_ok_and(|m| m != "fill") && cx.float("speed").is_ok_and(|s| s != 0.0)),

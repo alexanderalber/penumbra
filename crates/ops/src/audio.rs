@@ -100,7 +100,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(20.0, 400.0)
                 .range(40.0, 200.0)
                 .more()
-                .doc("The slowest tempo considered; with max_bpm less than an octave apart, so a half or double tempo is not taken"),
+                .doc("The slowest tempo considered, in beats per minute. Keep min_bpm and max_bpm less than an octave apart: then a half or double tempo cannot be taken"),
         )
         .param(
             ParamSpec::float("max_bpm", 180.0)
@@ -111,7 +111,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(
             ParamSpec::bool("normalize", true)
-                .doc("Levels and spectrum relative to the loudest of the last seconds, so a quiet input still spans 0 to 1"),
+                .doc("A quiet input still spans 0 to 1: levels and spectrum are measured relative to the loudest of the last seconds"),
         )
         .param(
             ParamSpec::float("floor", -60.0)
@@ -135,7 +135,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(1000.0, 8000.0)
                 .unit(Unit::Hertz)
                 .group("levels")
-                .doc("Where the high band starts: the high channel is the level above this; mid lies between low and high"),
+                .doc("Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high"),
         )
         .param(
             ParamSpec::int("bands", 32)
@@ -159,7 +159,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .describe_output("spectrum", "One channel whose samples are log-spaced bands from 30 Hz to 16 kHz")
         .describe_output(
             "meters",
-            "The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum; drawn only while something reads it",
+            "The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum. Drawn only while something reads this output",
         ),
         || Box::new(Analysis::default()) as Box<dyn Operator>,
     )

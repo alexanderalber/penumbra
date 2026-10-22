@@ -38,7 +38,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(
                 ParamSpec::vec3("position", [-2.0, -3.0, 4.0])
                     .range(-10.0, 10.0)
-                    .doc("Where it shines from; only the direction to the target counts"),
+                    .doc("Where the light shines from; only the direction to the target counts"),
             )
             .param(target())
             .param(color())
@@ -137,7 +137,9 @@ fn position(default: [f64; 3]) -> ParamSpec {
 }
 
 fn target() -> ParamSpec {
-    ParamSpec::vec3("target", [0.0; 3]).range(-10.0, 10.0).doc("The point it shines at, in metres (z up)")
+    ParamSpec::vec3("target", [0.0; 3])
+        .range(-10.0, 10.0)
+        .doc("The point the light shines at, in metres (z up)")
 }
 
 fn color() -> ParamSpec {
@@ -153,7 +155,7 @@ fn intensity(default: f64) -> ParamSpec {
 }
 
 fn shadows(default: bool) -> ParamSpec {
-    ParamSpec::bool("shadows", default).doc("What stands in its way casts a shadow")
+    ParamSpec::bool("shadows", default).doc("What stands in the light's way casts a shadow")
 }
 
 fn bias() -> ParamSpec {
@@ -161,13 +163,13 @@ fn bias() -> ParamSpec {
         .clamp(0.0, 20.0)
         .range(0.0, 4.0)
         .more()
-        .doc("Shadow offset, times the usual: more against stripes on lit surfaces, less against light leaking where objects touch")
+        .doc("Shadow offset, times the usual. Raise it against stripes on lit surfaces, lower it against light leaking where objects touch")
 }
 
 fn falloff() -> ParamSpec {
     ParamSpec::choice("falloff", &FALLOFF)
         .more()
-        .doc("How the light weakens with distance from it")
+        .doc("How the light weakens with distance")
         .choice_doc("none", "as bright at any distance")
         .choice_doc(
             "inverse square",

@@ -21,7 +21,7 @@ const SOURCE: &str = include_str!("denoise.wgsl");
 fn desc() -> NodeDesc {
     NodeDesc::new(
         KIND,
-        "Calms a noisy picture (a camera in the dark): averages over frames where it is still",
+        "Calms a noisy picture (a camera in the dark): averages over frames where the picture is still",
     )
     .stateful()
     .param(
@@ -41,12 +41,12 @@ fn desc() -> NodeDesc {
             .doc("The same for colour noise (coloured speckles)"),
     )
     .param(ParamSpec::float("motion", 0.06).clamp(0.0, 1.0).range(0.0, 0.3).curve(Curve::Power(2.0)).doc(
-        "A change from which a pixel counts as moving and shows the new frame at once (on the \
-                     square root of the values, so it means about the same in dark and bright parts). Raise \
-                     it when the noise still flickers, lower it when moving things leave trails",
+        "Change above which a pixel counts as moving and shows the new frame at once. Raise it when \
+         the noise still flickers, lower it when moving things leave trails. Measured on the square \
+         root of the values, so it means about the same in dark and bright parts",
     ))
     .param(ParamSpec::float("spatial", 0.5).clamp(0.0, 1.0).range(0.0, 1.0).doc(
-        "Smooths the brightness of what moves, where the average cannot help, keeping edges stronger than `motion`; 0: off",
+        "Smooths the brightness of moving parts, where the average cannot help. Edges stronger than `motion` are kept; 0: off",
     ))
     .param(
         ParamSpec::float("color_spatial", 0.5)

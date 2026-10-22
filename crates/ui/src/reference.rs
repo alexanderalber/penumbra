@@ -68,7 +68,7 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
     }
     if desc.stateful {
         notes.push(
-            "Keeps state from frame to frame: `node.reset`, the reset button or R starts it over."
+            "Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over."
                 .to_string(),
         );
     }
@@ -133,8 +133,8 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
 fn nodes_md(types: &NodeTypes) -> String {
     let mut out = format!(
         "{HEADER}\n\n# Node reference\n\nEvery built-in node type with its inputs, outputs and params, by family. \
-         A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range is only the \
-         slider's; typed values outside it are kept. For what the families are for, see \
+         A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range limits only \
+         the slider; typed values outside it are kept. For what the families are for, see \
          [Concepts](../concepts.md).\n\n"
     );
     let fams = families(types);

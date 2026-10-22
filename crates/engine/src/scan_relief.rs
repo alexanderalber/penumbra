@@ -40,17 +40,18 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     registry.register(FnCommand::new(
         "scan.relief",
         "Height maps of a mostly flat object (a relief panel) from its scans (folders scan.capture or \
-         scan.decode wrote), no reference scan needed: per projector a robust plane projector -> camera, \
-         the residual along its main direction as the height, the panel cut out at jumps, holes filled; \
-         every projector brought to the first one's units over the camera pixels both light (symmetric \
-         fit); writes height_N.exr (0 to 1 over the heights' 1st to 99.5th percentile, for tex.lookup), \
-         mask_N.png (the light mask, for tex.image or scan.blend's masks), height_camera.exr and \
-         relief_view.png (the same in camera space, to look at); {scans: [folder, ...], out? (folder, \
-         relief), sign? (\"auto\" | 1 | -1, the first projector's, the others follow it by the overlap: auto is a \
-         heuristic, the wall around the panel taken as behind it; 1 and -1 are fixed to the camera's \
-         axes, the reply's sign.as_param pins what a run found), scale? (\"symmetric\" | \"least_squares\"), jump? (camera px per \
-         projector px, 4), erode? (projector px, 4), reach? (projector px: notches in the measured \
-         panel's outline up to twice this wide are lit, nothing past it, 60)}",
+         scan.decode wrote), no reference scan needed. Per projector: a robust plane projector -> camera, \
+         the residual along its main direction as the height, the panel cut out at jumps, holes filled. \
+         Every projector is brought to the first one's units over the camera pixels both light \
+         (symmetric fit). Writes height_N.exr (0 to 1 over the heights' 1st to 99.5th percentile, for \
+         tex.lookup), mask_N.png (the light mask, for tex.image or scan.blend's masks), \
+         height_camera.exr and relief_view.png (the same in camera space, to look at); {scans: \
+         [folder, ...], out? (folder, relief), sign? (\"auto\" | 1 | -1: the first projector's sign, the \
+         others follow it by the overlap; auto is a heuristic, the wall around the panel taken as \
+         behind it; 1 and -1 are fixed to the camera's axes; the reply's sign.as_param pins what a run \
+         found), scale? (\"symmetric\" | \"least_squares\"), jump? (camera px per projector px, 4), erode? \
+         (projector px, 4), reach? (projector px, 60: notches in the measured panel's outline up to \
+         twice this wide are lit, nothing past it)}",
         move |p| {
             let a: ReliefArgs = args(p)?;
             run(e.session().dir(), &a)
@@ -194,7 +195,7 @@ pub fn run(dir: &Path, a: &ReliefArgs) -> CmdResult<Json> {
             Some(f) => {
                 if f.correlation < WEAK_CORRELATION {
                     warnings.push(format!(
-                        "projector {n}: its heights and the others' correlate only {:.2} over the {overlap} camera pixels both light; its scale is doubtful",
+                        "projector {n}: its scale is doubtful; its heights and the others' correlate only {:.2} over the {overlap} camera pixels both light",
                         f.correlation
                     ));
                 }

@@ -64,19 +64,23 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "projector.flatfield",
-        "Measure how brightness and colour vary across each projector's picture (hot spot, a colour cast \
-         towards an edge) and the brighter black where projectors overlap, with a camera; write per projector \
-         a gain map and a black lift (gain_NAME.png, black_NAME.png) and connect them to out.projector's gain \
-         and black inputs; blocks for about 20 s per projector; {camera (tex.video_in path), projectors \
-         (out.projector paths), scans (one scan folder per projector, with cam_to_proj.exr and proj_to_cam.exr, \
-         relative to the project; they must fit the current setup), even? (all: brightness and colour, measured on          a flat evenly coloured surface | colour: the colour cast only, which a relief's shading does not          change), levels? (drive levels per primary, 5), \
-         low? (lowest level, sRGB-encoded drive, 0.6), frames? (camera frames averaged per picture, 4), \
-         settle? (s, 0.5), timeout? (s, 5), degree? (of the smooth surface fitted over the projector, 3), \
-         trim? (share of samples the fit may ignore: the surface's own pattern, 0.25), floor? (share of the \
-         picture allowed to stay dimmer than the target, 0.02), cover? (share of a projector's brightest \
-         that counts as lit for the black, 0.1), blur? (of the black lift, projector px, 6), contrast? \
-         (projector contrast, black = white / contrast, where the camera cannot read the black), out? \
-         (folder in the project, flatfield), apply? (true: connect the maps, one undo step), pictures? (false:          also keep the camera's pictures, 16-bit sRGB PNGs, in out/pictures)}",
+        "Measure with a camera how brightness and colour vary across each projector's picture (hot spot, \
+         a colour cast towards an edge), and the brighter black where projectors overlap. Writes per \
+         projector a gain map and a black lift (gain_NAME.png, black_NAME.png) and connects them to \
+         out.projector's gain and black inputs. Blocks for about 20 s per projector; {camera \
+         (tex.video_in path), projectors (out.projector paths), scans (one scan folder per projector, \
+         with cam_to_proj.exr and proj_to_cam.exr, relative to the project; they must fit the current \
+         setup), even? (all: brightness and colour, measured on a flat evenly coloured surface | colour: \
+         the colour cast only, which a relief's shading does not change), levels? (drive levels per \
+         primary, 5), low? (lowest level, sRGB-encoded drive, 0.6), frames? (camera frames averaged per \
+         picture, 4), settle? (s, 0.5), timeout? (s, 5), degree? (of the smooth surface fitted over the \
+         projector, 3), trim? (share of samples the fit may ignore, the surface's own pattern, 0.25), \
+         floor? (share of the picture allowed to stay dimmer than the target, 0.02), cover? (share of a \
+         projector's brightest that counts as lit for the black, 0.1), blur? (of the black lift, \
+         projector px, 6), contrast? (projector contrast, black = white / contrast, where the camera \
+         cannot read the black), out? (folder in the project, flatfield), apply? (true: connect the \
+         maps, one undo step), pictures? (false: also keep the camera's pictures, 16-bit sRGB PNGs, in \
+         out/pictures)}",
         move |p| {
             let a: FlatfieldArgs = args(p)?;
             run(&e, &a)
@@ -287,8 +291,8 @@ fn lighting(
     let spots = colour::spots(&lit, black.width, black.height);
     if projectors.len() > 1 && !spots.shared {
         warnings.push(
-            "the projectors do not overlap in the camera's view: each one's gain is relative to its own centre, \
-             so a match made by projector.match may not hold across them"
+            "the projectors do not overlap in the camera's view; a match made by projector.match may not \
+             hold across them (each one's gain is relative to its own centre)"
                 .into(),
         );
     }
@@ -402,7 +406,9 @@ fn gain(
         let kept: Vec<f64> = samples.iter().zip(&surfaces).map(|(s, f)| f.residual(s, trim).1).collect();
         if kept.iter().any(|v| *v > UNEVEN) {
             warnings.push(format!(
-                "{path}: the surface is far from even (a relief, objects or a pattern; {:.0} % from the fit): its shading is in the gain too. Measure on a flat, evenly coloured surface, or use even: colour",
+                "{path}: the surface's shading is in the gain too. The surface is far from even ({:.0} % from \
+                 the fit): a relief, objects or a pattern. Measure on a flat, evenly coloured surface, or \
+                 use even: colour",
                 kept.iter().fold(0.0f64, |a, v| a.max(*v)) * 100.0
             ));
         }
