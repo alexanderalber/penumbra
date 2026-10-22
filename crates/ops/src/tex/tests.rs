@@ -1061,6 +1061,63 @@ fn composite_lays_further_layers_on_in_turn() {
 }
 
 #[test]
+fn contour_draws_a_line_per_interval_and_none_around_clipped_flats() {
+    let Some(gpu) = gpu() else { return };
+    let ramp = |path: &str, keys: &str| {
+        create(
+            path,
+            "tex.ramp",
+            &[("width", Value::Int(200)), ("height", Value::Int(4)), ("keys", keys.into())],
+        )
+    };
+    let ops = [
+        ramp(
+            "/rise",
+            "0 0 0 0
+1 1 1 1",
+        ),
+        // Flat at 0 on the left half, then rising: a valley floor clipped at 0.
+        ramp(
+            "/floor",
+            "0 0 0 0
+0.5 0 0 0
+1 1 1 1",
+        ),
+        create("/lines", "tex.contour", &[("interval", Value::Float(0.1))]),
+        create("/clipped", "tex.contour", &[("interval", Value::Float(0.1))]),
+        connect("/rise", "/lines", 0),
+        connect("/floor", "/clipped", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let row = |rig: &mut Rig, path: &str| {
+        let px = rig.pixels(path);
+        (0..200).map(|x| px.get(x, 2).unwrap()[0]).collect::<Vec<f32>>()
+    };
+    // Lines are runs of lit pixels; on the rise one per level 0.1 to 0.9, not at 0 and 1.
+    let runs = |v: &[f32]| {
+        let mut starts = Vec::new();
+        for x in 0..v.len() {
+            if v[x] > 0.5 && (x == 0 || v[x - 1] <= 0.5) {
+                starts.push(x);
+            }
+        }
+        starts
+    };
+    let lines = row(&mut rig, "/lines");
+    let starts = runs(&lines);
+    assert_eq!(starts.len(), 9, "{starts:?}");
+    for (i, x) in starts.iter().enumerate() {
+        let want = 20.0 * (i + 1) as f32;
+        assert!((*x as f32 - want).abs() <= 2.0, "line {i} at {x}, not near {want}");
+    }
+    assert!(lines[10] < 0.01 && lines[30] < 0.01, "between the lines");
+    // The floor: nothing on the flat half nor at its border, the levels of the rise as before.
+    let clipped = row(&mut rig, "/clipped");
+    assert!(clipped[..100].iter().all(|v| *v < 0.01), "{:?}", &clipped[..110]);
+    assert_eq!(runs(&clipped).len(), 9, "{:?}", runs(&clipped));
+}
+
+#[test]
 fn select_follows_the_named_node_and_switch_picks_or_blends() {
     let Some(gpu) = gpu() else { return };
     let ops = [
