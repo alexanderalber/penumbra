@@ -389,6 +389,15 @@ impl CookState {
             for hub in self.hubs.all() {
                 hub.network_changed(&net, types);
             }
+            // The thumbnails are a project setting: undo, a file edit and `cook.thumbnails`
+            // all arrive here.
+            let (mode, every) = net.thumbnails();
+            let mut policy = self.cooker.thumbnail_policy();
+            if (policy.mode, policy.min_interval) != (mode, every) {
+                policy.mode = mode;
+                policy.min_interval = every;
+                self.cooker.set_thumbnail_policy(policy);
+            }
         }
         let mut wanted: Vec<NodeId> = self.sinks.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
         self.watched.retain(|id| net.node(*id).is_some());

@@ -18,7 +18,7 @@ use crate::changes::Changes;
 use crate::control::{Reply, UiRequest};
 use crate::editor::{self, Editor};
 use crate::icons::{self, Icon};
-use crate::layout::{EditorOptions, Layout};
+use crate::layout::Layout;
 use crate::navigate::{self, Move};
 use crate::params::{self, ParamPanel};
 use crate::textures::Textures;
@@ -178,7 +178,7 @@ impl PenumbraApp {
         }
         let layout = Layout::load(Some(engine.session().dir()));
         cc.egui_ctx.set_visuals(theme::visuals(false));
-        let app = Self {
+        Self {
             control: options.control,
             adapter,
             textures: Textures::new(cc.wgpu_render_state.clone()),
@@ -219,9 +219,7 @@ impl PenumbraApp {
             flown: Instant::now(),
             starts_fresh: penumbra_engine::projects::starts_fresh(engine.session().dir()),
             engine,
-        };
-        app.apply_thumbnails();
-        app
+        }
     }
 
     /// Another project opened: writes the old one's layout, then starts over with the new
@@ -245,18 +243,6 @@ impl PenumbraApp {
         self.textures.clear();
         self.library.1 = None;
         self.title.clear();
-        self.apply_thumbnails();
-    }
-
-    /// Hands the project's thumbnail mode and rate (kept in its layout) to the engine.
-    fn apply_thumbnails(&self) {
-        let (mode, every) = (self.layout.options.thumbnails, self.layout.options.thumbnail_every);
-        self.engine.post_cook(move |st| {
-            let mut policy = st.cooker.thumbnail_policy();
-            policy.mode = mode;
-            policy.min_interval = every;
-            st.cooker.set_thumbnail_policy(policy);
-        });
     }
 
     /// Writes the layout now; for runs that end without `on_exit` (headless).
@@ -311,18 +297,7 @@ impl PenumbraApp {
                     self.helpers.open();
                     Ok(())
                 }
-                Action::Thumbnails(mode) => {
-                    let options = EditorOptions { thumbnails: mode, ..self.layout.options };
-                    self.layout.set_options(options, now);
-                    self.apply_thumbnails();
-                    Ok(())
-                }
-                Action::ThumbnailEvery(every) => {
-                    let options = EditorOptions { thumbnail_every: every, ..self.layout.options };
-                    self.layout.set_options(options, now);
-                    self.apply_thumbnails();
-                    Ok(())
-                }
+
                 Action::Message(m) => Err(penumbra_core::Error::new(m)),
                 Action::Group(ids) => {
                     crate::components::group(&self.engine, &mut self.editor, &self.layout, &ids, now)
@@ -950,8 +925,8 @@ impl PenumbraApp {
                     status: &view.status,
                     outputs: &view.outputs,
                     pictures: &view.pictures,
-                    thumbnail_mode: view.thumbnails,
-                    thumbnail_every: view.thumbnail_every,
+                    thumbnail_mode: net.thumbnails().0,
+                    thumbnail_every: net.thumbnails().1,
                     fps: view.time.map_or(60.0, |t| t.rate.as_f64()),
                     chan_bars: self.layout.options.chan_bars,
                     binding_lines: self.layout.options.binding_lines,

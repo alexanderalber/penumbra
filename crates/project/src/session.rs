@@ -18,9 +18,10 @@
 //!   overwritten. The next change to the file is tried again; `project.save` overwrites it on
 //!   purpose, after copying it to [`BACKUP_NAME`].
 //!
-//! - **Positions from an older build:** a project none of whose nodes has a position takes
-//!   them from the editor's old `layout.ron` as it opens ([`crate::legacy`]); that makes no
-//!   history entry, and the document counts as unsaved, so autosave writes them into the file.
+//! - **From an older build:** node positions and the thumbnail mode, which older builds kept in
+//!   the editor's `layout.ron`, are taken from there as the project opens ([`crate::legacy`]);
+//!   that makes no history entry, and the document counts as unsaved, so autosave writes them
+//!   into the file.
 //!
 //! File IO happens outside the state lock, so a slow disk never stalls an edit from the UI.
 
@@ -200,9 +201,9 @@ impl Session {
                 (Network::new(), Content::default(), None, Some(e.0))
             }
         };
-        // Positions from an older build's layout file: in the document, not yet in the file.
+        // What an older build kept in its layout file: in the document, not yet in the file.
         let migrated = match file_text {
-            Some(_) => crate::legacy::positions(dir, &net),
+            Some(_) => crate::legacy::take_over(dir, &net),
             None => Vec::new(),
         };
         let (net, written) = if migrated.is_empty() {
@@ -210,11 +211,14 @@ impl Session {
         } else {
             match net.apply_with(&types, &migrated, Params::Keep) {
                 Ok(applied) => {
-                    log::info!("took {} node positions over from the old layout file", migrated.len());
+                    log::info!(
+                        "took {} positions and settings over from the old layout file",
+                        migrated.len()
+                    );
                     (applied.network, Some(Arc::new(net)))
                 }
                 Err(e) => {
-                    log::warn!("node positions from the old layout file not taken over: {e}");
+                    log::warn!("positions and settings from the old layout file not taken over: {e}");
                     (net, None)
                 }
             }
@@ -772,6 +776,7 @@ mod tests {
         assert_eq!(pos(&s, "/a"), Some([10.0, 20.0]));
         assert_eq!(pos(&s, "/x"), Some([400.0, 0.0]), "a placeholder too");
         assert_eq!(pos(&s, "/s"), None, "the layout had none for it");
+        assert_eq!(s.doc().snapshot().thumbnails().0, penumbra_graph::ThumbnailMode::WhenFree);
         assert!(!s.status(t0).can_undo, "no history entry");
         assert!(s.status(t0).unsaved);
         s.poll(t0);
@@ -784,6 +789,7 @@ mod tests {
             ),
             "{text}"
         );
+        assert!(text.contains(r#""thumbnails": "when_free","#), "{text}");
         assert!(!s.status(t0 + S).unsaved);
         drop(s);
         // Once the file has positions, the layout file's are not looked at again.

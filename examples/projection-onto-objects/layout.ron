@@ -14,8 +14,6 @@
         chan_bars: true,
         viewer_background: false,
         binding_lines: true,
-        thumbnails: always,
-        thumbnail_every: 1,
         chan_scale: auto,
         audio_view: meters,
     )),

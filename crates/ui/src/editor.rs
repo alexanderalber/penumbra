@@ -1955,7 +1955,7 @@ fn options_menu(
         auto.add(format!("thumbnails.{}", mode.name().replace(' ', "_")), r.rect, mode.name());
         if r.clicked() {
             if mode != current {
-                actions.push(Action::Thumbnails(mode));
+                thumbnails(actions, Some(mode), None);
             }
             ui.close();
         }
@@ -1975,13 +1975,21 @@ fn options_menu(
             auto.add(format!("thumbnails.every_{every}"), r.rect, format!("{hz:.0} Hz"));
             if r.clicked() {
                 if every != input.thumbnail_every {
-                    actions.push(Action::ThumbnailEvery(every));
+                    thumbnails(actions, None, Some(every));
                 }
                 ui.close();
             }
         }
     });
     arrange
+}
+
+/// Sets the project's thumbnail mode or rate, as `cook.thumbnails` does.
+fn thumbnails(actions: &mut Vec<Action>, mode: Option<penumbra_graph::ThumbnailMode>, every: Option<u32>) {
+    match penumbra_engine::commands::thumbnail_ops(mode, every) {
+        Ok(ops) => actions.push(Action::Edit { ops, label: "thumbnails".into(), group: None }),
+        Err(e) => actions.push(Action::Message(e.0)),
+    }
 }
 
 /// The thumbnail rates the options menu offers, as frames between two cooks of a node.

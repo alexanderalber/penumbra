@@ -1,15 +1,17 @@
 //! What older builds kept beside the project file, taken into the project once as it opens.
 //!
-//! Before node positions were part of the project, the editor kept them in `layout.ron` beside
-//! `project.ron`, keyed by path. A project none of whose nodes has a position takes them from
-//! there as it opens ([`positions`]); the editor leaves them out the next time it writes its
-//! layout file, which keeps only view state from then on.
+//! Before node positions and the thumbnail mode were part of the project, the editor kept them
+//! in `layout.ron` beside `project.ron` (positions keyed by path, the thumbnail mode and rate
+//! among its options). A project takes them from there as it opens ([`take_over`]): the
+//! positions when none of its nodes has one, the thumbnail settings when it has none of its
+//! own. The editor leaves them out the next time it writes its layout file, which keeps only
+//! view state from then on.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use penumbra_core::NodePath;
-use penumbra_graph::{Network, Op};
+use penumbra_core::{Name, NodePath};
+use penumbra_graph::{Network, Op, THUMBNAIL_EVERY, THUMBNAILS, ThumbnailMode};
 use serde::Deserialize;
 
 /// The editor's layout file in the project directory.
@@ -22,6 +24,21 @@ const MAX_BYTES: u64 = 16 * 1024 * 1024;
 struct OldLayout {
     #[serde(default)]
     nodes: BTreeMap<String, (f32, f32)>,
+    #[serde(default)]
+    options: Option<OldOptions>,
+}
+
+/// The editor's options as older builds wrote them (plain values, no `Some`).
+#[derive(Deserialize, Default)]
+struct OldOptions {
+    #[serde(default, deserialize_with = "present")]
+    thumbnails: Option<ThumbnailMode>,
+    #[serde(default, deserialize_with = "present")]
+    thumbnail_every: Option<u32>,
+}
+
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
 }
 
 fn read(dir: &Path) -> Option<OldLayout> {
@@ -45,21 +62,34 @@ fn read(dir: &Path) -> Option<OldLayout> {
     }
 }
 
-/// The ops that give the nodes of `net` the positions the layout file in `dir` holds for them;
-/// none when any node has a position already (the project was written by a build that keeps
-/// them) or there is no such file. Positions that are no place are left out.
-pub fn positions(dir: &Path, net: &Network) -> Vec<Op> {
-    if net.is_empty() || net.nodes().any(|n| n.pos.is_some()) {
-        return Vec::new();
-    }
+/// The ops that take over what the layout file in `dir` holds that is the project's now: node
+/// positions when no node of `net` has one, the thumbnail mode and rate when `net` has no
+/// thumbnail setting. None when there is no such file. Values that are no position or no
+/// setting are left out.
+pub fn take_over(dir: &Path, net: &Network) -> Vec<Op> {
     let Some(old) = read(dir) else { return Vec::new() };
-    old.nodes
-        .into_iter()
-        .filter_map(|(path, (x, y))| {
+    let mut ops = Vec::new();
+    if !net.is_empty() && net.nodes().all(|n| n.pos.is_none()) {
+        ops.extend(old.nodes.into_iter().filter_map(|(path, (x, y))| {
             let path: NodePath = path.parse().ok()?;
             net.resolve(&path)?;
             let pos = penumbra_graph::check_pos([x, y]).ok()?;
             Some(Op::Place { path, pos: Some(pos) })
-        })
-        .collect()
+        }));
+    }
+    let own = [THUMBNAILS, THUMBNAIL_EVERY].iter().any(|n| net.settings().contains_key(*n));
+    if let Some(options) = old.options.filter(|_| !own) {
+        let settings = [
+            (THUMBNAILS, options.thumbnails.map(|m| penumbra_core::Value::Text(m.key().into()))),
+            (THUMBNAIL_EVERY, options.thumbnail_every.map(|e| penumbra_core::Value::Int(i64::from(e)))),
+        ];
+        for (name, value) in settings {
+            let (Ok(name), Some(value)) = (Name::new(name), value) else { continue };
+            // Only what is a value of the setting, and differs from its default.
+            if penumbra_graph::check_setting(&name, Some(&value)).is_ok_and(|v| v.is_some()) {
+                ops.push(Op::Setting { name, value: Some(value) });
+            }
+        }
+    }
+    ops
 }

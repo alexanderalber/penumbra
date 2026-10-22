@@ -659,7 +659,9 @@ mod tests {
         }
         for n in &names {
             let layout = std::fs::read_to_string(source.join(n).join(penumbra_project::legacy::LAYOUT_FILE));
-            assert!(!layout.unwrap_or_default().contains("nodes:"), "{n}: positions belong in the project");
+            let layout = layout.unwrap_or_default();
+            assert!(!layout.contains("nodes:"), "{n}: positions belong in the project");
+            assert!(!layout.contains("thumbnail"), "{n}: thumbnails are a project setting");
         }
     }
 

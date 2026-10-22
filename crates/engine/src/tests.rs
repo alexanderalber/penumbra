@@ -259,6 +259,17 @@ fn thumbnail_switch() {
     for bad in [json!({}), json!({"every": 0}), json!({"every": 61})] {
         assert!(!f.fail("cook.thumbnails", bad).is_empty());
     }
+    eventually("the cooker to take the setting", || f.engine.view().thumbnail_every == 6);
+    // A project setting: undoable, listed with the others, written to the file.
+    let settings = f.call("project.settings", json!({}))["settings"].clone();
+    let thumbs = settings.as_array().unwrap().iter().find(|s| s["name"] == "thumbnails").unwrap().clone();
+    assert_eq!(thumbs["value"], "when_free");
+    assert_eq!(thumbs["choices"], json!(["always", "when_free", "never"]));
+    f.call("history.undo", json!({}));
+    assert_eq!(f.call("cook.status", json!({}))["thumbnails"]["min_interval"], 1);
+    eventually("the cooker to follow the undo", || f.engine.view().thumbnail_every == 1);
+    f.call("project.save", json!({}));
+    assert!(f.file().contains(r#""thumbnails": "when_free""#), "{}", f.file());
 }
 
 #[test]

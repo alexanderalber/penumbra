@@ -126,7 +126,8 @@ fn build_wire_tweak_and_undo_through_the_ui() {
         .session()
         .doc()
         .with_history(|h| h.entries().iter().map(|e| e.label.clone()).collect::<Vec<_>>());
-    assert_eq!(history.len(), 3, "create, connect, create (the undone set is gone): {history:?}");
+    assert_eq!(history.len(), 4, "create, connect, create (the undone set is gone): {history:?}");
+    assert_eq!(history[3], "thumbnails", "a project setting, through the history");
     // Both new nodes have their place in the document: /lfo1 where the dialog opened, as part
     // of its creation; /composite1, placed right of its input by the editor, outside the
     // history.

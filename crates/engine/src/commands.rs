@@ -129,7 +129,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("cook.status", "Show clock, last cook pass, watched nodes, thumbnail policy", cook_status);
     add(
         "cook.thumbnails",
-        "Global thumbnail switch and rate; {mode?: always | when_free | never, every?: cook passes between two thumbnail cooks of a node, 1 = every frame}",
+        "The editor's thumbnails, kept with the project (settings thumbnails and thumbnail_every; one undo step); {mode?: always | when_free | never, every?: cook passes between two thumbnail cooks of a node, 1 = every frame}",
         cook_thumbnails,
     );
     add("cook.play", "Run or stop the show clock; {playing?} (default true)", cook_play);
@@ -233,7 +233,21 @@ fn project_settings(e: &Engine, p: &Json) -> Result<Json> {
     let net = e.session().doc().snapshot();
     let settings: Vec<Json> = penumbra_graph::SETTINGS
         .iter()
-        .map(|s| json!({"name": s.name, "value": net.switch(s.name), "default": s.default, "doc": s.doc}))
+        .map(|s| {
+            let mut v = json!({"name": s.name, "value": net.setting(s.name), "default": s.default_value(), "doc": s.doc});
+            if let Some(o) = v.as_object_mut() {
+                match s.kind {
+                    penumbra_graph::SettingKind::Choice { choices, .. } => {
+                        o.insert("choices".into(), json!(choices));
+                    }
+                    penumbra_graph::SettingKind::Count { min, max, .. } => {
+                        o.insert("range".into(), json!([min, max]));
+                    }
+                    penumbra_graph::SettingKind::Switch { .. } => {}
+                }
+            }
+            v
+        })
         .collect();
     Ok(json!({"settings": settings}))
 }
@@ -866,16 +880,32 @@ fn cook_status(e: &Engine, p: &Json) -> Result<Json> {
         "last_pass_ms": last.elapsed.as_secs_f64() * 1000.0,
         "cooked_last_pass": last.cooked.len(),
         "watched": watched,
+        // The project's setting, which the next pass takes (the cooker may be a pass behind).
         "thumbnails": {
-            "mode": thumbs.mode,
-            "min_interval": thumbs.min_interval,
+            "mode": net.thumbnails().0,
+            "min_interval": net.thumbnails().1,
             "budget_ms": thumbs.budget.as_secs_f64() * 1000.0,
         },
     }))
 }
 
-/// The slowest thumbnail rate `cook.thumbnails` takes: one cook a second at 60 fps.
-const MAX_THUMBNAIL_EVERY: u32 = 60;
+/// The edit that sets the editor's thumbnails ([`penumbra_graph::THUMBNAILS`],
+/// [`penumbra_graph::THUMBNAIL_EVERY`]); `None` leaves one as it is.
+pub fn thumbnail_ops(mode: Option<ThumbnailMode>, every: Option<u32>) -> Result<Vec<Op>> {
+    let name = |n: &str| Name::new(n).map_err(CommandError::from);
+    let mut ops = Vec::new();
+    if let Some(mode) = mode {
+        ops.push(Op::Setting {
+            name: name(penumbra_graph::THUMBNAILS)?,
+            value: Some(Value::Text(mode.key().into())),
+        });
+    }
+    if let Some(every) = every {
+        let value = Some(Value::Int(i64::from(every)));
+        ops.push(Op::Setting { name: name(penumbra_graph::THUMBNAIL_EVERY)?, value });
+    }
+    Ok(ops)
+}
 
 fn cook_thumbnails(e: &Engine, p: &Json) -> Result<Json> {
     #[derive(Deserialize)]
@@ -888,19 +918,19 @@ fn cook_thumbnails(e: &Engine, p: &Json) -> Result<Json> {
     if a.mode.is_none() && a.every.is_none() {
         return Err(CommandError("give `mode`, `every` or both".into()));
     }
-    if let Some(every) = a.every
-        && !(1..=MAX_THUMBNAIL_EVERY).contains(&every)
-    {
-        return Err(CommandError(format!("`every` must be 1 to {MAX_THUMBNAIL_EVERY} cook passes")));
+    let max = penumbra_graph::MAX_THUMBNAIL_EVERY;
+    if a.every.is_some_and(|every| !(1..=max).contains(&every)) {
+        return Err(CommandError(format!("`every` must be 1 to {max} cook passes")));
     }
-    let policy = e.on_cook(move |st| {
-        let mut policy = st.cooker.thumbnail_policy();
-        policy.mode = a.mode.unwrap_or(policy.mode);
-        policy.min_interval = a.every.unwrap_or(policy.min_interval);
-        st.cooker.set_thumbnail_policy(policy);
-        policy
-    })?;
-    Ok(json!({"mode": policy.mode, "every": policy.min_interval}))
+    let out = edit(e, &thumbnail_ops(a.mode, a.every)?, "thumbnails")?;
+    // The cook loop takes the setting with the next pass; the reply already tells it.
+    let (mode, every) = out.snapshot.thumbnails();
+    let mut reply = outcome(&out);
+    if let Some(o) = reply.as_object_mut() {
+        o.insert("mode".into(), json!(mode));
+        o.insert("every".into(), json!(every));
+    }
+    Ok(reply)
 }
 
 fn cook_play(e: &Engine, p: &Json) -> Result<Json> {

@@ -157,9 +157,9 @@ during a show does not black out a projector.
 **Thumbnails** follow the editor's options (right-click on empty canvas): always live, only
 when free (nothing is cooked just for a thumbnail), or never. A live thumbnail cooks every
 frame by default; the same menu lowers that to every 2nd, 3rd or 6th frame for large networks.
-Both choices are kept with the project (`cook.thumbnails` over the control channel changes them
-for the run only). A
-picture is only shown while it is up to date; an outdated one would be misleading. "Pause
+Both are project settings (`thumbnails` and `thumbnail_every` in `project.ron`), so a change is
+undoable and travels with the project; `cook.thumbnails` over the control channel sets the same.
+A picture is only shown while it is up to date; an outdated one would be misleading. "Pause
 thumbnail" in a node's menu does the same for one node.
 
 **Locking** a node (node menu, or the lock in the param panel) holds its current outputs: it no
@@ -171,7 +171,7 @@ kept across restarts. Use it for calibration results and anything expensive to m
 | | |
 |---|---|
 | `project.ron` | the network: nodes, params, wires, bindings, where each node sits in the editor, project settings. Written a second after each change |
-| `layout.ron` | view state: pan and zoom, open sections, the right column's width, the viewer's aspect, editor options (thumbnails included) |
+| `layout.ron` | view state: pan and zoom, open sections, the right column's width, the viewer's aspect, the editor's other options |
 | `state/` | what nodes hold across restarts (feedback loops, caches, locked outputs); ignored by git through its own `.gitignore` |
 | `components/` | the project's own component files |
 | `project.ron.bak` | the file as it was before `project.save` wrote over a file that did not load; worth a line in a project's `.gitignore` |
@@ -181,7 +181,8 @@ kept across restarts. Use it for calibration results and anything expensive to m
 merges only what differs, as one undoable entry, keeping your unsaved work. A project keeps
 working under git: one node per line, sorted. A node's `pos` is where it sits in the editor;
 without one the editor places it and the next save writes where. Projects from builds that
-kept positions in `layout.ron` (format version 1) take them from there once as they open.
+kept positions and the thumbnail mode in `layout.ron` (format version 1) take them from there
+once as they open.
 
 A node whose line does not load (a kind this build does not know, an input its kind does not
 have, a param value its kind refuses) does not stop the rest: the project opens, and the node

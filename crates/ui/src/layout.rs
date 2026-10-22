@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 
 use egui::{Pos2, Rect, Vec2, pos2, vec2};
 use penumbra_core::{NodeId, NodePath};
-use penumbra_graph::{Network, Op, ThumbnailMode, ThumbnailPolicy};
+use penumbra_graph::{Network, Op, ThumbnailMode};
 use serde::{Deserialize, Serialize};
 
 pub const FILE_NAME: &str = "layout.ron";
@@ -102,9 +102,6 @@ pub fn viewer_aspect(size: Vec2) -> Option<f32> {
     Some(((w / h).clamp(VIEWER_ASPECTS.0, VIEWER_ASPECTS.1) * 1000.0).round() / 1000.0)
 }
 
-/// The slowest thumbnail rate taken from a file, as `cook.thumbnails` takes it.
-const MAX_THUMBNAIL_EVERY: u32 = 60;
-
 #[derive(Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct FileRepr {
@@ -144,9 +141,8 @@ impl Default for Sections {
 }
 
 /// What the editor's own menu (a right-click on empty space) switches, and the viewer's channel
-/// scale, kept per project. The thumbnail mode and rate are the engine's (`cook.thumbnails`);
-/// the menu's choice is kept here and handed to the engine when the project opens. A change over
-/// the control channel lasts for the run only.
+/// scale, kept per project. The thumbnail mode and rate, also in that menu, are project settings
+/// (`cook.thumbnails`), not view state.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct EditorOptions {
@@ -157,14 +153,21 @@ pub struct EditorOptions {
     /// Every binding as a line; off, a stub on the bound node, and a line only for the selected
     /// or hovered nodes.
     pub binding_lines: bool,
-    /// Which nodes show a live picture.
-    pub thumbnails: ThumbnailMode,
-    /// Cook passes between two thumbnail cooks of a node.
-    pub thumbnail_every: u32,
     /// How the viewer scales several channels.
     pub chan_scale: ChanScale,
     /// What the viewer shows of a `chan.audio_analysis`: its meters or the channel plot.
     pub audio_view: AudioView,
+    /// The thumbnail mode and rate as older builds kept them here, read so their files load
+    /// (the project takes them over as it opens, `penumbra_project::legacy`), never written.
+    #[serde(default, skip_serializing, rename = "thumbnails", deserialize_with = "present")]
+    pub(crate) old_thumbnails: Option<ThumbnailMode>,
+    #[serde(default, skip_serializing, rename = "thumbnail_every", deserialize_with = "present")]
+    pub(crate) old_thumbnail_every: Option<u32>,
+}
+
+/// A field that older files wrote as a plain value, read as `Some`.
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
 }
 
 /// What the viewer shows of an audio analysis.
@@ -243,15 +246,14 @@ impl ChanScale {
 
 impl Default for EditorOptions {
     fn default() -> Self {
-        let policy = ThumbnailPolicy::default();
         Self {
             chan_bars: true,
             viewer_background: false,
             binding_lines: true,
-            thumbnails: policy.mode,
-            thumbnail_every: policy.min_interval,
             chan_scale: ChanScale::Auto,
             audio_view: AudioView::Meters,
+            old_thumbnails: None,
+            old_thumbnail_every: None,
         }
     }
 }
@@ -356,7 +358,11 @@ impl Layout {
                     layout.sections = sections;
                 }
                 if let Some(mut options) = repr.options {
-                    options.thumbnail_every = options.thumbnail_every.clamp(1, MAX_THUMBNAIL_EVERY);
+                    // Project settings now: written again without them.
+                    if options.old_thumbnails.is_some() || options.old_thumbnail_every.is_some() {
+                        layout.dirty_since = Some(Instant::now());
+                    }
+                    (options.old_thumbnails, options.old_thumbnail_every) = (None, None);
                     layout.options = options;
                 }
                 if let Some(share) = repr.column.filter(|s| s.is_finite()) {
@@ -982,8 +988,6 @@ mod tests {
         let now = Instant::now();
         let mut layout = Layout::load(Some(&dir));
         let options = EditorOptions {
-            thumbnails: ThumbnailMode::WhenFree,
-            thumbnail_every: 3,
             chan_scale: ChanScale::PerChannel,
             audio_view: AudioView::Plot,
             ..EditorOptions::default()
@@ -998,11 +1002,19 @@ mod tests {
         assert_eq!(again.options, options);
         assert_eq!(again.column, 0.42);
         assert_eq!(again.viewer_aspect, Some(2.5));
-        // Thumbnail rates out of range are not taken from the file as they are.
         let text = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
-        std::fs::write(dir.join(FILE_NAME), text.replace("thumbnail_every: 3", "thumbnail_every: 0"))
-            .unwrap();
-        assert_eq!(Layout::load(Some(&dir)).options.thumbnail_every, 1);
+        // One from before the thumbnails were a project setting loads, and is written again
+        // without them.
+        assert!(!text.contains("thumbnail"), "{text}");
+        let old = text.replace(
+            "chan_scale:",
+            "thumbnails: when_free,\n        thumbnail_every: 3,\n        chan_scale:",
+        );
+        std::fs::write(dir.join(FILE_NAME), &old).unwrap();
+        let mut loaded = Layout::load(Some(&dir));
+        assert_eq!(loaded.options, options);
+        loaded.save_if_due(Instant::now() + SAVE_DELAY, false);
+        assert_eq!(std::fs::read_to_string(dir.join(FILE_NAME)).unwrap(), text);
         assert!(text.contains("chan_scale: per_channel"), "{text}");
         // A file from before the channel scale existed still loads, with the default.
         std::fs::write(dir.join(FILE_NAME), text.replace("chan_scale: per_channel,", "")).unwrap();
