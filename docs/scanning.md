@@ -5,6 +5,9 @@ which camera pixel each projector pixel lands on. That is enough to find objects
 front of a wall, to give each projector a mask and a blend weight for them, and to draw content
 once, in the camera's picture, so it lands on every object the same way in every projector.
 
+A mostly flat object (a relief panel) needs no reference scan: `scan.relief` turns one scan
+per projector into height maps and light masks.
+
 Everything here is a command (see [Control](control.md)); the results are plain files in the
 project, read by `tex.image`. Nothing of it runs per frame: during the show what remains is a
 `tex.remap` lookup and a multiply per projector.
@@ -131,7 +134,79 @@ is fine) and in the camera.
 Limits: black or very dark surfaces do not decode, so they are neither found nor lit. Faces of
 one object at an angle to each other usually stay one part.
 
-## 4. Blend: `scan.blend`
+## 4. Relief: `scan.relief`
+
+For a mostly flat object, a relief panel filling most of each projector's frame, one scan per
+projector is enough; no scan of the empty scene is needed:
+
+    penumbra-cli ctl scan.relief '{"scans": ["scan/proj_a", "scan/proj_b"]}'
+
+Per projector a homography from projector to camera pixels is fitted robustly (reweighted,
+Cauchy) to the measured pixels: the panel's plane. Whatever stands out of the plane lands
+beside where the homography predicts, by its parallax, along the direction between camera and
+projector; that residual is the height, in camera pixels of parallax (not millimetres, and not
+quite the same scale everywhere: the parallax per millimetre grows towards the near side of the
+field). Before that the panel is cut out from the wall or floor around it, which would tilt the
+plane: where the residual (filled in from the nearest measured pixel, median filtered) jumps by
+more than `jump` (camera pixels per projector pixel, 4), one surface ends; the largest piece is
+the panel, and the plane is fitted again on it alone, twice. Pixels without a measurement
+(the camera is coarser than the projector, self-shadows) get their height from their
+neighbours, in the projector's own pixels. The plane takes up any tilt of the panel and also
+the broadest part of the relief itself: a panel that is one big dome comes out flatter.
+
+The light mask is the panel with its holes filled (so unmeasured self-shadows inside stay lit),
+without light the plane predicts outside the camera's picture (it was never seen), shrunk by
+`erode` (projector pixels, 4) so nothing spills onto the wall.
+
+**Sign.** The scan does not tell near from far: the same data comes from a mirrored depth with
+the camera on the projector's other side. `sign` `"auto"` (the default) is a heuristic: measured
+pixels well outside the panel are taken as the wall behind it, so heights grow away from them;
+with no wall in view, the heights are taken as skewed upwards (narrow peaks over a broad base).
+Check the result by eye. `1` and `-1` fix the sign to the camera's axes instead; the reply's
+`sign.as_param` says which of the two a run found, so once it is right it can be pinned while
+camera and projectors stay put. The sign applies to the first projector; the others follow it
+through the overlap.
+
+**Several projectors.** Each projector's heights are in its own units (its baseline to the
+camera differs). They are brought to the first one's over the camera pixels both light inside
+their masks, by a line fit with matched standard deviations (`scale` `"symmetric"`, the default;
+`"least_squares"` regresses on the other projector), outliers trimmed. The reply gives the
+scale, offset, both slopes, the overlap in camera pixels and the correlation. One scale per
+projector is an approximation: across a wide field the parallax per millimetre varies, so a
+projector whose area lies mostly far from the overlap can still be off by tens of percent.
+
+Written into `out` (default `relief/`), `N` the projector's place in the list:
+
+| file | what |
+|---|---|
+| `height_N.exr` | projector size, float: the height, 0 to 1 over the 1st to 99.5th percentile of all lit pixels (clamped), in red, green and blue |
+| `mask_N.png` | 8-bit, projector size: 255 where the projector lights the relief, 0 elsewhere; also a mask for `scan.blend` |
+| `height_camera.exr` | camera size: the same heights as the camera sees them, alpha 0 where no projector lights the relief |
+| `relief_view.png` | the same to look at, grey by height, black where unknown (also camera pixels no scan decoded) |
+
+The reply has per projector the fit's error, the panel (pixels, share of the measured ones),
+the relief area, its own height range, how the sign was found and the scale to the first; the
+heights' raw range (`range`, camera pixels of parallax in the first projector's units) and the
+warnings.
+
+**Content on the relief** stays in the network, per projector:
+
+1. `tex.image` of `relief/height_N.exr`.
+2. Colours by height: `tex.lookup` with the height as `in` and a `tex.ramp` (horizontal, the
+   colours as `keys`, e.g. blue, greens, browns, white for hypsometric tints) as `lut`.
+3. Contour lines: `tex.level` with `white` 0.05 (twenty steps over the range), `tex.limit`
+   mode wrap: a sawtooth per step; a `tex.lookup` of that through a ramp dark only near 0 and 1
+   gives lines. Their width varies with the slope (thin on steep, wide on flat parts); there is
+   no node that keeps them even, a `tex.shader` with `fwidth` can.
+4. `tex.composite` multiply with `tex.image` of `relief/mask_N.png` (or run `scan.blend` with
+   `"masks": ["relief/mask_0.png", ...]` and multiply by its `weight_N.png` instead, where the
+   projectors overlap).
+5. Into the projector's `out.projector`.
+
+Because the heights are per projector and in shared units, the same ramp gives the same colour
+at the same height in every projector.
+
+## 5. Blend: `scan.blend`
 
 Where two projectors light the same spot it is twice as bright, and any misregistration
 doubles. `scan.blend` gives each projector a weight: where another projector also lands on the
@@ -156,7 +231,7 @@ Written into `out` (default `objects/`):
 | `weight_N.png` | 16-bit, projector size; stored sRGB-encoded so that `tex.image` gives back the weight itself |
 | `proj_to_cam_smooth_N.exr` | the projector's `proj_to_cam` map, smoothed |
 
-## 5. The network
+## 6. The network
 
 Content is made once, in the camera's picture, and each projector takes its share:
 

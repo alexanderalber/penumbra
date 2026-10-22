@@ -145,7 +145,7 @@ impl Homography {
             }
             let stride = kept.len().div_ceil(ROBUST_SAMPLE).max(1);
             let sample: Vec<usize> = kept.iter().copied().step_by(stride).collect();
-            let h = match normal_dlt(&sample, from, to) {
+            let h = match normal_dlt(&sample, from, to, None) {
                 Ok(h) => h,
                 Err(e) if fit.is_none() => return Err(e),
                 Err(_) => break,
@@ -170,6 +170,55 @@ impl Homography {
         let (homography, errors, kept) =
             fit.ok_or_else(|| Error::new("a homography needs at least 4 point pairs"))?;
         Ok(RobustFit { homography, errors, kept })
+    }
+
+    /// The homography taking each `from` to its `to` by iteratively reweighted least squares
+    /// with Cauchy weights: the normalised DLT over the pairs (at most [`ROBUST_SAMPLE`], evenly
+    /// thinned), then `rounds` refits, each pair weighted by `1 / (1 + (e / c)^2)` with `e` its
+    /// error under the fit before and `c` the median error. Unlike [`Homography::fit_robust`] no
+    /// pair is dropped outright; far ones fade, so a surface holding most of the pairs wins over
+    /// a smaller one at another depth. Pairs with non-finite coordinates are left out; fails on
+    /// fewer than four pairs, lists of different lengths and degenerate configurations.
+    pub fn fit_cauchy(from: &[[f64; 2]], to: &[[f64; 2]], rounds: usize) -> Result<Self, Error> {
+        if from.len() != to.len() {
+            return Err(Error::new(format!("{} points to map, {} images", from.len(), to.len())));
+        }
+        let finite = |p: &[f64; 2]| p.iter().all(|v| v.is_finite());
+        let usable: Vec<usize> = from
+            .iter()
+            .zip(to)
+            .enumerate()
+            .filter(|(_, (a, b))| finite(a) && finite(b))
+            .map(|(i, _)| i)
+            .collect();
+        let stride = usable.len().div_ceil(ROBUST_SAMPLE).max(1);
+        let sample: Vec<usize> = usable.into_iter().step_by(stride).collect();
+        let mut h = normal_dlt(&sample, from, to, None)?;
+        for _ in 0..rounds {
+            let errors: Vec<f64> = sample
+                .iter()
+                .map(|i| match (from.get(*i), to.get(*i)) {
+                    (Some(p), Some(q)) => match h.apply(*p) {
+                        Some(r) => ((r[0] - q[0]).powi(2) + (r[1] - q[1]).powi(2)).sqrt(),
+                        None => f64::INFINITY,
+                    },
+                    _ => f64::INFINITY,
+                })
+                .collect();
+            let mut sorted = errors.clone();
+            sorted.sort_by(f64::total_cmp);
+            let c = sorted.get(sorted.len() / 2).copied().unwrap_or(1.0);
+            let c = if c.is_finite() { c.max(1e-6) } else { 1.0 };
+            let weights: Vec<f64> = errors
+                .iter()
+                .map(|e| if e.is_finite() { 1.0 / (1.0 + (e / c).powi(2)) } else { 0.0 })
+                .collect();
+            match normal_dlt(&sample, from, to, Some(&weights)) {
+                Ok(next) => h = next,
+                Err(_) => break,
+            }
+        }
+        Ok(h)
     }
 
     /// The homography taking the unit square's corners (top left, top right, bottom right,
@@ -242,7 +291,12 @@ impl Homography {
 
 /// The normalised DLT over the pairs `indices` of `from` and `to`, by the normal equations (the
 /// 9 x 9 matrix of the stacked constraints times itself) and its smallest eigenvector.
-fn normal_dlt(indices: &[usize], from: &[[f64; 2]], to: &[[f64; 2]]) -> Result<Homography, Error> {
+fn normal_dlt(
+    indices: &[usize],
+    from: &[[f64; 2]],
+    to: &[[f64; 2]],
+    weights: Option<&[f64]>,
+) -> Result<Homography, Error> {
     let pick = |points: &[[f64; 2]]| -> Vec<[f64; 2]> {
         indices.iter().filter_map(|i| points.get(*i).copied()).collect()
     };
@@ -253,7 +307,9 @@ fn normal_dlt(indices: &[usize], from: &[[f64; 2]], to: &[[f64; 2]]) -> Result<H
     let t_from = normalising(&a)?;
     let t_to = normalising(&b)?;
     let mut m = SMatrix::<f64, 9, 9>::zeros();
-    for (p, q) in a.iter().zip(&b) {
+    for (k, (p, q)) in a.iter().zip(&b).enumerate() {
+        // A pair's rows scaled by its weight: its share of the normal matrix by the square.
+        let w2 = weights.map_or(1.0, |w| w.get(k).copied().unwrap_or(0.0).powi(2));
         let p = t_from * Vector3::new(p[0], p[1], 1.0);
         let q = t_to * Vector3::new(q[0], q[1], 1.0);
         let (x, y) = (p.x / p.z, p.y / p.z);
@@ -264,7 +320,7 @@ fn normal_dlt(indices: &[usize], from: &[[f64; 2]], to: &[[f64; 2]]) -> Result<H
             for (i, ri) in row.iter().enumerate() {
                 for (j, rj) in row.iter().enumerate() {
                     if let Some(e) = m.get_mut((i, j)) {
-                        *e += ri * rj;
+                        *e += w2 * ri * rj;
                     }
                 }
             }
