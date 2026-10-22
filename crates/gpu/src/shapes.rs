@@ -7,6 +7,9 @@ use penumbra_core::Error;
 
 use crate::{FORMAT, Gpu, Tex};
 
+/// The shader, after the helpers the built-in shaders share.
+const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("shapes.wgsl"));
+
 const UNIFORM_SIZE: u64 = 32;
 const POLY_SIZE: usize = 48;
 
@@ -74,7 +77,7 @@ impl Shapes {
         let (pipeline, error) = gpu.scoped(|| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("shapes"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shapes.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(SOURCE.into()),
             });
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("shapes"),
@@ -243,7 +246,15 @@ impl Shapes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::gpu;
+    use crate::testing::{gpu, wgsl_struct};
+
+    /// The sizes packed by hand match shapes.wgsl's structs.
+    #[test]
+    fn layout_matches_the_shader() {
+        let source = SOURCE;
+        assert_eq!(u64::from(wgsl_struct(source, "U").0), UNIFORM_SIZE);
+        assert_eq!(wgsl_struct(source, "Poly").0 as usize, POLY_SIZE);
+    }
 
     #[test]
     fn mask_sdf_and_outline_of_a_square() {

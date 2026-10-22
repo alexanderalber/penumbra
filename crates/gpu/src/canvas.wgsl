@@ -124,15 +124,7 @@ fn fs_draw(v: VOut) -> @location(0) vec4f {
 
 @vertex
 fn vs_resolve(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-    let x = f32((i << 1u) & 2u);
-    let y = f32(i & 2u);
-    return vec4f(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
-}
-
-fn to_linear(c: vec3f) -> vec3f {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3f(2.4));
-    return select(hi, lo, c <= vec3f(0.04045));
+    return pn_fullscreen(i);
 }
 
 @fragment
@@ -143,5 +135,5 @@ fn fs_resolve(@builtin(position) pos: vec4f) -> @location(0) vec4f {
         return vec4f(0.0);
     }
     let straight = clamp(c.rgb / a, vec3f(0.0), vec3f(1.0));
-    return vec4f(to_linear(straight) * a, a);
+    return vec4f(pn_srgb_decode(straight) * a, a);
 }

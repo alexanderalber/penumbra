@@ -143,32 +143,13 @@ fn test_pattern(q: vec2f, size: vec2f) -> vec3f {
 // Surface pixels per needed projector pixel along the surface's worse axis, times the factor
 // for a coarser node upstream, at most the target's own (gpu::projection::Overlay).
 fn density(s: vec2f) -> f32 {
-    let t = s * u.tex_size;
-    let gx = vec2f(dpdx(t.x), dpdy(t.x)) * u.overlay_scale;
-    let gy = vec2f(dpdx(t.y), dpdy(t.y)) * u.overlay_scale;
-    return min(min(length(gx), length(gy)) * u.overlay_factor, u.overlay_cap);
-}
-
-// Green about one to one, red too coarse (below 0.9), blue wasted (above 1.3), the limits of
-// ops::res; the picture's brightness shows through.
-fn overlay(r: f32, c: vec3f) -> vec3f {
-    var tint = vec3f(0.1, 0.85, 0.2);
-    tint = mix(vec3f(1.0, 0.1, 0.05), tint, smoothstep(0.87, 0.9, r));
-    tint = mix(tint, vec3f(0.15, 0.35, 1.0), smoothstep(1.3, 1.36, r));
-    let luma = dot(c, vec3f(0.2126, 0.7152, 0.0722));
-    return tint * (0.3 + 0.7 * luma);
+    return pn_density(s * u.tex_size, u.overlay_scale, u.overlay_factor, u.overlay_cap);
 }
 
 fn srgb(c: vec3f) -> vec3f {
     let lo = c * 12.92;
     let hi = 1.055 * pow(c, vec3f(1.0 / 2.4)) - 0.055;
     return select(hi, lo, c <= vec3f(0.0031308));
-}
-
-fn linear(c: vec3f) -> vec3f {
-    let lo = c / 12.92;
-    let hi = pow((c + 0.055) / 1.055, vec3f(2.4));
-    return select(hi, lo, c <= vec3f(0.04045));
 }
 
 // Tone curve `ch` at encoded drive `x`, piecewise linear between its samples.
@@ -258,7 +239,7 @@ fn fs(v: V) -> @location(0) vec4f {
             rgb *= share(v.uv);
         }
         if (u.flags & 16u) != 0u {
-            rgb = overlay(r, rgb);
+            rgb = pn_overlay_tint(r, rgb);
         }
         if (u.flags & 64u) != 0u {
             let q = (v.pos.xy - u.viewport.xy) / max(u.viewport.zw, vec2f(1.0));
@@ -270,7 +251,7 @@ fn fs(v: V) -> @location(0) vec4f {
         // A target that encodes itself (or a linear texture) gets the light that encodes to
         // the signal.
         if (u.flags & 1u) == 0u {
-            rgb = linear(rgb);
+            rgb = pn_srgb_decode(rgb);
         }
     } else if (u.flags & 1u) != 0u {
         rgb = srgb(rgb);

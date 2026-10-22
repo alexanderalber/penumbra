@@ -52,6 +52,11 @@ use crate::geo::{Faces, Geo, Instances, Mat4, Material, Shading, VERTEX_BYTES, W
 use crate::projection::Overlay;
 use crate::{FORMAT, Gpu, Tex};
 
+/// The shader, after the helpers the built-in shaders share.
+const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("render.wgsl"));
+
+#[cfg(test)]
+mod layout_tests;
 mod passes;
 
 use passes::{Calls, Encoding, MeasureTargets, RenderPipes, Shared, Wanted};
@@ -599,7 +604,7 @@ impl Pipelines {
             let layouts = Layouts::new(device);
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("render"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("render.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(SOURCE.into()),
             });
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("render"),

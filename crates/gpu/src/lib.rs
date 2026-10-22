@@ -597,6 +597,81 @@ pub(crate) mod testing {
         })
         .clone()
     }
+
+    /// A member of a WGSL struct as naga lays it out.
+    pub struct Member {
+        pub name: String,
+        pub offset: u32,
+        /// The element count of a fixed-size array.
+        pub len: Option<u32>,
+    }
+
+    fn parse(source: &str) -> naga::Module {
+        naga::front::wgsl::parse_str(source).unwrap_or_else(|e| panic!("{}", e.emit_to_string(source)))
+    }
+
+    /// The size and members of struct `name` in `source`, for checking hand-packed uniforms
+    /// against the shader.
+    pub fn wgsl_struct(source: &str, name: &str) -> (u32, Vec<Member>) {
+        let module = parse(source);
+        let (members, span) = module
+            .types
+            .iter()
+            .find_map(|(_, t)| match &t.inner {
+                naga::TypeInner::Struct { members, span } if t.name.as_deref() == Some(name) => {
+                    Some((members.clone(), *span))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no struct {name}"));
+        let members = members
+            .iter()
+            .map(|m| {
+                let len = match module.types[m.ty].inner {
+                    naga::TypeInner::Array { size: naga::ArraySize::Constant(n), .. } => Some(n.get()),
+                    _ => None,
+                };
+                Member { name: m.name.clone().unwrap_or_default(), offset: m.offset, len }
+            })
+            .collect();
+        (span, members)
+    }
+
+    /// The member `name` of a [`wgsl_struct`].
+    pub fn member<'a>(members: &'a [Member], name: &str) -> &'a Member {
+        members.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("no member {name}"))
+    }
+
+    /// The value of the `f32` constant `name` in `source`.
+    pub fn wgsl_f32(source: &str, name: &str) -> f32 {
+        let module = parse(source);
+        let (_, c) = module
+            .constants
+            .iter()
+            .find(|(_, c)| c.name.as_deref() == Some(name))
+            .unwrap_or_else(|| panic!("no constant {name}"));
+        match module.global_expressions[c.init] {
+            naga::Expression::Literal(naga::Literal::F32(v)) => v,
+            ref e => panic!("{name} is {e:?}"),
+        }
+    }
+
+    /// The names of the global variables (bindings) in `source`.
+    pub fn wgsl_globals(source: &str) -> Vec<String> {
+        parse(source).global_variables.iter().filter_map(|(_, g)| g.name.clone()).collect()
+    }
+
+    /// The `f32` at byte `offset` of packed uniform bytes.
+    pub fn f32_at(bytes: &[u8], offset: u32) -> f32 {
+        let o = offset as usize;
+        f32::from_le_bytes(bytes[o..o + 4].try_into().unwrap())
+    }
+
+    /// The `u32` at byte `offset` of packed uniform bytes.
+    pub fn u32_at(bytes: &[u8], offset: u32) -> u32 {
+        let o = offset as usize;
+        u32::from_le_bytes(bytes[o..o + 4].try_into().unwrap())
+    }
 }
 
 #[cfg(test)]

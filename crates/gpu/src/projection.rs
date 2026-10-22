@@ -11,11 +11,19 @@ use penumbra_core::Error;
 
 use crate::{FORMAT, Gpu, Tex};
 
+/// The shader, after the helpers the built-in shaders share.
+const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("projection.wgsl"));
+
 /// Most other projectors one projector blends with.
 pub const MAX_PEERS: usize = 8;
 /// Most samples per tone curve of a [`Correction`].
 pub const MAX_CURVE: usize = 64;
-const UNIFORM_SIZE: u64 = 304 + 16 * MAX_CURVE as u64 + 32;
+/// Where projection.wgsl's `Look` has `viewport`, `flat` and `curve`, and its size: the packing
+/// pads up to these (a test reads them from the shader).
+const VIEWPORT_AT: usize = 192;
+const FLAT_AT: usize = 224;
+const CURVE_AT: u64 = 304;
+const UNIFORM_SIZE: u64 = CURVE_AT + 16 * MAX_CURVE as u64 + 32;
 
 /// A projector's colour correction, the last step before its signal: a matrix in linear light
 /// (`drive = matrix * colour`, clamped to 0..1), then per channel a tone curve from the drive,
@@ -154,7 +162,7 @@ impl Projection {
         let (pipeline, error) = gpu.scoped(|| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("projection"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("projection.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(SOURCE.into()),
             });
             let attributes = [
                 wgpu::VertexAttribute {
@@ -403,15 +411,15 @@ fn uniform_bytes(
             b.extend_from_slice(&v.to_le_bytes());
         }
     }
-    // Offsets as in projection.wgsl's Look: viewport at 192, overlay_cap at 208, the flat
-    // signal and the correction from 224.
-    b.resize(192, 0);
+    // Offsets as in projection.wgsl's Look: the viewport, then overlay_cap; the flat signal and
+    // the correction.
+    b.resize(VIEWPORT_AT, 0);
     for v in viewport {
         b.extend_from_slice(&v.to_le_bytes());
     }
     let cap = look.overlay.map_or(f32::MAX, |o| if o.cap.is_nan() { f32::MAX } else { o.cap });
     b.extend_from_slice(&cap.to_le_bytes());
-    b.resize(224, 0);
+    b.resize(FLAT_AT, 0);
     let unit = |v: f32| if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.0 };
     let flat = look.flat.unwrap_or([0.0; 3]);
     for v in flat {
@@ -468,7 +476,60 @@ fn uniform_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::gpu;
+    use crate::testing::{f32_at, gpu, member, u32_at, wgsl_struct};
+
+    /// The packing of `Look` matches projection.wgsl's struct: its size, the arrays' lengths, and
+    /// every member's offset (each gets a value of its own, read back where naga puts it).
+    #[test]
+    fn uniform_layout_matches_the_shader() {
+        let (span, m) = wgsl_struct(SOURCE, "Look");
+        assert_eq!(u64::from(span), UNIFORM_SIZE);
+        assert_eq!(member(&m, "peers").len, Some(MAX_PEERS as u32));
+        assert_eq!(member(&m, "curve").len, Some(MAX_CURVE as u32));
+        assert_eq!(member(&m, "viewport").offset as usize, VIEWPORT_AT);
+        assert_eq!(member(&m, "flat").offset as usize, FLAT_AT);
+        assert_eq!(u64::from(member(&m, "curve").offset), CURVE_AT);
+        let look = Look {
+            region: [0.125, 0.25, 0.5, 0.625],
+            peers: vec![[0.75, 0.0, 0.0, 0.0]],
+            blend: true,
+            gamma: 2.5,
+            pattern: false,
+            test: false,
+            tint: [0.375, 0.0, 0.0],
+            overlay: Some(Overlay { factor: 3.0, scale: [5.0, 6.0], cap: 7.0 }),
+            correction: Some(Arc::new(Correction {
+                matrix: [[0.5, 0.0, 0.0], [0.25, 0.0, 0.0], [0.125, 0.0, 0.0]],
+                curves: [vec![0.0, 0.5, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]],
+            })),
+            flatten: 0.875,
+            lift: 0.5,
+            flat: Some([0.0625, 0.0, 0.0]),
+            stripes: Some(Stripes { pattern: 9, level: 0.5, size: [11, 12] }),
+        };
+        let b = uniform_bytes(&look, (13, 14), [15.0, 16.0, 17.0, 18.0], false, true, true);
+        assert_eq!(b.len() as u64, UNIFORM_SIZE);
+        let f = |name: &str| f32_at(&b, member(&m, name).offset);
+        assert_eq!(f("region"), 0.125);
+        assert_eq!(f("tint"), 0.375);
+        assert_eq!(f("tex_size"), 13.0);
+        assert_eq!(f("gamma"), 2.5);
+        assert_eq!(u32_at(&b, member(&m, "flags").offset) & 2, 2);
+        assert_eq!(u32_at(&b, member(&m, "peer_count").offset), 1);
+        assert_eq!(f("overlay_factor"), 3.0);
+        assert_eq!(f("overlay_scale"), 5.0);
+        assert_eq!(f("peers"), 0.75);
+        assert_eq!(f("viewport"), 15.0);
+        assert_eq!(f("overlay_cap"), 7.0);
+        assert_eq!(f("flat"), 0.0625);
+        assert_eq!(f("m0"), 0.5);
+        assert_eq!(f("m1"), 0.25);
+        assert_eq!(f("m2"), 0.125);
+        assert_eq!(u32_at(&b, member(&m, "counts").offset), 3);
+        assert_eq!(f32_at(&b, member(&m, "curve").offset + 16), 0.5);
+        assert_eq!(f("stripes"), 11.0);
+        assert_eq!(f("field"), 0.875);
+    }
 
     /// A full-screen quad: the unit square onto the whole target, the surface's `region`.
     fn quad(region: [f32; 4]) -> (Vec<MeshVertex>, Vec<u32>) {
