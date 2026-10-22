@@ -398,11 +398,19 @@ impl Pass {
         self.uses_input.get(index).copied().unwrap_or(false)
     }
 
-    /// Renders into `target` (cleared first) and submits.
-    pub fn render(&self, gpu: &Gpu, target: &Tex, input: &PassInput<'_>) {
-        let mut batch = Batch::new(gpu, &self.label);
-        self.encode(&mut batch, target, input);
-        batch.submit();
+    /// Renders into `target` (cleared first) and submits. A validation error of the work
+    /// (a target of the wrong format, say) is returned instead of reaching wgpu's global
+    /// handler, so the node reports it.
+    pub fn render(&self, gpu: &Gpu, target: &Tex, input: &PassInput<'_>) -> Result<(), Error> {
+        let ((), error) = gpu.scoped(|| {
+            let mut batch = Batch::new(gpu, &self.label);
+            self.encode(&mut batch, target, input);
+            batch.submit();
+        });
+        match error {
+            Some(e) => Err(Error::new(format!("{}: {e}", self.label))),
+            None => Ok(()),
+        }
     }
 
     /// Records rendering into `target` (cleared first) into `batch`, submitted with it.
@@ -672,7 +680,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         assert!(!pass.uses_input(0));
         let target = Tex::new(&gpu, 4, 2, "t").unwrap();
         let gain = |name: &str| (name == "gain").then_some(Value::Float(2.0));
-        pass.render(&gpu, &target, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &gain });
+        pass.render(&gpu, &target, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &gain }).unwrap();
         let px = gpu.read(&target).unwrap();
         // Pixel centres: x = 0.125, 0.375, ...; times gain 2.
         let [r, g, b, a] = px.get(1, 1).unwrap();

@@ -586,7 +586,7 @@ mod tests {
         .unwrap();
         let t = Tex::new(gpu, w, h, "flat").unwrap();
         let c = move |name: &str| (name == "c").then_some(Value::Vec4(rgba));
-        pass.render(gpu, &t, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &c });
+        pass.render(gpu, &t, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &c }).unwrap();
         t
     }
 
@@ -643,7 +643,8 @@ mod tests {
         )
         .unwrap();
         let map = Tex::new(&gpu, 2, 1, "map").unwrap();
-        pass.render(&gpu, &map, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &|_| None });
+        pass.render(&gpu, &map, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &|_| None })
+            .unwrap();
         let out = Tex::new(&gpu, 2, 1, "out").unwrap();
         stack.read(&gpu, Some(&map), &out, Look { reach: 2.0, offset: 0.0, blend: true }).unwrap();
         // 8-bit sRGB keeps linear values to within about half a percent at these levels.

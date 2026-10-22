@@ -244,16 +244,16 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "Brightness by hand, in linear light, on top of the matrix (0.8: a fifth less light)",
         ))
         .param(ParamSpec::text("matrix", "").multiline().group(COLOUR).doc(
-            "3x3 matrix in linear light, drive = matrix x colour: three rows of three numbers (`1 0 0 / 0 1 0 / 0 0 1`);              empty is none. projector.match writes it",
+            "3x3 matrix in linear light, drive = matrix x colour: three rows of three numbers (`1 0 0 / 0 1 0 / 0 0 1`); empty is none. projector.match writes it",
         ))
         .param(ParamSpec::text("curves", "").multiline().group(COLOUR).doc(
-            "Tone curve per channel, from drive (sRGB-encoded, evenly spaced from 0 to 1) to the signal sent:              lines `r: 0 0.06 ... 1`, `g: ...`, `b: ...` (2 to 64 samples each, one line for all three); a straight              line 0..1 or empty is none. projector.match writes it",
+            "Tone curve per channel, from drive (sRGB-encoded, evenly spaced from 0 to 1) to the signal sent: lines `r: 0 0.06 ... 1`, `g: ...`, `b: ...` (2 to 64 samples each, one line for all three); a straight line 0..1 or empty is none. projector.match writes it",
         ))
         .param(ParamSpec::float("flatten", 1.0).clamp(0.0, 1.0).group(COLOUR).doc(
-            "How much of the gain map at the `gain` input applies: 1 all of it (even brightness and colour              across the picture), 0 none. projector.flatfield measures the map",
+            "How much of the gain map at the `gain` input applies: 1 all of it (even brightness and colour across the picture), 0 none. projector.flatfield measures the map",
         ))
         .param(ParamSpec::float("lift", 1.0).clamp(0.0, 4.0).group(COLOUR).doc(
-            "Scales the black lift at the `black` input: 1 as measured, 0 none, more where the camera              underrated the black (black outside an overlap still darker than inside). projector.flatfield              measures it",
+            "Scales the black lift at the `black` input: 1 as measured, 0 none, more where the camera underrated the black (black outside an overlap still darker than inside). projector.flatfield measures it",
         ))
         .input("in", DataKind::Tex)
         .input("gain", DataKind::Tex)

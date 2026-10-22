@@ -181,7 +181,7 @@ impl Operator for Switch {
             gpu,
             &target,
             &PassInput { inputs: &[Some(ta), Some(tb)], seconds: 0.0, frame: 0, param: &param },
-        );
+        )?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))
     }
 }

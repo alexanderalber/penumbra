@@ -758,7 +758,13 @@ impl Engine {
         let session = self.session();
         let snapshot = session.clone();
         let due = save_state
-            && self.on_cook(move |st| st.state.due(&st.cooker, &snapshot.doc().snapshot())).unwrap_or(false);
+            && match self.on_cook(move |st| st.state.due(&st.cooker, &snapshot.doc().snapshot())) {
+                Ok(due) => due,
+                Err(e) => {
+                    log::warn!("state at closing: not saved, cannot ask whether a save is due: {e}");
+                    false
+                }
+            };
         if due
             && !self.state.holding()
             && let Err(e) = self.save_state(Duration::from_secs(10))
@@ -1238,14 +1244,14 @@ impl Engine {
         guard.clone()
     }
 
-    /// The pacing output presented a frame at `at` (called from its thread): the cook thread
-    /// cooks the next frame now instead of waiting for its timer.
     /// Whether the ticker ticks (it is parked while real vsyncs arrive).
     #[cfg(test)]
     pub(crate) fn ticking(&self) -> bool {
         self.ticker.ticking()
     }
 
+    /// The pacing output presented a frame at `at` (called from its thread): the cook thread
+    /// cooks the next frame now instead of waiting for its timer.
     pub fn vsync(&self, at: Instant) {
         lock(&self.cook).send(CookMsg::Vsync(at)).ok();
     }

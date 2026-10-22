@@ -7,7 +7,7 @@
 //! and the node warns. Windows only.
 
 use penumbra_core::{Error, ParamSpec};
-use penumbra_gpu::{Gpu, Tex};
+use penumbra_gpu::Tex;
 use penumbra_graph::{CookContext, CookError, Cooked, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
 use penumbra_spout::{Alpha, Format, Sender, Sent};
 
@@ -61,7 +61,7 @@ struct SpoutOut {
 
 impl Operator for SpoutOut {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let gpu = cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU"))?;
+        let gpu = crate::gpu(cx)?;
         let set = cx.text("name")?.trim();
         let wanted =
             if set.is_empty() { format!("penumbra {}", cx.def().name.as_str()) } else { set.to_string() };
@@ -93,8 +93,12 @@ impl Operator for SpoutOut {
             cx.warn("nothing connected: receivers see the last picture");
             return Ok(Cooked::Outputs(Vec::new()));
         };
-        let format = Format::parse(cx.text("format")?).unwrap_or_default();
-        let alpha = Alpha::parse(cx.text("alpha")?).unwrap_or_default();
+        let format = cx.text("format")?;
+        let format =
+            Format::parse(format).ok_or_else(|| CookError::failed(format!("unknown format `{format}`")))?;
+        let alpha = cx.text("alpha")?;
+        let alpha =
+            Alpha::parse(alpha).ok_or_else(|| CookError::failed(format!("unknown alpha `{alpha}`")))?;
         match sender.send(gpu, tex, format, alpha) {
             Ok(Sent::Frame | Sent::Busy) => Ok(Cooked::Outputs(Vec::new())),
             Err(e) => Err(CookError::failed(e)),

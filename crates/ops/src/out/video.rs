@@ -353,7 +353,7 @@ impl Operator for VideoOut {
             )));
         }
         if let Some(take) = self.take.as_mut() {
-            let gpu = cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU yet"))?;
+            let gpu = crate::gpu(cx)?;
             take.frame(gpu, cx.input_as::<Tex>(0), now)?;
         }
         // The last recording's error and drops count while `record` is on; once off, the status

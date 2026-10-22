@@ -48,6 +48,8 @@ use penumbra_graph::{
     Operator,
 };
 
+use crate::{gpu, waiting};
+
 /// Largest width or height a resolution parameter accepts; the device may allow less.
 pub const MAX_SIDE: f64 = 16384.0;
 
@@ -563,13 +565,13 @@ impl Operator for BuiltinOp {
         let param = |name: &str| cx.param(name).cloned();
         let fold = b.fold;
         let first = if fold { inputs.get(..2).unwrap_or(&inputs) } else { &inputs };
-        pass.render(gpu, &target, &PassInput { inputs: first, seconds, frame, param: &param });
+        pass.render(gpu, &target, &PassInput { inputs: first, seconds, frame, param: &param })?;
         if fold {
             for k in 2..cx.def().inputs.len() {
                 let Some(layer) = cx.input_as::<Tex>(k) else { continue };
                 let next = self.ring.next(gpu, w, h, &b.desc.kind)?;
                 let pair = [Some(&target), Some(layer)];
-                pass.render(gpu, &next, &PassInput { inputs: &pair, seconds, frame, param: &param });
+                pass.render(gpu, &next, &PassInput { inputs: &pair, seconds, frame, param: &param })?;
                 target = next;
             }
         }
@@ -592,20 +594,6 @@ impl Operator for BuiltinOp {
             Size::Custom(_) => def.param(desc, "mode").and_then(|v| v.as_str()) == Some("custom"),
         }
     }
-}
-
-/// Why a filter without an input texture cannot cook: connected but upstream has nothing yet
-/// (an image loading), so wait; or nothing connected.
-fn waiting(cx: &CookContext<'_>) -> CookError {
-    if cx.def().inputs.iter().any(Option::is_some) {
-        CookError::Pending
-    } else {
-        CookError::failed("connect an input")
-    }
-}
-
-fn gpu<'a>(cx: &'a CookContext<'_>) -> Result<&'a Gpu, CookError> {
-    cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU: texture nodes cannot cook"))
 }
 
 /// The texture inputs, `None` where unconnected.

@@ -272,9 +272,7 @@ struct EnvironmentNode {
 
 impl Operator for EnvironmentNode {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let gpu = cx
-            .resource::<penumbra_gpu::Gpu>()
-            .ok_or_else(|| CookError::failed("no GPU: the environment cannot be baked"))?;
+        let gpu = crate::gpu(cx)?;
         let Some(picture) = cx.input_as::<Tex>(0) else {
             return Err(if cx.def().inputs.first().is_some_and(Option::is_some) {
                 CookError::Pending
@@ -310,11 +308,7 @@ impl Operator for Merge {
             all.extend(l.0.iter().cloned());
         }
         if !any {
-            return Err(if cx.def().inputs.iter().any(Option::is_some) {
-                CookError::Pending
-            } else {
-                CookError::failed("connect a light")
-            });
+            return Err(crate::waiting_for(cx, "connect a light"));
         }
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Light, Lights(all))]))
     }

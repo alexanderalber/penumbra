@@ -22,7 +22,8 @@ pub mod trace;
 pub mod view;
 
 use penumbra_core::Error;
-use penumbra_graph::NodeTypes;
+use penumbra_gpu::Gpu;
+use penumbra_graph::{CookContext, CookError, Cooked, NodeTypes, Operator};
 
 pub use tex::warm_up;
 
@@ -42,6 +43,34 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     tex::register(types)?;
     view::register(types)?;
     Ok(())
+}
+
+/// The error of a node whose input has nothing (yet): still pending while one is wired,
+/// otherwise a hint to wire one.
+pub(crate) fn waiting(cx: &CookContext<'_>) -> CookError {
+    waiting_for(cx, "connect an input")
+}
+
+/// [`waiting`] with `hint` for the unwired case.
+pub(crate) fn waiting_for(cx: &CookContext<'_>, hint: &'static str) -> CookError {
+    if cx.def().inputs.iter().any(Option::is_some) { CookError::Pending } else { CookError::failed(hint) }
+}
+
+/// The GPU, for nodes that need one; an error until it arrives.
+pub(crate) fn gpu<'a>(cx: &'a CookContext<'_>) -> Result<&'a Gpu, CookError> {
+    cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU yet"))
+}
+
+/// Passes its input on as it is (`chan.null`, `table.null`).
+pub(crate) struct Null;
+
+impl Operator for Null {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        match cx.input(0) {
+            Some(data) => Ok(Cooked::Outputs(vec![data.clone()])),
+            None => Err(waiting(cx)),
+        }
+    }
 }
 
 /// Why param `name` of `node` does not count with its other params as they are (the param panel

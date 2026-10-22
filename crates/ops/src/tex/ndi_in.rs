@@ -104,7 +104,9 @@ impl NdiIn {
         };
         let want_audio = cx.output_wanted(AUDIO);
         receiver.want_audio(want_audio);
-        let alpha = Alpha::parse(cx.text("alpha")?).unwrap_or_default();
+        let alpha = cx.text("alpha")?;
+        let alpha =
+            Alpha::parse(alpha).ok_or_else(|| CookError::failed(format!("unknown alpha `{alpha}`")))?;
         let mut changed = false;
         let picture = receiver.take_picture();
         let again = picture.is_none() && cx.params_changed() && self.shown.is_some();

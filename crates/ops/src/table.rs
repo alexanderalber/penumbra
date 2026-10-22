@@ -7,6 +7,8 @@ use penumbra_graph::{
     NodeTypes, Operator,
 };
 
+use crate::Null;
+
 /// Largest file `table.file` reads.
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -56,18 +58,6 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Null) as Box<dyn Operator>,
     ))?;
     Ok(())
-}
-
-/// Passes its input on as it is.
-struct Null;
-
-impl Operator for Null {
-    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        match cx.input(0) {
-            Some(data) => Ok(Cooked::Outputs(vec![data.clone()])),
-            None => Err(crate::chan::waiting(cx)),
-        }
-    }
 }
 
 fn format(name: &str) -> Result<Format, CookError> {

@@ -101,12 +101,12 @@ fn desc() -> NodeDesc {
                 .range(0.0, 30.0)
                 .curve(Curve::Power(2.0))
                 .doc(
-                    "How fast the dye takes on the colour poured in, per second (where it moves fast):                      at 4 about two thirds in a quarter of a second; it paints over, so the dye never                      gets brighter than its colours",
+                    "How fast the dye takes on the colour poured in, per second (where it moves fast): at 4 about two thirds in a quarter of a second; it paints over, so the dye never gets brighter than its colours",
                 ),
         )
         .param(
             ParamSpec::color("color", [0.35, 0.7, 1.0, 1.0]).doc(
-                "The dye's colour where the dye input is not wired (its alpha slows the pouring), and                  of splats without r, g, b",
+                "The dye's colour where the dye input is not wired (its alpha slows the pouring), and of splats without r, g, b",
             ),
         )
         .param(

@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use penumbra_calib::colour;
-use penumbra_calib::scan::{self, Decoder, Options, Pattern, Patterns};
+use penumbra_calib::scan::{Decoder, Options, Pattern, Patterns};
 use penumbra_camera::CameraFrame;
 use penumbra_core::{NodeId, NodePath, Value};
 use penumbra_gpu::Pixels;
@@ -42,8 +42,8 @@ use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
 use crate::engine::Engine;
-use crate::projector::{CameraStream, Claim, projector_list, wait_shown};
-use crate::scan::{DEFAULT_FILL, ms, write_decoded};
+use crate::projector::{CameraStream, Claim, projector_list, settle_of, timeout_of, wait_shown};
+use crate::scan::{fill_of, ms, write_decoded};
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -53,7 +53,6 @@ pub const DEFAULT_OUT: &str = "scan";
 /// The folder inside a projector's scan folder that keeps the camera frames (`frames: true`).
 pub const FRAMES: &str = "frames";
 pub const DEFAULT_SETTLE: f64 = 0.05;
-pub const DEFAULT_TIMEOUT: f64 = 5.0;
 pub const DEFAULT_RETRIES: u32 = 3;
 /// How long the black before the first projector's white is waited for, before any latency is
 /// known.
@@ -436,14 +435,8 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
 /// [`capture`], stopped by and reporting to `watch`.
 pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -> CmdResult<Json> {
     let started = Instant::now();
-    let settle = a.settle.unwrap_or(DEFAULT_SETTLE);
-    if !(settle.is_finite() && (0.0..=10.0).contains(&settle)) {
-        return Err("`settle` is 0 to 10 seconds".into());
-    }
-    let timeout = a.timeout.unwrap_or(DEFAULT_TIMEOUT);
-    if !(timeout.is_finite() && (0.05..=60.0).contains(&timeout)) {
-        return Err("`timeout` is 0.05 to 60 seconds".into());
-    }
+    let settle = settle_of(a.settle, DEFAULT_SETTLE)?;
+    let timeout = timeout_of(a.timeout)?;
     let level = a.level.unwrap_or(1.0);
     if !(level.is_finite() && level > 0.0 && level <= 1.0) {
         return Err("`level` is above 0, at most 1".into());
@@ -453,10 +446,7 @@ pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -
         return Err("`retries` is 0 to 20".into());
     }
     a.options.check().map_err(CommandError)?;
-    let fill = a.fill.unwrap_or(DEFAULT_FILL);
-    if fill > scan::MAX_FILL {
-        return Err(CommandError(format!("`fill` is 0 to {} projector pixels", scan::MAX_FILL)));
-    }
+    let fill = fill_of(a.fill)?;
     let keep_frames = a.frames.unwrap_or(false);
 
     let net = e.session().doc().snapshot();

@@ -146,7 +146,7 @@ impl Operator for Shader {
         };
         let target = self.ring.next(gpu, w, h, "tex.shader")?;
         let param = |name: &str| cx.param(name).cloned();
-        current.pass.render(gpu, &target, &PassInput { inputs: &inputs, seconds, frame, param: &param });
+        current.pass.render(gpu, &target, &PassInput { inputs: &inputs, seconds, frame, param: &param })?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))
     }
 

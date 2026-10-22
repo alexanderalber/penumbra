@@ -152,7 +152,7 @@ impl Operator for Ramp {
         let target = self.out.next(gpu, w, h, KIND)?;
         let param = |name: &str| cx.param(name).cloned();
         let input = PassInput { inputs: &[Some(&lut)], seconds: 0.0, frame: 0, param: &param };
-        pass(gpu)?.render(gpu, &target, &input);
+        pass(gpu)?.render(gpu, &target, &input)?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))
     }
 

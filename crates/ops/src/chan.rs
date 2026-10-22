@@ -12,6 +12,8 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
+use crate::{Null, waiting};
+
 /// Registers the `chan` node types.
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -389,27 +391,6 @@ fn row_of(param: &str) -> Option<usize> {
 
 fn is_constant_param(name: &str) -> bool {
     name == "rows" || row_of(name).is_some_and(|k| k < CONSTANT_MAX_ROWS)
-}
-
-/// Passes its input on as it is.
-struct Null;
-
-impl Operator for Null {
-    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        match cx.input(0) {
-            Some(data) => Ok(Cooked::Outputs(vec![data.clone()])),
-            None => Err(waiting(cx)),
-        }
-    }
-}
-
-/// Pending while a wired input has nothing yet, else asks for an input.
-pub(crate) fn waiting(cx: &CookContext<'_>) -> CookError {
-    if cx.def().inputs.iter().any(Option::is_some) {
-        CookError::Pending
-    } else {
-        CookError::failed("connect an input")
-    }
 }
 
 /// Parses `chan.select`'s `channels`: `(keep, leave out, refused renames)`.

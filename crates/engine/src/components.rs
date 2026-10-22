@@ -14,8 +14,8 @@ use penumbra_project::{Actor, Content, diff};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
-use crate::command::{CommandError, FnCommand, Registry, args};
-use crate::commands::{edit, outcome, require};
+use crate::command::{CommandError, Registry, args};
+use crate::commands::{edit, engine_commands, outcome, require};
 use crate::engine::Engine;
 
 type Result<T> = std::result::Result<T, CommandError>;
@@ -26,10 +26,7 @@ const MAX_FILE_BYTES: u64 = penumbra_project::file::MAX_FILE_BYTES;
 pub const PROJECT_DIR: &str = "components";
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
-    let mut add = |id: &'static str, summary: &'static str, f: fn(&Engine, &Json) -> Result<Json>| {
-        let engine = Arc::clone(engine);
-        registry.register(FnCommand::new(id, summary, move |p| f(&engine, p)));
-    };
+    let mut add = engine_commands(registry, engine);
     add(
         "comp.collapse",
         "Group side-by-side nodes into a new component, ports where wires cross; {paths, name?}",
@@ -78,12 +75,7 @@ pub fn default_library() -> Option<PathBuf> {
     if let Some(dir) = var("PENUMBRA_LIBRARY") {
         return Some(dir);
     }
-    let base = if cfg!(windows) {
-        var("LOCALAPPDATA")?
-    } else {
-        var("XDG_DATA_HOME").or_else(|| var("HOME").map(|h| h.join(".local/share")))?
-    };
-    Some(base.join("penumbra").join("components"))
+    crate::projects::data_dir().ok().map(|d| d.join("components"))
 }
 
 /// One component file found.

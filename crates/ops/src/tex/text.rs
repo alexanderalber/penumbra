@@ -190,7 +190,7 @@ impl Operator for Text {
             _ => cx.param(name).cloned(),
         };
         let inputs = [Some(&raster.tex)];
-        pass.render(gpu, &target, &PassInput { inputs: &inputs, seconds: 0.0, frame: 0, param: &param });
+        pass.render(gpu, &target, &PassInput { inputs: &inputs, seconds: 0.0, frame: 0, param: &param })?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))
     }
 

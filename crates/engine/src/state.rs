@@ -209,6 +209,16 @@ impl StateShared {
         self.changed.notify_all();
     }
 
+    /// Records that save `seq` failed, logging why.
+    fn failed(&self, seq: u64, why: String) {
+        log::warn!("state snapshot {seq}: {why}");
+        self.update(|s| {
+            s.finished = s.finished.max(seq);
+            s.failures += 1;
+            s.last_error = Some((seq, why));
+        });
+    }
+
     /// Waits until save `seq` finished; its report or its error.
     pub fn wait_for(&self, seq: u64, timeout: Duration) -> Result<SaveReport, Error> {
         let guard = lock(&self.status);
@@ -791,13 +801,8 @@ impl StateKeeper {
     }
 
     fn fail(&mut self, seq: u64, why: String) {
-        log::warn!("state snapshot {seq}: {why}");
         self.written = None;
-        self.shared.update(|s| {
-            s.finished = s.finished.max(seq);
-            s.failures += 1;
-            s.last_error = Some((seq, why));
-        });
+        self.shared.failed(seq, why);
     }
 
     fn send(&mut self, job: WriteJob) {
@@ -1046,19 +1051,8 @@ fn writer(rx: &Receiver<WriteJob>, shared: &StateShared, dir: &Path, pool: &Mute
                     s.last_save = Some(report);
                 });
             }
-            Ok(Err(e)) => {
-                log::warn!("state snapshot {seq}: {e}");
-                shared.update(|s| {
-                    s.finished = s.finished.max(seq);
-                    s.failures += 1;
-                    s.last_error = Some((seq, e.0));
-                });
-            }
-            Err(_) => shared.update(|s| {
-                s.finished = s.finished.max(seq);
-                s.failures += 1;
-                s.last_error = Some((seq, "writing the state panicked".into()));
-            }),
+            Ok(Err(e)) => shared.failed(seq, e.0),
+            Err(_) => shared.failed(seq, "writing the state panicked".into()),
         }
     }
 }
@@ -1143,8 +1137,7 @@ pub fn load(
             Err(e) => {
                 log::warn!("state: {e}");
                 report.broken.push((path.display().to_string(), e.0));
-                // Out of the rotation, kept for a look.
-                let _ = std::fs::rename(&path, dir.join(BROKEN));
+                set_aside(&path, &dir.join(BROKEN));
             }
         }
     }
@@ -1152,6 +1145,20 @@ pub fn load(
         report.note = Some("no saved state".into());
     }
     None
+}
+
+/// Takes a file that does not read out of the rotation, kept as `broken` for a look. Should
+/// the move fail, the file is deleted instead: left in place, the next save would rotate a
+/// broken `latest` into `previous`.
+fn set_aside(path: &Path, broken: &Path) {
+    let Err(e) = std::fs::rename(path, broken) else { return };
+    log::warn!("state: cannot move {} to {}: {e}; deleting it instead", path.display(), broken.display());
+    if let Err(e) = std::fs::remove_file(path) {
+        log::error!(
+            "state: cannot delete {} either: {e}; the next save may keep it as the previous state",
+            path.display()
+        );
+    }
 }
 
 /// The saved nodes turned into what the cooker takes, textures uploaded (on the caller's

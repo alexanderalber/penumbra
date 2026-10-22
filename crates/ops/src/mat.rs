@@ -193,7 +193,7 @@ impl MatNode {
 
 impl Operator for MatNode {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let gpu = cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU: mat nodes cannot cook"))?;
+        let gpu = crate::gpu(cx)?;
         let mut material = Material { shading: self.shading, ..Material::constant() };
         if self.shading != Shading::Occluder {
             material.color = rgba(cx, "color")?;

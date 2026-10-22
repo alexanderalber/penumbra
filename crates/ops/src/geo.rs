@@ -19,6 +19,8 @@ use penumbra_graph::{
 };
 use penumbra_mesh::{Bounds, Limits, Mesh, Up, prim};
 
+use crate::{gpu, waiting};
+
 /// Choices of `geo.file`'s `up`.
 pub const UP: [&str; 3] = ["auto", "y", "z"];
 
@@ -178,10 +180,6 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(TexInstance) as Box<dyn Operator>,
     ))?;
     Ok(())
-}
-
-fn gpu<'a>(cx: &'a CookContext<'_>) -> Result<&'a Gpu, CookError> {
-    cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU: geo nodes cannot cook"))
 }
 
 /// A camera looking at `bounds` from the front (-y), right and above, the whole box in view.
@@ -629,13 +627,5 @@ impl Operator for PutMaterial {
             input.items.iter().map(|i| Item { material: Some(mat.material.clone()), ..i.clone() }).collect();
         let geo = Geo { items, preview: None };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
-    }
-}
-
-fn waiting(cx: &CookContext<'_>) -> CookError {
-    if cx.def().inputs.iter().any(Option::is_some) {
-        CookError::Pending
-    } else {
-        CookError::failed("connect an input")
     }
 }

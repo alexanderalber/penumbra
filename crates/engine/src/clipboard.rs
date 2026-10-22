@@ -13,8 +13,8 @@ use penumbra_project::{Actor, Content, diff};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
-use crate::command::{CommandError, FnCommand, Registry, args};
-use crate::commands::outcome;
+use crate::command::{CommandError, Registry, args};
+use crate::commands::{engine_commands, outcome};
 use crate::components::edit_as;
 use crate::engine::Engine;
 
@@ -29,10 +29,7 @@ pub struct Clipboard {
 }
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
-    let mut add = |id: &'static str, summary: &'static str, f: fn(&Engine, &Json) -> Result<Json>| {
-        let engine = Arc::clone(engine);
-        registry.register(FnCommand::new(id, summary, move |p| f(&engine, p)));
-    };
+    let mut add = engine_commands(registry, engine);
     add(
         "node.copy",
         "Copy side-by-side nodes with everything inside them; returns the text; {paths}",

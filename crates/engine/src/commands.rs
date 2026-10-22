@@ -26,12 +26,23 @@ use crate::engine::Engine;
 
 type Result<T> = std::result::Result<T, CommandError>;
 
-/// Registers the engine's commands into `registry`.
-pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
-    let mut add = |id: &'static str, summary: &'static str, f: fn(&Engine, &Json) -> Result<Json>| {
+/// A command run with the engine.
+pub(crate) type EngineCommand = fn(&Engine, &Json) -> Result<Json>;
+
+/// Registers commands that run with `engine` into `registry`: `add(id, summary, function)`.
+pub(crate) fn engine_commands<'a>(
+    registry: &'a mut Registry,
+    engine: &'a Arc<Engine>,
+) -> impl FnMut(&'static str, &'static str, EngineCommand) + 'a {
+    move |id, summary, f| {
         let engine = Arc::clone(engine);
         registry.register(FnCommand::new(id, summary, move |p| f(&engine, p)));
-    };
+    }
+}
+
+/// Registers the engine's commands into `registry`.
+pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
+    let mut add = engine_commands(registry, engine);
     add("project.info", "Project directory, unsaved changes, file errors, who is editing", project_info);
     add("project.save", "Write project.ron now, also over a file that failed to merge", project_save);
     add(
@@ -47,7 +58,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("history.redo", "Redo one history entry", history_redo);
     add(
         "node.kinds",
-        "Node types with their params, inputs and outputs; with a param, its help (what it does,          type, default, range, unit, what each choice does); {kind?, param?}",
+        "Node types with their params, inputs and outputs; with a param, its help (what it does, type, default, range, unit, what each choice does); {kind?, param?}",
         node_kinds,
     );
     add("node.list", "Nodes under a path; {path?, recursive?}", node_list);
@@ -163,7 +174,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
 #[serde(deny_unknown_fields)]
 pub(crate) struct Empty {}
 
-fn no_args(p: &Json) -> Result<()> {
+pub(crate) fn no_args(p: &Json) -> Result<()> {
     args::<Empty>(p).map(|_| ())
 }
 

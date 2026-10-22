@@ -3,8 +3,7 @@
 //! Every entry holds the snapshot after its edit, so undo and redo are a pointer move. Entries
 //! record their source and group id; consecutive edits with the same group (one parameter drag,
 //! one action by Claude over several commands) merge into one entry. An edit that changes
-//! nothing records nothing. "Modified" compares against the snapshot marked as saved, so undoing
-//! back to it means unmodified.
+//! nothing records nothing.
 //!
 //! **Live values** ([`History::live`], OSC param edits): written into the current snapshot
 //! without an entry, and remembered per param. Undo and redo write them into the snapshot they
@@ -63,7 +62,6 @@ pub struct History {
     entries: Vec<Entry>,
     /// Number of entries applied: 0 means at `base`.
     cursor: usize,
-    saved: Arc<Network>,
     limit: usize,
     /// Params set outside the history, with their values (`None`: the default).
     live: BTreeMap<(NodeId, Name), Option<Value>>,
@@ -75,7 +73,6 @@ impl History {
 
     pub fn new(initial: Arc<Network>) -> Self {
         Self {
-            saved: initial.clone(),
             base: initial,
             entries: Vec::new(),
             cursor: 0,
@@ -185,7 +182,7 @@ impl History {
         label: &str,
         touched: BTreeSet<NodeId>,
     ) -> Recorded {
-        if same(self.current(), &snapshot) {
+        if Network::same(self.current(), &snapshot) {
             return Recorded::NoChange;
         }
         if !self.live.is_empty() {
@@ -197,7 +194,7 @@ impl History {
             && on_top
             && self.entries.get(t).is_some_and(|e| e.group == group && e.source == source)
         {
-            if same(self.before(t), &snapshot) {
+            if Network::same(self.before(t), &snapshot) {
                 self.entries.truncate(t);
                 self.cursor = t;
                 return Recorded::Collapsed;
@@ -263,18 +260,6 @@ impl History {
     pub fn applied(&self) -> usize {
         self.cursor
     }
-
-    pub fn mark_saved(&mut self) {
-        self.saved = self.current().clone();
-    }
-
-    pub fn is_modified(&self) -> bool {
-        !same(self.current(), &self.saved)
-    }
-}
-
-fn same(a: &Arc<Network>, b: &Arc<Network>) -> bool {
-    Arc::ptr_eq(a, b) || a == b
 }
 
 #[cfg(test)]
@@ -351,7 +336,7 @@ mod tests {
         );
         assert_eq!(rec(&mut h, back, 3), Recorded::Collapsed);
         assert!(!h.can_undo());
-        assert!(!h.is_modified());
+        assert!(Network::same(h.current(), &s0));
     }
 
     #[test]
@@ -388,21 +373,6 @@ mod tests {
         rec(&mut h, set(&s0, 3.0), 3);
         assert_eq!(h.entries().len(), 1);
         assert!(!h.can_redo());
-    }
-
-    #[test]
-    fn modified_follows_undo() {
-        let s0 = start();
-        let mut h = History::new(s0.clone());
-        assert!(!h.is_modified());
-        rec(&mut h, set(&s0, 1.0), 1);
-        assert!(h.is_modified());
-        h.mark_saved();
-        assert!(!h.is_modified());
-        h.undo();
-        assert!(h.is_modified());
-        h.redo();
-        assert!(!h.is_modified());
     }
 
     #[test]

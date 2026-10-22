@@ -88,7 +88,7 @@ impl Operator for Blur {
                 gpu,
                 &target,
                 &PassInput { inputs: &[Some(&current)], seconds: 0.0, frame: 0, param: &param },
-            );
+            )?;
             current = target;
         }
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, current)]))

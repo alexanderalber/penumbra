@@ -336,7 +336,7 @@ impl BlobTrack {
             gpu,
             &target,
             &PassInput { inputs: &[Some(src)], seconds: 0.0, frame: 0, param: &|_| None },
-        );
+        )?;
         // A connected background is shrunk the same way and read back with the frame.
         let background = match cx.input_as::<Tex>(1) {
             Some(bg) => {
@@ -345,7 +345,7 @@ impl BlobTrack {
                     gpu,
                     &t,
                     &PassInput { inputs: &[Some(bg)], seconds: 0.0, frame: 0, param: &|_| None },
-                );
+                )?;
                 Some(t)
             }
             None => None,

@@ -223,7 +223,7 @@ impl Operator for DmxOut {
             cx.resource::<Hub>().ok_or_else(|| CookError::failed("DMX is not available in this process"))?;
         let (target, start) = target_of(cx)?;
         let Some(chans) = cx.input_as::<Chans>(0) else {
-            return Err(crate::chan::waiting(cx));
+            return Err(crate::waiting(cx));
         };
         if self.output.as_ref().is_none_or(|o| *o.target() != target) {
             // The old one first, so a port it holds is free for the new one.
