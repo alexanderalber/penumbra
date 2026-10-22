@@ -154,13 +154,16 @@ the panel, and the plane is fitted again on it alone, twice. Pixels without a me
 neighbours, in the projector's own pixels. The plane takes up any tilt of the panel and also
 the broadest part of the relief itself: a panel that is one big dome comes out flatter.
 
-The light mask is the panel's measured pixels, closed (gaps and notches up to about 50
-projector pixels wide) and with their enclosed holes filled, so unmeasured self-shadows inside
-the panel stay lit. Unmeasured regions open to the outside stay dark: beside the panel's edge
-the projector may reach wall that the panel hides from the camera, and the scan cannot tell it
-from the panel. The price is that a wide unmeasured notch at the panel's edge stays dark too.
-Also left out is light the plane predicts outside the camera's picture (never seen); the mask
-is then shrunk by `erode` (projector pixels, 4) so nothing spills onto the wall.
+The light mask is the panel with its holes filled, so unmeasured self-shadows inside stay lit.
+Pixels without a measurement count only within `reach` (projector pixels, 60) of measured
+panel pixels: past those the scan knows nothing, and an edge of the panel the camera cannot
+see looks the same as wall beside the panel that the panel hides from the camera. Within
+`reach`, an unmeasured pixel is also tested: where the plane and its filled height put its light
+in the camera's picture, does the camera see another projector pixel there? Then the panel's
+edge stands in front of that spot and the pixel's light lands on the wall behind it, so it stays
+dark. Raise `reach` if the panel's edge stays dark, lower it if a stripe of wall beside the panel
+is lit. Also left out is light the plane predicts outside the camera's picture (never seen); the
+mask is then shrunk by `erode` (projector pixels, 4) so nothing spills onto the wall.
 
 **Sign.** The scan does not tell near from far: the same data comes from a mirrored depth with
 the camera on the projector's other side. `sign` `"auto"` (the default) is a heuristic: measured

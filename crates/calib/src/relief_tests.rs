@@ -107,7 +107,7 @@ fn correlation(a: &[f32], b: &[f32]) -> f64 {
 #[test]
 fn height_mask_and_sign_from_one_scan() {
     let (map, truth) = to_camera(OFFSETS[0]);
-    let r = analyse(&map, CAMERA, &ReliefOptions::default()).unwrap();
+    let r = analyse(&map, &from_camera(OFFSETS[0]), &ReliefOptions::default()).unwrap();
     assert!(matches!(r.heuristic, Heuristic::Wall { .. }), "{:?}", r.heuristic);
     assert!(!r.flipped);
     let panel = truth.iter().filter(|t| t.is_some()).count();
@@ -138,7 +138,7 @@ fn second_projector_in_the_first_ones_units() {
     let o = ReliefOptions::default();
     let scans: Vec<(Map, Vec<Option<f32>>)> = OFFSETS.iter().map(|ox| to_camera(*ox)).collect();
     let cams: Vec<Map> = OFFSETS.iter().map(|ox| from_camera(*ox)).collect();
-    let reliefs: Vec<_> = scans.iter().map(|(m, _)| analyse(m, CAMERA, &o).unwrap()).collect();
+    let reliefs: Vec<_> = scans.iter().zip(&cams).map(|((m, _), c)| analyse(m, c, &o).unwrap()).collect();
     let view = |k: usize| View {
         from_camera: &cams[k],
         heights: &reliefs[k].heights,
@@ -175,7 +175,7 @@ fn second_projector_in_the_first_ones_units() {
 #[test]
 fn flipping_turns_the_heights_over() {
     let (map, _) = to_camera(OFFSETS[0]);
-    let mut r = analyse(&map, CAMERA, &ReliefOptions::default()).unwrap();
+    let mut r = analyse(&map, &from_camera(OFFSETS[0]), &ReliefOptions::default()).unwrap();
     let before = r.heights.clone();
     r.flip();
     assert!(r.flipped);
@@ -185,11 +185,11 @@ fn flipping_turns_the_heights_over() {
 #[test]
 fn bad_input_is_an_error() {
     let empty = Map::new(8, 8, vec![[-1.0, -1.0, 0.0, 1.0]; 64]).unwrap();
-    assert!(analyse(&empty, CAMERA, &ReliefOptions::default()).unwrap_err().contains("measured"));
+    let cam = from_camera(OFFSETS[0]);
+    assert!(analyse(&empty, &cam, &ReliefOptions::default()).unwrap_err().contains("measured"));
     let (map, _) = to_camera(OFFSETS[0]);
-    assert!(analyse(&map, (0, 10), &ReliefOptions::default()).is_err());
-    let o = ReliefOptions { jump: f32::NAN, erode: 4 };
-    assert!(analyse(&map, CAMERA, &o).unwrap_err().contains("jump"));
+    let o = ReliefOptions { jump: f32::NAN, ..ReliefOptions::default() };
+    assert!(analyse(&map, &cam, &o).unwrap_err().contains("jump"));
     assert!(scale_fit(&[1.0; 10], &[2.0; 10], true).is_none(), "too few pairs");
     assert!(scale_fit(&[1.0; 1000], &[2.0; 1000], true).is_none(), "no spread");
 }
@@ -308,7 +308,7 @@ fn wall_hidden_from_the_camera_stays_dark() {
     assert!(hidden.len() > 1000, "the scene has a hidden strip: {}", hidden.len());
     let filled = filled_like_decode(&map);
     assert!(hidden.iter().filter(|i| filled.uv(**i).is_some()).count() * 2 > hidden.len());
-    let r = analyse(&filled, CAMERA, &ReliefOptions::default()).unwrap();
+    let r = analyse(&filled, &from_camera(OFFSETS[1]), &ReliefOptions::default()).unwrap();
     let lit_hidden = hidden.iter().filter(|i| r.mask[**i]).count();
     assert_eq!(lit_hidden, 0, "hidden wall pixels lit");
     let off = r.mask.iter().zip(&truth).filter(|(m, t)| **m && t.is_none()).count();
@@ -316,4 +316,48 @@ fn wall_hidden_from_the_camera_stays_dark() {
     let panel = truth.iter().filter(|t| t.is_some()).count();
     let lit = r.mask.iter().filter(|m| **m).count();
     assert!(lit as f64 > 0.8 * panel as f64, "{lit} of {panel} panel pixels lit");
+}
+
+#[test]
+fn unmeasured_panel_edge_stays_lit() {
+    // Dark paint along the panel's right edge in A's frame (x above 4, away from the corners): neither the camera's pictures of A
+    // nor A's map decode there, the decode fills A's pixels in from their neighbours. Nothing
+    // hides it from the camera, so it is panel and stays lit.
+    let ox = OFFSETS[0];
+    let (pw, ph) = PROJECTOR;
+    let dark = |p: [f32; 3], on: bool| on && p[0] > 4.0 && p[1].abs() < 3.0;
+    let (map, truth) = to_camera(ox);
+    let mut rgba = map.rgba.clone();
+    let mut band = Vec::new();
+    for v in 0..ph {
+        for u in 0..pw {
+            let d = [(u as f32 + 0.5 - pw as f32 / 2.0) / FOCAL, (v as f32 + 0.5 - ph as f32 / 2.0) / FOCAL];
+            let (p, on) = hit(ox, d);
+            if dark(p, on) {
+                rgba[v * pw + u] = [-1.0, -1.0, 0.0, 1.0];
+                band.push(v * pw + u);
+            }
+        }
+    }
+    let map = filled_like_decode(&Map::new(pw, ph, rgba).unwrap());
+    let cam = from_camera(ox);
+    let (cw, ch) = CAMERA;
+    let mut c = cam.rgba.clone();
+    for y in 0..ch {
+        for x in 0..cw {
+            let d = [(x as f32 + 0.5 - cw as f32 / 2.0) / FOCAL, (y as f32 + 0.5 - ch as f32 / 2.0) / FOCAL];
+            let (p, on) = hit(0.0, d);
+            if dark(p, on) {
+                c[y * cw + x] = [-1.0, -1.0, 0.0, 1.0];
+            }
+        }
+    }
+    let cam = Map::new(cw, ch, c).unwrap();
+    let r = analyse(&map, &cam, &ReliefOptions::default()).unwrap();
+    assert!(band.len() > 1000, "{}", band.len());
+    // The band runs to the frame edge, where erosion takes nothing.
+    let lit = band.iter().filter(|i| r.mask[**i]).count();
+    assert!(lit as f64 > 0.95 * band.len() as f64, "{lit} of {} band pixels lit", band.len());
+    let off = r.mask.iter().zip(&truth).filter(|(m, t)| **m && t.is_none()).count();
+    assert_eq!(off, 0, "mask pixels off the panel");
 }

@@ -14,11 +14,14 @@
 //! projector pixel); cut there, the largest piece with its holes filled is the panel, and the
 //! plane is fitted again on it alone, twice. Unmeasured pixels (the camera coarser than the
 //! projector, self-shadows) get their height by a normalised convolution at a few scales in
-//! the projector's own pixels ([`fill`]). The light mask is the piece's measured pixels closed
-//! and their enclosed holes filled (self-shadows inside the panel stay lit, while unmeasured
-//! regions open to the outside, such as wall the panel hides from the camera, stay dark),
-//! without the pixels whose light the plane predicts outside the camera's picture (it was never
-//! seen, so it is not known to land on the panel), its largest part, shrunk by
+//! the projector's own pixels ([`fill`]). The light mask is the piece, closed and its holes
+//! filled, where unmeasured pixels count only within [`ReliefOptions::reach`] of measured ones
+//! (past the measured panel the scan cannot tell its unseen edge from wall it hides from the
+//! camera) and not where the panel hides them from the camera: where the plane and the filled
+//! height put such a pixel's light in the camera picture, the camera sees another projector
+//! pixel (the panel's edge in front of it), so the light lands on the wall behind. Also without the pixels whose light the plane predicts outside the
+//! camera's picture (it was never seen, so it is not known to land on the panel); its largest
+//! part, holes filled, shrunk by
 //! [`ReliefOptions::erode`].
 //!
 //! **Sign:** the data does not tell near from far (mirroring the depth and the camera's side of
@@ -48,9 +51,12 @@ const MEDIAN: usize = 5;
 const JUMP_WIDEN: u32 = 2;
 /// Closing of the panel before the light mask, projector pixels.
 const MASK_CLOSE: u32 = 6;
-/// Closing of the piece's measured pixels for the light mask, projector pixels: the mask
-/// reaches at most about this far past them, and notches narrower than twice it close.
-const MEASURED_CLOSE: u32 = 24;
+/// Closing of the piece's measured pixels, projector pixels: within it a pixel counts as panel
+/// without the occlusion test (the gaps a camera coarser than the projector leaves).
+const MEASURED_CLOSE: u32 = 12;
+/// An unmeasured pixel is hidden wall when the camera, where its light would land on the
+/// panel, sees a projector pixel farther than this from it, projector pixels.
+const OCCLUDED_PX: f64 = 8.0;
 /// Light predicted closer than this to the camera picture's edge counts as outside, camera px.
 const SEEN_MARGIN: f64 = 3.0;
 /// Scales of the hole fill, projector pixels, and the weight density each must reach to count.
@@ -76,11 +82,15 @@ pub struct ReliefOptions {
     pub jump: f32,
     /// The light mask shrinks by this, projector pixels.
     pub erode: u32,
+    /// How far past the panel's measured pixels its light may reach, projector pixels. Beyond
+    /// them the scan knows nothing: the panel's edge where the camera cannot see it, or wall it
+    /// hides from the camera.
+    pub reach: u32,
 }
 
 impl Default for ReliefOptions {
     fn default() -> Self {
-        Self { jump: 4.0, erode: 4 }
+        Self { jump: 4.0, erode: 4, reach: 60 }
     }
 }
 
@@ -91,6 +101,9 @@ impl ReliefOptions {
         }
         if self.erode > 64 {
             return Err("`erode` is 0 to 64 projector pixels".into());
+        }
+        if self.reach > 4096 {
+            return Err("`reach` is 0 to 4096 projector pixels".into());
         }
         Ok(())
     }
@@ -149,8 +162,10 @@ impl Relief {
     }
 }
 
-/// The relief seen by one projector: `map` is its `proj_to_cam` map, `camera` the camera's size.
-pub fn analyse(map: &Map, camera: (usize, usize), o: &ReliefOptions) -> Result<Relief, String> {
+/// The relief seen by one projector: `map` is its `proj_to_cam` map, `from_camera` its
+/// `cam_to_proj` map (camera size).
+pub fn analyse(map: &Map, from_camera: &Map, o: &ReliefOptions) -> Result<Relief, String> {
+    let camera = (from_camera.width, from_camera.height);
     o.check()?;
     let (w, h) = (map.width, map.height);
     let n = map.len();
@@ -257,15 +272,41 @@ pub fn analyse(map: &Map, camera: (usize, usize), o: &ReliefOptions) -> Result<R
             })
         })
         .collect();
-    // Only the measured pixels of the piece say where light lands on the panel: unmeasured ones
-    // the piece took in from its nearest measured neighbour may be wall the panel hides from the
-    // camera. So the measured pixels are closed (bridging the gaps a coarser camera leaves and
-    // narrow notches at the edge) and their enclosed holes filled (self-shadows inside the
-    // panel); unmeasured regions open to the outside stay dark.
+    // Unmeasured pixels the piece took in from their nearest measured neighbour are either panel
+    // that did not decode (dark paint, steep flanks, an edge the camera cannot see) or wall
+    // beside the panel's edge that the panel hides from the camera. The measured pixels, closed
+    // over the gaps a coarser camera leaves, are panel. Any other pixel is lit only within
+    // `reach` of them, and only when the camera, where the plane and its filled height put the
+    // pixel's light, does not see another projector pixel there (then the panel's edge stands
+    // in front of it and its light lands on the wall behind).
     let measured_piece: Vec<bool> = measured.iter().zip(&piece).map(|(a, b)| *a && *b).collect();
-    let lit = raster::fill_holes(w, h, &raster::close(w, h, &measured_piece, MEASURED_CLOSE));
+    let sure = raster::close(w, h, &measured_piece, MEASURED_CLOSE);
     let closed = raster::fill_holes(w, h, &raster::close(w, h, &piece, MASK_CLOSE));
-    let m: Vec<bool> = closed.iter().zip(&lit).zip(&seen).map(|((a, l), b)| *a && *l && *b).collect();
+    let hidden = |i: usize| -> bool {
+        let p = [(i % w) as f64 + 0.5, (i / w) as f64 + 0.5];
+        let Some(base) = plane.apply(p) else { return false };
+        let hgt = f64::from(heights.get(i).copied().unwrap_or(0.0));
+        let c = [base[0] + hgt * direction[0], base[1] + hgt * direction[1]];
+        if !(c[0] >= 0.0 && c[1] >= 0.0 && c[0] < cw && c[1] < ch) {
+            return false;
+        }
+        let j = (c[1] as usize) * camera.0 + c[0] as usize;
+        match from_camera.uv(j) {
+            Some([u, v]) => {
+                let q = [f64::from(u) * w as f64, f64::from(v) * h as f64];
+                (q[0] - p[0]).hypot(q[1] - p[1]) > OCCLUDED_PX
+            }
+            None => false,
+        }
+    };
+    let (reach, _) = raster::distance(w, h, &measured_piece);
+    let m: Vec<bool> = (0..n)
+        .map(|i| {
+            let at = |v: &[bool]| v.get(i) == Some(&true);
+            let near = reach.get(i).is_some_and(|d| *d <= o.reach as f32);
+            at(&closed) && at(&seen) && (at(&sure) || (near && !hidden(i)))
+        })
+        .collect();
     let m = raster::fill_holes(w, h, &largest(w, h, &m));
     let mask = raster::erode(w, h, &m, o.erode);
 
