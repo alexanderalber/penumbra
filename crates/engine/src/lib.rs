@@ -30,6 +30,7 @@ pub mod scan_capture;
 pub mod scan_relief;
 pub mod scan_run;
 pub mod scan_scene;
+pub mod scan_synthetic;
 pub mod shapes;
 pub mod spout;
 pub mod state;
@@ -78,6 +79,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     scan_align::register(&mut registry, engine);
     scan_relief::register(&mut registry, engine);
     scan_scene::register(&mut registry, engine);
+    scan_synthetic::register(&mut registry, engine);
     scan_run::register(&mut registry, engine);
     projector::register(&mut registry, engine);
     flatfield::register(&mut registry, engine);

@@ -274,10 +274,14 @@ are taken out and the search goes on among the rest, until the best fit left hol
 `min_plane` (a share of the measured pixels, 0.002). A fit's pixels that do not touch are faces
 of their own: the tops of two crates standing side by side at one height are one fit and two
 faces (`group` in the reply tells which faces came from one fit). A patch of a curved surface
-can be flat within the tolerance; such a patch is dropped, because a smooth bowl explains most
-of its error, which on a real face is the decode's noise (`bend` in the reply; a face counts as
-curved above 0.5). Cylinders and cones are curved in one direction only and can pass for faces
-in narrow strips. Where two faces meet, each pixel goes to the one that fits it better.
+can be flat within the tolerance; such a patch is dropped when a smooth bowl explains its
+error better than the decode's noise does (`bend` in the reply: the bowl's share of the error,
+its RMS and its `bow_px`, how far it bends over 100 projector pixels). A face counts as curved
+when the bowl's RMS is above 0.3 camera pixels and either its share is above 0.5 or it bows
+more than 5 pixels over 100: the second catches the small patches of a pumpkin or a flower pot,
+where the noise keeps the share low, while a lens's distortion bows a wall far less. Narrow
+strips of cylinders and cones can still pass for faces. Where two faces meet, each pixel goes
+to the one that fits it better.
 
 What fits no face is an object: closed, holes filled, pieces smaller than `min_object`
 (projector pixels, 1/256 of the projector) dropped. Faces and objects are numbered alike in
@@ -309,6 +313,17 @@ the outline and a grid of true squares over it, to check by eye. Into a `tex.sha
 aspect[0]` and `v * aspect[1]` are the face's own units.
 
 Everything the reply holds is also written to `scene.json`.
+
+**Trying it without a scan.** `scan.synthetic` writes the scans of a made-up room, ray cast,
+in the same files `scan.decode` writes: by default a landscape of five Euro crates with a
+ribbed pumpkin on one of them, two full HD projectors left and right of a full HD camera, and
+decode noise like a real scan's (plane fits off by about 0.7 camera pixels, median). Each scan
+folder also gets `photo.png`, the camera's picture of the room lit white by that projector, for
+previews in camera space. Then `scan.scene` on its folders gives what a real scan of such a
+landscape would, so the content after it can be built before the real scan exists:
+
+    penumbra-cli ctl scan.synthetic '{"out": "synthetic"}'
+    penumbra-cli ctl scan.scene '{"scans": ["synthetic/a", "synthetic/b"], "out": "scene"}'
 
 ## 6. Blend: `scan.blend`
 

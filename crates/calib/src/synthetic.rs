@@ -2,6 +2,9 @@
 //! standing on the floor with a ball on its top, a camera above looking down at it and
 //! projectors beside the camera. Its maps are what `scan.decode` writes for such a room.
 //!
+//! [`Room::pumpkin`] is a landscape of crates with a ribbed pumpkin on one of them instead of
+//! the ball, with decode noise like a real scan's.
+//!
 //! World units are decimetres: the box is a 60 x 40 x 31 cm crate (x across, z away from the
 //! camera, y up), the ball 32 cm across, the wall 1.9 m behind the camera.
 
@@ -22,6 +25,113 @@ pub enum Surface {
     Front,
     Side,
     Ball,
+    Pumpkin,
+}
+
+/// A pumpkin: an oblate body whose horizontal radius dips into a furrow between each two ribs,
+/// its top sunk a little round the stalk (the stalk itself is left out: a scan does not see
+/// it).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pumpkin {
+    pub centre: [f64; 3],
+    /// Horizontal radius over a rib's crest.
+    pub radius: f64,
+    /// Half the height.
+    pub half_height: f64,
+    pub ribs: u32,
+    /// How deep a furrow cuts in, as a share of the radius.
+    pub furrow: f64,
+    /// How far the top sinks round the stalk, as a share of the half height.
+    pub dimple: f64,
+    /// Turn about the vertical axis, radians.
+    pub turn: f64,
+}
+
+impl Pumpkin {
+    /// A pumpkin 29 cm across and 21 cm high with ten ribs and furrows 1 cm deep, standing on
+    /// the plane `y = floor` at `x`, `z`.
+    pub fn on(x: f64, floor: f64, z: f64) -> Pumpkin {
+        let half_height = 1.05;
+        Pumpkin {
+            centre: [x, floor + half_height * 0.97, z],
+            radius: 1.45,
+            half_height,
+            ribs: 10,
+            furrow: 0.07,
+            dimple: 0.18,
+            turn: 0.2,
+        }
+    }
+
+    /// The horizontal radius at azimuth `phi` as a share of [`Pumpkin::radius`]: 1 over a rib,
+    /// `1 - furrow` at the bottom of a furrow; a raised cosine to the fourth power, so the
+    /// furrows are narrow and the ribs broad.
+    pub fn rib(&self, phi: f64) -> f64 {
+        let c = 0.5 + 0.5 * (f64::from(self.ribs) * (phi - self.turn)).cos();
+        1.0 - self.furrow * c.powi(4)
+    }
+
+    /// Negative inside, zero on the skin, positive outside (not a distance).
+    pub fn field(&self, p: V) -> f64 {
+        let q = sub(p, self.centre);
+        let rho = q[0].hypot(q[2]);
+        let r = (self.radius * self.rib(q[2].atan2(q[0]))).max(1e-9);
+        let mut b = self.half_height;
+        if q[1] > 0.0 {
+            b *= 1.0 - self.dimple * (-(rho / (0.35 * self.radius)).powi(2)).exp();
+        }
+        (rho / r).powi(2) + (q[1] / b.max(1e-9)).powi(2) - 1.0
+    }
+
+    /// The outward normal at (or near) the skin.
+    pub fn normal(&self, p: V) -> V {
+        let e = 1e-4;
+        let g = |k: usize| {
+            let (mut a, mut b) = (p, p);
+            if let (Some(x), Some(y)) = (a.get_mut(k), b.get_mut(k)) {
+                *x += e;
+                *y -= e;
+            }
+            self.field(a) - self.field(b)
+        };
+        unit([g(0), g(1), g(2)])
+    }
+
+    /// Where the ray from `o` along `d` first meets the skin (in units of `d`): marched in
+    /// steps of a hundredth of the bounding sphere's radius, then bisected.
+    pub fn enter(&self, o: V, d: V) -> Option<f64> {
+        let bound = self.radius.max(self.half_height) * 1.02;
+        let oc = sub(o, self.centre);
+        let (a, b, c) = (dot(d, d), 2.0 * dot(oc, d), dot(oc, oc) - bound * bound);
+        let disc = b * b - 4.0 * a * c;
+        if disc < 0.0 || a <= 0.0 {
+            return None;
+        }
+        let (t0, t1) = (((-b - disc.sqrt()) / (2.0 * a)).max(0.0), (-b + disc.sqrt()) / (2.0 * a));
+        if t1 <= t0 {
+            return None;
+        }
+        let step = bound / 100.0 / a.sqrt();
+        let inside = |t: f64| self.field(add(o, mul(d, t))) < 0.0;
+        let (mut prev, mut t) = (t0, t0);
+        while t < t1 {
+            t = (t + step).min(t1);
+            if inside(t) {
+                let (mut lo, mut hi) = (prev, t);
+                for _ in 0..40 {
+                    let mid = 0.5 * (lo + hi);
+                    if inside(mid) {
+                        hi = mid;
+                    } else {
+                        lo = mid;
+                    }
+                }
+                return Some(hi);
+            }
+            prev = t;
+        }
+        None
+    }
 }
 
 /// The room's cameras and the ball.
@@ -38,10 +148,17 @@ pub struct Room {
     pub offsets: Vec<f64>,
     /// Boxes standing in the room (on the floor or on each other).
     pub boxes: Vec<Cuboid>,
-    /// Centre and radius.
+    /// Centre and radius; no ball with a radius of 0.
     pub ball: [f64; 4],
+    pub pumpkin: Option<Pumpkin>,
     /// Uniform noise on the camera positions, up to this many camera pixels either way.
     pub noise: f64,
+    /// Gaussian noise on the camera positions (standard deviation per axis, camera pixels) and
+    /// on the projector positions of the camera map (projector pixels).
+    pub sigma: f64,
+    /// The share of measured pixels that land far off (up to 8 camera pixels either way), as
+    /// a wrongly decoded bit leaves them.
+    pub outliers: f64,
 }
 
 impl Default for Room {
@@ -56,7 +173,10 @@ impl Default for Room {
             offsets: vec![-4.0, 4.0],
             boxes: vec![BOX],
             ball: [0.3, 4.6, 13.2, 1.6],
+            pumpkin: None,
             noise: 0.25,
+            sigma: 0.0,
+            outliers: 0.0,
         }
     }
 }
@@ -130,6 +250,41 @@ impl Room {
         }
     }
 
+    /// A landscape of five Euro crates (two side by side, one stacked on the left one, a low
+    /// one in front, one standing on its end at the right) with a ribbed pumpkin on the right
+    /// crate, seen by a 16:9 camera and two 16:9 projectors of `scale` times 480 x 270 pixels,
+    /// with decode noise like a real scan's.
+    pub fn pumpkin(scale: f64) -> Room {
+        let scale = if scale.is_finite() { scale.clamp(0.25, 8.0) } else { 1.0 };
+        let size =
+            |w: f64, h: f64| ((w * scale).round().max(8.0) as usize, (h * scale).round().max(8.0) as usize);
+        Room {
+            camera: size(480.0, 270.0),
+            focal: 420.0 * scale,
+            projector: size(480.0, 270.0),
+            projector_focal: 400.0 * scale,
+            eye: [0.0, 11.0, -1.0],
+            target: [0.5, 2.6, 13.0],
+            offsets: vec![-4.0, 4.0],
+            boxes: vec![
+                // Left and right on the floor with a gap: their tops and fronts coplanar.
+                [[-6.4, -0.4], [0.0, 3.1], [11.0, 15.0]],
+                [[0.0, 6.0], [0.0, 3.1], [11.0, 15.0]],
+                // Stacked on the left one's back.
+                [[-6.4, -0.4], [3.1, 6.2], [12.6, 16.6]],
+                // A low one (12 cm) in front of the gap.
+                [[-3.4, 2.6], [0.0, 1.2], [6.8, 10.8]],
+                // On its end right of the right one: 31 wide, 40 high, 60 deep.
+                [[6.4, 9.5], [0.0, 4.0], [10.0, 16.0]],
+            ],
+            ball: [0.0; 4],
+            pumpkin: Some(Pumpkin::on(3.2, 3.1, 13.3)),
+            noise: 0.0,
+            sigma: 0.15 * scale,
+            outliers: 0.002,
+        }
+    }
+
     fn basis(&self) -> (V, V, V) {
         let f = unit(sub(self.target, self.eye));
         let r = unit(cross([0.0, 1.0, 0.0], f));
@@ -176,8 +331,11 @@ impl Room {
         let oc = sub(o, [cx, cy, cz]);
         let (a, b, c) = (dot(d, d), 2.0 * dot(oc, d), dot(oc, oc) - r * r);
         let disc = b * b - 4.0 * a * c;
-        if disc >= 0.0 && a > 0.0 {
+        if r > 0.0 && disc >= 0.0 && a > 0.0 {
             take((-b - disc.sqrt()) / (2.0 * a), Surface::Ball);
+        }
+        if let Some(t) = self.pumpkin.and_then(|p| p.enter(o, d)) {
+            take(t, Surface::Pumpkin);
         }
         best
     }
@@ -195,59 +353,89 @@ impl Room {
         let (proj, cam) = (self.projector_pinhole(p), self.camera_pinhole());
         let (pw, ph) = self.projector;
         let (cw, ch) = (self.camera.0 as f32, self.camera.1 as f32);
-        let mut rgba = Vec::with_capacity(pw * ph);
-        let mut truth = Vec::with_capacity(pw * ph);
-        for v in 0..ph {
-            for u in 0..pw {
-                let d = proj.ray(u as f64 + 0.5, v as f64 + 0.5);
-                let seen = self.hit(proj.at, d).and_then(|(t, s)| {
-                    let point = add(proj.at, mul(d, t));
-                    if !self.visible(cam.at, point) {
-                        return None;
+        let pixels = rows(ph, |v| {
+            (0..pw)
+                .map(|u| {
+                    let d = proj.ray(u as f64 + 0.5, v as f64 + 0.5);
+                    let seen = self.hit(proj.at, d).and_then(|(t, s)| {
+                        let point = add(proj.at, mul(d, t));
+                        if !self.visible(cam.at, point) {
+                            return None;
+                        }
+                        cam.project(point).map(|c| (c, s, point))
+                    });
+                    match seen {
+                        Some((c, s, point)) => {
+                            let [dx, dy] = self.error((v * pw + u) as u64);
+                            let measured = if (u + v) % 3 == 0 { 0.5 } else { 1.0 };
+                            let (x, y) = ((c[0] + dx) as f32, (c[1] + dy) as f32);
+                            let px = [(x / cw).clamp(0.0, 1.0), (y / ch).clamp(0.0, 1.0), measured, 1.0];
+                            (px, Some((s, point)))
+                        }
+                        None => ([-1.0, -1.0, 0.0, 1.0], None),
                     }
-                    cam.project(point).map(|c| (c, s, point))
-                });
-                match seen {
-                    Some((c, s, point)) => {
-                        let i = (v * pw + u) as u64;
-                        let jitter = |k: u64| (hash(i * 2 + k) * 2.0 - 1.0) * self.noise;
-                        let measured = if (u + v) % 3 == 0 { 0.5 } else { 1.0 };
-                        let (x, y) = ((c[0] + jitter(0)) as f32, (c[1] + jitter(1)) as f32);
-                        rgba.push([(x / cw).clamp(0.0, 1.0), (y / ch).clamp(0.0, 1.0), measured, 1.0]);
-                        truth.push(Some((s, point)));
-                    }
-                    None => {
-                        rgba.push([-1.0, -1.0, 0.0, 1.0]);
-                        truth.push(None);
-                    }
-                }
-            }
-        }
+                })
+                .collect()
+        });
+        let (rgba, truth) = pixels.into_iter().unzip();
         (Map { width: pw, height: ph, rgba }, truth)
     }
 
-    /// Projector `p`'s `cam_to_proj` map.
+    /// The decode error of pixel `i`: uniform up to `noise`, Gaussian of `sigma`, and for a
+    /// share `outliers` of the pixels a jump of up to 8 pixels.
+    fn error(&self, i: u64) -> [f64; 2] {
+        // The default room's uniform noise draws from `hash(2 i)` and `hash(2 i + 1)` as it
+        // always did, so its tests see the same numbers.
+        let uniform = |j: u64| (hash(i.wrapping_mul(2) + j) * 2.0 - 1.0) * self.noise;
+        let k = i.wrapping_mul(8) ^ 0x5555_0000_0000_0000;
+        let gauss = |j: u64| {
+            if self.sigma <= 0.0 {
+                return 0.0;
+            }
+            let (a, b) = (hash(k + 2 * j).max(1e-12), hash(k + 2 * j + 1));
+            (-2.0 * a.ln()).sqrt() * (std::f64::consts::TAU * b).cos() * self.sigma
+        };
+        let jump = |j: u64| {
+            if self.outliers > 0.0 && hash(k + 4) < self.outliers {
+                (hash(k + 5 + j) * 2.0 - 1.0) * 8.0
+            } else {
+                0.0
+            }
+        };
+        [uniform(0) + gauss(0) + jump(0), uniform(1) + gauss(1) + jump(1)]
+    }
+
+    /// Projector `p`'s `cam_to_proj` map (with the Gaussian part of the noise, in projector
+    /// pixels).
     pub fn from_camera(&self, p: usize) -> Map {
         let (proj, cam) = (self.projector_pinhole(p), self.camera_pinhole());
         let (cw, ch) = self.camera;
         let (pw, ph) = (self.projector.0 as f32, self.projector.1 as f32);
-        let mut rgba = Vec::with_capacity(cw * ch);
-        for y in 0..ch {
-            for x in 0..cw {
-                let d = cam.ray(x as f64 + 0.5, y as f64 + 0.5);
-                let lit = self.hit(cam.at, d).and_then(|(t, _)| {
-                    let point = add(cam.at, mul(d, t));
-                    if !self.visible(proj.at, point) {
-                        return None;
+        let quiet = Room { noise: 0.0, outliers: 0.0, ..self.clone() };
+        let salt = (p as u64 + 1) << 40;
+        let rgba = rows(ch, |y| {
+            (0..cw)
+                .map(|x| {
+                    let d = cam.ray(x as f64 + 0.5, y as f64 + 0.5);
+                    let lit = self.hit(cam.at, d).and_then(|(t, _)| {
+                        let point = add(cam.at, mul(d, t));
+                        if !self.visible(proj.at, point) {
+                            return None;
+                        }
+                        proj.project(point)
+                    });
+                    match lit {
+                        Some(q) => {
+                            let [dx, dy] = quiet.error(salt + (y * cw + x) as u64);
+                            let u = ((q[0] + dx) as f32 / pw).clamp(0.0, 1.0);
+                            let v = ((q[1] + dy) as f32 / ph).clamp(0.0, 1.0);
+                            [u, v, 1.0, 1.0]
+                        }
+                        None => [-1.0, -1.0, 0.0, 1.0],
                     }
-                    proj.project(point)
-                });
-                rgba.push(match lit {
-                    Some(q) => [q[0] as f32 / pw, q[1] as f32 / ph, 1.0, 1.0],
-                    None => [-1.0, -1.0, 0.0, 1.0],
-                });
-            }
-        }
+                })
+                .collect()
+        });
         Map { width: cw, height: ch, rgba }
     }
 
@@ -255,14 +443,53 @@ impl Room {
     pub fn camera_truth(&self) -> Vec<Option<(Surface, V)>> {
         let cam = self.camera_pinhole();
         let (cw, ch) = self.camera;
-        let mut out = Vec::with_capacity(cw * ch);
-        for y in 0..ch {
-            for x in 0..cw {
-                let d = cam.ray(x as f64 + 0.5, y as f64 + 0.5);
-                out.push(self.hit(cam.at, d).map(|(t, s)| (s, add(cam.at, mul(d, t)))));
-            }
-        }
-        out
+        rows(ch, |y| {
+            (0..cw)
+                .map(|x| {
+                    let d = cam.ray(x as f64 + 0.5, y as f64 + 0.5);
+                    self.hit(cam.at, d).map(|(t, s)| (s, add(cam.at, mul(d, t))))
+                })
+                .collect()
+        })
+    }
+
+    /// The normal of surface `s` at `p`, on the side facing `from`.
+    fn normal(&self, s: Surface, p: V, from: V) -> V {
+        let n = match s {
+            Surface::Floor | Surface::Top => [0.0, 1.0, 0.0],
+            Surface::Wall | Surface::Front => [0.0, 0.0, -1.0],
+            Surface::Side => [1.0, 0.0, 0.0],
+            Surface::Ball => unit(sub(p, [self.ball[0], self.ball[1], self.ball[2]])),
+            Surface::Pumpkin => self.pumpkin.map_or([0.0, 1.0, 0.0], |k| k.normal(p)),
+        };
+        if dot(n, sub(from, p)) < 0.0 { mul(n, -1.0) } else { n }
+    }
+
+    /// The camera's picture of the room lit white by projector `p` alone (linear RGBA, camera
+    /// size): light wood crates, a grey floor and wall, an orange pumpkin; diffuse, falling off
+    /// with the square of the distance (1 at the target), black where the projector does not
+    /// reach.
+    pub fn photo(&self, p: usize) -> Vec<[f32; 4]> {
+        let (proj, cam) = (self.projector_pinhole(p), self.camera_pinhole());
+        let (cw, ch) = self.camera;
+        let reach = dot(sub(self.target, proj.at), sub(self.target, proj.at));
+        rows(ch, |y| {
+            (0..cw)
+                .map(|x| {
+                    let d = cam.ray(x as f64 + 0.5, y as f64 + 0.5);
+                    let Some((t, s)) = self.hit(cam.at, d) else { return [0.0, 0.0, 0.0, 1.0] };
+                    let point = add(cam.at, mul(d, t));
+                    if !self.visible(proj.at, point) || proj.project(point).is_none() {
+                        return [0.0, 0.0, 0.0, 1.0];
+                    }
+                    let to = sub(proj.at, point);
+                    let lambert = dot(self.normal(s, point, cam.at), unit(to)).max(0.0);
+                    let light = lambert * reach / dot(to, to).max(1e-9);
+                    let a = albedo(s);
+                    [(a[0] * light) as f32, (a[1] * light) as f32, (a[2] * light) as f32, 1.0]
+                })
+                .collect()
+        })
     }
 
     /// Where the camera sees a point (camera pixels), if in its picture.
@@ -287,6 +514,30 @@ impl Room {
     pub fn box_of(&self, p: V) -> Option<usize> {
         self.boxes.iter().position(|b| b.iter().zip(&p).all(|(r, v)| *v >= r[0] - 1e-6 && *v <= r[1] + 1e-6))
     }
+}
+
+/// A surface's colour (linear).
+fn albedo(s: Surface) -> [f64; 3] {
+    match s {
+        Surface::Floor => [0.25, 0.25, 0.26],
+        Surface::Wall => [0.55, 0.56, 0.6],
+        Surface::Top | Surface::Front | Surface::Side => [0.7, 0.52, 0.32],
+        Surface::Ball => [0.8, 0.8, 0.8],
+        Surface::Pumpkin => [0.85, 0.36, 0.06],
+    }
+}
+
+/// `row(y)` for every `y` below `count`, on as many threads as there are cores, concatenated.
+fn rows<T: Send>(count: usize, row: impl Fn(usize) -> Vec<T> + Sync) -> Vec<T> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, count.max(1));
+    let chunk = count.div_ceil(threads).max(1);
+    let run = |start: usize| (start..(start + chunk).min(count)).flat_map(&row).collect::<Vec<T>>();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> =
+            (0..count).step_by(chunk).map(|start| (start, scope.spawn(move || run(start)))).collect();
+        // A thread that failed has its rows done again here, so the picture keeps its size.
+        handles.into_iter().flat_map(|(start, h)| h.join().unwrap_or_else(|_| run(start))).collect()
+    })
 }
 
 /// A number in 0 to 1 from an integer, the same on every run.

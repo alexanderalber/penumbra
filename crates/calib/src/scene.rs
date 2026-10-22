@@ -69,6 +69,12 @@ const BORDER_REACH: u32 = 3;
 /// of a ray-cast ball 0.77 to 0.94.
 const BEND_SHARE: f64 = 0.5;
 const BEND_PX: f64 = 0.3;
+/// Or when the bowl's RMS is above [`BEND_PX`] and it bows more than this over [`BOW_SPAN`]
+/// projector pixels, camera pixels. Measured with a real decode's noise: faces of a real scan
+/// up to 3.5 (the small ones, whose bow is noisy), its wall 0.03, patches of a flower pot 6 to
+/// 16, of a ray-cast pumpkin 7 to 13.
+const BEND_BOW: f64 = 5.0;
+const BOW_SPAN: f64 = 100.0;
 /// How far (projector pixels) a pixel looks for a better fitting face at a crease.
 const SETTLE: u32 = 3;
 /// Closing and opening of the objects, projector pixels.
@@ -135,9 +141,9 @@ pub struct Plane {
     pub error_px: [f64; 2],
     /// Faces of one group came from one fit: coplanar, e.g. the tops of boxes side by side.
     pub group: usize,
-    /// How much of its pixels' error a smooth bowl explains: the share and its RMS, camera
-    /// pixels ([`bend`]).
-    pub bend: [f64; 2],
+    /// How much of its pixels' error a smooth bowl explains: the share, its RMS and its bow
+    /// over 100 projector pixels, camera pixels ([`bend`]).
+    pub bend: [f64; 3],
 }
 
 /// One projector's planes and objects.
@@ -296,7 +302,7 @@ pub fn analyse(map: &Map, camera: (usize, usize), o: &SceneOptions) -> Result<Sc
             break;
         }
         for f in faces {
-            let bent = f.bend[0] > BEND_SHARE && f.bend[1] > BEND_PX;
+            let bent = f.bend[1] > BEND_PX && (f.bend[0] > BEND_SHARE || f.bend[2] > BEND_BOW);
             for k in &f.inliers {
                 if let Some(x) = free.get_mut(*k) {
                     *x = false;
@@ -534,7 +540,7 @@ struct Face {
     pixels: Vec<u32>,
     inliers: Vec<usize>,
     /// See [`bend`].
-    bend: [f64; 2],
+    bend: [f64; 3],
 }
 
 /// The best plane among the free pairs, as its faces of at least `least` inliers each; none
@@ -1012,15 +1018,18 @@ pub fn face_outline(
 
 /// How curved a face is: its pairs' errors under its homography `h`, fitted per axis by a
 /// quadratic in the projector position; the share of the errors' variance the quadratic
-/// explains, and its RMS (camera pixels). On a plane the errors are the decode's noise and the
-/// quadratic explains little; on a patch of a curved surface flat within the tolerance they
-/// are a bowl, and it explains most.
-fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> [f64; 2] {
+/// explains, its RMS (camera pixels), and its bow: how far it bends over [`BOW_SPAN`]
+/// projector pixels (camera pixels, the larger axis). On a plane the errors are the decode's
+/// noise and the quadratic explains little; on a patch of a curved surface flat within the
+/// tolerance they are a bowl, and it explains most when the noise is low. With a real decode's
+/// noise the share stays low on small patches, but their bow stands out: a lens's distortion
+/// bows a wall over its whole size, a pumpkin over a hand's breadth.
+fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> [f64; 3] {
     use nalgebra::{SMatrix, SVector};
     let pts: Vec<([f64; 2], [f64; 2])> =
         inliers.iter().filter_map(|k| Some((*pairs.from.get(*k)?, pairs.residual(h, *k)?))).collect();
     if pts.len() < 12 {
-        return [0.0, 0.0];
+        return [0.0; 3];
     }
     let m = pts.len() as f64;
     let (mx, my) = (pts.iter().map(|p| p.0[0]).sum::<f64>() / m, pts.iter().map(|p| p.0[1]).sum::<f64>() / m);
@@ -1038,7 +1047,7 @@ fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> [f64; 2] {
         b[0] += v * r[0];
         b[1] += v * r[1];
     }
-    let Some(inv) = a.try_inverse() else { return [0.0, 0.0] };
+    let Some(inv) = a.try_inverse() else { return [0.0; 3] };
     let coef = [inv * b[0], inv * b[1]];
     let (mut total, mut left) = (0.0, 0.0);
     let mean = [pts.iter().map(|p| p.1[0]).sum::<f64>() / m, pts.iter().map(|p| p.1[1]).sum::<f64>() / m];
@@ -1054,10 +1063,14 @@ fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> [f64; 2] {
         }
     }
     if total <= 0.0 {
-        return [0.0, 0.0];
+        return [0.0; 3];
     }
     let share = (1.0 - left / total).clamp(0.0, 1.0);
-    [share, ((total - left).max(0.0) / m).sqrt()]
+    // The bowl's second-order terms back in projector pixels: its bow over BOW_SPAN.
+    let bow =
+        coef.iter().map(|k| (k[3].powi(2) + 0.5 * k[4].powi(2) + k[5].powi(2)).sqrt()).fold(0.0f64, f64::max)
+            * (BOW_SPAN / s).powi(2);
+    [share, ((total - left).max(0.0) / m).sqrt(), bow]
 }
 
 /// Gaps a decode leaves in a picture of labels, up to about `2 r` wide, filled: each label

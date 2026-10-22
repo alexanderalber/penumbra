@@ -189,15 +189,25 @@ fn dump_pictures() {
         Some(Surface::Front) => [140, 90, 30],
         Some(Surface::Side) => [100, 60, 20],
         Some(Surface::Ball) => [255, 120, 0],
+        Some(Surface::Pumpkin) => [255, 90, 0],
     };
     let ppm = |name: &str, w: usize, h: usize, px: Vec<[u8; 3]>| {
         let mut bytes = format!("P6\n{w} {h}\n255\n").into_bytes();
         bytes.extend(px.iter().flatten());
         std::fs::write(dir.join(name), bytes).unwrap();
     };
-    let room = if std::env::var("PENUMBRA_LANDSCAPE").is_ok() { Room::landscape() } else { Room::default() };
+    let room = match std::env::var("PENUMBRA_LANDSCAPE").as_deref() {
+        Ok("pumpkin") => Room::pumpkin(2.0),
+        Ok(_) => Room::landscape(),
+        Err(_) => Room::default(),
+    };
     let (cw, ch) = room.camera;
     ppm("camera_truth.ppm", cw, ch, room.camera_truth().iter().map(|t| colour(t.map(|t| t.0))).collect());
+    let gamma = |v: f32| (v.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0) as u8;
+    for p in 0..2 {
+        let photo = room.photo(p).iter().map(|c| [gamma(c[0]), gamma(c[1]), gamma(c[2])]).collect();
+        ppm(&format!("photo{p}.ppm"), cw, ch, photo);
+    }
     for p in 0..2 {
         let (map, truth) = room.to_camera(p);
         let (pw, ph) = room.projector;
@@ -272,5 +282,75 @@ fn coplanar_faces_of_different_crates_are_faces_of_their_own() {
         };
         assert_eq!(group(0), group(1));
         assert_eq!(s.objects, 1, "projector {p}");
+    }
+}
+
+#[test]
+fn the_pumpkin_is_ray_cast_with_ribs_and_furrows() {
+    use crate::synthetic::Pumpkin;
+    let k = Pumpkin::on(0.0, 0.0, 0.0);
+    let [cx, cy, cz] = k.centre;
+    assert!(k.field(k.centre) < 0.0 && k.field([cx + 2.0, cy, cz]) > 0.0);
+    // From the side at mid height, towards the centre: the crest of a rib at the radius, the
+    // bottom of a furrow `furrow` deeper.
+    let crest = k.turn + std::f64::consts::PI / f64::from(k.ribs);
+    for (phi, want) in [(crest, k.radius), (k.turn, k.radius * (1.0 - k.furrow))] {
+        let from = [cx + 5.0 * phi.cos(), cy, cz + 5.0 * phi.sin()];
+        let d = [-phi.cos(), 0.0, -phi.sin()];
+        let t = k.enter(from, d).unwrap();
+        assert!((5.0 - t - want).abs() < 1e-3, "{phi}: {} vs {want}", 5.0 - t);
+        // The normal points back along the ray.
+        let n = k.normal([from[0] + t * d[0], cy, from[2] + t * d[2]]);
+        assert!(n[0] * d[0] + n[2] * d[2] < -0.9, "{n:?}");
+    }
+    // From above: the top sunk round the stalk, below the half height.
+    let t = k.enter([cx, cy + 5.0, cz], [0.0, -1.0, 0.0]).unwrap();
+    let top = cy + 5.0 - t;
+    assert!((top - (cy + k.half_height * (1.0 - k.dimple))).abs() < 1e-3, "{top}");
+    // Missed: beside it, and away from it.
+    assert!(k.enter([cx + 2.0, cy + 5.0, cz], [0.0, -1.0, 0.0]).is_none());
+    assert!(k.enter([cx, cy, cz + 5.0], [0.0, 0.0, 1.0]).is_none());
+    // In the room: the camera sees it, orange in the photo.
+    let room = Room::pumpkin(1.0);
+    let c = room.camera_point([cx + 3.2, 3.1 + k.half_height, 13.3 - 0.5]).unwrap();
+    let (cw, _) = room.camera;
+    let i = c[1] as usize * cw + c[0] as usize;
+    assert_eq!(room.camera_truth()[i].map(|t| t.0), Some(Surface::Pumpkin));
+    let px = room.photo(0)[i];
+    assert!(px[0] > 2.0 * px[2] && px[0] > 0.1, "{px:?}");
+}
+
+#[test]
+fn the_pumpkin_with_real_noise_is_one_object_and_no_face() {
+    // Twice the size of the default room's pictures; noise 0.3 camera pixels per axis.
+    let room = Room::pumpkin(2.0);
+    for p in 0..2 {
+        let (map, truth) = room.to_camera(p);
+        let o = SceneOptions { min_object: (map.rgba.len() / 256).max(1), ..SceneOptions::default() };
+        let s = analyse(&map, room.camera, &o).unwrap();
+        // The plane fits' errors as a real decode's: 0.6 to 1 pixels median.
+        let median = s.planes.iter().map(|pl| pl.error_px[0]).fold(0.0, f64::max);
+        assert!(median > 0.3 && median < 1.0, "projector {p}: {median}");
+        let pumpkin = truth.iter().filter(|t| matches!(t, Some((Surface::Pumpkin, _)))).count();
+        let on_object = s
+            .object_labels
+            .iter()
+            .zip(&truth)
+            .filter(|(l, t)| **l > 0 && matches!(t, Some((Surface::Pumpkin, _))))
+            .count();
+        let on_planes = s
+            .plane_labels
+            .iter()
+            .zip(&truth)
+            .filter(|(l, t)| **l > 0 && matches!(t, Some((Surface::Pumpkin, _))))
+            .count();
+        eprintln!(
+            "projector {p}: {} planes, {} objects, pumpkin {pumpkin} px, {on_object} as object, {on_planes} on planes",
+            s.planes.len(),
+            s.objects
+        );
+        assert_eq!(s.objects, 1, "projector {p}");
+        assert!(on_object * 100 > pumpkin * 95, "projector {p}: {on_object} of {pumpkin}");
+        assert!(on_planes * 100 < pumpkin * 2, "projector {p}: {on_planes} of {pumpkin}");
     }
 }

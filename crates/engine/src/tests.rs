@@ -1544,6 +1544,31 @@ fn scene_rectifies_any_face_of_a_crate_landscape() {
 }
 
 #[test]
+fn synthetic_scans_go_through_scan_scene_like_real_ones() {
+    let f = Fixture::new("scan_synthetic");
+    let dir = f.engine.session().dir().to_path_buf();
+    let r = f.call("scan.synthetic", json!({"scale": 1}));
+    assert_eq!(r["camera"], json!([480, 270]), "{r}");
+    for name in ["a", "b"] {
+        for file in ["proj_to_cam.exr", "cam_to_proj.exr", "scene.png", "quality.png", "photo.png"] {
+            assert!(dir.join("synthetic").join(name).join(file).exists(), "{name}/{file}");
+        }
+    }
+    let r = f.call("scan.scene", json!({"scans": ["synthetic/a", "synthetic/b"]}));
+    assert_eq!(r["objects"].as_array().unwrap().len(), 1, "{r}");
+    assert!(r["planes"].as_array().unwrap().len() >= 10, "{r}");
+    // The support is the crate the pumpkin stands on, rectified, with heights from both.
+    assert_eq!(r["rectified"].as_array().unwrap().len(), 1, "{r}");
+    assert!(r["projectors"][1]["heights"]["to_first"]["correlation"].as_f64().unwrap() > 0.9, "{r}");
+
+    assert!(f.fail("scan.synthetic", json!({"room": "attic"})).contains("attic"));
+    assert!(f.fail("scan.synthetic", json!({"scale": 100})).contains("scale"));
+    assert!(f.fail("scan.synthetic", json!({"room": "crate", "scale": 2})).contains("scale"));
+    assert!(f.fail("scan.synthetic", json!({"noise": -1})).contains("noise"));
+    assert!(f.fail("scan.synthetic", json!({"outliers": 0.5})).contains("outliers"));
+}
+
+#[test]
 fn relief_heights_and_masks_from_two_scans() {
     let f = Fixture::new("scan_relief");
     let dir = f.engine.session().dir().to_path_buf();

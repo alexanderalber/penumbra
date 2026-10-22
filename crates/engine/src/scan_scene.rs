@@ -487,7 +487,7 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
                     "pixels": pl.pixels,
                     "error_px": {"median": round(pl.error_px[0]), "p90": round(pl.error_px[1])},
                     "group": pl.group,
-                    "bend": {"share": round(pl.bend[0]), "rms_px": round(pl.bend[1])},
+                    "bend": {"share": round(pl.bend[0]), "rms_px": round(pl.bend[1]), "bow_px": round(pl.bend[2])},
                 })
             })
             .collect();
