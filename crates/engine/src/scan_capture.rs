@@ -8,13 +8,15 @@
 //! pixels, whatever feeds it.
 //!
 //! Each picture is taken once the change reached the projector (the cook thread published it
-//! and every output window presented it), `settle` passed, the camera's picture changed from the
-//! one taken before, and the camera then delivered two frames that agree (`verify`); the first
-//! frame that changed is never taken, it may have caught the change half way. The latency is
-//! measured on the way: the white pattern follows black and the black pattern white, and the
-//! first camera frame brighter (darker) than before tells when the light arrived. Stripes finer
-//! than the camera resolves change nothing it can see: those are taken once twice the latency
-//! (plus a camera frame) passed. Pattern and inverse of the coarsest bits are checked to differ
+//! and every output window presented it), the light-to-camera latency (plus a camera frame) and
+//! `settle` passed, the camera's picture changed from the one taken before, and the camera then
+//! delivered two frames that agree (`verify`); the first frame that changed is never taken, it
+//! may have caught the change half way. The latency is measured on the way: the white pattern
+//! follows black and the black pattern white, and the first camera frame brighter (darker) than
+//! before tells when the light arrived. A change seen earlier than half the latency is not
+//! counted (fine stripes flicker in the camera, and the pattern before may still be arriving), and
+//! a change alone never lets a frame from before the latency through. Stripes finer than the
+//! camera resolves change nothing it can see: those are taken once twice the latency passed. Pattern and inverse of the coarsest bits are checked to differ
 //! clearly where the projector reaches, and taken again once if they do not.
 //!
 //! The camera frames go straight into the streaming decoder (no files in between, unless
@@ -189,6 +191,7 @@ struct Shot {
 
 struct Scanner<'a> {
     e: &'a Engine,
+    /// Every projector shown: those scanned and every other active one (black throughout).
     projectors: Vec<(NodeId, String)>,
     camera: CameraStream,
     settle: Duration,
@@ -202,10 +205,9 @@ struct Scanner<'a> {
 }
 
 impl Scanner<'_> {
-    /// Shows `pattern` of a `size` projector on projector `k`, black on the others, and waits
-    /// until it is presented.
-    fn show(&mut self, k: usize, pattern: usize, size: (u32, u32)) -> CmdResult<Instant> {
-        let lit = self.projectors.get(k).map(|(id, _)| *id).ok_or("no such projector")?;
+    /// Shows `pattern` of a `size` projector on projector `lit`, black on every other active
+    /// one, and waits until all are presented.
+    fn show(&mut self, lit: NodeId, pattern: usize, size: (u32, u32)) -> CmdResult<Instant> {
         let stripes = Stripes {
             pattern: u32::try_from(pattern).unwrap_or(u32::MAX),
             level: self.level,
@@ -251,6 +253,10 @@ impl Scanner<'_> {
         let mut seen = 0u64;
         let mut last: Option<Arc<CameraFrame>> = None;
         let mut changed_at: Option<Instant> = None;
+        // The first of the frames changed in a row so far.
+        let mut candidate: Option<Instant> = None;
+        // The frame that confirmed the change.
+        let mut confirmed = presented;
         let (mut frame, mut l) = loop {
             let f = self.camera.next(self.e, self.timeout, |f| f.sequence != seen)?;
             if let Some(last) = &last
@@ -271,7 +277,9 @@ impl Scanner<'_> {
                 }
                 .into());
             }
-            if f.arrived <= presented {
+            // A frame from before half the latency cannot show the new light: changes in it are
+            // the old picture still arriving, or the camera's flicker on fine stripes.
+            if f.arrived <= presented + latency / 2 {
                 continue;
             }
             let l = luma(&f);
@@ -281,17 +289,26 @@ impl Scanner<'_> {
                         let (c, n) = changed(from, &l, lit, way);
                         let share = if lit.is_some() { UNSTABLE_SHARE } else { CHANGE_SHARE };
                         if n > 0 && c as f64 > share * n as f64 {
-                            changed_at = Some(f.arrived);
-                            // The first frame that changed may have caught the change half way.
+                            // A change counts once the next frame shows it too: a single frame is
+                            // the camera's flicker. Its first frame tells when the light arrived;
+                            // neither is taken, the first may have caught the change half way.
+                            match candidate {
+                                Some(first) => {
+                                    changed_at = Some(first);
+                                    confirmed = f.arrived;
+                                }
+                                None => candidate = Some(f.arrived),
+                            }
                             continue;
                         }
+                        candidate = None;
                         // Patterns finer than the camera resolves look alike: no change to wait
                         // for once the light has surely arrived.
                         if !fallback.is_some_and(|t| f.arrived >= t) {
                             continue;
                         }
                     }
-                    Some(t) if f.arrived <= t => continue,
+                    Some(_) if f.arrived <= confirmed => continue,
                     Some(_) => {}
                 }
             }
@@ -447,10 +464,18 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
     let camera = CameraStream::open(e, &net, &a.camera)?;
     let out = e.session().dir().join(a.out.as_deref().unwrap_or(std::path::Path::new(DEFAULT_OUT)));
 
-    let claim = Claim::new(e, projectors.iter().map(|(id, _)| *id).collect())?;
+    // Every active projector not scanned shows black the whole time: its picture would light the
+    // scene where it overlaps the one scanned.
+    let mut shown = projectors.clone();
+    for p in projector_list(e, &net, None)? {
+        if !shown.iter().any(|(id, _)| *id == p.0) {
+            shown.push(p);
+        }
+    }
+    let claim = Claim::new(e, shown.iter().map(|(id, _)| *id).collect())?;
     let mut s = Scanner {
         e,
-        projectors: projectors.clone(),
+        projectors: shown,
         camera,
         settle: Duration::from_secs_f64(settle),
         timeout: Duration::from_secs_f64(timeout),
@@ -466,7 +491,8 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
     // Before the first projector the latency is unknown and the content shown before may still be
     // in the camera's picture: a generous wait once.
     let mut known_latency = FIRST_WAIT;
-    for (k, (_, path)) in projectors.iter().enumerate() {
+    for (k, (id, path)) in projectors.iter().enumerate() {
+        let id = *id;
         let t = Instant::now();
         let patterns = *all_patterns.get(k).ok_or("lost a projector")?;
         let size = patterns.size();
@@ -492,9 +518,9 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
 
         // Black first, so white is a change the latency can be read from (the latency of the
         // projector before, if any, lets the camera see that black).
-        let shown = s.show(k, 1, size)?;
+        let shown = s.show(id, 1, size)?;
         let black_before = s.take(path, shown, known_latency, None, None, None)?;
-        let shown = s.show(k, 0, size)?;
+        let shown = s.show(id, 0, size)?;
         let white = s.take(
             &format!("{path}, white"),
             shown,
@@ -504,7 +530,7 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
             None,
         )?;
         c.add(&s.camera, 0, &white)?;
-        let shown = s.show(k, 1, size)?;
+        let shown = s.show(id, 1, size)?;
         let black = s.take(
             &format!("{path}, black"),
             shown,
@@ -537,17 +563,13 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
         let mut previous = black.luma.clone();
         let mut unchanged = 0;
         while index < patterns.count() {
-            let shown = s.show(k, index, size)?;
-            // Taken after the picture changed from the one before (where the projector reaches),
-            // or, for stripes too fine for the camera, once twice the latency passed.
-            let shot = s.take(
-                path,
-                shown,
-                Duration::ZERO,
-                Some((&previous, Way::Any)),
-                Some(&lit),
-                Some(latency * 2),
-            )?;
+            let shown = s.show(id, index, size)?;
+            // Never before the latency passed; then after the picture changed from the one before
+            // (where the projector reaches), or, for stripes too fine for the camera, once twice
+            // the latency more passed. A change alone is no proof: fine stripes flicker in the
+            // camera, and a late frame of the pattern before is a change too.
+            let shot =
+                s.take(path, shown, latency, Some((&previous, Way::Any)), Some(&lit), Some(latency))?;
             c.add(&s.camera, index, &shot)?;
             if shot.changed_at.is_none() {
                 unchanged += 1;
