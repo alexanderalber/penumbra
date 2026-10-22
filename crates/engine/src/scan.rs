@@ -30,7 +30,7 @@ pub const DEFAULT_PROJECTOR: [u32; 2] = [1920, 1080];
 /// Hole fill in projector pixels unless another is asked for.
 pub const DEFAULT_FILL: u32 = 32;
 /// Writes `bytes` to `file`; the file's path for the reply.
-fn write_file(file: &Path, bytes: Vec<u8>) -> CmdResult<String> {
+pub(crate) fn write_file(file: &Path, bytes: Vec<u8>) -> CmdResult<String> {
     std::fs::write(file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
     Ok(file.display().to_string())
 }
@@ -373,7 +373,7 @@ fn read_labels(file: &Path, size: (usize, usize)) -> CmdResult<Vec<u16>> {
 }
 
 /// A colour per object for the pictures (sRGB bytes): hues a golden angle apart.
-fn colour(k: u16) -> [u8; 3] {
+pub(crate) fn colour(k: u16) -> [u8; 3] {
     let h = (f32::from(k) * 0.618_034).fract() * 6.0;
     let (s, v) = (0.7f32, 1.0f32);
     let c = v * s;

@@ -295,14 +295,14 @@ pub fn segment(
 }
 
 /// The mask without its connected pieces smaller than `min_area`.
-fn keep_large(w: usize, h: usize, mask: &[bool], min_area: usize) -> Vec<bool> {
+pub(crate) fn keep_large(w: usize, h: usize, mask: &[bool], min_area: usize) -> Vec<bool> {
     let (comp, sizes) = raster::components(w, h, mask);
     comp.iter().map(|c| *c > 0 && sizes.get(*c as usize - 1).is_some_and(|s| *s >= min_area.max(1))).collect()
 }
 
 /// Labels shrunk by `r`: a pixel stays when no background and no other label is within `r`
 /// steps (both sides of a seam between two labels give way).
-fn eroded_labels(w: usize, h: usize, labels: &[u16], r: u32) -> Vec<u16> {
+pub(crate) fn eroded_labels(w: usize, h: usize, labels: &[u16], r: u32) -> Vec<u16> {
     if r == 0 {
         return labels.to_vec();
     }
@@ -338,6 +338,28 @@ pub fn number(
     scans: &[&Map],
     camera: (usize, usize),
     erode: u32,
+) -> Result<Objects, String> {
+    number_parts(parts, scans, camera, erode, true)
+}
+
+/// [`number`] for flat faces: only parts sharing camera pixels are one face, not those that
+/// merely continue past a projector's frame (a face cut off there may well end at another
+/// face of another projector).
+pub fn number_faces(
+    parts: &mut [Parts],
+    scans: &[&Map],
+    camera: (usize, usize),
+    erode: u32,
+) -> Result<Objects, String> {
+    number_parts(parts, scans, camera, erode, false)
+}
+
+fn number_parts(
+    parts: &mut [Parts],
+    scans: &[&Map],
+    camera: (usize, usize),
+    erode: u32,
+    across_frames: bool,
 ) -> Result<Objects, String> {
     if parts.len() != scans.len() {
         return Err("one scan per projector".into());
@@ -433,8 +455,8 @@ pub fn number(
             let common = shared(&na.cells, &nb.cells);
             let smaller = na.cells.len().min(nb.cells.len()).max(1);
             let same = common as f32 / smaller as f32 >= SAME_OBJECT
-                || continues(&na.frame, &nb.cells, gw)
-                || continues(&nb.frame, &na.cells, gw);
+                || (across_frames
+                    && (continues(&na.frame, &nb.cells, gw) || continues(&nb.frame, &na.cells, gw)));
             if same {
                 let (x, y) = (root(&mut parent, a), root(&mut parent, b));
                 if let Some(s) = parent.get_mut(x) {

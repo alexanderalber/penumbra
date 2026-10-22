@@ -80,7 +80,7 @@ pub enum ScaleKind {
 }
 
 impl ScaleKind {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             ScaleKind::Symmetric => "symmetric",
             ScaleKind::LeastSquares => "least_squares",
@@ -89,7 +89,7 @@ impl ScaleKind {
 }
 
 /// `None` for auto, else the sign asked for.
-fn sign(v: Option<&Json>) -> CmdResult<Option<f32>> {
+pub(crate) fn sign(v: Option<&Json>) -> CmdResult<Option<f32>> {
     match v {
         None => Ok(None),
         Some(Json::String(s)) if s == "auto" => Ok(None),
@@ -99,12 +99,15 @@ fn sign(v: Option<&Json>) -> CmdResult<Option<f32>> {
     }
 }
 
-fn heuristic_json(h: &Heuristic) -> Json {
+pub(crate) fn heuristic_json(h: &Heuristic) -> Json {
     match h {
         Heuristic::Wall { pixels, median } => {
             json!({"by": h.name(), "wall_pixels": pixels, "wall_median": median.abs()})
         }
         Heuristic::Skew { skew } => json!({"by": h.name(), "skew": skew.abs()}),
+        Heuristic::Below { pixels, median } | Heuristic::Contact { pixels, median } => {
+            json!({"by": h.name(), "pixels": pixels, "median": median.abs()})
+        }
     }
 }
 
@@ -156,76 +159,8 @@ pub fn run(dir: &Path, a: &ReliefArgs) -> CmdResult<Json> {
             .map_err(|e| CommandError(format!("{}: {e}", dir.join(folder).display())))?;
         reliefs.push(r);
     }
-    // The first projector's sign as asked (fixed to the camera's axes, see `fixed_sign`); the
-    // others follow it through the overlap.
-    if let (Some(s), Some(first)) = (asked, reliefs.first_mut())
-        && fixed_sign(first.direction) != s
-    {
-        first.flip();
-    }
-    let mut converted: Vec<Vec<f32>> = Vec::new();
-    let mut scales: Vec<Json> = Vec::new();
-    for n in 0..reliefs.len() {
-        if n == 0 {
-            converted.push(reliefs.first().map(|r| r.heights.clone()).unwrap_or_default());
-            scales.push(Json::Null);
-            continue;
-        }
-        let (x, y) = {
-            let (Some(r), Some(c)) = (reliefs.get(n), from_camera.get(n)) else { continue };
-            let this =
-                View { from_camera: c, heights: &r.heights, mask: &r.mask, width: r.width, height: r.height };
-            let earlier: Vec<View<'_>> = (0..n)
-                .filter_map(|k| {
-                    let e = reliefs.get(k)?;
-                    Some(View {
-                        from_camera: from_camera.get(k)?,
-                        heights: converted.get(k)?,
-                        mask: &e.mask,
-                        width: e.width,
-                        height: e.height,
-                    })
-                })
-                .collect();
-            relief::overlap(&this, &earlier)
-        };
-        let overlap = x.len();
-        let Some(r) = reliefs.get_mut(n) else { continue };
-        match relief::scale_fit(&x, &y, kind == ScaleKind::Symmetric) {
-            Some(f) => {
-                if f.correlation < WEAK_CORRELATION {
-                    warnings.push(format!(
-                        "projector {n}: its scale is doubtful; its heights and the others' correlate only {:.2} over the {overlap} camera pixels both light",
-                        f.correlation
-                    ));
-                }
-                // A negative slope: this projector's sign heuristic disagrees with the ones before.
-                let flips = f.scale < 0.0;
-                if flips {
-                    r.flip();
-                    warnings.push(format!(
-                        "projector {n}: its own sign heuristic disagrees with the overlap with the projectors before; the overlap wins"
-                    ));
-                }
-                let k = f.scale.abs();
-                converted.push(r.heights.iter().map(|h| (f64::from(*h) * k + f.offset) as f32).collect());
-                scales.push(json!({
-                    "scale": round(k), "offset": round(f.offset), "fit": kind.name(),
-                    "symmetric": round(f.symmetric.abs()), "least_squares": round(f.least_squares.abs()),
-                    "overlap": overlap, "kept": f.kept, "correlation": round(f.correlation.abs()),
-                    "sign_from": "the overlap",
-                }));
-            }
-            None => {
-                warnings.push(format!(
-                    "projector {n} shares only {overlap} camera pixels with the projectors before (at least {}): its heights stay in its own units and sign",
-                    relief::MIN_OVERLAP
-                ));
-                converted.push(r.heights.clone());
-                scales.push(json!({"scale": null, "overlap": overlap, "sign_from": "heuristic"}));
-            }
-        }
-    }
+    let cams: Vec<&Map> = from_camera.iter().collect();
+    let (converted, scales) = unify(&mut reliefs, &cams, asked, kind, &mut warnings);
 
     let lit: Vec<f32> = converted
         .iter()
@@ -343,13 +278,97 @@ pub fn run(dir: &Path, a: &ReliefArgs) -> CmdResult<Json> {
     }))
 }
 
+/// Brings every projector's heights into the first one's units: the first one's sign as asked
+/// (fixed to the camera's axes, see [`fixed_sign`]), the others by a line fit over the camera
+/// pixels they share with the ones before, which also settles their sign. Per projector its
+/// converted heights and the fit, as the reply reports it.
+pub(crate) fn unify(
+    reliefs: &mut [Relief],
+    from_camera: &[&Map],
+    asked: Option<f32>,
+    kind: ScaleKind,
+    warnings: &mut Vec<String>,
+) -> (Vec<Vec<f32>>, Vec<Json>) {
+    // The first projector's sign as asked (fixed to the camera's axes, see `fixed_sign`); the
+    // others follow it through the overlap.
+    if let (Some(s), Some(first)) = (asked, reliefs.first_mut())
+        && fixed_sign(first.direction) != s
+    {
+        first.flip();
+    }
+    let mut converted: Vec<Vec<f32>> = Vec::new();
+    let mut scales: Vec<Json> = Vec::new();
+    for n in 0..reliefs.len() {
+        if n == 0 {
+            converted.push(reliefs.first().map(|r| r.heights.clone()).unwrap_or_default());
+            scales.push(Json::Null);
+            continue;
+        }
+        let (x, y) = {
+            let (Some(r), Some(c)) = (reliefs.get(n), from_camera.get(n).copied()) else { continue };
+            let this =
+                View { from_camera: c, heights: &r.heights, mask: &r.mask, width: r.width, height: r.height };
+            let earlier: Vec<View<'_>> = (0..n)
+                .filter_map(|k| {
+                    let e = reliefs.get(k)?;
+                    Some(View {
+                        from_camera: from_camera.get(k).copied()?,
+                        heights: converted.get(k)?,
+                        mask: &e.mask,
+                        width: e.width,
+                        height: e.height,
+                    })
+                })
+                .collect();
+            relief::overlap(&this, &earlier)
+        };
+        let overlap = x.len();
+        let Some(r) = reliefs.get_mut(n) else { continue };
+        match relief::scale_fit(&x, &y, kind == ScaleKind::Symmetric) {
+            Some(f) => {
+                if f.correlation < WEAK_CORRELATION {
+                    warnings.push(format!(
+                        "projector {n}: its scale is doubtful; its heights and the others' correlate only {:.2} over the {overlap} camera pixels both light",
+                        f.correlation
+                    ));
+                }
+                // A negative slope: this projector's sign heuristic disagrees with the ones before.
+                let flips = f.scale < 0.0;
+                if flips {
+                    r.flip();
+                    warnings.push(format!(
+                        "projector {n}: its own sign heuristic disagrees with the overlap with the projectors before; the overlap wins"
+                    ));
+                }
+                let k = f.scale.abs();
+                converted.push(r.heights.iter().map(|h| (f64::from(*h) * k + f.offset) as f32).collect());
+                scales.push(json!({
+                    "scale": round(k), "offset": round(f.offset), "fit": kind.name(),
+                    "symmetric": round(f.symmetric.abs()), "least_squares": round(f.least_squares.abs()),
+                    "overlap": overlap, "kept": f.kept, "correlation": round(f.correlation.abs()),
+                    "sign_from": "the overlap",
+                }));
+            }
+            None => {
+                warnings.push(format!(
+                    "projector {n} shares only {overlap} camera pixels with the projectors before (at least {}): its heights stay in its own units and sign",
+                    relief::MIN_OVERLAP
+                ));
+                converted.push(r.heights.clone());
+                scales.push(json!({"scale": null, "overlap": overlap, "sign_from": "heuristic"}));
+            }
+        }
+    }
+    (converted, scales)
+}
+
 /// The `sign` param's value that gives heights growing along `direction`: 1 when it points to
 /// the camera picture's right (or, nearly vertical, down), -1 otherwise. A fixed convention, so
 /// a sign once found right stays right while camera and projector stay where they are.
-fn fixed_sign(direction: [f64; 2]) -> f32 {
+pub(crate) fn fixed_sign(direction: [f64; 2]) -> f32 {
     if direction[0] + 0.01 * direction[1] >= 0.0 { 1.0 } else { -1.0 }
 }
 
-fn round(v: f64) -> f64 {
+pub(crate) fn round(v: f64) -> f64 {
     (v * 1e4).round() / 1e4
 }

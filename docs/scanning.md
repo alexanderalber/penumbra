@@ -6,7 +6,9 @@ front of a wall, to give each projector a mask and a blend weight for them, and 
 once, in the camera's picture, so it lands on every object the same way in every projector.
 
 A mostly flat object (a relief panel) needs no reference scan: `scan.relief` turns one scan
-per projector into height maps and light masks.
+per projector into height maps and light masks. Nor does a scene of flat faces with objects
+among them (boxes, a floor, a wall, a pumpkin on a crate): `scan.scene` finds every face and
+every object in one scan per projector, and rectifies any face of known aspect.
 
 Everything here is a command (see [Control](control.md)); the results are plain files in the
 project, read by `tex.image`. Nothing of it runs per frame: during the show what remains is a
@@ -257,7 +259,58 @@ warnings.
 Because the heights are per projector and in shared units, the same ramp gives the same colour
 at the same height in every projector.
 
-## 5. Blend: `scan.blend`
+## 5. Faces and objects: `scan.scene`
+
+A scene built of flat faces, such as boxes or crates on a floor in front of a wall, with
+objects among them that are not flat, needs no reference scan either:
+
+    penumbra-cli ctl scan.scene '{"scans": ["scan/proj_a", "scan/proj_b"]}'
+
+A flat face maps its projector pixels to camera pixels by a homography of its own, so every
+face of the scene is one fit, and whatever is not flat fits none. Per projector the fits are
+found one after the other (RANSAC: hypotheses from four nearby measured pixels, the best
+refined over all pixels it explains within `tolerance`, camera pixels, 2), each fit's pixels
+are taken out and the search goes on among the rest, until the best fit left holds no face of
+`min_plane` (a share of the measured pixels, 0.002). A fit's pixels that do not touch are faces
+of their own: the tops of two crates standing side by side at one height are one fit and two
+faces (`group` in the reply tells which faces came from one fit). A patch of a curved surface
+can be flat within the tolerance; such a patch is dropped, because a smooth bowl explains most
+of its error, which on a real face is the decode's noise (`bend` in the reply; a face counts as
+curved above 0.5). Cylinders and cones are curved in one direction only and can pass for faces
+in narrow strips. Where two faces meet, each pixel goes to the one that fits it better.
+
+What fits no face is an object: closed, holes filled, pieces smaller than `min_object`
+(projector pixels, 1/256 of the projector) dropped. Faces and objects are numbered alike in
+every projector, top of the camera picture first: `planes_N.png` and `labels_N.png` per
+projector (8-bit; `labels_N.png` as `scan.objects` writes it, for `scan.blend`'s masks and
+`shapes.trace`), `planes_camera.png` and `objects_camera.png` in the camera's picture,
+`scene_N.png` and `scene_view.png` to look at (faces in flat colours, objects white). Two
+projectors that do not overlap on a face (a wall, the left half lit by one, the right by the
+other) give it two numbers.
+
+**Support and height.** The face right below the objects in the camera picture is the support
+(`support` names another). The objects' height is their residual against the support's
+homography, as `scan.relief` measures it against its panel: `height_N.exr`, `mask_N.png` and
+`height_camera.exr`, in the first projector's units. Its sign comes from the faces the camera
+sees below the support (a crate's front, the floor in front of it), which lie under the
+support's plane while the objects stand on it; `sign` pins it as for `scan.relief`.
+
+**Rectifying a face.** A face that is a rectangle of known aspect (a crate's top is 60 x 40, its
+front 60 x its height) can get its own coordinates, for content in true proportions such as
+tiles: `rectify` lists the faces and their aspect, `[{"plane": 7, "aspect": [60, 31]}]`;
+without it the support is rectified as 60 x 40. The face's border in the camera picture,
+without the part along an object, is fitted by four straight lines, so an edge hidden under an
+object is completed from its visible parts; the lines' crossings are the corners, the far left
+one first. A face whose edge is hidden by another face in front (not by an object) gets that
+face's edge instead; then give its four corners in camera pixels with `corners`. Per rectified
+face K: `uv_K_N.exr` per projector (red and green the face's u along the outline's first edge
+and v along its last, 0 to 1; blue 1 on the face) and `uv_K_camera.exr`; `scene_view.png` draws
+the outline and a grid of true squares over it, to check by eye. Into a `tex.shader`, `u *
+aspect[0]` and `v * aspect[1]` are the face's own units.
+
+Everything the reply holds is also written to `scene.json`.
+
+## 6. Blend: `scan.blend`
 
 Where two projectors light the same spot it is twice as bright, and any misregistration
 doubles. `scan.blend` gives each projector a weight: where another projector also lands on the
@@ -284,7 +337,7 @@ Written into `out` (default `objects/`):
 | `weight_N.png` | 16-bit, projector size; stored sRGB-encoded so that `tex.image` gives back the weight itself |
 | `proj_to_cam_smooth_N.exr` | the projector's `proj_to_cam` map, smoothed |
 
-## 6. The network
+## 7. The network
 
 Content is made once, in the camera's picture, and each projector takes its share:
 
