@@ -1281,6 +1281,93 @@ fn contour_lines_are_as_wide_on_a_diagonal_as_across() {
     assert!((width - 3.0).abs() < 0.45, "the circle's line is {width} px wide (diameter {diameter})");
 }
 
+/// A gentle grey rise from 0 at the left to 0.25 at the right, stored in 8-bit steps (four
+/// pixels per step) after dither noise of +-half a step: plateaus whose pixels all share a value,
+/// with ragged borders between them, as in a measured height map.
+fn write_stepped_rise(path: &Path, w: u32, h: u32) {
+    let encode = |v: f32| if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1.0 / 2.4) - 0.055 };
+    let mut samples = Vec::new();
+    let mut seed = 11u32;
+    for _ in 0..h {
+        for x in 0..w {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = ((seed >> 8) as f32 / 16_777_216.0 - 0.5) / 255.0;
+            let v = (0.25 * x as f32 / w as f32 + noise).clamp(0.0, 1.0);
+            let g = (encode((v * 255.0).round() / 255.0) * 65535.0).round() as u16;
+            samples.extend([g, g, g, 65535]);
+        }
+    }
+    let img =
+        photocraft_codecs::Image::from_u16(w, h, photocraft_codecs::ChannelLayout::Rgba, &samples).unwrap();
+    let png = photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &Default::default()).unwrap();
+    std::fs::write(path, png).unwrap();
+}
+
+#[test]
+fn thick_contour_lines_hold_together_on_a_stepped_map() {
+    let Some(gpu) = gpu() else { return };
+    let (w, h) = (256, 32);
+    let dir = scratch("contour_stepped");
+    write_stepped_rise(&dir.join("stepped.png"), w, h);
+    let ops = [
+        create("/stepped", "tex.image", &[("file", "stepped.png".into())]),
+        create(
+            "/thick",
+            "tex.contour",
+            &[("interval", Value::Float(0.05)), ("thickness", Value::Float(4.0))],
+        ),
+        connect("/stepped", "/thick", 0),
+        // Opaque up to 0.55 of the width, transparent after: the fit must not see the zeros
+        // there and draw a line along the edge.
+        create(
+            "/cut",
+            "tex.ramp",
+            &[
+                ("width", Value::Int(200)),
+                ("height", Value::Int(8)),
+                (
+                    "keys",
+                    "0 0 0 0 1
+0.55 0.55 0.55 0.55 1
+0.551 0.55 0.55 0.55 0
+1 1 1 1 0"
+                        .into(),
+                ),
+            ],
+        ),
+        create(
+            "/cut_lines",
+            "tex.contour",
+            &[("interval", Value::Float(0.1)), ("thickness", Value::Float(4.0)), ("mode", "alpha".into())],
+        ),
+        connect("/cut", "/cut_lines", 0),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let px = rig.pixels("/thick");
+    let lit = |x: u32, y: u32| px.get(x, y).is_some_and(|p| p[0] > 0.5);
+    // Levels 0.05 to 0.2 lie at x = 51, 102, 154, 205; every row crosses each of them in one
+    // unbroken run about four pixels wide.
+    for y in 0..h {
+        for level in 1..=4u32 {
+            let at = (f64::from(level) * 0.05 / 0.25 * f64::from(w)).round() as u32;
+            let window = at - 12..at + 12;
+            let xs: Vec<u32> = window.clone().filter(|&x| lit(x, y)).collect();
+            let row: String = window.map(|x| if lit(x, y) { '#' } else { '.' }).collect();
+            let (Some(first), Some(last)) = (xs.first(), xs.last()) else {
+                panic!("row {y}: no line at level {level}: {row}");
+            };
+            assert_eq!((last - first + 1) as usize, xs.len(), "row {y}, level {level}: a hole: {row}");
+            assert!((2..=7).contains(&xs.len()), "row {y}, level {level}: {} px wide: {row}", xs.len());
+        }
+    }
+    let cut = rig.pixels("/cut_lines");
+    let alpha = |x: u32| cut.get(x, 4).map_or(0.0, |p| p[3]);
+    let lit: Vec<u32> = (0..200).filter(|&x| alpha(x) > 0.5 && (x == 0 || alpha(x - 1) <= 0.5)).collect();
+    assert_eq!(lit.len(), 5, "levels 0.1 to 0.5, none along the transparent edge: {lit:?}");
+    assert!((104..200).all(|x| alpha(x) < 0.1), "{:?}", (100..120).map(alpha).collect::<Vec<_>>());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn select_follows_the_named_node_and_switch_picks_or_blends() {
     let Some(gpu) = gpu() else { return };

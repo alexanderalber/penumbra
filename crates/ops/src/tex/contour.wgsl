@@ -11,16 +11,24 @@
 // near their edge. The blurred field is stored as a 16-bit float plus the remainder in a second
 // channel: one 16-bit float alone would put the smoothed values back onto steps.
 //
-// The width: the distance to the level in pixels is the distance in value divided by the slope,
-// the length of the gradient from central differences over the four neighbours (per pixel, so
-// the edge of a line does not step with 2 x 2 blocks as fwidth would, and a diagonal line is as
-// wide as a straight one). The slope has a floor at the precision the field is stored with (half
-// a step of a 16-bit float, the blurred field's two parts far less): below it a difference is
-// rounding, and the division would turn it into a smear. A pixel whose neighbours all have its
-// value (the inside of a flat, or of one step of a quantised map) gets no line: where the level
-// lies in such a flat is not known. The floor is deliberately not the input's quantisation step
-// (1/255 for an 8-bit map): that floor would flood every gentle slope with a band one step
-// wide; a stepped map wants `smooth` instead. Where the value changes by an interval or more per
+// The width: the distance to the level in pixels is the distance in value divided by the slope.
+// A thin line (under 3 px) takes the value from the pixel itself and the slope from central
+// differences over the four neighbours (per pixel, so the edge of a line does not step with
+// 2 x 2 blocks as fwidth would, and a diagonal line is as wide as a straight one). A thicker line
+// takes both from a plane fitted to the field around the pixel, reaching as far to each side as
+// the line is wide. On a quantised map (one step of an 8-bit field spans several pixels of a
+// gentle slope, its borders ragged with the noise of a measurement) the four neighbours of a
+// pixel inside a step have its value, and the pixel's own value jumps a whole step at a ragged
+// border: a per-pixel slope of 0 would punch holes into a thick line and the jumps would fray its
+// edges, while the fit averages the steps out. For a field that changes linearly the plane is
+// the field, so the line is as wide and where it was. The slope has a floor at the precision the
+// field is stored with (half a step of a 16-bit float over two pixels, the blurred field's two
+// parts far less): below it a difference is rounding, and the division would turn it into a
+// smear. A pixel whose surroundings all have its value (the inside of a flat, or of one step of a
+// quantised map wider than the fit reaches) gets no line: where the level lies in such a flat is
+// not known. The floor is deliberately not the input's quantisation step (1/255 for an 8-bit
+// map): that floor would flood every gentle slope with a band one step wide; a map with steps
+// wider than the line wants `smooth` instead. Where the value changes by an interval or more per
 // pixel the lines would merge into a smear; they fade out there, which also keeps the edge of a
 // transparent region free of lines.
 
@@ -97,6 +105,47 @@ fn pn_smooth(p: vec2i, axis: vec2i, first: bool) -> vec4f {
     return vec4f(hi, m - hi, weight / max(total, 1e-6), 1.0);
 }
 
+// A plane fitted (least squares) to the field on a grid around p reaching `reach` pixels to
+// each side: up to 9 x 9 points, a pixel apart where that covers the reach, spread out where it
+// does not (a cap on the cost). Grid points past the border stop there and count where they
+// land, so the fit stays exact for a linear field up to the border. Returns the plane's value at p and its slope per
+// pixel along x and y.
+fn pn_plane(p: vec2i, reach: i32, last: vec2i) -> vec3f {
+    let n = min(reach, 4);
+    let stride = f32(reach) / f32(n);
+    // Weighted sums of the offsets' products (1, x, y, xx, xy, yy) and of the values times 1, x, y.
+    var m = mat3x3f(vec3f(0.0), vec3f(0.0), vec3f(0.0));
+    var r = vec3f(0.0);
+    for (var j = -n; j <= n; j++) {
+        for (var i = -n; i <= n; i++) {
+            let k = vec2i(round(vec2f(f32(i), f32(j)) * stride));
+            let q = clamp(p + k, vec2i(0), last);
+            // Weighed by alpha as the blur is: transparent parts must not pull the plane down.
+            let w = select(pn_load(in0, q).a, 1.0, params.channel == channel_alpha);
+            let o = vec3f(1.0, vec2f(q - p));
+            m += mat3x3f(o * o.x, o * o.y, o * o.z) * w;
+            r += o * (pn_field(q) * w);
+        }
+    }
+    // A grid squeezed onto one line (an image one pixel high or wide) has no slope across it.
+    let lone = vec2f(select(0.0, 1.0, m[1][1] < 0.5), select(0.0, 1.0, m[2][2] < 0.5));
+    m[1][1] += lone.x;
+    m[2][2] += lone.y;
+    let det = determinant(m);
+    if (abs(det) < 1e-6) {
+        return vec3f(pn_field(p), 0.0, 0.0);
+    }
+    return inverse3(m, det) * r;
+}
+
+// The inverse of a 3 x 3 matrix whose determinant is `det` (WGSL has no inverse built in).
+fn inverse3(m: mat3x3f, det: f32) -> mat3x3f {
+    let a = m[0];
+    let b = m[1];
+    let c = m[2];
+    return transpose(mat3x3f(cross(b, c), cross(c, a), cross(a, b))) * (1.0 / det);
+}
+
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
     let p = vec2i(v.pos.xy);
@@ -109,15 +158,24 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     }
     let src = textureSampleLevel(in0, pn_clamp, v.uv, 0.0);
     let interval = max(params.interval, 1e-6);
-    let x = pn_field(p);
-    let grad = vec2f(
-        pn_field(p + vec2i(1, 0)) - pn_field(p - vec2i(1, 0)),
-        pn_field(p + vec2i(0, 1)) - pn_field(p - vec2i(0, 1)),
-    ) * 0.5;
+    // Half the line's width in whole pixels, at least 1; a line wider than 16 px is not on offer.
+    let reach = i32(clamp(round(0.5 * params.thickness), 1.0, 8.0));
+    var x = pn_field(p);
+    var grad: vec2f;
+    if (reach == 1) {
+        grad = vec2f(
+            pn_field(p + vec2i(1, 0)) - pn_field(p - vec2i(1, 0)),
+            pn_field(p + vec2i(0, 1)) - pn_field(p - vec2i(0, 1)),
+        ) * 0.5;
+    } else {
+        let fit = pn_plane(p, 2 * reach, vec2i(textureDimensions(in0)) - 1);
+        x = fit.x;
+        grad = fit.yz;
+    }
     // Value change per pixel, in intervals.
     let slope = length(grad) / interval;
     let smoothed = stage == pn_draw_smoothed;
-    let least = pn_step(x) * select(0.5, 1.0 / 2048.0, smoothed) / interval;
+    let least = pn_step(x) * select(1.0, 1.0 / 1024.0, smoothed) / f32(2 * reach) / interval;
     let t = (x - params.offset) / interval;
     let level = round(t);
     let value = level * params.interval + params.offset;
