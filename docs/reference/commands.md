@@ -158,6 +158,12 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `project.save_as` | Copy the open project (its files and the latest state snapshot) into dir (new or empty) and open the copy, a project of its own; {dir} |
 | `project.settings` | Project settings with their values and what they do; {set?: {name: value}}, null resets (one undo step) |
 
+## projector
+
+| command | |
+|---|---|
+| `projector.match` | Measure the projectors with a camera (each alone: black, white, red, green and blue ramps) and write their colour correction (matrix, curves) so they look alike; blocks for several seconds per projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera picture, 0..1), timeout? (s, 5), apply? (true: write the params as one undo step)} |
+
 ## render
 
 | command | |
