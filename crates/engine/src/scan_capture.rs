@@ -43,7 +43,7 @@ use serde_json::{Value as Json, json};
 use crate::command::{CommandError, FnCommand, Registry, args};
 use crate::engine::Engine;
 use crate::projector::{CameraStream, Claim, projector_list, settle_of, timeout_of, wait_shown};
-use crate::scan::{fill_of, ms, write_decoded};
+use crate::scan::{Decoded, fill_of, ms, write_decoded};
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -407,10 +407,6 @@ impl Collect {
         }
         Ok(())
     }
-
-    fn luma(&self, index: usize) -> Option<&[u8]> {
-        self.lumas.get(index).and_then(|l| l.as_deref())
-    }
 }
 
 /// The projector's size as its outputs draw it: its viewport of its display.
@@ -428,13 +424,19 @@ fn seconds(d: Duration) -> f64 {
     (d.as_secs_f64() * 1000.0).round() / 1000.0
 }
 
-pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
-    capture_watched(e, a, None)
+/// `scan.capture`'s arguments, checked, the defaults filled in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Settings {
+    settle: f64,
+    timeout: f64,
+    level: f32,
+    retries: u32,
+    fill: u32,
+    keep_frames: bool,
+    verify: bool,
 }
 
-/// [`capture`], stopped by and reporting to `watch`.
-pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -> CmdResult<Json> {
-    let started = Instant::now();
+fn settings(a: &CaptureArgs) -> CmdResult<Settings> {
     let settle = settle_of(a.settle, DEFAULT_SETTLE)?;
     let timeout = timeout_of(a.timeout)?;
     let level = a.level.unwrap_or(1.0);
@@ -447,37 +449,369 @@ pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -
     }
     a.options.check().map_err(CommandError)?;
     let fill = fill_of(a.fill)?;
-    let keep_frames = a.frames.unwrap_or(false);
+    Ok(Settings {
+        settle,
+        timeout,
+        level,
+        retries,
+        fill,
+        keep_frames: a.frames.unwrap_or(false),
+        verify: a.verify.unwrap_or(true),
+    })
+}
 
-    let net = e.session().doc().snapshot();
-    let projectors = projector_list(e, &net, a.projectors.as_deref())?;
-    if projectors.is_empty() {
-        return Err(format!("no active {PROJECTOR} to scan").into());
-    }
+/// Each projector's scan folder name (inside `out`); two may not share one.
+fn folders(projectors: &[(NodeId, String)]) -> CmdResult<Vec<String>> {
     let mut folders: Vec<String> = Vec::new();
-    for (_, path) in &projectors {
+    for (_, path) in projectors {
         let name = folder_name(path);
         if folders.contains(&name) {
             return Err(format!("two projectors would share the folder {name}").into());
         }
         folders.push(name);
     }
+    Ok(folders)
+}
+
+/// Every projector shown while scanning: the `scanned` ones and every other `active` one, which
+/// shows black the whole time (its picture would light the scene where it overlaps the one
+/// scanned).
+fn shown_projectors(scanned: &[(NodeId, String)], active: Vec<(NodeId, String)>) -> Vec<(NodeId, String)> {
+    let mut shown = scanned.to_vec();
+    for p in active {
+        if !shown.iter().any(|(id, _)| *id == p.0) {
+            shown.push(p);
+        }
+    }
+    shown
+}
+
+/// Samples lit by the projector: brighter in `white` than in `black` by more than [`CHANGED`].
+fn lit_samples(white: &[u8], black: &[u8]) -> Vec<bool> {
+    white.iter().zip(black).map(|(w, b)| i16::from(*w) - i16::from(*b) > CHANGED).collect()
+}
+
+/// The pattern-inverse pair ending at `index` is one of the coarsest bits, checked.
+fn checked_pair(patterns: &Patterns, index: usize) -> bool {
+    match patterns.get(index) {
+        Some(Pattern::Columns { bit, inverse: true }) | Some(Pattern::Rows { bit, inverse: true }) => {
+            bit < CHECKED_BITS
+        }
+        _ => false,
+    }
+}
+
+/// The margin of the pair ending at `index` ([`margin`]), from the luma samples of the pictures
+/// taken (`lumas`, by pattern).
+fn pair_margin(lumas: &[Option<Vec<u8>>], index: usize) -> Option<f64> {
+    let get = |i: usize| lumas.get(i).and_then(|l| l.as_deref());
+    match (get(0), get(1), index.checked_sub(1).and_then(get), get(index)) {
+        (Some(w), Some(b), Some(p), Some(q)) => margin(w, b, p, q),
+        _ => None,
+    }
+}
+
+/// Per axis (columns, rows) the margin of each bit's pair, rounded to hundredths: for the report.
+fn margins(patterns: &Patterns, lumas: &[Option<Vec<u8>>]) -> [Vec<Option<f64>>; 2] {
+    let mut margins: [Vec<Option<f64>>; 2] = Default::default();
+    for index in 2..patterns.count() {
+        let (axis, inverse) = match patterns.get(index) {
+            Some(Pattern::Columns { inverse, .. }) => (0, inverse),
+            Some(Pattern::Rows { inverse, .. }) => (1, inverse),
+            _ => continue,
+        };
+        if !inverse {
+            continue;
+        }
+        let m = pair_margin(lumas, index);
+        if let Some(list) = margins.get_mut(axis) {
+            list.push(m.map(|v| (v * 100.0).round() / 100.0));
+        }
+    }
+    margins
+}
+
+/// One projector's scan: the pictures decoded so far and what was seen on the way.
+struct Scanned {
+    collect: Collect,
+    /// When the light of white (black) arrived, after it was presented.
+    rise: Option<Duration>,
+    fall: Option<Duration>,
+    /// What each stripe picture waited for the light.
+    latency: Duration,
+    lit_samples: usize,
+    /// Pairs taken again for too small a margin.
+    retaken: usize,
+    /// Pictures taken without the camera's picture changing.
+    unchanged: u32,
+    /// From the start of this projector to the last picture.
+    captured: Duration,
+}
+
+/// Scans projector `k` (`id` at `path`): black, white, black (the latency read from the changes),
+/// then every stripe pattern, the coarsest pairs checked and taken again if too alike.
+/// `known_latency` is the wait before the first black; `frames`, if given, keeps the pictures.
+fn scan_projector(
+    s: &mut Scanner<'_>,
+    k: usize,
+    (id, path): (NodeId, &str),
+    patterns: Patterns,
+    frames: Option<PathBuf>,
+    known_latency: Duration,
+) -> CmdResult<Scanned> {
+    let t = Instant::now();
+    let size = patterns.size();
+    if let Some(dir) = &frames {
+        // Frames of an earlier scan would mix with these in scan.decode.
+        if dir.exists() {
+            std::fs::remove_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+        }
+        std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    }
+    let mut c = Collect {
+        decoder: None,
+        patterns,
+        frames,
+        lumas: vec![None; patterns.count()],
+        unstable: 0,
+        unsettled: Vec::new(),
+        camera_delay_ms: None,
+    };
+
+    // Black first, so white is a change the latency can be read from (the latency of the
+    // projector before, if any, lets the camera see that black).
+    let shown = s.show(id, 1, size)?;
+    let black_before = s.take(path, shown, known_latency, None, None, None)?;
+    let shown = s.show(id, 0, size)?;
+    let white = s.take(
+        &format!("{path}, white"),
+        shown,
+        Duration::ZERO,
+        Some((&black_before.luma, Way::Brighter)),
+        None,
+        None,
+    )?;
+    c.add(&s.camera, 0, &white)?;
+    let shown = s.show(id, 1, size)?;
+    let black = s.take(
+        &format!("{path}, black"),
+        shown,
+        Duration::ZERO,
+        Some((&white.luma, Way::Darker)),
+        None,
+        None,
+    )?;
+    c.add(&s.camera, 1, &black)?;
+    let delay = |shot: &Shot| shot.changed_at.map(|t| t.saturating_duration_since(shot.presented));
+    let (rise, fall) = (delay(&white), delay(&black));
+    // One frame more: the first frame that showed the change may have been exposed early,
+    // the next time late.
+    let latency = rise.unwrap_or_default().max(fall.unwrap_or_default()) + s.interval();
+    let lit = lit_samples(&white.luma, &black.luma);
+    let lit_count = lit.iter().filter(|l| **l).count();
+    if lit_count == 0 {
+        return Err(format!("{path}: white and black look alike to the camera").into());
+    }
+
+    // The stripes, pattern and inverse in turn; the coarsest bits checked.
+    let mut index = 2;
+    let mut retaken: Vec<usize> = Vec::new();
+    let mut previous = black.luma.clone();
+    let mut unchanged = 0;
+    while index < patterns.count() {
+        let shown = s.show(id, index, size)?;
+        // Never before the latency passed; then after the picture changed from the one before
+        // (where the projector reaches), or, for stripes too fine for the camera, once twice
+        // the latency more passed. A change alone is no proof: fine stripes flicker in the
+        // camera, and a late frame of the pattern before is a change too.
+        let shot = s.take(path, shown, latency, Some((&previous, Way::Any)), Some(&lit), Some(latency))?;
+        c.add(&s.camera, index, &shot)?;
+        if let Some(w) = s.watch {
+            (w.progress)(k, index as f32 / patterns.count().max(1) as f32);
+        }
+        if shot.changed_at.is_none() {
+            unchanged += 1;
+        }
+        previous = shot.luma;
+        if checked_pair(&patterns, index) && !retaken.contains(&index) {
+            let m = pair_margin(&c.lumas, index);
+            if m.is_some_and(|m| m < MIN_MARGIN) {
+                // Once more from the pattern: adding it again restarts the pair.
+                retaken.push(index);
+                index -= 1;
+                continue;
+            }
+        }
+        index += 1;
+    }
+    Ok(Scanned {
+        collect: c,
+        rise,
+        fall,
+        latency,
+        lit_samples: lit_count,
+        retaken: retaken.len(),
+        unchanged,
+        captured: t.elapsed(),
+    })
+}
+
+/// What one projector's scan warns of: pairs that barely differ, pictures that kept changing,
+/// a latency that could not be read.
+fn scan_warnings(
+    path: &str,
+    margins: &[Vec<Option<f64>>; 2],
+    unsettled: &[usize],
+    retries: u32,
+    rise: Option<Duration>,
+    fall: Option<Duration>,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for (axis, name) in ["column", "row"].iter().enumerate() {
+        for (bit, m) in margins.get(axis).into_iter().flatten().enumerate().take(CHECKED_BITS as usize) {
+            if m.is_some_and(|m| m < MIN_MARGIN) {
+                warnings.push(format!(
+                    "{path}: {name} bit {bit}'s pattern and inverse barely differ in the camera (median margin {:.2}): \
+                     stray light, a moving camera, or the camera adapting its exposure?",
+                    m.unwrap_or(0.0)
+                ));
+            }
+        }
+    }
+    if !unsettled.is_empty() {
+        warnings.push(format!(
+            "{path}: the camera's picture of pattern(s) {unsettled:?} still changed after {retries} retries; taken anyway"
+        ));
+    }
+    if rise.is_none() || fall.is_none() {
+        warnings.push(format!("{path}: the light-to-camera latency could not be read"));
+    }
+    warnings
+}
+
+/// One projector's part of the reply.
+struct ProjectorScan {
+    path: String,
+    rise: Option<Duration>,
+    fall: Option<Duration>,
+    valid: usize,
+    measured: usize,
+    report: Json,
+}
+
+/// The reply's entry of a projector scanned (`scanned`) and decoded (`decoded`) into `folder`.
+fn projector_report(
+    path: &str,
+    folder: &std::path::Path,
+    scanned: &Scanned,
+    decoded: &Decoded,
+    margins: &[Vec<Option<f64>>; 2],
+    warnings: &[String],
+) -> Json {
+    let c = &scanned.collect;
+    let pictures = c.patterns.count();
+    let mut o = decoded.fields.clone();
+    o.insert("path".into(), json!(path));
+    o.insert("folder".into(), json!(folder.display().to_string()));
+    o.insert(
+        "latency_ms".into(),
+        json!({
+            "rise": scanned.rise.map(ms),
+            "fall": scanned.fall.map(ms),
+            "waited": ms(scanned.latency),
+            "camera_delay": c.camera_delay_ms,
+        }),
+    );
+    o.insert("margins".into(), json!({"columns": margins[0], "rows": margins[1]}));
+    o.insert("lit_samples".into(), json!(scanned.lit_samples));
+    o.insert("retaken_pairs".into(), json!(scanned.retaken));
+    o.insert("unstable_frames".into(), json!(c.unstable));
+    o.insert("unchanged_pictures".into(), json!(scanned.unchanged));
+    o.insert("frames".into(), json!(c.frames.as_ref().map(|f| f.display().to_string())));
+    o.insert(
+        "ms".into(),
+        json!({
+            "capture": ms(scanned.captured),
+            "decode": ms(decoded.decode),
+            "write": ms(decoded.write),
+            "per_picture": ms(scanned.captured / u32::try_from(pictures + 1).unwrap_or(1)),
+        }),
+    );
+    o.insert("warnings".into(), json!(warnings));
+    Json::Object(o)
+}
+
+/// The largest of `values`, `None` without any.
+fn largest(values: impl Iterator<Item = f64>) -> Option<f64> {
+    values.fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v))))
+}
+
+/// The reply of the whole capture.
+fn capture_reply(
+    a: &CaptureArgs,
+    folders: &[String],
+    scans: Vec<ProjectorScan>,
+    warnings: Vec<String>,
+    started: Instant,
+) -> Json {
+    let summary: Vec<String> = scans
+        .iter()
+        .map(|r| format!("{}: {} camera px decoded, {} projector px measured", r.path, r.valid, r.measured))
+        .collect();
+    let rise = largest(scans.iter().filter_map(|r| r.rise.map(ms)));
+    let fall = largest(scans.iter().filter_map(|r| r.fall.map(ms)));
+    let folders_json: Vec<String> = folders
+        .iter()
+        .map(|f| {
+            a.out
+                .as_deref()
+                .unwrap_or(std::path::Path::new(DEFAULT_OUT))
+                .join(f)
+                .display()
+                .to_string()
+                .replace('\\', "/")
+        })
+        .collect();
+    let count = scans.len();
+    let projectors: Vec<Json> = scans.into_iter().map(|r| r.report).collect();
+    json!({
+        "message": format!("{} projector(s) scanned in {:.1} s; {}", count, started.elapsed().as_secs_f64(), summary.join("; ")),
+        "projectors": projectors,
+        "latency_ms": {"rise": rise, "fall": fall},
+        "scans": folders_json,
+        "warnings": warnings,
+        "seconds": seconds(started.elapsed()),
+        "next": "scan.align with these scans and the mappers of the projectors (same order); scan.objects / scan.blend take the folders too",
+    })
+}
+
+pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
+    capture_watched(e, a, None)
+}
+
+/// [`capture`], stopped by and reporting to `watch`. In stages: the settings; the projectors,
+/// their folders and patterns, the camera and the claim on them; per projector the scan
+/// ([`scan_projector`]), then its decode written and its report; the reply ([`capture_reply`]).
+pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -> CmdResult<Json> {
+    let started = Instant::now();
+    let Settings { settle, timeout, level, retries, fill, keep_frames, verify } = settings(a)?;
+
+    let session = e.session();
+    let net = session.doc().snapshot();
+    let projectors = projector_list(e, &net, a.projectors.as_deref())?;
+    if projectors.is_empty() {
+        return Err(format!("no active {PROJECTOR} to scan").into());
+    }
+    let folders = folders(&projectors)?;
     let sizes: Vec<(u32, u32)> = projectors.iter().map(|(id, _)| projector_size(e, &net, *id)).collect();
     let mut all_patterns = Vec::new();
     for (size, (_, path)) in sizes.iter().zip(&projectors) {
         all_patterns.push(Patterns::new(size.0, size.1).map_err(|err| format!("{path}: {err}"))?);
     }
     let camera = CameraStream::open(e, &net, &a.camera)?;
-    let out = e.session().dir().join(a.out.as_deref().unwrap_or(std::path::Path::new(DEFAULT_OUT)));
+    let out = session.dir().join(a.out.as_deref().unwrap_or(std::path::Path::new(DEFAULT_OUT)));
 
-    // Every active projector not scanned shows black the whole time: its picture would light the
-    // scene where it overlaps the one scanned.
-    let mut shown = projectors.clone();
-    for p in projector_list(e, &net, None)? {
-        if !shown.iter().any(|(id, _)| *id == p.0) {
-            shown.push(p);
-        }
-    }
+    let shown = shown_projectors(&projectors, projector_list(e, &net, None)?);
     let claim = Claim::new(e, shown.iter().map(|(id, _)| *id).collect())?;
     let mut s = Scanner {
         e,
@@ -485,7 +819,7 @@ pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -
         camera,
         settle: Duration::from_secs_f64(settle),
         timeout: Duration::from_secs_f64(timeout),
-        verify: a.verify.unwrap_or(true),
+        verify,
         retries,
         level,
         pass: e.output().pass,
@@ -499,233 +833,202 @@ pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -
     // in the camera's picture: a generous wait once.
     let mut known_latency = FIRST_WAIT;
     for (k, (id, path)) in projectors.iter().enumerate() {
-        let id = *id;
-        let t = Instant::now();
         let patterns = *all_patterns.get(k).ok_or("lost a projector")?;
-        let size = patterns.size();
         let folder = out.join(folders.get(k).map(String::as_str).unwrap_or("projector"));
         let frames = keep_frames.then(|| folder.join(FRAMES));
-        if let Some(dir) = &frames {
-            // Frames of an earlier scan would mix with these in scan.decode.
-            if dir.exists() {
-                std::fs::remove_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-            }
-            std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
-        }
-        let mut c = Collect {
-            decoder: None,
-            patterns,
-            frames,
-            lumas: vec![None; patterns.count()],
-            unstable: 0,
-            unsettled: Vec::new(),
-            camera_delay_ms: None,
-        };
-        let mut warnings: Vec<String> = Vec::new();
+        let mut scanned = scan_projector(&mut s, k, (*id, path), patterns, frames, known_latency)?;
+        known_latency = scanned.latency;
 
-        // Black first, so white is a change the latency can be read from (the latency of the
-        // projector before, if any, lets the camera see that black).
-        let shown = s.show(id, 1, size)?;
-        let black_before = s.take(path, shown, known_latency, None, None, None)?;
-        let shown = s.show(id, 0, size)?;
-        let white = s.take(
-            &format!("{path}, white"),
-            shown,
-            Duration::ZERO,
-            Some((&black_before.luma, Way::Brighter)),
-            None,
-            None,
-        )?;
-        c.add(&s.camera, 0, &white)?;
-        let shown = s.show(id, 1, size)?;
-        let black = s.take(
-            &format!("{path}, black"),
-            shown,
-            Duration::ZERO,
-            Some((&white.luma, Way::Darker)),
-            None,
-            None,
-        )?;
-        c.add(&s.camera, 1, &black)?;
-        let delay = |shot: &Shot| shot.changed_at.map(|t| t.saturating_duration_since(shot.presented));
-        let (rise, fall) = (delay(&white), delay(&black));
-        // One frame more: the first frame that showed the change may have been exposed early,
-        // the next time late.
-        let latency = rise.unwrap_or_default().max(fall.unwrap_or_default()) + s.interval();
-        known_latency = latency;
-        let lit: Vec<bool> = white
-            .luma
-            .iter()
-            .zip(&black.luma)
-            .map(|(w, b)| i16::from(*w) - i16::from(*b) > CHANGED)
-            .collect();
-        let lit_count = lit.iter().filter(|l| **l).count();
-        if lit_count == 0 {
-            return Err(format!("{path}: white and black look alike to the camera").into());
-        }
-
-        // The stripes, pattern and inverse in turn; the coarsest bits checked.
-        let mut index = 2;
-        let mut retaken: Vec<usize> = Vec::new();
-        let mut previous = black.luma.clone();
-        let mut unchanged = 0;
-        while index < patterns.count() {
-            let shown = s.show(id, index, size)?;
-            // Never before the latency passed; then after the picture changed from the one before
-            // (where the projector reaches), or, for stripes too fine for the camera, once twice
-            // the latency more passed. A change alone is no proof: fine stripes flicker in the
-            // camera, and a late frame of the pattern before is a change too.
-            let shot =
-                s.take(path, shown, latency, Some((&previous, Way::Any)), Some(&lit), Some(latency))?;
-            c.add(&s.camera, index, &shot)?;
-            if let Some(w) = watch {
-                (w.progress)(k, index as f32 / patterns.count().max(1) as f32);
-            }
-            if shot.changed_at.is_none() {
-                unchanged += 1;
-            }
-            previous = shot.luma;
-            let checked = match patterns.get(index) {
-                Some(Pattern::Columns { bit, inverse: true })
-                | Some(Pattern::Rows { bit, inverse: true }) => bit < CHECKED_BITS,
-                _ => false,
-            };
-            if checked && !retaken.contains(&index) {
-                let m = match (c.luma(0), c.luma(1), c.luma(index - 1), c.luma(index)) {
-                    (Some(w), Some(b), Some(p), Some(q)) => margin(w, b, p, q),
-                    _ => None,
-                };
-                if m.is_some_and(|m| m < MIN_MARGIN) {
-                    // Once more from the pattern: adding it again restarts the pair.
-                    retaken.push(index);
-                    index -= 1;
-                    continue;
-                }
-            }
-            index += 1;
-        }
-        let captured = t.elapsed();
-
-        // Margins per bit, for the report.
-        let mut margins: [Vec<Option<f64>>; 2] = Default::default();
-        for index in 2..patterns.count() {
-            let (axis, inverse) = match patterns.get(index) {
-                Some(Pattern::Columns { inverse, .. }) => (0, inverse),
-                Some(Pattern::Rows { inverse, .. }) => (1, inverse),
-                _ => continue,
-            };
-            if !inverse {
-                continue;
-            }
-            let m = match (c.luma(0), c.luma(1), c.luma(index - 1), c.luma(index)) {
-                (Some(w), Some(b), Some(p), Some(q)) => margin(w, b, p, q),
-                _ => None,
-            };
-            if let Some(list) = margins.get_mut(axis) {
-                list.push(m.map(|v| (v * 100.0).round() / 100.0));
-            }
-        }
-        for (axis, name) in ["column", "row"].iter().enumerate() {
-            for (bit, m) in margins.get(axis).into_iter().flatten().enumerate().take(CHECKED_BITS as usize) {
-                if m.is_some_and(|m| m < MIN_MARGIN) {
-                    warnings.push(format!(
-                        "{path}: {name} bit {bit}'s pattern and inverse barely differ in the camera (median margin {:.2}): \
-                         stray light, a moving camera, or the camera adapting its exposure?",
-                        m.unwrap_or(0.0)
-                    ));
-                }
-            }
-        }
-        if !c.unsettled.is_empty() {
-            warnings.push(format!(
-                "{path}: the camera's picture of pattern(s) {:?} still changed after {retries} retries; taken anyway",
-                c.unsettled
-            ));
-        }
-        if rise.is_none() || fall.is_none() {
-            warnings.push(format!("{path}: the light-to-camera latency could not be read"));
-        }
-
-        let decoder = c.decoder.take().ok_or("no camera pictures")?;
-        let mut result = write_decoded(&decoder, &a.options, fill, &folder)?;
-        if let Some(w) = result.get("warnings").and_then(Json::as_array) {
-            warnings.extend(w.iter().filter_map(Json::as_str).map(|w| format!("{path}: {w}")));
-        }
-        let decode_ms = result.get("ms").cloned().unwrap_or(Json::Null);
-        if let Some(o) = result.as_object_mut() {
-            for key in ["warnings", "ms", "next", "message"] {
-                o.remove(key);
-            }
-            o.insert("path".into(), json!(path));
-            o.insert("folder".into(), json!(folder.display().to_string()));
-            o.insert(
-                "latency_ms".into(),
-                json!({
-                    "rise": rise.map(ms),
-                    "fall": fall.map(ms),
-                    "waited": ms(latency),
-                    "camera_delay": c.camera_delay_ms,
-                }),
-            );
-            o.insert("margins".into(), json!({"columns": margins[0], "rows": margins[1]}));
-            o.insert("lit_samples".into(), json!(lit_count));
-            o.insert("retaken_pairs".into(), json!(retaken.len()));
-            o.insert("unstable_frames".into(), json!(c.unstable));
-            o.insert("unchanged_pictures".into(), json!(unchanged));
-            o.insert("frames".into(), json!(c.frames.as_ref().map(|f| f.display().to_string())));
-            o.insert(
-                "ms".into(),
-                json!({
-                    "capture": ms(captured),
-                    "decode": decode_ms.get("decode"),
-                    "write": decode_ms.get("write"),
-                    "per_picture": ms(captured / u32::try_from(patterns.count() + 1).unwrap_or(1)),
-                }),
-            );
-            o.insert("warnings".into(), json!(warnings));
-        }
+        let margins = margins(&patterns, &scanned.collect.lumas);
+        let mut warnings =
+            scan_warnings(path, &margins, &scanned.collect.unsettled, retries, scanned.rise, scanned.fall);
+        let decoder = scanned.collect.decoder.take().ok_or("no camera pictures")?;
+        let decoded = write_decoded(&decoder, &a.options, fill, &folder)?;
+        warnings.extend(decoded.warnings.iter().map(|w| format!("{path}: {w}")));
+        let report = projector_report(path, &folder, &scanned, &decoded, &margins, &warnings);
         all_warnings.extend(warnings);
-        collected.push(result);
+        collected.push(ProjectorScan {
+            path: path.clone(),
+            rise: scanned.rise,
+            fall: scanned.fall,
+            valid: decoded.valid,
+            measured: decoded.measured,
+            report,
+        });
     }
     drop(claim);
+    Ok(capture_reply(a, &folders, collected, all_warnings, started))
+}
 
-    let rises: Vec<f64> =
-        collected.iter().filter_map(|r| r.pointer("/latency_ms/rise").and_then(Json::as_f64)).collect();
-    let falls: Vec<f64> =
-        collected.iter().filter_map(|r| r.pointer("/latency_ms/fall").and_then(Json::as_f64)).collect();
-    let summary: Vec<String> = collected
-        .iter()
-        .map(|r| {
-            format!(
-                "{}: {} camera px decoded, {} projector px measured",
-                r["path"].as_str().unwrap_or("?"),
-                r.pointer("/camera_pixels/valid").unwrap_or(&Json::Null),
-                r.pointer("/projector_pixels/measured").unwrap_or(&Json::Null)
-            )
-        })
-        .collect();
-    let folders_json: Vec<String> = folders
-        .iter()
-        .map(|f| {
-            a.out
-                .as_deref()
-                .unwrap_or(std::path::Path::new(DEFAULT_OUT))
-                .join(f)
-                .display()
-                .to_string()
-                .replace('\\', "/")
-        })
-        .collect();
-    Ok(json!({
-        "message": format!("{} projector(s) scanned in {:.1} s; {}", collected.len(), started.elapsed().as_secs_f64(), summary.join("; ")),
-        "projectors": collected,
-        "latency_ms": {
-            "rise": rises.iter().copied().fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v)))),
-            "fall": falls.iter().copied().fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.max(v)))),
-        },
-        "scans": folders_json,
-        "warnings": all_warnings,
-        "seconds": seconds(started.elapsed()),
-        "next": "scan.align with these scans and the mappers of the projectors (same order); scan.objects / scan.blend take the folders too",
-    }))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use penumbra_camera::{Matrix, PixelFormat};
+
+    fn frame(width: u32, height: u32, y: Vec<u8>) -> CameraFrame {
+        CameraFrame {
+            width,
+            height,
+            format: PixelFormat::I420,
+            cb: vec![128; y.len()],
+            cr: vec![128; y.len()],
+            y,
+            shift: (0, 0),
+            matrix: Matrix::Bt709,
+            full_range: true,
+            sequence: 0,
+            arrived: Instant::now(),
+            delay_ms: None,
+        }
+    }
+
+    fn two() -> Vec<(NodeId, String)> {
+        vec![(NodeId(1), "/a".into()), (NodeId(2), "/b".into())]
+    }
+
+    #[test]
+    fn luma_samples_every_fourth_pixel() {
+        // 9 x 5: columns 0, 4, 8 of rows 0 and 4.
+        let y: Vec<u8> = (0..45).collect();
+        assert_eq!(luma(&frame(9, 5, y)), [0, 4, 8, 36, 40, 44]);
+        // Too few bytes read as 0.
+        assert_eq!(luma(&frame(5, 1, vec![7])), [7, 0]);
+    }
+
+    #[test]
+    fn changed_counts_by_way_and_mask() {
+        let a = [100, 100, 100, 100];
+        let b = [100, 113, 87, 112];
+        assert_eq!(changed(&a, &b, None, Way::Any), (2, 4));
+        assert_eq!(changed(&a, &b, None, Way::Brighter), (1, 4));
+        assert_eq!(changed(&a, &b, None, Way::Darker), (1, 4));
+        let mask = [true, true, false];
+        assert_eq!(changed(&a, &b, Some(&mask), Way::Any), (1, 2));
+    }
+
+    #[test]
+    fn margin_is_the_median_where_the_projector_reaches() {
+        let white = [200, 200, 200, 20];
+        let black = [0, 0, 0, 10];
+        let pattern = [200, 100, 0, 20];
+        let inverse = [0, 0, 160, 10];
+        // 1, 0.5, 0.8; the last sample is not reached.
+        assert_eq!(margin(&white, &black, &pattern, &inverse), Some(0.8));
+        assert_eq!(margin(&[10], &[0], &[10], &[0]), None);
+    }
+
+    #[test]
+    fn lit_samples_are_clearly_brighter_in_white() {
+        assert_eq!(lit_samples(&[100, 113, 112, 0], &[100, 100, 100, 50]), [false, true, false, false]);
+    }
+
+    #[test]
+    fn pairs_margins_and_the_checked_bits() {
+        let patterns = Patterns::new(8, 4).unwrap();
+        let (cb, rb) = (patterns.column_bits() as usize, patterns.row_bits() as usize);
+        // The inverse of each pair is checked for the coarsest bits only.
+        assert!(!checked_pair(&patterns, 2) && checked_pair(&patterns, 3) && checked_pair(&patterns, 5));
+        assert_eq!(cb, 3);
+        assert!(!checked_pair(&patterns, 2 + 2 * CHECKED_BITS as usize + 1), "column bit 2");
+        assert!(checked_pair(&patterns, 2 + 2 * cb + 1));
+        assert!(!checked_pair(&patterns, 0) && !checked_pair(&patterns, patterns.count()));
+
+        // White, black, then every pair half as far apart as the one before.
+        let mut lumas: Vec<Option<Vec<u8>>> = vec![Some(vec![200; 4]), Some(vec![0; 4])];
+        let mut level = 200u8;
+        while lumas.len() < patterns.count() {
+            lumas.push(Some(vec![level; 4]));
+            lumas.push(Some(vec![0; 4]));
+            level /= 2;
+        }
+        assert_eq!(pair_margin(&lumas, 3), Some(1.0));
+        assert_eq!(pair_margin(&lumas, 5), Some(0.5));
+        assert_eq!(pair_margin(&lumas, 0), None);
+        let [columns, rows] = margins(&patterns, &lumas);
+        assert_eq!((columns.len(), rows.len()), (cb, rb));
+        assert_eq!(columns[..2], [Some(1.0), Some(0.5)]);
+        assert_eq!(rows[0], Some(0.13), "{rows:?}");
+        // A picture missing: no margin for its pair.
+        lumas[4] = None;
+        assert_eq!(margins(&patterns, &lumas)[0][1], None);
+    }
+
+    #[test]
+    fn warnings_of_a_scan() {
+        let margins = [vec![Some(0.9), Some(0.2), Some(0.1)], vec![None, Some(0.3)]];
+        let ms = Some(Duration::from_millis(80));
+        let w = scan_warnings("/a", &margins, &[], 3, ms, ms);
+        // Only the checked bits: column 1 and row 1; not column 2.
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert!(w[0].starts_with("/a: column bit 1's") && w[0].contains("margin 0.20"));
+        assert!(w[1].starts_with("/a: row bit 1's"));
+        let w = scan_warnings("/a", &Default::default(), &[4, 7], 3, None, ms);
+        assert_eq!(
+            w,
+            [
+                "/a: the camera's picture of pattern(s) [4, 7] still changed after 3 retries; taken anyway",
+                "/a: the light-to-camera latency could not be read",
+            ]
+        );
+    }
+
+    #[test]
+    fn folders_and_the_projectors_shown() {
+        assert_eq!(folders(&two()).unwrap(), [folder_name("/a"), folder_name("/b")]);
+        let same = vec![(NodeId(1), "/a".to_string()), (NodeId(2), "/a".to_string())];
+        assert!(folders(&same).unwrap_err().0.contains("share the folder"));
+        let active = vec![(NodeId(3), "/c".to_string()), (NodeId(1), "/a".to_string())];
+        let shown = shown_projectors(&two(), active);
+        assert_eq!(shown.iter().map(|(id, _)| id.0).collect::<Vec<_>>(), [1, 2, 3]);
+    }
+
+    #[test]
+    fn settings_fill_defaults_and_check_ranges() {
+        let args = |v: Json| -> CaptureArgs { serde_json::from_value(v).unwrap() };
+        let s = settings(&args(json!({"camera": "/cam"}))).unwrap();
+        assert_eq!(
+            (s.settle, s.level, s.retries, s.keep_frames, s.verify),
+            (DEFAULT_SETTLE, 1.0, 3, false, true)
+        );
+        for (bad, says) in [
+            (json!({"level": 0.0}), "`level`"),
+            (json!({"level": 1.5}), "`level`"),
+            (json!({"retries": 21}), "`retries`"),
+            (json!({"timeout": 0.0}), "`timeout`"),
+            (json!({"fill": 100000}), "`fill`"),
+        ] {
+            let mut v = bad.clone();
+            v["camera"] = json!("/cam");
+            let err = settings(&args(v)).unwrap_err();
+            assert!(err.0.contains(says), "{bad}: {}", err.0);
+        }
+    }
+
+    #[test]
+    fn the_reply_sums_up_the_projectors() {
+        let a: CaptureArgs = serde_json::from_value(json!({"camera": "/cam", "out": "scans"})).unwrap();
+        let scan = |path: &str, rise: Option<u64>, valid| ProjectorScan {
+            path: path.into(),
+            rise: rise.map(Duration::from_millis),
+            fall: Some(Duration::from_millis(40)),
+            valid,
+            measured: 10,
+            report: json!({"path": path}),
+        };
+        let scans = vec![scan("/a", Some(70), 100), scan("/b", None, 200)];
+        let r = capture_reply(&a, &["a".into(), "b".into()], scans, vec!["w".into()], Instant::now());
+        assert_eq!(r["latency_ms"], json!({"rise": 70.0, "fall": 40.0}));
+        assert_eq!(r["scans"], json!(["scans/a", "scans/b"]));
+        assert_eq!(r["projectors"], json!([{"path": "/a"}, {"path": "/b"}]));
+        let message = r["message"].as_str().unwrap();
+        assert!(message.starts_with("2 projector(s) scanned in "), "{message}");
+        assert!(
+            message.ends_with(
+                "/a: 100 camera px decoded, 10 projector px measured; /b: 200 camera px decoded, 10 projector px measured"
+            ),
+            "{message}"
+        );
+        assert_eq!(largest([].into_iter()), None);
+        assert_eq!(seconds(Duration::from_micros(1_234_567)), 1.235);
+    }
 }

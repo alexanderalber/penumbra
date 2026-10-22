@@ -21,20 +21,20 @@
 //! waits the same way ([`wait_shown`], [`CameraStream`]).
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use penumbra_calib::colour::{self, Mat3, Measured, Picture, Planes, Target};
 use penumbra_camera::{CameraFrame, Key, Matrix};
-use penumbra_core::{Name, NodeId, NodePath, ParamPath, Value, lock};
+use penumbra_core::{Name, NodeId, NodePath, ParamPath, Value};
 use penumbra_graph::{Network, Op};
-use penumbra_ops::out::{OutputBoard, PROJECTOR, ProjectorFrame, correct};
+use penumbra_ops::out::{PROJECTOR, ProjectorFrame, correct};
 use penumbra_ops::tex::video_in::VIDEO_IN;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
-use crate::commands::{edit, outcome, require};
+use crate::commands::{edit_in, outcome, require};
 use crate::engine::Engine;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
@@ -69,10 +69,6 @@ const PROBE: f64 = 0.375;
 const REFINED: f64 = 0.005;
 /// Widest camera picture measured; larger frames are sampled every few pixels.
 pub(crate) const MAX_WIDTH: usize = 640;
-
-/// The engines (by address) measuring now: one measurement (`projector.match`, `scan.capture`)
-/// per engine at a time, two would fight over the projectors.
-static RUNNING: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
@@ -115,32 +111,28 @@ pub struct MatchArgs {
 /// The projectors a measurement holds: while it lives no other measurement runs on the engine,
 /// and when dropped (however the measurement ends) their flat signals and stripes are cleared.
 pub(crate) struct Claim<'a> {
-    engine: usize,
-    board: &'a OutputBoard,
+    engine: &'a Engine,
     nodes: Vec<NodeId>,
 }
 
 impl<'a> Claim<'a> {
     pub(crate) fn new(e: &'a Engine, nodes: Vec<NodeId>) -> CmdResult<Self> {
-        let engine = std::ptr::from_ref(e) as usize;
-        let mut running = lock(&RUNNING);
-        if running.contains(&engine) {
+        if !e.begin_measurement() {
             return Err("a measurement (projector.match or scan.capture) is already running".into());
         }
-        running.push(engine);
-        Ok(Self { engine, board: e.board(), nodes })
+        Ok(Self { engine: e, nodes })
     }
 }
 
 impl Drop for Claim<'_> {
     fn drop(&mut self) {
-        self.board.update(|b| {
+        self.engine.board().update(|b| {
             for n in &self.nodes {
                 b.flat.remove(n);
                 b.stripes.remove(n);
             }
         });
-        lock(&RUNNING).retain(|e| *e != self.engine);
+        self.engine.end_measurement();
     }
 }
 
@@ -345,6 +337,25 @@ impl Rig<'_> {
     }
 }
 
+/// Takes camera pictures of what the projectors show: [`Rig`] with a camera, a synthetic one
+/// in tests.
+pub(crate) trait Shoot {
+    /// Shows `signal(k)` on projector `k` (sRGB-encoded, uncorrected) and returns the camera's
+    /// picture of it.
+    fn shoot(&mut self, signal: &dyn Fn(usize) -> [f32; 3]) -> CmdResult<Picture>;
+
+    /// Projector `k` alone showing `s`, every other one black.
+    fn alone(&mut self, k: usize, s: [f32; 3]) -> CmdResult<Picture> {
+        self.shoot(&|j| if j == k { s } else { [0.0; 3] })
+    }
+}
+
+impl Shoot for Rig<'_> {
+    fn shoot(&mut self, signal: &dyn Fn(usize) -> [f32; 3]) -> CmdResult<Picture> {
+        self.shot(signal)
+    }
+}
+
 const NAMES: [&str; 3] = ["red", "green", "blue"];
 
 /// What refining shows: white first (adjusted against), then full red, green, blue and grey at
@@ -387,13 +398,19 @@ fn ratios(got: [f64; 3], want: [f64; 3], black_got: [f64; 3], black_want: [f64; 
     json!({"ratio": ratio, "residual_codes": codes})
 }
 
-/// What the camera reads (black subtracted, in the spot) of projector `k` alone showing each of
-/// `contents` (linear light) through `matrix` and `curves`.
-fn read_through(
-    rig: &mut Rig<'_>,
+/// Where the camera reads one projector: its index, its measuring spot and its black there.
+#[derive(Clone, Copy)]
+struct Spot<'s> {
     k: usize,
-    spot: &[bool],
+    mask: &'s [bool],
     black: [f64; 3],
+}
+
+/// What the camera reads (black subtracted, in the spot) of the spot's projector alone showing
+/// each of `contents` (linear light) through `matrix` and `curves`.
+fn read_through(
+    shoot: &mut impl Shoot,
+    spot: Spot<'_>,
     matrix: &Mat3,
     curves: &[Vec<f64>; 3],
     contents: &[[f64; 3]],
@@ -401,9 +418,9 @@ fn read_through(
     let mut out = Vec::with_capacity(contents.len());
     for content in contents {
         let s = colour::signal(matrix, curves, *content).map(|v| v as f32);
-        let pic = rig.shot(|j| if j == k { s } else { [0.0; 3] })?;
-        let m = colour::trimmed_mean(&pic, spot).ok_or("an empty measuring spot")?;
-        out.push([m[0] - black[0], m[1] - black[1], m[2] - black[2]]);
+        let pic = shoot.alone(spot.k, s)?;
+        let m = colour::trimmed_mean(&pic, spot.mask).ok_or("an empty measuring spot")?;
+        out.push([m[0] - spot.black[0], m[1] - spot.black[1], m[2] - spot.black[2]]);
     }
     Ok(out)
 }
@@ -470,8 +487,19 @@ pub(crate) fn text_param(net: &Network, e: &Engine, id: NodeId, kind: &str, name
     node.param(desc, name).and_then(Value::as_str).map(str::to_string).unwrap_or_default()
 }
 
-pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
-    let started = Instant::now();
+/// `projector.match`'s arguments, checked, the defaults filled in.
+#[derive(Clone, Debug, PartialEq)]
+struct Settings {
+    levels: u32,
+    settle: f64,
+    timeout: f64,
+    samples: usize,
+    refine: u32,
+    /// The greys the curves are refined on, evenly spaced between black and white.
+    greys: Vec<f64>,
+}
+
+fn settings(a: &MatchArgs) -> CmdResult<Settings> {
     let levels = a.levels.unwrap_or(DEFAULT_LEVELS);
     if !(2..=32).contains(&levels) {
         return Err("`levels` is 2 to 32".into());
@@ -496,8 +524,389 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     {
         return Err("`area` is [x, y, w, h] within 0..1 of the camera picture".into());
     }
+    Ok(Settings { levels, settle, timeout, samples, refine, greys })
+}
 
-    let net = e.session().doc().snapshot();
+/// Keeps of `mask` (a `width` x `height` picture's) only the pixels whose centres lie in `area`
+/// (`[x, y, w, h]`, 0..1 of the picture).
+fn keep_area(mask: &mut [bool], width: usize, height: usize, area: [f64; 4]) {
+    let [x, y, w, h] = area;
+    let (pw, ph) = (width as f64, height as f64);
+    let width = width.max(1);
+    for (i, m) in mask.iter_mut().enumerate() {
+        let (px, py) = ((i % width) as f64 + 0.5, (i / width) as f64 + 0.5);
+        *m &= px >= x * pw && px < (x + w) * pw && py >= y * ph && py < (y + h) * ph;
+    }
+}
+
+/// The pictures that find where each projector lights the camera's picture (all black, then
+/// each one alone in white), with each one's lit pixels.
+struct Lit {
+    black: Picture,
+    whites: Vec<Picture>,
+    masks: Vec<Vec<bool>>,
+}
+
+/// Takes the [`Lit`] pictures; the masks only within `area`, if given.
+fn measure_lit(
+    shoot: &mut impl Shoot,
+    projectors: &[(NodeId, String)],
+    area: Option<[f64; 4]>,
+) -> CmdResult<Lit> {
+    let black = shoot.shoot(&|_| [0.0; 3])?;
+    let mut whites = Vec::with_capacity(projectors.len());
+    let mut masks = Vec::with_capacity(projectors.len());
+    for (k, (_, path)) in projectors.iter().enumerate() {
+        let white = shoot.alone(k, [1.0; 3])?;
+        let mut mask = colour::lit(&white, &black).ok_or_else(|| {
+            format!("{path} lights no camera pixel (is it in the camera's view, on, and the camera's exposure right?)")
+        })?;
+        if let Some(area) = area {
+            keep_area(&mut mask, black.width, black.height, area);
+            if colour::count(&mask) < colour::MIN_PIXELS {
+                return Err(format!("{path} lights (almost) nothing inside `area`").into());
+            }
+        }
+        whites.push(white);
+        masks.push(mask);
+    }
+    Ok(Lit { black, whites, masks })
+}
+
+/// The ramps' signal levels: `1 / levels` up to 1.
+fn level_values(levels: u32) -> Vec<f64> {
+    (1..=levels).map(|i| f64::from(i) / f64::from(levels)).collect()
+}
+
+/// What the camera read of each projector in its spot: the ramps and white (black subtracted)
+/// and the black.
+struct Ramps {
+    measured: Vec<Measured>,
+    whites: Vec<Option<[f64; 3]>>,
+    blacks: Vec<[f64; 3]>,
+}
+
+/// Shows each projector's ramps (each primary at `levels` levels) and reads them in its spot.
+fn measure_ramps(
+    shoot: &mut impl Shoot,
+    projectors: &[(NodeId, String)],
+    lit: &Lit,
+    spots: &colour::Spots,
+    levels: u32,
+    warnings: &mut Vec<String>,
+) -> CmdResult<Ramps> {
+    let level_values = level_values(levels);
+    let mut measured = Vec::with_capacity(projectors.len());
+    let mut whites = Vec::with_capacity(projectors.len());
+    let mut blacks = Vec::with_capacity(projectors.len());
+    for (k, (_, path)) in projectors.iter().enumerate() {
+        let spot = spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[]);
+        let mean = |p: &Picture| {
+            colour::trimmed_mean(p, spot).ok_or_else(|| format!("{path}: an empty measuring spot"))
+        };
+        let b = mean(&lit.black)?;
+        let sub = |v: [f64; 3]| [v[0] - b[0], v[1] - b[1], v[2] - b[2]];
+        let w = lit.whites.get(k).map(mean).transpose()?.ok_or("lost a picture")?;
+        if w.iter().any(|v| *v > 0.97) {
+            warnings.push(format!("{path}: the camera clips its white; lower the camera's exposure"));
+        }
+        let mut ramps: [Vec<[f64; 3]>; 3] = Default::default();
+        for (c, ramp) in ramps.iter_mut().enumerate() {
+            for l in &level_values {
+                let mut s = [0.0; 3];
+                if let Some(v) = s.get_mut(c) {
+                    *v = *l as f32;
+                }
+                let pic = shoot.alone(k, s)?;
+                ramp.push(sub(mean(&pic)?));
+            }
+        }
+        blacks.push(b);
+        whites.push(Some(sub(w)));
+        measured.push(Measured { levels: level_values.clone(), ramps });
+    }
+    Ok(Ramps { measured, whites, blacks })
+}
+
+/// A note of the colour match, its projector named by path.
+fn named(note: &colour::Note, projectors: &[(NodeId, String)]) -> String {
+    note.named(|k| projectors.get(k).map(|(_, path)| path.clone()))
+}
+
+/// What the projectors are compared on: white, the primaries, the greys, the probe.
+fn compared_contents(greys: &[f64]) -> Vec<[f64; 3]> {
+    let mut contents = vec![WHITE];
+    contents.extend(PRIMARIES);
+    contents.extend(greys.iter().map(|g| [*g; 3]));
+    contents.push([PROBE; 3]);
+    contents
+}
+
+/// A projector refined against the reference: both spots, its path (for messages) and the
+/// most rounds per closed loop.
+#[derive(Clone, Copy)]
+struct Pair<'s> {
+    own: Spot<'s>,
+    reference: Spot<'s>,
+    path: &'s str,
+    rounds: u32,
+}
+
+/// The closed loop on white, its outcome.
+struct WhiteRounds {
+    /// Per round the scales tried and what the camera read.
+    rounds: Vec<Json>,
+    /// The closest round: its largest log ratio, matrix, log ratios and log scales.
+    best: Option<(f64, Mat3, [f64; 3], [f64; 3])>,
+    /// The largest log scale each row may take.
+    hi: [f64; 3],
+    /// What the solver learnt of the camera's slopes.
+    solver: colour::Broyden,
+}
+
+/// The rows of `base` scaled until the camera reads the projector's white, channel by channel,
+/// as the reference's (`want`).
+fn refine_white(
+    shoot: &mut impl Shoot,
+    pair: Pair<'_>,
+    base: Mat3,
+    curves: &[Vec<f64>; 3],
+    want: [f64; 3],
+) -> CmdResult<WhiteRounds> {
+    let Pair { own, reference, path, rounds: refine } = pair;
+    // ln(scale) per row: down to a twentieth, up to a row sum of 1.
+    let lo = 0.05_f64.ln();
+    let hi = base.map(|row| {
+        let sum: f64 = row.iter().sum();
+        if sum > 1e-9 { (1.0 / sum).ln().max(lo) } else { 0.0 }
+    });
+    let mut x = [0.0_f64; 3];
+    let mut solver = colour::Broyden::new();
+    let mut rounds = Vec::new();
+    let mut best: Option<(f64, Mat3, [f64; 3], [f64; 3])> = None;
+    for round in 0..=refine {
+        let mut m = base;
+        for (row, xc) in m.iter_mut().zip(x) {
+            *row = row.map(|v| v * xc.exp());
+        }
+        let got = read_through(shoot, own, &m, curves, &[WHITE])?;
+        let got = got.first().copied().ok_or("no reading")?;
+        let (f, codes) = compare(got, want, own.black, reference.black).ok_or_else(|| {
+            format!(
+                "{path}: the camera sees no white in a channel through the correction (or of the reference)"
+            )
+        })?;
+        let err = f.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
+        rounds.push(json!({
+            "round": round,
+            "scale": x.map(f64::exp),
+            "ratio": f.map(f64::exp),
+            "residual_codes": codes,
+            "white": got,
+        }));
+        if best.as_ref().is_none_or(|(e, _, _, _)| err < *e) {
+            best = Some((err, m, f, x));
+        }
+        if round == refine || err < REFINED {
+            break;
+        }
+        x = solver.step(x, f, lo, hi);
+    }
+    Ok(WhiteRounds { rounds, best, hi, solver })
+}
+
+/// With white matched by the matrix `m`, each channel's curve bent at every grey level until the
+/// camera reads that grey as the reference's (`want`, one per grey; one solver per level, the
+/// channels interact through the camera; between the levels the bend is interpolated).
+fn refine_greys(
+    shoot: &mut impl Shoot,
+    pair: Pair<'_>,
+    m: &Mat3,
+    curves: &[Vec<f64>; 3],
+    greys: &[f64],
+    want: &[[f64; 3]],
+    learnt: &colour::Broyden,
+) -> CmdResult<GreyRounds> {
+    let Pair { own, reference, rounds: refine, .. } = pair;
+    let mut grey_rounds = Vec::new();
+    let rows = m.map(|row| row.iter().sum::<f64>().clamp(0.0, 1.0));
+    let knots: Vec<[f64; 3]> = greys.iter().map(|g| rows.map(|s| colour::encode(s * g))).collect();
+    let ends = rows.map(colour::encode);
+    let contents: Vec<[f64; 3]> = greys.iter().map(|g| [*g; 3]).collect();
+    let mut y = vec![[0.0_f64; 3]; greys.len()];
+    // Starting from the slopes white taught: the same camera, the same channels.
+    let mut solvers: Vec<colour::Broyden> = greys.iter().map(|_| learnt.restart()).collect();
+    let mut best_curves: Option<(f64, [Vec<f64>; 3])> = None;
+    let lo = 0.2_f64.ln();
+    for round in 0..=refine {
+        let now = bend(curves, &knots, ends, &y);
+        let got = read_through(shoot, own, m, &now, &contents)?;
+        let mut err: f64 = 0.0;
+        let mut fs = Vec::with_capacity(greys.len());
+        let mut levels = Vec::with_capacity(greys.len());
+        for ((g, w), level) in got.iter().zip(want).zip(greys) {
+            // A grey too dark to read in a channel is left as it is.
+            let f = compare(*g, *w, own.black, reference.black).map_or([0.0; 3], |(f, _)| f);
+            err = f.iter().fold(err, |a, v| a.max(v.abs()));
+            fs.push(f);
+            let mut level_json = ratios(*g, *w, own.black, reference.black);
+            if let Some(o) = level_json.as_object_mut() {
+                o.insert("grey".into(), json!(level));
+            }
+            levels.push(level_json);
+        }
+        grey_rounds.push(json!({"round": round, "levels": levels}));
+        if best_curves.as_ref().is_none_or(|(e, _)| err < *e) {
+            best_curves = Some((err, now));
+        }
+        if round == refine || err < REFINED {
+            break;
+        }
+        for ((yj, f), (solver, kj)) in y.iter_mut().zip(fs).zip(solvers.iter_mut().zip(&knots)) {
+            // At most full signal where the bend peaks.
+            let mut hi = [0.0; 3];
+            for ((h, curve), e) in hi.iter_mut().zip(curves).zip(kj) {
+                *h = (1.0 / colour::lookup(curve, *e).max(1e-3)).ln().max(lo);
+            }
+            *yj = solver.step(*yj, f, lo, hi);
+        }
+    }
+    Ok(GreyRounds { rounds: grey_rounds, best: best_curves.map(|(_, c)| c) })
+}
+
+/// The closed loop on the greys, its outcome: per round what the camera read, and the closest
+/// curves.
+struct GreyRounds {
+    rounds: Vec<Json>,
+    best: Option<[Vec<f64>; 3]>,
+}
+
+/// One projector refined against the reference.
+struct Refined {
+    /// The matrix of the closest white round (none without a round).
+    matrix: Option<Mat3>,
+    curves: [Vec<f64>; 3],
+    report: Json,
+    warnings: Vec<String>,
+}
+
+/// Refines the pair's projector (`base` matrix, `curves`) against the reference's readings
+/// `want_all` (of [`compared_contents`]): the matrix on white, then the curves on the greys;
+/// then reads the primaries, the greys and the probe through the result, for the report.
+fn refine_projector(
+    shoot: &mut impl Shoot,
+    pair: Pair<'_>,
+    base: Mat3,
+    curves: &[Vec<f64>; 3],
+    want_all: &[[f64; 3]],
+    greys: &[f64],
+) -> CmdResult<Refined> {
+    let want = want_all.first().copied().ok_or("no reference reading")?;
+    let white = refine_white(shoot, pair, base, curves, want)?;
+    let m_final = white.best.as_ref().map_or(base, |b| b.1);
+    let mut final_curves = curves.clone();
+    let mut grey_rounds = Vec::new();
+    let want_greys: Vec<[f64; 3]> =
+        want_all.iter().skip(1 + PRIMARIES.len()).take(greys.len()).copied().collect();
+    if !greys.is_empty() && want_greys.len() == greys.len() {
+        let grey_fit = refine_greys(shoot, pair, &m_final, curves, greys, &want_greys, &white.solver)?;
+        grey_rounds = grey_fit.rounds;
+        if let Some(c) = grey_fit.best {
+            final_curves = c;
+        }
+    }
+
+    // Reported, not adjusted: the primaries, the greys and a grey between them, through the
+    // result.
+    let mut check = serde_json::Map::new();
+    let mut names: Vec<String> = NAMES.iter().map(|n| (*n).to_string()).collect();
+    names.extend(greys.iter().chain([PROBE].iter()).map(|g| format!("grey {g}")));
+    let contents: Vec<[f64; 3]> = compared_contents(greys).into_iter().skip(1).collect();
+    let got = read_through(shoot, pair.own, &m_final, &final_curves, &contents)?;
+    for ((name, g), w) in names.iter().zip(&got).zip(want_all.iter().skip(1)) {
+        check.insert(name.clone(), ratios(*g, *w, pair.own.black, pair.reference.black));
+    }
+    let mut warnings = Vec::new();
+    let mut matrix = None;
+    if let Some((_, m, f, x)) = white.best {
+        warnings = white_limits(pair.path, f, x, white.hi);
+        matrix = Some(m);
+    }
+    let report =
+        json!({"reference_white": want, "rounds": white.rounds, "grey_rounds": grey_rounds, "check": check});
+    Ok(Refined { matrix, curves: final_curves, report, warnings })
+}
+
+/// Warnings for the channels whose white stayed dimmer than the reference's (log ratio `f`)
+/// with their row's log scale `x` at its limit `hi`.
+fn white_limits(path: &str, f: [f64; 3], x: [f64; 3], hi: [f64; 3]) -> Vec<String> {
+    let mut out = Vec::new();
+    for ((name, fc), (xc, hc)) in NAMES.iter().zip(f).zip(x.into_iter().zip(hi)) {
+        if fc < -0.02 && (xc - hc).abs() < 1e-9 {
+            out.push(format!(
+                "{path}: cannot show the {name} of white as bright as the reference ({:.0} %); lower the reference's gain",
+                fc.exp() * 100.0
+            ));
+        }
+    }
+    out
+}
+
+/// The params to write (matrix, curves, correction on) and the report, per projector.
+fn results(
+    projectors: &[(NodeId, String)],
+    matched: &colour::Matched,
+    ramps: &Ramps,
+    matrices: &[Mat3],
+    curve_sets: &[[Vec<f64>; 3]],
+    refined: &[Json],
+) -> CmdResult<(Vec<Op>, Vec<Json>)> {
+    let mut ops = Vec::new();
+    let mut report = Vec::new();
+    for (k, ((_, path), c)) in projectors.iter().zip(&matched.projectors).enumerate() {
+        let refined_matrix = matrices.get(k).copied().unwrap_or(c.matrix);
+        let peak = [1.0, 0.5].map(|s| colour::peak(&c.primaries, &colour::blend_matrix(&refined_matrix, s)));
+        let matrix = correct::matrix_text(&refined_matrix);
+        let curves = correct::curves_text(curve_sets.get(k).unwrap_or(&c.curves));
+        let node = NodePath::parse(path)?;
+        for (name, value) in [
+            ("matrix", Value::Text(matrix.clone())),
+            ("curves", Value::Text(curves.clone())),
+            ("correct", Value::Bool(true)),
+        ] {
+            let param = ParamPath::new(node.clone(), Name::new(name)?)?;
+            ops.push(Op::Set { param, value });
+        }
+        let m = ramps.measured.get(k);
+        report.push(json!({
+            "path": path,
+            "black": ramps.blacks.get(k),
+            "white": ramps.whites.get(k),
+            "primaries": c.primaries,
+            "levels": m.map(|m| &m.levels),
+            "ramps": m.map(|m| &m.ramps),
+            "response": c.response,
+            "additivity": c.additivity,
+            "peak": {"strength_1": peak[0], "strength_0_5": peak[1]},
+            "unrefined_matrix": correct::matrix_text(&c.matrix),
+            "refine": refined.get(k),
+            "matrix": matrix,
+            "curves": curves,
+        }));
+    }
+    Ok((ops, report))
+}
+
+/// `projector.match` in stages: the settings; the projectors and the camera; where each lights
+/// the camera ([`measure_lit`]); the ramps ([`measure_ramps`]) and the correction they give; the
+/// closed loop per projector ([`refine_projector`]); the params and the report ([`results`]),
+/// written as one undo step.
+pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
+    let started = Instant::now();
+    let Settings { levels, settle, timeout, samples, refine, greys } = settings(a)?;
+
+    let session = e.session();
+    let net = session.doc().snapshot();
     let projectors = projector_list(e, &net, a.projectors.as_deref())?;
     if projectors.is_empty() {
         return Err(format!("no active {PROJECTOR} to measure").into());
@@ -515,28 +924,8 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     };
 
     // Where each projector lights the camera picture.
-    let black = rig.shot(|_| [0.0; 3])?;
-    let mut whites = Vec::with_capacity(projectors.len());
-    let mut masks = Vec::with_capacity(projectors.len());
-    for (k, (_, path)) in projectors.iter().enumerate() {
-        let white = rig.shot(|j| if j == k { [1.0; 3] } else { [0.0; 3] })?;
-        let mut mask = colour::lit(&white, &black).ok_or_else(|| {
-            format!("{path} lights no camera pixel (is it in the camera's view, on, and the camera's exposure right?)")
-        })?;
-        if let Some([x, y, w, h]) = a.area {
-            let (pw, ph) = (black.width as f64, black.height as f64);
-            for (i, m) in mask.iter_mut().enumerate() {
-                let (px, py) = ((i % black.width) as f64 + 0.5, (i / black.width) as f64 + 0.5);
-                *m &= px >= x * pw && px < (x + w) * pw && py >= y * ph && py < (y + h) * ph;
-            }
-            if colour::count(&mask) < colour::MIN_PIXELS {
-                return Err(format!("{path} lights (almost) nothing inside `area`").into());
-            }
-        }
-        whites.push(white);
-        masks.push(mask);
-    }
-    let spots = colour::spots(&masks, black.width, black.height);
+    let lit = measure_lit(&mut rig, &projectors, a.area)?;
+    let spots = colour::spots(&lit.masks, lit.black.width, lit.black.height);
     let mut warnings = Vec::new();
     if projectors.len() > 1 && !spots.shared {
         warnings.push(
@@ -546,52 +935,11 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         );
     }
 
-    // The ramps.
-    let level_values: Vec<f64> = (1..=levels).map(|i| f64::from(i) / f64::from(levels)).collect();
-    let mut measured = Vec::with_capacity(projectors.len());
-    let mut white_means = Vec::with_capacity(projectors.len());
-    let mut blacks = Vec::with_capacity(projectors.len());
-    for (k, (_, path)) in projectors.iter().enumerate() {
-        let spot = spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[]);
-        let mean = |p: &Picture| {
-            colour::trimmed_mean(p, spot).ok_or_else(|| format!("{path}: an empty measuring spot"))
-        };
-        let b = mean(&black)?;
-        let sub = |v: [f64; 3]| [v[0] - b[0], v[1] - b[1], v[2] - b[2]];
-        let w = whites.get(k).map(mean).transpose()?.ok_or("lost a picture")?;
-        if w.iter().any(|v| *v > 0.97) {
-            warnings.push(format!("{path}: the camera clips its white; lower the camera's exposure"));
-        }
-        let mut ramps: [Vec<[f64; 3]>; 3] = Default::default();
-        for (c, ramp) in ramps.iter_mut().enumerate() {
-            for l in &level_values {
-                let mut s = [0.0; 3];
-                if let Some(v) = s.get_mut(c) {
-                    *v = *l as f32;
-                }
-                let pic = rig.shot(|j| if j == k { s } else { [0.0; 3] })?;
-                ramp.push(sub(mean(&pic)?));
-            }
-        }
-        blacks.push(b);
-        white_means.push(Some(sub(w)));
-        measured.push(Measured { levels: level_values.clone(), ramps });
-    }
-    let matched = colour::match_projectors(&measured, &white_means, samples, a.target).map_err(|err| {
-        // Name the projector instead of its index.
-        let mut err = err;
-        for (k, (_, path)) in projectors.iter().enumerate() {
-            err = err.replace(&format!("projector {k}:"), &format!("{path}:"));
-        }
-        err
-    })?;
-    warnings.extend(matched.warnings.iter().map(|w| {
-        let mut w = w.clone();
-        for (k, (_, path)) in projectors.iter().enumerate() {
-            w = w.replace(&format!("projector {k}:"), &format!("{path}:"));
-        }
-        w
-    }));
+    // The ramps, and the correction they give.
+    let ramps = measure_ramps(&mut rig, &projectors, &lit, &spots, levels, &mut warnings)?;
+    let matched = colour::match_projectors(&ramps.measured, &ramps.whites, samples, a.target)
+        .map_err(|note| named(&note, &projectors))?;
+    warnings.extend(matched.warnings.iter().map(|w| named(w, &projectors)));
 
     // Closed loop: each other projector's matrix rows scaled until the camera reads its white,
     // channel by channel, as it reads the reference's. White and not the primaries one by one:
@@ -602,187 +950,42 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     let mut refined: Vec<Json> = vec![Json::Null; projectors.len()];
     let r = matched.reference;
     if refine > 0 && projectors.len() > 1 {
-        let spot = |k: usize| spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[]);
-        let black_of = |k: usize| blacks.get(k).copied().unwrap_or([0.0; 3]);
+        let spot = |k: usize| Spot {
+            k,
+            mask: spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[]),
+            black: ramps.blacks.get(k).copied().unwrap_or([0.0; 3]),
+        };
         let curves_of = |k: usize| matched.projectors.get(k).map(|c| c.curves.clone()).unwrap_or_default();
         let ref_matrix = matrices.get(r).copied().ok_or("no reference")?;
-        // White, the primaries, the greys, the probe: what the others are compared with.
-        let grey = |g: f64| [g; 3];
-        let mut contents = vec![WHITE];
-        contents.extend(PRIMARIES);
-        contents.extend(greys.iter().map(|g| grey(*g)));
-        contents.push(grey(PROBE));
         let want_all =
-            read_through(&mut rig, r, spot(r), black_of(r), &ref_matrix, &curves_of(r), &contents)?;
-        let want = want_all.first().copied().ok_or("no reference reading")?;
+            read_through(&mut rig, spot(r), &ref_matrix, &curves_of(r), &compared_contents(&greys))?;
+        if want_all.is_empty() {
+            return Err("no reference reading".into());
+        }
         for (k, (_, path)) in projectors.iter().enumerate() {
             if k == r {
                 continue;
             }
             let base = matrices.get(k).copied().ok_or("lost a matrix")?;
-            let curves = curves_of(k);
-            // ln(scale) per row: down to a twentieth, up to a row sum of 1.
-            let lo = 0.05_f64.ln();
-            let hi = base.map(|row| {
-                let sum: f64 = row.iter().sum();
-                if sum > 1e-9 { (1.0 / sum).ln().max(lo) } else { 0.0 }
-            });
-            let mut x = [0.0_f64; 3];
-            let mut solver = colour::Broyden::new();
-            let mut rounds = Vec::new();
-            let mut best: Option<(f64, Mat3, [f64; 3], [f64; 3])> = None;
-            for round in 0..=refine {
-                let mut m = base;
-                for (row, xc) in m.iter_mut().zip(x) {
-                    *row = row.map(|v| v * xc.exp());
-                }
-                let got = read_through(&mut rig, k, spot(k), black_of(k), &m, &curves, &[WHITE])?;
-                let got = got.first().copied().ok_or("no reading")?;
-                let (f, codes) = compare(got, want, black_of(k), black_of(r)).ok_or_else(|| {
-                    format!("{path}: the camera sees no white in a channel through the correction (or of the reference)")
-                })?;
-                let err = f.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
-                rounds.push(json!({
-                    "round": round,
-                    "scale": x.map(f64::exp),
-                    "ratio": f.map(f64::exp),
-                    "residual_codes": codes,
-                    "white": got,
-                }));
-                if best.as_ref().is_none_or(|(e, _, _, _)| err < *e) {
-                    best = Some((err, m, f, x));
-                }
-                if round == refine || err < REFINED {
-                    break;
-                }
-                x = solver.step(x, f, lo, hi);
-            }
-            // The greys: with white matched by the matrix, each channel's curve is bent at every
-            // grey level until the camera reads that grey as of the reference (one solver per
-            // level, the channels interact through the camera; between the levels the bend is
-            // interpolated).
-            let m_final = best.as_ref().map_or(base, |b| b.1);
-            let mut final_curves = curves.clone();
-            let mut grey_rounds = Vec::new();
-            let want_greys: Vec<[f64; 3]> =
-                want_all.iter().skip(1 + PRIMARIES.len()).take(greys.len()).copied().collect();
-            if !greys.is_empty() && want_greys.len() == greys.len() {
-                let rows = m_final.map(|row| row.iter().sum::<f64>().clamp(0.0, 1.0));
-                let knots: Vec<[f64; 3]> =
-                    greys.iter().map(|g| rows.map(|s| colour::encode(s * g))).collect();
-                let ends = rows.map(colour::encode);
-                let contents: Vec<[f64; 3]> = greys.iter().map(|g| grey(*g)).collect();
-                let mut y = vec![[0.0_f64; 3]; greys.len()];
-                // Starting from the slopes white taught: the same camera, the same channels.
-                let mut solvers: Vec<colour::Broyden> = greys.iter().map(|_| solver.restart()).collect();
-                let mut best_curves: Option<(f64, [Vec<f64>; 3])> = None;
-                let lo = 0.2_f64.ln();
-                for round in 0..=refine {
-                    let now = bend(&curves, &knots, ends, &y);
-                    let got = read_through(&mut rig, k, spot(k), black_of(k), &m_final, &now, &contents)?;
-                    let mut err: f64 = 0.0;
-                    let mut fs = Vec::with_capacity(greys.len());
-                    let mut levels = Vec::with_capacity(greys.len());
-                    for ((g, w), level) in got.iter().zip(&want_greys).zip(&greys) {
-                        // A grey too dark to read in a channel is left as it is.
-                        let f = compare(*g, *w, black_of(k), black_of(r)).map_or([0.0; 3], |(f, _)| f);
-                        err = f.iter().fold(err, |a, v| a.max(v.abs()));
-                        fs.push(f);
-                        let mut level_json = ratios(*g, *w, black_of(k), black_of(r));
-                        if let Some(o) = level_json.as_object_mut() {
-                            o.insert("grey".into(), json!(level));
-                        }
-                        levels.push(level_json);
-                    }
-                    grey_rounds.push(json!({"round": round, "levels": levels}));
-                    if best_curves.as_ref().is_none_or(|(e, _)| err < *e) {
-                        best_curves = Some((err, now));
-                    }
-                    if round == refine || err < REFINED {
-                        break;
-                    }
-                    for ((yj, f), (solver, kj)) in y.iter_mut().zip(fs).zip(solvers.iter_mut().zip(&knots)) {
-                        // At most full signal where the bend peaks.
-                        let mut hi = [0.0; 3];
-                        for ((h, curve), e) in hi.iter_mut().zip(&curves).zip(kj) {
-                            *h = (1.0 / colour::lookup(curve, *e).max(1e-3)).ln().max(lo);
-                        }
-                        *yj = solver.step(*yj, f, lo, hi);
-                    }
-                }
-                if let Some((_, c)) = best_curves {
-                    final_curves = c;
-                }
-            }
-
-            // Reported, not adjusted: the primaries, the greys and a grey between them, through the
-            // result.
-            let mut check = serde_json::Map::new();
-            let mut names: Vec<String> = NAMES.iter().map(|n| (*n).to_string()).collect();
-            names.extend(greys.iter().chain([PROBE].iter()).map(|g| format!("grey {g}")));
-            let contents: Vec<[f64; 3]> = contents.iter().skip(1).copied().collect();
-            let got = read_through(&mut rig, k, spot(k), black_of(k), &m_final, &final_curves, &contents)?;
-            for ((name, g), w) in names.iter().zip(&got).zip(want_all.iter().skip(1)) {
-                check.insert(name.clone(), ratios(*g, *w, black_of(k), black_of(r)));
-            }
+            let pair = Pair { own: spot(k), reference: spot(r), path, rounds: refine };
+            let done = refine_projector(&mut rig, pair, base, &curves_of(k), &want_all, &greys)?;
             if let Some(slot) = curve_sets.get_mut(k) {
-                *slot = final_curves;
+                *slot = done.curves;
             }
-            if let Some((_, m, f, bx)) = best {
-                for ((name, fc), (xc, hc)) in NAMES.iter().zip(f).zip(bx.into_iter().zip(hi)) {
-                    if fc < -0.02 && (xc - hc).abs() < 1e-9 {
-                        warnings.push(format!(
-                            "{path}: cannot show the {name} of white as bright as the reference ({:.0} %); lower the reference's gain",
-                            fc.exp() * 100.0
-                        ));
-                    }
-                }
-                if let Some(slot) = matrices.get_mut(k) {
-                    *slot = m;
-                }
+            warnings.extend(done.warnings);
+            if let (Some(m), Some(slot)) = (done.matrix, matrices.get_mut(k)) {
+                *slot = m;
             }
             if let Some(slot) = refined.get_mut(k) {
-                *slot = json!({"reference_white": want, "rounds": rounds, "grey_rounds": grey_rounds, "check": check});
+                *slot = done.report;
             }
         }
     }
     drop(claim);
 
-    let mut ops = Vec::new();
-    let mut report = Vec::new();
-    for (k, ((_, path), c)) in projectors.iter().zip(&matched.projectors).enumerate() {
-        let refined_matrix = matrices.get(k).copied().unwrap_or(c.matrix);
-        let peak = [1.0, 0.5].map(|s| colour::peak(&c.primaries, &colour::blend_matrix(&refined_matrix, s)));
-        let matrix = correct::matrix_text(&refined_matrix);
-        let curves = correct::curves_text(curve_sets.get(k).unwrap_or(&c.curves));
-        let node = NodePath::parse(path)?;
-        for (name, value) in [
-            ("matrix", Value::Text(matrix.clone())),
-            ("curves", Value::Text(curves.clone())),
-            ("correct", Value::Bool(true)),
-        ] {
-            let param = ParamPath::new(node.clone(), Name::new(name)?)?;
-            ops.push(Op::Set { param, value });
-        }
-        let m = measured.get(k);
-        report.push(json!({
-            "path": path,
-            "black": blacks.get(k),
-            "white": white_means.get(k),
-            "primaries": c.primaries,
-            "levels": m.map(|m| &m.levels),
-            "ramps": m.map(|m| &m.ramps),
-            "response": c.response,
-            "additivity": c.additivity,
-            "peak": {"strength_1": peak[0], "strength_0_5": peak[1]},
-            "unrefined_matrix": correct::matrix_text(&c.matrix),
-            "refine": refined.get(k),
-            "matrix": matrix,
-            "curves": curves,
-        }));
-    }
+    let (ops, report) = results(&projectors, &matched, &ramps, &matrices, &curve_sets, &refined)?;
     let apply = a.apply.unwrap_or(true);
-    let history = if apply { Some(outcome(&edit(e, &ops, "projector.match")?)) } else { None };
+    let history = if apply { Some(outcome(&edit_in(&session, &ops, "projector.match")?)) } else { None };
     let reference = projectors.get(matched.reference).map(|(_, p)| p.clone());
     Ok(json!({
         "message": format!(
@@ -797,11 +1000,229 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         "target": a.target,
         "shared_spot": spots.shared,
         "spot_pixels": spots.masks.iter().map(|m| colour::count(m)).collect::<Vec<_>>(),
-        "camera_picture": [black.width, black.height],
+        "camera_picture": [lit.black.width, lit.black.height],
         "projectors": report,
         "applied": apply,
         "history": history,
         "warnings": warnings,
         "seconds": started.elapsed().as_secs_f64(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A camera whose 16 x 16 picture every projector lights evenly: per channel `gain` times
+    /// the linear light of its signal, over the room's `black`.
+    struct Even {
+        gains: Vec<[f64; 3]>,
+        black: f64,
+    }
+
+    impl Shoot for Even {
+        fn shoot(&mut self, signal: &dyn Fn(usize) -> [f32; 3]) -> CmdResult<Picture> {
+            let mut v = [self.black; 3];
+            for (k, g) in self.gains.iter().enumerate() {
+                let s = signal(k);
+                for c in 0..3 {
+                    v[c] += g[c] * colour::decode(f64::from(s[c]));
+                }
+            }
+            Ok(Picture { width: 16, height: 16, rgb: vec![v.map(|x| x as f32); 256] })
+        }
+    }
+
+    fn straight() -> [Vec<f64>; 3] {
+        let c: Vec<f64> = (0..17).map(|i| f64::from(i) / 16.0).collect();
+        [c.clone(), c.clone(), c]
+    }
+
+    fn diag(v: f64) -> Mat3 {
+        [[v, 0.0, 0.0], [0.0, v, 0.0], [0.0, 0.0, v]]
+    }
+
+    fn close(a: f64, b: f64, tol: f64) -> bool {
+        (a - b).abs() <= tol
+    }
+
+    fn two() -> Vec<(NodeId, String)> {
+        vec![(NodeId(1), "/a".into()), (NodeId(2), "/b".into())]
+    }
+
+    fn args(v: Json) -> MatchArgs {
+        serde_json::from_value(v).unwrap()
+    }
+
+    #[test]
+    fn settings_fill_defaults_and_check_ranges() {
+        let s = settings(&args(json!({"camera": "/cam"}))).unwrap();
+        assert_eq!((s.levels, s.samples, s.refine), (DEFAULT_LEVELS, DEFAULT_SAMPLES, DEFAULT_REFINE));
+        assert_eq!(s.greys, [0.25, 0.5, 0.75]);
+        assert!(settings(&args(json!({"camera": "/cam", "grey_levels": 0}))).unwrap().greys.is_empty());
+        for (bad, says) in [
+            (json!({"levels": 1}), "`levels`"),
+            (json!({"grey_levels": 9}), "`grey_levels`"),
+            (json!({"refine": 11}), "`refine`"),
+            (json!({"settle": 11.0}), "`settle`"),
+            (json!({"samples": 1}), "`samples`"),
+            (json!({"area": [0.0, 0.0, 0.0, 1.0]}), "`area`"),
+            (json!({"area": [0.0, 0.0, 1.5, 1.0]}), "`area`"),
+        ] {
+            let mut v = bad.clone();
+            v["camera"] = json!("/cam");
+            let err = settings(&args(v)).unwrap_err();
+            assert!(err.0.contains(says), "{bad}: {}", err.0);
+        }
+    }
+
+    #[test]
+    fn bend_leaves_white_and_unbent_curves_alone() {
+        let curves = straight();
+        let knots = [[0.5; 3]];
+        assert_eq!(bend(&curves, &knots, [1.0; 3], &[[0.0; 3]]), curves);
+        // Raised at the knot, unchanged from white's sample on and at black.
+        let bent = bend(&curves, &knots, [0.8; 3], &[[0.2, 0.0, -0.2]]);
+        assert!(bent[0][8] > curves[0][8] && bent[2][8] < curves[2][8], "{bent:?}");
+        assert_eq!(bent[1], curves[1]);
+        for c in &bent {
+            assert_eq!(c[0], 0.0);
+            assert_eq!(&c[12..], &curves[0][12..]);
+        }
+        // A knot at or beyond white's sample is ignored.
+        assert_eq!(bend(&curves, &[[0.9; 3]], [0.8; 3], &[[0.5; 3]]), curves);
+    }
+
+    #[test]
+    fn ratios_and_compare_read_channel_by_channel() {
+        let r = ratios([0.4, 0.2, 0.0], [0.2, 0.2, 0.1], [0.0; 3], [0.0; 3]);
+        assert_eq!(r["ratio"], json!([2.0, 1.0, null]));
+        let codes = r["residual_codes"].as_array().unwrap();
+        assert!(codes[0].as_f64().unwrap() > 0.0 && codes[1].as_f64().unwrap() == 0.0);
+        let (f, codes) = compare([0.4, 0.2, 0.1], [0.2, 0.2, 0.2], [0.01; 3], [0.01; 3]).unwrap();
+        assert!(close(f[0], 2f64.ln(), 1e-12) && f[1] == 0.0 && close(f[2], 0.5f64.ln(), 1e-12));
+        assert!(codes[0] > 0.0 && codes[1] == 0.0 && codes[2] < 0.0);
+        assert_eq!(compare([0.4, 0.0, 0.1], [0.2; 3], [0.0; 3], [0.0; 3]), None);
+    }
+
+    #[test]
+    fn keep_area_keeps_pixel_centres_inside() {
+        let mut mask = vec![true; 8];
+        keep_area(&mut mask, 4, 2, [0.5, 0.0, 0.5, 0.5]);
+        assert_eq!(mask, [false, false, true, true, false, false, false, false]);
+        let mut empty: Vec<bool> = Vec::new();
+        keep_area(&mut empty, 0, 0, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn levels_and_contents() {
+        assert_eq!(level_values(4), [0.25, 0.5, 0.75, 1.0]);
+        let c = compared_contents(&[0.5]);
+        assert_eq!(c, [WHITE, PRIMARIES[0], PRIMARIES[1], PRIMARIES[2], [0.5; 3], [PROBE; 3]]);
+    }
+
+    #[test]
+    fn notes_name_projectors_by_path() {
+        let err = colour::match_projectors(&[], &[], 17, Target::Reference).unwrap_err();
+        assert_eq!(named(&err, &two()), "no projectors to match");
+        let note = colour::Note { projector: Some(1), text: "dim".into() };
+        assert_eq!(named(&note, &two()), "/b: dim");
+        let far = colour::Note { projector: Some(5), text: "dim".into() };
+        assert_eq!(named(&far, &two()), "projector 5: dim");
+    }
+
+    #[test]
+    fn white_limits_warn_only_at_the_limit() {
+        let w = white_limits("/b", [-0.1, -0.1, 0.0], [0.3, 0.2, 0.3], [0.3, 0.3, 0.3]);
+        assert_eq!(w.len(), 1);
+        assert!(w[0].starts_with("/b: cannot show the red of white") && w[0].contains("(90 %)"), "{w:?}");
+    }
+
+    #[test]
+    fn measuring_reads_the_ramps_in_each_spot() {
+        let mut cam = Even { gains: vec![[0.5, 0.4, 0.3], [1.0, 0.6, 0.6]], black: 0.01 };
+        let projectors = two();
+        let lit = measure_lit(&mut cam, &projectors, None).unwrap();
+        assert_eq!(lit.whites.len(), 2);
+        let spots = colour::spots(&lit.masks, lit.black.width, lit.black.height);
+        assert!(spots.shared);
+        let mut warnings = Vec::new();
+        let ramps = measure_ramps(&mut cam, &projectors, &lit, &spots, 4, &mut warnings).unwrap();
+        // Projector 1's white reads 1.01 in red: clipped.
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("/b: the camera clips"), "{warnings:?}");
+        assert!(close(ramps.blacks[0][0], 0.01, 1e-6));
+        let red = &ramps.measured[0].ramps[0];
+        for (l, v) in level_values(4).iter().zip(red) {
+            assert!(close(v[0], 0.5 * colour::decode(*l), 1e-6) && close(v[1], 0.0, 1e-6), "{red:?}");
+        }
+        assert!(close(ramps.whites[1].unwrap()[1], 0.6, 1e-6));
+
+        // Through the colour match to the params and the report.
+        let matched =
+            colour::match_projectors(&ramps.measured, &ramps.whites, 17, Target::Reference).unwrap();
+        let matrices: Vec<Mat3> = matched.projectors.iter().map(|c| c.matrix).collect();
+        let curves: Vec<[Vec<f64>; 3]> = matched.projectors.iter().map(|c| c.curves.clone()).collect();
+        let (ops, report) =
+            results(&projectors, &matched, &ramps, &matrices, &curves, &[Json::Null, Json::Null]).unwrap();
+        assert_eq!(ops.len(), 6);
+        assert_eq!(report[1]["path"], "/b");
+        assert_eq!(report[0]["levels"], json!([0.25, 0.5, 0.75, 1.0]));
+        // The dimmer projector is the reference; the brighter one is turned down to it.
+        assert_eq!(matched.reference, 0);
+        assert!(close(matrices[1][0][0], 0.5, 1e-3), "{:?}", matrices[1]);
+    }
+
+    #[test]
+    fn measuring_fails_on_no_light_or_a_too_small_area() {
+        let mut cam = Even { gains: vec![[0.5; 3]], black: 0.0 };
+        let projectors = vec![(NodeId(1), "/a".to_string())];
+        assert!(measure_lit(&mut cam, &projectors, Some([0.0, 0.0, 0.5, 0.5])).is_ok());
+        let err = measure_lit(&mut cam, &projectors, Some([0.0, 0.0, 0.1, 0.1])).err().unwrap();
+        assert!(err.0.contains("inside `area`"), "{}", err.0);
+        let mut dark = Even { gains: vec![[0.0; 3]], black: 0.1 };
+        assert!(
+            measure_lit(&mut dark, &projectors, None).err().unwrap().0.contains("lights no camera pixel")
+        );
+    }
+
+    /// Projector 1 refined against projector 0 by an [`Even`] camera.
+    fn refine_against(gains: Vec<[f64; 3]>, base: Mat3) -> Refined {
+        let mut cam = Even { gains, black: 0.0 };
+        let mask = vec![true; 256];
+        let spot = |k| Spot { k, mask: &mask, black: [0.0; 3] };
+        let greys = [0.25, 0.5, 0.75];
+        let want_all =
+            read_through(&mut cam, spot(0), &diag(1.0), &straight(), &compared_contents(&greys)).unwrap();
+        let pair = Pair { own: spot(1), reference: spot(0), path: "/b", rounds: 5 };
+        refine_projector(&mut cam, pair, base, &straight(), &want_all, &greys).unwrap()
+    }
+
+    #[test]
+    fn refining_scales_white_to_the_reference() {
+        // The reference reads 0.8 of white; the other, at half drive, 0.5 of its 1.
+        let done = refine_against(vec![[0.8; 3], [1.0; 3]], diag(0.5));
+        let m = done.matrix.unwrap();
+        for c in 0..3 {
+            assert!(close(m[c][c], 0.8, 0.8 * REFINED), "{m:?}");
+        }
+        assert!(done.warnings.is_empty(), "{:?}", done.warnings);
+        let rounds = done.report["rounds"].as_array().unwrap();
+        assert_eq!(rounds.len(), 2, "{rounds:?}");
+        // A linear camera: the greys match with the matrix, the curves stay.
+        assert_eq!(done.report["grey_rounds"].as_array().unwrap().len(), 1);
+        assert_eq!(done.curves, straight());
+        let check = done.report["check"].as_object().unwrap();
+        assert_eq!(check.len(), 3 + 3 + 1);
+        let ratio = check["grey 0.375"]["ratio"][1].as_f64().unwrap();
+        assert!(close(ratio, 1.0, 0.01), "{ratio}");
+    }
+
+    #[test]
+    fn refining_warns_when_the_projector_cannot_reach_the_reference() {
+        let done = refine_against(vec![[0.8; 3], [0.5; 3]], diag(1.0));
+        assert_eq!(done.matrix, Some(diag(1.0)));
+        assert_eq!(done.warnings.len(), 3, "{:?}", done.warnings);
+        assert!(done.warnings[1].contains("green of white") && done.warnings[1].contains("(62 %)"));
+    }
 }

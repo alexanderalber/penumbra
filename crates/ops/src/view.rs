@@ -15,6 +15,7 @@ use penumbra_gpu::render::View;
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDef, NodeDesc, NodeTypes, Operator,
 };
+use penumbra_mesh::Bounds;
 
 use crate::geo::{UP_AXIS, perspective};
 
@@ -449,6 +450,48 @@ impl Orbit {
     }
 }
 
+/// Where a camera goes to see all of a bounding box: [`frame_bounds`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Framing {
+    pub eye: [f64; 3],
+    /// The centre of the box.
+    pub target: [f64; 3],
+    /// How high an orthographic camera sees; `None` for a perspective one.
+    pub height: Option<f64>,
+}
+
+/// A camera at `position` looking at `target` moved to see all of `bounds` in a picture of
+/// `aspect` (width over height): it looks at the box's centre from the direction it looked from
+/// (from the front, right and above if `position` and `target` coincide). A perspective camera
+/// of vertical field of view `fov_degrees` moves so the bounding sphere fills the narrower side;
+/// an orthographic one (`ortho`) sees the sphere across the narrower side and stays as far as it
+/// was, at least clear of the sphere.
+pub fn frame_bounds(
+    bounds: &Bounds,
+    position: [f64; 3],
+    target: [f64; 3],
+    fov_degrees: f64,
+    aspect: f64,
+    ortho: bool,
+) -> Framing {
+    let fov = fov_degrees.to_radians();
+    let center = bounds.center().map(f64::from);
+    let s = bounds.size().map(f64::from);
+    let radius = (0.5 * (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt()).max(1e-3);
+    let mut dir = [position[0] - target[0], position[1] - target[1], position[2] - target[2]];
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
+    dir = if len > 1e-9 { dir.map(|c| c / len) } else { crate::geo::FRONT_RIGHT_ABOVE };
+    let (distance, height) = if ortho {
+        (len.max(radius * 2.0), 2.0 * radius * 1.02 / aspect.min(1.0))
+    } else {
+        let half = (0.5 * fov).tan().min((0.5 * fov).tan() * aspect).atan();
+        (radius / half.sin().max(1e-3) * 1.02, 0.0)
+    };
+    let eye = [0, 1, 2]
+        .map(|k| center.get(k).copied().unwrap_or(0.0) + dir.get(k).copied().unwrap_or(0.0) * distance);
+    Framing { eye, target: center, height: ortho.then_some(height) }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,5 +580,26 @@ mod tests {
         assert_eq!(back.ortho, Some(1.0));
         assert!((back.distance() - 4.0).abs() < 1e-9);
         assert!(!Orbit { ortho: Some(f64::NAN), ..back }.is_valid());
+    }
+
+    #[test]
+    fn framing_sees_the_whole_box_from_where_the_camera_looked() {
+        let b = Bounds { min: [-1.0, -1.0, -1.0], max: [1.0, 1.0, 3.0] };
+        // From straight in front, perspective, a square picture.
+        let f = frame_bounds(&b, [0.0, -5.0, 1.0], [0.0, 0.0, 1.0], 60.0, 1.0, false);
+        assert_eq!(f.target, [0.0, 0.0, 1.0]);
+        assert_eq!(f.height, None);
+        let radius = 0.5 * 24f64.sqrt();
+        let distance = radius / 30f64.to_radians().sin() * 1.02;
+        assert!(close(f.eye, [0.0, -distance, 1.0]), "{f:?}");
+        // A wide picture: the height is the narrower side, so as far.
+        assert_eq!(frame_bounds(&b, [0.0, -5.0, 1.0], [0.0, 0.0, 1.0], 60.0, 2.0, false), f);
+        // Orthographic: as far as it was, seeing the sphere across the narrower side.
+        let o = frame_bounds(&b, [0.0, -50.0, 1.0], [0.0, 0.0, 1.0], 60.0, 0.5, true);
+        assert!(close(o.eye, [0.0, -50.0, 1.0]), "{o:?}");
+        assert!((o.height.unwrap() - 2.0 * radius * 1.02 / 0.5).abs() < 1e-9);
+        // No direction: from the front, right and above.
+        let d = frame_bounds(&b, [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], 60.0, 1.0, false);
+        assert!(d.eye[1] < 0.0 && d.eye[0] > 0.0 && d.eye[2] > 1.0, "{d:?}");
     }
 }

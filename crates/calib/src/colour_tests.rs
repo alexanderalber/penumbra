@@ -146,7 +146,7 @@ fn unreachable_primaries_are_clamped_and_keep_grey() {
     let set = wide_set();
     let measured: Vec<Measured> = set.iter().map(|s| s.measure(8)).collect();
     let m = match_projectors(&measured, &[], 17, Target::Srgb).unwrap();
-    assert!(m.warnings.iter().any(|w| w.contains("clamped")), "{:?}", m.warnings);
+    assert!(m.warnings.iter().any(|w| w.text.contains("clamped")), "{:?}", m.warnings);
     let q = set[m.reference].p.map(|r| r.map(|v| v * m.alpha));
     let white = luminance(apply(&q, [1.0; 3]));
     for (k, s) in set.iter().enumerate() {
@@ -182,10 +182,10 @@ fn bad_measurements_are_errors() {
     assert!(match_projectors(&[nan], &[], 17, Target::Srgb).is_err());
     let mut dark = good.clone();
     dark.ramps[2] = vec![[0.0; 3]; 4];
-    assert!(match_projectors(&[dark], &[], 17, Target::Srgb).unwrap_err().contains("not brighter"));
+    assert!(match_projectors(&[dark], &[], 17, Target::Srgb).unwrap_err().text.contains("not brighter"));
     let mut alike = good.clone();
     alike.ramps[1] = alike.ramps[0].clone();
-    assert!(match_projectors(&[alike], &[], 17, Target::Srgb).unwrap_err().contains("alike"));
+    assert!(match_projectors(&[alike], &[], 17, Target::Srgb).unwrap_err().text.contains("alike"));
     assert!(match_projectors(std::slice::from_ref(&good), &[], 1, Target::Srgb).is_err());
     assert!(match_projectors(&[], &[], 17, Target::Srgb).is_err());
     let mut levels = good;
@@ -364,4 +364,18 @@ fn reshape_scales_around_knots_and_stays_monotone() {
     // Too much is clipped to 1, NaN changes nothing.
     assert!(reshape(&straight, &[(0.9, 3.0)]).iter().all(|v| *v <= 1.0));
     assert_eq!(reshape(&straight, &[(0.5, f64::NAN)]), straight);
+}
+
+#[test]
+fn notes_name_their_projector() {
+    let alike = Synth { p: [[0.3; 3]; 3], gamma: [2.2; 3] }.measure(6);
+    let good = Synth { p: [[0.3, 0.1, 0.0], [0.1, 0.3, 0.0], [0.0, 0.0, 0.3]], gamma: [2.2; 3] }.measure(6);
+    let err = match_projectors(&[good, alike], &[], 17, Target::Srgb).unwrap_err();
+    assert_eq!(err.projector, Some(1));
+    assert!(err.to_string().starts_with("projector 1: its red"), "{err}");
+    assert!(err.named(|k| Some(format!("/p{k}"))).starts_with("/p1: its red"));
+    // Without a name, the index.
+    assert_eq!(err.named(|_| None), err.to_string());
+    let general = Note::from("no projectors to match");
+    assert_eq!(general.named(|k| Some(format!("/p{k}"))), "no projectors to match");
 }

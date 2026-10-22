@@ -17,7 +17,7 @@ use penumbra_graph::{
     Data, EditOutcome, JobStatus, Network, NodeDesc, NodeStatus, Op, Port, PortRole, Recorded, ThumbnailMode,
 };
 use penumbra_ops::res::Report;
-use penumbra_project::Actor;
+use penumbra_project::{Actor, Session};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
@@ -526,7 +526,13 @@ pub(crate) fn desc_of<'e>(e: &'e Engine, kind: &str) -> Result<&'e NodeDesc> {
 // node: editing
 
 pub(crate) fn edit(e: &Engine, ops: &[Op], label: &str) -> Result<EditOutcome> {
-    Ok(e.session().edit(Actor::Claude, ops, None, label, Instant::now())?)
+    edit_in(&e.session(), ops, label)
+}
+
+/// [`edit`] in `session`: a command that read the network from it edits the same project, even
+/// if another one opened meanwhile.
+pub(crate) fn edit_in(session: &Session, ops: &[Op], label: &str) -> Result<EditOutcome> {
+    Ok(session.edit(Actor::Claude, ops, None, label, Instant::now())?)
 }
 
 pub(crate) fn outcome(out: &EditOutcome) -> Json {
@@ -908,9 +914,19 @@ const SNAPSHOT_WAIT: Duration = Duration::from_secs(10);
 /// `output` with the node's status. Waits while a job is in flight, so the result is the
 /// current one rather than the previous file's.
 pub(crate) fn cook_now(e: &Engine, id: NodeId, output: u32) -> Result<(Option<Data>, Option<NodeStatus>)> {
+    cook_now_in(e, &e.session(), id, output)
+}
+
+/// [`cook_now`] with the network of `session`.
+pub(crate) fn cook_now_in(
+    e: &Engine,
+    session: &Arc<Session>,
+    id: NodeId,
+    output: u32,
+) -> Result<(Option<Data>, Option<NodeStatus>)> {
     let deadline = Instant::now() + SNAPSHOT_WAIT;
     loop {
-        let session = e.session().clone();
+        let session = session.clone();
         let (data, status) = e.on_cook(move |st| {
             let net = session.doc().snapshot();
             let port = Port { node: id, output };
@@ -1056,7 +1072,8 @@ fn render_frame(e: &Engine, p: &Json) -> Result<Json> {
         path: NodePath,
     }
     let a: A = args(p)?;
-    let net = e.session().doc().snapshot();
+    let session = e.session();
+    let net = session.doc().snapshot();
     let id = require(&net, &a.path)?;
     let desc = kind_at(e, &net, &a.path)?;
     let node = net.node(id).ok_or_else(|| format!("{} does not exist", a.path))?;
@@ -1065,7 +1082,7 @@ fn render_frame(e: &Engine, p: &Json) -> Result<Json> {
     }
     let source =
         node.inputs.first().copied().flatten().ok_or_else(|| format!("{} has no geo input", a.path))?;
-    let (data, _) = cook_now(e, source.node, source.output)?;
+    let (data, _) = cook_now_in(e, &session, source.node, source.output)?;
     let geo = data.as_ref().and_then(|d| d.get::<Geo>()).ok_or("its geo input has no geometry yet")?;
     let b = geo.bounds().ok_or("its geometry is empty")?;
     let size = |name: &str| node.param(desc, name).and_then(Value::as_f64).unwrap_or(1.0).max(1.0);
@@ -1100,41 +1117,26 @@ fn render_frame(e: &Engine, p: &Json) -> Result<Json> {
         Some(&[x, y, z]) => [x, y, z],
         _ => [0.0; 3],
     };
-    let (position, target) = (vec3("position"), vec3("target"));
-    let fov = node.param(desc, "fov").and_then(Value::as_f64).unwrap_or(40.0).to_radians();
-    let center = b.center().map(f64::from);
-    let s = b.size().map(f64::from);
-    let radius = (0.5 * (s[0] * s[0] + s[1] * s[1] + s[2] * s[2]).sqrt()).max(1e-3);
-    let mut dir = [position[0] - target[0], position[1] - target[1], position[2] - target[2]];
-    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
-    dir = if len > 1e-9 { dir.map(|c| c / len) } else { penumbra_ops::geo::FRONT_RIGHT_ABOVE };
-    // Orthographic: the height sees the bounding sphere across the narrower side; the camera
-    // stays as far as it was, at least clear of the sphere.
-    let (distance, height) = if ortho {
-        (len.max(radius * 2.0), 2.0 * radius * 1.02 / aspect.min(1.0))
-    } else {
-        let half = (0.5 * fov).tan().min((0.5 * fov).tan() * aspect).atan();
-        (radius / half.sin().max(1e-3) * 1.02, 0.0)
-    };
-    let eye = [0, 1, 2]
-        .map(|k| center.get(k).copied().unwrap_or(0.0) + dir.get(k).copied().unwrap_or(0.0) * distance);
+    let fov = node.param(desc, "fov").and_then(Value::as_f64).unwrap_or(40.0);
+    let framing = penumbra_ops::view::frame_bounds(&b, vec3("position"), vec3("target"), fov, aspect, ortho);
+    let (eye, center) = (framing.eye, framing.target);
     let mut ops = vec![
         Op::Set { param: ParamPath::new(path.clone(), Name::new("position")?)?, value: Value::Vec3(eye) },
         Op::Set { param: ParamPath::new(path.clone(), Name::new("target")?)?, value: Value::Vec3(center) },
     ];
-    if ortho {
+    if let Some(height) = framing.height {
         let height = (height * 1e6).round() / 1e6;
         ops.push(Op::Set {
             param: ParamPath::new(path.clone(), Name::new("size")?)?,
             value: Value::Float(height),
         });
     }
-    let mut out = outcome(&edit(e, &ops, "frame the geometry")?);
+    let mut out = outcome(&edit_in(&session, &ops, "frame the geometry")?);
     if let Some(o) = out.as_object_mut() {
         o.insert("camera".into(), json!(path.to_string()));
         o.insert("position".into(), json!(eye));
         o.insert("target".into(), json!(center));
-        if ortho {
+        if let Some(height) = framing.height {
             o.insert("size".into(), json!(height));
         }
     }

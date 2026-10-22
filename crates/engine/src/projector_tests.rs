@@ -119,6 +119,20 @@ impl Drop for Camera {
 }
 
 #[test]
+fn one_measurement_at_a_time_per_engine() {
+    use crate::projector::Claim;
+    let f = Fixture::new("one-measurement");
+    let other = Fixture::new("other-measurement");
+    let first = Claim::new(&f.engine, Vec::new()).unwrap();
+    let err = Claim::new(&f.engine, Vec::new()).err().unwrap();
+    assert!(err.0.contains("already running"), "{}", err.0);
+    // Another engine measures on its own.
+    assert!(Claim::new(&other.engine, Vec::new()).is_ok());
+    drop(first);
+    assert!(Claim::new(&f.engine, Vec::new()).is_ok());
+}
+
+#[test]
 fn projector_match_with_a_simulated_camera() {
     let f = Fixture::new("projector-match");
     let key = Key::new("sim", "");

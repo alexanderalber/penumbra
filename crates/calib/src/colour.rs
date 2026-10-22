@@ -133,7 +133,51 @@ pub struct Matched {
     /// The target's brightness against the reference's full output.
     pub alpha: f64,
     pub projectors: Vec<Correction>,
-    pub warnings: Vec<String>,
+    pub warnings: Vec<Note>,
+}
+
+/// An error or a warning of [`match_projectors`]: its text and, when it concerns one
+/// projector, that projector's index, so a caller can name the projector its own way.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Note {
+    pub projector: Option<usize>,
+    pub text: String,
+}
+
+impl Note {
+    fn about(projector: usize, text: impl Into<String>) -> Self {
+        Self { projector: Some(projector), text: text.into() }
+    }
+
+    /// The text with the projector named by `name` (as `"{name}: {text}"`); the projector's
+    /// index where `name` gives none.
+    pub fn named(&self, name: impl Fn(usize) -> Option<String>) -> String {
+        match self.projector.and_then(name) {
+            Some(n) => format!("{n}: {}", self.text),
+            None => self.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for Note {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.projector {
+            Some(k) => write!(f, "projector {k}: {}", self.text),
+            None => f.write_str(&self.text),
+        }
+    }
+}
+
+impl From<String> for Note {
+    fn from(text: String) -> Self {
+        Self { projector: None, text }
+    }
+}
+
+impl From<&str> for Note {
+    fn from(text: &str) -> Self {
+        Self { projector: None, text: text.to_string() }
+    }
 }
 
 /// What the tone curves aim at.
@@ -160,26 +204,27 @@ pub fn match_projectors(
     whites: &[Option<[f64; 3]>],
     samples: usize,
     target: Target,
-) -> Result<Matched, String> {
+) -> Result<Matched, Note> {
     if measured.is_empty() {
         return Err("no projectors to match".into());
     }
     if !(2..=MAX_SAMPLES).contains(&samples) {
-        return Err(format!("a tone curve has 2 to {MAX_SAMPLES} samples, not {samples}"));
+        return Err(format!("a tone curve has 2 to {MAX_SAMPLES} samples, not {samples}").into());
     }
     let mut primaries = Vec::with_capacity(measured.len());
     let mut responses = Vec::with_capacity(measured.len());
     let mut warnings = Vec::new();
     for (k, m) in measured.iter().enumerate() {
-        check(m).map_err(|e| format!("projector {k}: {e}"))?;
+        check(m).map_err(|e| Note::about(k, e))?;
         let full: [[f64; 3]; 3] = m.ramps.clone().map(|r| r.last().copied().unwrap_or([0.0; 3]));
         if full.iter().any(|c| c.iter().sum::<f64>() <= 1e-6) {
-            return Err(format!("projector {k}: a full primary is not brighter than black"));
+            return Err(Note::about(k, "a full primary is not brighter than black"));
         }
         let p = from_columns(full);
         if inverse(&p).is_none() {
-            return Err(format!(
-                "projector {k}: its red, green and blue look alike to the camera (camera clipping, or a white balance that hides the colours?)"
+            return Err(Note::about(
+                k,
+                "its red, green and blue look alike to the camera (camera clipping, or a white balance that hides the colours?)",
             ));
         }
         let response: [Vec<f64>; 3] = [0, 1, 2].map(|c| {
@@ -224,10 +269,10 @@ pub fn match_projectors(
         );
     }
     if clamped > 0 {
-        warnings.push(format!(
+        warnings.push(Note::from(format!(
             "{clamped} matrix entr{} needed a negative drive and were clamped to zero: saturated colours match only approximately",
             if clamped == 1 { "y" } else { "ies" }
-        ));
+        )));
     }
 
     let reference_points: Option<[Vec<(f64, f64)>; 3]> = match target {
@@ -267,9 +312,12 @@ pub fn match_projectors(
         if let Some(add) = additivity
             && add.iter().any(|v| (v - 1.0).abs() > 0.1)
         {
-            warnings.push(format!(
-                "projector {k}: white is {:.2}, {:.2}, {:.2} times red + green + blue (a white boost or dynamic contrast? switch it off for a good match)",
-                add[0], add[1], add[2]
+            warnings.push(Note::about(
+                k,
+                format!(
+                    "white is {:.2}, {:.2}, {:.2} times red + green + blue (a white boost or dynamic contrast? switch it off for a good match)",
+                    add[0], add[1], add[2]
+                ),
             ));
         }
         let peak = [1.0, 0.5].map(|s| peak(p, &blend_matrix(&matrix, s)));
