@@ -7,18 +7,23 @@
 //! board's flat signals ([`penumbra_ops::out::BoardState::flat`]), never through the network,
 //! and clears them when it ends, however it ends.
 //!
+//! The matrix comes from camera values taken as linear light, which an ordinary camera is not;
+//! so it is then refined in a closed loop (`refine` rounds): every other projector shows full
+//! red, green and blue through its correction, and each row of its matrix is scaled until the
+//! camera reads the same as of the reference, by a secant search in the log of the scale. That
+//! holds whatever monotone curve the camera applies.
+//!
 //! Each picture is taken only after the change reached the projectors: the cook thread
 //! published an output frame with it, every output window presented that frame, `settle`
 //! passed, and then the camera delivered a frame that arrived after all that.
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use penumbra_calib::colour::{self, Measured, Picture, Planes, Target};
+use penumbra_calib::colour::{self, Mat3, Measured, Picture, Planes, Target};
 use penumbra_camera::{Key, Matrix};
-use penumbra_core::{Name, NodeId, NodePath, ParamPath, Value};
+use penumbra_core::{Name, NodeId, NodePath, ParamPath, Value, lock};
 use penumbra_graph::{Network, Op};
 use penumbra_ops::out::{OutputBoard, PROJECTOR, correct};
 use penumbra_ops::tex::video_in::VIDEO_IN;
@@ -35,11 +40,15 @@ pub const DEFAULT_LEVELS: u32 = 8;
 pub const DEFAULT_SETTLE: f64 = 0.5;
 pub const DEFAULT_SAMPLES: usize = 17;
 pub const DEFAULT_TIMEOUT: f64 = 5.0;
+pub const DEFAULT_REFINE: u32 = 3;
+/// Refining stops early when every channel reads within this (log ratio, about 0.5 %).
+const REFINED: f64 = 0.005;
 /// Widest camera picture measured; larger frames are sampled every few pixels.
 const MAX_WIDTH: usize = 640;
 
-/// One measurement at a time: two would fight over the projectors.
-static RUNNING: AtomicBool = AtomicBool::new(false);
+/// The engines (by address) measuring now: one measurement per engine at a time, two would
+/// fight over the projectors.
+static RUNNING: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
@@ -49,7 +58,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          write their colour correction (matrix, curves) so they look alike; blocks for several seconds per \
          projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), \
          levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera \
-         picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference          projector, which keeps straight curves; works through any camera | srgb: every projector follows          the sRGB curve; only with a camera known to be linear), apply? (true: write the params as one          undo step)}",
+         picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference          projector, which keeps straight curves; works through any camera | srgb: every projector follows          the sRGB curve; only with a camera known to be linear), apply? (true: write the params as one          undo step), refine? (rounds of closed-loop correction of the matrix against the reference, 3; 0 off)}",
         move |p| {
             let a: MatchArgs = args(p)?;
             run(&e, &a)
@@ -68,12 +77,14 @@ pub struct MatchArgs {
     pub area: Option<[f64; 4]>,
     pub timeout: Option<f64>,
     pub apply: Option<bool>,
+    pub refine: Option<u32>,
     #[serde(default)]
     pub target: Target,
 }
 
 /// Clears the flat signals of the projectors measured and the running flag when dropped.
 struct Restore<'a> {
+    engine: usize,
     board: &'a OutputBoard,
     nodes: Vec<NodeId>,
 }
@@ -85,7 +96,7 @@ impl Drop for Restore<'_> {
                 b.flat.remove(n);
             }
         });
-        RUNNING.store(false, Ordering::Release);
+        lock(&RUNNING).retain(|e| *e != self.engine);
     }
 }
 
@@ -203,6 +214,34 @@ impl Rig<'_> {
     }
 }
 
+const NAMES: [&str; 3] = ["red", "green", "blue"];
+
+/// Channel c of reading c: red of red, green of green, blue of blue.
+fn diagonal(r: &[[f64; 3]; 4]) -> [f64; 3] {
+    [r[0][0], r[1][1], r[2][2]]
+}
+
+/// What the camera reads (black subtracted, in the spot) of projector `k` alone showing full
+/// red, green, blue and white through `matrix` and `curves`.
+fn read_through(
+    rig: &mut Rig<'_>,
+    k: usize,
+    spot: &[bool],
+    black: [f64; 3],
+    matrix: &Mat3,
+    curves: &[Vec<f64>; 3],
+) -> CmdResult<[[f64; 3]; 4]> {
+    let mut out = [[0.0; 3]; 4];
+    let contents = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0; 3]];
+    for (o, content) in out.iter_mut().zip(contents) {
+        let s = colour::signal(matrix, curves, content).map(|v| v as f32);
+        let pic = rig.shot(|j| if j == k { s } else { [0.0; 3] })?;
+        let m = colour::trimmed_mean(&pic, spot).ok_or("an empty measuring spot")?;
+        *o = [m[0] - black[0], m[1] - black[1], m[2] - black[2]];
+    }
+    Ok(out)
+}
+
 fn text_param(net: &Network, e: &Engine, id: NodeId, kind: &str, name: &str) -> String {
     let (Some(node), Some(desc)) = (net.node(id), e.types().desc(kind)) else { return String::new() };
     node.param(desc, name).and_then(Value::as_str).map(str::to_string).unwrap_or_default()
@@ -225,6 +264,10 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     let samples = a.samples.unwrap_or(DEFAULT_SAMPLES);
     if !(2..=penumbra_gpu::projection::MAX_CURVE).contains(&samples) {
         return Err(format!("`samples` is 2 to {}", penumbra_gpu::projection::MAX_CURVE).into());
+    }
+    let refine = a.refine.unwrap_or(DEFAULT_REFINE);
+    if refine > 10 {
+        return Err("`refine` is 0 to 10 rounds".into());
     }
     if let Some(r) = a.area
         && !(r.iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)) && r[2] > 0.0 && r[3] > 0.0)
@@ -279,10 +322,15 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         Some(_) => {}
     }
 
-    if RUNNING.swap(true, Ordering::AcqRel) {
-        return Err("a projector.match is already running".into());
+    let engine = std::ptr::from_ref(e) as usize;
+    {
+        let mut running = lock(&RUNNING);
+        if running.contains(&engine) {
+            return Err("a projector.match is already running".into());
+        }
+        running.push(engine);
     }
-    let restore = Restore { board: e.board(), nodes: projectors.iter().map(|(id, _)| *id).collect() };
+    let restore = Restore { engine, board: e.board(), nodes: projectors.iter().map(|(id, _)| *id).collect() };
     let mut rig = Rig {
         engine: e,
         projectors: projectors.clone(),
@@ -357,8 +405,6 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         white_means.push(Some(sub(w)));
         measured.push(Measured { levels: level_values.clone(), ramps });
     }
-    drop(restore);
-
     let matched = colour::match_projectors(&measured, &white_means, samples, a.target).map_err(|err| {
         // Name the projector instead of its index.
         let mut err = err;
@@ -375,10 +421,101 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         w
     }));
 
+    // Closed loop: each other projector's matrix rows scaled until the camera reads its full
+    // red, green and blue as it reads the reference's.
+    let mut matrices: Vec<Mat3> = matched.projectors.iter().map(|c| c.matrix).collect();
+    let mut refined: Vec<Json> = vec![Json::Null; projectors.len()];
+    let r = matched.reference;
+    if refine > 0 && projectors.len() > 1 {
+        let spot = |k: usize| spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[]);
+        let black_of = |k: usize| blacks.get(k).copied().unwrap_or([0.0; 3]);
+        let curves_of = |k: usize| matched.projectors.get(k).map(|c| c.curves.clone()).unwrap_or_default();
+        let ref_matrix = matrices.get(r).copied().ok_or("no reference")?;
+        let want = read_through(&mut rig, r, spot(r), black_of(r), &ref_matrix, &curves_of(r))?;
+        for (k, (_, path)) in projectors.iter().enumerate() {
+            if k == r {
+                continue;
+            }
+            let base = matrices.get(k).copied().ok_or("lost a matrix")?;
+            let curves = curves_of(k);
+            // ln(scale) per row: down to a twentieth, up to a row sum of 1.
+            let lo = 0.05_f64.ln();
+            let hi = base.map(|row| {
+                let sum: f64 = row.iter().sum();
+                if sum > 1e-9 { (1.0 / sum).ln().max(lo) } else { 0.0 }
+            });
+            let mut x = [0.0_f64; 3];
+            let mut history: [Vec<(f64, f64)>; 3] = Default::default();
+            let mut rounds = Vec::new();
+            let mut best: Option<(f64, Mat3, [f64; 3], [f64; 3])> = None;
+            for round in 0..=refine {
+                let mut m = base;
+                for (row, xc) in m.iter_mut().zip(x) {
+                    *row = row.map(|v| v * xc.exp());
+                }
+                let got = read_through(&mut rig, k, spot(k), black_of(k), &m, &curves)?;
+                let mut f = [0.0; 3];
+                let mut codes = [0.0; 3];
+                let code = |v: f64| colour::encode(v) * 255.0;
+                let channels = NAMES.iter().zip(diagonal(&got).into_iter().zip(diagonal(&want)));
+                let blacks_kr = black_of(k).into_iter().zip(black_of(r));
+                for (((name, (g, w)), (fc, cc)), (bk, br)) in
+                    channels.zip(f.iter_mut().zip(codes.iter_mut())).zip(blacks_kr)
+                {
+                    if !(g > 1e-6 && w > 1e-6) {
+                        return Err(format!(
+                            "{path}: the camera sees no {name} through the correction (or of the reference)"
+                        )
+                        .into());
+                    }
+                    *fc = (g / w).ln();
+                    *cc = code(bk + g) - code(br + w);
+                }
+                let err = f.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
+                rounds.push(json!({
+                    "round": round,
+                    "scale": x.map(f64::exp),
+                    "ratio": f.map(f64::exp),
+                    "residual_codes": codes,
+                    "white": got[3],
+                }));
+                if best.as_ref().is_none_or(|(e, _, _, _)| err < *e) {
+                    best = Some((err, m, f, x));
+                }
+                if round == refine || err < REFINED {
+                    break;
+                }
+                for (((h, xc), fc), hc) in history.iter_mut().zip(x.iter_mut()).zip(f).zip(hi) {
+                    h.push((*xc, fc));
+                    *xc = colour::secant(h, lo, hc);
+                }
+            }
+            if let Some((_, m, f, bx)) = best {
+                for ((name, fc), (xc, hc)) in NAMES.iter().zip(f).zip(bx.into_iter().zip(hi)) {
+                    if fc < -0.02 && (xc - hc).abs() < 1e-9 {
+                        warnings.push(format!(
+                            "{path}: cannot show {name} as bright as the reference ({:.0} %); lower the reference's gain",
+                            fc.exp() * 100.0
+                        ));
+                    }
+                }
+                if let Some(slot) = matrices.get_mut(k) {
+                    *slot = m;
+                }
+            }
+            if let Some(slot) = refined.get_mut(k) {
+                *slot = json!({"reference_reading": want, "rounds": rounds});
+            }
+        }
+    }
+    drop(restore);
+
     let mut ops = Vec::new();
     let mut report = Vec::new();
     for (k, ((_, path), c)) in projectors.iter().zip(&matched.projectors).enumerate() {
-        let matrix = correct::matrix_text(&c.matrix);
+        let refined_matrix = matrices.get(k).copied().unwrap_or(c.matrix);
+        let peak = [1.0, 0.5].map(|s| colour::peak(&c.primaries, &colour::blend_matrix(&refined_matrix, s)));
+        let matrix = correct::matrix_text(&refined_matrix);
         let curves = correct::curves_text(&c.curves);
         let node = NodePath::parse(path)?;
         for (name, value) in [
@@ -399,7 +536,9 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
             "ramps": m.map(|m| &m.ramps),
             "response": c.response,
             "additivity": c.additivity,
-            "peak": {"strength_1": c.peak[0], "strength_0_5": c.peak[1]},
+            "peak": {"strength_1": peak[0], "strength_0_5": peak[1]},
+            "unrefined_matrix": correct::matrix_text(&c.matrix),
+            "refine": refined.get(k),
             "matrix": matrix,
             "curves": curves,
         }));
