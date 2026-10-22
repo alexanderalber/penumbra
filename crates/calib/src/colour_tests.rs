@@ -312,24 +312,30 @@ fn reference_target_holds_through_a_nonlinear_camera() {
 }
 
 #[test]
-fn secant_finds_a_scale_through_a_nonlinear_camera() {
-    // The camera reads a channel as (0.6 * scale)^2.7, the reference reads 0.4^2.7.
-    let read = |x: f64| (0.6 * x.exp()).powf(2.7);
-    let want = 0.4_f64.powf(2.7);
-    let mut history = Vec::new();
-    let mut x = 0.0;
-    for _ in 0..4 {
-        history.push((x, (read(x) / want).ln()));
-        x = secant(&history, -3.0, 0.0);
+fn broyden_solves_coupled_channels_through_a_nonlinear_camera() {
+    // White through rows scaled by e^x, seen by a camera with crosstalk and a curve per channel.
+    let p = [[0.30, 0.10, 0.05], [0.12, 0.35, 0.04], [0.01, 0.04, 0.32]];
+    let rows = [0.5, 0.45, 0.4];
+    let camera = [1.5, 2.0, 2.5];
+    let read = |x: [f64; 3]| {
+        let d = [0, 1, 2].map(|c| rows[c] * x[c].exp());
+        let light = apply(&p, d);
+        [0, 1, 2].map(|c| light[c].powf(camera[c]))
+    };
+    let want = read([0.3, 0.6, 0.9]);
+    let mut b = Broyden::new();
+    let mut x = [0.0; 3];
+    let mut worst = f64::MAX;
+    for _ in 0..6 {
+        let got = read(x);
+        let f = [0, 1, 2].map(|c| (got[c] / want[c]).ln());
+        worst = f.iter().fold(0.0_f64, |a, v| a.max(v.abs()));
+        x = b.step(x, f, -3.0, [1.5; 3]);
     }
-    assert!((read(x) / want - 1.0).abs() < 0.02, "{}", read(x) / want);
-    assert!((0.6 * x.exp() - 0.4).abs() < 0.01);
+    assert!(worst < 0.01, "{worst}");
     // Limits hold; nonsense does not move it.
-    assert_eq!(secant(&[(0.0, -5.0)], -1.0, 0.2), 0.2);
-    assert_eq!(secant(&[(0.0, f64::NAN)], -1.0, 1.0), 0.0);
-    assert_eq!(secant(&[], -1.0, -0.5), -0.5);
-    // A flat slope falls back to 1.
-    assert!((secant(&[(0.0, 0.5), (0.1, 0.5)], -1.0, 1.0) - (0.1 - 0.5)).abs() < 1e-12);
+    assert_eq!(Broyden::new().step([0.0; 3], [-5.0, 0.0, 0.0], -1.0, [0.2; 3])[0], 0.2);
+    assert_eq!(Broyden::new().step([0.0; 3], [f64::NAN, 0.0, 0.0], -1.0, [1.0; 3]), [0.0; 3]);
 }
 
 #[test]
