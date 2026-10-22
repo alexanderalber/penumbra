@@ -14,7 +14,9 @@
 //! projector pixel); cut there, the largest piece with its holes filled is the panel, and the
 //! plane is fitted again on it alone, twice. Unmeasured pixels (the camera coarser than the
 //! projector, self-shadows) get their height by a normalised convolution at a few scales in
-//! the projector's own pixels ([`fill`]). The light mask is the piece closed, holes filled,
+//! the projector's own pixels ([`fill`]). The light mask is the piece's measured pixels closed
+//! and their enclosed holes filled (self-shadows inside the panel stay lit, while unmeasured
+//! regions open to the outside, such as wall the panel hides from the camera, stay dark),
 //! without the pixels whose light the plane predicts outside the camera's picture (it was never
 //! seen, so it is not known to land on the panel), its largest part, shrunk by
 //! [`ReliefOptions::erode`].
@@ -46,6 +48,9 @@ const MEDIAN: usize = 5;
 const JUMP_WIDEN: u32 = 2;
 /// Closing of the panel before the light mask, projector pixels.
 const MASK_CLOSE: u32 = 6;
+/// Closing of the piece's measured pixels for the light mask, projector pixels: the mask
+/// reaches at most about this far past them, and notches narrower than twice it close.
+const MEASURED_CLOSE: u32 = 24;
 /// Light predicted closer than this to the camera picture's edge counts as outside, camera px.
 const SEEN_MARGIN: f64 = 3.0;
 /// Scales of the hole fill, projector pixels, and the weight density each must reach to count.
@@ -252,8 +257,15 @@ pub fn analyse(map: &Map, camera: (usize, usize), o: &ReliefOptions) -> Result<R
             })
         })
         .collect();
+    // Only the measured pixels of the piece say where light lands on the panel: unmeasured ones
+    // the piece took in from its nearest measured neighbour may be wall the panel hides from the
+    // camera. So the measured pixels are closed (bridging the gaps a coarser camera leaves and
+    // narrow notches at the edge) and their enclosed holes filled (self-shadows inside the
+    // panel); unmeasured regions open to the outside stay dark.
+    let measured_piece: Vec<bool> = measured.iter().zip(&piece).map(|(a, b)| *a && *b).collect();
+    let lit = raster::fill_holes(w, h, &raster::close(w, h, &measured_piece, MEASURED_CLOSE));
     let closed = raster::fill_holes(w, h, &raster::close(w, h, &piece, MASK_CLOSE));
-    let m: Vec<bool> = closed.iter().zip(&seen).map(|(a, b)| *a && *b).collect();
+    let m: Vec<bool> = closed.iter().zip(&lit).zip(&seen).map(|((a, l), b)| *a && *l && *b).collect();
     let m = raster::fill_holes(w, h, &largest(w, h, &m));
     let mask = raster::erode(w, h, &m, o.erode);
 
