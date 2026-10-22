@@ -166,9 +166,75 @@ fn list(v: &[Vec<usize>], i: usize) -> &[usize] {
     v.get(i).map_or(&[], Vec::as_slice)
 }
 
-/// Positions for the nodes of `g`, the whole arrangement's top left at `origin`. `old` (where
-/// the nodes were) decides the order of separate parts and where the ordering starts.
+/// Rounds of [`arrange`] looking for a layout that arranging keeps.
+const SETTLE_ROUNDS: usize = 12;
+
+/// Positions for the nodes of `g`, the whole arrangement's top left at `origin`, on whole
+/// pixels as the network stores them. `old` (where the nodes were) decides the order of
+/// separate parts and where the ordering starts.
+///
+/// Arranging again keeps an arrangement. One pass ([`arrange_once`]) starts from the old
+/// layout, so its result can differ from its input, and passes repeated from there can come
+/// round in a cycle of layouts (a long wire's lanes are not stored, so the next pass can order
+/// them differently while the crossings stay the same). So passes are repeated until one gives
+/// back a layout seen before, and of the layouts of that cycle the one with the straightest
+/// wires is taken. That choice depends on the cycle only, not on where in it the passes
+/// started, so arranging the result gives the result. An input that a pass keeps (within a
+/// pixel) is a cycle of one and stays as it is.
 pub fn arrange(g: &Graph, old: &HashMap<NodeId, Pos2>, origin: Pos2) -> HashMap<NodeId, Pos2> {
+    let same = |a: &HashMap<NodeId, Pos2>, b: &HashMap<NodeId, Pos2>| {
+        g.nodes.iter().all(|(id, _)| match (a.get(id), b.get(id)) {
+            (Some(p), Some(q)) => (*p - *q).abs().max_elem() <= 1.0,
+            _ => false,
+        })
+    };
+    let mut seen: Vec<HashMap<NodeId, Pos2>> = vec![old.clone()];
+    let mut start = None;
+    for _ in 0..SETTLE_ROUNDS {
+        let Some(last) = seen.last() else { break };
+        let next: HashMap<NodeId, Pos2> =
+            arrange_once(g, last, origin).into_iter().map(|(id, p)| (id, p.round())).collect();
+        if let Some(k) = seen.iter().position(|s| same(s, &next)) {
+            start = Some(k);
+            break;
+        }
+        seen.push(next);
+    }
+    // Without a cycle (none seen so far has needed that many rounds), the best of the passes.
+    let cycle = seen.split_off(start.unwrap_or(1).min(seen.len().saturating_sub(1)));
+    let key = |at: &HashMap<NodeId, Pos2>| {
+        let mut places: Vec<(NodeId, [f32; 2])> = at.iter().map(|(id, p)| (*id, [p.x, p.y])).collect();
+        places.sort_by_key(|(id, _)| *id);
+        (bend(g, at), places)
+    };
+    cycle
+        .into_iter()
+        .map(|at| (key(&at), at))
+        .min_by(|(a, _), (b, _)| {
+            a.0.total_cmp(&b.0).then_with(|| {
+                a.1.iter()
+                    .zip(&b.1)
+                    .map(|((ia, pa), (ib, pb))| {
+                        ia.cmp(ib).then(pa[0].total_cmp(&pb[0])).then(pa[1].total_cmp(&pb[1]))
+                    })
+                    .find(|o| o.is_ne())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+        })
+        .map(|(_, at)| at)
+        .unwrap_or_default()
+}
+
+/// How far the wires of `g` run up or down in all, placed at `at`.
+fn bend(g: &Graph, at: &HashMap<NodeId, Pos2>) -> f32 {
+    g.wires
+        .iter()
+        .filter_map(|w| Some(((at.get(&w.from)?.y + w.from_y) - (at.get(&w.to)?.y + w.to_y)).abs()))
+        .sum()
+}
+
+/// One pass of [`arrange`].
+fn arrange_once(g: &Graph, old: &HashMap<NodeId, Pos2>, origin: Pos2) -> HashMap<NodeId, Pos2> {
     let n = g.nodes.len();
     let index: HashMap<NodeId, usize> = g.nodes.iter().enumerate().map(|(i, (id, _))| (*id, i)).collect();
     let heights: Vec<f32> = g.nodes.iter().map(|(_, h)| h.max(1.0)).collect();
@@ -222,7 +288,16 @@ pub fn arrange(g: &Graph, old: &HashMap<NodeId, Pos2>, origin: Pos2) -> HashMap<
     let top_of = |members: &[usize]| {
         members.iter().filter_map(|i| old_of(*i)).map(|p| p.y).fold(f32::INFINITY, f32::min)
     };
-    parts.sort_by(|a, b| top_of(a).total_cmp(&top_of(b)).then(a.first().cmp(&b.first())));
+    // Parts side by side in a row are as high as each other: left to right among them.
+    let left_of = |members: &[usize]| {
+        members.iter().filter_map(|i| old_of(*i)).map(|p| p.x).fold(f32::INFINITY, f32::min)
+    };
+    parts.sort_by(|a, b| {
+        top_of(a)
+            .total_cmp(&top_of(b))
+            .then(left_of(a).total_cmp(&left_of(b)))
+            .then(a.first().cmp(&b.first()))
+    });
     let (singles, groups): (Vec<Vec<usize>>, Vec<Vec<usize>>) = parts.into_iter().partition(|p| p.len() == 1);
 
     let column = NODE_SIZE.x + GAP.x;
@@ -1387,5 +1462,51 @@ mod tests {
         let right = at.values().map(|p| p.x + NODE_SIZE.x).fold(0.0f32, f32::max);
         let bottom = at.values().map(|p| p.y + 104.0).fold(0.0f32, f32::max);
         assert!(right > bottom, "{right} x {bottom}");
+    }
+
+    /// `g` arranged `times` times in a row, as pressing the key again does.
+    fn arrange_times(g: &Graph, old: &HashMap<NodeId, Pos2>, times: usize) -> HashMap<NodeId, Pos2> {
+        let origin = old.values().fold(None::<Pos2>, |acc, p| Some(acc.map_or(*p, |a| a.min(*p))));
+        let mut at = old.clone();
+        for _ in 0..times {
+            at = arrange(g, &at, origin.unwrap_or(Pos2::ZERO));
+        }
+        at
+    }
+
+    #[test]
+    fn arranging_again_keeps_the_arrangement() {
+        // The shipped example whose arrangement used to cycle through four layouts, as the
+        // editor sees it.
+        let types = penumbra_ops::builtin_types().unwrap();
+        let text = include_str!("../../../examples/projection-onto-objects/project.ron");
+        let content = penumbra_project::load(text, &types).unwrap();
+        let ops = penumbra_project::diff(&penumbra_project::Content::default(), &content);
+        let net = Network::new().apply(&types, &ops).unwrap().network;
+        let mut layout = Layout::load(None);
+        layout.sync(&net);
+        let g = graph(&net, &types, None, None);
+        assert!(g.nodes.len() > 40 && !g.wires.is_empty());
+        let old: HashMap<NodeId, Pos2> =
+            g.nodes.iter().filter_map(|(id, _)| Some((*id, layout.get(*id)?))).collect();
+        let once = arrange_times(&g, &old, 1);
+        no_overlap(&g, &once);
+        for times in 2..=6 {
+            assert_eq!(arrange_times(&g, &old, times), once, "arranged {times} times");
+        }
+        // And for the small networks above, from no layout and from a scrambled one.
+        let chains = Graph {
+            nodes: (0..18).map(|i| (id(i), 104.0)).collect(),
+            wires: (0..6)
+                .flat_map(|p| [wire(p * 3, p * 3 + 1, 60.0), wire(p * 3 + 1, p * 3 + 2, 60.0)])
+                .collect(),
+            binds: vec![],
+        };
+        let scrambled: HashMap<NodeId, Pos2> =
+            (0..18).map(|i| (id(i), pos2((i * 7 % 5) as f32 * 230.0, (i * 11 % 7) as f32 * 150.0))).collect();
+        for start in [HashMap::new(), scrambled] {
+            let once = arrange_times(&chains, &start, 1);
+            assert_eq!(arrange_times(&chains, &start, 3), once);
+        }
     }
 }
