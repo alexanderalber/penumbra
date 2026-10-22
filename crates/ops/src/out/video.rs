@@ -25,6 +25,8 @@ use penumbra_graph::{
 };
 use penumbra_record::{Codec, Fps, Frame, H264Preset, Hub, Layout, Planes, Recording, Settings};
 
+use crate::on_gpu;
+
 /// Kind of the movie recording node.
 pub const VIDEO_OUT: &str = "out.video";
 /// Bytes the readback ring of one recording may hold (the ring has 3 to 10 frames).
@@ -116,15 +118,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             // changed.
             .time_dependent(),
         || Box::new(VideoOut::default()) as Box<dyn Operator>,
-    ))
+    )
+    .inactive(inactive)
+    .warm_up(on_gpu(|gpu| gpu.yuv_pipeline().map(|_| ()))))
 }
 
 /// Why param `name` of an `out.video` does not count with its other params; `None` while it
-/// counts (and for other nodes).
-pub fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str> {
-    if node.kind != VIDEO_OUT {
-        return None;
-    }
+/// counts.
+fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str> {
     let size = node.param(desc, "size").and_then(Value::as_str).unwrap_or("input");
     let codec = node.param(desc, "codec").and_then(Value::as_str).unwrap_or("h264");
     match (size, name) {

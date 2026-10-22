@@ -30,6 +30,7 @@ use penumbra_graph::{
 };
 
 use crate::mapping::{DEMAND_PERCENTILE, quantile};
+use crate::on_gpu;
 use crate::view::Viewpoint;
 
 pub const RENDER: &str = "tex.render";
@@ -382,7 +383,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .group("occlusion")
                 .doc("How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker"),
         );
-    types.register(FnNodeType::new(desc, || Box::new(Render::default()) as Box<dyn Operator>))
+    types.register(
+        FnNodeType::new(desc, || Box::new(Render::default()) as Box<dyn Operator>)
+            .warm_up(on_gpu(|gpu| gpu.render_pipelines().map(|_| ()))),
+    )
 }
 
 #[derive(Default)]

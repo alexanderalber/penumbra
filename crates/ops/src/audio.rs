@@ -22,6 +22,7 @@ use penumbra_graph::{
     Operator,
 };
 
+use crate::on_gpu;
 use crate::tex::meters_picture::{self, MetersPicture};
 use std::sync::Arc;
 
@@ -161,7 +162,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum; drawn only while something reads it",
         ),
         || Box::new(Analysis::default()) as Box<dyn Operator>,
-    ))?;
+    )
+    .warm_up(on_gpu(meters_picture::warm_up)))?;
     Ok(())
 }
 

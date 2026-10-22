@@ -21,11 +21,11 @@ pub mod tex;
 pub mod trace;
 pub mod view;
 
+use std::any::Any;
+
 use penumbra_core::Error;
 use penumbra_gpu::Gpu;
 use penumbra_graph::{CookContext, CookError, Cooked, NodeTypes, Operator};
-
-pub use tex::warm_up;
 
 /// Registers every built-in node type.
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
@@ -61,6 +61,26 @@ pub(crate) fn gpu<'a>(cx: &'a CookContext<'_>) -> Result<&'a Gpu, CookError> {
     cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU yet"))
 }
 
+/// A warm-up hook ([`penumbra_graph::WarmUp`]) that runs `f` with the GPU.
+pub(crate) fn on_gpu(
+    f: impl Fn(&Gpu) -> Result<(), Error> + Send + Sync + 'static,
+) -> impl Fn(&dyn Any) -> Result<(), Error> + Send + Sync + 'static {
+    move |resource| resource.downcast_ref::<Gpu>().map_or(Ok(()), &f)
+}
+
+/// Compiles the shaders and pipelines of every node type in `types` ([`penumbra_graph::NodeType::warm_up`]), so
+/// the first node of each kind does not stall the cook thread (a pipeline takes up to about a
+/// hundred milliseconds on some backends). Call it on a background thread when the GPU appears.
+pub fn warm_up(types: &NodeTypes, gpu: &Gpu) {
+    for kind in types.kinds() {
+        if let Some(t) = types.get(kind)
+            && let Err(e) = t.warm_up(gpu)
+        {
+            log::error!("the shaders of {kind} do not compile: {e}");
+        }
+    }
+}
+
 /// Passes its input on as it is (`chan.null`, `table.null`).
 pub(crate) struct Null;
 
@@ -71,18 +91,6 @@ impl Operator for Null {
             None => Err(waiting(cx)),
         }
     }
-}
-
-/// Why param `name` of `node` does not count with its other params as they are (the param panel
-/// greys it and says why); `None` while it counts.
-pub fn inactive(
-    node: &penumbra_graph::NodeDef,
-    desc: &penumbra_graph::NodeDesc,
-    name: &str,
-) -> Option<&'static str> {
-    view::inactive(node, desc, name)
-        .or_else(|| dmx::inactive(node, desc, name))
-        .or_else(|| out::video::inactive(node, desc, name))
 }
 
 /// All built-in node types.

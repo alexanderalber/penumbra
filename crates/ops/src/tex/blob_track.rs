@@ -25,7 +25,8 @@ use penumbra_graph::{
 };
 use penumbra_track::{Blob, Detect, Image, Settings, Tracker};
 
-use super::{gpu, waiting};
+use super::{PassCell, gpu, waiting};
+use crate::on_gpu;
 
 /// The node kind.
 pub const BLOB_TRACK: &str = "tex.blob_track";
@@ -159,14 +160,16 @@ fn desc() -> NodeDesc {
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(desc(), || Box::new(BlobTrack::new()) as Box<dyn Operator>))
+    types.register(
+        FnNodeType::new(desc(), || Box::new(BlobTrack::new()) as Box<dyn Operator>).warm_up(on_gpu(warm_up)),
+    )
 }
 
 fn pass(gpu: &Gpu) -> Result<Arc<penumbra_gpu::Pass>, Error> {
     gpu.cached_pass(BLOB_TRACK, SOURCE, &[])
 }
 
-pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     pass(gpu).map(|_| ())
 }
 
@@ -237,6 +240,7 @@ struct BlobTrack {
     /// The blob id in each slot of `chans`.
     slots: Vec<Option<u64>>,
     outputs: Option<Vec<Data>>,
+    pass: PassCell,
 }
 
 impl BlobTrack {
@@ -251,6 +255,7 @@ impl BlobTrack {
             last_frame: None,
             slots: Vec::new(),
             outputs: None,
+            pass: PassCell::default(),
         }
     }
 }
@@ -331,7 +336,7 @@ impl BlobTrack {
         let width = u32::try_from(cx.int("size")?).unwrap_or(320).clamp(16, w.max(16));
         let height = ((u64::from(width) * u64::from(h)) / u64::from(w.max(1))).clamp(1, 4096) as u32;
         let target = self.small.next(gpu, width, height, BLOB_TRACK)?;
-        let pass = pass(gpu)?;
+        let pass = self.pass.get(gpu, pass)?;
         pass.render(
             gpu,
             &target,

@@ -12,7 +12,8 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
-use super::{gpu, waiting};
+use super::{PassCell, gpu, waiting};
+use crate::on_gpu;
 
 const KIND: &str = "tex.denoise";
 const SOURCE: &str = include_str!("denoise.wgsl");
@@ -66,15 +67,19 @@ fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(desc(), || Box::new(Denoise::default()) as Box<dyn Operator>))
+    types.register(
+        FnNodeType::new(desc(), || Box::new(Denoise::default()) as Box<dyn Operator>)
+            .warm_up(on_gpu(warm_up)),
+    )
 }
 
-pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     pass(gpu).map(|_| ())
 }
 
 #[derive(Default)]
 struct Denoise {
+    pass: PassCell,
     ring: TexRing,
     /// The last result: the average so far.
     last: Option<Tex>,
@@ -87,7 +92,7 @@ struct Denoise {
 impl Operator for Denoise {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
-        let pass = pass(gpu)?;
+        let pass = self.pass.get(gpu, pass)?;
         let data = cx.input(0).ok_or_else(|| waiting(cx))?;
         let src = data.get::<Tex>().ok_or_else(|| CookError::failed("not a texture"))?;
         let reset = cx.bool("reset")?;

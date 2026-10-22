@@ -11,7 +11,8 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDef, NodeDesc, NodeTypes, Operator,
 };
 
-use super::{gpu, keep_size, side};
+use super::{PassCell, gpu, keep_size, side};
+use crate::on_gpu;
 
 const KIND: &str = "tex.ramp";
 const SOURCE: &str = include_str!("ramp.wgsl");
@@ -45,12 +46,15 @@ fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(desc(), || {
-        Box::new(Ramp { lut: None, out: TexRing::new() }) as Box<dyn Operator>
-    }))
+    types.register(
+        FnNodeType::new(desc(), || {
+            Box::new(Ramp { pass: PassCell::default(), lut: None, out: TexRing::new() }) as Box<dyn Operator>
+        })
+        .warm_up(on_gpu(warm_up)),
+    )
 }
 
-pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     pass(gpu).map(|_| ())
 }
 
@@ -129,6 +133,7 @@ fn row(keys: &[Key]) -> Vec<u8> {
 }
 
 struct Ramp {
+    pass: PassCell,
     /// The keys text last uploaded, and its row.
     lut: Option<(String, Tex)>,
     out: TexRing,
@@ -152,7 +157,7 @@ impl Operator for Ramp {
         let target = self.out.next(gpu, w, h, KIND)?;
         let param = |name: &str| cx.param(name).cloned();
         let input = PassInput { inputs: &[Some(&lut)], seconds: 0.0, frame: 0, param: &param };
-        pass(gpu)?.render(gpu, &target, &input)?;
+        self.pass.get(gpu, pass)?.render(gpu, &target, &input)?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))
     }
 

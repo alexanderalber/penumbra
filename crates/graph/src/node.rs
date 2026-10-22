@@ -368,7 +368,27 @@ pub trait NodeType: Send + Sync {
     fn input_chooser(&self) -> Option<InputChooser> {
         None
     }
+
+    /// Prepares what the nodes of this type need before their first cook, off the cook thread
+    /// ([`WarmUp`]). Does nothing by default.
+    fn warm_up(&self, _resource: &dyn Any) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// Why param `name` of `node` does not count with its other params as they are (the param
+    /// panel greys it and says why); `None`, the default, while it counts.
+    fn inactive(&self, _node: &NodeDef, _name: &str) -> Option<&'static str> {
+        None
+    }
 }
+
+/// A node type's preparation for the first cook, such as compiling its shaders, so that the
+/// first node of the type does not stall the cook thread. Gets a resource of the app's (the
+/// GPU); a hook that does not know the resource does nothing.
+pub type WarmUp = Arc<dyn Fn(&dyn Any) -> Result<(), Error> + Send + Sync>;
+
+/// [`NodeType::inactive`] as a function of the node, its type and the param.
+pub type Inactive = fn(&NodeDef, &NodeDesc, &str) -> Option<&'static str>;
 
 /// The runtime state of one node, owned by the cooker, living as long as the node does (so hot
 /// reload keeps caches, streams and tracking ids of nodes that did not change).
@@ -508,11 +528,28 @@ pub struct FnNodeType<F> {
     desc: NodeDesc,
     create: F,
     chooser: Option<InputChooser>,
+    warm_up: Option<WarmUp>,
+    inactive: Option<Inactive>,
 }
 
 impl<F: Fn() -> Box<dyn Operator> + Send + Sync> FnNodeType<F> {
     pub fn new(desc: NodeDesc, create: F) -> Self {
-        Self { desc, create, chooser: None }
+        Self { desc, create, chooser: None, warm_up: None, inactive: None }
+    }
+
+    /// Prepares with `warm_up` before the first cook ([`NodeType::warm_up`]).
+    pub fn warm_up(
+        mut self,
+        warm_up: impl Fn(&dyn Any) -> Result<(), Error> + Send + Sync + 'static,
+    ) -> Self {
+        self.warm_up = Some(Arc::new(warm_up));
+        self
+    }
+
+    /// Says with `inactive` which params do not count ([`NodeType::inactive`]).
+    pub fn inactive(mut self, inactive: Inactive) -> Self {
+        self.inactive = Some(inactive);
+        self
     }
 
     /// Needs only the inputs `chooser` picks ([`NodeType::input_chooser`]).
@@ -533,6 +570,14 @@ impl<F: Fn() -> Box<dyn Operator> + Send + Sync> NodeType for FnNodeType<F> {
 
     fn input_chooser(&self) -> Option<InputChooser> {
         self.chooser
+    }
+
+    fn warm_up(&self, resource: &dyn Any) -> Result<(), Error> {
+        self.warm_up.as_ref().map_or(Ok(()), |f| f(resource))
+    }
+
+    fn inactive(&self, node: &NodeDef, name: &str) -> Option<&'static str> {
+        self.inactive.and_then(|f| f(node, &self.desc, name))
     }
 }
 

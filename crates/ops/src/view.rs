@@ -191,11 +191,8 @@ impl Viewpoint {
 }
 
 /// Why param `name` of a `view.camera` does not count: the calibration replaces it, or the
-/// projection leaves it unused. `None` while it counts (and for other nodes).
-pub fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str> {
-    if node.kind != CAMERA {
-        return None;
-    }
+/// projection leaves it unused. `None` while it counts.
+fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str> {
     let text = |n: &str| node.param(desc, n).and_then(Value::as_str).unwrap_or("").trim().to_string();
     if !text("calibration").is_empty()
         && ["position", "target", "projection", "fov", "size", "roll", "shift"].contains(&name)
@@ -276,7 +273,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .doc("Farthest distance drawn, in metres from the camera; anything beyond is left out"),
     )
     .output("out", DataKind::View);
-    types.register(FnNodeType::new(desc, || Box::new(CameraNode) as Box<dyn Operator>))
+    types.register(FnNodeType::new(desc, || Box::new(CameraNode) as Box<dyn Operator>).inactive(inactive))
 }
 
 struct CameraNode;

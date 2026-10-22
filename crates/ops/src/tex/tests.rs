@@ -31,6 +31,18 @@ fn gpu() -> Option<Gpu> {
     .clone()
 }
 
+/// Every node type's warm-up hook succeeds: the shaders and pipelines it compiles ahead of the
+/// first cook are valid.
+#[test]
+fn every_node_type_warms_up() {
+    let Some(gpu) = gpu() else { return };
+    let types = builtin_types().unwrap();
+    for kind in types.kinds() {
+        let t = types.get(kind).unwrap();
+        t.warm_up(&gpu).unwrap_or_else(|e| panic!("{kind}: {e}"));
+    }
+}
+
 fn manifest() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }

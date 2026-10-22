@@ -17,6 +17,7 @@ use penumbra_graph::{
 };
 
 use super::{MAX_SIDE, gpu, side};
+use crate::on_gpu;
 use crate::shapes::{self, Instance};
 
 pub const SHAPES: &str = "tex.shapes";
@@ -75,11 +76,14 @@ fn desc() -> NodeDesc {
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(desc(), || Box::new(ShapesOp::default()) as Box<dyn Operator>))
+    types.register(
+        FnNodeType::new(desc(), || Box::new(ShapesOp::default()) as Box<dyn Operator>)
+            .warm_up(on_gpu(warm_up)),
+    )
 }
 
 /// Compiles the pipeline ahead of the first node.
-pub fn warm_up(gpu: &penumbra_gpu::Gpu) -> Result<(), Error> {
+fn warm_up(gpu: &penumbra_gpu::Gpu) -> Result<(), Error> {
     Drawer::new().warm_up(gpu)
 }
 

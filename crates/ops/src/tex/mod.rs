@@ -42,13 +42,13 @@ pub use video_in::VIDEO_IN;
 use std::sync::Arc;
 
 use penumbra_core::{Curve, Error, ParamSpec, Unit, Value};
-use penumbra_gpu::{Gpu, PassInput, Tex, TexRing};
+use penumbra_gpu::{Gpu, Pass, PassInput, Tex, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, Density, FnNodeType, NodeDef, NodeDesc, NodeTypes,
     Operator,
 };
 
-use crate::{gpu, waiting};
+use crate::{gpu, on_gpu, waiting};
 
 /// Largest width or height a resolution parameter accepts; the device may allow less.
 pub const MAX_SIDE: f64 = 16384.0;
@@ -450,10 +450,21 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     for b in builtins() {
         let b = Arc::new(b);
         let desc = b.desc.clone();
-        types.register(FnNodeType::new(desc, move || {
-            Box::new(BuiltinOp { node: b.clone(), ring: TexRing::new(), animated: false, sizes: None })
-                as Box<dyn Operator>
-        }))?;
+        let warm = b.clone();
+        types.register(
+            FnNodeType::new(desc, move || {
+                Box::new(BuiltinOp {
+                    node: b.clone(),
+                    pass: PassCell::default(),
+                    ring: TexRing::new(),
+                    animated: false,
+                    sizes: None,
+                }) as Box<dyn Operator>
+            })
+            .warm_up(on_gpu(move |gpu| {
+                gpu.cached_pass(&warm.desc.kind, warm.source, &warm.desc.params).map(|_| ())
+            })),
+        )?;
     }
     blob_track::register(types)?;
     blur::register(types)?;
@@ -480,57 +491,29 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     Ok(())
 }
 
-/// Compiles every built-in pass, so the first node of each kind does not stall the cook thread
-/// (a pipeline takes up to about a hundred milliseconds on some backends). Call it on a
-/// background thread when the GPU appears.
-pub fn warm_up(gpu: &Gpu) {
-    for b in builtins() {
-        if let Err(e) = gpu.cached_pass(&b.desc.kind, b.source, &b.desc.params) {
-            log::error!("built-in shader {} does not compile: {e}", b.desc.kind);
+/// A built-in pass, kept by its operator once compiled: [`Gpu::cached_pass`] identifies a pass
+/// by hashing its source and params, which is too much work for every cook.
+#[derive(Default)]
+pub(crate) struct PassCell(Option<Arc<Pass>>);
+
+impl PassCell {
+    /// The pass, from `make` the first time.
+    pub(crate) fn get(
+        &mut self,
+        gpu: &Gpu,
+        make: impl FnOnce(&Gpu) -> Result<Arc<Pass>, Error>,
+    ) -> Result<Arc<Pass>, Error> {
+        if let Some(p) = &self.0 {
+            return Ok(p.clone());
         }
-    }
-    if let Err(e) = meters_picture::warm_up(gpu) {
-        log::error!("the audio meters' canvas does not compile: {e}");
-    }
-    if let Err(e) = blob_track::warm_up(gpu) {
-        log::error!("built-in shader tex.blob_track does not compile: {e}");
-    }
-    if let Err(e) = blur::warm_up(gpu) {
-        log::error!("built-in shader tex.blur does not compile: {e}");
-    }
-    if let Err(e) = convert::warm_up(gpu) {
-        log::error!("built-in shader chan.from_tex does not compile: {e}");
-    }
-    if let Err(e) = denoise::warm_up(gpu) {
-        log::error!("built-in shader tex.denoise does not compile: {e}");
-    }
-    if let Err(e) = fluid::warm_up(gpu) {
-        log::error!("built-in shader tex.fluid does not compile: {e}");
-    }
-    if let Err(e) = optical_flow::warm_up(gpu) {
-        log::error!("built-in shader tex.optical_flow does not compile: {e}");
-    }
-    if let Err(e) = ramp::warm_up(gpu) {
-        log::error!("built-in shader tex.ramp does not compile: {e}");
-    }
-    if let Err(e) = shapes::warm_up(gpu) {
-        log::error!("built-in shader tex.shapes does not compile: {e}");
-    }
-    if let Err(e) = text::warm_up(gpu) {
-        log::error!("built-in shader tex.text does not compile: {e}");
-    }
-    if let Err(e) = time_machine::warm_up(gpu) {
-        log::error!("built-in shader tex.time_machine does not compile: {e}");
-    }
-    if let Err(e) = gpu.video_pipeline() {
-        log::error!("built-in shader video.wgsl does not compile: {e}");
-    }
-    if let Err(e) = gpu.yuv_pipeline() {
-        log::error!("built-in shader yuv.wgsl (out.video) does not compile: {e}");
+        let p = make(gpu)?;
+        self.0 = Some(p.clone());
+        Ok(p)
     }
 }
 
 struct BuiltinOp {
+    pass: PassCell,
     node: Arc<Builtin>,
     ring: TexRing,
     animated: bool,
@@ -541,7 +524,7 @@ impl Operator for BuiltinOp {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let b = &*self.node;
         let gpu = gpu(cx)?;
-        let pass = gpu.cached_pass(&b.desc.kind, b.source, &b.desc.params)?;
+        let pass = self.pass.get(gpu, |gpu| gpu.cached_pass(&b.desc.kind, b.source, &b.desc.params))?;
         let inputs = inputs(cx);
         let first = || inputs.iter().flatten().next().map(|t| t.size()).ok_or_else(|| waiting(cx));
         let (w, h) = match b.size {

@@ -9,7 +9,8 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
-use super::{gpu, inputs, waiting};
+use super::{PassCell, gpu, inputs, waiting};
+use crate::on_gpu;
 
 const KIND: &str = "tex.blur";
 const SOURCE: &str = include_str!("blur.wgsl");
@@ -48,16 +49,21 @@ fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(desc(), || {
-        Box::new(Blur { middle: TexRing::new(), out: TexRing::new() }) as Box<dyn Operator>
-    }))
+    types.register(
+        FnNodeType::new(desc(), || {
+            Box::new(Blur { pass: PassCell::default(), middle: TexRing::new(), out: TexRing::new() })
+                as Box<dyn Operator>
+        })
+        .warm_up(on_gpu(warm_up)),
+    )
 }
 
-pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     pass(gpu).map(|_| ())
 }
 
 struct Blur {
+    pass: PassCell,
     middle: TexRing,
     out: TexRing,
 }
@@ -65,7 +71,7 @@ struct Blur {
 impl Operator for Blur {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
-        let pass = pass(gpu)?;
+        let pass = self.pass.get(gpu, pass)?;
         let inputs = inputs(cx);
         let src = inputs.first().copied().flatten().ok_or_else(|| waiting(cx))?;
         let (w, h) = src.size();

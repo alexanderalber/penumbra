@@ -29,8 +29,8 @@ pub use network::{
     check_setting, natural_cmp, parse_expose,
 };
 pub use node::{
-    CookError, Cooked, Data, DataKind, Density, FnNodeType, InputChooser, NodeDesc, NodeType, NodeTypes,
-    Operator, PortRole, StateItem,
+    CookError, Cooked, Data, DataKind, Density, FnNodeType, Inactive, InputChooser, NodeDesc, NodeType,
+    NodeTypes, Operator, PortRole, StateItem, WarmUp,
 };
 pub use replace::{Replacement, replace};
 pub use watch::FileWatch;

@@ -17,7 +17,8 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
-use super::{gpu, waiting};
+use super::{PassCell, gpu, waiting};
+use crate::on_gpu;
 
 const KIND: &str = "tex.optical_flow";
 const SOURCE: &str = include_str!("optical_flow.wgsl");
@@ -100,10 +101,13 @@ fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(desc(), || Box::new(OpticalFlow::default()) as Box<dyn Operator>))
+    types.register(
+        FnNodeType::new(desc(), || Box::new(OpticalFlow::default()) as Box<dyn Operator>)
+            .warm_up(on_gpu(warm_up)),
+    )
 }
 
-pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     pass(gpu).map(|_| ())
 }
 
@@ -123,6 +127,7 @@ fn level_sizes(width: u32, height: u32, levels: usize) -> Vec<(u32, u32)> {
 
 #[derive(Default)]
 struct OpticalFlow {
+    pass: PassCell,
     /// Per level: the luma pyramid and the motion.
     values: Vec<TexRing>,
     flows: Vec<TexRing>,
@@ -138,7 +143,7 @@ struct OpticalFlow {
 impl Operator for OpticalFlow {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
-        let pass = pass(gpu)?;
+        let pass = self.pass.get(gpu, pass)?;
         let data = cx.input(0).ok_or_else(|| waiting(cx))?;
         let src = data.get::<Tex>().ok_or_else(|| CookError::failed("not a texture"))?;
         if let (Some(last), Some(input)) = (&self.last, &self.input)

@@ -27,7 +27,8 @@ use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
 
-use super::{gpu, waiting};
+use super::{PassCell, gpu, waiting};
+use crate::on_gpu;
 
 pub const FROM_CHAN: &str = "tex.from_chan";
 pub const FROM_TEX: &str = "chan.from_tex";
@@ -102,14 +103,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .input("in", DataKind::Tex)
         .output("out", DataKind::Chan),
         || Box::new(FromTex::default()) as Box<dyn Operator>,
-    ))
+    )
+    .warm_up(on_gpu(warm_up)))
 }
 
 fn shrink_pass(gpu: &Gpu) -> Result<Arc<penumbra_gpu::Pass>, Error> {
     gpu.cached_pass(FROM_TEX, SHRINK, &[])
 }
 
-pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     shrink_pass(gpu).map(|_| ())
 }
 
@@ -232,6 +234,7 @@ fn picture(chans: &Chans, layout: Layout, low: f64, high: f64, max: usize) -> Pi
 
 #[derive(Default)]
 struct FromTex {
+    pass: PassCell,
     /// The shrink passes' targets, largest first; the last is read back.
     levels: Vec<TexRing>,
     pool: ReadPool,
@@ -338,7 +341,7 @@ impl FromTex {
         }
         let sizes = shrink_sizes(src.size(), (columns, rows));
         self.levels.resize_with(sizes.len(), TexRing::new);
-        let pass = shrink_pass(gpu)?;
+        let pass = self.pass.get(gpu, shrink_pass)?;
         let mut from = src.clone();
         for (ring, (w, h)) in self.levels.iter_mut().zip(&sizes) {
             let target = ring.next(gpu, *w, *h, FROM_TEX)?;

@@ -24,6 +24,8 @@ use penumbra_graph::{
     Operator,
 };
 
+use crate::on_gpu;
+
 /// The node kind.
 pub const VIDEO_IN: &str = "tex.video_in";
 
@@ -50,7 +52,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .describe_output("out", "The camera's picture")
             .describe_output("info", "The stream: fps, delay_ms, age_ms, frames, dropped"),
         || Box::new(VideoIn::default()) as Box<dyn Operator>,
-    ))
+    )
+    .warm_up(on_gpu(|gpu| gpu.video_pipeline().map(|_| ()))))
 }
 
 /// The streams the network's `tex.video_in` nodes want (stored params).
