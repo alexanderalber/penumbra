@@ -16,7 +16,8 @@
 //! - `ui.select {paths}`, `ui.view {path?}` (pin the viewer; no path unpins)
 //! - `ui.camera {mode?, home?, camera?, orbit?, pan?, dolly?, travel?, look?, roll?, take?}`: the
 //!   viewer's free view and steering ([`crate::navigate`])
-//! - `ui.place {nodes: {path: [x, y]}}`, `ui.arrange {nodes?: [path]}`, `ui.frame`
+//! - `ui.arrange {nodes?: [path]}` (moves are edits: `node.place` sets places directly),
+//!   `ui.frame`
 //! - `ui.measure`: how tidy the level shown looks (size, wire length, crossings, overlaps)
 //! - `ui.screenshot {file?}`: PNG of the window
 
@@ -92,7 +93,6 @@ const COMMANDS: &[(&str, &str)] = &[
          orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; \
          moves go to the free view's camera, or in steer mode to the camera node (orthographic: dolly scales its size); take puts the free view into it",
     ),
-    ("ui.place", "Move nodes in the editor; {nodes: {path: [x, y]}}"),
     (
         "ui.options",
         "The editor's options (right-click on empty space) and the viewer's channel options; {chan_bars?, viewer_background?, binding_lines?, \
@@ -103,7 +103,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "ui.arrange",
-        "Arrange the nodes so wires cross little and run straight: {nodes?: [path]}, else every level (one undo step per level)",
+        "Arrange the nodes so wires cross little and run straight (one undo step): {nodes?: [path]}, else every level",
     ),
     ("ui.frame", "Fit all nodes into the editor"),
     (

@@ -1,15 +1,15 @@
 // penumbra project. Written by the app about a second after each change; while the app
 // runs, edits to this file are merged into the open project.
 (
-    version: 1,
+    version: 2,
     nodes: {
-        "/brightness": (kind: "chan.from_tex", params: {"columns": 128, "components": "luminance"}, inputs: {"in": "picture"}),
-        "/columns": (kind: "chan.from_tex", params: {"columns": 64, "components": "rgb"}, inputs: {"in": "picture"}),
-        "/curve": (kind: "tex.from_chan", inputs: {"in": "brightness"}),
-        "/mean": (kind: "chan.from_tex", params: {"components": "rgb"}, inputs: {"in": "picture"}),
-        "/picture": (kind: "tex.noise", params: {"amplitude": 0.6, "color": true, "frequency": 2.0, "height": 720, "speed": 0.25, "width": 1280}),
-        "/strip": (kind: "tex.from_chan", inputs: {"in": "columns"}),
-        "/swatch": (kind: "tex.constant", params: {"height": 64, "width": 64}, binds: {"color.0": "mean:r", "color.1": "mean:g", "color.2": "mean:b"}),
-        "/view": (kind: "tex.shader", params: {"file": "view.wgsl"}, inputs: {"in0": "picture", "in1": "curve", "in2": "strip", "in3": "swatch"}),
+        "/brightness": (kind: "chan.from_tex", params: {"columns": 128, "components": "luminance"}, inputs: {"in": "picture"}, pos: [250.0, 0.0]),
+        "/columns": (kind: "chan.from_tex", params: {"columns": 64, "components": "rgb"}, inputs: {"in": "picture"}, pos: [251.0, 158.0]),
+        "/curve": (kind: "tex.from_chan", inputs: {"in": "brightness"}, pos: [500.0, 0.0]),
+        "/mean": (kind: "chan.from_tex", params: {"components": "rgb"}, inputs: {"in": "picture"}, pos: [250.0, 360.0]),
+        "/picture": (kind: "tex.noise", params: {"amplitude": 0.6, "color": true, "frequency": 2.0, "height": 720, "speed": 0.25, "width": 1280}, pos: [0.0, 180.0]),
+        "/strip": (kind: "tex.from_chan", inputs: {"in": "columns"}, pos: [508.0, 202.0]),
+        "/swatch": (kind: "tex.constant", params: {"height": 64, "width": 64}, binds: {"color.0": "mean:r", "color.1": "mean:g", "color.2": "mean:b"}, pos: [500.0, 360.0]),
+        "/view": (kind: "tex.shader", params: {"file": "view.wgsl"}, inputs: {"in0": "picture", "in1": "curve", "in2": "strip", "in3": "swatch"}, pos: [800.0, 180.0]),
     },
 )

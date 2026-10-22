@@ -144,7 +144,7 @@ fn color(tags: &[String], tag: &str, alpha: u8) -> Color32 {
 impl ShapeEditor {
     fn edit(actions: &mut Vec<Action>, op: Option<Op>, label: &str, group: Option<GroupId>) {
         if let Some(op) = op {
-            actions.push(Action::Edit { ops: vec![op], label: label.into(), group, place: None });
+            actions.push(Action::Edit { ops: vec![op], label: label.into(), group });
         }
     }
 

@@ -122,7 +122,8 @@ travel with a saved component yet.
 Every edit, by hand, by Claude over the control channel, or by editing `project.ron` in a text
 editor, is an entry in one linear history, shown under Changes. Ctrl+Z undoes the latest,
 whoever made it; to take back one of Claude's changes while keeping later tweaks of your own,
-ask Claude to revert it. Moving nodes is undoable as well, in the same sequence.
+ask Claude to revert it. Moving nodes is an edit like any other: a drag (or one arrange) is one
+entry, and `history.undo` takes it back as well.
 
 Values that arrive by OSC are live control, not edits: they stay out of the history, and undo
 or redo of other edits does not roll them back. An edit by hand to the same param takes it
@@ -132,7 +133,7 @@ back into the history.
 
 You and Claude take turns. While Claude edits, the whole UI turns dark blue, the title says
 "Claude is editing" with what it is doing, and editing widgets are disabled; looking,
-selecting, moving nodes and pinning the viewer still work. Claude gets the turn only after
+selecting and pinning the viewer still work (moving nodes is an edit, so it waits too). Claude gets the turn only after
 3 seconds without an edit of yours. "Take over" in the blue bar ends Claude's turn at once,
 and it lapses by itself after 2 minutes without a command from Claude.
 
@@ -169,8 +170,8 @@ kept across restarts. Use it for calibration results and anything expensive to m
 
 | | |
 |---|---|
-| `project.ron` | the network: nodes, params, wires, bindings, project settings. Written a second after each change |
-| `layout.ron` | where the nodes sit, pan and zoom, open sections, the right column's width, editor options (thumbnails included) |
+| `project.ron` | the network: nodes, params, wires, bindings, where each node sits in the editor, project settings. Written a second after each change |
+| `layout.ron` | view state: pan and zoom, open sections, the right column's width, the viewer's aspect, editor options (thumbnails included) |
 | `state/` | what nodes hold across restarts (feedback loops, caches, locked outputs); ignored by git through its own `.gitignore` |
 | `components/` | the project's own component files |
 | `project.ron.bak` | the file as it was before `project.save` wrote over a file that did not load; worth a line in a project's `.gitignore` |
@@ -178,7 +179,9 @@ kept across restarts. Use it for calibration results and anything expensive to m
 
 `project.ron` is plain text, meant to be read and edited. The app notices a change to it and
 merges only what differs, as one undoable entry, keeping your unsaved work. A project keeps
-working under git: one node per line, sorted.
+working under git: one node per line, sorted. A node's `pos` is where it sits in the editor;
+without one the editor places it and the next save writes where. Projects from builds that
+kept positions in `layout.ron` (format version 1) take them from there once as they open.
 
 A node whose line does not load (a kind this build does not know, an input its kind does not
 have, a param value its kind refuses) does not stop the rest: the project opens, and the node

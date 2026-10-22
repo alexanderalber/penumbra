@@ -153,5 +153,5 @@ command. Close the app (or open another project) and come back to it, and the ne
 | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y | undo, redo |
 
 Keys go to the pane under the pointer, so F over the viewer does not frame the editor. Undo and
-redo work everywhere except while a text field has the focus. Moving nodes is undoable too, in
-the same sequence as edits.
+redo work everywhere except while a text field has the focus. Moving nodes is an edit too: a
+drag is one step in the same history.

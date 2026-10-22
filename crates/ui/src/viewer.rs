@@ -538,12 +538,7 @@ impl Viewer {
             auto.add("viewer.take_view", r.rect, "take view");
             if r.clicked() {
                 match self.nav.take_view(scene, net) {
-                    Ok(ops) => actions.push(Action::Edit {
-                        ops,
-                        label: "take the view".into(),
-                        group: None,
-                        place: None,
-                    }),
+                    Ok(ops) => actions.push(Action::Edit { ops, label: "take the view".into(), group: None }),
                     Err(e) => actions.push(Action::Message(e)),
                 }
             }

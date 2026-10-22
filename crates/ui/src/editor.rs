@@ -685,8 +685,12 @@ impl Editor {
         self.box_select(ui, &painter, &canvas_resp, geos, pointer, released, actions);
         self.canvas_clicks(&canvas_resp, canvas, view, clicked_node, input, layout, auto, actions);
         if released || !ui.input(|i| i.pointer.any_down()) {
-            if matches!(self.drag, Drag::Nodes) {
-                layout.end_move();
+            // The whole drag is one edit, made as it ends.
+            if matches!(self.drag, Drag::Nodes)
+                && let Some(ops) = layout.end_move(net)
+            {
+                let label = crate::layout::move_label(&ops);
+                actions.push(Action::Edit { ops, label, group: None });
             }
             self.drag = Drag::None;
         }
@@ -710,7 +714,7 @@ impl Editor {
         layout.level = self.level;
         let shown = layout.view;
         layout.visible = Some(Rect::from_min_size(shown.origin.to_pos2(), canvas.size() / shown.zoom));
-        layout.sync(net, now);
+        layout.sync(net);
         let level = self.level;
         self.selection.retain(|id| net.node(*id).is_some_and(|n| n.parent == level));
         self.paused.retain(|id| net.node(*id).is_some());
@@ -1043,15 +1047,19 @@ impl Editor {
             None => arrange = options_menu(ui, input, layout, auto, actions, selected),
         });
         if arrange {
-            self.arrange(input, layout);
+            self.arrange(input, layout, actions);
         }
     }
 
     /// Arranges the selection when it holds two nodes or more, else everything shown (and frames
-    /// it), as one undo step.
-    fn arrange(&mut self, input: &Inputs<'_>, layout: &mut Layout) {
+    /// it), as one edit.
+    fn arrange(&mut self, input: &Inputs<'_>, layout: &Layout, actions: &mut Vec<Action>) {
         let only = (self.selection.len() > 1).then_some(&self.selection);
-        crate::arrange::level(input.net, input.types, layout, self.level, only, input.now);
+        let to = crate::arrange::level(input.net, input.types, layout, self.level, only);
+        let ops = crate::layout::place_ops(input.net, &to);
+        if !ops.is_empty() {
+            actions.push(Action::Edit { ops, label: "arrange".into(), group: None });
+        }
         if only.is_none() {
             self.frame_all();
         }
@@ -1113,7 +1121,8 @@ impl Editor {
     ) {
         // A press on a port has already started a wire drag (see `start_port_drag`), so this only
         // starts for presses elsewhere on the node.
-        if resp.drag_started_by(PointerButton::Primary) && matches!(self.drag, Drag::None) {
+        // Moving is an edit: not while Claude edits.
+        if resp.drag_started_by(PointerButton::Primary) && matches!(self.drag, Drag::None) && input.can_edit {
             if !self.selection.contains(&id) {
                 self.selection.clear();
                 self.selection.insert(id);
@@ -1123,12 +1132,7 @@ impl Editor {
             layout.begin_move(self.selection.iter().copied());
         }
         if resp.dragged_by(PointerButton::Primary) && matches!(self.drag, Drag::Nodes) {
-            let delta = resp.drag_delta() / layout.view.zoom;
-            for sel in &self.selection {
-                if let Some(p) = layout.get(*sel) {
-                    layout.set(*sel, p + delta, input.now);
-                }
-            }
+            layout.drag_by(resp.drag_delta() / layout.view.zoom);
         }
         if resp.clicked() {
             *clicked_node = true;
@@ -1615,7 +1619,7 @@ impl Editor {
             )
         });
         if arrange {
-            self.arrange(input, layout);
+            self.arrange(input, layout, actions);
         }
         // Components: Ctrl+G groups the selection, I goes into the selected component, U up
         // (TouchDesigner's keys).
@@ -1750,14 +1754,14 @@ impl Editor {
                     let mut ops = vec![Op::Create { path: path.clone(), kind, params: Default::default() }];
                     // A single selected node with a matching output feeds the new node, which
                     // then goes right of it (placed by the layout); otherwise at the pointer.
-                    let mut place = Some(at);
                     if let [only] = self.selection.iter().copied().collect::<Vec<_>>().as_slice()
                         && let Some(connect) = auto_connect(input, *only, &path, ops.first())
                     {
                         ops.push(connect);
-                        place = None;
+                    } else if let Ok(pos) = penumbra_graph::check_pos([at.x, at.y]) {
+                        ops.push(Op::Place { path, pos: Some(pos) });
                     }
-                    actions.push(Action::Edit { ops, label: String::new(), group: None, place });
+                    actions.push(Action::Edit { ops, label: String::new(), group: None });
                 }
             }
         }

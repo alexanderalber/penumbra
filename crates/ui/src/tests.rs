@@ -127,9 +127,21 @@ fn build_wire_tweak_and_undo_through_the_ui() {
         .doc()
         .with_history(|h| h.entries().iter().map(|e| e.label.clone()).collect::<Vec<_>>());
     assert_eq!(history.len(), 3, "create, connect, create (the undone set is gone): {history:?}");
+    // Both new nodes have their place in the document: /lfo1 where the dialog opened, as part
+    // of its creation; /composite1, placed right of its input by the editor, outside the
+    // history.
+    let net = engine.session().doc().snapshot();
+    for path in ["/composite1", "/lfo1"] {
+        let id = net.resolve(&path.parse().unwrap()).unwrap();
+        assert!(net.node(id).unwrap().pos.is_some(), "{path} has a place");
+    }
     engine.shutdown();
     let layout = std::fs::read_to_string(dir.0.join(crate::layout::FILE_NAME)).unwrap();
-    assert!(layout.contains("/composite1") && layout.contains("/lfo1"), "{layout}");
+    assert!(!layout.contains("/composite1"), "positions are not view state: {layout}");
+    let project = std::fs::read_to_string(dir.0.join(penumbra_project::FILE_NAME)).unwrap();
+    let line = |p: &str| project.lines().find(|l| l.contains(&format!("\"{p}\""))).unwrap_or("").to_string();
+    assert!(line("/composite1").contains("pos: ["), "{project}");
+    assert!(line("/lfo1").contains("pos: ["), "{project}");
 }
 
 #[test]
@@ -201,7 +213,7 @@ fn delete_a_wire_and_replace_a_node_by_right_click() {
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"wait": 0.5}),
-        json!({"method": "ui.place", "params": {"nodes": {"/noise1": [0, 0], "/level1": [300, 0], "/out": [600, 0]}}}),
+        json!({"method": "node.place", "params": {"nodes": {"/noise1": [0, 0], "/level1": [300, 0], "/out": [600, 0]}}}),
         json!({"method": "ui.frame", "params": {}}),
         json!({"wait": 0.3}),
         json!({"method": "ui.click", "params": {"id": "wire./out.0", "button": "right"}}),
@@ -236,7 +248,8 @@ fn delete_a_wire_and_replace_a_node_by_right_click() {
         .session()
         .doc()
         .with_history(|h| h.entries().iter().map(|e| e.label.clone()).collect::<Vec<_>>());
-    assert_eq!(history, ["disconnect /out:0", "replace /level1 with tex.blur"]);
+    assert_eq!(history, ["move 3 nodes", "disconnect /out:0", "replace /level1 with tex.blur"]);
+    assert_eq!(state["positions"]["/level1"], json!([300.0, 0.0]), "the new node took the old one's place");
     engine.shutdown();
 }
 
@@ -315,6 +328,11 @@ fn moving_nodes_is_undone_in_turn_with_edits() {
     assert_eq!(pos(2), moved, "the first undo brought the node back where it was");
     assert_eq!(pos(3), start, "the second undo moved the node back");
     assert_eq!(pos(4), moved, "redo moved it again");
+    let history = engine
+        .session()
+        .doc()
+        .with_history(|h| h.entries().iter().map(|e| e.label.clone()).collect::<Vec<_>>());
+    assert_eq!(history, ["move /c", "delete /c"], "the whole drag is one entry");
     engine.shutdown();
 }
 

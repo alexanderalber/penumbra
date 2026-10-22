@@ -77,7 +77,7 @@ impl PenumbraApp {
                 done(json!({"pinned": pinned.and_then(|id| path_of(&net, id)), "output": self.viewer.output}))
             }
             "ui.camera" => done(self.camera(p, now)?),
-            "ui.place" => done(self.place(p, now)?),
+
             "ui.options" => done(self.options(p, now)?),
             "ui.arrange" => done(self.arrange(p, now)?),
             "ui.measure" => {
@@ -323,7 +323,7 @@ impl PenumbraApp {
         }
         if p.get("take").and_then(Json::as_bool).unwrap_or(false) {
             let ops = nav.take_view(&scene, &net)?;
-            actions.push(Action::Edit { ops, label: "take the view".into(), group: None, place: None });
+            actions.push(Action::Edit { ops, label: "take the view".into(), group: None });
         }
         let mode = nav.mode(&scene);
         let camera = nav.camera(id);
@@ -340,29 +340,22 @@ impl PenumbraApp {
         }))
     }
 
-    fn place(&mut self, p: &Json, now: Instant) -> Result<Json, String> {
-        let net = self.engine.session().doc().snapshot();
-        let nodes = p.get("nodes").and_then(Json::as_object).ok_or("`nodes` must be an object")?;
-        for (path, at) in nodes {
-            let id = resolve(&net, path)?;
-            let xy = at.as_array().and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
-            let Some((x, y)) = xy.filter(|(x, y)| x.is_finite() && y.is_finite()) else {
-                return Err(format!("{path}: position must be [x, y]"));
-            };
-            self.layout.set(id, pos2(x as f32, y as f32), now);
-        }
-        Ok(json!({"placed": nodes.len()}))
-    }
-
-    /// Arranges the nodes named in `nodes` (grouped by the level they are on), or every level.
+    /// Arranges the nodes named in `nodes` (grouped by the level they are on), or every level,
+    /// as one edit from the control channel.
     fn arrange(&mut self, p: &Json, now: Instant) -> Result<Json, String> {
         let session = self.engine.session();
         let net = session.doc().snapshot();
         let types = session.types();
-        let moved = match p.get("nodes") {
+        // Nodes placed by nobody yet get their place first, so the arrangement starts from
+        // what the editor shows.
+        self.layout.sync(&net);
+        let placed = self.layout.take_placed();
+        let net = if placed.is_empty() { net } else { session.place_unplaced(&placed).map_err(|e| e.0)? };
+        self.layout.sync(&net);
+        let to = match p.get("nodes") {
             None => {
                 self.editor.frame_all();
-                crate::arrange::everything(&net, types, &mut self.layout, now)
+                crate::arrange::everything(&net, types, &self.layout)
             }
             Some(list) => {
                 let list = list.as_array().ok_or("`nodes` must be a list of paths")?;
@@ -375,13 +368,23 @@ impl PenumbraApp {
                 }
                 levels
                     .iter()
-                    .map(|(level, only)| {
-                        crate::arrange::level(&net, types, &mut self.layout, *level, Some(only), now)
+                    .flat_map(|(level, only)| {
+                        crate::arrange::level(&net, types, &self.layout, *level, Some(only))
                     })
-                    .sum()
+                    .collect()
             }
         };
-        Ok(json!({"moved": moved}))
+        let ops = crate::layout::place_ops(&net, &to);
+        if ops.is_empty() {
+            return Ok(json!({"moved": 0, "history": "no_change"}));
+        }
+        let out =
+            session.edit(penumbra_project::Actor::Claude, &ops, None, "arrange", now).map_err(|e| e.0)?;
+        let mut reply = penumbra_engine::commands::outcome(&out);
+        if let Some(o) = reply.as_object_mut() {
+            o.insert("moved".into(), json!(ops.len()));
+        }
+        Ok(reply)
     }
 
     fn options(&mut self, p: &Json, now: Instant) -> Result<Json, String> {

@@ -541,7 +541,8 @@ pub(crate) fn edit_in(session: &Session, ops: &[Op], label: &str) -> Result<Edit
     Ok(session.edit(Actor::Claude, ops, None, label, Instant::now())?)
 }
 
-pub(crate) fn outcome(out: &EditOutcome) -> Json {
+/// The reply of an editing command: whether it made a history entry, and the nodes it created.
+pub fn outcome(out: &EditOutcome) -> Json {
     let recorded = match out.recorded {
         Recorded::New => "new",
         Recorded::Merged => "merged",

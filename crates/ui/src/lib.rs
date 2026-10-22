@@ -42,14 +42,12 @@ pub use control::{Bridge, UiRequest};
 
 /// What a panel asks the app to do; applied after drawing, in order.
 pub enum Action {
-    /// Edit the network as the user. `group` joins the edits of one drag into one undo step;
-    /// `place` puts the node the batch creates at this editor position (without it the layout
-    /// places it, right of its first input); a created node becomes the selection.
+    /// Edit the network as the user. `group` joins the edits of one drag into one undo step; a
+    /// created node becomes the selection.
     Edit {
         ops: Vec<Op>,
         label: String,
         group: Option<GroupId>,
-        place: Option<Pos2>,
     },
     Undo,
     Redo,
@@ -125,7 +123,7 @@ pub enum Action {
 impl Action {
     /// A one-off edit: its own undo step.
     pub fn edit(ops: Vec<Op>) -> Self {
-        Action::Edit { ops, label: String::new(), group: None, place: None }
+        Action::Edit { ops, label: String::new(), group: None }
     }
 }
 

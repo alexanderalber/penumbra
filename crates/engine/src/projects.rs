@@ -39,29 +39,29 @@ const RECENT_MAX_BYTES: u64 = 256 * 1024;
 /// feedback loop of blur and sharpen, which grows spots and stripes; the title, blurred into a
 /// shield, keeps the pattern out of the letters.
 pub const DEMO: &str = r#"(
-    version: 1,
+    version: 2,
     nodes: {
-        "/noise": (kind: "tex.noise", params: {"width": 640, "height": 360, "keep_size": true, "frequency": 1.27, "octaves": 1, "speed": 0.05}),
-        "/paper": (kind: "tex.constant", params: {"width": 640, "height": 360, "keep_size": true, "color": [1.0, 1.0, 1.0, 1.0]}),
-        "/title": (kind: "tex.text", params: {"text": "penumbra", "size": 110.0, "style": "Bold", "color": [0.0, 0.0, 0.0, 1.0], "width": 640, "height": 360, "keep_size": true}),
-        "/stencil": (kind: "tex.composite", inputs: {"layer1": "paper", "layer2": "title"}),
-        "/soften": (kind: "tex.blur", params: {"size": 8.0}, inputs: {"in": "stencil"}),
-        "/shield": (kind: "tex.level", params: {"gamma": 0.1}, inputs: {"in": "soften"}),
-        "/seed": (kind: "tex.composite", params: {"op": "multiply"}, inputs: {"layer1": "noise", "layer2": "shield"}),
-        "/loop": (kind: "tex.feedback", inputs: {"initial": "seed", "previous": "drift"}),
-        "/mix": (kind: "tex.cross", params: {"cross": 0.529}, inputs: {"a": "loop", "b": "seed"}),
-        "/blur": (kind: "tex.blur", params: {"size": 6.0}, inputs: {"in": "mix"}),
-        "/sharpen": (kind: "tex.shader", params: {"file": "sharpen.wgsl", "amount": 0.99}, inputs: {"in0": "blur"}),
-        "/keep": (kind: "tex.composite", params: {"op": "multiply"}, inputs: {"layer1": "sharpen", "layer2": "shield"}),
-        "/drift": (kind: "tex.transform", inputs: {"in": "keep"}, binds: {"rotate": "wobble"}),
-        "/wobble": (kind: "chan.noise", params: {"frequency": 0.01, "amplitude": 0.04}),
-        "/full": (kind: "tex.fit", params: {"fit": "stretch"}, inputs: {"in": "drift"}),
-        "/palette0": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.8308 0.624 0.1878\n0.1 0.8308 0.624 0.1878\n0.3 0.6867 0.1046 0.0561\n0.5 0.521 0.0222 0.0545\n0.7 0.0887 0.0176 0.0382\n0.9 0.0865 0.1845 0.1946\n1 0.0865 0.1845 0.1946"}),
-        "/palette1": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0529 0.0482 0.0685\n0.1 0.0529 0.0482 0.0685\n0.3 0.1714 0.1221 0.1559\n0.5 0.4452 0.2159 0.227\n0.7 0.8632 0.4508 0.3372\n0.9 0.9216 0.7682 0.5089\n1 0.9216 0.7682 0.5089"}),
-        "/palette2": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0343 0.0395 0.0395\n0.1 0.0343 0.0395 0.0395\n0.3 0.0 0.1144 0.147\n0.5 0.0 0.2582 0.3372\n0.7 0.0 0.4508 0.5972\n0.9 0.0 0.7305 0.9647\n1 0.0 0.7305 0.9647"}),
-        "/palette3": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0296 0.0 0.0296\n0.1 0.0296 0.0 0.0296\n0.3 0.0648 0.0 0.0648\n0.5 0.117 0.0091 0.0648\n0.7 0.521 0.0648 0.0648\n0.9 0.8632 0.1683 0.0529\n1 0.8632 0.1683 0.0529"}),
-        "/palettes": (kind: "tex.switch", params: {"blend": true}, inputs: {"in0": "palette0", "in1": "palette1", "in2": "palette2", "in3": "palette3"}),
-        "/show": (kind: "tex.lookup", inputs: {"in": "full", "lut": "palettes"}),
+        "/noise": (kind: "tex.noise", params: {"width": 640, "height": 360, "keep_size": true, "frequency": 1.27, "octaves": 1, "speed": 0.05}, pos: [600.0, 0.0]),
+        "/paper": (kind: "tex.constant", params: {"width": 640, "height": 360, "keep_size": true, "color": [1.0, 1.0, 1.0, 1.0]}, pos: [0.0, 568.0]),
+        "/title": (kind: "tex.text", params: {"text": "penumbra", "size": 110.0, "style": "Bold", "color": [0.0, 0.0, 0.0, 1.0], "width": 640, "height": 360, "keep_size": true}, pos: [0.0, 710.0]),
+        "/stencil": (kind: "tex.composite", inputs: {"layer1": "paper", "layer2": "title"}, pos: [200.0, 568.0]),
+        "/soften": (kind: "tex.blur", params: {"size": 8.0}, inputs: {"in": "stencil"}, pos: [400.0, 568.0]),
+        "/shield": (kind: "tex.level", params: {"gamma": 0.1}, inputs: {"in": "soften"}, pos: [600.0, 568.0]),
+        "/seed": (kind: "tex.composite", params: {"op": "multiply"}, inputs: {"layer1": "noise", "layer2": "shield"}, pos: [800.0, 0.0]),
+        "/loop": (kind: "tex.feedback", inputs: {"initial": "seed", "previous": "drift"}, pos: [1000.0, 0.0]),
+        "/mix": (kind: "tex.cross", params: {"cross": 0.529}, inputs: {"a": "loop", "b": "seed"}, pos: [1200.0, 0.0]),
+        "/blur": (kind: "tex.blur", params: {"size": 6.0}, inputs: {"in": "mix"}, pos: [1400.0, 0.0]),
+        "/sharpen": (kind: "tex.shader", params: {"file": "sharpen.wgsl", "amount": 0.99}, inputs: {"in0": "blur"}, pos: [1600.0, 0.0]),
+        "/keep": (kind: "tex.composite", params: {"op": "multiply"}, inputs: {"layer1": "sharpen", "layer2": "shield"}, pos: [1800.0, 0.0]),
+        "/drift": (kind: "tex.transform", inputs: {"in": "keep"}, binds: {"rotate": "wobble"}, pos: [2000.0, 0.0]),
+        "/wobble": (kind: "chan.noise", params: {"frequency": 0.01, "amplitude": 0.04}, pos: [1800.0, 142.0]),
+        "/full": (kind: "tex.fit", params: {"fit": "stretch"}, inputs: {"in": "drift"}, pos: [2200.0, 0.0]),
+        "/palette0": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.8308 0.624 0.1878\n0.1 0.8308 0.624 0.1878\n0.3 0.6867 0.1046 0.0561\n0.5 0.521 0.0222 0.0545\n0.7 0.0887 0.0176 0.0382\n0.9 0.0865 0.1845 0.1946\n1 0.0865 0.1845 0.1946"}, pos: [0.0, 0.0]),
+        "/palette1": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0529 0.0482 0.0685\n0.1 0.0529 0.0482 0.0685\n0.3 0.1714 0.1221 0.1559\n0.5 0.4452 0.2159 0.227\n0.7 0.8632 0.4508 0.3372\n0.9 0.9216 0.7682 0.5089\n1 0.9216 0.7682 0.5089"}, pos: [0.0, 142.0]),
+        "/palette2": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0343 0.0395 0.0395\n0.1 0.0343 0.0395 0.0395\n0.3 0.0 0.1144 0.147\n0.5 0.0 0.2582 0.3372\n0.7 0.0 0.4508 0.5972\n0.9 0.0 0.7305 0.9647\n1 0.0 0.7305 0.9647"}, pos: [0.0, 284.0]),
+        "/palette3": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0296 0.0 0.0296\n0.1 0.0296 0.0 0.0296\n0.3 0.0648 0.0 0.0648\n0.5 0.117 0.0091 0.0648\n0.7 0.521 0.0648 0.0648\n0.9 0.8632 0.1683 0.0529\n1 0.8632 0.1683 0.0529"}, pos: [0.0, 426.0]),
+        "/palettes": (kind: "tex.switch", params: {"blend": true}, inputs: {"in0": "palette0", "in1": "palette1", "in2": "palette2", "in3": "palette3"}, pos: [200.0, 0.0]),
+        "/show": (kind: "tex.lookup", inputs: {"in": "full", "lut": "palettes"}, pos: [2400.0, 0.0]),
     },
 )"#;
 
@@ -634,7 +634,8 @@ mod tests {
     }
 
     /// The shipped examples and the demo load whole: no node of theirs is kept as a
-    /// placeholder of a node that did not load.
+    /// placeholder of a node that did not load, and every node has its place, so they open
+    /// as they were arranged (and the editor's layout files hold none).
     #[test]
     fn the_shipped_examples_and_the_demo_load_whole() {
         use penumbra_graph::{Network, Params};
@@ -650,8 +651,15 @@ mod tests {
         for (name, text) in texts {
             let content = penumbra_project::parse(&text, &types).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(penumbra_project::load(&text, &types).unwrap(), content, "{name}");
+            let unplaced: Vec<_> =
+                content.nodes.iter().filter(|(_, n)| n.pos.is_none()).map(|(p, _)| p).collect();
+            assert!(unplaced.is_empty(), "{name}: without a place: {unplaced:?}");
             let ops = penumbra_project::diff(&Content::default(), &content);
             Network::new().apply_with(&types, &ops, Params::Keep).unwrap_or_else(|e| panic!("{name}: {e}"));
+        }
+        for n in &names {
+            let layout = std::fs::read_to_string(source.join(n).join(penumbra_project::legacy::LAYOUT_FILE));
+            assert!(!layout.unwrap_or_default().contains("nodes:"), "{n}: positions belong in the project");
         }
     }
 

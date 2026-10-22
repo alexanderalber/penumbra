@@ -210,7 +210,6 @@ impl MapEditor {
                     ops: vec![Op::Set { param: path, value: Value::Text(text) }],
                     label: "mesh size".into(),
                     group: None,
-                    place: None,
                 });
             }
             let mut pattern = stored(input, "pattern").and_then(Value::as_bool).unwrap_or(false);
@@ -236,7 +235,7 @@ impl MapEditor {
                 {
                     ops.push(Op::Set { param: path, value: Value::Text(flat.to_text()) });
                 }
-                actions.push(Action::Edit { ops, label: "reset mapping".into(), group: None, place: None });
+                actions.push(Action::Edit { ops, label: "reset mapping".into(), group: None });
             }
         });
         // View controls work in either editing mode.
@@ -380,7 +379,6 @@ impl MapEditor {
                         ops: vec![op],
                         label: "map".into(),
                         group: Some(drag.group),
-                        place: None,
                     });
                 }
             }
@@ -404,7 +402,6 @@ impl MapEditor {
                             ops: vec![op],
                             label: "nudge".into(),
                             group: Some(group),
-                            place: None,
                         });
                     }
                 }

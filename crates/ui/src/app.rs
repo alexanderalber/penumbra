@@ -233,7 +233,7 @@ impl PenumbraApp {
         // The same folder again means it was made afresh (the demo or an example opened anew):
         // the old layout must not be written over the fresh one.
         if !penumbra_engine::projects::same_dir(previous.dir(), old.dir()) {
-            self.layout.save_if_due(&previous.doc().snapshot(), now, true);
+            self.layout.save_if_due(now, true);
         }
         self.starts_fresh = penumbra_engine::projects::starts_fresh(old.dir());
         self.layout = Layout::load(Some(old.dir()));
@@ -261,8 +261,7 @@ impl PenumbraApp {
 
     /// Writes the layout now; for runs that end without `on_exit` (headless).
     pub fn close(&mut self) {
-        let net = self.engine.session().doc().snapshot();
-        self.layout.save_if_due(&net, Instant::now(), true);
+        self.layout.save_if_due(Instant::now(), true);
     }
 
     /// Synthetic input queued by `ui.click` and friends, one pointer event per frame. The
@@ -282,12 +281,9 @@ impl PenumbraApp {
         let session = self.engine.session().clone();
         for action in actions {
             let result = match action {
-                Action::Edit { ops, label, group, place } => {
+                Action::Edit { ops, label, group } => {
                     session.edit(Actor::User, &ops, group, &label, now).map(|out| {
                         if let Some(id) = out.created.first() {
-                            if let Some(at) = place {
-                                self.layout.set(*id, at, now);
-                            }
                             self.editor.selection = [*id].into();
                         }
                     })
@@ -329,10 +325,10 @@ impl PenumbraApp {
                 }
                 Action::Message(m) => Err(penumbra_core::Error::new(m)),
                 Action::Group(ids) => {
-                    crate::components::group(&self.engine, &mut self.editor, &mut self.layout, &ids, now)
+                    crate::components::group(&self.engine, &mut self.editor, &self.layout, &ids, now)
                 }
                 Action::Dissolve(id) => {
-                    crate::components::dissolve(&self.engine, &mut self.editor, &mut self.layout, id, now)
+                    crate::components::dissolve(&self.engine, &mut self.editor, &self.layout, id, now)
                 }
                 Action::SaveComponent(id) => crate::components::save(&self.engine, id).map(|text| {
                     self.message = Some((text, now));
@@ -342,25 +338,18 @@ impl PenumbraApp {
                     self.message = Some((text, now));
                     self.library.1 = None;
                 }),
-                Action::AddComponent { name, level, at } => crate::components::add(
-                    &self.engine,
-                    &mut self.editor,
-                    &mut self.layout,
-                    &name,
-                    level,
-                    at,
-                    now,
-                ),
+                Action::AddComponent { name, level, at } => {
+                    crate::components::add(&self.engine, &mut self.editor, &name, level, at, now)
+                }
                 Action::Copy(ids) => {
-                    crate::clipboard::copy(&self.engine, &self.layout, &ids).map(|c| self.copied_now(c, now))
+                    crate::clipboard::copy(&self.engine, &ids).map(|c| self.copied_now(c, now))
                 }
                 Action::Cut(ids) => {
-                    crate::clipboard::cut(&self.engine, &self.layout, &ids).map(|c| self.copied_now(c, now))
+                    crate::clipboard::cut(&self.engine, &ids).map(|c| self.copied_now(c, now))
                 }
                 Action::Paste { text, level, at } => crate::clipboard::paste(
                     &self.engine,
                     &mut self.editor,
-                    &mut self.layout,
                     self.copied.as_ref(),
                     text.as_deref(),
                     level,
@@ -471,14 +460,10 @@ impl PenumbraApp {
         let session = self.engine.session().clone();
         let net = session.doc().snapshot();
         let path = net.path_of(node).ok_or_else(|| penumbra_core::Error::new("the node is gone"))?;
-        let place = self.layout.get(node);
         let r = penumbra_graph::replace(&net, self.engine.types(), &path, kind)?;
         let label = format!("replace {path} with {kind}");
         let out = session.edit(Actor::User, &r.ops, None, &label, now)?;
         if let Some(id) = out.created.first() {
-            if let Some(at) = place {
-                self.layout.set(*id, at, now);
-            }
             self.editor.selection = [*id].into();
         }
         let text = if r.lost.is_empty() {
@@ -497,33 +482,14 @@ impl PenumbraApp {
         self.copied = Some(copied);
     }
 
-    /// Undoes the newest step: a node move (view state, not in the history) or a history
-    /// entry, whichever came last.
+    /// Undoes the newest history entry (moves of nodes included).
     fn undo(&mut self, now: Instant) -> Result<(), penumbra_core::Error> {
-        let session = self.engine.session().clone();
-        let entry = session
-            .doc()
-            .with_history(|h| h.applied().checked_sub(1).and_then(|i| h.entries().get(i)).map(|e| e.at));
-        match self.layout.last_move() {
-            Some(m) if entry.is_none_or(|e| m >= e) => {
-                self.layout.undo_move(now);
-                Ok(())
-            }
-            _ => session.undo(Actor::User, now).map(|_| ()),
-        }
+        self.engine.session().undo(Actor::User, now).map(|_| ())
     }
 
-    /// Redoes the oldest undone step, a move or a history entry.
+    /// Redoes the oldest undone history entry.
     fn redo(&mut self, now: Instant) -> Result<(), penumbra_core::Error> {
-        let session = self.engine.session().clone();
-        let entry = session.doc().with_history(|h| h.entries().get(h.applied()).map(|e| e.at));
-        match self.layout.next_redo() {
-            Some(m) if entry.is_none_or(|e| m < e) => {
-                self.layout.redo_move(now);
-                Ok(())
-            }
-            _ => session.redo(Actor::User, now).map(|_| ()),
-        }
+        self.engine.session().redo(Actor::User, now).map(|_| ())
     }
 
     fn global_keys(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
@@ -639,8 +605,8 @@ impl PenumbraApp {
     ) {
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.horizontal(|ui| {
-                let (layout, session) = (&mut self.layout, &self.shown.1);
-                let save_layout = || layout.save_if_due(&session.doc().snapshot(), now, true);
+                let layout = &mut self.layout;
+                let save_layout = || layout.save_if_due(now, true);
                 if let Some(m) = self.projects.show(ui, &self.engine, &mut self.auto, save_layout) {
                     self.message = Some((m, now));
                 }
@@ -782,8 +748,7 @@ impl PenumbraApp {
                     egui::Panel::bottom("changes_closed").resizable(false).exact_size(SECTION_HEADER)
                 };
                 panel.show(ui, |ui| {
-                    let undo = (status.can_undo && can_edit) || self.layout.last_move().is_some();
-                    let redo = (status.can_redo && can_edit) || self.layout.next_redo().is_some();
+                    let (undo, redo) = (status.can_undo && can_edit, status.can_redo && can_edit);
                     section(ui, &mut self.auto, "changes", "Changes", &mut sections.changes, |ui, auto| {
                         crate::changes::buttons(ui, undo, redo, auto, &mut actions);
                     });
@@ -1012,6 +977,13 @@ impl PenumbraApp {
                 )
             })
             .inner;
+        // Nodes that came without a position keep the place the editor gave them.
+        let placed = self.layout.take_placed();
+        if !placed.is_empty()
+            && let Err(e) = session.place_unplaced(&placed)
+        {
+            log::warn!("placing new nodes: {e}");
+        }
 
         let helpers = crate::helpers::HelpersInput {
             board: &board,
@@ -1071,7 +1043,7 @@ impl PenumbraApp {
             free,
         });
         self.textures.end_frame();
-        self.layout.save_if_due(&net, now, false);
+        self.layout.save_if_due(now, false);
         // A line under the title bar, like the one the status bar draws above itself. Painted last,
         // over whatever panel sits at the top.
         let stroke = ui.visuals().widgets.noninteractive.bg_stroke;

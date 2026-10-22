@@ -682,12 +682,7 @@ fn resolution(
         if r.clicked() {
             let ops = report.optimize_ops(input.net, None);
             if !ops.is_empty() {
-                actions.push(Action::Edit {
-                    ops,
-                    label: "optimize resolutions".into(),
-                    group: None,
-                    place: None,
-                });
+                actions.push(Action::Edit { ops, label: "optimize resolutions".into(), group: None });
             }
         }
         let kept = report.nodes.iter().filter(|n| n.keep && n.suggested.is_some()).count();

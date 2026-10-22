@@ -1,12 +1,12 @@
 // penumbra project. Written by the app about a second after each change; while the app
 // runs, edits to this file are merged into the open project.
 (
-    version: 1,
+    version: 2,
     nodes: {
-        "/backdrop": (kind: "tex.constant", params: {"color": [0.02, 0.025, 0.04, 1.0]}),
-        "/ball": (kind: "tex.ramp", params: {"keys": "0 1 0.7 0.3\n0.16 1 0.45 0.08\n0.18 0 0 0 0", "shape": "radial"}),
-        "/physics": (kind: "script.python", params: {"file": "bounce.py"}),
-        "/place": (kind: "tex.transform", params: {"extend": "zero"}, inputs: {"in": "ball"}, binds: {"translate.0": "physics:tx", "translate.1": "physics:ty"}),
-        "/view": (kind: "tex.composite", inputs: {"layer1": "backdrop", "layer2": "place"}),
+        "/backdrop": (kind: "tex.constant", params: {"color": [0.02, 0.025, 0.04, 1.0]}, pos: [200.0, 0.0]),
+        "/ball": (kind: "tex.ramp", params: {"keys": "0 1 0.7 0.3\n0.16 1 0.45 0.08\n0.18 0 0 0 0", "shape": "radial"}, pos: [0.0, 0.0]),
+        "/physics": (kind: "script.python", params: {"file": "bounce.py"}, pos: [0.0, 142.0]),
+        "/place": (kind: "tex.transform", params: {"extend": "zero"}, inputs: {"in": "ball"}, binds: {"translate.0": "physics:tx", "translate.1": "physics:ty"}, pos: [200.0, 142.0]),
+        "/view": (kind: "tex.composite", inputs: {"layer1": "backdrop", "layer2": "place"}, pos: [400.0, 0.0]),
     },
 )

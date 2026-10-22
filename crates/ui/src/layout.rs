@@ -1,28 +1,35 @@
-//! Where nodes sit in the editor, kept in `layout.ron` next to `project.ron`, with pan, zoom and
-//! which sections of the right column are open. View state, not content: it does not touch the
-//! project file or the change log. Moves are undoable all the same, on a stack of their own that
-//! Ctrl+Z interleaves with the history by time ([`Layout::undo_move`]).
+//! The editor's view state, kept in `layout.ron` next to `project.ron`: pan and zoom, which
+//! sections of the right column are open, the column's width, the viewer's aspect and the
+//! editor's options. View state, not content: it does not touch the project file or the change
+//! log.
 //!
-//! Positions are held by node id while the app runs, so a rename keeps its place; the file keys
-//! them by path. A node without a position (new, or created by Claude or the project file) is
+//! Where nodes sit is content: each node's position is in the network
+//! ([`penumbra_graph::NodeDef::pos`]) and a move is an edit through the history like any other.
+//! The layout keeps the positions of the nodes for drawing (by id, so a rename keeps its place),
+//! with two additions of its own: where nodes are being dragged to (shown at once, recorded as
+//! one edit when the drag ends, [`Layout::end_move`]), and where it placed nodes that came
+//! without a position.
+//!
+//! A node without a position (new, or created by Claude or the project file without one) is
 //! placed automatically: right of its first placed input, otherwise at the first free spot in
 //! the part of the editor on screen (in a column by its depth when nothing is placed yet), and
-//! moved down until it overlaps nothing. A deleted node's position is remembered for the run,
-//! so undoing the delete brings it back where it was.
+//! moved down until it overlaps nothing. That place goes into the document outside the history
+//! ([`Layout::take_placed`], `Session::place_unplaced`), so the project is written with it and
+//! opens the same the next time.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use egui::{Pos2, Rect, Vec2, pos2, vec2};
 use penumbra_core::{NodeId, NodePath};
-use penumbra_graph::{Network, ThumbnailMode, ThumbnailPolicy};
+use penumbra_graph::{Network, Op, ThumbnailMode, ThumbnailPolicy};
 use serde::{Deserialize, Serialize};
 
 pub const FILE_NAME: &str = "layout.ron";
 /// Largest layout file read; anything bigger is not a layout.
 const MAX_BYTES: u64 = 16 * 1024 * 1024;
-/// Delay between the last move and writing the file.
+/// Delay between the last change and writing the file.
 const SAVE_DELAY: Duration = Duration::from_secs(1);
 
 /// Space a node takes in the editor, in graph units, for placing and overlap checks.
@@ -104,7 +111,10 @@ struct FileRepr {
     version: u32,
     #[serde(default)]
     view: Option<ViewRepr>,
-    #[serde(default)]
+    /// Node positions as older builds kept them here, by path. The project takes them over as
+    /// it opens (`penumbra_project::legacy`); they are read only to know that the file is to be
+    /// written again without them.
+    #[serde(default, skip_serializing)]
     nodes: BTreeMap<String, [f32; 2]>,
     #[serde(default)]
     sections: Option<Sections>,
@@ -246,15 +256,6 @@ impl Default for EditorOptions {
     }
 }
 
-/// One drag of one or more nodes: where each was and where it went.
-struct Move {
-    at: SystemTime,
-    nodes: Vec<(NodeId, Pos2, Pos2)>,
-}
-
-/// Moves kept for undo.
-const MOVES_KEPT: usize = 200;
-
 #[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 struct ViewRepr {
@@ -278,20 +279,17 @@ impl Default for View {
 
 pub struct Layout {
     file: Option<PathBuf>,
+    /// Where every node of the network is drawn: its position in the network, unless it is
+    /// being dragged or was placed here and the network does not have that place yet.
     pos: HashMap<NodeId, Pos2>,
-    /// Each placed node's parent: positions are per component (each component's inside has a
-    /// plane of its own), so overlap checks and bounds look at one level only.
+    /// Each node's parent: positions are per component (each component's inside has a plane of
+    /// its own), so overlap checks and bounds look at one level only.
     parents: HashMap<NodeId, Option<NodeId>>,
-    /// Each placed node's name: a node deleted and created again under the same name in one edit
-    /// (`node.replace`) keeps its place.
-    names: HashMap<NodeId, String>,
     /// The component whose inside the editor shows (`None`: the top level); `visible` and
     /// `bounds` refer to it.
     pub level: Option<NodeId>,
     /// Pan and zoom of the levels not shown, for coming back.
     level_views: HashMap<Option<NodeId>, View>,
-    /// Positions from the file for nodes not seen yet, by path.
-    loaded: BTreeMap<String, Pos2>,
     pub view: View,
     pub sections: Sections,
     pub options: EditorOptions,
@@ -303,12 +301,14 @@ pub struct Layout {
     /// The part of the graph on screen, from the editor; new nodes without a placed input go
     /// there.
     pub visible: Option<Rect>,
-    /// Positions of nodes deleted during this run, for an undo that brings them back.
-    gone: HashMap<NodeId, Pos2>,
-    /// Positions when the current drag started.
-    moving: Option<Vec<(NodeId, Pos2)>>,
-    moves: Vec<Move>,
-    undone: Vec<Move>,
+    /// Where the nodes being dragged are now, ahead of the edit that records the drag.
+    dragged: HashMap<NodeId, Pos2>,
+    /// The nodes of the current drag.
+    moving: Option<Vec<NodeId>>,
+    /// Places given here to nodes that have none in the network, until the network has them.
+    placed: HashMap<NodeId, Pos2>,
+    /// Of those, the ones not yet handed to the document ([`Layout::take_placed`]).
+    unsent: Vec<NodeId>,
     dirty_since: Option<Instant>,
     last_text: Option<String>,
 }
@@ -322,32 +322,29 @@ impl Layout {
             file: file.clone(),
             pos: HashMap::new(),
             parents: HashMap::new(),
-            names: HashMap::new(),
             level: None,
             level_views: HashMap::new(),
-            loaded: BTreeMap::new(),
             view: View::default(),
             sections: Sections::default(),
             options: EditorOptions::default(),
             column: COLUMN_DEFAULT,
             viewer_aspect: None,
             visible: None,
-            gone: HashMap::new(),
+            dragged: HashMap::new(),
             moving: None,
-            moves: Vec::new(),
-            undone: Vec::new(),
+            placed: HashMap::new(),
+            unsent: Vec::new(),
             dirty_since: None,
             last_text: None,
         };
         let Some(file) = file else { return layout };
         match read(&file) {
             Ok(Some((repr, text))) => {
-                layout.loaded = repr
-                    .nodes
-                    .into_iter()
-                    .filter(|(_, p)| p.iter().all(|c| c.is_finite()))
-                    .map(|(k, [x, y])| (k, pos2(x, y)))
-                    .collect();
+                // Positions from an older build: the project has taken them over, so the file
+                // is written again without them.
+                if !repr.nodes.is_empty() {
+                    layout.dirty_since = Some(Instant::now());
+                }
                 if let Some(v) = repr.view
                     && v.pan.iter().all(|c| c.is_finite())
                     && v.zoom.is_finite()
@@ -377,17 +374,9 @@ impl Layout {
         layout
     }
 
+    /// Where node `id` is drawn.
     pub fn get(&self, id: NodeId) -> Option<Pos2> {
         self.pos.get(&id).copied()
-    }
-
-    pub fn set(&mut self, id: NodeId, pos: Pos2, now: Instant) {
-        if !(pos.x.is_finite() && pos.y.is_finite()) {
-            return;
-        }
-        if self.pos.insert(id, pos) != Some(pos) {
-            self.touch(now);
-        }
     }
 
     pub fn set_view(&mut self, view: View, now: Instant) {
@@ -450,123 +439,64 @@ impl Layout {
         self.dirty_since.get_or_insert(now);
     }
 
-    /// A drag of `ids` starts; [`Layout::end_move`] records it as one undo step.
+    /// A drag of `ids` starts; [`Layout::end_move`] turns it into one edit.
     pub fn begin_move(&mut self, ids: impl IntoIterator<Item = NodeId>) {
-        let start = ids.into_iter().filter_map(|id| Some((id, self.get(id)?))).collect();
-        self.moving = Some(start);
+        self.dragged.clear();
+        self.moving = Some(ids.into_iter().filter(|id| self.pos.contains_key(id)).collect());
     }
 
-    /// The drag ended; records it unless nothing moved.
-    pub fn end_move(&mut self) {
-        let Some(start) = self.moving.take() else { return };
-        let nodes: Vec<(NodeId, Pos2, Pos2)> = start
-            .into_iter()
-            .filter_map(|(id, from)| Some((id, from, self.get(id)?)))
-            .filter(|(_, from, to)| from != to)
-            .collect();
-        self.record(nodes);
-    }
-
-    /// Moves nodes to new places as one undo step, as a drag of them would; how many moved.
-    pub fn move_to(&mut self, to: &HashMap<NodeId, Pos2>, now: Instant) -> usize {
-        let nodes: Vec<(NodeId, Pos2, Pos2)> = to
-            .iter()
-            .filter(|(_, p)| p.x.is_finite() && p.y.is_finite())
-            .filter_map(|(id, p)| Some((*id, self.get(*id)?, *p)))
-            .filter(|(_, from, to)| from != to)
-            .collect();
-        for (id, _, p) in &nodes {
-            self.set(*id, *p, now);
-        }
-        let moved = nodes.len();
-        self.record(nodes);
-        moved
-    }
-
-    fn record(&mut self, nodes: Vec<(NodeId, Pos2, Pos2)>) {
-        if nodes.is_empty() {
+    /// Moves the nodes being dragged by `delta`: shown at once, recorded when the drag ends.
+    pub fn drag_by(&mut self, delta: Vec2) {
+        let Some(ids) = &self.moving else { return };
+        if !(delta.x.is_finite() && delta.y.is_finite()) {
             return;
         }
-        self.moves.push(Move { at: SystemTime::now(), nodes });
-        if self.moves.len() > MOVES_KEPT {
-            self.moves.remove(0);
-        }
-        self.undone.clear();
-    }
-
-    /// When the newest undoable move was made.
-    pub fn last_move(&self) -> Option<SystemTime> {
-        self.moves.last().map(|m| m.at)
-    }
-
-    /// When the move a redo would bring back was made.
-    pub fn next_redo(&self) -> Option<SystemTime> {
-        self.undone.last().map(|m| m.at)
-    }
-
-    /// Puts the nodes of the newest move back; whether there was one.
-    pub fn undo_move(&mut self, now: Instant) -> bool {
-        let Some(m) = self.moves.pop() else { return false };
-        for (id, from, _) in &m.nodes {
-            self.place_again(*id, *from, now);
-        }
-        self.undone.push(m);
-        true
-    }
-
-    pub fn redo_move(&mut self, now: Instant) -> bool {
-        let Some(m) = self.undone.pop() else { return false };
-        for (id, _, to) in &m.nodes {
-            self.place_again(*id, *to, now);
-        }
-        self.moves.push(m);
-        true
-    }
-
-    /// Sets a position for a node that may be deleted for now.
-    fn place_again(&mut self, id: NodeId, p: Pos2, now: Instant) {
-        if self.pos.contains_key(&id) {
-            self.set(id, p, now);
-        } else if self.gone.contains_key(&id) {
-            self.gone.insert(id, p);
-        }
-    }
-
-    /// Forgets deleted nodes and places new ones. Cheap when nothing changed.
-    pub fn sync(&mut self, net: &Network, now: Instant) {
-        let gone = &mut self.gone;
-        let parents = &mut self.parents;
-        let names = &mut self.names;
-        let mut replaced: HashMap<(Option<NodeId>, String), Pos2> = HashMap::new();
-        self.pos.retain(|id, p| {
-            let keep = net.node(*id).is_some();
-            if !keep {
-                gone.insert(*id, *p);
-                let parent = parents.remove(id);
-                if let (Some(parent), Some(name)) = (parent, names.remove(id)) {
-                    replaced.insert((parent, name), *p);
-                }
+        for id in ids {
+            if let Some(p) = self.pos.get_mut(id) {
+                *p += delta;
+                self.dragged.insert(*id, *p);
             }
-            keep
-        });
+        }
+    }
+
+    /// The drag ended: the edit that puts the dragged nodes where they went, as one history
+    /// entry; none when nothing moved. Until it is applied the nodes are drawn where the
+    /// network has them (an edit refused leaves them there).
+    pub fn end_move(&mut self, net: &Network) -> Option<Vec<Op>> {
+        self.moving.take()?;
+        let to = std::mem::take(&mut self.dragged);
+        let ops = place_ops(net, &to);
+        (!ops.is_empty()).then_some(ops)
+    }
+
+    /// The places given to nodes without a position since the last call, for the document
+    /// (`Session::place_unplaced`): written outside the history, so the project opens the same
+    /// the next time.
+    pub fn take_placed(&mut self) -> Vec<(NodeId, [f32; 2])> {
+        let placed = &self.placed;
+        self.unsent.drain(..).filter_map(|id| placed.get(&id).map(|p| (id, [p.x, p.y]))).collect()
+    }
+
+    /// Takes the positions from the network and places nodes without one. Cheap enough to run
+    /// every frame.
+    pub fn sync(&mut self, net: &Network) {
         if self.level.is_some_and(|l| net.node(l).is_none()) {
             self.level = None;
         }
-        if self.pos.len() == net.len() && self.parents.len() == net.len() {
-            return;
-        }
+        self.placed.retain(|id, _| net.node(*id).is_some_and(|n| n.pos.is_none()));
+        self.dragged.retain(|id, _| net.node(*id).is_some());
+        self.pos.clear();
+        self.parents.clear();
         let mut fresh: Vec<NodeId> = Vec::new();
         for node in net.nodes() {
             self.parents.insert(node.id, node.parent);
-            self.names.insert(node.id, node.name.to_string());
-            if self.pos.contains_key(&node.id) {
-                continue;
-            }
-            let back =
-                self.gone.remove(&node.id).or_else(|| replaced.remove(&(node.parent, node.name.to_string())));
-            let from_file =
-                back.or_else(|| net.path_of(node.id).and_then(|p| self.loaded.remove(&p.to_string())));
-            match from_file {
+            let at = self
+                .dragged
+                .get(&node.id)
+                .copied()
+                .or(node.pos.map(|[x, y]| pos2(x, y)))
+                .or_else(|| self.placed.get(&node.id).copied());
+            match at {
                 Some(p) => {
                     self.pos.insert(node.id, p);
                 }
@@ -616,10 +546,12 @@ impl Layout {
                 }
             };
             // Nodes placed beside their input do not count in `column_rows`, so check every spot.
-            let p = self.free_spot(wanted, parent);
+            // Whole units, as the network keeps positions.
+            let p = self.free_spot(wanted, parent).round();
             self.pos.insert(id, p);
+            self.placed.insert(id, p);
+            self.unsent.push(id);
         }
-        self.touch(now);
     }
 
     fn parent_of(&self, id: NodeId) -> Option<NodeId> {
@@ -676,7 +608,7 @@ impl Layout {
     }
 
     /// Writes the file about a second after the last change; `force` writes now (closing).
-    pub fn save_if_due(&mut self, net: &Network, now: Instant, force: bool) {
+    pub fn save_if_due(&mut self, now: Instant, force: bool) {
         let Some(since) = self.dirty_since else { return };
         if !force && now.saturating_duration_since(since) < SAVE_DELAY {
             return;
@@ -688,7 +620,7 @@ impl Layout {
             None => self.view,
             Some(_) => self.level_views.get(&None).copied().unwrap_or(self.view),
         };
-        let mut repr = FileRepr {
+        let repr = FileRepr {
             version: 1,
             view: Some(ViewRepr { pan: [top.origin.x, top.origin.y], zoom: top.zoom }),
             nodes: BTreeMap::new(),
@@ -697,18 +629,9 @@ impl Layout {
             column: Some(self.column),
             viewer_aspect: self.viewer_aspect,
         };
-        for (id, p) in &self.pos {
-            if let Some(path) = net.path_of(*id) {
-                repr.nodes.insert(path.to_string(), [round(p.x), round(p.y)]);
-            }
-        }
-        // Positions of nodes that are gone for now (a file edit in progress) are kept.
-        for (path, p) in &self.loaded {
-            repr.nodes.entry(path.clone()).or_insert([round(p.x), round(p.y)]);
-        }
         let text = match ron::ser::to_string_pretty(&repr, ron::ser::PrettyConfig::default()) {
             Ok(t) => format!(
-                "// penumbra editor layout: node positions, pan and zoom. Not part of the project content.\n{t}\n"
+                "// penumbra editor layout: pan and zoom, open sections, editor options. Not part of the project content.\n{t}\n"
             ),
             Err(e) => {
                 log::warn!("cannot write {}: {e}", file.display());
@@ -725,14 +648,37 @@ impl Layout {
         self.last_text = Some(text);
     }
 
-    /// Node paths with positions, for `ui.state`.
+    /// Node paths with the places they are drawn at, for `ui.state`.
     pub fn positions(&self, net: &Network) -> BTreeMap<NodePath, [f32; 2]> {
         self.pos.iter().filter_map(|(id, p)| Some((net.path_of(*id)?, [p.x, p.y]))).collect()
     }
 }
 
-fn round(v: f32) -> f32 {
-    v.round()
+/// The edit that moves nodes to the places in `to`: one [`Op::Place`] per node whose position
+/// in `net` differs (in whole units, as the network keeps them), in path order. Places that are
+/// no place are left out.
+pub fn place_ops(net: &Network, to: &HashMap<NodeId, Pos2>) -> Vec<Op> {
+    let mut ops: Vec<(NodePath, Op)> = to
+        .iter()
+        .filter_map(|(id, p)| {
+            let pos = penumbra_graph::check_pos([p.x, p.y]).ok()?;
+            if net.node(*id)?.pos == Some(pos) {
+                return None;
+            }
+            let path = net.path_of(*id)?;
+            Some((path.clone(), Op::Place { path, pos: Some(pos) }))
+        })
+        .collect();
+    ops.sort_by(|a, b| a.0.cmp(&b.0));
+    ops.into_iter().map(|(_, op)| op).collect()
+}
+
+/// The history label of an edit of `ops` that moves nodes.
+pub fn move_label(ops: &[Op]) -> String {
+    match ops {
+        [one] => one.label(),
+        many => format!("move {} nodes", many.len()),
+    }
 }
 
 /// Longest path from a node without inputs or bindings, per node, counted within its level.
@@ -855,7 +801,7 @@ mod tests {
     fn new_nodes_are_placed_by_depth_without_overlap() {
         let net = chain();
         let mut layout = Layout::load(None);
-        layout.sync(&net, Instant::now());
+        layout.sync(&net);
         let p = |path: &str| layout.get(net.resolve(&path.parse().unwrap()).unwrap()).unwrap();
         assert!(p("/a").x < p("/b").x && p("/b").x < p("/c").x);
         assert_eq!(p("/a").y, p("/b").y);
@@ -868,58 +814,70 @@ mod tests {
         }
     }
 
-    #[test]
-    fn moves_undo_and_redo_and_a_deleted_node_comes_back_in_place() {
-        let net = chain();
-        let a = net.resolve(&"/a".parse().unwrap()).unwrap();
-        let now = Instant::now();
-        let mut layout = Layout::load(None);
-        layout.sync(&net, now);
-        let start = layout.get(a).unwrap();
-        layout.begin_move([a]);
-        layout.set(a, pos2(900.0, 900.0), now);
-        layout.end_move();
-        assert!(layout.last_move().is_some());
-        assert!(layout.undo_move(now));
-        assert_eq!(layout.get(a), Some(start));
-        assert!(layout.redo_move(now));
-        assert_eq!(layout.get(a), Some(pos2(900.0, 900.0)));
-        // Moving several at once (as arranging does) is one step.
-        let b = net.resolve(&"/b".parse().unwrap()).unwrap();
-        let (a_was, b_was) = (layout.get(a).unwrap(), layout.get(b).unwrap());
-        let to: HashMap<NodeId, Pos2> = [(a, pos2(1.0, 2.0)), (b, pos2(3.0, 4.0))].into();
-        assert_eq!(layout.move_to(&to, now), 2);
-        assert!(layout.undo_move(now));
-        assert_eq!((layout.get(a), layout.get(b)), (Some(a_was), Some(b_was)));
-        assert!(layout.redo_move(now) && layout.undo_move(now));
-        // A drag that ends where it started records nothing.
-        layout.begin_move([a]);
-        layout.end_move();
-        assert!(layout.undo_move(now) && !layout.undo_move(now));
-
-        let ops = [Op::Delete { path: "/a".parse().unwrap() }];
-        let without = net.apply(&penumbra_ops::builtin_types().unwrap(), &ops).unwrap().network;
-        layout.sync(&without, now);
-        assert_eq!(layout.get(a), None);
-        layout.sync(&net, now);
-        assert_eq!(layout.get(a), Some(start));
+    /// `net` with the places the layout gave its nodes, as the app hands them to the document.
+    fn with_placed(net: &Network, placed: &[(NodeId, [f32; 2])]) -> Network {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let ops: Vec<Op> = placed
+            .iter()
+            .filter_map(|(id, pos)| Some(Op::Place { path: net.path_of(*id)?, pos: Some(*pos) }))
+            .collect();
+        net.apply(&types, &ops).unwrap().network
     }
 
     #[test]
-    fn a_replaced_node_keeps_its_place() {
+    fn a_drag_is_shown_at_once_and_recorded_as_one_edit() {
         let types = penumbra_ops::builtin_types().unwrap();
         let net = chain();
+        let id = |p: &str| net.resolve(&p.parse().unwrap()).unwrap();
+        let (a, b) = (id("/a"), id("/b"));
         let mut layout = Layout::load(None);
-        let now = Instant::now();
-        layout.sync(&net, now);
-        let b = net.resolve(&"/b".parse().unwrap()).unwrap();
-        layout.set(b, pos2(500.0, 300.0), now);
-        let r = penumbra_graph::replace(&net, &types, &"/b".parse().unwrap(), "chan.filter").unwrap();
-        let after = net.apply(&types, &r.ops).unwrap().network;
-        layout.sync(&after, now);
-        let new_b = after.resolve(&"/b".parse().unwrap()).unwrap();
-        assert_ne!(new_b, b);
-        assert_eq!(layout.get(new_b), Some(pos2(500.0, 300.0)));
+        layout.sync(&net);
+        let placed = layout.take_placed();
+        assert_eq!(placed.len(), 3, "each new node once");
+        assert!(layout.take_placed().is_empty());
+        let net = with_placed(&net, &placed);
+        layout.sync(&net);
+        let (a_was, b_was) = (layout.get(a).unwrap(), layout.get(b).unwrap());
+        layout.begin_move([a, b]);
+        for _ in 0..10 {
+            layout.drag_by(vec2(10.25, -3.0));
+            layout.sync(&net);
+        }
+        assert_eq!(layout.get(a), Some(a_was + vec2(102.5, -30.0)), "shown while dragging");
+        let ops = layout.end_move(&net).unwrap();
+        assert_eq!(move_label(&ops), "move 2 nodes");
+        let moved = net.apply(&types, &ops).unwrap().network;
+        layout.sync(&moved);
+        // Whole units, as the network keeps them.
+        assert_eq!(layout.get(a), Some((a_was + vec2(102.5, -30.0)).round()));
+        assert_eq!(layout.get(b), Some((b_was + vec2(102.5, -30.0)).round()));
+        // A drag that ends where it started, or a refused edit, leaves the network's places.
+        layout.begin_move([a]);
+        assert_eq!(layout.end_move(&moved), None);
+        layout.begin_move([a]);
+        layout.drag_by(vec2(500.0, 0.0));
+        assert!(layout.end_move(&moved).is_some());
+        layout.sync(&moved);
+        assert_eq!(layout.get(a), Some((a_was + vec2(102.5, -30.0)).round()));
+    }
+
+    #[test]
+    fn a_placed_node_stays_where_it_was_placed_until_the_network_has_it() {
+        let net = chain();
+        let a = net.resolve(&"/a".parse().unwrap()).unwrap();
+        let mut layout = Layout::load(None);
+        layout.sync(&net);
+        let first = layout.get(a).unwrap();
+        // The view moves away; the node does not follow it.
+        layout.visible = Some(Rect::from_min_size(pos2(5000.0, 5000.0), vec2(800.0, 600.0)));
+        layout.sync(&net);
+        assert_eq!(layout.get(a), Some(first));
+        // Once the network has a place, that one counts.
+        let types = penumbra_ops::builtin_types().unwrap();
+        let ops = [Op::Place { path: "/a".parse().unwrap(), pos: Some([7.0, 8.0]) }];
+        let net = net.apply(&types, &ops).unwrap().network;
+        layout.sync(&net);
+        assert_eq!(layout.get(a), Some(pos2(7.0, 8.0)));
     }
 
     #[test]
@@ -958,12 +916,12 @@ mod tests {
     fn a_new_node_without_inputs_lands_on_screen() {
         let net = chain();
         let mut layout = Layout::load(None);
-        layout.sync(&net, Instant::now());
+        layout.sync(&net);
         let shown = Rect::from_min_size(pos2(2000.0, 2000.0), vec2(800.0, 600.0));
         layout.visible = Some(shown);
         let ops = [create("/d", "chan.constant")];
         let more = net.apply(&penumbra_ops::builtin_types().unwrap(), &ops).unwrap().network;
-        layout.sync(&more, Instant::now());
+        layout.sync(&more);
         let d = layout.get(more.resolve(&"/d".parse().unwrap()).unwrap()).unwrap();
         assert!(shown.contains_rect(Rect::from_min_size(d, NODE_SIZE)), "{d:?}");
     }
@@ -974,7 +932,7 @@ mod tests {
         let ops = [create("/g", "comp.base"), create("/g/x", "chan.constant")];
         let net = chain().apply(&types, &ops).unwrap().network;
         let mut layout = Layout::load(None);
-        layout.sync(&net, Instant::now());
+        layout.sync(&net);
         let id = |p: &str| net.resolve(&p.parse().unwrap()).unwrap();
         // Inside, nothing else is in the way: the first node takes the first place, which a
         // node outside holds too.
@@ -1017,16 +975,12 @@ mod tests {
     }
 
     #[test]
-    fn positions_survive_a_round_trip_through_the_file() {
+    fn view_state_survives_a_round_trip_through_the_file() {
         let dir = std::env::temp_dir().join(format!("penumbra-layout-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let net = chain();
-        let a = net.resolve(&"/a".parse().unwrap()).unwrap();
         let now = Instant::now();
         let mut layout = Layout::load(Some(&dir));
-        layout.sync(&net, now);
-        layout.set(a, pos2(500.0, -20.0), now);
         let options = EditorOptions {
             thumbnails: ThumbnailMode::WhenFree,
             thumbnail_every: 3,
@@ -1037,12 +991,10 @@ mod tests {
         layout.set_options(options, now);
         layout.set_column(0.42, now);
         layout.set_viewer_aspect(Some(2.5), now);
-        layout.save_if_due(&net, now, false);
+        layout.save_if_due(now, false);
         assert!(!dir.join(FILE_NAME).exists(), "not before the delay");
-        layout.save_if_due(&net, now + SAVE_DELAY, false);
-        let mut again = Layout::load(Some(&dir));
-        again.sync(&net, now);
-        assert_eq!(again.get(a), Some(pos2(500.0, -20.0)));
+        layout.save_if_due(now + SAVE_DELAY, false);
+        let again = Layout::load(Some(&dir));
         assert_eq!(again.options, options);
         assert_eq!(again.column, 0.42);
         assert_eq!(again.viewer_aspect, Some(2.5));
@@ -1062,9 +1014,19 @@ mod tests {
         assert!(text.contains("viewer_aspect: Some(2.5)"), "{text}");
         std::fs::write(dir.join(FILE_NAME), text.replace("viewer_aspect: Some(2.5),", "")).unwrap();
         assert_eq!(Layout::load(Some(&dir)).viewer_aspect, None);
+        // One from before positions moved into the project loads, and is written again
+        // without them.
+        assert!(!text.contains("nodes"), "{text}");
+        let old = text.replace("viewer_aspect:", "nodes: {\"/a\": (10.0, 20.0)},\n    viewer_aspect:");
+        std::fs::write(dir.join(FILE_NAME), &old).unwrap();
+        let mut loaded = Layout::load(Some(&dir));
+        assert_eq!(loaded.options, options);
+        loaded.save_if_due(Instant::now() + SAVE_DELAY, false);
+        let rewritten = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
+        assert!(!rewritten.contains("nodes"), "{rewritten}");
         std::fs::write(dir.join(FILE_NAME), "garbage").unwrap();
         let broken = Layout::load(Some(&dir));
-        assert!(broken.pos.is_empty() && broken.loaded.is_empty());
+        assert_eq!(broken.options, EditorOptions::default());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -16,6 +16,7 @@ look alike but not pixel for pixel (the frame reached after the wait varies by a
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -44,8 +45,8 @@ SHOWCASE = [
 # fill the panel), seconds of show time.
 WINDOW = (EXAMPLES / "curl-noise", "1760x960", "/out", "/vel", 45)
 
-# The arrange picture: a project shot without its layout.ron, so its nodes sit where a project
-# without a layout puts them, and the window size it is shot at.
+# The arrange picture: a project shot without its node positions, so its nodes sit where the
+# editor places nodes that come without one, and the window size it is shot at.
 ARRANGE = (EXAMPLES / "projection-room", "1800x1500")
 ARRANGE_LABELS = ("before: as the nodes were first placed", "after: one press of L")
 
@@ -111,8 +112,9 @@ def call(method: str, **params) -> dict:
 
 
 def run(steps: list[dict], work: Path, name: str, project: Path | None = None, size: str | None = None,
-        keep_layout: bool = True) -> None:
-    """Runs the app headless on a script; `project` is copied into `work` first."""
+        keep_places: bool = True) -> None:
+    """Runs the app headless on a script; `project` is copied into `work` first, without its
+    node positions and editor layout unless `keep_places`."""
     script = work / f"{name}.jsonl"
     script.write_text("\n".join(json.dumps(s) for s in steps) + "\n", encoding="utf-8")
     command = [str(EXE), "--headless", str(script)]
@@ -120,8 +122,11 @@ def run(steps: list[dict], work: Path, name: str, project: Path | None = None, s
         copy = work / name
         shutil.copytree(project, copy)
         shutil.rmtree(copy / "state", ignore_errors=True)
-        if not keep_layout:
+        if not keep_places:
             (copy / "layout.ron").unlink(missing_ok=True)
+            file = copy / "project.ron"
+            text = re.sub(r", pos: \[[^\]]*\]", "", file.read_text(encoding="utf-8"))
+            file.write_text(text, encoding="utf-8")
         command += ["--project", str(copy), "--fresh"]
     if size is not None:
         command += ["--size", size]
@@ -194,7 +199,7 @@ def arrange(work: Path) -> None:
         {"wait": 1},
         call("ui.screenshot", file=after.as_posix()),
     ]
-    run(steps, work, "arrange", project, size, keep_layout=False)
+    run(steps, work, "arrange", project, size, keep_places=False)
     shots = []
     for png in (before, after):
         image = Image.open(png).convert("RGB")
