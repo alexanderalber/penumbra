@@ -321,14 +321,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     .describe_output("out", "The rendered picture")
     .describe_output(
         "data",
-        "Not a picture to look at: texture coordinates in red and green, part id + 1 in blue (0 where \
-         nothing was drawn), distance along the view in metres in alpha; for shaders and masks",
+        "Texture coordinates in red and green, part id + 1 in blue (0 where nothing was drawn), distance \
+         along the view in metres in alpha. Data for shaders and masks, not something to look at",
     )
     .describe_input("geo", "What to render")
-    .describe_input(
-        "texture",
-        "Put on the geometry where its surface is texture (or auto without a material)",
-    )
+    .describe_input("texture", "Put on the geometry when `surface` is texture or auto")
     .describe_input("lights", "Without lights, phong materials are black")
     .describe_input("camera", "A view.camera; needed");
     let desc = desc
@@ -338,7 +335,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .choice_doc("auto", "the texture input where connected, else material")
                 .choice_doc(
                     "material",
-                    "the material put on by geo.assign_material; without one, each part's from the file (colour times texture), unlit",
+                    "the material put on by geo.assign_material; without one, each part's material from the file (colour times texture), unlit",
                 )
                 .choice_doc("texture", "the texture input, by the mesh's texture coordinates, shaded by the material")
                 .choice_doc("parts", "a colour per part id, to tell the parts apart")
@@ -363,7 +360,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(64.0, 8192.0)
                 .range(256.0, 4096.0)
                 .more()
-                .doc("Texels across each light's shadow map: sharper shadows, more memory"),
+                .doc("Texels across each light's shadow map; more gives sharper shadows and takes more memory"),
         )
         .param(ParamSpec::bool("ao", false).group("occlusion").doc(
             "Ambient occlusion: less ambient and environment light in creases and where objects meet; direct light and unlit surfaces stay as they are",

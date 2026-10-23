@@ -75,15 +75,15 @@ fn details(ui: &mut Ui, engine: &Engine, fps: f64, auto: &mut automation::Regist
         (
             "cook thread",
             if s.passes > 0 { format!("{:.0} % busy", s.busy * 100.0) } else { "-".to_string() },
-            "Share of the last 8 s the cook thread spent in passes. Near 100 % it cannot keep up, \
-             whatever the CPU as a whole says",
+            "Share of the last 8 s the cook thread spent in passes. Near 100 % the cook thread cannot \
+             keep up, even when the CPU as a whole looks idle",
         ),
         ("CPU", percent(load.cpu), "All cores of the machine, every process (as Task Manager)"),
         (
             "GPU",
             percent(load.gpu),
             "The busiest GPU engine, every process (as Task Manager). Cook passes only queue GPU \
-             work, so a slow GPU shows here and not in the pass times",
+             work: a slow GPU shows here, not in the pass times",
         ),
     ];
     egui::Grid::new("cook_numbers").num_columns(2).spacing(vec2(16.0, 2.0)).show(ui, |ui| {

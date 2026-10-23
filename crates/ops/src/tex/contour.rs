@@ -51,7 +51,7 @@ fn desc() -> NodeDesc {
                 .curve(Curve::Power(2.0))
                 .unit(Unit::Pixels)
                 .doc(
-                    "Blurs the channel before the lines are found (radius in pixels, as tex.blur's size), so a noisy height map gives calm lines without islands; the picture under mode over stays sharp; 0: off",
+                    "Smooths a noisy height map so the lines come out calm, without islands. Radius in pixels, like tex.blur's size. Under mode over the picture itself stays sharp; 0: off",
                 ),
         )
         .param(ParamSpec::color("color", [1.0; 4]).doc("Colour of the lines"))

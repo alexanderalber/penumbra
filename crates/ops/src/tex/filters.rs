@@ -275,7 +275,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                     ParamSpec::float("scale", 1.0)
                         .range(0.25, 4.0)
                         .curve(Curve::Log)
-                        .doc("Zoom after the distortion: above 1 enlarges, to hide the edges barrel distortion pulls in"),
+                        .doc("Zoom after the distortion: above 1 enlarges and hides the edges that barrel distortion pulls in"),
                 )
                 .param(
                     ParamSpec::vec2("center", [0.5, 0.5])
@@ -370,7 +370,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                     ParamSpec::float("hue", 0.0)
                         .range(-180.0, 180.0)
                         .unit(Unit::Degrees)
-                        .doc("Added to the hue: 120 turns red into green; any angle, it wraps"),
+                        .doc("Added to the hue: 120 turns red into green. Any angle works, the hue wraps around"),
                 )
                 .param(
                     ParamSpec::float("saturation", 1.0)
@@ -422,7 +422,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 size_params(
                     filter(
                         "tex.resolution",
-                        "The input at another resolution; shrinking averages, so it does not alias",
+                        "The input at another resolution. Shrinking averages the pixels, so nothing aliases",
                     )
                     .param(
                         ParamSpec::choice("mode", &["multiply", "custom"])

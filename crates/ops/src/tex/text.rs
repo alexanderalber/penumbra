@@ -39,7 +39,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(
                 ParamSpec::text("text", "Text")
                     .multiline()
-                    .doc("What is written; line breaks are kept, align lines the lines up"),
+                    .doc("What is written. Line breaks are kept; align sets how the lines line up"),
             )
             .param(
                 ParamSpec::float("size", 100.0)
@@ -71,7 +71,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             )
             .param(
                 ParamSpec::text("style", "Regular")
-                    .doc("Style within the family: Regular, Bold, Italic, Light, ...; the menu lists the family's"),
+                    .doc("Style within the family: Regular, Bold, Italic, Light, ... The menu lists the family's styles"),
             )
             .param(super::width_param().more())
             .param(super::height_param().more())

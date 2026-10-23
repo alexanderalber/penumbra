@@ -17,7 +17,7 @@ pub(super) fn builtin() -> Builtin {
             ParamSpec::int("pattern", 0)
                 .clamp(0.0, 1000.0)
                 .range(0.0, 45.0)
-                .doc("Which picture: 0 white, 1 black, then a column bit (coarsest first) and its inverse in turn, then the row bits; black past the last (scan.patterns lists them)"),
+                .doc("Which picture: 0 white, 1 black, then each column bit (coarsest first) followed by its inverse, then the row bits the same way. Past the last: black. scan.patterns lists them"),
         )
         .param(
             ParamSpec::float("level", 1.0)

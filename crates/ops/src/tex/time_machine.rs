@@ -59,8 +59,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .doc("Frames back added everywhere; without a map, the delay of the whole picture"),
             )
             .param(ParamSpec::bool("blend", true).doc(
-                "Mixes the two frames around a map value between them; off takes the nearer one (sharper, \
-                 but a smooth map shows steps)",
+                "Mixes the two frames nearest to the map's value. Off takes the nearer frame alone: sharper, \
+                 but a smooth map shows steps",
             ))
             .param(ParamSpec::float("scale", 1.0).clamp(0.05, 1.0).range(0.1, 1.0).doc(
                 "Resolution of the kept frames relative to the input; 0.5 needs a quarter of the memory",
@@ -72,8 +72,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .choice_doc("8bit", "in half the memory, with values above 1 clipped"),
             )
             .param(ParamSpec::int("step", 1).clamp(1.0, MAX_STEP as f64).range(1.0, 8.0).doc(
-                "Keeps only every n-th input frame, for n times the length in the same memory; \
-                 between kept frames the picture is blended, which smears fast motion",
+                "Keeps only every n-th input frame: n times the length in the same memory. Between kept \
+                 frames the picture is blended, and fast motion smears",
             ))
             .param(ParamSpec::bool("record", true).doc("Take new frames; off holds what is kept"))
             .param(
@@ -83,9 +83,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .more()
                     .special(0.0, "automatic")
                     .doc(
-                        "Most GPU memory the kept frames take, in GiB; automatic is half of what the GPU \
-                 grants penumbra. Never more than the GPU has free; past either, fewer frames are \
-                 kept, with a warning",
+                        "Most GPU memory the kept frames take, in GiB; automatic: half of what the GPU \
+                         grants penumbra. Over the budget or over what the GPU has free, fewer frames \
+                         are kept, with a warning",
                     ),
             )
             .input("in", DataKind::Tex)
@@ -223,13 +223,13 @@ impl TimeMachine {
                     };
                     let bits = if shape.precision == Precision::Byte { 8 } else { 16 };
                     self.warning = Some(format!(
-                        "{} frames of {sw}x{sh} at {bits} bit want {:.1} GiB; keeping {kept} ({:.1} GiB) \
-                         because {why}, so white reaches {} frames back; lower scale, 8bit or a larger \
-                         step keep more",
+                        "white reaches {} frames back: keeping {kept} of {} frames of {sw}x{sh} at {bits} \
+                         bit ({:.1} of the {:.1} GiB wanted) because {why}. A lower scale, 8bit or a \
+                         larger step keep more",
+                        (kept - 1) * step,
                         shape.wanted,
-                        gib(shape.wanted),
                         gib(kept),
-                        (kept - 1) * step
+                        gib(shape.wanted)
                     ));
                 }
                 if let Some(s) = stack.shortfall() {

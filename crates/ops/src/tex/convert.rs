@@ -90,7 +90,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::int("rows", 1)
                 .clamp(1.0, 1024.0)
                 .range(1.0, 64.0)
-                .doc("Rows averaged to; more than one numbers the channels by row from the top (r0, r1, ..)"),
+                .doc("Rows the picture is averaged down to. With more than one row, the channels are numbered by row from the top (r0, r1, ...)"),
         )
         .param(
             ParamSpec::choice("components", &["rgba", "rgb", "red", "luminance"])
@@ -178,7 +178,7 @@ fn picture(chans: &Chans, layout: Layout, low: f64, high: f64, max: usize) -> Pi
     }
     let width = chans.window().min(max);
     if width < len {
-        warning.push(format!("{len} samples, the newest {width} shown (the widest texture)"));
+        warning.push(format!("{len} samples, the newest {width} shown (the widest texture the GPU allows)"));
     }
     let rows = match layout {
         Layout::Rows => {

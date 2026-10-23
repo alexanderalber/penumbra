@@ -396,7 +396,7 @@ pub const SETTINGS: &[SettingSpec] = &[
     SettingSpec {
         name: THUMBNAILS,
         kind: SettingKind::Choice { choices: &["always", "when_free", "never"], default: "always" },
-        doc: "Which nodes show a live picture in the editor: always (every visible node, rate limited by thumbnail_every), when_free (nothing cooks just for a thumbnail; a node shows its picture while it is up to date) or never",
+        doc: "Which nodes show a live picture in the editor. always: every visible node, rate limited by thumbnail_every. when_free: a node shows its picture while that picture is up to date anyway; nothing cooks just for a thumbnail. never: no live pictures",
     },
     SettingSpec {
         name: THUMBNAIL_EVERY,

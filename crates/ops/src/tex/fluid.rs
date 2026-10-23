@@ -61,14 +61,10 @@ fn desc() -> NodeDesc {
         .param(height_param())
         .param(keep_size())
         .param(
-            ParamSpec::float("force", 4.0)
-                .clamp(0.0, 1000.0)
-                .range(0.0, 20.0)
-                .curve(Curve::Power(2.0))
-                .doc(
-                    "How strongly motion pushes the fluid: per second of motion, this many times its \
-                     speed is added to the fluid's (the force input and the splats)",
-                ),
+            ParamSpec::float("force", 4.0).clamp(0.0, 1000.0).range(0.0, 20.0).curve(Curve::Power(2.0)).doc(
+                "How strongly motion (the force input and the splats) pushes the fluid. Per second, \
+                     this many times the motion's speed is added to the fluid's speed",
+            ),
         )
         .param(
             ParamSpec::float("velocity_fade", 2.0)
@@ -91,25 +87,22 @@ fn desc() -> NodeDesc {
                 .doc("Where dye comes in")
                 .choice_doc(
                     "moving",
-                    "where the force input or a splat moves, the faster the more: the dye input's \
-                     colours, or `color` when nothing is wired there",
+                    "where the force input or a splat moves, the faster the more; the dye input's \
+                     colours, or `color` while the dye input is unwired",
                 )
                 .choice_doc("everywhere", "the dye input everywhere, splats whether they move or not"),
         )
         .param(
-            ParamSpec::float("amount", 4.0)
-                .clamp(0.0, 1000.0)
-                .range(0.0, 30.0)
-                .curve(Curve::Power(2.0))
-                .doc(
-                    "How fast the dye takes on the colour poured in, per second (where it moves fast): at 4 about two thirds in a quarter of a second; it paints over, so the dye never gets brighter than its colours",
-                ),
-        )
-        .param(
-            ParamSpec::color("color", [0.35, 0.7, 1.0, 1.0]).doc(
-                "The dye's colour where the dye input is not wired (its alpha slows the pouring), and of splats without r, g, b",
+            ParamSpec::float("amount", 4.0).clamp(0.0, 1000.0).range(0.0, 30.0).curve(Curve::Power(2.0)).doc(
+                "How fast the dye takes on the poured colour, per second, where the fluid moves fast. At 4, \
+                     about two thirds in a quarter of a second. Pouring paints over, so the dye never gets \
+                     brighter than the poured colour",
             ),
         )
+        .param(ParamSpec::color("color", [0.35, 0.7, 1.0, 1.0]).doc(
+            "Colour of the dye while the dye input is unwired, and of splats without r, g, b columns. The \
+                 colour's alpha slows the pouring",
+        ))
         .param(
             ParamSpec::float("vorticity", 0.3)
                 .clamp(0.0, 100.0)
@@ -123,8 +116,8 @@ fn desc() -> NodeDesc {
                 .curve(Curve::Power(3.0))
                 .more()
                 .doc(
-                    "Thickness: neighbouring parts take on each other's motion (honey rather than \
-                     smoke), in image heights squared per second; 0: off, costs nothing",
+                    "Thickness, honey instead of smoke: neighbouring parts take on each other's motion. In \
+                     image heights squared per second; 0: off, costs nothing",
                 ),
         )
         .param(
@@ -135,19 +128,15 @@ fn desc() -> NodeDesc {
                 .unit(Unit::Pixels)
                 .more()
                 .doc(
-                    "Width of the simulation grid (the height follows the picture's shape); more \
-                     gives finer swirls and costs more; the dye keeps the output's size",
+                    "Width of the simulation grid; the height follows the picture's shape. More gives \
+                     finer swirls and costs more. The dye keeps the output's size",
                 ),
         )
         .param(
-            ParamSpec::int("iterations", 20)
-                .clamp(1.0, MAX_ITERATIONS as f64)
-                .range(4.0, 60.0)
-                .more()
-                .doc(
-                    "Steps that keep the fluid from being squeezed together; fewer cost less and let \
-                     it bulge and leak",
-                ),
+            ParamSpec::int("iterations", 20).clamp(1.0, MAX_ITERATIONS as f64).range(4.0, 60.0).more().doc(
+                "Steps that keep the fluid from being squeezed together. Fewer cost less and let \
+                     the fluid bulge and leak",
+            ),
         )
         .param(
             ParamSpec::float("splat_radius", 0.05)
@@ -161,8 +150,8 @@ fn desc() -> NodeDesc {
             ParamSpec::choice("edges", &["walls", "open"])
                 .more()
                 .doc("What the picture's edges are to the fluid")
-                .choice_doc("walls", "it turns along them")
-                .choice_doc("open", "it flows out, with the dye"),
+                .choice_doc("walls", "the fluid turns along them")
+                .choice_doc("open", "the fluid flows out, with the dye"),
         )
         .param(
             ParamSpec::bool("reset", false)
@@ -176,27 +165,30 @@ fn desc() -> NodeDesc {
         .input("force", DataKind::Tex)
         .describe_input(
             "force",
-            "Motion that pushes the fluid, in image sizes per input frame (red x in widths, green y in \
-             heights, down positive): tex.optical_flow's output as it is",
+            "Motion that pushes the fluid: tex.optical_flow's output as it is. Red x in widths, green y in \
+             heights, down positive, per input frame",
         )
         .input("dye", DataKind::Tex)
-        .describe_input("dye", "Colour poured in (see `inject`); unwired, `color` where it moves")
+        .describe_input(
+            "dye",
+            "Colour poured in, where `inject` says. Unwired: `color` where the fluid moves",
+        )
         .input("obstacles", DataKind::Tex)
         .describe_input("obstacles", "Solid where brighter than half: the fluid flows around it")
         .input("splats", DataKind::Table)
         .describe_input(
             "splats",
-            "Pushes and dye at points, one per row (at most 64): columns x, y (0 to 1, top left), \
-             optional vx, vy (image sizes per second), r, g, b and radius (image heights); \
-             tex.blob_track's table as it is",
+            "Pushes and dye at points, one per row, at most 64: tex.blob_track's table as it is. Columns \
+             x, y (0 to 1, from the top left); optional vx, vy (image sizes per second), r, g, b and \
+             radius (image heights)",
         )
         .output("out", DataKind::Tex)
         .describe_output("out", "The dye, at width x height")
         .output("velocity", DataKind::Tex)
         .describe_output(
             "velocity",
-            "The fluid's velocity at the grid's size, in image sizes per second (red x in widths, green y \
-             in heights, down positive); tex.displace with midpoint 0 moves a picture along it",
+            "The fluid's velocity at the grid's size: red x in widths, green y in heights, down positive, \
+             per second. tex.displace with midpoint 0 moves a picture along it",
         )
         .lazy_output("velocity")
 }

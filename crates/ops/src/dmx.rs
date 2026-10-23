@@ -46,8 +46,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                  FTDI FT232R plugged in (dmx.ports lists them)",
             ))
             .param(ParamSpec::text("host", "").doc(
-                "IP address to send to, optionally with :port; empty broadcasts Art-Net and sends sACN \
-                 to the multicast groups; DDP needs one",
+                "IP address to send to, optionally with :port. Empty broadcasts Art-Net and sends sACN \
+                 to the multicast groups. DDP needs an address",
             ))
             .param(ParamSpec::int("universe", 1).clamp(0.0, 63999.0).range(0.0, 16.0).doc(
                 "Universe of the first slot, as the protocol counts (Art-Net from 0, sACN from 1); \

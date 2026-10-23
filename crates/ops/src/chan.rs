@@ -92,7 +92,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(0.01, 50.0)
                 .curve(Curve::Log)
                 .unit(Unit::Hertz)
-                .doc("How fast it wanders: about this many rises and falls per second"),
+                .doc("How fast the noise wanders: about this many rises and falls per second"),
         )
         .param(
             ParamSpec::float("amplitude", 1.0)
@@ -113,7 +113,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::int("octaves", 2)
                 .clamp(1.0, 8.0)
                 .more()
-                .doc("Layers of ever faster wiggle added up, each twice the frequency of the one before; 1 is smoothest"),
+                .doc("How much fine wiggle rides on the motion: 1 is smoothest. Each octave adds a layer at twice the frequency of the one before"),
         )
         .param(
             ParamSpec::float("roughness", 0.5)
@@ -132,8 +132,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "chan.math",
-            "a op b per channel; b's channel of the same name, else its first; `b` while input b is \
-             unconnected",
+            "a op b per channel. Each channel of a meets b's channel of the same name, else b's first \
+             channel. While input b is unconnected, the param `b` stands in",
         )
         .param(
             ParamSpec::choice(
@@ -194,12 +194,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(
             ParamSpec::choice("limit", &["none", "loop", "clamp"])
                 .doc("Whether the sum is kept within min and max")
-                .choice_doc("none", "it grows without end")
+                .choice_doc("none", "the sum grows without end")
                 .choice_doc(
                     "loop",
                     "past max it starts again from min (and the other way round): an angle, a scroll",
                 )
-                .choice_doc("clamp", "it stops at min and max"),
+                .choice_doc("clamp", "the sum stops at min and max"),
         )
         .param(
             ParamSpec::float("min", 0.0)
@@ -245,16 +245,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 ),
         )
         .param(ParamSpec::bool("active", true).doc(
-            "Records while on; off holds the trail as it is, and recording resumes from the moment \
-             it is on again",
+            "Records while on. Off holds the trail as it is; recording resumes from the moment active \
+             is on again",
         ))
         .input("in", DataKind::Chan)
         .output("out", DataKind::Chan)
-        .describe_input("in", "The channels to record; of each, its value now (its last sample) is taken")
+        .describe_input(
+            "in",
+            "The channels to record. Of each channel the trail takes its current value (the last sample)",
+        )
         .describe_output(
             "out",
-            "The input's channels by name, the newest sample last: one sample when the trail starts \
-             (made, reset or sought back), one more per sample taken, up to length times rate",
+            "The input's channels by name, the newest sample last. The trail starts with one sample \
+             (when made, reset or sought back) and grows by one per sample taken, up to length times rate",
         )
         .time_dependent(),
         || Box::new(Trail::default()) as Box<dyn Operator>,
@@ -272,7 +275,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         NodeDesc::new("chan.select", "The input's channels matching patterns, in the patterns' order")
             .param(ParamSpec::text("channels", "*").doc(
                 "Space-separated names, `*` matches any run of characters: `x y pos*`; `^name` leaves \
-             channels out. Renaming is chan.rename's job",
+             channels out. To rename, add a chan.rename",
             ))
             .input("in", DataKind::Chan)
             .output("out", DataKind::Chan),

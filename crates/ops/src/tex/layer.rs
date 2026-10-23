@@ -30,7 +30,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(
             ParamSpec::bool("placed", true)
                 .more()
-                .doc("The layer where it sits on the canvas (the canvas's size); off: only its own rectangle"),
+                .doc("The layer at its place on the canvas, at the canvas's size; off: only the layer's own rectangle"),
         )
         .output("out", DataKind::Tex)
         .output("layers", DataKind::Table)

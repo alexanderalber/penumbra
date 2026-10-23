@@ -84,22 +84,22 @@ const COMMANDS: &[(&str, &str)] = &[
     ("ui.scroll", "Mouse wheel over an element or point; {id | x, y, dy}"),
     ("ui.key", "Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?}"),
     ("ui.type", "Type text into the focused field; {text}"),
-    ("ui.select", "Select nodes in the editor (it shows the component they sit in); {paths}"),
+    ("ui.select", "Select nodes in the editor (the editor shows the component they sit in); {paths}"),
     ("ui.enter", "Show the inside of a component in the editor, the top level without a path; {path?}"),
     ("ui.view", "Pin the viewer to a node, or unpin without a path; {path?, output?: name or index}"),
     (
         "ui.camera",
         "The viewer's 3D view of a render or geometry: {mode?: picture|free|steer, home?, camera?: {eye, target, roll, fov, ortho?}, \
          orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; \
-         moves go to the free view's camera, or in steer mode to the camera node (orthographic: dolly scales its size); take puts the free view into it",
+         moves go to the free view's camera, in steer mode to the camera node (orthographic: dolly scales the view's size); take copies the free view into the camera node",
     ),
     (
         "ui.options",
         "The editor's options (right-click on empty space) and the viewer's channel options; {chan_bars?, viewer_background?, binding_lines?, \
          chan_scale?: auto|shared|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale), \
          audio_view?: meters|plot (what the viewer shows of a chan.audio_analysis: meters, beat and spectrum, or the channel plot), \
-         viewer_aspect?: auto|number (the viewer's picture area, width over height; its height follows the column's width; \
-         dragging the viewer's edge sets it, auto is 16:9)}",
+         viewer_aspect?: auto|number (width over height of the viewer's picture area; the height follows the column's width; \
+         dragging the viewer's edge sets the aspect, auto is 16:9)}",
     ),
     (
         "ui.arrange",
@@ -108,7 +108,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("ui.frame", "Fit all nodes into the editor"),
     (
         "ui.measure",
-        "How tidy the level shown is, in graph units: the nodes' width and height, total and longest wire length, crossings, wire length running on top of a wire from another output (overlap, and where: overlaps) or through nodes",
+        "How tidy the level shown is, in graph units: width and height of the nodes, total and longest wire length, crossings, wire length on top of a wire from another output (overlap; where: overlaps), wire length through nodes",
     ),
     ("ui.screenshot", "PNG of the window; {file?} (default %TEMP%/penumbra/ui.png)"),
 ];

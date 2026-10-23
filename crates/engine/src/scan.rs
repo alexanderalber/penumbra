@@ -84,8 +84,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.decode",
-        "Decode a structured light scan: the camera's pictures of tex.scan_pattern 0, 1, 2, ... as \
-         files in a folder (sorted by name, numbers by value), written as cam_to_proj.exr and \
+        "Decode a structured light scan from the camera's pictures of tex.scan_pattern 0, 1, 2, ... \
+         (files in a folder, sorted by name, numbers by value). Writes cam_to_proj.exr and \
          proj_to_cam.exr (maps for tex.remap), scene.png (the scene as the projector sees it) and \
          quality.png; {frames (folder, relative to the project), projector?: [w, h] (1920, 1080), \
          out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, \
@@ -98,7 +98,14 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.objects",
-        "The objects in front of a surface, from a scan of the empty scene (reference) and one with the objects, per projector (folders scan.decode wrote): parts by parallax, numbered alike in every projector (top of the camera picture first); writes labels_N.png (8-bit, 0 background, k the object) and parts_N.png per projector, objects_camera.png (the same labels in camera space, for shapes.trace with labels) and objects_camera_view.png; {projectors: [{reference, scan}, ...], out? (folder, objects), threshold? (camera px, 25), split? (camera px per projector px, 2), min_area? (projector px, 1/256 of the projector), erode? (projector px, 2), unmeasured? (projector px, 4), rim? (projector px, 25)}",
+        "Find the objects in front of a surface by parallax, per projector, between a scan of the empty \
+         scene (reference) and a scan with the objects (folders scan.decode wrote). The objects are \
+         numbered alike in every projector, top of the camera picture first. Writes per projector \
+         labels_N.png (8-bit, 0 background, k the object) and parts_N.png, plus objects_camera.png (the \
+         same labels in camera space, for shapes.trace with labels) and objects_camera_view.png; \
+         {projectors: [{reference, scan}, ...], out? (folder, objects), threshold? (camera px, 25), \
+         split? (camera px per projector px, 2), min_area? (projector px, 1/256 of the projector), \
+         erode? (projector px, 2), unmeasured? (projector px, 4), rim? (projector px, 25)}",
         move |p| {
             let a: ObjectsArgs = args(p)?;
             objects(e.session().dir(), &a)
@@ -107,7 +114,13 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.blend",
-        "Blend weights for projectors lighting the same surface, from their scans (folders scan.decode wrote): weight_N.png (16-bit, sRGB-encoded so tex.image gives the weight; multiply the projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed, for tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? (folder, objects), ramp? (projector px, 200), blur? (projector px, 3), reach? (camera px, 6), sigma? (projector px, 6), into_scans? (write weight.png and proj_to_cam_smooth.exr into each scan's folder, where tex.scan reads them, false)}",
+        "Blend weights for projectors lighting the same surface, from their scans (folders scan.decode \
+         wrote). Writes weight_N.png (16-bit, sRGB-encoded so tex.image gives the weight; multiply the \
+         projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed, for tex.remap); \
+         {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? \
+         (folder, objects), ramp? (projector px, 200), blur? (projector px, 3), reach? (camera px, 6), \
+         sigma? (projector px, 6), into_scans? (write weight.png and proj_to_cam_smooth.exr into each \
+         scan's folder, where tex.scan reads them, false)}",
         move |p| {
             let a: BlendArgs = args(p)?;
             blend(e.session().dir(), &a)

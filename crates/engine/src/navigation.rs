@@ -22,7 +22,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add(
         "view.free",
         "A render's or a geometry's scene from any camera, as the viewer's free view draws it (without its lines); \
-         {path, output?, camera?: {eye, target, roll, fov, ortho?: height}, width?, height?, file?}; no camera starts where the viewer does",
+         {path, output?, camera?: {eye, target, roll, fov, ortho?: height}, width?, height?, file?}; without camera, the view starts where the viewer does",
         view_free,
     );
     add(

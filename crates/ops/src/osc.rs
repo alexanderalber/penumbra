@@ -48,18 +48,17 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .special(0.0, "any free port")
                     .doc("UDP port to listen on; osc.status says which port it got"),
             )
-            .param(
-                ParamSpec::bool("lan", false).doc(
-                    "Listen on every network interface (phones, other computers), not only this machine",
-                ),
-            )
+            .param(ParamSpec::bool("lan", false).doc(
+                "Also take OSC from other devices (phones, other computers): listens on every network \
+                     interface. Off: this machine only",
+            ))
             .param(ParamSpec::text("addresses", "*").doc(
                 "Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; \
                  `^/ping` leaves an address out",
             ))
             .param(ParamSpec::bool("params", false).doc(
                 "Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, \
-                 outside the undo history). Binding to the channels is the better way for continuous control",
+                 outside the undo history). For continuous control, bind params to the channels instead",
             ))
             .output("out", DataKind::Chan)
             .output("messages", DataKind::Table)

@@ -66,7 +66,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("history.redo", "Redo one history entry", history_redo);
     add(
         "node.kinds",
-        "Node types with their params, inputs and outputs; with a param, its help (what it does, type, default, range, unit, what each choice does); {kind?, param?}",
+        "Node types with their params, inputs and outputs. With a param: its help (what it does, type, default, range, unit, what each choice does); {kind?, param?}",
         node_kinds,
     );
     add("node.list", "Nodes under a path; {path?, recursive?}", node_list);
@@ -75,7 +75,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("node.delete", "Delete a node and everything inside it; {path}", node_delete);
     add(
         "node.replace",
-        "Replace a node with one of another kind under the same name, keeping the params, wires and bindings that fit (one undo step); lists what was not kept; {path, kind}",
+        "Replace a node with one of another kind under the same name (one undo step). Keeps the params, wires and bindings that fit and lists what was not kept; {path, kind}",
         node_replace,
     );
     add("node.rename", "Rename a node; {path, name}", node_rename);
@@ -85,7 +85,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("node.lock", "Lock (hold outputs) or unlock a node; {path, locked?}", node_lock);
     add(
         "node.place",
-        "Move nodes in the editor (top left corner, graph units on their component's plane; one undo step); null leaves a node to the editor to place; {nodes: {path: [x, y]}}",
+        "Move nodes in the editor; top left corner, graph units on their component's plane, one undo step. null leaves a node to the editor to place; {nodes: {path: [x, y]}}",
         node_place,
     );
     add(
@@ -98,7 +98,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("node.watch", "Cook a node every frame (or stop); {path, watch?}", node_watch);
     add(
         "node.reset",
-        "Start stateful nodes over (feedback, cache, time machine, tracker, filter...); a component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path}",
+        "Start stateful nodes over (feedback, cache, time machine, tracker, filter...). A component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path}",
         node_reset,
     );
     add(
@@ -123,7 +123,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "render.frame",
-        "Move the view.camera wired into a tex.render so its geometry fills the picture, keeping the direction (orthographic: sets its size); {path}",
+        "Move the view.camera wired into a tex.render so its geometry fills the picture; the direction stays (orthographic: sets its size); {path}",
         render_frame,
     );
     add("cook.status", "Show clock, last cook pass, watched nodes, thumbnail policy", cook_status);
@@ -136,7 +136,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("gpu.info", "GPU adapter, texture size limit, memory, errors raised so far, whether lost", gpu_info);
     add(
         "gpu.simulate_loss",
-        "Test aid: end the GPU device as if the driver had lost it; the app then closes as after a real loss and the next start opens paused; {confirm: true}",
+        "Test aid: end the GPU device as if the driver had lost it. The app then closes as after a real loss, and the next start opens paused; {confirm: true}",
         gpu_simulate_loss,
     );
     add("text.fonts", "Font families and their styles, for tex.text's font and style; {family?}", text_fonts);
@@ -157,7 +157,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "res.analyze",
-        "What the projectors need of every node they show: size, needed, verdict, suggestion; waits up to 3 s for render nodes to measure (pending: those that did not)",
+        "What the projectors need of every node they show: size, needed, verdict, suggestion. Waits up to 3 s for render nodes to measure (pending: those that did not)",
         res_analyze,
     );
     add(

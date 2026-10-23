@@ -123,7 +123,7 @@ impl Stack {
         let most = Self::capacity(gpu, width, height, precision)?;
         if frames == 0 || frames > most {
             return Err(Error::new(format!(
-                "a frame stack of {width}x{height} holds 1 to {most} frames, not {frames}"
+                "a frame stack of {width}x{height} holds 1 to {most} frames, got {frames}"
             )));
         }
         let chunk = layers_per_chunk(Self::bytes_for(width, height, 1, precision), Self::layer_limit(gpu));

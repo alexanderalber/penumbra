@@ -40,16 +40,16 @@ fn desc() -> NodeDesc {
     NodeDesc::new(KIND, "How far each part of the picture moved since the previous frame (optical flow)")
         .stateful()
         .param(ParamSpec::bool("colors", false).doc(
-            "Show the motion as colours instead of passing the numbers on: direction as hue, speed as \
-             brightness. For looking at it; nodes that use the motion want this off",
+            "Show the motion as colours: direction as hue, speed as brightness. For looking at the \
+             motion; nodes that use the motion want this off",
         ))
         .param(ParamSpec::bool("confidence", false).more().doc(
-            "Blue says how well the motion is pinned down, 0 to 1: high where there is texture, moving \
-             or not, low on a plain wall; off, blue is 0 and a still picture black",
+            "Blue says how well the motion is pinned down, 0 to 1: high where there is texture (moving \
+             or not), low on a plain wall. Off: blue is 0, and a still picture is black",
         ))
         .param(ParamSpec::int("fill", 4).clamp(0.0, MAX_SMOOTH as f64).range(0.0, MAX_SMOOTH as f64).doc(
-            "Rounds of filling in: the motion found at edges and texture spreads into plain parts of the \
-             same thing (skin, a shirt), not across edges; each round reaches twice as far. 0: off",
+            "Rounds of filling in. Motion found at edges and texture spreads into plain parts of the same \
+             thing (skin, a shirt) and stops at edges. Each round reaches twice as far; 0: off",
         ))
         .param(
             ParamSpec::float("threshold", 0.25)
@@ -58,8 +58,8 @@ fn desc() -> NodeDesc {
                 .curve(Curve::Power(2.0))
                 .unit(Unit::Pixels)
                 .doc(
-                    "Slower motion than this fades out (none below half of it), so camera noise does not \
-                     shimmer; in pixels at the analysed size per frame",
+                    "Slower motion than this fades out, so camera noise does not shimmer. In pixels per \
+                     frame at the analysed size; below half of it nothing is left",
                 ),
         )
         .param(

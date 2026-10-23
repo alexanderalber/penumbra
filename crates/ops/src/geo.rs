@@ -116,7 +116,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .doc("Turn about x, then y, then z, after scale and before translate"),
             )
             .param(ParamSpec::vec3("scale", [1.0; 3]).range(0.0, 4.0).doc(
-                "Size along x, y, z around the origin, first of the steps: 1 keeps it, negative mirrors",
+                "Size along x, y, z around the origin, applied first: 1 keeps the size, negative mirrors",
             ))
             .param(
                 ParamSpec::float("uniform", 1.0)
@@ -151,7 +151,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "geo.instance",
-            "A copy of the input per table row, placed by the columns the first row names: tx ty tz, rx ry rz (degrees), sx sy sz; part ids continue from copy to copy",
+            "One copy of the input per table row. The first row names the columns that place each copy: tx ty tz, rx ry rz (degrees), sx sy sz. Part ids continue from copy to copy",
         )
         .input("in", DataKind::Geo)
         .input("table", DataKind::Table)
@@ -161,7 +161,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "geo.tex_instance",
-            "A copy of the input per texel of position, drawn on the GPU: scaled by scale's rgb, its +y turned to aim's rgb (+z kept up), moved to position's rgb, its colour times color's rgb; texel i % width, i / width of each texture is copy i's",
+            "One copy of the input per texel of position, drawn on the GPU. Copy i reads texel (i % width, i / width) of each texture: position's rgb moves the copy, scale's rgb scales it, aim's rgb turns its +y that way (+z kept up), color's rgb multiplies its colour",
         )
         .param(
             ParamSpec::float("extent", 10.0)
@@ -169,7 +169,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(0.1, 1000.0)
                 .curve(Curve::Log)
                 .more()
-                .doc("Half the side of a box around the origin that holds every copy (the positions stay on the GPU): framing and shadow maps"),
+                .doc("Half the side of a box around the origin that holds every copy. Framing and shadow maps use this box, since the positions stay on the GPU"),
         )
         .input("in", DataKind::Geo)
         .input("position", DataKind::Tex)

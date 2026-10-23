@@ -65,7 +65,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(0.01, 1.0)
                 .curve(Curve::Log)
                 .unit(Unit::Seconds)
-                .doc("A call running longer is stopped, and the node with it until the script changes"),
+                .doc("A call running longer than this is stopped. The node then stays stopped until the script or `timeout` changes"),
         )
         .param(ParamSpec::text("code", DEFAULT_CODE).lines(14).code().doc("The script while `file` is empty"))
         .input("chan0", DataKind::Chan)

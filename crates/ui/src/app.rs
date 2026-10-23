@@ -612,7 +612,7 @@ impl PenumbraApp {
                 if self.starts_fresh {
                     ui.label(RichText::new("until reopened").color(theme::TEXT_WEAK)).on_hover_text(
                         "The demo and the examples start fresh on every open. To keep your changes, \
-                         use Save copy as in the project menu.",
+                         use \"Save copy as\" in the project menu.",
                     );
                 }
                 if let Some(notice) = self.engine.notice() {

@@ -75,13 +75,13 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     registry.register(FnCommand::new(
         "projector.match",
         "Measure the projectors with a camera (each alone: black, white, red, green and blue ramps) and \
-         write their colour correction (matrix, curves) so they look alike; blocks for about half a minute \
-         per projector; {camera (tex.video_in path), projectors? (paths, default every active \
+         write their colour correction (matrix, curves) so they look alike. Blocks for about half a \
+         minute per projector; {camera (tex.video_in path), projectors? (paths, default every active \
          out.projector), levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] \
          of the camera picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the \
-         reference projector, which keeps straight curves; works through any camera | srgb: every \
-         projector follows the sRGB curve; only with a camera known to be linear), refine? (rounds of \
-         closed-loop correction against the reference: the matrix on white, then the curves on greys; \
+         reference projector, the reference keeps straight curves, works through any camera | srgb: \
+         every projector follows the sRGB curve, only with a camera known to be linear), refine? (rounds \
+         of closed-loop correction against the reference, the matrix on white, then the curves on greys; \
          5; 0 off), grey_levels? (greys the curves are refined on, evenly spaced; 3), apply? (true: \
          write the params as one undo step)}",
         move |p| {
@@ -929,8 +929,8 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     let mut warnings = Vec::new();
     if projectors.len() > 1 && !spots.shared {
         warnings.push(
-            "the projectors do not overlap in the camera's view: each was measured on its own part of the wall, so \
-             differences of the wall and the camera's vignetting count as projector differences"
+            "the projectors do not overlap in the camera's view; differences of the wall and the camera's \
+             vignetting count as projector differences (each was measured on its own part of the wall)"
                 .to_string(),
         );
     }

@@ -69,8 +69,8 @@ pub(crate) fn refuse(node: &NodeDef, path: &str, params: Params) -> Result<(), p
         return Ok(());
     }
     Err(penumbra_core::Error::new(format!(
-        "{path} did not load ({}); it is kept as written in the project file and can only be \
-         deleted or renamed here; fix its entry in the file instead",
+        "{path} did not load ({}). The node is kept as written in the project file; here it can only be \
+         deleted or renamed. Fix its entry in the file instead",
         text(node, ERROR)
     )))
 }

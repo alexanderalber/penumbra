@@ -1174,7 +1174,7 @@ impl Editor {
             let has_outputs = input.types.desc(&node.kind).is_some_and(|d| !d.outputs.is_empty());
             let paused = self.paused.contains(&id);
             let label = if paused { "Resume thumbnail" } else { "Pause thumbnail" };
-            let tip = "A paused thumbnail is not cooked for; it shows a picture only while it is up to date";
+            let tip = "No cooking for this thumbnail. The picture shows only while the node is up to date anyway";
             if has_outputs && ui.button(label).on_hover_text(tip).clicked() {
                 if !self.paused.remove(&id) {
                     self.paused.insert(id);
@@ -1191,7 +1191,7 @@ impl Editor {
                     }
                     if !is_comp {
                         let tip =
-                            "Pick another kind for it; the params, wires and bindings that fit are kept";
+                            "Swap this node for another kind. Params, wires and bindings that fit the new kind stay";
                         let r = ui.button("Replace node...").on_hover_text(tip);
                         auto.add("menu.replace", r.rect, "Replace node...");
                         if r.clicked() {
@@ -1237,7 +1237,7 @@ impl Editor {
                 ui.close();
             }
             if is_comp {
-                let tip = "Write it to the component library; add it to any project from the comp tab";
+                let tip = "Save this component to the library. Add it to any project from the comp tab";
                 if ui.button("Save to the library").on_hover_text(tip).clicked() {
                     actions.push(Action::SaveComponent(id));
                     ui.close();
@@ -1739,7 +1739,7 @@ impl Editor {
             Outcome::Chosen(kind) if replacing.is_some() => match replacing {
                 Some(_) if kind.starts_with(crate::add_dialog::LIBRARY_MARK) => {
                     actions.push(Action::Message(
-                        "a component cannot replace a node; delete it and add the component".into(),
+                        "a component cannot replace a node; delete the node and add the component".into(),
                     ))
                 }
                 Some(node) => actions.push(Action::Replace { node, kind }),
@@ -1912,7 +1912,7 @@ fn options_menu(
     use penumbra_graph::ThumbnailMode;
     let label = if selected > 1 { "Arrange selection" } else { "Arrange" };
     let r = ui.button(format!("{label}  (L)")).on_hover_text(
-        "Moves the nodes so that wires cross as little as possible and run straight where they can; the selection when two or more nodes are selected, else everything shown. Ctrl+Z puts them back",
+        "Moves the nodes so wires cross less and run straight. With two or more nodes selected, only the selection moves; else every node shown. Ctrl+Z puts them back",
     );
     auto.add("options.arrange", r.rect, label);
     let arrange = r.clicked();
@@ -1923,14 +1923,14 @@ fn options_menu(
     let mut options = layout.options;
     let r = ui
         .checkbox(&mut options.chan_bars, "Channel bars")
-        .on_hover_text("The bar under a single channel's value: green, red while negative");
+        .on_hover_text("A bar under each single-channel value: green, red while the value is negative");
     auto.add("options.chan_bars", r.rect, "Channel bars");
     let r = ui
         .checkbox(&mut options.viewer_background, "Viewer as background")
         .on_hover_text("The viewer's picture behind the network, dimmed so nodes and wires stay readable");
     auto.add("options.viewer_background", r.rect, "Viewer as background");
     let r = ui.checkbox(&mut options.binding_lines, "All binding lines").on_hover_text(
-        "A line for every binding. Off, a binding shows as a short stub on the node it drives, and as a line while its source or that node is selected or under the pointer",
+        "On: a line for every binding. Off: a short stub on the driven node; the line shows only while the source or the driven node is selected or under the pointer",
     );
     auto.add("options.binding_lines", r.rect, "All binding lines");
     layout.set_options(options, input.now);
@@ -1949,8 +1949,8 @@ fn options_menu(
         let tip = match mode {
             ThumbnailMode::Always => "every visible node shows a live picture",
             ThumbnailMode::WhenFree => {
-                "nothing is cooked for thumbnails; a node shows its picture only while it is \
-                 up to date (it cooks for an output or the viewer, or nothing changed)"
+                "thumbnails never cause a cook; a node shows its picture only while the node is \
+                 up to date anyway (cooking for an output or the viewer, or nothing changed)"
             }
             ThumbnailMode::Never => "no thumbnails",
         };

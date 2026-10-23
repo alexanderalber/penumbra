@@ -31,8 +31,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "shapes.trace",
-        "Outlines of a mask or label texture as poly lines in a tex.shapes (one undo step), replacing \
-         its lines with that tag; {path, from (node: path or name beside path), output?, tag? (trace), \
+        "Trace the outlines of a mask or label texture as poly lines into a tex.shapes (one undo step). \
+         Replaces the lines of that tag; {path, from (node: path or name beside path), output?, tag? (trace), \
          channel? (auto | red | green | blue | alpha | luma), threshold? (0.5), invert? (inside is \
          below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?}",
         move |p| {
@@ -174,7 +174,7 @@ pub fn trace_into(e: &Engine, actor: Actor, a: &TraceArgs, now: Instant) -> CmdR
 
     let mut warnings: Vec<String> = Vec::new();
     if node.inputs.first().copied().flatten().is_some() {
-        warnings.push(format!("{}'s table input is connected, so its own shapes are not drawn", a.path));
+        warnings.push(format!("{}: its own shapes are not drawn while its table input is connected", a.path));
     }
     let surface = |name: &str| node.param(desc, name).and_then(Value::as_f64).unwrap_or(0.0);
     let (sw, sh) = (surface("width"), surface("height"));

@@ -141,7 +141,7 @@ impl Outputs {
             match resolved.display() {
                 Some(d) if infos.iter().any(|i| i.id == d.id && i.editor) => {
                     state.error = Some(format!(
-                        "`{}` shows the editor; move the editor to another display or choose another one",
+                        "`{}` shows the editor; move the editor to another display, or give this projector another display",
                         d.id
                     ));
                     self.shown.remove(&p.node);

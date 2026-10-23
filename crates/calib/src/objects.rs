@@ -79,7 +79,7 @@ impl Map {
     pub fn new(width: usize, height: usize, rgba: Vec<[f32; 4]>) -> Result<Self, String> {
         let n = width.checked_mul(height).ok_or("the map is too large")?;
         if n == 0 || n > MAX_PIXELS {
-            return Err(format!("a map is 1 to {MAX_PIXELS} pixels, not {width} x {height}"));
+            return Err(format!("a map is 1 to {MAX_PIXELS} pixels, got {width} x {height}"));
         }
         if rgba.len() != n {
             return Err(format!("{} pixels for a {width} x {height} map", rgba.len()));

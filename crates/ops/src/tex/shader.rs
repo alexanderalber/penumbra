@@ -39,10 +39,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .choice_doc("custom", "width and height, whatever is wired"),
         )
         .param(super::width_param().doc(
-            "Width of the output in pixels, for resolution custom or without in0; res.optimize may change it unless keep_size is on",
+            "Width of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on",
         ))
         .param(super::height_param().doc(
-            "Height of the output in pixels, for resolution custom or without in0; res.optimize may change it unless keep_size is on",
+            "Height of the output in pixels, used with resolution custom or without in0. res.optimize may change it unless keep_size is on",
         ))
         .param(super::keep_size())
         .input("in0", DataKind::Tex)
@@ -96,7 +96,7 @@ impl Operator for Shader {
                 // Such a param would silently take the node's own value.
                 if let Some(p) = header.params.iter().find(|p| FIXED.contains(&p.name.as_str())) {
                     return Err(format!(
-                        "{label}: `{}` is a param of the node itself; give the shader's another name",
+                        "{label}: `{}` is a param of the node itself; give the shader's param another name",
                         p.name
                     ));
                 }

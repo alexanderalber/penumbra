@@ -23,7 +23,7 @@ use penumbra_mesh::prim;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new("mat.constant", "A colour as it is, unlit: what projection content wants")
+        NodeDesc::new("mat.constant", "A colour as it is, unlit: the usual choice for projection content")
             .param(color())
             .input("texture", DataKind::Tex)
             .output("out", DataKind::Mat),
@@ -83,7 +83,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .doc("Which edges get a line")
                     .choice_doc(
                         "polygons",
-                        "leave out edges inside the file's polygons (OBJ faces), or inside flat faces where it has only triangles (a quad's diagonal)",
+                        "only the outlines of the file's polygons (OBJ faces); in a mesh of plain triangles, diagonals across flat faces are left out too",
                     )
                     .choice_doc("triangles", "every edge"),
             )
@@ -92,7 +92,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .doc("What the faces between the lines show")
                     .choice_doc("open", "nothing: the lines behind show through")
                     .choice_doc("filled", "the fill colour, hiding what lies behind")
-                    .choice_doc("hidden", "only the lines filled faces would leave, the faces see-through"),
+                    .choice_doc("hidden", "the lines as filled faces would leave them, but the faces are see-through"),
             )
             .param(
                 ParamSpec::color("fill", [0.0, 0.0, 0.0, 1.0])

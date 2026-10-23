@@ -172,7 +172,7 @@ impl BcConverter {
             return Err(Error::new(format!("target is {:?}, the frame {w}x{h}", target.size())));
         }
         if !gpu.device().features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
-            return Err(Error::new("this GPU cannot sample BC textures, which HAP needs"));
+            return Err(Error::new("cannot show HAP on this GPU (it cannot sample BC textures)"));
         }
         let pipeline = gpu.bc_pipeline()?;
         self.write(gpu, 0, frame.format, w, h, frame.data)?;

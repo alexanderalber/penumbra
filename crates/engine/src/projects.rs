@@ -523,7 +523,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     registry.register(FnCommand::new(
         "project.example",
         "Open a shipped example from a fresh copy in the user's data folder (the shipped one stays \
-         as it is); changes last until it is opened again, project.save_as keeps them; {name}",
+         as it is). Changes last until the example is opened again; project.save_as keeps them; {name}",
         move |p| reply(open_example(&e, &args::<NameArg>(p)?.name)),
     ));
     let e = Arc::clone(engine);

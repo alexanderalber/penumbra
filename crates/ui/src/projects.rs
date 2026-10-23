@@ -92,7 +92,9 @@ impl ProjectMenu {
         }
         let mut chosen = None;
         egui::Popup::menu(&r).id(ui.make_persistent_id("project_menu")).show(|ui| {
-            let b = ui.button("New project\u{2026}").on_hover_text("Pick or make an empty folder for it");
+            let b = ui
+                .button("New project\u{2026}")
+                .on_hover_text("Pick or make an empty folder for the new project");
             auto.add("project.new", b.rect, "New project");
             if b.clicked() {
                 self.pick(Pick::New, &current);
@@ -106,7 +108,7 @@ impl ProjectMenu {
             }
             let b = ui
                 .button("Save copy as\u{2026}")
-                .on_hover_text("Copy this project into a new or empty folder and go on there");
+                .on_hover_text("Copies this project into a new or empty folder and opens the copy");
             auto.add("project.save_as", b.rect, "Save copy as");
             if b.clicked() {
                 self.pick(Pick::SaveAs, &current);
@@ -137,9 +139,9 @@ impl ProjectMenu {
             }
             let demo = projects::is_demo(&current);
             let b = ui.add(egui::Button::new("Demo project").selected(demo)).on_hover_text(if demo {
-                "Start the demo over: your changes go"
+                "Reopens the demo from scratch: your changes are lost"
             } else {
-                "Opens fresh every time; Save copy as keeps your changes"
+                "Opens fresh every time. \"Save copy as\" keeps your changes"
             });
             auto.add("project.demo", b.rect, "Demo project");
             if b.clicked() {
@@ -156,9 +158,11 @@ impl ProjectMenu {
                         let copy = copies.as_ref().map(|c| c.join(name));
                         let open = copy.as_ref().is_some_and(|c| projects::same_dir(c, &current));
                         let tip = match &copy {
-                            Some(_) if open => "Start it over: your changes go".to_string(),
+                            Some(_) if open => {
+                                "Reopens this example from scratch: your changes are lost".to_string()
+                            }
                             Some(c) => format!(
-                                "A fresh copy in {}, every time; Save copy as keeps your changes",
+                                "Opens as a fresh copy in {} every time. \"Save copy as\" keeps your changes",
                                 c.display()
                             ),
                             None => "The user's data folder is unknown".to_string(),

@@ -122,7 +122,7 @@ pub fn calibrate(
     let distortion = initial.map_or([0.0; 2], |c| c.intrinsics.distortion);
     if shape.thickness < PLANAR && !options.fix_principal_point {
         return Err(Error::new(
-            "the points lie on one plane, which cannot tell the principal point: fix it (or add points off the plane)",
+            "points on one plane cannot tell the principal point: fix the principal point, or add points off the plane",
         ));
     }
 
@@ -245,7 +245,7 @@ fn check_input(
         let k = &c.intrinsics;
         if k.size != size {
             return Err(Error::new(format!(
-                "the initial camera is for a {:?} picture, not {size:?}",
+                "the initial camera is for a {:?} picture; this picture is {size:?}",
                 k.size
             )));
         }
@@ -715,7 +715,7 @@ fn plane_start(
             let width = f64::from(size[0]);
             if !positive(w) || !f.is_finite() || f < 0.05 * width || f > 50.0 * width {
                 return Err(Error::new(
-                    "the plane is seen too squarely to tell the focal length: fix it, or give an initial camera",
+                    "the plane is seen too squarely to tell the focal length: fix the focal length, or give an initial camera",
                 ));
             }
             [f, f]
