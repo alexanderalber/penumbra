@@ -33,8 +33,9 @@ Files
 - pyhost.dll                runs Python for script nodes; keep it next to penumbra.exe
 - penumbra-cli.exe          command line tool (control channel client, soak test), for use
                             from a terminal; not needed to use the app
-- docs\                     the documentation of this version (Markdown); start at
-                            docs\README.md
+- docs\                     the documentation of this version: docs\penumbra.html in a
+                            browser (all of it in one page; the ? on a node opens it
+                            there), or the Markdown files, starting at docs\README.md
 - examples\                 example projects, listed in examples\README.md
 - CLAUDE.md                 how Claude Code drives the app, read by it when started here
 - THIRD-PARTY-NOTICES.html  licences of the components penumbra is built from

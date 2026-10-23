@@ -11,7 +11,8 @@
 //! - `bless`: rewrite the golden images (`crates/ops/tests/golden/`) from the current renders on
 //!   the software adapter. Look at the result before committing it.
 //! - `docs`: rewrite the generated reference (`docs/reference/`) from the node types and
-//!   commands. `test` fails while it is out of date.
+//!   commands, and `docs/penumbra.html`, the single page with all the docs that the `?` on a
+//!   node opens. `test` fails while any of it is out of date.
 //! - `notices`: the third-party notices a build must ship with, written to
 //!   `target/THIRD-PARTY-NOTICES.html` by cargo-about (`about.toml`, `about.hbs`). Fails when a
 //!   dependency's licence is not accepted in `about.toml` or cannot be determined.
@@ -146,7 +147,7 @@ fn docs() -> Result<(), String> {
     if !status.success() {
         return Err(format!("writing the reference failed ({status})"));
     }
-    eprintln!("xtask: reference rewritten; check `git diff docs/reference`");
+    eprintln!("xtask: reference rewritten; check `git diff docs/reference docs/penumbra.html`");
     Ok(())
 }
 

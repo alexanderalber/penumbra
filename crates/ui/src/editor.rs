@@ -31,6 +31,8 @@ use crate::wires::{self, Ends, Route, flatten, wire_points};
 use crate::{Action, theme};
 
 const HEADER: f32 = 20.0;
+/// Below this zoom a node's header has no text, badges or `?`.
+const HEADER_TEXT_ZOOM: f32 = 0.35;
 const PORT_R: f32 = 5.0;
 /// Pick radius of a port, in points.
 const PORT_PICK: f32 = 11.0;
@@ -861,6 +863,19 @@ impl Editor {
             if resp.hovered() {
                 self.hovered = Some(g.id);
             }
+            // The `?` in the header, on top of the node: a click on it opens the documentation
+            // instead of selecting (a drag from it still moves the node).
+            let zoom = g.rect.width() / NODE_SIZE.x;
+            if zoom > HEADER_TEXT_ZOOM {
+                let rect = help_rect(g.rect, zoom);
+                let help = ui
+                    .interact(rect, ui.id().with(("help", g.id)), Sense::click())
+                    .on_hover_text(format!("Documentation of {} in the browser", node.kind));
+                auto.add(format!("help.{path}"), rect, format!("documentation of {}", node.kind));
+                if help.clicked() {
+                    actions.push(Action::Help(node.kind.clone()));
+                }
+            }
             self.node_interaction(ui, &resp, g.id, input, layout, auto, actions, &mut clicked_node);
             let on_port = pointer.is_some_and(|q| {
                 g.inputs.iter().chain(&g.outputs).any(|port| q.distance(port.pos) <= PORT_PICK)
@@ -1400,7 +1415,7 @@ impl Editor {
         }
 
         // Header text, badges.
-        if zoom > 0.35 {
+        if zoom > HEADER_TEXT_ZOOM {
             let name = node.name.as_str();
             painter.text(
                 pos2(header.min.x + 6.0 * zoom, header.center().y),
@@ -1410,7 +1425,16 @@ impl Editor {
                 Color32::WHITE,
             );
             let short = node.kind.split('.').nth(1).unwrap_or(&node.kind);
-            let mut right = header.max.x - 6.0 * zoom;
+            let help = help_rect(g.rect, zoom);
+            let over_help = ui.ctx().pointer_hover_pos().is_some_and(|p| help.contains(p));
+            painter.text(
+                help.center(),
+                Align2::CENTER_CENTER,
+                "?",
+                FontId::proportional(12.0 * zoom),
+                Color32::from_white_alpha(if over_help { 255 } else { 120 }),
+            );
+            let mut right = help.min.x - 2.0 * zoom;
             let error = status.and_then(|s| s.error.as_deref());
             let warning = status.and_then(|s| s.warning.as_deref());
             if error.is_some() || warning.is_some() {
@@ -2433,4 +2457,10 @@ fn draw_grid(painter: &egui::Painter, canvas: Rect, view: View) {
         painter.line_segment([pos2(canvas.min.x, y), pos2(canvas.max.x, y)], Stroke::new(1.0, color));
         y += step;
     }
+}
+
+/// The `?` at the right end of a node's header, in screen points.
+fn help_rect(node: Rect, zoom: f32) -> Rect {
+    let size = HEADER * zoom;
+    Rect::from_min_size(pos2(node.max.x - size, node.min.y), vec2(size, size))
 }

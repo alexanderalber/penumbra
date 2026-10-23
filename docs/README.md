@@ -29,3 +29,6 @@ Generated from the code, so always complete:
 
 - [Node reference](reference/nodes.md): every node type with its inputs, outputs and params.
 - [Command reference](reference/commands.md): every command of the control channel.
+- `penumbra.html`: all of the above in one page for the browser, with a filter box; the `?` on
+  a node opens it at that node (see [the documentation page](getting-started.md#the-documentation-page)).
+  Longer texts for single node kinds live in `nodes/<kind>.md` and appear in their entries there.

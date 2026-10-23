@@ -119,6 +119,13 @@ impl ParamPanel {
                 }
             }
             ui.label(RichText::new(&node.kind).color(theme::TEXT_WEAK));
+            // Not an edit, so allowed while Claude edits too.
+            let r =
+                ui.small_button("?").on_hover_text(format!("Documentation of {} in the browser", node.kind));
+            auto.add("param.help", r.rect, format!("documentation of {}", node.kind));
+            if r.clicked() {
+                actions.push(Action::Help(node.kind.clone()));
+            }
         });
         if let Some(d) = desc {
             ui.label(RichText::new(&d.summary).color(theme::TEXT_WEAK).small());

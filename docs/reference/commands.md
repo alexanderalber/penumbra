@@ -89,6 +89,12 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `gpu.info` | GPU adapter, texture size limit, memory, errors raised so far, whether lost |
 | `gpu.simulate_loss` | Test aid: end the GPU device as if the driver had lost it. The app then closes as after a real loss, and the next start opens paused; {confirm: true} |
 
+## help
+
+| command | |
+|---|---|
+| `help.open` | The documentation page (docs/penumbra.html) in the default browser, at the entry of a node kind, a command or a guide; {kind?, open?}. Answers with its file and URL; open: false, and headless runs, open nothing |
+
 ## history
 
 | command | |

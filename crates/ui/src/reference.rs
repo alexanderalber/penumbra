@@ -1,7 +1,12 @@
 //! The generated part of the user documentation: `docs/reference/nodes.md` from the node
-//! types and `docs/reference/commands.md` from the app's command registry. The test fails when
-//! a file differs from what the code declares; `PENUMBRA_BLESS=1` (`cargo xtask docs`) rewrites
-//! them instead.
+//! types, `docs/reference/commands.md` from the app's command registry, and `docs/penumbra.html`,
+//! all of it with the hand-written docs in one page for the browser ([`html`]). The test fails
+//! when a file differs from what the code and the docs declare; `PENUMBRA_BLESS=1` (`cargo xtask
+//! docs`) rewrites them instead.
+
+mod html;
+mod markdown;
+mod tests;
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -60,8 +65,8 @@ fn param_default(spec: &ParamSpec) -> String {
     }
 }
 
-fn node_section(out: &mut String, desc: &NodeDesc) {
-    let _ = writeln!(out, "### {}\n\n{}\n", desc.kind, desc.summary);
+/// What sets a node kind apart, in sentences: time, state, eager cooking, components.
+fn node_notes(desc: &NodeDesc) -> Vec<String> {
     let mut notes = Vec::new();
     if desc.time_dependent {
         notes.push("Follows the show clock: cooks again whenever time moves.".to_string());
@@ -89,6 +94,12 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
     if desc.extra_params {
         notes.push("Declares further params per node, from its file or code.".to_string());
     }
+    notes
+}
+
+fn node_section(out: &mut String, desc: &NodeDesc) {
+    let _ = writeln!(out, "### {}\n\n{}\n", desc.kind, desc.summary);
+    let notes = node_notes(desc);
     if !notes.is_empty() {
         let _ = writeln!(out, "{}\n", notes.join(" "));
     }
@@ -161,23 +172,33 @@ fn nodes_md(types: &NodeTypes) -> String {
     out
 }
 
+/// Every command with its summary: those without a group (`ping`) first, the groups after them
+/// by name.
+fn sorted_commands(registry: &Registry) -> Vec<(String, String)> {
+    let list = registry.list();
+    let mut commands: Vec<(String, String)> = list["commands"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|c| {
+                    let field = |k: &str| c[k].as_str().unwrap_or_default().to_string();
+                    (field("id"), field("summary"))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    commands.sort_by_key(|(id, _)| (id.contains('.'), id.clone()));
+    commands
+}
+
 fn commands_md(registry: &Registry) -> String {
     let mut out = format!(
         "{HEADER}\n\n# Command reference\n\nEvery command of the running app, as `penumbra-cli ctl <command>` \
          or a control-channel request sends it (see [Control](../control.md)). `{{a, b?}}` lists \
          the params, `?` marks optional ones.\n\n"
     );
-    let list = registry.list();
-    let mut commands = list["commands"].as_array().cloned().unwrap_or_default();
-    // Commands without a group (`ping`) first, the groups after them by name.
-    commands.sort_by_key(|c| {
-        let id = c["id"].as_str().unwrap_or_default().to_string();
-        (id.contains('.'), id)
-    });
     let mut group = String::new();
-    for c in &commands {
-        let id = c["id"].as_str().unwrap_or_default();
-        let summary = c["summary"].as_str().unwrap_or_default();
+    for (id, summary) in &sorted_commands(registry) {
         let g = id.split_once('.').map_or("general", |(g, _)| g);
         if g != group {
             group = g.to_string();
@@ -189,19 +210,48 @@ fn commands_md(registry: &Registry) -> String {
 }
 
 fn docs_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/reference")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs")
 }
 
-/// Compares `name` under `docs/reference` with `text`, or writes it when blessing.
+/// Compares `name` under `docs` with `text`, or writes it when blessing.
 fn check(name: &str, text: &str) -> Option<String> {
     let file = docs_dir().join(name);
     if std::env::var_os("PENUMBRA_BLESS").is_some() {
-        std::fs::create_dir_all(docs_dir()).unwrap();
+        if let Some(dir) = file.parent() {
+            std::fs::create_dir_all(dir).unwrap();
+        }
         std::fs::write(&file, text).unwrap();
         return None;
     }
     let old = std::fs::read_to_string(&file).unwrap_or_default().replace("\r\n", "\n");
-    (old != text).then(|| format!("docs/reference/{name}"))
+    (old != text).then(|| format!("docs/{name}"))
+}
+
+/// The markdown files directly in `dir` by file stem, line endings as `\n`.
+fn markdown_files(dir: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Default::default() };
+    entries
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "md"))
+        .filter_map(|p| {
+            let stem = p.file_stem()?.to_str()?.to_string();
+            Some((stem, std::fs::read_to_string(&p).ok()?.replace("\r\n", "\n")))
+        })
+        .collect()
+}
+
+/// The single-page documentation from the node types, the commands and the markdown in `docs`.
+fn penumbra_html(types: &NodeTypes, commands: &[(String, String)]) -> String {
+    let mut docs = markdown_files(&docs_dir());
+    let readme = docs.remove("README").unwrap_or_default();
+    let guides: Vec<html::Guide> = docs.into_iter().map(|(stem, text)| html::Guide { stem, text }).collect();
+    let node_pages = markdown_files(&docs_dir().join("nodes"));
+    for kind in node_pages.keys() {
+        assert!(types.desc(kind).is_some(), "docs/nodes/{kind}.md names no node kind");
+    }
+    let sources = html::Sources { readme: &readme, guides: &guides, node_pages: &node_pages, commands };
+    html::page(types, &sources).unwrap()
 }
 
 #[test]
@@ -214,11 +264,15 @@ fn reference_docs_are_current() {
     let mut registry = penumbra_engine::engine_registry(&engine);
     let (bridge, _requests) = crate::Bridge::new();
     crate::control::register(&mut registry, &bridge);
-    let stale: Vec<String> =
-        [check("nodes.md", &nodes_md(&types)), check("commands.md", &commands_md(&registry))]
-            .into_iter()
-            .flatten()
-            .collect();
+    let commands = sorted_commands(&registry);
+    let stale: Vec<String> = [
+        check("reference/nodes.md", &nodes_md(&types)),
+        check("reference/commands.md", &commands_md(&registry)),
+        check("penumbra.html", &penumbra_html(&types, &commands)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     engine.shutdown();
     let _ = std::fs::remove_dir_all(&dir);
     assert!(

@@ -74,7 +74,9 @@ press play once the cause is fixed. The record of that lives in
   for it, as tall as a picture's.
 - **Parameters** (top right): the selected node's name, kind, a one-line summary, the lock, its
   cook time, and its params. Params that belong together sit in folded sections, the rarely
-  used ones under "more".
+  used ones under "more". The `?` beside the kind opens the node's documentation in the
+  browser, as the `?` at the right end of every node's header in the editor does (see
+  [the documentation page](#the-documentation-page)).
 - **Viewer** (middle right): the selected node's output, or the node pinned with `pin`.
   `window` shows it in a window of its own (on a second monitor, say). Its picture area stays
   16:9 as the column grows and shrinks; drag its top edge for another shape, which is kept with
@@ -126,6 +128,20 @@ change the share (also kept with the project).
 
 Everything is written to the project directory a second after each change; there is no save
 command. Close the app (or open another project) and come back to it, and the network is back.
+
+## The documentation page
+
+`docs/penumbra.html` (in the release zip beside `penumbra.exe`) holds all of this documentation
+in one page for the browser, offline: these guides, every node kind with its inputs, outputs and
+params, and every command, each folded until opened. The filter box at the top narrows the
+entries to those holding all the words typed (Enter jumps to the first, Escape clears); an entry
+lists the places in the guides that mention it.
+
+Click the `?` in a node's header, or the one beside the kind in the parameters, and the page
+opens in the default browser at that node's entry. `help.open {kind}` does the same from the
+control channel (`kind` may also be a command or a guide such as `scanning`) and answers with
+the page's file and URL; with `open: false`, and in headless runs, it opens nothing. A link to
+an entry is the page's address with `#` and the kind or command: `penumbra.html#tex.shapes`.
 
 ## Moving around
 

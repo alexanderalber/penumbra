@@ -124,6 +124,8 @@ fn run() -> Result<(), String> {
     engine.remember(&dir);
 
     let (bridge, requests) = Bridge::new();
+    // The app with a window: the `?` buttons and `help.open` may start the browser.
+    bridge.allow_browser();
     let mut registry = penumbra_engine::engine_registry(&engine);
     penumbra_ui::control::register(&mut registry, &bridge);
     let registry = Arc::new(registry);

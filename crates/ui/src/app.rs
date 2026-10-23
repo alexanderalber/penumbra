@@ -133,6 +133,8 @@ pub struct PenumbraApp {
     flown: Instant,
     /// The open project is the demo or an example, made afresh on every open.
     starts_fresh: bool,
+    /// The `?` buttons may open the browser ([`crate::control::Bridge::allow_browser`]).
+    browser: bool,
 }
 
 /// Resizing the window once more so egui-wgpu reconfigures a surface whose last configure
@@ -218,6 +220,7 @@ impl PenumbraApp {
             shown: (engine.generation(), engine.session()),
             flown: Instant::now(),
             starts_fresh: penumbra_engine::projects::starts_fresh(engine.session().dir()),
+            browser: options.bridge.as_ref().is_some_and(|b| b.browser()),
             engine,
         }
     }
@@ -401,6 +404,19 @@ impl PenumbraApp {
                     }
                     Ok(())
                 }
+                Action::Help(kind) => crate::help::open(Some(&kind), self.browser)
+                    .map(|reply| {
+                        let text = if reply.get("opened").and_then(|o| o.as_bool()) == Some(true) {
+                            format!("the documentation of {kind} opens in the browser")
+                        } else {
+                            format!(
+                                "the documentation of {kind}: {}",
+                                reply.get("url").and_then(|u| u.as_str()).unwrap_or_default()
+                            )
+                        };
+                        self.message = Some((text, now));
+                    })
+                    .map_err(penumbra_core::Error::new),
                 Action::LearnOsc(param) => {
                     let timeout = penumbra_engine::osc::LEARN_TIMEOUT;
                     match self.engine.osc().learn(&self.engine.session(), &param, timeout) {

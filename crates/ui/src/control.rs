@@ -20,7 +20,11 @@
 //!   `ui.frame`
 //! - `ui.measure`: how tidy the level shown looks (size, wire length, crossings, overlaps)
 //! - `ui.screenshot {file?}`: PNG of the window
+//!
+//! `help.open {kind?, open?}` is registered here too but answers on the calling thread: it needs
+//! nothing of the UI, only whether this run may open a browser ([`Bridge::allow_browser`]).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -44,13 +48,25 @@ pub struct UiRequest {
 pub struct Bridge {
     tx: Mutex<Sender<UiRequest>>,
     ctx: OnceLock<egui::Context>,
+    /// Whether `help.open` and the `?` buttons may start a browser: only in the app with a
+    /// window, never in headless runs and tests.
+    browser: AtomicBool,
 }
 
 impl Bridge {
     /// The bridge and the receiver the app reads requests from.
     pub fn new() -> (Arc<Bridge>, Receiver<UiRequest>) {
         let (tx, rx) = mpsc::channel();
-        (Arc::new(Bridge { tx: Mutex::new(tx), ctx: OnceLock::new() }), rx)
+        (Arc::new(Bridge { tx: Mutex::new(tx), ctx: OnceLock::new(), browser: AtomicBool::new(false) }), rx)
+    }
+
+    /// Lets `help.open` and the `?` buttons open the documentation in the browser.
+    pub fn allow_browser(&self) {
+        self.browser.store(true, Ordering::Relaxed);
+    }
+
+    pub fn browser(&self) -> bool {
+        self.browser.load(Ordering::Relaxed)
     }
 
     /// Called by the app once its egui context exists, so requests can wake it up.
@@ -119,4 +135,10 @@ pub fn register(registry: &mut Registry, bridge: &Arc<Bridge>) {
         let bridge = Arc::clone(bridge);
         registry.register(FnCommand::new(id, summary, move |p| bridge.call(id, p)));
     }
+    let bridge = Arc::clone(bridge);
+    registry.register(FnCommand::new(
+        "help.open",
+        "The documentation page (docs/penumbra.html) in the default browser, at the entry of a node kind,          a command or a guide; {kind?, open?}. Answers with its file and URL; open: false, and headless runs,          open nothing",
+        move |p| crate::help::command(p, bridge.browser()).map_err(CommandError),
+    ));
 }

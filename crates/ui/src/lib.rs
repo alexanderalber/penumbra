@@ -15,6 +15,7 @@ pub mod control;
 mod cook_meter;
 pub mod editor;
 pub mod headless;
+pub mod help;
 pub mod helpers;
 pub mod icons;
 mod keyboard;
@@ -115,6 +116,8 @@ pub enum Action {
     Scan(NodeId),
     /// Stop the scan going on (`scan.cancel`).
     CancelScan,
+    /// The documentation at this node kind's entry, in the browser (`help.open`).
+    Help(String),
 }
 
 impl Action {
