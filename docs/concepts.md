@@ -83,6 +83,20 @@ draws every binding as a dashed green line into the top of the node. With "All b
 unticked in the editor's right-click menu, a binding shows as a short stub on the bound node,
 and as a line only while the source or the bound node is selected or under the pointer.
 
+### Keys
+
+`chan.keyboard_in` turns keys into channels: with `keys` at `1 2 3 4` (the default) it has
+`key_1` to `key_4`, each 1 while its key is held, and `last`, the index in `keys` (from 0) of
+the key pressed last, which stays until another listed key is pressed and starts at 0 when the
+project opens. Bind a switch's `index` (or a `chan.constant` that several switches follow) to
+`last`, and the number keys switch the show's pieces. Keys count only while a penumbra
+window has the focus: the editor, the viewer's own window or a projector output (click it
+once). A key typed into a text field and a key held with Ctrl, Alt or the Windows key do not
+count. The number pad's digits are the digits; letters are named as the keyboard layout labels
+them. **learn from OSC** in a param's link menu also takes a key a `chan.keyboard_in` lists,
+and binds its gate. From the control channel: `keyboard.press {key}` (or `{key, down}` to hold
+and let go) and `keyboard.status`.
+
 ## Paths
 
 Every node has a path: `/noise1` at the top level, `/scene/noise1` inside the component

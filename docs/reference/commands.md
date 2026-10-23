@@ -97,6 +97,13 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `history.redo` | Redo one history entry |
 | `history.undo` | Undo one history entry |
 
+## keyboard
+
+| command | |
+|---|---|
+| `keyboard.press` | Press a key as if typed in a penumbra window, for chan.keyboard_in: {key, down?}; without `down` a tap, `down: true` holds it until `down: false` |
+| `keyboard.status` | Keys held now (and by which window), the key pressed last, presses so far |
+
 ## ndi
 
 | command | |
@@ -134,7 +141,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `osc.config` | OSC settings for this run: {enabled?, max_packet?, rate?, burst?, pattern_rate?, max_addresses?} |
-| `osc.learn` | Bind a param to the next OSC address that arrives with a number; {param, timeout?, wait?} or {cancel: true} |
+| `osc.learn` | Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists); {param, timeout?, wait?} or {cancel: true} |
 | `osc.send` | Send one OSC message; {host?, port, address, args?: [numbers, strings, booleans]} |
 | `osc.status` | OSC listeners (port, bound, packets, drops, sources), senders, recent messages, params set by address, learn |
 

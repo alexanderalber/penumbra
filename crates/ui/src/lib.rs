@@ -17,6 +17,7 @@ pub mod editor;
 pub mod headless;
 pub mod helpers;
 pub mod icons;
+mod keyboard;
 pub mod layout;
 mod mapping;
 pub mod meters;

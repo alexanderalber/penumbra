@@ -449,7 +449,7 @@ impl Helpers {
             ui.horizontal(|ui| {
                 ui.colored_label(
                     theme::kind_color(penumbra_graph::DataKind::Chan),
-                    format!("learning {}: move a control ({:.0} s)", l.param, l.remaining),
+                    format!("learning {}: move a control or press a key ({:.0} s)", l.param, l.remaining),
                 );
                 let r = ui.button("Cancel");
                 auto.add("helpers.osc.learn_cancel", r.rect, "Cancel");

@@ -17,6 +17,7 @@ pub mod dmx;
 pub mod engine;
 pub mod flatfield;
 pub mod hubs;
+pub mod keyboard;
 pub mod meter;
 pub mod navigation;
 pub mod ndi;
@@ -66,6 +67,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     calib::register(&mut registry);
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
+    keyboard::register(&mut registry, engine);
     audio::register(&mut registry, engine);
     dmx::register(&mut registry, engine);
     ndi::register(&mut registry);

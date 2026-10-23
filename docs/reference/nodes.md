@@ -1036,7 +1036,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed), [chan.trail](#chantrail)
 
 ### chan.audio_analysis
 
@@ -1163,6 +1163,20 @@ Inputs:
 - `in` (chan)
 
 Outputs: `out` (chan).
+
+### chan.keyboard_in
+
+Keys of the keyboard while a penumbra window has the focus: a gate per key, and which was pressed last
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): `key_<name>` per key, 1 while held; `last`: the index in `keys` (from 0) of the key pressed last, held until another listed key is pressed
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `keys` | text | `"1 2 3 4"` |  | Space-separated keys: digits (the number pad's too), letters, f1 to f12, space, left right up down, enter tab backspace delete insert home end pageup pagedown escape |
 
 ### chan.lfo
 

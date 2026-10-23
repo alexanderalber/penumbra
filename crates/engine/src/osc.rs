@@ -11,7 +11,8 @@
 //!   ([`penumbra_graph::History::live`]). OSC edits pass the gate as the user's (refused
 //!   while Claude holds the claim) and are refused on locked nodes and bound params.
 //! - **Learn** (`osc.learn`): the next address with a number binds the param to that address's
-//!   channel on the `chan.osc_in` that takes it; one undo step.
+//!   channel on the `chan.osc_in` that takes it; one undo step. A key pressed meanwhile that a
+//!   `chan.keyboard_in` lists counts too: the param is bound to that key's gate.
 //!
 //! Commands: `osc.status`, `osc.config`, `osc.learn`, `osc.send`.
 
@@ -22,6 +23,7 @@ use std::time::{Duration, Instant};
 
 use penumbra_core::{Name, NodeId, NodePath, ParamKind, ParamPath, ParamSpec, Value, lock};
 use penumbra_graph::{Network, NodeDef, NodeTypes, Op};
+use penumbra_ops::keyboard::{DEFAULT_KEYS, KEYBOARD_IN, Key, Keyboard, parse_keys};
 use penumbra_ops::osc::{Filter, OSC_IN, channels_of};
 use penumbra_osc::codec::{self, Arg, Message};
 use penumbra_osc::hub::{self, Config, Hub, Incoming};
@@ -83,6 +85,8 @@ pub struct Learned {
 /// Shared between the osc thread, the commands and the UI.
 pub struct OscShared {
     hub: Hub,
+    /// Learn also listens to the keys.
+    keyboard: Keyboard,
     stop: AtomicBool,
     stats: Mutex<ParamStats>,
     learning: Mutex<Option<Learning>>,
@@ -90,9 +94,10 @@ pub struct OscShared {
 }
 
 impl OscShared {
-    pub fn new(hub: Hub) -> Self {
+    pub fn new(hub: Hub, keyboard: Keyboard) -> Self {
         Self {
             hub,
+            keyboard,
             stop: AtomicBool::new(false),
             stats: Mutex::new(ParamStats::default()),
             learning: Mutex::new(None),
@@ -140,11 +145,13 @@ impl OscShared {
             remaining: 0.0,
         });
         self.hub.learn(true);
+        self.keyboard.learn(true);
         Ok(())
     }
 
     pub fn cancel_learn(&self) -> bool {
         self.hub.learn(false);
+        self.keyboard.learn(false);
         lock(&self.learning).take().is_some()
     }
 
@@ -443,14 +450,40 @@ fn learn_step(session: &Session, shared: &OscShared, now: Instant) {
     let Some(learning) = lock(&shared.learning).clone() else {
         // Something heard after a cancel is dropped.
         shared.hub.take_heard();
+        shared.keyboard.take_heard();
         return;
     };
     let heard = shared.hub.take_heard();
     let finish = |l: Learned| {
         *lock(&shared.learning) = None;
         shared.hub.learn(false);
+        shared.keyboard.learn(false);
         *lock(&shared.learned) = Some(l);
     };
+    if heard.is_none()
+        && let Some(key) = shared.keyboard.take_heard()
+    {
+        let address = format!("key {}", key.name());
+        match bind_learned_key(session, &learning, key) {
+            Ok((from, channel)) => finish(Learned {
+                param: learning.param.clone(),
+                address: Some(address),
+                from: Some(from),
+                channels: vec![channel],
+                error: None,
+            }),
+            // A key no node lists: keep listening, it may have been meant for something else.
+            Err(None) => {}
+            Err(Some(e)) => finish(Learned {
+                param: learning.param.clone(),
+                address: Some(address),
+                from: None,
+                channels: Vec::new(),
+                error: Some(e),
+            }),
+        }
+        return;
+    }
     let Some(heard) = heard else {
         if now >= learning.until {
             finish(Learned {
@@ -525,6 +558,46 @@ fn bind_learned(
     Ok((from.to_string(), used))
 }
 
+/// Binds the learning param to `key`'s gate on the first `chan.keyboard_in` (by path) that
+/// lists it; `Err(None)` when none does.
+fn bind_learned_key(
+    session: &Session,
+    learning: &Learning,
+    key: Key,
+) -> Result<(String, String), Option<String>> {
+    let net = session.doc().snapshot();
+    let types = session.types();
+    let desc = types.desc(KEYBOARD_IN).ok_or(None)?;
+    let mut nodes: Vec<NodePath> = net
+        .nodes()
+        .filter(|n| n.kind == KEYBOARD_IN)
+        .filter(|n| {
+            let text = n.param(desc, "keys").and_then(Value::as_str).unwrap_or(DEFAULT_KEYS);
+            parse_keys(text).0.contains(&key)
+        })
+        .filter_map(|n| net.path_of(n.id))
+        .collect();
+    nodes.sort();
+    let from = nodes.first().ok_or(None)?;
+    let (param, component) = &learning.target;
+    let target = net.resolve_alias(types, param).map_err(|e| Some(e.0))?;
+    let (_, spec) = param_spec(&net, types, &target).map_err(Some)?;
+    // One gate for one number: a vector as a whole takes it in its first component.
+    let component = component.or(if spec.bind_components() > 1 { Some(0) } else { None });
+    let channel = key.channel();
+    let op = bind(param, component, from, &channel).map_err(Some)?;
+    session
+        .edit(
+            Actor::Osc,
+            &[op],
+            None,
+            &format!("learn {} from key {}", learning.param, key.name()),
+            Instant::now(),
+        )
+        .map_err(|e| Some(e.0))?;
+    Ok((from.to_string(), channel))
+}
+
 fn bind(param: &ParamPath, component: Option<u8>, from: &NodePath, channel: &str) -> Result<Op, String> {
     Ok(Op::Bind {
         param: param.clone(),
@@ -553,7 +626,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "osc.learn",
-        "Bind a param to the next OSC address that arrives with a number; {param, timeout?, wait?} or {cancel: true}",
+        "Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists); {param, timeout?, wait?} or {cancel: true}",
         osc_learn,
     );
     add(

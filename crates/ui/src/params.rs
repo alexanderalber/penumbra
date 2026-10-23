@@ -1728,18 +1728,21 @@ fn bind_menu(
             }
         }
         ui.separator();
-        let listening = input.net.nodes().any(|n| n.kind == penumbra_ops::osc::OSC_IN);
+        let listening = input
+            .net
+            .nodes()
+            .any(|n| n.kind == penumbra_ops::osc::OSC_IN || n.kind == penumbra_ops::keyboard::KEYBOARD_IN);
         let r = ui
             .add_enabled(listening && input.can_edit, egui::Button::new("learn from OSC"))
             .on_hover_text(if listening {
-                "Bind to the next OSC address that arrives with a number (a vector: one number per component)"
+                "Bind to the next OSC address that arrives with a number (a vector: one number per component),                  or to the next key a chan.keyboard_in lists"
             } else {
-                "Needs a chan.osc_in node: Tab > chan > osc_in"
+                "Needs a chan.osc_in or chan.keyboard_in node: Tab > chan > osc_in"
             })
             .on_disabled_hover_text(if listening {
                 "Not while Claude is editing"
             } else {
-                "Needs a chan.osc_in node: Tab > chan > osc_in"
+                "Needs a chan.osc_in or chan.keyboard_in node: Tab > chan > osc_in"
             });
         auto.add("bind.learn", r.rect, "learn from OSC");
         if r.clicked() {

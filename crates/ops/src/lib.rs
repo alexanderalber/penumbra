@@ -7,6 +7,7 @@ pub mod comp;
 pub mod dmx;
 pub mod freeview;
 pub mod geo;
+pub mod keyboard;
 pub mod light;
 pub mod mapping;
 pub mod mat;
@@ -36,6 +37,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     comp::register(types)?;
     dmx::register(types)?;
     geo::register(types)?;
+    keyboard::register(types)?;
     light::register(types)?;
     mat::register(types)?;
     osc::register(types)?;

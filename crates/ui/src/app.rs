@@ -1079,9 +1079,13 @@ impl PenumbraApp {
         };
         let gpu = self.gpu.as_ref().filter(|_| opening);
         let mut size = None;
+        let keyboard = self.engine.keyboard().clone();
         let show = || {
             ctx.show_viewport_immediate(viewer_viewport(), builder, |ctx, class| {
                 size = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+                if class != egui::ViewportClass::EmbeddedWindow {
+                    crate::keyboard::feed(ctx, &keyboard, penumbra_ops::keyboard::Source::Viewer);
+                }
                 if class == egui::ViewportClass::EmbeddedWindow {
                     // Where the platform has no second window (the headless runs), egui already
                     // wraps this in a window inside the main one; it has no close button.
@@ -1505,6 +1509,9 @@ impl eframe::App for PenumbraApp {
     }
 
     fn ui(&mut self, ui: &mut Ui, frame: &mut eframe::Frame) {
+        // Before any panel consumes a key it uses itself. Not in `logic`: while the window is
+        // hidden that sees the last shown frame's events again and again.
+        crate::keyboard::feed(ui.ctx(), self.engine.keyboard(), penumbra_ops::keyboard::Source::Editor);
         self.frame(ui);
         self.tell_outputs(ui.ctx());
         // The native title bar follows the theme (Windows 11; elsewhere nothing happens).

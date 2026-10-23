@@ -92,6 +92,7 @@ use penumbra_graph::{
     ThumbnailMode,
 };
 use penumbra_ops::freeview;
+use penumbra_ops::keyboard::Keyboard;
 use penumbra_ops::mapping::Mapping;
 use penumbra_ops::out::{Mappings, OutputBoard, ProjectorFrame};
 use penumbra_ops::res::{Report, Scene};
@@ -1049,6 +1050,11 @@ impl Engine {
     /// The 3D mouse; [`SpaceNav::start`] opens it.
     pub fn spacenav(&self) -> &SpaceNav {
         &self.hubs.spacenav
+    }
+
+    /// The keyboard: the windows pass keys on while a `chan.keyboard_in` exists.
+    pub fn keyboard(&self) -> &Keyboard {
+        &self.hubs.keyboard
     }
 
     /// CPU and GPU load; sampled on a thread of its own while asked for.

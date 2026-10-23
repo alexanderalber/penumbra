@@ -14,6 +14,7 @@ use penumbra_camera::Hub as CameraHub;
 use penumbra_dmx::Hub as DmxHub;
 use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_graph::{Cooker, Network, NodeTypes};
+use penumbra_ops::keyboard::Keyboard;
 use penumbra_ops::tex::scan::Scans;
 use penumbra_record::Hub as RecordHub;
 use penumbra_spacenav::SpaceNav;
@@ -50,12 +51,15 @@ pub struct Hubs {
     pub scans: Scans,
     /// The 3D mouse; its reader starts when the UI first asks for it.
     pub spacenav: SpaceNav,
+    /// The keys the windows (and `keyboard.press`) pass on, for `chan.keyboard_in`.
+    pub keyboard: Keyboard,
 }
 
 impl Hubs {
     pub fn new() -> Self {
+        let keyboard = Keyboard::new();
         Hubs {
-            osc: Arc::new(OscShared::new(penumbra_osc::Hub::new())),
+            osc: Arc::new(OscShared::new(penumbra_osc::Hub::new(), keyboard.clone())),
             audio: AudioHub::new(),
             dmx: DmxHub::new(),
             dmx_in: DmxInputs::new(),
@@ -63,16 +67,17 @@ impl Hubs {
             record: RecordHub::new(),
             scans: Scans::new(),
             spacenav: SpaceNav::new(),
+            keyboard,
         }
     }
 
     /// Every hub, in the order they shut down. Recordings come first: when the app closes, the
     /// cook thread has dropped its nodes and every recording is finishing its file, which the
     /// shutdown waits for.
-    pub fn all(&self) -> [&dyn DeviceHub; 8] {
+    pub fn all(&self) -> [&dyn DeviceHub; 9] {
         // Destructured so that a field missing here does not compile.
-        let Hubs { osc, audio, dmx, dmx_in, camera, record, scans, spacenav } = self;
-        [record, osc.as_ref(), audio, dmx, dmx_in, camera, scans, spacenav]
+        let Hubs { osc, audio, dmx, dmx_in, camera, record, scans, spacenav, keyboard } = self;
+        [record, osc.as_ref(), audio, dmx, dmx_in, camera, scans, spacenav, keyboard]
     }
 }
 
@@ -174,6 +179,21 @@ impl DeviceHub for SpaceNav {
     }
 }
 
+impl DeviceHub for Keyboard {
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    fn network_changed(&self, net: &Network, _types: &NodeTypes) {
+        self.set_wanted(penumbra_ops::keyboard::wanted(net));
+    }
+
+    /// The next project starts with no key pressed, so its `last` channels are 0.
+    fn project_closing(&self) {
+        self.reset();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use penumbra_graph::JobPool;
@@ -195,6 +215,7 @@ mod tests {
         assert!(cooker.resource::<CameraHub>().is_some());
         assert!(cooker.resource::<RecordHub>().is_some());
         assert!(cooker.resource::<Scans>().is_some());
+        assert!(cooker.resource::<Keyboard>().is_some());
         assert!(cooker.resource::<SpaceNav>().is_none());
         for hub in hubs.all() {
             hub.shutdown();

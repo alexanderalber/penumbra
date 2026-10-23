@@ -505,7 +505,7 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             "load": s.stats.load(rate),
         })
     });
-    Ok(json!({
+    let mut info = json!({
         "path": a.path,
         "id": id.0,
         "kind": node.kind,
@@ -520,7 +520,13 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
         "component": crate::components::info(e, &net, id),
         "watched": watched,
         "status": status,
-    }))
+    });
+    if let Some(k) = crate::keyboard::info(e, &node)
+        && let Some(o) = info.as_object_mut()
+    {
+        o.insert("keyboard".into(), k);
+    }
+    Ok(info)
 }
 
 /// `"/a"` for output 0, `"/a:name"` otherwise, as in the project file.

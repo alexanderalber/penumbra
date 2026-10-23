@@ -131,6 +131,7 @@ impl Rig {
         cooker.provide(penumbra_dmx::Inputs::new());
         let record = penumbra_record::Hub::new();
         cooker.provide(record.clone());
+        cooker.provide(crate::keyboard::Keyboard::new());
         cooker.set_base_dir(dir.map(Path::to_path_buf));
         Self {
             types,

@@ -19,10 +19,12 @@ use std::time::{Duration, Instant};
 use penumbra_core::NodeId;
 use penumbra_engine::Engine;
 use penumbra_gpu::Gpu;
+use penumbra_ops::keyboard::{Key, Source};
 use penumbra_ops::out::{DisplayInfo, OutputBoard, ProjectorState};
 use penumbra_system::{DisplayDetails, KeepAwake, Problem};
-use winit::event::WindowEvent;
+use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
+use winit::keyboard::{Key as LogicalKey, ModifiersState, PhysicalKey};
 use winit::monitor::MonitorHandle;
 use winit::window::{Fullscreen, WindowId};
 
@@ -64,6 +66,9 @@ pub struct Outputs {
     /// Keeps the displays from sleeping while windows are open: Windows would otherwise turn
     /// the projectors off after its idle timeout, in the middle of a show.
     awake: KeepAwake,
+    /// The modifiers held over the output windows: a key pressed with Ctrl, Alt or the
+    /// Windows key is a shortcut, not a key for the show.
+    modifiers: ModifiersState,
 }
 
 impl Outputs {
@@ -79,6 +84,7 @@ impl Outputs {
             shown: BTreeMap::new(),
             reported: BTreeMap::new(),
             awake: KeepAwake::new(),
+            modifiers: ModifiersState::empty(),
         }
     }
 
@@ -99,6 +105,23 @@ impl Outputs {
             // Alt+F4 on a projector during a show must not close it; projectors close by
             // deactivating or deleting their node.
             WindowEvent::CloseRequested => log::info!("output {}: close ignored", w.display),
+            WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
+            WindowEvent::KeyboardInput { event, .. } => {
+                let keyboard = self.engine.keyboard();
+                if keyboard.wanted() {
+                    let down = event.state == ElementState::Pressed;
+                    let shortcut = self.modifiers.control_key()
+                        || self.modifiers.alt_key()
+                        || self.modifiers.super_key();
+                    let key = if down && !shortcut { key_of(event) } else { None };
+                    keyboard.key(Source::Output, &format!("{:?}", event.physical_key), key, down);
+                }
+            }
+            // Keys held when the focus goes elsewhere never see their release here.
+            WindowEvent::Focused(false) => {
+                self.modifiers = ModifiersState::empty();
+                self.engine.keyboard().release_all(Source::Output);
+            }
             _ => {}
         }
         true
@@ -378,6 +401,20 @@ impl Outputs {
 
 /// The displays winit sees, named by the system crate where it knows them (Windows) and by
 /// winit's own name otherwise (Linux: the connector, e.g. `DP-1`).
+/// The key a key event means: by what the layout puts on it (a letter as labelled), else by
+/// its place (Shift+1 is still 1, a digit on a layout whose number row types other characters).
+fn key_of(event: &KeyEvent) -> Option<Key> {
+    let logical = match &event.logical_key {
+        LogicalKey::Character(c) => Key::parse(c.as_str()),
+        LogicalKey::Named(n) => Key::parse(&format!("{n:?}")),
+        _ => None,
+    };
+    logical.or_else(|| match event.physical_key {
+        PhysicalKey::Code(code) => Key::parse(&format!("{code:?}")),
+        PhysicalKey::Unidentified(_) => None,
+    })
+}
+
 fn describe(monitors: &[MonitorHandle], editor: Option<[i32; 4]>) -> (Vec<DisplayDetails>, Vec<DisplayInfo>) {
     let named = penumbra_system::displays().unwrap_or_else(|e| {
         log::warn!("display names: {e}");
