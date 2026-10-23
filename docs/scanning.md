@@ -121,6 +121,12 @@ those only it decoded (`levels`), and how far the levels' decodes lie apart wher
 (`apart_px`, projector pixels). On a scene of crates and a pumpkin, a full and a half-level scan
 merged decoded 3 % more camera pixels than the full one alone; most of that where it clipped.
 
+**Wrong decodes from bounced light.** In a niche of light surfaces, a bright pass decodes light
+the walls throw on as if the projector lit those surfaces directly. The decoder fits the decode's
+own epipolar geometry and drops pixels further than `options.epipolar` (4 projector pixels; 0
+turns it off) from it; the reply's `off_geometry` counts them. Maps decoded before this check
+keep their wrong pixels: decode the kept frames again.
+
 Kept frames of several levels merge again with `scan.decode` and a list:
 `"frames": ["scan/proj_a/frames", "scan/proj_a/frames_1"]`.
 
@@ -372,6 +378,12 @@ lie on (scored by how much of the quad its pixels cover, so a dense patch of the
 front does not win), grown with its bend, takes every pixel inside that fits it, from the faces
 and objects they were given to; the other projectors search where the first found it. It gets
 a number of its own like any face, and `"support": "rectified"` makes it the support.
+
+**Objects where projectors disagree.** An object pixel of one projector is taken out of the
+objects where another projector measures that camera pixel but sees no object there: a face one
+projector sees at a grazing angle, or the seams between faces, would otherwise join the object.
+`carved_px` in the reply counts the pixels taken out. A sagging lid that every projector sees
+as part of the object still needs its corners.
 
 Everything the reply holds is also written to `scene.json`.
 
