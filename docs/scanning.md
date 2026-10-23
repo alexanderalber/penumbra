@@ -318,8 +318,8 @@ folder menu, into a folder beside the installation, then open that. Or an empty 
 you set it), and a `tex.video_in` for the camera:
 
     penumbra-cli ctl output.list
-    penumbra-cli ctl node.set '{"path": "/proj_a", "params": {"display": "EPSON PJ @ port 4"}}'
-    penumbra-cli ctl node.set '{"path": "/proj_b", "params": {"display": "EPSON PJ @ port 3"}}'
+    penumbra-cli ctl node.set '{"path": "/proj_a", "params": {"display": "EPSON PJ [SECA514] @ target 168196"}}'
+    penumbra-cli ctl node.set '{"path": "/proj_b", "params": {"display": "EPSON PJ [SECA519] @ target 168194"}}'
     penumbra-cli ctl node.create '{"path": "/cam", "kind": "tex.video_in", "params": {"device": "Cam Link"}}'
 
 In an empty project create the projectors first, with `node.create` and `kind`

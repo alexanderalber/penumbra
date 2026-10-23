@@ -6,6 +6,11 @@
 //! the window that paces the show clock, and report everything to the [`OutputBoard`], where
 //! the projector nodes and `output.list` read it. While windows are open the displays are kept
 //! from sleeping.
+//!
+//! A projector whose display cannot be found for certain shows nothing: a show must not end up
+//! on another wall. Its node gets the error, and every change of what a projector is shown on
+//! (or why not) is logged once. A display that drops out for a moment (a glitch in the
+//! enumeration) keeps its window for [`GRACE_TICKS`] while the window is still on it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -15,7 +20,7 @@ use penumbra_core::NodeId;
 use penumbra_engine::Engine;
 use penumbra_gpu::Gpu;
 use penumbra_ops::out::{DisplayInfo, OutputBoard, ProjectorState};
-use penumbra_system::{DisplayDetails, KeepAwake, Resolved};
+use penumbra_system::{DisplayDetails, KeepAwake, Problem};
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
@@ -27,6 +32,20 @@ use crate::window::OutputWindow;
 pub const TICK: Duration = Duration::from_millis(250);
 /// A display may pace the show clock when its refresh rate is this close to the show rate.
 const PACE_TOLERANCE: f64 = 0.01;
+/// How many ticks a projector stays on its window after its display stopped resolving.
+pub const GRACE_TICKS: u32 = 4;
+
+/// Where a projector was last shown.
+#[derive(Clone, Debug, PartialEq)]
+struct Shown {
+    /// The id as the projector stores it.
+    stored: String,
+    display: String,
+    os_name: String,
+    target: String,
+    /// Ticks its display has not resolved since.
+    lost: u32,
+}
 
 /// The output windows of the app.
 pub struct Outputs {
@@ -38,6 +57,10 @@ pub struct Outputs {
     /// cleared when the display set changes.
     failed: BTreeMap<String, String>,
     last_displays: Vec<String>,
+    /// Where each projector was last shown, for the grace and the log.
+    shown: BTreeMap<NodeId, Shown>,
+    /// What was last reported per projector, so changes are logged once.
+    reported: BTreeMap<NodeId, ProjectorState>,
     /// Keeps the displays from sleeping while windows are open: Windows would otherwise turn
     /// the projectors off after its idle timeout, in the middle of a show.
     awake: KeepAwake,
@@ -53,6 +76,8 @@ impl Outputs {
             last_tick: None,
             failed: BTreeMap::new(),
             last_displays: Vec::new(),
+            shown: BTreeMap::new(),
+            reported: BTreeMap::new(),
             awake: KeepAwake::new(),
         }
     }
@@ -108,47 +133,56 @@ impl Outputs {
         for p in frame.projectors.iter().filter(|p| p.active && !p.display.is_empty()) {
             let mut state = ProjectorState::default();
             let resolved = penumbra_system::resolve(&p.display, &details);
-            match &resolved {
-                Resolved::NotConnected => {
-                    let list: Vec<&str> = details.iter().map(|d| d.id.as_str()).collect();
-                    state.error = Some(format!(
-                        "display `{}` is not connected; connected: {}",
-                        p.display,
-                        list.join(", ")
-                    ));
-                }
-                Resolved::Ambiguous(list) => {
-                    let list: Vec<&str> = list.iter().map(|d| d.id.as_str()).collect();
-                    state.error = Some(format!(
-                        "`{}` matches several displays ({}); use the full id",
-                        p.display,
-                        list.join(", ")
-                    ));
-                }
-                // The monitor name alone is a valid id; a full id found only by name means the
-                // cable moved.
-                Resolved::ByName(d) if p.display.contains(" @ ") => {
-                    state.warning = Some(format!(
-                        "`{}` not found, showing on `{}` (moved to another port?)",
-                        p.display, d.id
-                    ))
-                }
-                Resolved::ByName(_) => {}
-                Resolved::Exact(_) => {}
+            match resolved.problem(&p.display, &details) {
+                Some(Problem::Error(e)) => state.error = Some(e),
+                Some(Problem::Warning(w)) => state.warning = Some(w),
+                None => {}
             }
-            if let Some(d) = resolved.display() {
-                if infos.iter().any(|i| i.id == d.id && i.editor) {
+            match resolved.display() {
+                Some(d) if infos.iter().any(|i| i.id == d.id && i.editor) => {
                     state.error = Some(format!(
                         "`{}` shows the editor; move the editor to another display or choose another one",
                         d.id
                     ));
-                } else {
+                    self.shown.remove(&p.node);
+                }
+                Some(d) => {
                     state.display = Some(d.id.clone());
                     wanted.entry(d.id.clone()).or_default().push(p.node);
+                    let now = Shown {
+                        stored: p.display.clone(),
+                        display: d.id.clone(),
+                        os_name: d.os_name.clone(),
+                        target: d.target.clone(),
+                        lost: 0,
+                    };
+                    if let Some(before) = self.shown.insert(p.node, now)
+                        && before.display == d.id
+                        && before.target != d.target
+                    {
+                        log::info!(
+                            "projector {}: `{}` moved from {} to {}, following it",
+                            self.path(p.node),
+                            d.id,
+                            before.target,
+                            d.target
+                        );
+                    }
                 }
+                None => match self.hold(p.node, &p.display, &monitors, &details) {
+                    Some(display) => {
+                        // The error is not shown yet: the display may be back next tick.
+                        state = ProjectorState { display: Some(display.clone()), ..Default::default() };
+                        wanted.entry(display).or_default().push(p.node);
+                    }
+                    None => {
+                        self.shown.remove(&p.node);
+                    }
+                },
             }
             states.insert(p.node, state);
         }
+        self.shown.retain(|node, _| states.contains_key(node));
 
         // Close windows nobody wants, whose display went away or moved, or whose thread died.
         let mut i = 0;
@@ -198,6 +232,7 @@ impl Outputs {
                 state.error = Some(format!("the output window failed: {e}"));
             }
         }
+        self.report(&frame.projectors, &states, &infos);
 
         // The window that paces: the first (by id) whose refresh rate matches the show rate.
         let rate = self.engine.view().time.map_or(60.0, |t| 1.0 / t.rate.period().as_secs_f64().max(1e-6));
@@ -224,6 +259,80 @@ impl Outputs {
             s.keeps_display_awake = awake;
             s.projectors = states;
         });
+    }
+
+    /// Whether projector `node`, whose display did not resolve this tick, keeps its window for
+    /// now: within [`GRACE_TICKS`], with the id unchanged, its window still open on the same
+    /// desktop display and that display not taken by another monitor. Returns the display id it
+    /// keeps.
+    fn hold(
+        &mut self,
+        node: NodeId,
+        stored: &str,
+        monitors: &[MonitorHandle],
+        details: &[DisplayDetails],
+    ) -> Option<String> {
+        let shown = self.shown.get_mut(&node)?;
+        shown.lost += 1;
+        let shown = shown.clone();
+        let window = self.windows.iter().find(|w| w.display == shown.display)?;
+        let on_it =
+            window.window.current_monitor().and_then(|m| m.name()).is_some_and(|n| n == shown.os_name);
+        let listed = monitors.iter().any(|m| m.name().as_deref() == Some(shown.os_name.as_str()));
+        // A display named by the system crate under the same OS name but with another id is
+        // another monitor now; one named only by winit (the system crate failed) may be the same.
+        let not_taken = details
+            .iter()
+            .find(|d| d.os_name == shown.os_name)
+            .is_none_or(|d| d.id == shown.display || d.target_id.is_none());
+        if shown.lost > GRACE_TICKS || shown.stored != stored || !on_it || !listed || !not_taken {
+            return None;
+        }
+        if shown.lost == 1 {
+            log::info!(
+                "projector {}: `{}` not found, keeping its window for up to {} ms",
+                self.path(node),
+                shown.display,
+                u128::from(GRACE_TICKS) * TICK.as_millis()
+            );
+        }
+        Some(shown.display)
+    }
+
+    /// The node's path for log lines.
+    fn path(&self, node: NodeId) -> String {
+        let net = self.engine.session().doc().snapshot();
+        net.path_of(node).map_or_else(|| format!("{node:?}"), |p| p.to_string())
+    }
+
+    /// Logs every projector whose state changed since the last tick, once.
+    fn report(
+        &mut self,
+        projectors: &[penumbra_ops::out::ProjectorFrame],
+        states: &BTreeMap<NodeId, ProjectorState>,
+        infos: &[DisplayInfo],
+    ) {
+        for (node, state) in states {
+            if self.reported.get(node) == Some(state) {
+                continue;
+            }
+            let path = self.path(*node);
+            let stored = projectors.iter().find(|p| p.node == *node).map_or("", |p| p.display.as_str());
+            if let Some(e) = &state.error {
+                log::warn!("projector {path} (display `{stored}`): {e}");
+            } else if let Some(w) = &state.warning {
+                log::warn!("projector {path} (display `{stored}`): {w}");
+            }
+            if let Some(d) = &state.display {
+                let how = infos.iter().find(|i| &i.id == d).map_or(String::new(), |i| {
+                    format!(" ({}, {}, {})", i.os_name, i.target, i.serial.as_deref().unwrap_or("no serial"))
+                });
+                log::info!("projector {path}: shown on `{d}`{how}");
+            } else {
+                log::info!("projector {path}: nothing shown");
+            }
+        }
+        self.reported = states.clone();
     }
 
     fn open(
@@ -287,16 +396,17 @@ fn describe(monitors: &[MonitorHandle], editor: Option<[i32; 4]>) -> (Vec<Displa
             id: os_name.clone(),
             os_name: os_name.clone(),
             monitor: os_name.clone(),
-            port: String::new(),
             connector: "other",
-            edid: None,
             refresh_hz: refresh,
+            ..Default::default()
         });
         let (pos, size) = (m.position(), m.size());
         infos.push(DisplayInfo {
             id: d.id.clone(),
             monitor: d.monitor.clone(),
-            port: d.port.clone(),
+            edid: d.edid.clone(),
+            serial: d.serial.clone(),
+            target: d.target.clone(),
             connector: d.connector.to_string(),
             os_name,
             size: [size.width, size.height],
@@ -339,13 +449,11 @@ mod tests {
         DisplayInfo {
             id: id.into(),
             monitor: id.into(),
-            port: String::new(),
-            connector: String::new(),
             os_name: id.into(),
             size: [w, 1080],
             position: [x, 0],
             refresh_hz: Some(60.0),
-            editor: false,
+            ..DisplayInfo::default()
         }
     }
 

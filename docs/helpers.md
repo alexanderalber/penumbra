@@ -16,10 +16,35 @@ window runs at the show rate. The status bar repeats this in short ("no outputs 
 The timer ticks as evenly as a projector's vsync, so timing while developing without a
 projector is what it will be at the show. It costs a few percent of one CPU core.
 
-The display ids listed here (`EPSON PJ @ port 4`) are what an `out.projector`'s `display`
-takes; the monitor name alone is enough when it is unique. The `test` param of a projector
-shows a test pattern in the projector's own pixels, in its colour, so overlapping projectors
-can be told apart.
+The display ids listed here are what an `out.projector`'s `display` takes. An id names the
+display itself, not the order in which the system lists displays, so plugging in another one
+changes nothing:
+
+- `AW3225QF [DELA246 #BY4BYZ3]`: monitor name, model (manufacturer and product, as Device
+  Manager shows it) and serial number. Such a display is found on whatever connector it is
+  plugged into.
+- `EPSON PJ [SECA519] @ target 168194`: a display without a serial number (Epson projectors,
+  for one). Two of the same model cannot be told apart by anything they report, so the
+  connector on the graphics card decides; plug each projector back into the same socket (and
+  through the same adapter, if any).
+
+The monitor name alone (`EPSON PJ`), or with the model (`EPSON PJ [SECA519]`), is enough when
+it is unique. Hovering an id shows the model, serial number, connector and the name Windows
+gives the display (`\.\DISPLAY2`).
+
+When a projector's display is not certainly there, the projector shows nothing rather than
+something on the wrong wall: its node shows the error, and the log names the stored id and what
+is connected. A display without a serial number that turns up on another connector is not
+followed (it may be the other unit of the same model); the error names it, so you can choose it
+after checking. A display that drops out for a moment keeps its window for a second.
+
+Projects from before this scheme store ids like `EPSON PJ @ port 4`. Port numbers shifted when
+displays were added, so they no longer decide: such an id still works when only one display has
+that monitor name (with a warning), and otherwise shows nothing until the display is chosen
+again. The error says which display the old number points at today; check it with `test`.
+
+The `test` param of a projector shows a test pattern in the projector's own pixels, in its
+colour, so overlapping projectors can be told apart.
 
 While at least one output window is open, penumbra tells the operating system that the displays
 are in use, so Windows does not turn them (and the projectors) off after its idle timeout. The

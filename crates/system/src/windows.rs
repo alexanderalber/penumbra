@@ -1,5 +1,6 @@
 //! The Windows calls behind [`crate::display`], [`crate::checks`] and [`crate::awake`]: display
-//! configuration (`QueryDisplayConfig`), the current user's registry and power requests. With
+//! configuration (`QueryDisplayConfig`), the monitors' EDIDs and the current user's settings in
+//! the registry, and power requests. With
 //! NVML's loader the crate's only `unsafe`; every call checks its status code and every buffer is
 //! sized by the API or by its type.
 #![allow(unsafe_code)]
@@ -13,9 +14,12 @@ use windows_sys::Win32::Devices::Display::{
     DISPLAYCONFIG_SOURCE_DEVICE_NAME, DISPLAYCONFIG_TARGET_DEVICE_NAME, DisplayConfigGetDeviceInfo,
     GetDisplayConfigBufferSizes, QDC_ALL_PATHS, QDC_ONLY_ACTIVE_PATHS, QueryDisplayConfig,
 };
-use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, LUID};
+use windows_sys::Win32::Foundation::{
+    ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA, ERROR_SUCCESS, LUID,
+};
 use windows_sys::Win32::System::Registry::{
-    HKEY_CURRENT_USER, REG_DWORD, RRF_RT_REG_DWORD, RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+    HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_DWORD, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD,
+    RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
 };
 
 use crate::display::RawDisplay;
@@ -26,8 +30,8 @@ pub fn displays() -> Result<Vec<RawDisplay>, Error> {
     Ok(query(QDC_ONLY_ACTIVE_PATHS)?.iter().map(raw_display).collect())
 }
 
-/// The connectors of every adapter, connected or not: `(adapter, target id)` of every path the
-/// adapters could drive, deduplicated and sorted.
+/// The connectors the adapters list, connected or not: `(adapter, target id)` of every path they
+/// could drive, deduplicated and sorted. Not a fixed set: it changes with what is plugged in.
 pub fn connectors() -> Result<Vec<(i64, u32)>, Error> {
     let mut list: Vec<(i64, u32)> =
         query(QDC_ALL_PATHS)?.iter().map(|p| (luid(p.targetInfo.adapterId), p.targetInfo.id)).collect();
@@ -99,16 +103,62 @@ fn raw_display(path: &DISPLAYCONFIG_PATH_INFO) -> RawDisplay {
     // SAFETY: as above.
     let target_ok = unsafe { DisplayConfigGetDeviceInfo(&mut target.header) } == 0;
     let rate = path.targetInfo.refreshRate;
+    let device_path = if target_ok { wide(&target.monitorDevicePath) } else { String::new() };
+    let edid = (target.edidManufactureId, target.edidProductCodeId);
     RawDisplay {
         os_name: if source_ok { wide(&source.viewGdiDeviceName) } else { String::new() },
         monitor: if target_ok { wide(&target.monitorFriendlyDeviceName) } else { String::new() },
         technology: path.targetInfo.outputTechnology,
         adapter: luid(path.targetInfo.adapterId),
         target: path.targetInfo.id,
-        edid: target_ok.then_some((target.edidManufactureId, target.edidProductCodeId)),
-        device_path: if target_ok { wide(&target.monitorDevicePath) } else { String::new() },
+        edid: (target_ok && edid != (0, 0)).then_some(edid),
+        serial: monitor_edid(&device_path).and_then(|blob| crate::display::edid_serial(&blob)),
+        device_path,
         refresh: (rate.Denominator != 0).then_some((rate.Numerator, rate.Denominator)),
     }
+}
+
+/// The EDID Windows stored for the monitor with this device path
+/// (`\\?\DISPLAY#SECA519#5&12587d74&1&UID168194#{...}`), from
+/// `HKLM\SYSTEM\CurrentControlSet\Enum\DISPLAY\<pnp>\<instance>\Device Parameters`. `None`
+/// when the path does not look like that or the value cannot be read.
+fn monitor_edid(device_path: &str) -> Option<Vec<u8>> {
+    let mut parts = device_path.strip_prefix(r"\\?\")?.split('#');
+    let (class, pnp, instance) = (parts.next()?, parts.next()?, parts.next()?);
+    let plain = |s: &str| {
+        !s.is_empty() && s.len() < 128 && s.chars().all(|c| c.is_ascii_alphanumeric() || "&_-.".contains(c))
+    };
+    if !class.eq_ignore_ascii_case("DISPLAY") || !plain(pnp) || !plain(instance) {
+        return None;
+    }
+    let key = format!(r"SYSTEM\CurrentControlSet\Enum\DISPLAY\{pnp}\{instance}\Device Parameters");
+    let (k, n) = (to_wide(&key), to_wide("EDID"));
+    let mut buffer = vec![0u8; 256];
+    for _ in 0..3 {
+        let mut size = u32::try_from(buffer.len()).ok()?;
+        // SAFETY: NUL-terminated strings, an out buffer of `size` bytes.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                k.as_ptr(),
+                n.as_ptr(),
+                RRF_RT_REG_BINARY,
+                std::ptr::null_mut(),
+                buffer.as_mut_ptr().cast::<c_void>(),
+                &mut size,
+            )
+        };
+        match status {
+            ERROR_SUCCESS => {
+                buffer.truncate(size as usize);
+                return Some(buffer);
+            }
+            // EDIDs are at most a few blocks of 128 bytes; anything larger is not one.
+            ERROR_MORE_DATA if (size as usize) <= 32 * 1024 => buffer = vec![0u8; size as usize],
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// A NUL-terminated UTF-16 buffer as a string.
