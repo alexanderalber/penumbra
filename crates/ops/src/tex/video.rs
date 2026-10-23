@@ -23,6 +23,8 @@ use penumbra_video::{
     Frame, HapColor, HapFrame, Limits, Matrix, PixelData, Player, Range, Shown, VideoFrame,
 };
 
+use crate::on_gpu;
+
 /// The node kind.
 pub const VIDEO: &str = "tex.video";
 
@@ -32,35 +34,39 @@ const GAP_SECONDS: f64 = 0.5;
 const LATE_WARNING_SECONDS: f64 = 2.0;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(
-        NodeDesc::new(VIDEO, "A video file or animated GIF, looping seamlessly; resolution of the file")
-            .param(
-                ParamSpec::file("file", penumbra_video::EXTENSIONS)
-                    .doc("MP4, MOV, MKV, WebM, MXF, MPEG (H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP) or GIF"),
-            )
-            .param(ParamSpec::bool("play", true).doc("Off holds the current frame"))
-            .param(
-                ParamSpec::float("speed", 1.0)
-                    .clamp(0.0, 16.0)
-                    .range(0.0, 4.0)
-                    .doc("Playback rate; every frame is still decoded, so high speeds cost CPU"),
-            )
-            .param(ParamSpec::bool("loop", true).doc("Off stops on the last frame"))
-            .param(
-                ParamSpec::float("start", 0.0)
-                    .clamp(0.0, 1e7)
-                    .range(0.0, 60.0)
-                    .unit(Unit::Seconds)
-                    .more()
-                    .doc("Where playback begins when the file is (re)loaded"),
-            )
-            .output("out", DataKind::Tex)
-            .output("info", DataKind::Chan)
-            .describe_output("out", "The video's picture")
-            .describe_output("info", "Playback: frame, progress (0 to 1), loops, late, seeks")
-            .time_dependent(),
-        || Box::new(Video::default()) as Box<dyn Operator>,
-    ))
+    types.register(
+        FnNodeType::new(
+            NodeDesc::new(VIDEO, "A video file or animated GIF, looping seamlessly; resolution of the file")
+                .param(
+                    ParamSpec::file("file", penumbra_video::EXTENSIONS).doc(
+                        "MP4, MOV, MKV, WebM, MXF, MPEG (H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP) or GIF",
+                    ),
+                )
+                .param(ParamSpec::bool("play", true).doc("Off holds the current frame"))
+                .param(
+                    ParamSpec::float("speed", 1.0)
+                        .clamp(0.0, 16.0)
+                        .range(0.0, 4.0)
+                        .doc("Playback rate; every frame is still decoded, so high speeds cost CPU"),
+                )
+                .param(ParamSpec::bool("loop", true).doc("Off stops on the last frame"))
+                .param(
+                    ParamSpec::float("start", 0.0)
+                        .clamp(0.0, 1e7)
+                        .range(0.0, 60.0)
+                        .unit(Unit::Seconds)
+                        .more()
+                        .doc("Where playback begins when the file is (re)loaded"),
+                )
+                .output("out", DataKind::Tex)
+                .output("info", DataKind::Chan)
+                .describe_output("out", "The video's picture")
+                .describe_output("info", "Playback: frame, progress (0 to 1), loops, late, seeks")
+                .time_dependent(),
+            || Box::new(Video::default()) as Box<dyn Operator>,
+        )
+        .warm_up(on_gpu(|gpu| gpu.video_pipeline().map(|_| ()))),
+    )
 }
 
 #[derive(Default)]

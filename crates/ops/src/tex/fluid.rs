@@ -19,7 +19,8 @@ use penumbra_graph::{
     StateItem,
 };
 
-use super::{gpu, height_param, keep_size, side, width_param};
+use super::{PassCell, gpu, height_param, keep_size, side, width_param};
+use crate::on_gpu;
 
 pub(crate) const KIND: &str = "tex.fluid";
 const SOURCE: &str = include_str!("fluid.wgsl");
@@ -230,10 +231,12 @@ fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(desc(), || Box::new(Fluid::default()) as Box<dyn Operator>))
+    types.register(
+        FnNodeType::new(desc(), || Box::new(Fluid::default()) as Box<dyn Operator>).warm_up(on_gpu(warm_up)),
+    )
 }
 
-pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+fn warm_up(gpu: &Gpu) -> Result<(), Error> {
     pass(gpu).map(|_| ())
 }
 
@@ -344,6 +347,7 @@ fn splat_bytes(splats: &[Splat]) -> Vec<u8> {
 
 #[derive(Default)]
 struct Fluid {
+    pass: PassCell,
     velocity_ring: TexRing,
     pressure_ring: TexRing,
     divergence_ring: TexRing,
@@ -454,7 +458,7 @@ impl Fluid {
 impl Operator for Fluid {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
-        let pass = pass(gpu)?;
+        let pass = self.pass.get(gpu, pass)?;
         self.persist = cx.bool("persist")?;
         let now = cx.time();
         let period = 1.0 / cx.rate().as_f64().max(1.0);

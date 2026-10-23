@@ -18,6 +18,8 @@ use penumbra_graph::{
     NodeTypes, Operator,
 };
 
+use crate::on_gpu;
+
 /// Longest text rasterised. Layout time grows with the square of a line's length
 /// (measured: 16k characters 0.2 s, 200k 62 s).
 pub const MAX_CHARS: usize = 4096;
@@ -76,7 +78,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(super::keep_size())
             .output("out", DataKind::Tex),
         || Box::new(Text::default()) as Box<dyn Operator>,
-    ))
+    )
+    .warm_up(on_gpu(warm_up)))
 }
 
 /// Font families with their styles (weight order), sorted by family, for the param panel's
@@ -110,8 +113,12 @@ fn pass_params() -> Vec<ParamSpec> {
 }
 
 /// Compiles the placing pass ahead of its first use.
-pub fn warm_up(gpu: &Gpu) -> Result<(), Error> {
-    gpu.cached_pass("tex.text", SOURCE, &pass_params()).map(|_| ())
+fn warm_up(gpu: &Gpu) -> Result<(), Error> {
+    pass(gpu).map(|_| ())
+}
+
+fn pass(gpu: &Gpu) -> Result<Arc<penumbra_gpu::Pass>, Error> {
+    gpu.cached_pass(TEXT, SOURCE, &pass_params())
 }
 
 /// What a raster depends on.
@@ -135,6 +142,7 @@ struct Raster {
 
 #[derive(Default)]
 struct Text {
+    pass: super::PassCell,
     slot: AsyncSlot<Arc<Raster>>,
     key: Option<Key>,
     current: Option<Arc<Raster>>,
@@ -179,7 +187,7 @@ impl Operator for Text {
             cx.warn(format!("font `{}` not found; using Inter", cx.text("font")?));
         }
         let (w, h) = (super::side(cx, "width")?, super::side(cx, "height")?);
-        let pass = gpu.cached_pass("tex.text", SOURCE, &pass_params())?;
+        let pass = self.pass.get(gpu, pass)?;
         let target = self.ring.next(gpu, w, h, "tex.text")?;
         let anchor = Value::Vec2(raster.anchor);
         let size = cx.float("size")?.clamp(1.0, MAX_SIZE);

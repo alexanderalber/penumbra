@@ -19,6 +19,7 @@ use penumbra_graph::{
 };
 
 use super::{gpu, waiting};
+use crate::on_gpu;
 
 const KIND: &str = "tex.time_machine";
 const MAX_STEP: i64 = 16;
@@ -35,67 +36,68 @@ const SETTLE: Duration = Duration::from_secs(2);
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let longest = f64::from(MAX_FRAMES) * MAX_STEP as f64;
-    types.register(FnNodeType::new(
-        NodeDesc::new(
-            KIND,
-            "Per pixel, a frame from the past: the map says how far back (black now, white oldest)",
-        )
-        .stateful()
-        .param(
-            ParamSpec::int("length", 120)
-                .clamp(1.0, longest)
-                .range(1.0, 1800.0)
-                .curve(Curve::Log)
-                .unit(Unit::Frames)
-                .doc("How far back white reaches, in input frames (a camera at 30 fps: 600 are 20 s)"),
-        )
-        .param(
-            ParamSpec::float("offset", 0.0)
-                .clamp(0.0, longest)
-                .range(0.0, 600.0)
-                .unit(Unit::Frames)
-                .doc("Frames back added everywhere; without a map, the delay of the whole picture"),
-        )
-        .param(ParamSpec::bool("blend", true).doc(
-            "Mixes the two frames around a map value between them; off takes the nearer one (sharper, \
+    types.register(
+        FnNodeType::new(
+            NodeDesc::new(
+                KIND,
+                "Per pixel, a frame from the past: the map says how far back (black now, white oldest)",
+            )
+            .stateful()
+            .param(
+                ParamSpec::int("length", 120)
+                    .clamp(1.0, longest)
+                    .range(1.0, 1800.0)
+                    .curve(Curve::Log)
+                    .unit(Unit::Frames)
+                    .doc("How far back white reaches, in input frames (a camera at 30 fps: 600 are 20 s)"),
+            )
+            .param(
+                ParamSpec::float("offset", 0.0)
+                    .clamp(0.0, longest)
+                    .range(0.0, 600.0)
+                    .unit(Unit::Frames)
+                    .doc("Frames back added everywhere; without a map, the delay of the whole picture"),
+            )
+            .param(ParamSpec::bool("blend", true).doc(
+                "Mixes the two frames around a map value between them; off takes the nearer one (sharper, \
                  but a smooth map shows steps)",
-        ))
-        .param(
-            ParamSpec::float("scale", 1.0).clamp(0.05, 1.0).range(0.1, 1.0).doc(
+            ))
+            .param(ParamSpec::float("scale", 1.0).clamp(0.05, 1.0).range(0.1, 1.0).doc(
                 "Resolution of the kept frames relative to the input; 0.5 needs a quarter of the memory",
-            ),
-        )
-        .param(
-            ParamSpec::choice("precision", &["16bit", "8bit"])
-                .doc("How the kept frames are stored")
-                .choice_doc("16bit", "as they come")
-                .choice_doc("8bit", "in half the memory, with values above 1 clipped"),
-        )
-        .param(ParamSpec::int("step", 1).clamp(1.0, MAX_STEP as f64).range(1.0, 8.0).doc(
-            "Keeps only every n-th input frame, for n times the length in the same memory; \
+            ))
+            .param(
+                ParamSpec::choice("precision", &["16bit", "8bit"])
+                    .doc("How the kept frames are stored")
+                    .choice_doc("16bit", "as they come")
+                    .choice_doc("8bit", "in half the memory, with values above 1 clipped"),
+            )
+            .param(ParamSpec::int("step", 1).clamp(1.0, MAX_STEP as f64).range(1.0, 8.0).doc(
+                "Keeps only every n-th input frame, for n times the length in the same memory; \
                  between kept frames the picture is blended, which smears fast motion",
-        ))
-        .param(ParamSpec::bool("record", true).doc("Take new frames; off holds what is kept"))
-        .param(
-            ParamSpec::float("budget", 0.0)
-                .clamp(0.0, 64.0)
-                .range(0.0, 20.0)
-                .more()
-                .special(0.0, "automatic")
-                .doc(
-                    "Most GPU memory the kept frames take, in GiB; automatic is half of what the GPU \
+            ))
+            .param(ParamSpec::bool("record", true).doc("Take new frames; off holds what is kept"))
+            .param(
+                ParamSpec::float("budget", 0.0)
+                    .clamp(0.0, 64.0)
+                    .range(0.0, 20.0)
+                    .more()
+                    .special(0.0, "automatic")
+                    .doc(
+                        "Most GPU memory the kept frames take, in GiB; automatic is half of what the GPU \
                  grants penumbra. Never more than the GPU has free; past either, fewer frames are \
                  kept, with a warning",
-                ),
+                    ),
+            )
+            .input("in", DataKind::Tex)
+            .input("map", DataKind::Tex)
+            .output("out", DataKind::Tex),
+            || Box::new(TimeMachine::default()) as Box<dyn Operator>,
         )
-        .input("in", DataKind::Tex)
-        .input("map", DataKind::Tex)
-        .output("out", DataKind::Tex),
-        || Box::new(TimeMachine::default()) as Box<dyn Operator>,
-    ))
+        .warm_up(on_gpu(warm_up)),
+    )
 }
 
-pub fn warm_up(gpu: &penumbra_gpu::Gpu) -> Result<(), Error> {
+fn warm_up(gpu: &penumbra_gpu::Gpu) -> Result<(), Error> {
     gpu.stack_pipelines().map(|_| ())
 }
 

@@ -70,7 +70,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ))
             .input("chans", DataKind::Chan),
         || Box::new(DmxOut::default()) as Box<dyn Operator>,
-    ))?;
+    )
+    .inactive(inactive))?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             DMX_IN,
@@ -123,12 +124,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     Ok(())
 }
 
-/// Why param `name` of an `out.dmx` does not count with its protocol. `None` while it counts
-/// (and for other nodes).
-pub fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str> {
-    if node.kind != DMX {
-        return None;
-    }
+/// Why param `name` of an `out.dmx` does not count with its protocol. `None` while it counts.
+fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str> {
     let protocol = node.param(desc, "protocol").and_then(Value::as_str).unwrap_or("open_dmx");
     match (protocol, name) {
         ("open_dmx", "host") => Some("The Open DMX USB sits on a serial port, see `port`"),

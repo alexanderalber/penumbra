@@ -58,7 +58,7 @@ pub(crate) fn params() -> [ParamSpec; 3] {
 }
 
 /// Compiles the canvas pipelines ahead of the first picture.
-pub fn warm_up(gpu: &penumbra_gpu::Gpu) -> Result<(), penumbra_core::Error> {
+pub(crate) fn warm_up(gpu: &penumbra_gpu::Gpu) -> Result<(), penumbra_core::Error> {
     gpu.canvas_pipelines().map(|_| ())
 }
 
