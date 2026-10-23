@@ -354,3 +354,101 @@ fn the_pumpkin_with_real_noise_is_one_object_and_no_face() {
         assert!(on_planes * 100 < pumpkin * 2, "projector {p}: {on_planes} of {pumpkin}");
     }
 }
+
+/// Adds noise to projector pixels on a box's top: Gaussian of `sigma` camera pixels per axis
+/// (sum of uniforms), as light thrown back by the walls makes a real decode noisier there.
+fn noisy_top(
+    room: &Room,
+    map: &mut crate::objects::Map,
+    truth: &[Option<(Surface, [f64; 3])>],
+    b: usize,
+    sigma: f64,
+) {
+    let (cw, ch) = (room.camera.0 as f64, room.camera.1 as f64);
+    let mut state = 0x1234_5678_u64;
+    let mut uniform = || {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+    };
+    for (px, t) in map.rgba.iter_mut().zip(truth) {
+        if let Some((Surface::Top, at)) = t
+            && room.box_of(*at) == Some(b)
+            && px[0] >= 0.0
+        {
+            // Twelve uniforms of variance 1/12 each: about Gaussian with variance 1.
+            let mut g = || (0..12).map(|_| uniform()).sum::<f64>();
+            px[0] = (f64::from(px[0]) + sigma * g() / cw).clamp(0.0, 1.0) as f32;
+            px[1] = (f64::from(px[1]) + sigma * g() / ch).clamp(0.0, 1.0) as f32;
+        }
+    }
+}
+
+/// Share of a box top's measured pixels on a face and on an object.
+fn top_shares(
+    s: &crate::scene::SceneParts,
+    map: &crate::objects::Map,
+    truth: &[Option<(Surface, [f64; 3])>],
+    room: &Room,
+    b: usize,
+) -> (f64, f64) {
+    let (mut all, mut face, mut object) = (0usize, 0usize, 0usize);
+    for (i, t) in truth.iter().enumerate() {
+        if let Some((Surface::Top, at)) = t
+            && room.box_of(*at) == Some(b)
+            && map.measured(i)
+        {
+            all += 1;
+            face += usize::from(s.plane_labels[i] > 0);
+            object += usize::from(s.object_labels[i] > 0);
+        }
+    }
+    (face as f64 / all.max(1) as f64, object as f64 / all.max(1) as f64)
+}
+
+#[test]
+fn a_noisy_top_is_found_by_the_rough_pass() {
+    let room = Room::pumpkin(2.0);
+    let (mut map, truth) = room.to_camera(0);
+    // The pumpkin's crate: noise ten times a clean face's (0.3 px per axis); without the
+    // rough pass the top is an object with the pumpkin (measured: 3 % on a face).
+    noisy_top(&room, &mut map, &truth, 1, 3.0);
+    let o = SceneOptions { min_object: (map.rgba.len() / 256).max(1), ..SceneOptions::default() };
+    let s = analyse(&map, room.camera, &o).unwrap();
+    let (face, object) = top_shares(&s, &map, &truth, &room, 1);
+    eprintln!("top: {face:.2} on a face, {object:.2} on an object; {} objects", s.objects);
+    assert!(face > 0.8 && object < 0.05, "{face} {object}");
+    assert_eq!(s.objects, 1);
+}
+
+#[test]
+fn a_face_in_one_projector_beats_an_object_in_the_other() {
+    let room = Room::pumpkin(2.0);
+    let o = |m: &crate::objects::Map| SceneOptions {
+        min_object: (m.rgba.len() / 256).max(1),
+        ..SceneOptions::default()
+    };
+    let (mut map0, truth0) = room.to_camera(0);
+    let (map1, _) = room.to_camera(1);
+    // The crate on its end: projector 0 decodes its top far too noisy for any fit.
+    noisy_top(&room, &mut map0, &truth0, 4, 6.0);
+    let mut scenes = vec![
+        analyse(&map0, room.camera, &o(&map0)).unwrap(),
+        analyse(&map1, room.camera, &o(&map1)).unwrap(),
+    ];
+    let before = top_shares(&scenes[0], &map0, &truth0, &room, 4);
+    let objects = scenes[0].objects;
+    let dropped = crate::scene::drop_objects_on_faces(&mut scenes, &[&map0, &map1], room.camera);
+    let after = top_shares(&scenes[0], &map0, &truth0, &room, 4);
+    eprintln!(
+        "before {before:?} ({objects} objects), after {after:?} ({} objects), dropped {dropped:?}",
+        scenes[0].objects
+    );
+    // Part of the top is an object in projector 0 (the rest unexplained or rough faces).
+    assert!(before.1 > 0.1, "{before:?}");
+    assert!(after.1 < 0.02, "{after:?}");
+    assert!(dropped[0] >= 1 && dropped[1] == 0, "{dropped:?}");
+    assert_eq!(dropped[0], objects - scenes[0].objects);
+    assert!(scenes[0].objects >= 1, "the pumpkin stays");
+    let labels = &scenes[0].object_labels;
+    assert_eq!(labels.iter().copied().max(), Some(scenes[0].objects as u16));
+}

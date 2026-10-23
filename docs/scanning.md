@@ -273,18 +273,29 @@ refined over all pixels it explains within `tolerance`, camera pixels, 2), each 
 are taken out and the search goes on among the rest, until the best fit left holds no face of
 `min_plane` (a share of the measured pixels, 0.002). A fit's pixels that do not touch are faces
 of their own: the tops of two crates standing side by side at one height are one fit and two
-faces (`group` in the reply tells which faces came from one fit). A patch of a curved surface
-can be flat within the tolerance; such a patch is dropped when a smooth bowl explains its
-error better than the decode's noise does (`bend` in the reply: the bowl's share of the error,
-its RMS and its `bow_px`, how far it bends over 100 projector pixels). A face counts as curved
-when the bowl's RMS is above 0.3 camera pixels and either its share is above 0.5 or it bows
-more than 5 pixels over 100: the second catches the small patches of a pumpkin or a flower pot,
-where the noise keeps the share low, while a lens's distortion bows a wall far less. Narrow
-strips of cylinders and cones can still pass for faces. Where two faces meet, each pixel goes
-to the one that fits it better.
+faces (`group` in the reply tells which faces came from one fit). When that search ends, a
+second, rough one goes on among the rest with 2.5 times the tolerance: some faces decode
+noisier than others (a top seen at a grazing angle, a glossy lid, a surface lit by the light
+the walls next to it throw back), and their median error comes out at 1 to 2.5 pixels instead
+of 0.6.
 
-What fits no face is an object: closed, holes filled, pieces smaller than `min_object`
-(projector pixels, 1/256 of the projector) dropped. Faces and objects are numbered alike in
+A patch of a curved surface can be flat within the tolerance. Such a patch is dropped when a
+smooth bowl explains its error better than the decode's noise does (`bend` in the reply: the
+bowl's share of the error, its RMS and its `bow_px`, how far it bends over 100 projector
+pixels): when the bowl's RMS is above 0.3 camera pixels and either its share is above 0.5 or
+it bows more than 5 pixels over 100, or when the bowl's RMS alone is above 0.3 times the
+pass's tolerance. A patch is also dropped when the surface round it goes on bending the way
+its bowl does: a flat face ends at a crease, a step or a rim, the pot or the pumpkin it was cut
+from carries on. Narrow strips of cylinders and cones can still pass for faces. Where two
+faces meet, each pixel goes to the one that fits it better.
+
+What fits no face is an object, except surface detail: measured pixels near a face that lie
+within 6 tolerances of its plane are the face's rims, ribs or noise (a Euro crate's walls are
+full of them) and stay out of the objects. The rest is closed, its holes filled (never with a
+face), pieces smaller than `min_object` (projector pixels, 1/256 of the projector) dropped.
+Where the projectors disagree, a face wins: an object of one projector that lies mostly on
+another projector's faces in the camera picture is dropped (`objects_on_faces` in the reply
+per projector). Faces and objects are numbered alike in
 every projector, top of the camera picture first: `planes_N.png` and `labels_N.png` per
 projector (8-bit; `labels_N.png` as `scan.objects` writes it, for `scan.blend`'s masks and
 `shapes.trace`), `planes_camera.png` and `objects_camera.png` in the camera's picture,
@@ -293,7 +304,9 @@ projectors that do not overlap on a face (a wall, the left half lit by one, the 
 other) give it two numbers.
 
 **Support and height.** The face right below the objects in the camera picture is the support
-(`support` names another). The objects' height is their residual against the support's
+(`support` names another): per column of an object's lower edge the first face below it within
+a twelfth of the picture's height (under a pumpkin the camera sees a band nothing measures, its
+underside and its shadow), the face most columns name. The objects' height is their residual against the support's
 homography, as `scan.relief` measures it against its panel: `height_N.exr`, `mask_N.png` and
 `height_camera.exr`, in the first projector's units. Its sign comes from the faces the camera
 sees below the support (a crate's front, the floor in front of it), which lie under the

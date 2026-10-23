@@ -13,14 +13,21 @@
 //! (coplanar faces of different boxes share the fit, not the face). Their pixels are taken out
 //! and the next fit is searched among the rest, until the best fit holds no such face.
 //!
-//! A curved object holds patches that are flat within the tolerance. Such a patch is dropped
-//! when a smooth bowl explains most of its error ([`bend`]), or when it is enclosed by the
-//! object, its border touching no other face, no frame edge and no unlit pixel. Last, where two
-//! faces meet, each pixel goes to the face nearby that fits it best (the face found first took
-//! the crease).
+//! When the strict search ends, a rough one goes on with [`ROUGH`] times the tolerance, for
+//! faces whose decode is noisier (tops seen at a grazing angle, surfaces lit by light the walls
+//! next to them throw back).
 //!
-//! **Objects:** the measured pixels on no face, closed, opened, holes filled, small pieces
-//! dropped, numbered by size.
+//! A curved object holds patches that are flat within the tolerance. Such a patch is dropped
+//! when a smooth bowl explains much of its error ([`bend`]), or when the surface round it goes
+//! on bending the way that bowl does ([`continues`]): a flat face ends at a crease, a step or a
+//! rim instead. Last, where two faces meet, each pixel goes to the face nearby that fits it best
+//! (the face found first took the crease).
+//!
+//! **Objects:** the measured pixels on no face, without the surface detail next to a face (rims,
+//! ribs, noise: within a few tolerances of its plane), closed, opened, holes filled (but not
+//! with faces), small pieces dropped, numbered by size. With several projectors, an object of
+//! one that lies on another's faces in the camera picture is dropped
+//! ([`drop_objects_on_faces`]).
 //!
 //! **Height** ([`relief`]): an object's residual against the face it stands on, along its main
 //! direction, as `scan.relief` does against a single plane: camera pixels of parallax, up to
@@ -59,10 +66,8 @@ const REGION_CLOSE: u32 = 2;
 const REGION_OPEN: u32 = 4;
 /// A plane's piece counts when it holds this share of the plane's least size.
 const PIECE_SHARE: usize = 4;
-/// A plane is kept when this share of its border lies within [`BORDER_REACH`] projector pixels
-/// of another plane, the frame or an unlit pixel.
-const OPEN_BORDER: f64 = 0.15;
-const BORDER_REACH: u32 = 3;
+/// The second, rough pass: its tolerance as a multiple of `tolerance`.
+const ROUGH: f64 = 2.5;
 /// A face is a patch of a curved surface, no plane, when a bowl explains more than this share
 /// of its error ([`bend`]) and the bowl's RMS is above this, camera pixels. Measured: planes of a
 /// real scan 0.003 to 0.28 (the most on a wall filling the frame, the lens's distortion), patches
@@ -75,8 +80,35 @@ const BEND_PX: f64 = 0.3;
 /// 16, of a ray-cast pumpkin 7 to 13.
 const BEND_BOW: f64 = 5.0;
 const BOW_SPAN: f64 = 100.0;
+/// Or when the bowl's RMS alone is above this share of the pass's tolerance. Measured on a real
+/// scan of crates: faces up to 0.2 of it (0.39 px at 2 px), patches of a pumpkin 0.37 (0.74 px)
+/// and in the rough pass 0.4 (2 px at 5 px).
+const BEND_TOLERANCE: f64 = 0.3;
+/// The ring past a face's edge (projector pixels) [`continues`] looks at, and when the surface
+/// is taken to bend on past the edge: this many measured pixels in the ring, this share of them
+/// off the face's plane, and this share of those where its bowl predicts them.
+const RING_IN: u32 = 2;
+const RING_OUT: u32 = 12;
+const CONTINUE_MIN: usize = 50;
+const CONTINUE_OFF: f64 = 0.3;
+/// Measured: faces of real scans 0 to 0.3 (the most on a wall filling the frame), patches of a
+/// flower pot 0.42 and 0.52.
+const CONTINUE_FOLLOWS: f64 = 0.36;
 /// How far (projector pixels) a pixel looks for a better fitting face at a crease.
 const SETTLE: u32 = 3;
+/// Measured pixels on no face lie on an object unless the nearest face, within the projector's
+/// longer side over this, fits them within this many tolerances: then they are its rims, ribs
+/// or noise, surface detail.
+const DETAIL_SPAN: usize = 32;
+const DETAIL: f64 = 6.0;
+/// How far (projector pixels) an object grows back into the detail next to it.
+const REGROW: u32 = 6;
+/// [`drop_objects_on_faces`]: an object of one projector is a face when more than this share of
+/// its pixels another projector measures lie on that one's faces (at least this many), the
+/// camera pictures' masks grown by this (camera pixels, the decode leaves gaps).
+const FACE_WINS: f64 = 0.5;
+const FACE_WINS_MIN: usize = 200;
+const CAMERA_REACH: u32 = 2;
 /// Closing and opening of the objects, projector pixels.
 const OBJECT_CLOSE: u32 = 3;
 const OBJECT_OPEN: u32 = 3;
@@ -161,7 +193,7 @@ pub struct SceneParts {
     pub measured: usize,
     /// Measured pixels on neither a plane nor an object.
     pub unexplained: usize,
-    /// Faces found and dropped again: curved, or enclosed by an object.
+    /// Faces found and dropped again as curved.
     pub dropped_planes: usize,
 }
 
@@ -296,55 +328,54 @@ pub fn analyse(map: &Map, camera: (usize, usize), o: &SceneOptions) -> Result<Sc
     // Pairs of faces dropped as curved: no plane, but no longer searched.
     let mut curved = vec![false; pairs.idx.len()];
     let mut dropped_planes = 0usize;
-    while found.len() < o.max_planes {
-        let faces = find_plane(w, h, &pairs, &near, &sample, &free, tol, least, &mut rng);
-        if faces.is_empty() {
-            break;
-        }
-        for f in faces {
-            let bent = f.bend[1] > BEND_PX && (f.bend[0] > BEND_SHARE || f.bend[2] > BEND_BOW);
-            for k in &f.inliers {
-                if let Some(x) = free.get_mut(*k) {
-                    *x = false;
+    // A strict pass, then a rough one for faces whose decode is noisier (tops at a grazing
+    // angle, surfaces catching light thrown back by the walls next to them).
+    for pass_tol in [tol, tol * ROUGH] {
+        while found.len() < o.max_planes {
+            let faces = find_plane(w, h, &pairs, &near, &sample, &free, pass_tol, least, &mut rng);
+            if faces.is_empty() {
+                break;
+            }
+            for f in faces {
+                let bent = f.bend[1] > BEND_PX && (f.bend[0] > BEND_SHARE || f.bend[2] > BEND_BOW)
+                    || f.bend[1] > BEND_TOLERANCE * pass_tol;
+                for k in &f.inliers {
+                    if let Some(x) = free.get_mut(*k) {
+                        *x = false;
+                    }
+                    if bent && let Some(c) = curved.get_mut(*k) {
+                        *c = true;
+                    }
                 }
-                if bent && let Some(c) = curved.get_mut(*k) {
+                if bent {
+                    dropped_planes += 1;
+                } else if found.len() < o.max_planes {
+                    found.push((f, group));
+                }
+            }
+            group += 1;
+        }
+    }
+
+    // A patch of a curved object, flat within the tolerance, goes on bending past its edge the
+    // way its bowl does; a flat face ends in a crease, a step or a rim.
+    let labels = plane_labels(n, &found);
+    let keep: Vec<bool> =
+        found.iter().map(|(f, _)| !continues(w, h, &pairs, &near, &labels, f, tol)).collect();
+    let mut k = 0usize;
+    found.retain(|(f, _)| {
+        let kept = keep.get(k).copied().unwrap_or(true);
+        k += 1;
+        if !kept {
+            dropped_planes += 1;
+            for i in &f.inliers {
+                if let Some(c) = curved.get_mut(*i) {
                     *c = true;
                 }
             }
-            if bent {
-                dropped_planes += 1;
-            } else if found.len() < o.max_planes {
-                found.push((f, group));
-            }
         }
-        group += 1;
-    }
-
-    // Patches inside an object are no planes: drop the enclosed ones, again while dropping
-    // leaves others enclosed.
-    let unlit: Vec<bool> = (0..n).map(|i| map.uv(i).is_none()).collect();
-    for _ in 0..MAX_PLANES {
-        let labels = plane_labels(n, &found);
-        let shares = open_borders(w, h, &labels, &unlit, found.len());
-        let before = found.len();
-        let mut k = 0usize;
-        found.retain(|(f, _)| {
-            let keep = shares.get(k).is_none_or(|s| *s >= OPEN_BORDER);
-            k += 1;
-            if !keep {
-                for i in &f.inliers {
-                    if let Some(x) = free.get_mut(*i) {
-                        *x = true;
-                    }
-                }
-            }
-            keep
-        });
-        dropped_planes += before - found.len();
-        if found.len() == before {
-            break;
-        }
-    }
+        kept
+    });
     let mut labels = settle(w, h, &plane_labels(n, &found), &found, &pairs, &point_at, &near, tol);
 
     // The objects: pixels on no plane whose nearest measured pixel is on none either.
@@ -356,9 +387,41 @@ pub fn analyse(map: &Map, camera: (usize, usize), o: &SceneOptions) -> Result<Sc
             *l == 0 && (free.get(k) == Some(&true) || curved.get(k) == Some(&true))
         })
         .collect();
-    let mask = raster::close(w, h, &left, OBJECT_CLOSE);
+    // Surface detail is no object: a rim, a rib or a noisy patch next to a face stands off its
+    // plane by a few pixels, an object standing in front of it by many.
+    let reach = (w.max(h) / DETAIL_SPAN).max(1) as f32;
+    let on_face: Vec<bool> = labels.iter().map(|l| *l > 0).collect();
+    let (face_dist, face_near) = raster::distance(w, h, &on_face);
+    let core: Vec<bool> = left
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            if !*l {
+                return false;
+            }
+            let (Some(d), Some(Some(j)), Some(&k)) = (face_dist.get(i), face_near.get(i), near.get(i)) else {
+                return true;
+            };
+            let face = labels.get(*j as usize).copied().unwrap_or(0);
+            if *d > reach || face == 0 {
+                return true;
+            }
+            found
+                .get(usize::from(face) - 1)
+                .is_none_or(|(f, _)| pairs.error(&f.homography, k as usize) >= DETAIL * tol)
+        })
+        .collect();
+    let mask = raster::close(w, h, &core, OBJECT_CLOSE);
     let mask = raster::open(w, h, &mask, OBJECT_OPEN);
-    let mask = raster::fill_holes(w, h, &mask);
+    let mask = keep_large(w, h, &mask, o.min_object);
+    // The objects take back the detail right next to them (an object's foot is near the plane
+    // it stands on, and would else be cut off), each its own, never joining another.
+    let mask = regrow(w, h, &mask, &left);
+    // Holes filled, but not with faces: a face the leftover runs round (a crate's front
+    // between rims and noisy tops) stays a face.
+    let filled = raster::fill_holes(w, h, &mask);
+    let mask: Vec<bool> =
+        filled.iter().zip(&mask).zip(&labels).map(|((f, m), l)| *m || (*f && *l == 0)).collect();
     let mask = keep_large(w, h, &mask, o.min_object);
     let (comp, sizes) = raster::components(w, h, &mask);
     let mut order: Vec<(usize, usize)> = sizes.iter().enumerate().map(|(k, s)| (*s, k + 1)).collect();
@@ -409,6 +472,154 @@ pub fn analyse(map: &Map, camera: (usize, usize), o: &SceneOptions) -> Result<Sc
         unexplained,
         dropped_planes,
     })
+}
+
+/// `mask`'s parts grown by [`REGROW`] pixels into `into`, one pixel a round; a pixel two parts
+/// would reach (or two neighbours taken by different parts in one round) stays out, so parts
+/// that were apart stay apart.
+fn regrow(w: usize, h: usize, mask: &[bool], into: &[bool]) -> Vec<bool> {
+    let (mut part, _) = raster::components(w, h, mask);
+    for _ in 0..REGROW {
+        let mut next = part.clone();
+        for (i, n) in next.iter_mut().enumerate() {
+            if *n != 0 || into.get(i) != Some(&true) {
+                continue;
+            }
+            let mut by = 0u32;
+            for j in raster::neighbours4(i, w, h).into_iter().flatten() {
+                match part.get(j).copied().unwrap_or(0) {
+                    0 => {}
+                    m if by == 0 || by == m => by = m,
+                    _ => {
+                        by = u32::MAX;
+                        break;
+                    }
+                }
+            }
+            if by != u32::MAX {
+                *n = by;
+            }
+        }
+        let mut grew = false;
+        for i in 0..next.len() {
+            let (Some(&now), Some(&before)) = (next.get(i), part.get(i)) else { continue };
+            if now == 0 || before != 0 {
+                continue;
+            }
+            let clash = raster::neighbours4(i, w, h)
+                .into_iter()
+                .flatten()
+                .any(|j| next.get(j).is_some_and(|m| *m != 0 && *m != now));
+            if !clash && let Some(p) = part.get_mut(i) {
+                *p = now;
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    part.iter().map(|p| *p != 0).collect()
+}
+
+/// Where two projectors disagree, a face wins: an object of one projector whose pixels land
+/// mostly (over [`FACE_WINS`] of those the other projector measures) on the other's faces in
+/// the camera picture is a flat surface the first one decoded badly (a top catching light the
+/// walls throw back), no object. Such objects are dropped (their pixels left unexplained) and
+/// the rest renumbered by size. `maps` are the projectors' `proj_to_cam` maps in the order of
+/// `scenes`; returns how many objects each projector dropped.
+pub fn drop_objects_on_faces(scenes: &mut [SceneParts], maps: &[&Map], camera: (usize, usize)) -> Vec<usize> {
+    let (cw, ch) = camera;
+    let mut dropped = vec![0usize; scenes.len()];
+    if scenes.len() < 2 || maps.len() != scenes.len() || cw == 0 || ch == 0 {
+        return dropped;
+    }
+    // Per projector the camera pixels it measures, and those on its faces.
+    let views: Vec<(Vec<bool>, Vec<bool>)> = scenes
+        .iter()
+        .zip(maps)
+        .map(|(s, map)| {
+            let (mut seen, mut face) = (vec![false; cw * ch], vec![false; cw * ch]);
+            for i in 0..map.len() {
+                if !map.measured(i) {
+                    continue;
+                }
+                let Some(c) = map.pixel_in(i, cw, ch) else { continue };
+                if let Some(x) = seen.get_mut(c) {
+                    *x = true;
+                }
+                if s.plane_labels.get(i).is_some_and(|l| *l > 0)
+                    && let Some(x) = face.get_mut(c)
+                {
+                    *x = true;
+                }
+            }
+            (raster::dilate(cw, ch, &seen, CAMERA_REACH), raster::dilate(cw, ch, &face, CAMERA_REACH))
+        })
+        .collect();
+    for (p, (s, map)) in scenes.iter_mut().zip(maps).enumerate() {
+        let count = usize::from(s.object_labels.iter().copied().max().unwrap_or(0));
+        if count == 0 {
+            continue;
+        }
+        // Per object and other projector: pixels that one measures, and of those on its faces.
+        let mut tally = vec![[0usize; 2]; count + 1];
+        for (i, l) in s.object_labels.iter().enumerate() {
+            if *l == 0 || !map.measured(i) {
+                continue;
+            }
+            let Some(c) = map.pixel_in(i, cw, ch) else { continue };
+            for (q, (seen, face)) in views.iter().enumerate() {
+                if q == p || seen.get(c) != Some(&true) {
+                    continue;
+                }
+                if let Some(t) = tally.get_mut(usize::from(*l)) {
+                    t[0] += 1;
+                    if face.get(c) == Some(&true) {
+                        t[1] += 1;
+                    }
+                }
+            }
+        }
+        let wins: Vec<bool> =
+            tally.iter().map(|[n, f]| *n >= FACE_WINS_MIN && *f as f64 > FACE_WINS * *n as f64).collect();
+        if !wins.iter().any(|w| *w) {
+            continue;
+        }
+        let mut sizes = vec![0usize; count + 1];
+        for l in &s.object_labels {
+            if let Some(z) = sizes.get_mut(usize::from(*l)) {
+                *z += 1;
+            }
+        }
+        let mut kept: Vec<(usize, usize)> = (1..=count)
+            .filter(|k| wins.get(*k) == Some(&false))
+            .map(|k| (sizes.get(k).copied().unwrap_or(0), k))
+            .collect();
+        kept.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        let mut number = vec![0u16; count + 1];
+        for (n, (_, k)) in kept.iter().enumerate() {
+            if let Some(m) = number.get_mut(*k) {
+                *m = u16::try_from(n + 1).unwrap_or(0);
+            }
+        }
+        let mut gone = 0usize;
+        for (i, l) in s.object_labels.iter_mut().enumerate() {
+            if *l == 0 {
+                continue;
+            }
+            *l = number.get(usize::from(*l)).copied().unwrap_or(0);
+            if *l == 0 && map.measured(i) && s.plane_labels.get(i) == Some(&0) {
+                gone += 1;
+            }
+        }
+        s.unexplained += gone;
+        s.objects = kept.len();
+        if let Some(d) = dropped.get_mut(p) {
+            *d = count - kept.len();
+        }
+    }
+    dropped
 }
 
 /// Per pixel the first face whose region holds it.
@@ -491,46 +702,58 @@ fn settle(
     out
 }
 
-/// Per label 1..=count the share of its border pixels within [`BORDER_REACH`] of another
-/// label, the frame or an unlit pixel (1 for a label without border).
-fn open_borders(w: usize, h: usize, labels: &[u16], unlit: &[bool], count: usize) -> Vec<f64> {
-    let mut border = vec![0usize; count];
-    let mut open = vec![0usize; count];
-    let r = BORDER_REACH as i64;
-    for (i, l) in labels.iter().enumerate() {
-        if *l == 0 {
-            continue;
-        }
-        let edge = raster::neighbours4(i, w, h).iter().any(|j| j.is_none_or(|j| labels.get(j) != Some(l)));
-        if !edge {
-            continue;
-        }
-        let (x, y) = ((i % w.max(1)) as i64, (i / w.max(1)) as i64);
-        let mut is_open = false;
-        'scan: for dy in -r..=r {
-            for dx in -(r - dy.abs())..=(r - dy.abs()) {
-                let (nx, ny) = (x + dx, y + dy);
-                if nx < 0 || ny < 0 || nx >= w as i64 || ny >= h as i64 {
-                    is_open = true;
-                    break 'scan;
-                }
-                let j = ny as usize * w + nx as usize;
-                let other = labels.get(j).is_some_and(|m| *m != 0 && m != l);
-                if other || unlit.get(j) == Some(&true) {
-                    is_open = true;
-                    break 'scan;
-                }
-            }
-        }
-        let k = usize::from(*l) - 1;
-        if let Some(b) = border.get_mut(k) {
-            *b += 1;
-        }
-        if is_open && let Some(o) = open.get_mut(k) {
-            *o += 1;
+/// Whether a face's surface bends on past its edge, as on a curved object, rather than ending
+/// in a step or a crease, as a flat face does: among the measured pixels in a ring round it on
+/// no other face, enough lie off its plane (beyond `tol`) and most of those where its bowl
+/// ([`bend`]), carried on past the edge, puts them.
+fn continues(w: usize, h: usize, pairs: &Pairs, near: &[u32], labels: &[u16], face: &Face, tol: f64) -> bool {
+    let Some(bowl) = face.bowl else { return false };
+    if face.pixels.is_empty() || w == 0 {
+        return false;
+    }
+    let (mut x0, mut y0, mut x1, mut y1) = (usize::MAX, usize::MAX, 0usize, 0usize);
+    for i in &face.pixels {
+        let (x, y) = (*i as usize % w, *i as usize / w);
+        (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+    }
+    let rect = raster::Rect { x0, y0, x1, y1 }.grown(RING_OUT as usize + 1, w, h);
+    let (rw, rh) = (rect.width(), rect.height());
+    let mut local = vec![false; rw * rh];
+    for i in &face.pixels {
+        let (x, y) = (*i as usize % w, *i as usize / w);
+        if let Some(r) = local.get_mut((y - rect.y0) * rw + x - rect.x0) {
+            *r = true;
         }
     }
-    border.iter().zip(&open).map(|(b, o)| if *b == 0 { 1.0 } else { *o as f64 / *b as f64 }).collect()
+    let inner = raster::dilate(rw, rh, &local, RING_IN);
+    let outer = raster::dilate(rw, rh, &local, RING_OUT);
+    let (mut ring, mut off, mut follows) = (0usize, 0usize, 0usize);
+    for (j, (o, n)) in outer.iter().zip(&inner).enumerate() {
+        if !*o || *n {
+            continue;
+        }
+        let i = (rect.y0 + j / rw.max(1)) * w + rect.x0 + j % rw.max(1);
+        if labels.get(i).is_some_and(|l| *l != 0) {
+            continue;
+        }
+        let Some(&k) = near.get(i) else { continue };
+        let k = k as usize;
+        if pairs.idx.get(k) != Some(&i) {
+            continue;
+        }
+        let (Some(r), Some(p)) = (pairs.residual(&face.homography, k), pairs.from.get(k)) else { continue };
+        ring += 1;
+        if r[0].hypot(r[1]) > tol {
+            off += 1;
+            let q = bowl.at(*p);
+            if (r[0] - q[0]).hypot(r[1] - q[1]) < tol {
+                follows += 1;
+            }
+        }
+    }
+    ring >= CONTINUE_MIN
+        && off as f64 >= CONTINUE_OFF * ring as f64
+        && follows as f64 >= CONTINUE_FOLLOWS * off as f64
 }
 
 /// A connected face found by [`find_plane`]: its homography, pixels (its region, unmeasured
@@ -541,6 +764,7 @@ struct Face {
     inliers: Vec<usize>,
     /// See [`bend`].
     bend: [f64; 3],
+    bowl: Option<Bowl>,
 }
 
 /// The best plane among the free pairs, as its faces of at least `least` inliers each; none
@@ -664,8 +888,8 @@ fn find_plane(
         let own = pairs.fit(|k| on(&hom, k)).unwrap_or(hom);
         let inliers: Vec<usize> = (0..pairs.idx.len()).filter(|k| on(&own, *k)).collect();
         if inliers.len() >= least {
-            let bend = bend(pairs, &own, &inliers);
-            faces.push(Face { homography: own, pixels, inliers, bend });
+            let (bend, bowl) = bend(pairs, &own, &inliers);
+            faces.push(Face { homography: own, pixels, inliers, bend, bowl });
         }
     }
     faces
@@ -975,9 +1199,14 @@ fn fit_line(points: &[[f64; 2]], least: usize, rng: &mut Lcg) -> Option<Edge> {
 /// count as the support's edge.
 const RING: u32 = 6;
 
+/// How far below an object's lower edge (a share of the camera picture's height) the support is
+/// looked for: under a pumpkin on a crate the camera sees a band nothing measures (the top in the
+/// pumpkin's shadow, its underside curving away), about 40 pixels in full HD.
+const SUPPORT_SPAN: usize = 12;
+
 /// Per plane (label `k` at index `k - 1`, `count` of them) how many columns of an object's
-/// lower edge it is the first plane below, within a few pixels: the plane the objects stand on
-/// scores highest (from a camera above, the support shows right under an object's lower edge,
+/// lower edge it is the first plane below, within a twelfth of the picture's height: the plane
+/// the objects stand on scores highest (from a camera above, the support shows right under an object's lower edge,
 /// the wall behind it beside and above it). `planes` and `objects` are camera labels.
 pub fn support_scores(w: usize, h: usize, planes: &[u16], objects: &[u16], count: usize) -> Vec<usize> {
     let mut scores = vec![0usize; count];
@@ -985,10 +1214,11 @@ pub fn support_scores(w: usize, h: usize, planes: &[u16], objects: &[u16], count
         return scores;
     }
     let highest = objects.iter().copied().max().unwrap_or(0);
+    let reach = (h / SUPPORT_SPAN).max(2 * RING as usize);
     for k in 1..=highest {
         for x in 0..w {
             let Some(bottom) = (0..h).rev().find(|y| objects.get(y * w + x) == Some(&k)) else { continue };
-            let below = (bottom + 1..(bottom + 1 + 2 * RING as usize).min(h))
+            let below = (bottom + 1..(bottom + 1 + reach).min(h))
                 .filter_map(|y| planes.get(y * w + x).copied())
                 .find(|p| *p > 0);
             if let Some(p) = below
@@ -1016,6 +1246,22 @@ pub fn face_outline(
     outline(w, h, &mask, &hidden)
 }
 
+/// A face's bowl: the quadratic [`bend`] fits to its errors, to extrapolate past its edge.
+#[derive(Clone, Copy, Debug)]
+struct Bowl {
+    centre: [f64; 2],
+    scale: f64,
+    coef: [nalgebra::SVector<f64, 6>; 2],
+}
+
+impl Bowl {
+    fn at(&self, p: [f64; 2]) -> [f64; 2] {
+        let (x, y) = ((p[0] - self.centre[0]) / self.scale, (p[1] - self.centre[1]) / self.scale);
+        let v = nalgebra::SVector::<f64, 6>::from([1.0, x, y, x * x, x * y, y * y]);
+        [self.coef[0].dot(&v), self.coef[1].dot(&v)]
+    }
+}
+
 /// How curved a face is: its pairs' errors under its homography `h`, fitted per axis by a
 /// quadratic in the projector position; the share of the errors' variance the quadratic
 /// explains, its RMS (camera pixels), and its bow: how far it bends over [`BOW_SPAN`]
@@ -1024,12 +1270,13 @@ pub fn face_outline(
 /// tolerance they are a bowl, and it explains most when the noise is low. With a real decode's
 /// noise the share stays low on small patches, but their bow stands out: a lens's distortion
 /// bows a wall over its whole size, a pumpkin over a hand's breadth.
-fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> [f64; 3] {
+/// Also the bowl itself, `None` when too few pairs or a degenerate fit.
+fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> ([f64; 3], Option<Bowl>) {
     use nalgebra::{SMatrix, SVector};
     let pts: Vec<([f64; 2], [f64; 2])> =
         inliers.iter().filter_map(|k| Some((*pairs.from.get(*k)?, pairs.residual(h, *k)?))).collect();
     if pts.len() < 12 {
-        return [0.0; 3];
+        return ([0.0; 3], None);
     }
     let m = pts.len() as f64;
     let (mx, my) = (pts.iter().map(|p| p.0[0]).sum::<f64>() / m, pts.iter().map(|p| p.0[1]).sum::<f64>() / m);
@@ -1047,7 +1294,7 @@ fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> [f64; 3] {
         b[0] += v * r[0];
         b[1] += v * r[1];
     }
-    let Some(inv) = a.try_inverse() else { return [0.0; 3] };
+    let Some(inv) = a.try_inverse() else { return ([0.0; 3], None) };
     let coef = [inv * b[0], inv * b[1]];
     let (mut total, mut left) = (0.0, 0.0);
     let mean = [pts.iter().map(|p| p.1[0]).sum::<f64>() / m, pts.iter().map(|p| p.1[1]).sum::<f64>() / m];
@@ -1062,15 +1309,16 @@ fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> [f64; 3] {
             left += (rc - fit).powi(2);
         }
     }
+    let fitted = Bowl { centre: [mx, my], scale: s, coef };
     if total <= 0.0 {
-        return [0.0; 3];
+        return ([0.0; 3], Some(fitted));
     }
     let share = (1.0 - left / total).clamp(0.0, 1.0);
     // The bowl's second-order terms back in projector pixels: its bow over BOW_SPAN.
     let bow =
         coef.iter().map(|k| (k[3].powi(2) + 0.5 * k[4].powi(2) + k[5].powi(2)).sqrt()).fold(0.0f64, f64::max)
             * (BOW_SPAN / s).powi(2);
-    [share, ((total - left).max(0.0) / m).sqrt(), bow]
+    ([share, ((total - left).max(0.0) / m).sqrt(), bow], Some(fitted))
 }
 
 /// Gaps a decode leaves in a picture of labels, up to about `2 r` wide, filled: each label

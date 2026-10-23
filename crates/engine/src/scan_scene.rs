@@ -287,6 +287,8 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
         found.push(s);
     }
     let scans: Vec<&Map> = to_camera.iter().collect();
+    // A face in one projector beats an object in another (a top one projector decodes badly).
+    let objects_on_faces = scene::drop_objects_on_faces(&mut found, &scans, camera);
 
     // Planes and objects numbered alike in every projector, top of the camera picture first.
     let plane_counts: Vec<usize> = found.iter().map(|s| s.planes.len()).collect();
@@ -497,6 +499,7 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             "measured": s.measured,
             "planes": own,
             "dropped_planes": s.dropped_planes,
+            "objects_on_faces": objects_on_faces.get(p).copied().unwrap_or(0),
             "objects": op.labels.iter().copied().max().unwrap_or(0),
             "unexplained": s.unexplained,
             "files": {"planes": planes, "labels": labels, "picture": picture, "uv": uv},
