@@ -26,16 +26,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Null) as Box<dyn Operator>,
     ))?;
 
-    let mut switch = NodeDesc::new("tex.switch", "One of several inputs, or a blend of two neighbours")
+    let mut switch = NodeDesc::new(
+        "tex.switch",
+        "Chooses which of up to eight pictures goes out: cut between scenes or looks, or crossfade",
+    )
         .param(
             ParamSpec::float("index", 0.0)
                 .range(0.0, (SWITCH_INPUTS - 1) as f64)
-                .doc("Which connected input, counted from 0. Past the last input: the last input"),
+                .doc("Which input goes out: the wired inputs counted from 0, gaps skipped. Past the last: the last"),
         )
-        .param(ParamSpec::bool("blend", false).doc("A fractional index mixes the two inputs either side"))
+        .param(ParamSpec::bool("blend", false).doc("Crossfade: a fractional index mixes the inputs either side (1.25: a quarter of the next). Off: it rounds down"))
         .param(
             ParamSpec::choice("inactive", &["cook", "skip"])
-                .doc("What the inputs not shown do")
+                .doc("Whether the chains not shown keep running (switching is instant) or pause (they cost nothing)")
                 .choice_doc("cook", "their chains keep cooking as if shown")
                 .choice_doc(
                     "skip",

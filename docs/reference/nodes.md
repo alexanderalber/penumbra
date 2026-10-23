@@ -928,7 +928,7 @@ Outputs:
 
 ### tex.switch
 
-One of several inputs, or a blend of two neighbours
+Chooses which of up to eight pictures goes out: cut between scenes or looks, or crossfade
 
 Inputs:
 
@@ -945,9 +945,9 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `index` | float | `0` | 0 to 7 (soft) | Which connected input, counted from 0. Past the last input: the last input |
-| `blend` | bool | `false` |  | A fractional index mixes the two inputs either side |
-| `inactive` | cook \| skip | `"cook"` |  | What the inputs not shown do; cook: their chains keep cooking as if shown; skip: only the shown input's chain cooks; the other chains stand still and cost nothing. Switching to a skipped input cooks its chain in that frame: a slow chain makes the frame late, a video may need a moment to catch up. A feedback loop, cache or time machine in a skipped chain carries on from where it stopped. An input counts as connected as soon as it is wired |
+| `index` | float | `0` | 0 to 7 (soft) | Which input goes out: the wired inputs counted from 0, gaps skipped. Past the last: the last |
+| `blend` | bool | `false` |  | Crossfade: a fractional index mixes the inputs either side (1.25: a quarter of the next). Off: it rounds down |
+| `inactive` | cook \| skip | `"cook"` |  | Whether the chains not shown keep running (switching is instant) or pause (they cost nothing); cook: their chains keep cooking as if shown; skip: only the shown input's chain cooks; the other chains stand still and cost nothing. Switching to a skipped input cooks its chain in that frame: a slow chain makes the frame late, a video may need a moment to catch up. A feedback loop, cache or time machine in a skipped chain carries on from where it stopped. An input counts as connected as soon as it is wired |
 
 ### tex.text
 

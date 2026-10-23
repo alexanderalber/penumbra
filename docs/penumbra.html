@@ -2438,9 +2438,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#spout-receiving-texspout_in">Spout › Receiving: tex.spout_in</a></p>
 </div></details>
-<details class="entry node" id="tex.switch"><summary><code class="name">tex.switch</code><span class="sum">One of several inputs, or a blend of two neighbours</span></summary>
+<details class="entry node" id="tex.switch"><summary><code class="name">tex.switch</code><span class="sum">Chooses which of up to eight pictures goes out: cut between scenes or looks, or crossfade</span></summary>
 <div class="body">
-<p>One of several inputs, or a blend of two neighbours</p>
+<p>Chooses which of up to eight pictures goes out: cut between scenes or looks, or crossfade</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in0</code> <span class="kind">tex</span></li>
@@ -2460,11 +2460,25 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>index</code></td><td>float</td><td><code>0</code></td><td>0 to 7 (soft)</td><td>Which connected input, counted from 0. Past the last input: the last input</td></tr>
-<tr><td><code>blend</code></td><td>bool</td><td><code>false</code></td><td></td><td>A fractional index mixes the two inputs either side</td></tr>
-<tr><td><code>inactive</code></td><td>cook | skip</td><td><code>&quot;cook&quot;</code></td><td></td><td>What the inputs not shown do<ul><li><code>cook</code>: their chains keep cooking as if shown</li><li><code>skip</code>: only the shown input's chain cooks; the other chains stand still and cost nothing. Switching to a skipped input cooks its chain in that frame: a slow chain makes the frame late, a video may need a moment to catch up. A feedback loop, cache or time machine in a skipped chain carries on from where it stopped. An input counts as connected as soon as it is wired</li></ul></td></tr>
+<tr><td><code>index</code></td><td>float</td><td><code>0</code></td><td>0 to 7 (soft)</td><td>Which input goes out: the wired inputs counted from 0, gaps skipped. Past the last: the last</td></tr>
+<tr><td><code>blend</code></td><td>bool</td><td><code>false</code></td><td></td><td>Crossfade: a fractional index mixes the inputs either side (1.25: a quarter of the next). Off: it rounds down</td></tr>
+<tr><td><code>inactive</code></td><td>cook | skip</td><td><code>&quot;cook&quot;</code></td><td></td><td>Whether the chains not shown keep running (switching is instant) or pause (they cost nothing)<ul><li><code>cook</code>: their chains keep cooking as if shown</li><li><code>skip</code>: only the shown input's chain cooks; the other chains stand still and cost nothing. Switching to a skipped input cooks its chain in that frame: a slow chain makes the frame late, a video may need a moment to catch up. A feedback loop, cache or time machine in a skipped chain carries on from where it stopped. An input counts as connected as soon as it is wired</li></ul></td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="tex.switch-what-it-is-for">What it is for</h5>
+<p>A switch decides which picture goes on. Wire up to eight chains into <code>in0</code> to <code>in7</code>, say the scenes of a show, the looks of a projection or a test pattern beside the real content, and <code>index</code> picks the one that comes out. Turn <code>index</code> by hand, or bind it to whatever should change the picture during the show: a key, an OSC or MIDI control, a timer.</p>
+<h5 id="tex.switch-which-input">Which input</h5>
+<p><code>index</code> counts the wired inputs from 0, in order, and skips the gaps: with <code>in0</code>, <code>in1</code> and <code>in4</code> wired, 2 is <code>in4</code>. An index past the last input shows the last one.</p>
+<h5 id="tex.switch-cut-or-crossfade">Cut or crossfade</h5>
+<p>With <code>blend</code> off, the picture cuts from one input to the next, and a fractional index rounds down (1.7 shows input 1). With <code>blend</code> on, a fractional index mixes the two inputs either side: 1.25 is three quarters of input 1 and a quarter of input 2. Move <code>index</code> smoothly from 1 to 2 and the picture crossfades. The mix has the size of the lower input.</p>
+<p>For two fixed pictures and a mix amount, <a class="ref" href="#tex.cross"><code>tex.cross</code></a> is the simpler node. For a show that runs on a timeline, with cuts and fades at set times, use <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a>.</p>
+<h5 id="tex.switch-the-inputs-not-shown">The inputs not shown</h5>
+<p>With <code>inactive: cook</code> (the default), every chain keeps running whether it is shown or not. Switching is instant and every input is up to date, but all of them cost GPU time.</p>
+<p>With <code>inactive: skip</code>, only the shown input's chain runs (both, while blending); the others stand still and cost nothing. That makes room for many heavy scenes. The price: switching to a skipped chain cooks it in that frame, so a slow chain makes one frame late and a video may need a moment to catch up. A feedback loop, cache or time machine in a skipped chain carries on from where it stopped, not from where it would be by now.</p>
+<h5 id="tex.switch-example">Example</h5>
+<p>Scenes on the number keys: wire four scenes into <code>in0</code> to <code>in3</code>, add a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a> (its <code>keys</code> are <code>1 2 3 4</code> by default) and bind <code>index</code> to its <code>last</code> channel. Key 1 shows <code>in0</code>, key 2 <code>in1</code>, and so on. With <code>inactive: skip</code>, only the scene on screen costs anything.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
 </div></details>
 <details class="entry node" id="tex.text"><summary><code class="name">tex.text</code><span class="sum">Text in any installed or bundled font, placed at a position</span></summary>
