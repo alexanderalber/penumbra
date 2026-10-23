@@ -567,6 +567,9 @@ fn every_builtin_cooks_without_warnings() {
                 ("count", Value::Int(4)),
             ]),
             "tex.video_in" => params.push(("device", "test".into())),
+            // Its trace input gets the black feed: the whole picture is one dark region, on a
+            // surface of the feed's size.
+            "tex.shapes" => params.extend(size().into_iter().chain([("trace_invert", true.into())])),
             "out.spout" => params.push(("name", spout.as_str().into())),
             "tex.spout_in" => params.push(("sender", spout.as_str().into())),
             _ => {}

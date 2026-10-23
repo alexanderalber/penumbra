@@ -431,8 +431,13 @@ Content is made once, in the camera's picture, and each projector takes its shar
 
 1. `tex.shapes` with the camera's size as `width` and `height`; a `tex.image` of
    `objects/objects_camera.png` beside it, then
-   `shapes.trace {"path": "/shapes", "from": "/objects_image", "labels": true}`: one shape per
-   object, in camera space.
+   `shapes.trace {"path": "/shapes", "from": "/objects_image", "labels": true, "live": true}`: one
+   shape per object, in camera space. `live` connects the picture to the shapes' `trace` input
+   and sets `trace_labels`, so the node traces by itself whenever the picture changes (a new scan)
+   or the project opens, and nothing traced is stored in the project file. A script writing
+   `project.ron` gets the same by writing that connection and those params:
+   `"/shapes": (kind: "tex.shapes", params: {"width": 1920, "height": 1080, "trace_labels": true}, inputs: {"trace": "objects_image"})`.
+   Without `live`, the outlines are written into the node's `shapes` text once, to edit by hand.
 2. `tex.shape_content` from the shapes' `id` output: fill, pulse, chase or ripple per object.
    Because there is one set of shapes, ripples and chases run across all projectors as one.
 3. Per projector: `tex.remap` with the content as `in` and a `tex.image` of

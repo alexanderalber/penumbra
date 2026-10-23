@@ -4,15 +4,21 @@
 //! ([`penumbra_ops::trace`]) and writes them as `poly` lines into a `tex.shapes`'s `shapes`
 //! text: one edit, undone like any other, and the lines are edited by hand afterwards like drawn
 //! ones. Nothing of it runs per frame.
+//!
+//! With `live`, nothing is written into the text: the source is connected to the node's `trace`
+//! input and the options become its `trace_*` params, so the node traces by itself whenever the
+//! source changes or the project opens (what a project file written by a script relies on).
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use penumbra_core::{Name, NodePath, ParamPath, Value};
+use penumbra_core::{Name, NodePath, ParamPath, Table, Value};
 use penumbra_gpu::Tex;
 use penumbra_graph::Op;
 use penumbra_ops::shapes::{self, MAX_INSTANCES};
-use penumbra_ops::tex::shapes::SHAPES;
+/// The tag traced shapes get unless another is named.
+pub use penumbra_ops::tex::shapes::TRACE_TAG;
+use penumbra_ops::tex::shapes::{SHAPES, TABLE_OUTPUT, TRACE_INPUT};
 use penumbra_ops::trace::{self, Channel, MAX_PIXELS, Options};
 use penumbra_project::Actor;
 use serde::Deserialize;
@@ -24,9 +30,6 @@ use crate::engine::Engine;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
-/// The tag traced shapes get unless another is named.
-pub const TRACE_TAG: &str = "trace";
-
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
@@ -34,7 +37,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Trace the outlines of a mask or label texture as poly lines into a tex.shapes (one undo step). \
          Replaces the lines of that tag; {path, from (node: path or name beside path), output?, tag? (trace), \
          channel? (auto | red | green | blue | alpha | luma), threshold? (0.5), invert? (inside is \
-         below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?}",
+         below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?, \
+         live? (instead: connect `from` to the node's trace input and set its trace_* params, so it traces \
+         by itself whenever the picture changes or the project opens; options not given are reset)}",
         move |p| {
             let a: TraceArgs = args(p)?;
             trace_into(&e, Actor::Claude, &a, Instant::now())
@@ -59,6 +64,8 @@ pub struct TraceArgs {
     pub min_area: Option<f64>,
     /// Keep the lines with the tag (else they are replaced).
     pub append: Option<bool>,
+    /// Trace by the node's `trace` input and params instead of into its text.
+    pub live: Option<bool>,
 }
 
 impl TraceArgs {
@@ -76,6 +83,7 @@ impl TraceArgs {
             tolerance: None,
             min_area: None,
             append: None,
+            live: None,
         }
     }
 }
@@ -83,7 +91,6 @@ impl TraceArgs {
 /// Traces as `a` says and writes the result into the shapes text as `actor`; the reply says what
 /// was found, dropped and filled, with `message` a one-line summary.
 pub fn trace_into(e: &Engine, actor: Actor, a: &TraceArgs, now: Instant) -> CmdResult<Json> {
-    let gpu = e.gpu().ok_or("no GPU yet (the window opens it)")?.clone();
     let net = e.session().doc().snapshot();
     let target = require(&net, &a.path)?;
     let node = net.node(target).ok_or_else(|| CommandError(format!("no node at {}", a.path)))?;
@@ -134,6 +141,13 @@ pub fn trace_into(e: &Engine, actor: Actor, a: &TraceArgs, now: Instant) -> CmdR
         Some(slot) => slot_index(slot, &names, "output", &from_path)?,
         None => 0,
     };
+    if a.live.unwrap_or(false) {
+        if append {
+            return Err("`append` keeps lines of the text; a live trace writes none".into());
+        }
+        return trace_live(e, actor, a, &from_path, output, &tag, now);
+    }
+    let gpu = e.gpu().ok_or("no GPU yet (the window opens it)")?.clone();
     let (data, status) = cook_now(e, source, output)?;
     let error = status.as_ref().and_then(|s| s.error.clone());
     let data = result_of(&from_path, data, error)?;
@@ -214,6 +228,64 @@ pub fn trace_into(e: &Engine, actor: Actor, a: &TraceArgs, now: Instant) -> CmdR
         "coarser": traced.coarser,
         "channel": channel.name(),
         "source": {"path": from_path.to_string(), "output": output, "width": w, "height": h},
+        "tag": tag,
+        "warnings": warnings,
+    }))
+}
+
+/// `shapes.trace` with `live`: connects the source to the node's `trace` input and sets its
+/// `trace_*` params (the options given; the others back to their defaults) in one undo step,
+/// then waits for the node's first trace to say what it found.
+fn trace_live(
+    e: &Engine,
+    actor: Actor,
+    a: &TraceArgs,
+    from_path: &NodePath,
+    output: u32,
+    tag: &str,
+    now: Instant,
+) -> CmdResult<Json> {
+    let param =
+        |name: &str| -> CmdResult<ParamPath> { Ok(ParamPath::new(a.path.clone(), Name::new(name)?)?) };
+    let set = |name: &str, value: Option<Value>| -> CmdResult<Op> {
+        Ok(match value {
+            Some(value) => Op::Set { param: param(name)?, value },
+            None => Op::Reset { param: param(name)? },
+        })
+    };
+    let input = u32::try_from(TRACE_INPUT).map_err(|_| "the trace input has no index")?;
+    let ops = [
+        Op::Connect { from: from_path.clone(), output, to: a.path.clone(), input },
+        set("trace_tag", a.tag.as_ref().map(|_| Value::Text(tag.to_string())))?,
+        set("trace_channel", a.channel.as_ref().map(|c| Value::Text(c.trim().to_string())))?,
+        set("trace_threshold", a.threshold.map(Value::Float))?,
+        set("trace_invert", a.invert.map(Value::Bool))?,
+        set("trace_labels", a.labels.map(Value::Bool))?,
+        set("trace_tolerance", a.tolerance.map(Value::Float))?,
+        set("trace_min_area", a.min_area.map(Value::Float))?,
+    ];
+    let label = format!("trace {from_path} live");
+    e.session().edit(actor, &ops, None, &label, now)?;
+
+    // The node traces on its own now; its table says what came of it.
+    let net = e.session().doc().snapshot();
+    let target = require(&net, &a.path)?;
+    let (data, status) = cook_now(e, target, TABLE_OUTPUT)?;
+    let error = status.as_ref().and_then(|s| s.error.clone());
+    let warning = status.as_ref().and_then(|s| s.warning.clone());
+    let data = result_of(&a.path, data, error)?;
+    let table = data.get::<Table>().ok_or_else(|| CommandError(format!("{} has no shapes table", a.path)))?;
+    // The first row names the columns; the second column is the tag.
+    let shapes = table.rows().iter().skip(1).filter(|r| r.get(1).is_some_and(|t| t == tag)).count();
+    let mut warnings: Vec<String> = warning.into_iter().collect();
+    if net.node(target).is_some_and(|n| n.inputs.first().copied().flatten().is_some()) {
+        warnings.push(format!("{}: its own shapes are not drawn while its table input is connected", a.path));
+    }
+    Ok(json!({
+        "message": format!("{} traces {from_path} by itself: {shapes} shape(s) tagged `{tag}`", a.path),
+        "shapes": shapes,
+        "live": true,
+        "source": {"path": from_path.to_string(), "output": output},
         "tag": tag,
         "warnings": warnings,
     }))

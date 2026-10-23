@@ -138,7 +138,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(
             ParamSpec::choice(
                 "op",
-                &["add", "subtract", "multiply", "divide", "min", "max", "power", "modulo", "floor"],
+                &["add", "subtract", "multiply", "divide", "min", "max", "power", "modulo", "floor", "equal"],
             )
             .doc("What is done with a and b, sample by sample")
             .choice_doc("add", "a + b")
@@ -149,7 +149,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .choice_doc("max", "the larger of a and b: b is a floor")
             .choice_doc("power", "a to the power b")
             .choice_doc("modulo", "a wrapped into 0 to b (b = 0 leaves a)")
-            .choice_doc("floor", "a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a)"),
+            .choice_doc("floor", "a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a)")
+            .choice_doc(
+                "equal",
+                "1 where a equals b (to within a millionth), else 0: whether the piece channel is 3",
+            ),
         )
         .param(
             ParamSpec::float("b", 0.0)
@@ -216,6 +220,50 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Chan)
         .time_dependent(),
         || Box::new(Speed::default()) as Box<dyn Operator>,
+    ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            CLOCK,
+            "Seconds since it was switched on: starts over from 0 each time `run` turns on, then plays \
+             once, loops or runs on. A clock per piece of a show that starts with its piece",
+        )
+        .stateful()
+        .param(ParamSpec::float("run", 1.0).range(0.0, 1.0).doc(
+            "On from 0.5 up (with `equals` set: while it equals that number). Each time it turns on the \
+             clock starts over from 0; while it is off the clock stands at 0. Bind it to a key's gate, \
+             or to the piece channel with `equals`",
+        ))
+        .param(ParamSpec::int("equals", -1).clamp(-1.0, 1e9).range(-1.0, 20.0).special(-1.0, "off").doc(
+            "When set, `run` is on while it equals this number: bind `run` to the channel that \
+                     says which piece plays and set this to the piece's number. While off, `run` is on \
+                     from 0.5 up",
+        ))
+        .param(
+            ParamSpec::float("length", 10.0)
+                .clamp(CLOCK_MIN_LENGTH, 1e6)
+                .range(0.1, 120.0)
+                .curve(Curve::Log)
+                .unit(Unit::Seconds)
+                .doc("How long one run (once) or one round (loop) takes; `fraction` is the time over it"),
+        )
+        .param(
+            ParamSpec::choice("mode", &["once", "loop", "free"])
+                .doc("What the clock does once `length` has passed")
+                .choice_doc("once", "it stops at the end and holds there")
+                .choice_doc("loop", "it starts over from 0, round after round")
+                .choice_doc("free", "it runs on: seconds grow without end, fraction past 1"),
+        )
+        .output("out", DataKind::Chan)
+        .describe_output(
+            "out",
+            "`seconds` since it was switched on (once: at most `length`; loop: within the round), \
+             `fraction` of `length` (0 to 1 for once and loop), `done` (1 once a full length has passed \
+             since it was switched on, else 0). It also starts over when it was not computed for more \
+             than half a second of show time while on (nothing showed it, as when its piece was not \
+             picked) and after a seek",
+        )
+        .time_dependent(),
+        || Box::new(Clock::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new(
@@ -631,6 +679,7 @@ impl Operator for Math {
             "power" => f64::powf,
             "modulo" => |a, b| if b == 0.0 { a } else { a.rem_euclid(b) },
             "floor" => |a, b| if b == 0.0 { a } else { (a / b).floor() * b },
+            "equal" => |a, b| if equal(a, b) { 1.0 } else { 0.0 },
             _ => |a, b| a + b,
         };
         // The layout (names, length, rate) comes from a, else from b.
@@ -787,6 +836,69 @@ impl Operator for Speed {
         }
         self.state = state;
         out(Chans::new(input.rate(), channels)?.shaped_like(input))
+    }
+}
+
+/// The kind of the restartable clock.
+pub const CLOCK: &str = "chan.clock";
+/// Shortest `length` of a `chan.clock`, in seconds.
+const CLOCK_MIN_LENGTH: f64 = 0.001;
+/// A `chan.clock` not computed for longer than this while on starts over: nothing showed it.
+const CLOCK_GAP: f64 = 0.5;
+
+/// Whether `a` and `b` count as equal for `chan.math`'s `equal` and `chan.clock`'s `equals`:
+/// within a millionth, so numbers that went through a sum or a binding still match.
+fn equal(a: f64, b: f64) -> bool {
+    (a - b).abs() <= 1e-6
+}
+
+/// `chan.clock`: the show time when it was switched on, and the time it was last computed.
+#[derive(Default)]
+struct Clock {
+    start: Option<Tick>,
+    last: Option<Tick>,
+}
+
+/// What a clock shows `elapsed` seconds after it was switched on: seconds, fraction, done.
+fn clock_values(elapsed: f64, length: f64, mode: &str) -> [f64; 3] {
+    let length = length.max(CLOCK_MIN_LENGTH);
+    let elapsed = elapsed.max(0.0);
+    let done = if elapsed >= length { 1.0 } else { 0.0 };
+    let seconds = match mode {
+        "loop" => elapsed.rem_euclid(length),
+        "free" => elapsed,
+        _ => elapsed.min(length),
+    };
+    [seconds, seconds / length, done]
+}
+
+impl Operator for Clock {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let now = cx.time().tick;
+        let run = cx.float("run")?;
+        let equals = cx.int("equals")?;
+        let on = if equals >= 0 { equal(run, equals as f64) } else { run >= 0.5 };
+        // A seek back, or time that passed without this clock being computed (nothing showed
+        // it), starts it over: from where it is seen again, it is a new start.
+        let gap = match self.last {
+            Some(last) => now.0 < last.0 || Tick(now.0 - last.0).seconds() > CLOCK_GAP,
+            None => true,
+        };
+        self.last = Some(now);
+        if !on {
+            self.start = None;
+        } else if self.start.is_none() || gap {
+            self.start = Some(now);
+        }
+        let elapsed = self.start.map_or(0.0, |s| Tick(now.0.saturating_sub(s.0)).seconds());
+        let [seconds, fraction, done] = clock_values(elapsed, cx.float("length")?, cx.text("mode")?);
+        let rate = cx.rate().as_f64();
+        let channel = |name: &str, v: f64| -> Result<Channel, CookError> {
+            Ok(Channel { name: Name::new(name)?, samples: vec![v] })
+        };
+        let channels =
+            vec![channel("seconds", seconds)?, channel("fraction", fraction)?, channel("done", done)?];
+        out(Chans::new(rate, channels)?)
     }
 }
 
@@ -1228,6 +1340,89 @@ mod tests {
         );
         f.clock.advance(600);
         assert_eq!(f.value("/s"), 3.0);
+    }
+
+    #[test]
+    fn clock_values_per_mode() {
+        use super::clock_values;
+        assert_eq!(clock_values(2.0, 8.0, "once"), [2.0, 0.25, 0.0]);
+        assert_eq!(clock_values(9.0, 8.0, "once"), [8.0, 1.0, 1.0]);
+        assert_eq!(clock_values(10.0, 8.0, "loop"), [2.0, 0.25, 1.0]);
+        assert_eq!(clock_values(10.0, 8.0, "free"), [10.0, 1.25, 1.0]);
+        // A length of 0 cannot divide by zero; time before the start is the start.
+        assert!(clock_values(1.0, 0.0, "loop").iter().all(|v| v.is_finite()));
+        assert_eq!(clock_values(-1.0, 8.0, "once"), [0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn clock_starts_over_with_its_piece() {
+        let mut f = F::new(&[
+            create("/piece", "chan.constant"),
+            create("/clock", "chan.clock"),
+            set("/clock.equals", 2_i64),
+            set("/clock.length", 1.0),
+            Op::Bind {
+                param: ParamPath::parse("/clock.run").unwrap(),
+                component: None,
+                from: "/piece".parse().unwrap(),
+                channel: None,
+            },
+        ]);
+        let seconds = |f: &mut F| f.chans("/clock").value(Some("seconds")).unwrap();
+        // Another piece plays: the clock stands at 0.
+        assert_eq!(seconds(&mut f), 0.0);
+        f.clock.advance(15);
+        assert_eq!(seconds(&mut f), 0.0);
+        // Its piece: from 0, a quarter second per 15 frames.
+        apply(&mut f, &[set("/piece.value0", 2.0)]);
+        f.clock.advance(15);
+        assert_eq!(seconds(&mut f), 0.0);
+        f.clock.advance(15);
+        assert!((seconds(&mut f) - 0.25).abs() < 1e-9);
+        // Once: it holds at the end and says it is done.
+        for _ in 0..8 {
+            f.clock.advance(15);
+            seconds(&mut f);
+        }
+        let c = f.chans("/clock");
+        assert_eq!((c.value(Some("seconds")), c.value(Some("done"))), (Some(1.0), Some(1.0)));
+        // Another piece and back again: from 0.
+        apply(&mut f, &[set("/piece.value0", 1.0)]);
+        f.clock.advance(15);
+        assert_eq!(seconds(&mut f), 0.0);
+        apply(&mut f, &[set("/piece.value0", 2.0)]);
+        f.clock.advance(15);
+        assert_eq!(seconds(&mut f), 0.0);
+        assert_eq!(f.chans("/clock").value(Some("done")), Some(0.0));
+        // Not computed for a second (nothing showed it) while its piece stays: from 0 again.
+        f.clock.advance(15);
+        assert!((seconds(&mut f) - 0.25).abs() < 1e-9);
+        f.clock.advance(60);
+        assert_eq!(seconds(&mut f), 0.0);
+        // Looping, and on from 0.5 up without `equals`.
+        apply(&mut f, &[set("/clock.mode", "loop"), set("/clock.equals", -1_i64), set("/piece.value0", 1.0)]);
+        for _ in 0..5 {
+            f.clock.advance(15);
+            seconds(&mut f);
+        }
+        let c = f.chans("/clock");
+        assert!((c.value(Some("seconds")).unwrap() - 0.25).abs() < 1e-9, "{c:?}");
+        assert!((c.value(Some("fraction")).unwrap() - 0.25).abs() < 1e-9);
+        apply(&mut f, &[set("/piece.value0", 0.25)]);
+        f.clock.advance(15);
+        assert_eq!(seconds(&mut f), 0.0);
+    }
+
+    #[test]
+    fn math_equal() {
+        let mut f =
+            F::new(&[create("/c", "chan.constant"), create("/m", "chan.math"), set("/m.op", "equal")]);
+        apply(&mut f, &[connect("/c", "/m", 0), set("/c.value0", 3.0), set("/m.b", 3.0)]);
+        assert_eq!(f.value("/m"), 1.0);
+        apply(&mut f, &[set("/m.b", 2.0)]);
+        assert_eq!(f.value("/m"), 0.0);
+        apply(&mut f, &[set("/m.b", 3.0 + 1e-9)]);
+        assert_eq!(f.value("/m"), 1.0);
     }
 
     fn apply(f: &mut F, ops: &[Op]) {

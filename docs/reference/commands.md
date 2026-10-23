@@ -215,7 +215,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `shapes.trace` | Trace the outlines of a mask or label texture as poly lines into a tex.shapes (one undo step). Replaces the lines of that tag; {path, from (node: path or name beside path), output?, tag? (trace), channel? (auto \| red \| green \| blue \| alpha \| luma), threshold? (0.5), invert? (inside is below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?} |
+| `shapes.trace` | Trace the outlines of a mask or label texture as poly lines into a tex.shapes (one undo step). Replaces the lines of that tag; {path, from (node: path or name beside path), output?, tag? (trace), channel? (auto \| red \| green \| blue \| alpha \| luma), threshold? (0.5), invert? (inside is below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?, live? (instead: connect `from` to the node's trace input and set its trace_* params, so it traces by itself whenever the picture changes or the project opens; options not given are reset)} |
 
 ## spacenav
 

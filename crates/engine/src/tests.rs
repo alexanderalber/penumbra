@@ -1226,6 +1226,86 @@ fn trace_a_mask_into_shapes() {
     assert!(f.fail("shapes.trace", json!({"path": "/l", "from": "/t"})).contains("not a tex.shapes"));
 }
 
+/// The traced shapes of a `tex.shapes` (rows of its table with the tag), or `None` while it has
+/// none to give.
+fn traced_rows(f: &Fixture, path: &str, tag: &str) -> Option<usize> {
+    let r = f.registry.dispatch("table.read", &json!({"path": path}));
+    let rows = r["result"]["rows"].as_array()?;
+    Some(rows.iter().skip(1).filter(|row| row[1] == tag).count())
+}
+
+#[test]
+fn live_traced_shapes_survive_a_rewritten_project_file_and_a_restart() {
+    let gpu = || match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        Ok(g) => Some(g),
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(_) => None,
+    };
+    let Some(first) = gpu() else { return };
+    let f = Fixture::new("trace_live");
+    f.engine.attach_gpu(first).unwrap();
+    f.call(
+        "node.create",
+        json!({"path": "/src", "kind": "tex.shapes", "params": {"width": 64, "height": 48,
+            "shapes": "a rect 0.25,0.25 0.5,0.25\nb ellipse 0.1,0.6 0.3,0.3\n"}}),
+    );
+    f.call("node.create", json!({"path": "/t", "kind": "tex.shapes", "params": {"width": 64, "height": 48}}));
+    let r = f.call(
+        "shapes.trace",
+        json!({"path": "/t", "from": "src", "output": "mask", "live": true,
+        "channel": "alpha", "min_area": 4, "tag": "face"}),
+    );
+    assert_eq!((r["shapes"].as_u64(), r["live"].as_bool()), (Some(2), Some(true)), "{r}");
+    let info = f.call("node.info", json!({"path": "/t"}));
+    assert_eq!(info["inputs"][1]["from"], "/src", "{info}");
+    let param = |info: &Json, name: &str| {
+        info["params"].as_array().unwrap().iter().find(|p| p["name"] == name).map(|p| p["value"].clone())
+    };
+    // Nothing is written into the text; the options are params.
+    assert_eq!(param(&info, "shapes"), Some(json!("")));
+    assert_eq!(param(&info, "trace_tag"), Some(json!("face")));
+    assert_eq!(param(&info, "trace_min_area"), Some(json!(4.0)));
+    assert!(
+        f.fail("shapes.trace", json!({"path": "/t", "from": "src", "live": true, "append": true}))
+            .contains("append")
+    );
+
+    // A script writes the project file anew: the traced node is only its kind, params and the
+    // connection. The merged node traces by itself, with the new params.
+    let script = r#"(
+    version: 2,
+    nodes: {
+        "/src": (kind: "tex.shapes", params: {"width": 64, "height": 48, "shapes": "a rect 0.25,0.25 0.5,0.25\nb ellipse 0.1,0.6 0.3,0.3\nc rect 0.8,0.1 0.1,0.1\n"}),
+        "/t": (kind: "tex.shapes", params: {"width": 64, "height": 48, "trace_tag": "piece", "trace_channel": "alpha", "trace_min_area": 4}, inputs: {"trace": "src:mask"}),
+    },
+)
+"#;
+    eventually("autosave", || f.file().contains("trace_tag"));
+    std::fs::write(f.engine.session().file(), script).unwrap();
+    eventually("the merged node to trace", || traced_rows(&f, "/t", "piece") == Some(3));
+    assert_eq!(traced_rows(&f, "/t", "face"), Some(0));
+    // A changed picture is traced again.
+    f.call("node.set", json!({"path": "/src", "params": {"shapes": "a rect 0.25,0.25 0.5,0.25\n"}}));
+    eventually("the trace of the changed picture", || traced_rows(&f, "/t", "piece") == Some(1));
+    // Unwired, the traced shapes are gone; the node's own shapes stay.
+    f.call("node.set", json!({"path": "/t", "params": {"shapes": "own rect 0,0 0.1,0.1\n"}}));
+    f.call("node.disconnect", json!({"to": "/t", "input": "trace"}));
+    assert_eq!(traced_rows(&f, "/t", "piece"), Some(0));
+    assert_eq!(traced_rows(&f, "/t", "own"), Some(1));
+
+    // A restart: a fresh engine on the file the script wrote traces again with no command.
+    f.engine.shutdown();
+    std::fs::write(f.engine.session().file(), script).unwrap();
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let session = Arc::new(Session::open(&f._dir.0, types, &Content::default()).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let Some(second) = gpu() else { return };
+    engine.attach_gpu(second).unwrap();
+    let again =
+        Fixture { registry: crate::engine_registry(&engine), engine, _dir: TempDir::new("trace_live_again") };
+    eventually("the reopened node to trace", || traced_rows(&again, "/t", "piece") == Some(3));
+}
+
 #[test]
 fn decode_a_scan_from_pictures_in_a_folder() {
     let f = Fixture::new("scan");

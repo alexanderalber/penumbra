@@ -97,6 +97,20 @@ them. **learn from OSC** in a param's link menu also takes a key a `chan.keyboar
 and binds its gate. From the control channel: `keyboard.press {key}` (or `{key, down}` to hold
 and let go) and `keyboard.status`.
 
+### A clock per piece
+
+`chan.clock` counts the seconds since it was switched on. Its `run` is on from 0.5 up; each
+time it turns on, the clock starts over from 0, and while it is off the clock stands at 0. With
+`equals` set, `run` is on while it equals that number instead: bind `run` to the channel that
+says which piece plays (`last` of a `chan.keyboard_in`, or the `chan.constant` bound to it) and
+set `equals` to the piece's number, and the piece has a clock that starts with it, with one
+binding. `mode` says what happens after `length` seconds: `once` holds at the end, `loop` starts
+over, `free` runs on. Its channels are `seconds`, `fraction` (of `length`) and `done` (1 once a
+full length has passed). A clock that nothing computed for more than half a second while on
+(its piece was not picked in a `tex.switch`, so nothing asked for it) also starts over, and so
+does every clock after a seek. To compare channels elsewhere, `chan.math` has `op` `equal`: 1
+where a equals b, else 0.
+
 ## Paths
 
 Every node has a path: `/noise1` at the top level, `/scene/noise1` inside the component

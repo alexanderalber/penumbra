@@ -828,6 +828,7 @@ Tagged shapes on the surface: a mask and a distance field per tag, outlines, a t
 Inputs:
 
 - `table` (table): Shapes from a table (as the `table` output has them) instead of the node's own
+- `trace` (tex): A mask or label picture whose regions become shapes tagged `trace_tag`, besides the node's own: traced again whenever the picture or a `trace_*` param changes, never stored. Meant for a picture that holds still (a tex.image, a shader on images); it is stretched to the surface
 
 Outputs:
 
@@ -845,6 +846,13 @@ Outputs:
 | `shapes` | text |  |  | One per line: `tag rect x,y w,h`, `tag ellipse x,y w,h` or `tag poly x,y x,y ...`, optionally `repeat CxR dx,dy`; surface coordinates (draw them in the viewer) |
 | `tag` | text |  |  | Tags in the mask and the distance field, separated by spaces; empty: all |
 | `outline` *(more)* | float | `2` | 0.5 to 8 px (soft) | Width of the lines in the outline output, in surface pixels |
+| `trace_tag` *(trace)* | text | `"trace"` |  | Tag of the shapes traced from the `trace` input (one word: letters, digits, `_`) |
+| `trace_channel` *(trace)* | auto \| red \| green \| blue \| alpha \| luma | `"auto"` |  | The channel of the `trace` input that is traced; auto: alpha when the picture has transparent pixels, else luma; red: the red channel (label pictures often keep their labels there); green: the green channel; blue: the blue channel; alpha: the alpha channel; luma: the brightness (Rec. 709 weights on the linear values) |
+| `trace_threshold` *(trace)* | float | `0.5` | 0 to 1 (soft) | Inside a shape is above this value (below with `trace_invert`); not used with `trace_labels` |
+| `trace_invert` *(trace)* | bool | `false` |  | Inside is below the threshold: dark objects on a bright wall |
+| `trace_labels` *(trace)* | bool | `false` |  | A label picture: every value above 0 is a region of its own (one shape per label), 0 is the background; the threshold is not used |
+| `trace_tolerance` *(trace)* | float | `1` | 0 to 8 px (soft) | How far a traced line may stray from the pixel edges to save points, in pixels of the picture |
+| `trace_min_area` *(trace)* | float | `64` | 0 to 10000 (soft) | Regions of fewer pixels of the picture are specks and dropped; holes in regions are filled |
 
 ### tex.slope
 
@@ -1037,7 +1045,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed), [chan.trail](#chantrail)
 
 ### chan.audio_analysis
 
@@ -1083,6 +1091,25 @@ Outputs: `out` (chan).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `device` | text |  |  | Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's default input |
+
+### chan.clock
+
+Seconds since it was switched on: starts over from 0 each time `run` turns on, then plays once, loops or runs on. A clock per piece of a show that starts with its piece
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): `seconds` since it was switched on (once: at most `length`; loop: within the round), `fraction` of `length` (0 to 1 for once and loop), `done` (1 once a full length has passed since it was switched on, else 0). It also starts over when it was not computed for more than half a second of show time while on (nothing showed it, as when its piece was not picked) and after a seek
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `run` | float | `1` | 0 to 1 (soft) | On from 0.5 up (with `equals` set: while it equals that number). Each time it turns on the clock starts over from 0; while it is off the clock stands at 0. Bind it to a key's gate, or to the piece channel with `equals` |
+| `equals` | int | `-1` (off) | -1 to 20 (soft) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the piece's number. While off, `run` is on from 0.5 up; -1: off |
+| `length` | float | `10` | 0.1 to 120 s (soft) | How long one run (once) or one round (loop) takes; `fraction` is the time over it |
+| `mode` | once \| loop \| free | `"once"` |  | What the clock does once `length` has passed; once: it stops at the end and holds there; loop: it starts over from 0, round after round; free: it runs on: seconds grow without end, fraction past 1 |
 
 ### chan.constant
 
@@ -1211,7 +1238,7 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | add \| subtract \| multiply \| divide \| min \| max \| power \| modulo \| floor | `"add"` |  | What is done with a and b, sample by sample; add: a + b; subtract: a - b; multiply: a times b: b scales a; divide: a divided by b; min: the smaller of a and b: b is a ceiling; max: the larger of a and b: b is a floor; power: a to the power b; modulo: a wrapped into 0 to b (b = 0 leaves a); floor: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a) |
+| `op` | add \| subtract \| multiply \| divide \| min \| max \| power \| modulo \| floor \| equal | `"add"` |  | What is done with a and b, sample by sample; add: a + b; subtract: a - b; multiply: a times b: b scales a; divide: a divided by b; min: the smaller of a and b: b is a ceiling; max: the larger of a and b: b is a floor; power: a to the power b; modulo: a wrapped into 0 to b (b = 0 leaves a); floor: a down to a multiple of b (b = 1: whole numbers; b = 0 leaves a); equal: 1 where a equals b (to within a millionth), else 0: whether the piece channel is 3 |
 | `b` | float | `0` | -1 to 1 (soft) | The b side as a number, used while input b is unconnected |
 
 ### chan.merge
