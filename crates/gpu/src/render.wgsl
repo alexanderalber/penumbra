@@ -236,23 +236,9 @@ fn palette(id: u32) -> vec3f {
     return pow(rgb, vec3f(2.2));
 }
 
-// Texels of the bound texture per needed projector pixel along its worse axis, as
-// projection.wgsl's density().
+// Texels of the bound texture per needed projector pixel along its worse axis.
 fn density(uv: vec2f) -> f32 {
-    let t = uv * vec2f(textureDimensions(tex));
-    let gx = vec2f(dpdx(t.x), dpdy(t.x)) * frame.overlay_scale;
-    let gy = vec2f(dpdx(t.y), dpdy(t.y)) * frame.overlay_scale;
-    return min(min(length(gx), length(gy)) * frame.overlay_factor, frame.overlay_cap);
-}
-
-// Green about one to one, red too coarse (below 0.9), blue wasted (above 1.3), the limits of
-// ops::res; the picture's brightness shows through. The same as projection.wgsl's overlay().
-fn overlay_tint(r: f32, c: vec3f) -> vec3f {
-    var tint = vec3f(0.1, 0.85, 0.2);
-    tint = mix(vec3f(1.0, 0.1, 0.05), tint, smoothstep(0.87, 0.9, r));
-    tint = mix(tint, vec3f(0.15, 0.35, 1.0), smoothstep(1.3, 1.36, r));
-    let luma = dot(c, vec3f(0.2126, 0.7152, 0.0722));
-    return tint * (0.3 + 0.7 * luma);
+    return pn_density(uv * vec2f(textureDimensions(tex)), frame.overlay_scale, frame.overlay_factor, frame.overlay_cap);
 }
 
 // A projector's picture at `uv` (0..1 from the top left); white without one.
@@ -615,7 +601,7 @@ fn shade(v: VOut, open: f32) -> vec4f {
     }
     if frame.overlay == 1u {
         let straight = clamp(base.rgb / max(base.a, 1e-6), vec3f(0.0), vec3f(1.0));
-        base = vec4f(overlay_tint(r, straight) * base.a, base.a);
+        base = vec4f(pn_overlay_tint(r, straight) * base.a, base.a);
     }
     return base;
 }

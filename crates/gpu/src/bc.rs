@@ -11,7 +11,7 @@ use penumbra_core::{Error, lock};
 
 use crate::{FORMAT, Gpu, Tex};
 
-const SOURCE: &str = include_str!("bc.wgsl");
+const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("bc.wgsl"));
 
 /// A block-compressed texture format. Blocks are 4 x 4 pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

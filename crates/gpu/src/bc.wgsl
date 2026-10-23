@@ -19,14 +19,11 @@ struct Conv {
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-    let x = f32((i << 1u) & 2u);
-    let y = f32(i & 2u);
-    return vec4f(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    return pn_fullscreen(i);
 }
 
 fn srgb_to_linear(v: vec3f) -> vec3f {
-    let x = clamp(v, vec3f(0.0), vec3f(1.0));
-    return select(pow((x + 0.055) / 1.055, vec3f(2.4)), x / 12.92, x <= vec3f(0.04045));
+    return pn_srgb_decode(clamp(v, vec3f(0.0), vec3f(1.0)));
 }
 
 @fragment

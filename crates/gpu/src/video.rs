@@ -9,7 +9,7 @@ use penumbra_core::{Error, lock};
 
 use crate::{FORMAT, Gpu, Tex};
 
-const SOURCE: &str = include_str!("video.wgsl");
+const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("video.wgsl"));
 
 /// Samples as the decoder delivered them. Plane sizes follow from the frame size and the
 /// chroma shifts; slices that are too short are refused, never read past.

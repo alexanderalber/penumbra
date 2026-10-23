@@ -29,9 +29,7 @@ struct Conv {
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4f {
-    let x = f32((i << 1u) & 2u);
-    let y = f32(i & 2u);
-    return vec4f(x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0);
+    return pn_fullscreen(i);
 }
 
 fn load(t: texture_2d<u32>, p: vec2i) -> f32 {

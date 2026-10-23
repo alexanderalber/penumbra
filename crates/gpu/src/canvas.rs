@@ -12,6 +12,9 @@ use penumbra_core::{Error, lock};
 
 use crate::{FORMAT, Gpu, Tex};
 
+/// The shader, after the helpers the built-in shaders share.
+const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("canvas.wgsl"));
+
 /// Width and height of the glyph atlas in texels.
 pub const ATLAS: u32 = 2048;
 /// Bytes of one primitive in the storage buffer.
@@ -114,7 +117,7 @@ impl Pipelines {
         let (pipelines, error) = gpu.scoped(|| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("canvas"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("canvas.wgsl").into()),
+                source: wgpu::ShaderSource::Wgsl(SOURCE.into()),
             });
             let pipeline = |label, vs, fs, blend| {
                 device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -420,7 +423,25 @@ fn blend_space(c: [f32; 4]) -> [f32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::gpu;
+    use crate::testing::{f32_at, gpu, member, u32_at, wgsl_struct};
+
+    /// A primitive's record and the uniform block match canvas.wgsl's structs.
+    #[test]
+    fn layout_matches_the_shader() {
+        let source = SOURCE;
+        let (span, _) = wgsl_struct(source, "U");
+        assert_eq!(u64::from(span), UNIFORM_SIZE);
+        let (span, m) = wgsl_struct(source, "Prim");
+        assert_eq!(span as usize, PRIM_SIZE);
+        let line = Paint::Line { from: [2.0, 3.0], to: [6.0, 7.0], width: 0.5, color: [0.25, 0.0, 0.0, 1.0] };
+        let b = line.record().unwrap();
+        let f = |name: &str| f32_at(&b, member(&m, name).offset);
+        assert_eq!(f("bounds"), 2.0 - 1.25);
+        assert_eq!(f("a"), 2.0);
+        assert_eq!(f("b"), 0.5);
+        assert_eq!(f("color"), 0.25);
+        assert_eq!(u32_at(&b, member(&m, "kind").offset), 3);
+    }
 
     #[test]
     fn shapes_cover_their_pixels_and_blend_like_the_ui() {
