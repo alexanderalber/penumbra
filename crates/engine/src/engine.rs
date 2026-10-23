@@ -48,10 +48,13 @@
 //! thread of its own when the GPU arrives ([`Engine::attach_gpu`]); until then nothing is saved,
 //! so a start without a GPU cannot overwrite it. [`Engine::shutdown`] saves once more.
 //!
-//! **OSC** ([`crate::osc`]): the cook thread tells the [`Hub`] which ports the network's
-//! `chan.osc_in` nodes want whenever the network changes; the hub is a resource of the cooker
-//! (the nodes read what arrived); the **osc thread** turns messages into param edits and ends
-//! learns.
+//! **Device hubs** ([`crate::hubs`]): every hub below goes through one list for what the engine
+//! does with all of them (provide to the cooker, tell what the network wants, shut down).
+//!
+//! **OSC** ([`crate::osc`]): the cook thread tells the [`penumbra_osc::Hub`] which ports the
+//! network's `chan.osc_in` nodes want whenever the network changes; the hub is a resource of
+//! the cooker (the nodes read what arrived); the **osc thread** turns messages into param edits
+//! and ends learns.
 //!
 //! **Audio:** likewise, the cook thread tells the audio [`AudioHub`] which input devices the
 //! network's `chan.audio_in` nodes want; the hub keeps a stream thread per device, and the
@@ -94,13 +97,14 @@ use penumbra_ops::out::{Mappings, OutputBoard, ProjectorFrame};
 use penumbra_ops::res::{Report, Scene};
 use penumbra_ops::tex::mapper::Mappers;
 use penumbra_ops::tex::render::Renders;
-use penumbra_osc::Hub;
+use penumbra_ops::tex::scan::Scans;
 use penumbra_project::Session;
 use penumbra_record::Hub as RecordHub;
 use penumbra_spacenav::SpaceNav;
 use penumbra_system::LoadMeter;
 use serde::Serialize;
 
+use crate::hubs::Hubs;
 use crate::meter::CookMeter;
 use crate::osc::OscShared;
 use crate::pictures::GeoPictures;
@@ -285,12 +289,8 @@ pub struct CookState {
     pub state: StateKeeper,
     /// Cook pass timings since the last `cook.stats` reset.
     pub stats: PassStats,
-    /// Told which ports to listen on when the network changes.
-    osc: Hub,
-    /// Told which audio inputs to open when the network changes.
-    audio: AudioHub,
-    /// Told which cameras to open when the network changes.
-    camera: CameraHub,
+    /// Told what the network wants when it changes.
+    hubs: Arc<Hubs>,
     /// Added to the cooker's pass numbers in what is published, so they keep growing when
     /// another project opens (the output threads wait for a pass newer than the last they drew).
     pass_base: u64,
@@ -386,9 +386,9 @@ impl CookState {
                 .map(|n| n.id)
                 .collect();
             self.sinks = Some((net.clone(), sinks));
-            self.osc.set_wanted(&penumbra_ops::osc::wants(&net, types));
-            self.audio.set_wanted(&penumbra_ops::audio::wants(&net, types));
-            self.camera.set_wanted(&penumbra_ops::tex::video_in::wants(&net, types));
+            for hub in self.hubs.all() {
+                hub.network_changed(&net, types);
+            }
         }
         let mut wanted: Vec<NodeId> = self.sinks.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
         self.watched.retain(|id| net.node(*id).is_some());
@@ -560,17 +560,8 @@ pub struct Engine {
     /// paused).
     notice: Mutex<Option<String>>,
     state: Arc<StateShared>,
-    osc: Arc<OscShared>,
-    audio: AudioHub,
-    dmx: DmxHub,
-    dmx_in: DmxInputs,
-    camera: CameraHub,
-    /// The movie recordings of `out.video` nodes.
-    record: RecordHub,
-    /// The structured light scans of `tex.scan` nodes (`scan.run`).
-    scans: penumbra_ops::tex::scan::Scans,
-    /// The 3D mouse; its reader starts when the UI first asks for it.
-    spacenav: SpaceNav,
+    /// OSC, audio, DMX, cameras, recordings, scans, the 3D mouse.
+    hubs: Arc<Hubs>,
     /// The timer pacing the show clock while no output does, one thread per open project.
     ticker: Arc<Ticker>,
     /// CPU and GPU load, sampled while asked for.
@@ -641,14 +632,7 @@ impl Engine {
             crash_marker: Mutex::new(None),
             notice: Mutex::new(None),
             state: Arc::new(StateShared::default()),
-            osc: Arc::new(OscShared::new(Hub::new())),
-            audio: AudioHub::new(),
-            dmx: DmxHub::new(),
-            dmx_in: DmxInputs::new(),
-            camera: CameraHub::new(),
-            record: RecordHub::new(),
-            scans: penumbra_ops::tex::scan::Scans::new(),
-            spacenav: SpaceNav::new(),
+            hubs: Arc::new(Hubs::new()),
             ticker: Arc::new(Ticker::default()),
             load: LoadMeter::new(),
             shut: AtomicBool::new(false),
@@ -667,13 +651,9 @@ impl Engine {
         cooker.provide(mappers.clone());
         let renders = Renders::new();
         cooker.provide(renders.clone());
-        cooker.provide(self.osc.hub().clone());
-        cooker.provide(self.audio.clone());
-        cooker.provide(self.dmx.clone());
-        cooker.provide(self.dmx_in.clone());
-        cooker.provide(self.camera.clone());
-        cooker.provide(self.record.clone());
-        cooker.provide(self.scans.clone());
+        for hub in self.hubs.all() {
+            hub.provide(&mut cooker);
+        }
         cooker.provide(penumbra_ops::tex::blob_track::BlobTracks::new());
         let gpu = self.gpu.get().cloned();
         if let Some(gpu) = &gpu {
@@ -699,9 +679,7 @@ impl Engine {
             resolution: None,
             state: StateKeeper::new(self.state.clone(), session.dir()),
             stats: PassStats::default(),
-            osc: self.osc.hub().clone(),
-            audio: self.audio.clone(),
-            camera: self.camera.clone(),
+            hubs: self.hubs.clone(),
             pass_base,
         }
     }
@@ -742,8 +720,8 @@ impl Engine {
         *lock(&self.stop_project) = Some(stop_tx);
         lock(&self.threads).push(project);
 
-        self.osc.resume();
-        let (osc_session, osc_shared) = (session.clone(), self.osc.clone());
+        self.hubs.osc.resume();
+        let (osc_session, osc_shared) = (session.clone(), self.hubs.osc.clone());
         let osc_thread = std::thread::Builder::new()
             .name("osc".into())
             .spawn(move || crate::osc::run(&osc_session, &osc_shared))
@@ -773,7 +751,7 @@ impl Engine {
         }
         lock(&self.cook).send(CookMsg::Stop).ok();
         self.ticker.stop(true);
-        self.osc.stop();
+        self.hubs.osc.stop();
         if let Some(stop) = lock(&self.stop_project).take() {
             drop(stop);
         }
@@ -806,8 +784,9 @@ impl Engine {
             return Err(Error::new("the app is closing"));
         }
         let pass_base = self.view().pass.max(self.output().pass);
-        // Node ids of the next project mean other nodes; a scan going on stops.
-        self.scans.clear();
+        for hub in self.hubs.all() {
+            hub.project_closing();
+        }
         self.stop_threads(save_state);
         let session = match make() {
             Ok(session) => session,
@@ -1011,42 +990,42 @@ impl Engine {
 
     /// OSC: the hub, params set by address, learn.
     pub fn osc(&self) -> &Arc<OscShared> {
-        &self.osc
+        &self.hubs.osc
     }
 
     /// The audio inputs.
     pub fn audio(&self) -> &AudioHub {
-        &self.audio
+        &self.hubs.audio
     }
 
     /// The DMX outputs.
     pub fn dmx(&self) -> &DmxHub {
-        &self.dmx
+        &self.hubs.dmx
     }
 
     /// The DMX inputs.
     pub fn dmx_in(&self) -> &DmxInputs {
-        &self.dmx_in
+        &self.hubs.dmx_in
     }
 
     /// The cameras.
     pub fn camera(&self) -> &CameraHub {
-        &self.camera
+        &self.hubs.camera
     }
 
     /// The movie recordings.
     pub fn record(&self) -> &RecordHub {
-        &self.record
+        &self.hubs.record
     }
 
     /// The scans of `tex.scan` nodes.
-    pub fn scans(&self) -> &penumbra_ops::tex::scan::Scans {
-        &self.scans
+    pub fn scans(&self) -> &Scans {
+        &self.hubs.scans
     }
 
     /// The 3D mouse; [`SpaceNav::start`] opens it.
     pub fn spacenav(&self) -> &SpaceNav {
-        &self.spacenav
+        &self.hubs.spacenav
     }
 
     /// CPU and GPU load; sampled on a thread of its own while asked for.
@@ -1293,14 +1272,11 @@ impl Engine {
         }
         let _switch = lock(&self.switching);
         self.stop_threads(true);
-        // The cook thread has dropped its nodes, so every recording is finishing its file.
-        self.record.shutdown(RECORD_FINISH);
-        self.osc.hub().shutdown();
-        self.audio.shutdown();
-        self.dmx.shutdown();
-        self.dmx_in.shutdown();
-        self.camera.shutdown();
-        self.spacenav.shutdown();
+        // In the order of the list: the cook thread has dropped its nodes, so every recording
+        // is finishing its file, which comes first.
+        for hub in self.hubs.all() {
+            hub.shutdown();
+        }
         self.load.shutdown();
     }
 }

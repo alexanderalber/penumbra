@@ -16,6 +16,7 @@ pub mod crash;
 pub mod dmx;
 pub mod engine;
 pub mod flatfield;
+pub mod hubs;
 pub mod meter;
 pub mod navigation;
 pub mod ndi;
