@@ -173,9 +173,22 @@ kept across restarts. Use it for calibration results and anything expensive to m
 | `layout.ron` | where the nodes sit, pan and zoom, open sections, the right column's width, editor options (thumbnails included) |
 | `state/` | what nodes hold across restarts (feedback loops, caches, locked outputs); ignored by git through its own `.gitignore` |
 | `components/` | the project's own component files |
+| `project.ron.bak` | the file as it was before `project.save` wrote over a file that did not load; worth a line in a project's `.gitignore` |
 | anything else | shaders, scripts, images, videos, meshes, referenced by relative path |
 
 `project.ron` is plain text, meant to be read and edited. The app notices a change to it and
-merges only what differs, as one undoable entry, keeping your unsaved work. A file that does not
-parse is reported and left alone (autosave pauses) until it is fixed. A project keeps working
-under git: one node per line, sorted.
+merges only what differs, as one undoable entry, keeping your unsaved work. A project keeps
+working under git: one node per line, sorted.
+
+A node whose line does not load (a kind this build does not know, an input its kind does not
+have, a param value its kind refuses) does not stop the rest: the project opens, and the node
+stays as a placeholder (`node.broken`) that shows the reason as its error, in the bar at
+the top of the window and in `project.info` (`broken`). The placeholder does nothing; wires from
+it carry nothing. Saving writes its line back as it was, so nothing is lost by opening and
+saving. It can be renamed or deleted; to change it, fix its line in `project.ron`, and the
+fixed node takes its place.
+
+A file that does not parse at all, or has a format version this build does not read, is reported
+and left alone (autosave pauses) until it is fixed. `project.save` writes over it anyway; it first
+copies the file to `project.ron.bak` (also when nodes are kept as placeholders; one copy, the next
+such save replaces it).

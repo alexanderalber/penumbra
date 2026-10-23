@@ -31,7 +31,7 @@
 use std::collections::BTreeMap;
 
 use penumbra_core::{Error, Name, NodePath, ParamPart, Value};
-use penumbra_graph::{NodeDesc, NodeTypes, check_setting};
+use penumbra_graph::{DataKind, Network, NodeDesc, NodeTypes, Params, broken, check_param, check_setting};
 use serde::{Deserialize, Serialize};
 
 use crate::content::{BindRef, Content, NodeContent, PortRef};
@@ -76,24 +76,33 @@ fn is_false(b: &bool) -> bool {
 }
 
 fn desc<'t>(types: &'t NodeTypes, path: &NodePath, kind: &str) -> Result<&'t NodeDesc, Error> {
-    types.desc(kind).ok_or_else(|| {
-        Error::new(format!(
-            "{path}: unknown node kind `{kind}`; known: {}",
-            types.kinds().collect::<Vec<_>>().join(", ")
-        ))
-    })
+    types.desc(kind).ok_or_else(|| Error::new(format!("{path}: unknown node kind `{kind}`")))
 }
 
-/// Reads the text of a project file. Checks the syntax, the version, the node kinds and the
-/// connections; parameter values are checked when the content is applied to a network.
+/// Reads the text of a project file, all or nothing: any node that does not load fails the
+/// whole text (component files, the demo). Checks the syntax, the version, the node kinds and
+/// the connections; param values are checked when the content is applied to a network.
 pub fn parse(text: &str, types: &NodeTypes) -> Result<Content, Error> {
-    parse_as(text, types, FILE_NAME, false)
+    read(text, types, FILE_NAME, false, false)
+}
+
+/// Reads the text of a project file as a project opens or merges it: a node that does not load
+/// (param values included) becomes a placeholder ([`penumbra_graph::broken`]) holding its
+/// entry and the reason, and the rest loads. Only a text that is no project file at all (its syntax, its version, a settings
+/// value) fails as a whole; so do the few problems between nodes (a loop, a node inside one
+/// that cannot hold nodes), which the network refuses when the content is applied.
+pub fn load(text: &str, types: &NodeTypes) -> Result<Content, Error> {
+    read(text, types, FILE_NAME, false, true)
 }
 
 /// [`parse`] for a text called `what` in errors. With `outside`, inputs and bindings may name
 /// nodes that are not in the text (copied nodes: [`crate::clipboard`]); an input from such a
 /// node gives its output by index, since its kind is not known here.
 pub(crate) fn parse_as(text: &str, types: &NodeTypes, what: &str, outside: bool) -> Result<Content, Error> {
+    read(text, types, what, outside, false)
+}
+
+fn read(text: &str, types: &NodeTypes, what: &str, outside: bool, tolerant: bool) -> Result<Content, Error> {
     let repr: FileRepr = ron::from_str(text).map_err(|e| Error::new(format!("{what}: {e}")))?;
     if repr.version == 0 || repr.version > FORMAT_VERSION {
         return Err(Error::new(format!(
@@ -109,41 +118,166 @@ pub(crate) fn parse_as(text: &str, types: &NodeTypes, what: &str, outside: bool)
             settings.insert(name.clone(), v);
         }
     }
-    let mut nodes = BTreeMap::new();
+    // Which nodes do not load: first what each node gets wrong by itself, then wires and
+    // bindings. A wire or binding from a node that does not load is taken as written, so
+    // finding one more such node only lets readers load; the passes end after one or two.
+    let mut failed: BTreeMap<&NodePath, Error> = BTreeMap::new();
     for (path, node) in &repr.nodes {
-        let d = desc(types, path, &node.kind)?;
-        let level = path.parent().unwrap_or_else(NodePath::root);
-        let mut inputs = vec![None; d.inputs.len()];
-        for (name, source) in &node.inputs {
-            let ctx = || format!("{path} input `{name}`");
-            let index = d.inputs.iter().position(|i| i.name == name.as_str()).ok_or_else(|| {
-                let known: Vec<&str> = d.inputs.iter().map(|i| i.name.as_str()).collect();
-                Error::new(format!("{}: `{}` has no such input; inputs: {}", ctx(), d.kind, known.join(", ")))
-            })?;
-            let port =
-                parse_source(&level, source, &repr.nodes, types, outside).map_err(|e| e.context(ctx()))?;
-            if let Some(slot) = inputs.get_mut(index) {
-                *slot = Some(port);
+        if let Err(e) = check_own(path, node, types, tolerant) {
+            failed.insert(path, e);
+        }
+    }
+    loop {
+        let mut more = false;
+        for (path, node) in &repr.nodes {
+            if failed.contains_key(path) {
+                continue;
+            }
+            let mut outputs = BTreeMap::new();
+            if let Err(e) =
+                load_node(path, node, &repr.nodes, &failed, &mut outputs, types, outside, tolerant)
+            {
+                failed.insert(path, e);
+                more = true;
             }
         }
-        let mut binds = BTreeMap::new();
-        for (part, source) in &node.binds {
-            let src = parse_bind(&level, source, &repr.nodes, outside)
-                .map_err(|e| e.context(format!("{path} bind `{part}`")))?;
-            binds.insert(part.clone(), src);
+        if !more {
+            break;
+        }
+    }
+    if !tolerant && let Some(e) = failed.values().next() {
+        return Err(e.clone());
+    }
+    let mut nodes = BTreeMap::new();
+    // Per placeholder, the output names its readers use ([`broken::OUTPUTS`]).
+    let mut outputs: BTreeMap<NodePath, Vec<String>> = BTreeMap::new();
+    for (path, node) in &repr.nodes {
+        if failed.contains_key(path) {
+            continue;
+        }
+        let content = load_node(path, node, &repr.nodes, &failed, &mut outputs, types, outside, tolerant)
+            .map_err(|e| e.context(format!("{what}: {path} loaded once, then not")))?;
+        nodes.insert(path.clone(), content);
+    }
+    for (path, error) in failed {
+        let entry = ron::to_string(repr.nodes.get(path).ok_or_else(|| Error::new("lost a node"))?)
+            .map_err(|e| Error::new(format!("{path}: {e}")))?;
+        if entry.len() > penumbra_core::param::MAX_TEXT {
+            return Err(error.context(format!("{what} (the entry is too long to keep as a placeholder)")));
+        }
+        log::warn!("{path} did not load and is kept as it is in {what}: {error}");
+        let mut params = BTreeMap::new();
+        params.insert(Name::new(broken::ENTRY)?, Value::Text(entry));
+        params.insert(Name::new(broken::ERROR)?, Value::Text(error.0));
+        if let Some(names) = outputs.get(path).filter(|n| !n.is_empty()) {
+            params.insert(Name::new(broken::OUTPUTS)?, Value::Text(names.join("\n")));
         }
         nodes.insert(
             path.clone(),
             NodeContent {
-                kind: node.kind.clone(),
-                params: node.params.clone(),
-                inputs,
-                binds,
-                locked: node.locked,
+                kind: broken::BROKEN_KIND.to_string(),
+                params,
+                inputs: Vec::new(),
+                binds: BTreeMap::new(),
+                locked: false,
             },
         );
     }
     Ok(Content { nodes, settings })
+}
+
+/// What can be checked of the node at `path` without looking at other nodes; its declaration.
+fn check_own<'t>(
+    path: &NodePath,
+    node: &NodeRepr,
+    types: &'t NodeTypes,
+    check_params: bool,
+) -> Result<&'t NodeDesc, Error> {
+    if node.kind == broken::BROKEN_KIND {
+        return Err(Error::new(format!("{path}: `{}` is no kind a file may name", node.kind)));
+    }
+    let d = desc(types, path, &node.kind)?;
+    for (name, value) in node.params.iter().filter(|_| check_params) {
+        // Params the kind does not declare are kept ([`Params::Keep`]), as when it is applied.
+        check_param(d, name, value, Params::Keep).map_err(|e| e.context(format!("{path} param")))?;
+    }
+    if node.locked && d.outputs.is_empty() {
+        return Err(Error::new(format!("{path} is locked, but `{}` has no outputs to lock", d.kind)));
+    }
+    for name in node.inputs.keys() {
+        if !d.inputs.iter().any(|i| i.name == name.as_str()) {
+            let known: Vec<&str> = d.inputs.iter().map(|i| i.name.as_str()).collect();
+            return Err(Error::new(format!(
+                "{path} input `{name}`: `{}` has no such input; inputs: {}",
+                d.kind,
+                known.join(", ")
+            )));
+        }
+    }
+    for part in node.binds.keys() {
+        if let Some(spec) = d.param_spec(part.param.as_str()) {
+            spec.check_bindable(part.component).map_err(|e| e.context(format!("{path} bind `{part}`")))?;
+        }
+    }
+    Ok(d)
+}
+
+/// The content of the node at `path`, or why it does not load. `failed` holds the nodes known
+/// not to load; `outputs` collects the output names read from them. Param values are checked
+/// only with `check_params`; otherwise the network checks them when the content is applied.
+#[allow(clippy::too_many_arguments)]
+fn load_node(
+    path: &NodePath,
+    node: &NodeRepr,
+    nodes: &BTreeMap<NodePath, NodeRepr>,
+    failed: &BTreeMap<&NodePath, Error>,
+    outputs: &mut BTreeMap<NodePath, Vec<String>>,
+    types: &NodeTypes,
+    outside: bool,
+    check_params: bool,
+) -> Result<NodeContent, Error> {
+    let d = check_own(path, node, types, check_params)?;
+    let level = path.parent().unwrap_or_else(NodePath::root);
+    let mut inputs = vec![None; d.inputs.len()];
+    for (name, source) in &node.inputs {
+        let ctx = || format!("{path} input `{name}`");
+        let index = d.inputs.iter().position(|i| i.name == name.as_str()).ok_or_else(|| {
+            let known: Vec<&str> = d.inputs.iter().map(|i| i.name.as_str()).collect();
+            Error::new(format!("{}: `{}` has no such input; inputs: {}", ctx(), d.kind, known.join(", ")))
+        })?;
+        let (port, kind) = parse_source(&level, source, nodes, failed, outputs, types, outside)
+            .map_err(|e| e.context(ctx()))?;
+        if let (Some(kind), Some(spec)) = (kind, d.inputs.get(index))
+            && kind != spec.kind
+        {
+            return Err(Error::new(format!(
+                "{}: {source} gives {kind:?}, the input wants {:?}",
+                ctx(),
+                spec.kind
+            )));
+        }
+        if let Some(slot) = inputs.get_mut(index) {
+            *slot = Some(port);
+        }
+    }
+    let mut binds = BTreeMap::new();
+    for (part, source) in &node.binds {
+        let ctx = || format!("{path} bind `{part}`");
+        let src = parse_bind(&level, source, nodes, outside).map_err(|e| e.context(ctx()))?;
+        if let Some(from) = nodes.get(&src.node).filter(|_| !failed.contains_key(&src.node))
+            && !types.desc(&from.kind).is_some_and(|f| f.outputs.iter().any(|o| o.kind == DataKind::Chan))
+        {
+            return Err(Error::new(format!("{}: {} has no chan output to bind to", ctx(), src.node)));
+        }
+        binds.insert(part.clone(), src);
+    }
+    Ok(NodeContent {
+        kind: node.kind.clone(),
+        params: node.params.clone(),
+        inputs,
+        binds,
+        locked: node.locked,
+    })
 }
 
 /// `"path"` or `"path:channel"`, read on `level`.
@@ -164,14 +298,17 @@ fn parse_bind(
     Ok(BindRef { node, channel })
 }
 
-/// `"path"` or `"path:output"`, where output is a name or an index, read on `level`.
+/// `"path"` or `"path:output"`, where output is a name or an index, read on `level`; with the
+/// data kind of that output when it is known.
 fn parse_source(
     level: &NodePath,
     text: &str,
     nodes: &BTreeMap<NodePath, NodeRepr>,
+    failed: &BTreeMap<&NodePath, Error>,
+    outputs: &mut BTreeMap<NodePath, Vec<String>>,
     types: &NodeTypes,
     outside: bool,
-) -> Result<PortRef, Error> {
+) -> Result<(PortRef, Option<DataKind>), Error> {
     let (path, output) = match text.split_once(':') {
         Some((p, o)) => (p, Some(o)),
         None => (text, None),
@@ -184,9 +321,33 @@ fn parse_source(
                 Error::new(format!("{path} is not in the text, so its output is given by number, not `{o}`"))
             })?,
         };
-        return Ok(PortRef { node: path, output });
+        return Ok((PortRef { node: path, output }, None));
     }
     let source = nodes.get(&path).ok_or_else(|| Error::new(format!("{path} is not in the file")))?;
+    if failed.contains_key(&path) {
+        // Its outputs are unknown: a number stays a number, a name gets a number of its own.
+        let output = match output {
+            None => 0,
+            Some(o) => match o.parse::<u32>() {
+                Ok(i) => i,
+                Err(_) => {
+                    let names = outputs.entry(path.clone()).or_default();
+                    let at = match names.iter().position(|n| n == o) {
+                        Some(at) => at,
+                        None => {
+                            names.push(o.to_string());
+                            names.len() - 1
+                        }
+                    };
+                    u32::try_from(at)
+                        .ok()
+                        .and_then(|at| broken::NAMED_OUTPUT.checked_add(at))
+                        .ok_or_else(|| Error::new(format!("{path}: too many output names")))?
+                }
+            },
+        };
+        return Ok((PortRef { node: path, output }, None));
+    }
     let d = desc(types, &path, &source.kind)?;
     let output = match output {
         None => 0,
@@ -203,17 +364,77 @@ fn parse_source(
                 })?,
         },
     };
-    if output as usize >= d.outputs.len() {
-        return Err(Error::new(format!("{path} has no output {output}")));
+    let spec =
+        d.outputs.get(output as usize).ok_or_else(|| Error::new(format!("{path} has no output {output}")))?;
+    Ok((PortRef { node: path, output }, Some(spec.kind)))
+}
+
+/// A node of a project that did not load, as `project.info` lists it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BrokenNode {
+    pub path: String,
+    /// The kind its entry names.
+    pub kind: String,
+    pub error: String,
+}
+
+/// The placeholders in `net` ([`penumbra_graph::broken`]).
+pub fn broken_nodes(net: &Network) -> Vec<BrokenNode> {
+    let mut out: Vec<BrokenNode> = net
+        .nodes()
+        .filter(|n| broken::is_broken(n))
+        .map(|n| BrokenNode {
+            path: net.path_of(n.id).map(|p| p.to_string()).unwrap_or_default(),
+            kind: ron::from_str::<NodeRepr>(broken::text(n, broken::ENTRY))
+                .map(|r| r.kind)
+                .unwrap_or_default(),
+            error: broken::text(n, broken::ERROR).to_string(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.path.cmp(&b.path));
+    out
+}
+
+/// How a reader writes output `output` of `from`, which it calls `name`: by the output's name
+/// where it has one.
+fn output_ref(
+    content: &Content,
+    types: &NodeTypes,
+    from: &NodePath,
+    name: String,
+    output: u32,
+) -> Result<String, Error> {
+    let Some(n) = content.nodes.get(from) else {
+        // A source outside the content (copied nodes) by number: its kind is not known.
+        return Ok(format!("{name}:{output}"));
+    };
+    if n.kind == broken::BROKEN_KIND {
+        let named = output
+            .checked_sub(broken::NAMED_OUTPUT)
+            .and_then(|i| n.params.get(broken::OUTPUTS)?.as_str()?.lines().nth(i as usize));
+        return Ok(match named {
+            Some(o) => format!("{name}:{o}"),
+            None => format!("{name}:{output}"),
+        });
     }
-    Ok(PortRef { node: path, output })
+    Ok(match desc(types, from, &n.kind)?.outputs.get(output as usize) {
+        Some(out) => format!("{name}:{}", out.name),
+        None => format!("{name}:{output}"),
+    })
 }
 
 /// The text of a project file for `content`, in canonical form: sorted by path, one node per
-/// line, outputs other than the first named.
+/// line, outputs other than the first named. A placeholder is written as the entry it holds.
 pub fn print(content: &Content, types: &NodeTypes) -> Result<String, Error> {
     let mut nodes = BTreeMap::new();
     for (path, node) in &content.nodes {
+        if node.kind == broken::BROKEN_KIND {
+            let entry = node.params.get(broken::ENTRY).and_then(Value::as_str).unwrap_or_default();
+            let repr: NodeRepr = ron::from_str(entry)
+                .map_err(|e| Error::new(format!("{path}: the entry it keeps does not read: {e}")))?;
+            nodes.insert(path.clone(), repr);
+            continue;
+        }
         let d = desc(types, path, &node.kind)?;
         let level = path.parent().unwrap_or_else(NodePath::root);
         let mut inputs = BTreeMap::new();
@@ -224,14 +445,7 @@ pub fn print(content: &Content, types: &NodeTypes) -> Result<String, Error> {
             let from = level.write_ref(&src.node);
             let source = match src.output {
                 0 => from,
-                // A source outside the content (copied nodes) by number: its kind is not known.
-                o => match content.nodes.get(&src.node) {
-                    Some(n) => match desc(types, &src.node, &n.kind)?.outputs.get(o as usize) {
-                        Some(out) => format!("{from}:{}", out.name),
-                        None => format!("{from}:{o}"),
-                    },
-                    None => format!("{from}:{o}"),
-                },
+                o => output_ref(content, types, &src.node, from, o)?,
             };
             inputs.insert(Name::new(&input.name)?, source);
         }
@@ -432,6 +646,68 @@ mod tests {
             let e = parse(text, &types).unwrap_err();
             assert!(e.0.contains(want), "{text}: {e}");
         }
+    }
+
+    /// A file with nodes that do not load, in the form the app writes.
+    const BROKEN: &str = r#"(version: 1, nodes: {
+        "/a": (kind: "test.const", params: {"value": 2.0}),
+        "/b": (kind: "test.const", params: {"value": "two"}),
+        "/g": (kind: "gone.group", params: {"size": [1, 2]}),
+        "/g/in": (kind: "test.const", binds: {"value": "../a"}),
+        "/s": (kind: "test.add", inputs: {"a": "x:left", "b": "b"}),
+        "/t": (kind: "test.add", inputs: {"a": "x:3", "b": "x"}, binds: {"x": "x:ch"}),
+        "/w": (kind: "test.add", inputs: {"c": "a"}),
+        "/x": (kind: "gone.kind", params: {"rate": 2}, inputs: {"in": "a"}, binds: {"rate": "a:value"}, locked: true),
+    })"#;
+
+    fn line<'a>(text: &'a str, path: &str) -> &'a str {
+        text.lines().find(|l| l.trim_start().starts_with(&format!("\"{path}\""))).unwrap_or("").trim()
+    }
+
+    #[test]
+    fn nodes_that_do_not_load_are_kept_and_written_back_as_they_were() {
+        let types = test_types();
+        let c = load(BROKEN, &types).unwrap();
+        let kind = |p: &str| c.nodes[&p.parse::<NodePath>().unwrap()].kind.as_str();
+        for p in ["/b", "/g", "/w", "/x"] {
+            assert_eq!(kind(p), broken::BROKEN_KIND, "{p}");
+        }
+        for (p, k) in [("/a", "test.const"), ("/g/in", "test.const"), ("/s", "test.add"), ("/t", "test.add")]
+        {
+            assert_eq!(kind(p), k, "{p}");
+        }
+        let error = |p: &str| {
+            c.nodes[&p.parse::<NodePath>().unwrap()].params[broken::ERROR].as_str().unwrap_or("").to_string()
+        };
+        assert!(error("/b").contains("`value`"), "{}", error("/b"));
+        assert!(error("/g").contains("unknown node kind `gone.group`"), "{}", error("/g"));
+        assert!(error("/w").contains("no such input"), "{}", error("/w"));
+        assert!(error("/x").contains("unknown node kind `gone.kind`"), "{}", error("/x"));
+        // Wires from a placeholder are kept: a name gets a number of its own, a number stays.
+        let s = &c.nodes[&"/s".parse::<NodePath>().unwrap()];
+        assert_eq!(s.inputs[0], Some(PortRef { node: "/x".parse().unwrap(), output: broken::NAMED_OUTPUT }));
+        assert_eq!(s.inputs[1], Some(PortRef { node: "/b".parse().unwrap(), output: 0 }));
+
+        let text = print(&c, &types).unwrap();
+        for (p, want) in [
+            ("/b", r#""/b": (kind: "test.const", params: {"value": "two"}),"#),
+            // Values in the canonical form, as for every node: vectors of floats.
+            ("/g", r#""/g": (kind: "gone.group", params: {"size": [1.0, 2.0]}),"#),
+            ("/s", r#""/s": (kind: "test.add", inputs: {"a": "x:left", "b": "b"}),"#),
+            ("/t", r#""/t": (kind: "test.add", inputs: {"a": "x:3", "b": "x"}, binds: {"x": "x:ch"}),"#),
+            ("/w", r#""/w": (kind: "test.add", inputs: {"c": "a"}),"#),
+            (
+                "/x",
+                r#""/x": (kind: "gone.kind", params: {"rate": 2}, inputs: {"in": "a"}, binds: {"rate": "a:value"}, locked: true),"#,
+            ),
+        ] {
+            assert_eq!(line(&text, p), want);
+        }
+        assert_eq!(load(&text, &types).unwrap(), c);
+        assert_eq!(print(&load(&text, &types).unwrap(), &types).unwrap(), text);
+        // All or nothing where a project is not opened.
+        let e = parse(BROKEN, &types).unwrap_err();
+        assert!(e.0.contains("/g: unknown node kind"), "{e}");
     }
 
     #[test]

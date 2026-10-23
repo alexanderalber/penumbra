@@ -512,7 +512,9 @@ fn every_builtin_cooks_without_warnings() {
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
     std::fs::write(dir.join("poster.psd"), layers::psd()).unwrap();
-    let kinds: Vec<String> = types.kinds().map(str::to_string).collect();
+    // The placeholder of a node that did not load fails its cook on purpose.
+    let kinds: Vec<String> =
+        types.kinds().filter(|k| *k != penumbra_graph::broken::BROKEN_KIND).map(str::to_string).collect();
     let passes_on = |kind: &str| {
         matches!(
             kind,

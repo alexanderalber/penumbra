@@ -10,6 +10,7 @@ use std::sync::Arc;
 use penumbra_core::{Error, Name, NodeId, NodePath, ParamPart, ParamPath, Value};
 use serde::{Deserialize, Serialize};
 
+use crate::broken;
 use crate::node::{DataKind, NodeDesc, NodeTypes, PortRole};
 
 /// The text param of a container that lists the params it exposes: one per line, `name =
@@ -654,6 +655,20 @@ impl Applied {
         Ok(Arc::make_mut(node))
     }
 
+    /// Refuses an edit of placeholder `id` ([`broken`]) unless it comes from the project file.
+    fn guard(&self, id: NodeId, path: &NodePath) -> Result<(), Error> {
+        match self.network.nodes.get(&id) {
+            Some(node) => broken::refuse(node, &path.to_string(), self.params),
+            None => Ok(()),
+        }
+    }
+
+    /// Whether `id` is a placeholder and the edit comes from the project file, which may wire
+    /// from it as the file says.
+    fn kept_broken(&self, id: NodeId) -> bool {
+        self.params == Params::Keep && self.network.nodes.get(&id).is_some_and(|n| broken::is_broken(n))
+    }
+
     fn apply_one(&mut self, types: &NodeTypes, op: &Op) -> Result<(), Error> {
         // An exposed param of a component acts on the inner param it stands for.
         let aliased = match op {
@@ -692,11 +707,18 @@ impl Applied {
                 } else {
                     let p = net.require(&parent_path)?;
                     let pkind = net.nodes.get(&p).map(|n| n.kind.as_str()).unwrap_or_default();
-                    if !types.desc(pkind).is_some_and(|d| d.container) {
+                    // What sits inside a placeholder in the file loads into it, so a component
+                    // whose own entry is broken keeps its nodes.
+                    if !types.desc(pkind).is_some_and(|d| d.container) && !self.kept_broken(p) {
                         return Err(Error::new(format!("{parent_path} ({pkind}) cannot hold nodes")));
                     }
                     Some(p)
                 };
+                if kind == broken::BROKEN_KIND && self.params != Params::Keep {
+                    return Err(Error::new(format!(
+                        "`{kind}` stands for a node that did not load; only loading a project makes one"
+                    )));
+                }
                 let desc = types.desc(kind).ok_or_else(|| {
                     Error::new(format!(
                         "unknown node kind `{kind}`; known: {}",
@@ -772,6 +794,7 @@ impl Applied {
             }
             Op::Set { param, value } => {
                 let id = net.require(param.node())?;
+                self.guard(id, param.node())?;
                 let desc = desc_of(net, types, id)?;
                 let value = check_param(desc, param.param(), value, self.params)?;
                 let is_default = desc.param_spec(param.param().as_str()).is_some_and(|s| s.default == value);
@@ -787,6 +810,7 @@ impl Applied {
             }
             Op::Reset { param } => {
                 let id = net.require(param.node())?;
+                self.guard(id, param.node())?;
                 let desc = desc_of(net, types, id)?;
                 // A stray value (see [`Params::Keep`]) can always be removed.
                 let present = net.nodes.get(&id).is_some_and(|n| n.params.contains_key(param.param()));
@@ -798,10 +822,19 @@ impl Applied {
             Op::Connect { from, output, to, input } => {
                 let src = net.require(from)?;
                 let dst = net.require(to)?;
-                let out_spec = desc_of(net, types, src)?
-                    .outputs
-                    .get(*output as usize)
-                    .ok_or_else(|| Error::new(format!("{from} has no output {output}")))?;
+                self.guard(src, from)?;
+                self.guard(dst, to)?;
+                // A placeholder's outputs are unknown: the file's wire from it is kept as it is.
+                let out_spec = if self.kept_broken(src) {
+                    None
+                } else {
+                    Some(
+                        desc_of(net, types, src)?
+                            .outputs
+                            .get(*output as usize)
+                            .ok_or_else(|| Error::new(format!("{from} has no output {output}")))?,
+                    )
+                };
                 let dst_desc = desc_of(net, types, dst)?;
                 let in_spec = dst_desc
                     .inputs
@@ -813,7 +846,9 @@ impl Applied {
                          component goes through one of its input or output nodes (tex.in, tex.out, ...)"
                     )));
                 }
-                if out_spec.kind != in_spec.kind {
+                if let Some(out_spec) = out_spec
+                    && out_spec.kind != in_spec.kind
+                {
                     return Err(Error::new(format!(
                         "{from} output `{}` is {:?}, {to} input `{}` wants {:?}",
                         out_spec.name, out_spec.kind, in_spec.name, in_spec.kind
@@ -841,6 +876,7 @@ impl Applied {
             },
             Op::Lock { path, locked } => {
                 let id = net.require(path)?;
+                self.guard(id, path)?;
                 if *locked && desc_of(net, types, id)?.outputs.is_empty() {
                     return Err(Error::new(format!("{path} has no outputs to lock")));
                 }
@@ -849,6 +885,8 @@ impl Applied {
             Op::Bind { param, component, from, channel } => {
                 let dst = net.require(param.node())?;
                 let src = net.require(from)?;
+                self.guard(dst, param.node())?;
+                self.guard(src, from)?;
                 let desc = desc_of(net, types, dst)?;
                 let name = param.param();
                 match desc.param_spec(name.as_str()) {
@@ -857,7 +895,9 @@ impl Applied {
                     None if desc.extra_params || self.params == Params::Keep => {}
                     None => return Err(unknown_param(desc, name)),
                 }
-                if !desc_of(net, types, src)?.outputs.iter().any(|o| o.kind == DataKind::Chan) {
+                if !self.kept_broken(src)
+                    && !desc_of(net, types, src)?.outputs.iter().any(|o| o.kind == DataKind::Chan)
+                {
                     return Err(Error::new(format!("{from} has no chan output to bind to")));
                 }
                 if src == dst || net.depends_on(src, dst) {
@@ -871,6 +911,7 @@ impl Applied {
             }
             Op::Unbind { param, component } => {
                 let dst = net.require(param.node())?;
+                self.guard(dst, param.node())?;
                 let part = ParamPart::new(param.param().clone(), *component);
                 if net.nodes.get(&dst).is_some_and(|n| n.binds.contains_key(&part)) {
                     self.node_mut(dst)?.binds.remove(&part);
@@ -878,6 +919,7 @@ impl Applied {
             }
             Op::Disconnect { to, input } => {
                 let dst = net.require(to)?;
+                self.guard(dst, to)?;
                 let slot = self.node_mut(dst)?.inputs.get_mut(*input as usize);
                 match slot {
                     Some(slot) => *slot = None,
@@ -894,7 +936,8 @@ fn desc_of<'t>(net: &Network, types: &'t NodeTypes, id: NodeId) -> Result<&'t No
     types.desc(kind).ok_or_else(|| Error::new(format!("node {id} has unknown kind `{kind}`")))
 }
 
-fn check_param(desc: &NodeDesc, name: &Name, value: &Value, params: Params) -> Result<Value, Error> {
+/// The value param `name` of a node of type `desc` stores for `value`, or why it cannot.
+pub fn check_param(desc: &NodeDesc, name: &Name, value: &Value, params: Params) -> Result<Value, Error> {
     match desc.param_spec(name.as_str()) {
         Some(spec) => spec.check(value),
         None if desc.extra_params || params == Params::Keep => check_extra(name, value),

@@ -29,6 +29,8 @@ use penumbra_graph::{CookContext, CookError, Cooked, NodeTypes, Operator};
 
 /// Registers every built-in node type.
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
+    // What a node of a project file that does not load becomes.
+    types.register(penumbra_graph::broken::node_type())?;
     audio::register(types)?;
     chan::register(types)?;
     comp::register(types)?;

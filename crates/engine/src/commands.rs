@@ -43,8 +43,16 @@ pub(crate) fn engine_commands<'a>(
 /// Registers the engine's commands into `registry`.
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let mut add = engine_commands(registry, engine);
-    add("project.info", "Project directory, unsaved changes, file errors, who is editing", project_info);
-    add("project.save", "Write project.ron now, also over a file that failed to merge", project_save);
+    add(
+        "project.info",
+        "Project directory, unsaved changes, file errors, nodes that did not load (broken), who is editing",
+        project_info,
+    );
+    add(
+        "project.save",
+        "Write project.ron now, also over a file that failed to merge (copied to project.ron.bak first)",
+        project_save,
+    );
     add(
         "project.settings",
         "Project settings with their values and what they do; {set?: {name: value}}, null resets (one undo step)",

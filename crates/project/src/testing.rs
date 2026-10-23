@@ -27,6 +27,7 @@ fn register(t: &mut NodeTypes, desc: NodeDesc) {
 
 pub fn test_types() -> NodeTypes {
     let mut t = NodeTypes::new();
+    t.register(penumbra_graph::broken::node_type()).unwrap();
     register(
         &mut t,
         NodeDesc::new("test.const", "A number")

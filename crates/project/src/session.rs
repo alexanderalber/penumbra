@@ -8,10 +8,15 @@
 //!   cannot miss an edit that lands in the same timestamp tick. A change waits for the
 //!   [`Gate`], is diffed against the content it was based on and merged into the running
 //!   document as one history entry with source "project file".
-//! - **A file that does not merge** (syntax error, unknown kind, a conflict with the user's
-//!   unsaved edits) is reported in [`SessionStatus::file_error`], and autosave pauses so the
-//!   broken file, which is probably someone's work in progress, is not overwritten. The next
-//!   change to the file is tried again; `project.save` overwrites it on purpose.
+//! - **A node that does not load** (unknown kind, an input its kind does not have, a param value
+//!   its declaration refuses) becomes a placeholder that keeps its entry as written
+//!   ([`penumbra_graph::broken`]); the rest of the project opens or merges, and saving writes
+//!   the entry back unchanged. The placeholders are listed in [`SessionStatus::broken`].
+//! - **A file that does not merge** (syntax error, a format version this build does not read,
+//!   a conflict with the user's unsaved edits) is reported in [`SessionStatus::file_error`], and
+//!   autosave pauses so the broken file, which is probably someone's work in progress, is not
+//!   overwritten. The next change to the file is tried again; `project.save` overwrites it on
+//!   purpose, after copying it to [`BACKUP_NAME`].
 //!
 //! File IO happens outside the state lock, so a slow disk never stalls an edit from the UI.
 
@@ -25,8 +30,13 @@ use penumbra_graph::{Document, EditOutcome, Network, NodeTypes, Op, Params, Sour
 use serde::Serialize;
 
 use crate::content::{Content, diff};
-use crate::file::{FILE_NAME, MAX_FILE_BYTES, parse, print};
+use crate::file::{BrokenNode, FILE_NAME, MAX_FILE_BYTES, broken_nodes, load, print};
 use crate::gate::{Gate, GateStatus};
+
+/// The copy of the project file that `project.save` makes before it writes over a file that did
+/// not load or merge, or that holds nodes that did not load. One only; the next such save
+/// replaces it.
+pub const BACKUP_NAME: &str = "project.ron.bak";
 
 /// Delay between the first unsaved change and writing the file.
 pub const AUTOSAVE_DELAY: Duration = Duration::from_secs(1);
@@ -55,6 +65,8 @@ pub struct SessionStatus {
     pub merge_waiting: bool,
     pub file_error: Option<String>,
     pub write_error: Option<String>,
+    /// Nodes that did not load and are kept as placeholders, with the reason.
+    pub broken: Vec<BrokenNode>,
     pub can_undo: bool,
     pub can_redo: bool,
     pub edit: GateStatus,
@@ -163,7 +175,7 @@ impl Session {
         let loaded = read_text(&file).and_then(|text| match text {
             None => Ok(None),
             Some(text) => {
-                let content = parse(&text, &types)?;
+                let content = load(&text, &types)?;
                 let net = build(&content, &types)?;
                 Ok(Some((text, content, net)))
             }
@@ -302,6 +314,7 @@ impl Session {
             merge_waiting: state.waiting.is_some(),
             file_error: state.file_error.clone(),
             write_error: state.write_error.clone(),
+            broken: broken_nodes(&current),
             can_undo,
             can_redo,
             edit: state.gate.status(now),
@@ -334,15 +347,34 @@ impl Session {
     }
 
     /// Writes the document now, also over a file that failed to merge or an edit still waiting
-    /// for the gate (those are discarded). Returns whether the file changed.
+    /// for the gate (those are discarded). Over a file that failed, or while nodes are kept as
+    /// placeholders, the file is first copied to [`BACKUP_NAME`]. Returns whether the file
+    /// changed.
     pub fn save(&self) -> Result<bool, Error> {
         let _io = lock(&self.io);
+        let failed = lock(&self.state).file_error.is_some();
+        if failed || !broken_nodes(&self.doc.snapshot()).is_empty() {
+            self.backup()?;
+        }
         {
             let mut state = lock(&self.state);
             state.waiting = None;
             state.file_error = None;
         }
         self.write(true)
+    }
+
+    /// Copies the project file to [`BACKUP_NAME`] beside it, if there is one.
+    fn backup(&self) -> Result<(), Error> {
+        if !self.file.is_file() {
+            return Ok(());
+        }
+        let to = self.dir.join(BACKUP_NAME);
+        std::fs::copy(&self.file, &to).map_err(|e| {
+            Error::new(format!("cannot copy {} to {}: {e}", self.file.display(), to.display()))
+        })?;
+        log::info!("copied {} to {} before writing over it", self.file.display(), to.display());
+        Ok(())
     }
 
     fn look_at_file(&self) {
@@ -375,7 +407,7 @@ impl Session {
         }
         let Some(text) = state.waiting.take() else { return };
         let types = self.doc.types();
-        let merged = parse(&text, types).and_then(|theirs| {
+        let merged = load(&text, types).and_then(|theirs| {
             let ops = diff(&state.base, &theirs);
             if !ops.is_empty() {
                 self.doc.edit(
@@ -602,13 +634,13 @@ mod tests {
         let s = open(&dir);
         let t0 = Instant::now();
         let good = file(&s);
-        std::fs::write(s.file(), "(version: 1, nodes: {\"/a\": (kind: \"nope.x\")})").unwrap();
+        std::fs::write(s.file(), "(version: 2, nodes: {\"/a\": (kind: \"test.const\")})").unwrap();
         s.poll(t0);
         let err = s.status(t0).file_error.unwrap();
-        assert!(err.contains("unknown node kind"), "{err}");
+        assert!(err.contains("version 2"), "{err}");
         s.edit(Actor::User, &[set(3.0)], None, "", t0).unwrap();
         s.poll(t0 + 5 * S);
-        assert!(file(&s).contains("nope.x"), "the broken file is someone's work; keep it");
+        assert!(file(&s).contains("version: 2"), "the broken file is someone's work; keep it");
 
         let fixed =
             good.replace(r#"(kind: "test.const")"#, r#"(kind: "test.const", params: {"value": 4.0})"#);
@@ -657,15 +689,124 @@ mod tests {
     }
 
     #[test]
-    fn save_overwrites_a_broken_file_on_request() {
+    fn save_overwrites_a_broken_file_on_request_and_keeps_a_copy() {
         let dir = TempDir::new("save");
         let s = open(&dir);
+        let bak = dir.0.join(BACKUP_NAME);
+        // A save over a file that loads makes no copy.
+        assert_eq!(s.save(), Ok(false));
+        assert!(!bak.exists());
         std::fs::write(s.file(), "garbage").unwrap();
         s.poll(Instant::now());
         assert!(s.status(Instant::now()).file_error.is_some());
         assert_eq!(s.save(), Ok(true));
         assert!(file(&s).contains("test.const"));
         assert_eq!(s.status(Instant::now()).file_error, None);
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), "garbage");
+        // The next one replaces it.
+        std::fs::write(s.file(), "more garbage").unwrap();
+        s.poll(Instant::now());
+        assert_eq!(s.save(), Ok(true));
+        assert_eq!(std::fs::read_to_string(&bak).unwrap(), "more garbage");
+    }
+
+    const WITH_BROKEN: &str = r#"(version: 1, nodes: {
+        "/a": (kind: "test.const"),
+        "/s": (kind: "test.add", inputs: {"a": "x:left", "b": "a"}),
+        "/x": (kind: "gone.kind", params: {"rate": 2}, inputs: {"in": "a"}),
+    })"#;
+
+    fn kind_of(s: &Session, path: &str) -> Option<String> {
+        let net = s.doc().snapshot();
+        Some(net.node(net.resolve(&path.parse::<NodePath>().ok()?)?)?.kind.clone())
+    }
+
+    #[test]
+    fn a_node_that_does_not_load_keeps_its_entry_and_the_rest_opens() {
+        let dir = TempDir::new("placeholder");
+        std::fs::create_dir_all(&dir.0).unwrap();
+        std::fs::write(dir.0.join(FILE_NAME), WITH_BROKEN).unwrap();
+        let s = open(&dir);
+        let t0 = Instant::now();
+        let status = s.status(t0);
+        assert_eq!(status.file_error, None);
+        assert_eq!(status.broken.len(), 1);
+        assert_eq!((status.broken[0].path.as_str(), status.broken[0].kind.as_str()), ("/x", "gone.kind"));
+        assert!(status.broken[0].error.contains("unknown node kind"), "{:?}", status.broken);
+        assert_eq!(kind_of(&s, "/s").as_deref(), Some("test.add"));
+        // Autosave goes on and writes the entry back as it was.
+        s.edit(Actor::User, &[set(2.0)], None, "", t0).unwrap();
+        s.poll(t0);
+        s.poll(t0 + S);
+        let text = file(&s);
+        assert!(
+            text.contains(r#""/x": (kind: "gone.kind", params: {"rate": 2}, inputs: {"in": "a"}),"#),
+            "{text}"
+        );
+        assert!(text.contains(r#""/s": (kind: "test.add", inputs: {"a": "x:left", "b": "a"}),"#), "{text}");
+        assert!(text.contains(r#""/a": (kind: "test.const", params: {"value": 2.0}),"#), "{text}");
+        assert!(!dir.0.join(BACKUP_NAME).exists(), "autosave makes no copy");
+
+        // From the UI or the control channel it can be renamed and deleted, nothing else.
+        let e = s
+            .edit(
+                Actor::User,
+                &[Op::Set { param: "/x.entry".parse().unwrap(), value: Value::Text("".into()) }],
+                None,
+                "",
+                t0,
+            )
+            .unwrap_err();
+        assert!(e.0.contains("did not load"), "{e}");
+        s.edit(
+            Actor::User,
+            &[Op::Rename { path: "/x".parse().unwrap(), name: "y".parse().unwrap() }],
+            None,
+            "",
+            t0,
+        )
+        .unwrap();
+        s.poll(t0 + 3 * S);
+        s.poll(t0 + 4 * S);
+        assert!(
+            file(&s).contains(r#""/s": (kind: "test.add", inputs: {"a": "y:left", "b": "a"}),"#),
+            "{}",
+            file(&s)
+        );
+        assert!(file(&s).contains(r#""/y": (kind: "gone.kind""#), "{}", file(&s));
+        // A save on request keeps a copy while a node did not load.
+        assert_eq!(s.save(), Ok(false));
+        assert!(dir.0.join(BACKUP_NAME).exists());
+        s.edit(Actor::User, &[Op::Delete { path: "/y".parse().unwrap() }], None, "", t0).unwrap();
+        assert!(s.status(t0).broken.is_empty());
+        s.poll(t0 + 5 * S);
+        s.poll(t0 + 6 * S);
+        assert!(file(&s).contains(r#""/s": (kind: "test.add", inputs: {"b": "a"}),"#), "{}", file(&s));
+    }
+
+    #[test]
+    fn a_file_edit_that_breaks_one_node_merges_the_rest() {
+        let dir = TempDir::new("merge_broken");
+        let s = open(&dir);
+        let t0 = Instant::now();
+        let good = file(&s);
+        let text = good.replace(
+            r#""/a": (kind: "test.const"),"#,
+            r#""/a": (kind: "test.const", params: {"value": 5}), "/b": (kind: "test.const", params: {"value": "five"}),"#,
+        );
+        assert_ne!(text, good);
+        std::fs::write(s.file(), &text).unwrap();
+        s.poll(t0);
+        let status = s.status(t0);
+        assert_eq!(status.file_error, None);
+        assert_eq!(value(&s), Some(Value::Float(5.0)));
+        assert_eq!(kind_of(&s, "/b").as_deref(), Some(penumbra_graph::broken::BROKEN_KIND));
+        assert!(status.broken[0].error.contains("`value`"), "{:?}", status.broken);
+        // Fixed in the file, it loads.
+        std::fs::write(s.file(), text.replace(r#""five""#, "6")).unwrap();
+        s.poll(t0 + S);
+        assert_eq!(kind_of(&s, "/b").as_deref(), Some("test.const"));
+        assert!(s.status(t0 + S).broken.is_empty());
     }
 
     #[test]
