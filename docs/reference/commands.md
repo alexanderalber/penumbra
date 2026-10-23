@@ -58,7 +58,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `cook.play` | Run or stop the show clock; {playing?} (default true) |
 | `cook.stats` | Cook pass timings since the last reset: passes, slowest pass, longest gap, late frames, stalls; {reset?} |
 | `cook.status` | Show clock, last cook pass, watched nodes, thumbnail policy |
-| `cook.thumbnails` | Global thumbnail switch and rate; {mode?: always \| when_free \| never, every?: cook passes between two thumbnail cooks of a node, 1 = every frame} |
+| `cook.thumbnails` | The editor's thumbnails, kept with the project (settings thumbnails and thumbnail_every; one undo step); {mode?: always \| when_free \| never, every?: cook passes between two thumbnail cooks of a node, 1 = every frame} |
 
 ## dmx
 

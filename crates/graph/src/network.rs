@@ -11,6 +11,7 @@ use penumbra_core::{Error, Name, NodeId, NodePath, ParamPart, ParamPath, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::broken;
+use crate::cook::ThumbnailMode;
 use crate::node::{DataKind, NodeDesc, NodeTypes, PortRole};
 
 /// The text param of a container that lists the params it exposes: one per line, `name =
@@ -324,20 +325,85 @@ pub enum Params {
 #[derive(Clone, Copy, Debug)]
 pub struct SettingSpec {
     pub name: &'static str,
-    pub default: bool,
+    pub kind: SettingKind,
     pub doc: &'static str,
+}
+
+/// What values a setting takes.
+#[derive(Clone, Copy, Debug)]
+pub enum SettingKind {
+    /// `true` or `false`.
+    Switch { default: bool },
+    /// One of a few names.
+    Choice { choices: &'static [&'static str], default: &'static str },
+    /// A whole number in `min..=max`.
+    Count { min: i64, max: i64, default: i64 },
+}
+
+impl SettingSpec {
+    /// The value it has when it is not stored.
+    pub fn default_value(&self) -> Value {
+        match self.kind {
+            SettingKind::Switch { default } => Value::Bool(default),
+            SettingKind::Choice { default, .. } => Value::Text(default.to_string()),
+            SettingKind::Count { default, .. } => Value::Int(default),
+        }
+    }
+
+    /// `value` in the form it is stored in, or why it is none of this setting's.
+    fn check(&self, value: &Value) -> Result<Value, Error> {
+        let name = self.name;
+        match self.kind {
+            SettingKind::Switch { .. } => value
+                .as_bool()
+                .map(Value::Bool)
+                .ok_or_else(|| Error::new(format!("project setting `{name}` is true or false"))),
+            SettingKind::Choice { choices, .. } => match value.as_str() {
+                Some(s) if choices.contains(&s) => Ok(Value::Text(s.to_string())),
+                _ => Err(Error::new(format!("project setting `{name}` is one of {}", choices.join(", ")))),
+            },
+            SettingKind::Count { min, max, .. } => {
+                let whole =
+                    value.as_f64().filter(|v| v.fract() == 0.0 && *v >= min as f64 && *v <= max as f64);
+                match whole {
+                    Some(v) => Ok(Value::Int(v as i64)),
+                    None => Err(Error::new(format!(
+                        "project setting `{name}` is a whole number from {min} to {max}"
+                    ))),
+                }
+            }
+        }
+    }
 }
 
 /// Keep what feedback loops, caches and other operators hold across restarts (the state files).
 /// Locked nodes' outputs are kept regardless.
 pub const PERSIST_STATE: &str = "persist_state";
+/// Which nodes show a live picture in the editor: one of [`ThumbnailMode::key`].
+pub const THUMBNAILS: &str = "thumbnails";
+/// Cook passes between two thumbnail cooks of a node ([`crate::ThumbnailPolicy::min_interval`]).
+pub const THUMBNAIL_EVERY: &str = "thumbnail_every";
+/// The slowest thumbnail rate: one cook a second at 60 fps.
+pub const MAX_THUMBNAIL_EVERY: u32 = 60;
 
-/// Every project setting. All are switches so far.
-pub const SETTINGS: &[SettingSpec] = &[SettingSpec {
-    name: PERSIST_STATE,
-    default: false,
-    doc: "Keep what feedback loops, caches and other nodes hold across restarts (locked nodes are kept regardless)",
-}];
+/// Every project setting.
+pub const SETTINGS: &[SettingSpec] = &[
+    SettingSpec {
+        name: PERSIST_STATE,
+        kind: SettingKind::Switch { default: false },
+        doc: "Keep what feedback loops, caches and other nodes hold across restarts (locked nodes are kept regardless)",
+    },
+    SettingSpec {
+        name: THUMBNAILS,
+        kind: SettingKind::Choice { choices: &["always", "when_free", "never"], default: "always" },
+        doc: "Which nodes show a live picture in the editor: always (every visible node, rate limited by thumbnail_every), when_free (nothing cooks just for a thumbnail; a node shows its picture while it is up to date) or never",
+    },
+    SettingSpec {
+        name: THUMBNAIL_EVERY,
+        kind: SettingKind::Count { min: 1, max: MAX_THUMBNAIL_EVERY as i64, default: 1 },
+        doc: "Cook passes between two thumbnail cooks of a node: 1 is every frame, 6 is 10 Hz at 60 fps",
+    },
+];
 
 /// The value of setting `name` as stored (`None` for the default), checked against
 /// [`SETTINGS`].
@@ -349,10 +415,8 @@ pub fn check_setting(name: &Name, value: Option<&Value>) -> Result<Option<Value>
     match value {
         None => Ok(None),
         Some(v) => {
-            let on = v
-                .as_bool()
-                .ok_or_else(|| Error::new(format!("project setting `{name}` is true or false")))?;
-            Ok((on != spec.default).then_some(Value::Bool(on)))
+            let v = spec.check(v)?;
+            Ok((v != spec.default_value()).then_some(v))
         }
     }
 }
@@ -390,13 +454,27 @@ impl Network {
         &self.settings
     }
 
+    /// Setting `name` ([`SETTINGS`]): stored, else its default; `None` for an unknown name.
+    pub fn setting(&self, name: &str) -> Option<Value> {
+        match self.settings.get(name) {
+            Some(v) => Some(v.clone()),
+            None => SETTINGS.iter().find(|s| s.name == name).map(SettingSpec::default_value),
+        }
+    }
+
     /// Switch `name` ([`SETTINGS`]); its default when it is not stored, `false` for an unknown
     /// name.
     pub fn switch(&self, name: &str) -> bool {
-        match self.settings.get(name).and_then(Value::as_bool) {
-            Some(on) => on,
-            None => SETTINGS.iter().find(|s| s.name == name).is_some_and(|s| s.default),
-        }
+        self.setting(name).and_then(|v| v.as_bool()).unwrap_or(false)
+    }
+
+    /// The editor's thumbnails: the mode and the cook passes between two thumbnail cooks of a
+    /// node ([`THUMBNAILS`], [`THUMBNAIL_EVERY`]).
+    pub fn thumbnails(&self) -> (ThumbnailMode, u32) {
+        let mode = self.setting(THUMBNAILS).and_then(|v| v.as_str().and_then(ThumbnailMode::from_key));
+        let every =
+            self.setting(THUMBNAIL_EVERY).and_then(|v| v.as_i64()).and_then(|v| u32::try_from(v).ok());
+        (mode.unwrap_or_default(), every.unwrap_or(1).clamp(1, MAX_THUMBNAIL_EVERY))
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Arc<NodeDef>> {
@@ -1040,6 +1118,39 @@ mod tests {
 
     fn pp(s: &str) -> ParamPath {
         ParamPath::parse(s).unwrap()
+    }
+
+    #[test]
+    fn settings_are_switches_choices_and_counts_stored_only_when_not_default() {
+        let types = test_types();
+        let setting = |name: &str, value: Option<Value>| Op::Setting { name: name.parse().unwrap(), value };
+        let net = Network::new();
+        assert_eq!(net.thumbnails(), (ThumbnailMode::Always, 1));
+        assert!(!net.switch(PERSIST_STATE));
+        let ops = [
+            setting(THUMBNAILS, Some(Value::Text("when_free".into()))),
+            setting(THUMBNAIL_EVERY, Some(Value::Float(6.0))),
+            setting(PERSIST_STATE, Some(Value::Bool(true))),
+        ];
+        let set = net.apply(&types, &ops).unwrap().network;
+        assert_eq!(set.thumbnails(), (ThumbnailMode::WhenFree, 6));
+        assert!(set.switch(PERSIST_STATE));
+        assert_eq!(set.settings().get(THUMBNAIL_EVERY), Some(&Value::Int(6)), "stored as a whole number");
+        // The default is no stored value.
+        let back =
+            set.apply(&types, &[setting(THUMBNAILS, Some(Value::Text("always".into())))]).unwrap().network;
+        assert!(!back.settings().contains_key(THUMBNAILS));
+        for (name, bad) in [
+            (THUMBNAILS, Value::Text("sometimes".into())),
+            (THUMBNAILS, Value::Bool(true)),
+            (THUMBNAIL_EVERY, Value::Int(0)),
+            (THUMBNAIL_EVERY, Value::Int(61)),
+            (THUMBNAIL_EVERY, Value::Float(1.5)),
+            (PERSIST_STATE, Value::Int(1)),
+        ] {
+            assert!(net.apply(&types, &[setting(name, Some(bad.clone()))]).is_err(), "{name} = {bad}");
+        }
+        assert!(net.apply(&types, &[setting("nope", None)]).is_err());
     }
 
     #[test]

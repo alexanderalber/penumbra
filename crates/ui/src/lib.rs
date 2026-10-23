@@ -35,7 +35,7 @@ use std::collections::BTreeSet;
 
 use egui::Pos2;
 use penumbra_core::{GroupId, NodeId};
-use penumbra_graph::{Op, ThumbnailMode};
+use penumbra_graph::Op;
 
 pub use app::{AppOptions, PenumbraApp};
 pub use control::{Bridge, UiRequest};
@@ -58,9 +58,7 @@ pub enum Action {
     /// Pin the viewer to a node, or follow the selection with `None`.
     Pin(Option<NodeId>),
     Play(bool),
-    Thumbnails(ThumbnailMode),
-    /// Cook passes between two thumbnail cooks of a node.
-    ThumbnailEvery(u32),
+
     /// Open the Helpers window.
     OpenHelpers,
     /// Show a message in the status bar.

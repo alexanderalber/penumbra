@@ -291,7 +291,8 @@ struct Services {
     watcher: Watcher,
 }
 
-/// The global thumbnail switch (`cook.thumbnails`, the status bar's dropdown).
+/// Which nodes show a live picture in the editor: the project setting
+/// [`crate::network::THUMBNAILS`] (`cook.thumbnails`, the editor's options).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThumbnailMode {
@@ -309,13 +310,26 @@ impl ThumbnailMode {
     pub const ALL: [ThumbnailMode; 3] =
         [ThumbnailMode::Always, ThumbnailMode::WhenFree, ThumbnailMode::Never];
 
-    /// The name used by `cook.thumbnails` and shown in the UI.
+    /// The name shown in the UI.
     pub fn name(self) -> &'static str {
         match self {
             ThumbnailMode::Always => "always",
             ThumbnailMode::WhenFree => "when free",
             ThumbnailMode::Never => "never",
         }
+    }
+
+    /// The name in the project setting and in `cook.thumbnails`.
+    pub fn key(self) -> &'static str {
+        match self {
+            ThumbnailMode::Always => "always",
+            ThumbnailMode::WhenFree => "when_free",
+            ThumbnailMode::Never => "never",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<ThumbnailMode> {
+        Self::ALL.into_iter().find(|m| m.key() == key)
     }
 }
 
