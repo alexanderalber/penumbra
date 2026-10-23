@@ -12,6 +12,10 @@ running app over its control channel. The documentation of exactly this version 
 3. As needed: `docs/reference/commands.md` (every command) and `docs/reference/nodes.md`
    (every node type), plus the topic pages listed in `docs/README.md`.
 
+`library/README.md` catalogues the content library: effects for scanned objects (edges, water,
+relight, tiles, a carved face, ...) as components with a preview each, added with
+`comp.load {"file": "<name>"}`.
+
 `examples/` holds small finished projects (`examples/README.md` lists them); their
 `project.ron` files are good models of networks, bindings and feedback loops. Open one with
 `project.open dir=<absolute path to the example>`.

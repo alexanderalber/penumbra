@@ -1,0 +1,13 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/tiles": (kind: "comp.base", params: {"expose": "object = tiles.object\nreveal = tiles.reveal\naspect = tiles.aspect\ntile = tiles.tile\ngrout = tiles.grout\nrim = tiles.rim\ndecor = tiles.decor\ngrout_color = tiles.grout_color\nwood = tiles.wood\ngain = tiles.gain\nseed = tiles.seed\natlas = atlas.file"}),
+        "/tiles/atlas": (kind: "tex.image", params: {"file": "library/tiles/atlas.png"}),
+        "/tiles/objects": (kind: "tex.in"),
+        "/tiles/out": (kind: "tex.out", inputs: {"in": "tiles"}),
+        "/tiles/tiles": (kind: "tex.shader", params: {"file": "library/tiles/tiles.wgsl"}, inputs: {"in0": "uv", "in1": "atlas", "in2": "objects"}),
+        "/tiles/uv": (kind: "tex.in"),
+    },
+)

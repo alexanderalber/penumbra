@@ -37,6 +37,8 @@ Files
                             browser (all of it in one page; the ? on a node opens it
                             there), or the Markdown files, starting at docs\README.md
 - examples\                 example projects, listed in examples\README.md
+- library\                  the content library: effects for scanned objects, offered in
+                            the add dialog's comp tab; library\README.md shows each
 - CLAUDE.md                 how Claude Code drives the app, read by it when started here
 - THIRD-PARTY-NOTICES.html  licences of the components penumbra is built from
 - LICENSE-MIT, LICENSE-APACHE

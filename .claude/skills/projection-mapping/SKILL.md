@@ -134,6 +134,12 @@ Content is drawn once, in the camera's picture, and each projector takes its sha
 `tex.shapes` tracing `objects_camera.png` or `regions_camera.png` (`shapes.trace` with `live`).
 `docs/scanning.md`, "The network", has the node chain.
 
+Ready-made effects (edges, pulsing faces, a scan line, water in a box, a lamp round an object,
+glowing furrows, contours, tiles on a rectified face, a carved face) are components in the
+content library: `library/README.md` shows each with a preview and says which scan pictures it
+takes; `comp.load {"file": "<name>"}` adds one. Most start from `scan_labels` (labels and the
+objects' outline from `regions_camera.png` and `objects_camera.png`).
+
 If the project already holds prepared content with its own rebuild step (a script that takes
 a scan folder and rewrites the project), run that step on the new scan instead of building
 content by hand, and do not change the content itself.

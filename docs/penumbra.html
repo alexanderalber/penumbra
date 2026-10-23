@@ -104,6 +104,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 </ul>
 <p><a href="../examples/README.md">Examples</a>: small projects, each showing one side of penumbra.</p>
+<p><a href="../library/README.md">Content library</a>: ready-made effects for scanned objects, as components with a preview each (add them from the add dialog's <code>comp</code> tab).</p>
 <p>Generated from the code, so always complete:</p>
 <ul>
 <li><a href="#nodes">Node reference</a>: every node type with its inputs, outputs and params.
@@ -302,10 +303,10 @@ water      15
 </li>
 <li><strong>Expose params:</strong> the component's <code>expose</code> param lists inner params, one per line, <code>speed = noise1.speed</code> or just <code>noise1.speed</code>. They show on the component and act on the inner param.
 </li>
-<li><strong>Library:</strong> &quot;Save to the library&quot; in the node menu writes a <code>&lt;name&gt;.comp.ron</code> file; the add dialog's <code>comp</code> tab lists the project's <code>components/</code> folder and the library shared by all projects (<code>%LOCALAPPDATA%\penumbra\components</code>, or <code>PENUMBRA_LIBRARY</code>). Adding one adds a copy. The cross beside a library entry moves its file into a <code>removed/</code> folder beside it.
+<li><strong>Library:</strong> &quot;Save to the library&quot; in the node menu writes a <code>&lt;name&gt;.comp.ron</code> file; the add dialog's <code>comp</code> tab lists the project's <code>components/</code> folder, the library shared by all projects (<code>%LOCALAPPDATA%\penumbra\components</code>, or <code>PENUMBRA_LIBRARY</code>) and the content library that ships with penumbra (marked <code>penumbra</code>; the <code>library</code> folder beside the app, catalogued with a preview of each in <a href="../library/README.md">its README</a>): effects for scanned objects such as water in a crate, a lamp going round a pumpkin, contour lines or a carved face. Adding one adds a copy. The cross beside a user's library entry moves its file into a <code>removed/</code> folder beside it; penumbra's own cannot be removed.
 </li>
 </ul>
-<p>Files a component refers to (a shader, an image) stay relative to the project, so they do not travel with a saved component yet.</p>
+<p>Files a component refers to (a shader, an image) are relative to the project. A component in a folder of its own, <code>&lt;name&gt;/&lt;name&gt;.comp.ron</code> (as all of penumbra's are), brings the other files of that folder along: adding it copies them into the project's <code>library/&lt;name&gt;/</code>, which is where its nodes name them (<code>library/water/water.wgsl</code>). A file the project has already is kept, so a changed copy survives adding the component again; <a class="ref" href="#comp.load"><code>comp.load</code></a> says what it <code>copied</code> and <code>kept</code>. Its preview picture and notes stay behind. Saving a component does not collect its files yet.</p>
 <h3 id="concepts-undo-and-the-change-log">Undo and the change log</h3>
 <p>Every edit, by hand, by Claude over the control channel, or by editing <code>project.ron</code> in a text editor, is an entry in one linear history, shown under Changes. Ctrl+Z undoes the latest, whoever made it; to take back one of Claude's changes while keeping later tweaks of your own, ask Claude to revert it. Moving nodes is an edit like any other: a drag (or one arrange) is one entry, and <a class="ref" href="#history.undo"><code>history.undo</code></a> takes it back as well.</p>
 <p>Values that arrive by OSC are live control, not edits: they stay out of the history, and undo or redo of other edits does not roll them back. An edit by hand to the same param takes it back into the history.</p>
@@ -336,6 +337,7 @@ water      15
 <tr><td><code>layout.ron</code></td><td>view state: pan and zoom, open sections, the right column's width, the viewer's aspect, the editor's other options</td></tr>
 <tr><td><code>state/</code></td><td>what nodes hold across restarts (feedback loops, caches, locked outputs); ignored by git through its own <code>.gitignore</code></td></tr>
 <tr><td><code>components/</code></td><td>the project's own component files</td></tr>
+<tr><td><code>library/</code></td><td>the files of components added from a library (<code>library/&lt;name&gt;/</code>)</td></tr>
 <tr><td><code>project.ron.bak</code></td><td>the file as it was before <a class="ref" href="#project.save"><code>project.save</code></a> wrote over a file that did not load; worth a line in a project's <code>.gitignore</code></td></tr>
 <tr><td>anything else</td><td>shaders, scripts, images, videos, meshes, referenced by relative path</td></tr>
 </tbody>
@@ -976,7 +978,7 @@ water      15
 <ol>
 <li><a class="ref" href="#tex.shapes"><code>tex.shapes</code></a> with the camera's size as <code>width</code> and <code>height</code>; a <a class="ref" href="#tex.image"><code>tex.image</code></a> of <code>objects/objects_camera.png</code> beside it, then <a class="ref" href="#shapes.trace"><code>shapes.trace {&quot;path&quot;: &quot;/shapes&quot;, &quot;from&quot;: &quot;/objects_image&quot;, &quot;labels&quot;: true, &quot;live&quot;: true}</code></a>: one shape per object, in camera space. <code>live</code> connects the picture to the shapes' <code>trace</code> input and sets <code>trace_labels</code>, so the node traces by itself whenever the picture changes (a new scan) or the project opens, and nothing traced is stored in the project file. A script writing <code>project.ron</code> gets the same by writing that connection and those params: <code>&quot;/shapes&quot;: (kind: &quot;tex.shapes&quot;, params: {&quot;width&quot;: 1920, &quot;height&quot;: 1080, &quot;trace_labels&quot;: true}, inputs: {&quot;trace&quot;: &quot;objects_image&quot;})</code>. Without <code>live</code>, the outlines are written into the node's <code>shapes</code> text once, to edit by hand.
 </li>
-<li><a class="ref" href="#tex.shape_content"><code>tex.shape_content</code></a> from the shapes' <code>id</code> output: fill, pulse, chase or ripple per object. Because there is one set of shapes, ripples and chases run across all projectors as one.
+<li><a class="ref" href="#tex.shape_content"><code>tex.shape_content</code></a> from the shapes' <code>id</code> output: fill, pulse, chase or ripple per object. Because there is one set of shapes, ripples and chases run across all projectors as one. Or any effect of the <a href="../library/README.md">content library</a> (edges, water, a lamp going round an object, tiles, ...): they take the scan's pictures and draw in the camera's picture too.
 </li>
 <li>Per projector: <a class="ref" href="#tex.remap"><code>tex.remap</code></a> with the content as <code>in</code> and a <a class="ref" href="#tex.image"><code>tex.image</code></a> of <code>objects/proj_to_cam_smooth_N.exr</code> as <code>map</code>, <code>extend</code> zero.
 </li>
@@ -4089,13 +4091,14 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="body">
 <p>Dissolve a component, its nodes move up beside it; {path}</p>
 </div></details>
-<details class="entry command" id="comp.library"><summary><code class="name">comp.library</code><span class="sum">Component files in the project's components/ and the user's library</span></summary>
+<details class="entry command" id="comp.library"><summary><code class="name">comp.library</code><span class="sum">Component files in the project's components/, the user's library and penumbra's own library</span></summary>
 <div class="body">
-<p>Component files in the project's components/ and the user's library</p>
+<p>Component files in the project's components/, the user's library and penumbra's own library</p>
 </div></details>
-<details class="entry command" id="comp.load"><summary><code class="name">comp.load</code><span class="sum">Add a component from a file or the library (by name)</span></summary>
+<details class="entry command" id="comp.load"><summary><code class="name">comp.load</code><span class="sum">Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/&lt;name&gt;/ first</span></summary>
 <div class="body">
-<p>Add a component from a file or the library (by name); {file, path?}</p>
+<p>Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/&lt;name&gt;/ first; {file, path?}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
 <details class="entry command" id="comp.remove"><summary><code class="name">comp.remove</code><span class="sum">Take a component file out of the library (into its removed/ folder)</span></summary>
 <div class="body">

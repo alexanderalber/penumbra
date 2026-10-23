@@ -29,6 +29,9 @@ pub struct Inputs<'a> {
     pub status: Option<&'a NodeStatus>,
     /// Params the instance declares (a shader's header), when the cook thread published them.
     pub instance: Option<&'a [ParamSpec]>,
+    /// For a component: the params the inner nodes its exposed params lead to declare
+    /// themselves (a shader's header), by inner node.
+    pub inner: &'a BTreeMap<NodeId, Vec<ParamSpec>>,
     pub can_edit: bool,
     pub project_dir: Option<&'a Path>,
     pub new_group: &'a dyn Fn() -> GroupId,
@@ -262,7 +265,12 @@ impl ParamPanel {
                 let found = target.as_ref().ok().and_then(|t| {
                     let id = input.net.resolve(t.node())?;
                     let inner = input.net.node(id)?;
-                    let spec = input.types.desc(&inner.kind)?.param_spec(t.param().as_str())?.clone();
+                    let name = t.param().as_str();
+                    let spec = match input.types.desc(&inner.kind)?.param_spec(name) {
+                        Some(spec) => spec.clone(),
+                        // A param the inner node's file declares (a shader's header).
+                        None => input.inner.get(&id)?.iter().find(|s| s.name == name)?.clone(),
+                    };
                     Some((inner.clone(), spec))
                 });
                 match (found, target) {
@@ -279,7 +287,7 @@ impl ParamPanel {
                             .and_then(|n| input.types.desc(&n.kind))
                             .is_some_and(|d| d.extra_params);
                         problems.push(if declared_by_file {
-                            format!("{}: {t} is declared by its file; set it inside or with node.set", x.name)
+                            format!("{}: {t} is not declared by its file (yet)", x.name)
                         } else {
                             format!("{}: {t} does not exist", x.name)
                         });

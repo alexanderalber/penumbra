@@ -519,6 +519,56 @@ fn resolution_analysis_and_optimisation_through_commands() {
 }
 
 #[test]
+fn shipped_components_bring_their_files() {
+    let f = Fixture::new("shipped");
+    let lib = TempDir::new("shipped-user");
+    f.engine.set_library(Some(lib.0.clone()));
+    let shipped = TempDir::new("shipped-lib");
+    let folder = shipped.0.join("glowy");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(
+        folder.join("glowy.comp.ron"),
+        r#"(version: 2, nodes: {
+            "/glowy": (kind: "comp.base"),
+            "/glowy/look": (kind: "tex.shader", params: {"file": "library/glowy/look.wgsl"}),
+            "/glowy/out": (kind: "tex.out", inputs: {"in": "look"}),
+        })"#,
+    )
+    .unwrap();
+    std::fs::write(folder.join("look.wgsl"), "// shipped\n").unwrap();
+    std::fs::write(folder.join("preview.png"), b"not copied").unwrap();
+    f.engine.set_shipped_library(Some(shipped.0.clone()));
+
+    let listed = f.call("comp.library", json!({}));
+    assert_eq!(
+        listed["components"],
+        json!([{"name": "glowy", "place": "penumbra", "file": folder.join("glowy.comp.ron").display().to_string()}]),
+        "{listed}"
+    );
+    let loaded = f.call("comp.load", json!({"file": "glowy"}));
+    assert_eq!(loaded["copied"], json!(["library/glowy/look.wgsl"]), "{loaded}");
+    let project = f.engine.session().dir().to_path_buf();
+    let copy = project.join("library").join("glowy").join("look.wgsl");
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), "// shipped\n");
+    assert!(!project.join("library").join("glowy").join("preview.png").exists());
+    // A changed copy in the project stays.
+    std::fs::write(&copy, "// mine\n").unwrap();
+    let again = f.call("comp.load", json!({"file": "glowy"}));
+    assert_eq!(again["kept"], json!(["library/glowy/look.wgsl"]), "{again}");
+    assert_eq!(again["path"], "/glowy1");
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), "// mine\n");
+    // penumbra's own stay where they are.
+    assert!(f.fail("comp.remove", json!({"name": "glowy"})).contains("ships with penumbra"));
+    assert!(folder.join("glowy.comp.ron").is_file());
+    // The user's library comes first for the same name.
+    let mine = lib.0.join("glowy");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::copy(folder.join("glowy.comp.ron"), mine.join("glowy.comp.ron")).unwrap();
+    let listed = f.call("comp.library", json!({}));
+    assert_eq!(listed["components"][0]["place"], "library", "{listed}");
+}
+
+#[test]
 fn components_group_save_load_and_dissolve() {
     let f = Fixture::new("comps");
     let lib = TempDir::new("comps-lib");

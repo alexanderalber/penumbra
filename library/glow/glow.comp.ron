@@ -1,0 +1,14 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/glow": (kind: "comp.base", params: {"expose": "clock = flame.clock\nbox = flame.box\nflame = flame.flame\nspread = flame.spread\nskin = flame.skin\nfurrow = flame.furrow\nthreshold = flame.threshold\nfull = flame.full\nedge = flame.edge\nflicker = flame.flicker\nsway = flame.sway\nignite = flame.ignite\ndim = flame.dim\nhot = flame.hot"}),
+        "/glow/fine": (kind: "tex.in"),
+        "/glow/flame": (kind: "tex.shader", params: {"file": "library/glow/glow.wgsl"}, inputs: {"in0": "labels", "in1": "sdf", "in2": "fine", "in3": "wide"}),
+        "/glow/labels": (kind: "tex.in"),
+        "/glow/out": (kind: "tex.out", inputs: {"in": "flame"}),
+        "/glow/sdf": (kind: "tex.in"),
+        "/glow/wide": (kind: "tex.in"),
+    },
+)

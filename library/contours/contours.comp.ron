@@ -1,0 +1,13 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/contours": (kind: "comp.base", params: {"expose": "interval = lines.interval\noffset = lines.offset\nthickness = lines.thickness\nsmooth = lines.smooth\ncolor = lines.color\nmode = lines.mode\nrange = lines.range"}),
+        "/contours/height": (kind: "tex.in"),
+        "/contours/labels": (kind: "tex.in"),
+        "/contours/lines": (kind: "tex.contour", params: {"interval": 0.07, "thickness": 2.0, "smooth": 6.0, "mode": "alpha", "color": [1.0, 0.9, 0.6, 0.9]}, inputs: {"in": "on"}),
+        "/contours/on": (kind: "tex.shader", params: {"file": "library/contours/on_object.wgsl"}, inputs: {"in0": "height", "in1": "labels"}),
+        "/contours/out": (kind: "tex.out", inputs: {"in": "lines"}),
+    },
+)

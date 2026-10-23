@@ -1,0 +1,13 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/breathe": (kind: "comp.base", params: {"expose": "count = fields.count\nc0 = fields.c0\nc1 = fields.c1\nc2 = fields.c2\nc3 = fields.c3\nedge = fields.edge\ngain = fields.gain\nbase = fields.base\nperiod = fields.period\nspread = fields.spread\nfade = fields.fade\nfirst = fields.first\nevery = fields.every\nwipe = fields.wipe\nbreadth = fields.breadth\nangle = fields.angle\nturn = fields.turn\nlines = fields.lines\nlift = fields.lift\nclock = fields.clock\nline = fields.line"}),
+        "/breathe/fields": (kind: "tex.shader", params: {"file": "library/breathe/breathe.wgsl"}, inputs: {"in0": "regions", "in1": "table", "in2": "outlines"}),
+        "/breathe/out": (kind: "tex.out", inputs: {"in": "fields"}),
+        "/breathe/outlines": (kind: "tex.in"),
+        "/breathe/regions": (kind: "tex.in"),
+        "/breathe/table": (kind: "tex.in"),
+    },
+)

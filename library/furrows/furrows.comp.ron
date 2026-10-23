@@ -1,0 +1,14 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/furrows": (kind: "comp.base", params: {"expose": "gain = glow.gain\nrelative = glow.relative\nthreshold = glow.threshold\nflicker = glow.flicker\ncolor = glow.color\ncore = glow.core\ncrest = glow.crest\nrim = glow.rim"}),
+        "/furrows/fine": (kind: "tex.in"),
+        "/furrows/glow": (kind: "tex.shader", params: {"file": "library/furrows/furrows.wgsl", "gain": 5.0, "threshold": 0.3, "relative": 1.0}, inputs: {"in0": "fine", "in1": "wide", "in2": "labels", "in3": "sdf"}),
+        "/furrows/labels": (kind: "tex.in"),
+        "/furrows/out": (kind: "tex.out", inputs: {"in": "glow"}),
+        "/furrows/sdf": (kind: "tex.in"),
+        "/furrows/wide": (kind: "tex.in"),
+    },
+)

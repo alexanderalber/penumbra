@@ -485,6 +485,20 @@ impl<'a> Grid<'a> {
         auto: &mut automation::Registry,
     ) -> bool {
         let place = self.library.iter().find(|o| o.name == name).map_or("", |o| o.place);
+        let place_text = || {
+            painter.text(
+                cell.right_center() - vec2(6.0, 0.0),
+                Align2::RIGHT_CENTER,
+                place,
+                FontId::proportional(11.0),
+                theme::TEXT_WEAK,
+            );
+        };
+        // penumbra's own components stay in its library: no button to take them out.
+        if place == "penumbra" {
+            place_text();
+            return false;
+        }
         let cross = Rect::from_center_size(
             cell.right_center() - vec2(4.0 + CELL.y / 2.0, 0.0),
             vec2(CELL.y - 4.0, CELL.y - 4.0),
@@ -501,13 +515,7 @@ impl<'a> Grid<'a> {
                 "Removes `{name}` from {from}. The file moves into a `removed` folder beside it"
             ));
         } else {
-            painter.text(
-                cell.right_center() - vec2(6.0, 0.0),
-                Align2::RIGHT_CENTER,
-                place,
-                FontId::proportional(11.0),
-                theme::TEXT_WEAK,
-            );
+            place_text();
         }
         x.clicked()
     }
@@ -519,7 +527,11 @@ fn summary(ui: &mut Ui, about: Option<&str>, types: &NodeTypes, library: &[Offer
         .and_then(|k| match k.strip_prefix(LIBRARY_MARK) {
             Some(name) => {
                 let place = library.iter().find(|o| o.name == name).map_or("", |o| o.place);
-                let place = if place == "project" { "the project's components/" } else { "the library" };
+                let place = match place {
+                    "project" => "the project's components/",
+                    "penumbra" => "penumbra's own library",
+                    _ => "the library",
+                };
                 Some(format!("{name}: a component file from {place} (comp.load)"))
             }
             None => types.desc(k).map(|d| format!("{k}: {}", d.summary)),

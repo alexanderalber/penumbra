@@ -1,0 +1,15 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/scan_labels": (kind: "comp.base", params: {"expose": "keep = clean.keep\nfill = clean.fill\nradius = clean.radius\nwidth = shape.width\nheight = shape.height\ntolerance = shape.trace_tolerance\nmin_area = shape.trace_min_area"}),
+        "/scan_labels/clean": (kind: "tex.shader", params: {"file": "library/scan_labels/labels.wgsl"}, inputs: {"in0": "faces", "in1": "objects", "in2": "uv"}),
+        "/scan_labels/faces": (kind: "tex.in"),
+        "/scan_labels/labels": (kind: "tex.out", inputs: {"in": "clean"}),
+        "/scan_labels/objects": (kind: "tex.in"),
+        "/scan_labels/sdf": (kind: "tex.out", inputs: {"in": "shape:sdf"}),
+        "/scan_labels/shape": (kind: "tex.shapes", params: {"width": 1920, "height": 1080, "keep_size": true, "trace_channel": "green", "trace_labels": true, "trace_min_area": 400.0, "trace_tolerance": 1.5}, inputs: {"trace": "clean"}),
+        "/scan_labels/uv": (kind: "tex.in"),
+    },
+)

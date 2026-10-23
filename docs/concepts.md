@@ -217,12 +217,21 @@ reach anywhere.
   `speed = noise1.speed` or just `noise1.speed`. They show on the component and act on the
   inner param.
 - **Library:** "Save to the library" in the node menu writes a `<name>.comp.ron` file; the add
-  dialog's `comp` tab lists the project's `components/` folder and the library shared by all
-  projects (`%LOCALAPPDATA%\penumbra\components`, or `PENUMBRA_LIBRARY`). Adding one adds a
-  copy. The cross beside a library entry moves its file into a `removed/` folder beside it.
+  dialog's `comp` tab lists the project's `components/` folder, the library shared by all
+  projects (`%LOCALAPPDATA%\penumbra\components`, or `PENUMBRA_LIBRARY`) and the content
+  library that ships with penumbra (marked `penumbra`; the `library` folder beside the app,
+  catalogued with a preview of each in [its README](../library/README.md)): effects for scanned
+  objects such as water in a crate, a lamp going round a pumpkin, contour lines or a carved
+  face. Adding one adds a copy. The cross beside a user's library entry moves its file into a
+  `removed/` folder beside it; penumbra's own cannot be removed.
 
-Files a component refers to (a shader, an image) stay relative to the project, so they do not
-travel with a saved component yet.
+Files a component refers to (a shader, an image) are relative to the project. A component in a
+folder of its own, `<name>/<name>.comp.ron` (as all of penumbra's are), brings the other files
+of that folder along: adding it copies them into the project's `library/<name>/`, which is where
+its nodes name them (`library/water/water.wgsl`). A file the project has already is kept, so a
+changed copy survives adding the component again; `comp.load` says what it `copied` and
+`kept`. Its preview picture and notes stay behind. Saving a component does not collect its
+files yet.
 
 ## Undo and the change log
 
@@ -281,6 +290,7 @@ kept across restarts. Use it for calibration results and anything expensive to m
 | `layout.ron` | view state: pan and zoom, open sections, the right column's width, the viewer's aspect, the editor's other options |
 | `state/` | what nodes hold across restarts (feedback loops, caches, locked outputs); ignored by git through its own `.gitignore` |
 | `components/` | the project's own component files |
+| `library/` | the files of components added from a library (`library/<name>/`) |
 | `project.ron.bak` | the file as it was before `project.save` wrote over a file that did not load; worth a line in a project's `.gitignore` |
 | anything else | shaders, scripts, images, videos, meshes, referenced by relative path |
 

@@ -1,0 +1,11 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/edges": (kind: "comp.base", params: {"expose": "line = lines.line\ncolor = lines.color\nobjects = lines.objects\nglow = lines.glow"}),
+        "/edges/labels": (kind: "tex.in"),
+        "/edges/lines": (kind: "tex.shader", params: {"file": "library/edges/edges.wgsl"}, inputs: {"in0": "labels"}),
+        "/edges/out": (kind: "tex.out", inputs: {"in": "lines"}),
+    },
+)

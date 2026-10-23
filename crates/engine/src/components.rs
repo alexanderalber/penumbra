@@ -38,8 +38,16 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Write a component to a file (default: the library, <name>.comp.ron); {path, file?}",
         comp_save,
     );
-    add("comp.load", "Add a component from a file or the library (by name); {file, path?}", comp_load);
-    add("comp.library", "Component files in the project's components/ and the user's library", comp_library);
+    add(
+        "comp.load",
+        "Add a component from a file or a library (by name); one in a folder of its own copies that folder's files into the project's library/<name>/ first; {file, path?}",
+        comp_load,
+    );
+    add(
+        "comp.library",
+        "Component files in the project's components/, the user's library and penumbra's own library",
+        comp_library,
+    );
     add(
         "comp.remove",
         "Take a component file out of the library (into its removed/ folder); {name, place?: project | library}",
@@ -59,6 +67,9 @@ pub fn remove(e: &Engine, name: &str, place: Option<&str>) -> Result<PathBuf> {
         .into_iter()
         .find(|x| x.name == name && place.is_none_or(|p| p == x.place))
         .ok_or_else(|| format!("no component file `{name}`"))?;
+    if entry.place == "penumbra" {
+        return Err(format!("`{name}` ships with penumbra and stays in its library").into());
+    }
     let dir = entry.file.parent().ok_or("the component file has no directory")?.join(REMOVED_DIR);
     std::fs::create_dir_all(&dir).map_err(|err| format!("cannot create {}: {err}", dir.display()))?;
     let file_name = entry.file.file_name().ok_or("the component file has no name")?;
@@ -84,31 +95,69 @@ pub struct LibraryEntry {
     /// The file name without `.comp.ron`.
     pub name: String,
     pub file: PathBuf,
-    /// `project` or `library`.
+    /// `project`, `library` or `penumbra` (shipped with penumbra).
     pub place: &'static str,
 }
 
-/// The component files of the project and the user's library, project first, each sorted by
-/// name. Unreadable directories count as empty.
+/// Where the shipped library is looked for: as many directories above the executable's own as
+/// the examples (the release zip has it beside the executable, a checkout above `target/`).
+const SHIPPED_SEARCH_DEPTH: usize = 4;
+/// The shipped library's directory name.
+pub const SHIPPED_DIR: &str = "library";
+/// Where a component's own files go in a project: `library/<name>/`, the same path its nodes
+/// name them by, so a component in a folder of its own works wherever it is loaded.
+pub const FILES_DIR: &str = "library";
+/// Most files a component brings along, and the largest one.
+const MAX_FILES: usize = 64;
+const MAX_FILE_COPY_BYTES: u64 = 64 << 20;
+
+/// The component library shipped with penumbra: a `library` directory beside the executable or
+/// a few levels above it holding at least one component file.
+pub fn shipped_source() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors()
+        .skip(1)
+        .take(SHIPPED_SEARCH_DEPTH + 1)
+        .map(|d| d.join(SHIPPED_DIR))
+        .find(|d| !files_in(d, "penumbra").is_empty())
+}
+
+/// The component files in `dir`: `<name>.comp.ron` directly in it, or in a folder of its own,
+/// `<name>/<name>.comp.ron` (whose other files travel with it, see [`load`]); sorted by name.
+fn files_in(dir: &Path, place: &'static str) -> Vec<LibraryEntry> {
+    let Ok(read) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut found: Vec<LibraryEntry> = read
+        .flatten()
+        .take(10_000)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let kind = entry.file_type().ok()?;
+            let (name, file) = if kind.is_dir() {
+                let name = path.file_name()?.to_str()?.to_string();
+                if name == REMOVED_DIR {
+                    return None;
+                }
+                let file = path.join(format!("{name}{FILE_SUFFIX}"));
+                (name, file)
+            } else {
+                (path.file_name()?.to_str()?.strip_suffix(FILE_SUFFIX)?.to_string(), path)
+            };
+            (!name.is_empty() && file.is_file()).then_some(LibraryEntry { name, file, place })
+        })
+        .collect();
+    found.sort_by(|a, b| penumbra_graph::natural_cmp(&a.name, &b.name));
+    found
+}
+
+/// The component files of the project, the user's library and penumbra's own, in that order,
+/// each sorted by name. Unreadable directories count as empty.
 pub fn library(e: &Engine) -> Vec<LibraryEntry> {
-    let mut out = Vec::new();
-    let dirs = [(Some(e.session().dir().join(PROJECT_DIR)), "project"), (e.library(), "library")];
-    for (dir, place) in dirs {
-        let Some(dir) = dir else { continue };
-        let Ok(read) = std::fs::read_dir(&dir) else { continue };
-        let mut found: Vec<LibraryEntry> = read
-            .flatten()
-            .filter_map(|entry| {
-                let file = entry.path();
-                let name = file.file_name()?.to_str()?.strip_suffix(FILE_SUFFIX)?.to_string();
-                (!name.is_empty() && file.is_file()).then_some(LibraryEntry { name, file, place })
-            })
-            .take(10_000)
-            .collect();
-        found.sort_by(|a, b| penumbra_graph::natural_cmp(&a.name, &b.name));
-        out.extend(found);
-    }
-    out
+    let dirs = [
+        (Some(e.session().dir().join(PROJECT_DIR)), "project"),
+        (e.library(), "library"),
+        (e.shipped_library(), "penumbra"),
+    ];
+    dirs.into_iter().filter_map(|(dir, place)| Some(files_in(&dir?, place))).flatten().collect()
 }
 
 fn history(out: &penumbra_graph::EditOutcome) -> Json {
@@ -279,15 +328,83 @@ fn find_component(e: &Engine, name: &str) -> Result<PathBuf> {
     })
 }
 
+/// What loading a component did.
+pub struct Loaded {
+    pub path: NodePath,
+    pub outcome: EditOutcome,
+    /// Files the component brought along, copied into the project (relative to it).
+    pub copied: Vec<String>,
+    /// Files it brings that the project had already; those are left as they are.
+    pub kept: Vec<String>,
+}
+
+/// The files a component in a folder of its own (`<name>/<name>.comp.ron`) brings along: the
+/// other files of that folder, except its preview picture and notes. Copied into the project's
+/// `library/<name>/` unless already there (a changed copy in the project wins). Returns the
+/// copied and the kept ones, relative to the project.
+fn bring_files(e: &Engine, file: &Path) -> Result<(Vec<String>, Vec<String>)> {
+    let (mut copied, mut kept) = (Vec::new(), Vec::new());
+    let Some(dir) = file.parent() else { return Ok((copied, kept)) };
+    let Some(name) = file.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(FILE_SUFFIX))
+    else {
+        return Ok((copied, kept));
+    };
+    if dir.file_name().and_then(|n| n.to_str()) != Some(name) {
+        return Ok((copied, kept));
+    }
+    let to = e.session().dir().join(FILES_DIR).join(name);
+    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if same(dir, &to) {
+        return Ok((copied, kept));
+    }
+    let read = std::fs::read_dir(dir).map_err(|err| format!("cannot read {}: {err}", dir.display()))?;
+    let mut files: Vec<PathBuf> = read
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_file()))
+        .map(|entry| entry.path())
+        .filter(|p| {
+            let n = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            !n.ends_with(FILE_SUFFIX) && !n.starts_with("preview.") && !n.ends_with(".md")
+        })
+        .take(MAX_FILES + 1)
+        .collect();
+    if files.len() > MAX_FILES {
+        return Err(format!("{} holds more than {MAX_FILES} files to bring along", dir.display()).into());
+    }
+    files.sort();
+    for from in files {
+        let Some(file_name) = from.file_name() else { continue };
+        let target = to.join(file_name);
+        let shown = format!("{FILES_DIR}/{name}/{}", file_name.to_string_lossy());
+        if target.exists() {
+            kept.push(shown);
+            continue;
+        }
+        let size =
+            std::fs::metadata(&from).map_err(|err| format!("cannot read {}: {err}", from.display()))?.len();
+        if size > MAX_FILE_COPY_BYTES {
+            return Err(format!("{} is larger than {} MiB", from.display(), MAX_FILE_COPY_BYTES >> 20).into());
+        }
+        std::fs::create_dir_all(&to).map_err(|err| format!("cannot create {}: {err}", to.display()))?;
+        std::fs::copy(&from, &target).map_err(|err| format!("cannot copy {}: {err}", from.display()))?;
+        copied.push(shown);
+    }
+    Ok((copied, kept))
+}
+
 /// Reads a component file and adds it at `path` (default: in `level`, named after it), as
-/// `actor`.
+/// `actor`. A component in a folder of its own brings that folder's files into the project
+/// first ([`bring_files`]).
 pub fn load(
     e: &Engine,
     actor: Actor,
     file: &str,
     path: Option<NodePath>,
     level: &NodePath,
-) -> Result<(NodePath, EditOutcome)> {
+) -> Result<Loaded> {
     let file = find_component(e, file)?;
     let size =
         std::fs::metadata(&file).map_err(|err| format!("cannot read {}: {err}", file.display()))?.len();
@@ -312,9 +429,10 @@ pub fn load(
     };
     let base = content(&net)?;
     let next = component::instantiate(&base, types, &comp, &at)?;
+    let (copied, kept) = bring_files(e, &file)?;
     let ops = diff(&base, &next);
-    let out = edit_as(e, actor, &ops, &format!("add component {at}"))?;
-    Ok((at, out))
+    let outcome = edit_as(e, actor, &ops, &format!("add component {at}"))?;
+    Ok(Loaded { path: at, outcome, copied, kept })
 }
 
 fn comp_load(e: &Engine, p: &Json) -> Result<Json> {
@@ -325,8 +443,8 @@ fn comp_load(e: &Engine, p: &Json) -> Result<Json> {
         path: Option<NodePath>,
     }
     let a: A = args(p)?;
-    let (path, out) = load(e, Actor::Claude, &a.file, a.path, &NodePath::root())?;
-    Ok(json!({"path": path, "history": history(&out)}))
+    let l = load(e, Actor::Claude, &a.file, a.path, &NodePath::root())?;
+    Ok(json!({"path": l.path, "copied": l.copied, "kept": l.kept, "history": history(&l.outcome)}))
 }
 
 fn comp_remove(e: &Engine, p: &Json) -> Result<Json> {
@@ -349,12 +467,24 @@ fn comp_library(e: &Engine, p: &Json) -> Result<Json> {
     let dirs = json!({
         "project": e.session().dir().join(PROJECT_DIR).display().to_string(),
         "library": e.library().map(|d| d.display().to_string()),
+        "penumbra": e.shipped_library().map(|d| d.display().to_string()),
     });
     let list: Vec<Json> = library(e)
         .into_iter()
         .map(|x| json!({"name": x.name, "file": x.file.display().to_string(), "place": x.place}))
         .collect();
     Ok(json!({"dirs": dirs, "components": list}))
+}
+
+/// The value of param `name` that node `n` (`id`) declares itself (a shader's header): its own
+/// value if set, else the declared default; `None` when it declares no such param (or has not
+/// read its file yet).
+fn declared(e: &Engine, n: &penumbra_graph::NodeDef, id: NodeId, name: &str) -> Option<penumbra_core::Value> {
+    if let Some(v) = n.params.get(name) {
+        return Some(v.clone());
+    }
+    let specs = e.on_cook(move |st| st.cooker.status(id).and_then(|s| s.params)).ok().flatten()?;
+    specs.into_iter().find(|s| s.name == name).map(|s| s.default)
 }
 
 /// For `node.connect` and `node.disconnect` on a component: its input (or output) called `slot`
@@ -411,7 +541,8 @@ pub fn info(e: &Engine, net: &Network, id: NodeId) -> Option<Json> {
             let value = match &resolved {
                 Some(Ok(t)) => net.resolve(t.node()).and_then(|nid| {
                     let n = net.node(nid)?;
-                    n.param(types.desc(&n.kind)?, t.param().as_str()).cloned()
+                    let name = t.param().as_str();
+                    n.param(types.desc(&n.kind)?, name).cloned().or_else(|| declared(e, n, nid, name))
                 }),
                 _ => None,
             };

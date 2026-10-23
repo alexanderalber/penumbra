@@ -25,6 +25,9 @@ explained here.
 
 [Examples](../examples/README.md): small projects, each showing one side of penumbra.
 
+[Content library](../library/README.md): ready-made effects for scanned objects, as components
+with a preview each (add them from the add dialog's `comp` tab).
+
 Generated from the code, so always complete:
 
 - [Node reference](reference/nodes.md): every node type with its inputs, outputs and params.

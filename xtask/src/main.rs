@@ -17,7 +17,7 @@
 //!   `target/THIRD-PARTY-NOTICES.html` by cargo-about (`about.toml`, `about.hbs`). Fails when a
 //!   dependency's licence is not accepted in `about.toml` or cannot be determined.
 //! - `dist`: a release build for Windows, zipped with everything it needs beside the exe, the
-//!   documentation and the examples: `target/dist/penumbra-VERSION-windows-x64.zip`. Not part
+//!   documentation, the examples and the content library: `target/dist/penumbra-VERSION-windows-x64.zip`. Not part
 //!   of `ci`.
 
 use std::path::Path;
@@ -239,6 +239,8 @@ fn dist() -> Result<(), String> {
     // screenshot by a path relative to docs/, so it keeps that place.
     copy_dir(&root.join("docs"), &stage.join("docs"))?;
     copy_dir(&root.join("examples"), &stage.join("examples"))?;
+    // The content library: components with their shaders, offered in the add dialog.
+    copy_dir(&root.join("library"), &stage.join("library"))?;
     std::fs::create_dir_all(stage.join("assets")).map_err(|e| format!("cannot create assets: {e}"))?;
     let shot = root.join("assets").join("screenshot.png");
     std::fs::copy(&shot, stage.join("assets").join("screenshot.png"))

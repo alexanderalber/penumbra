@@ -180,6 +180,9 @@ pub struct ViewFrame {
     pub pictures: BTreeSet<NodeId>,
     /// Instance params of [`ViewRequest::detail`].
     pub detail_params: Option<(NodeId, Vec<ParamSpec>)>,
+    /// When [`ViewRequest::detail`] is a component: the instance params of the inner nodes its
+    /// exposed params lead to, so it can show a shader's own params as its own.
+    pub inner_params: BTreeMap<NodeId, Vec<ParamSpec>>,
     /// The mappings of the `tex.mapper` nodes among the viewers.
     pub mappings: BTreeMap<NodeId, Arc<Mapping>>,
     /// The latest resolution analysis, while the overlay is on or the view asks for it.
@@ -425,7 +428,7 @@ impl CookState {
         }
         self.state.after_pass(&self.cooker, &net, self.gpu.as_ref(), self.clock.now().frame);
         let free = self.draw_free_views(&net, &request.free);
-        self.publish(&net, &request, now, free);
+        self.publish(&net, session.types(), &request, now, free);
         self.stats.add(started, self.last.elapsed, due, self.clock.now().rate.period());
         // The whole pass, not only the cooking: outputs, free views and publishing take from
         // the same frame.
@@ -450,6 +453,30 @@ impl CookState {
             .zip(self.free_views.iter_mut())
             .map(|(r, fv)| (*r, fv.draw(gpu, net, &self.cooker, &self.renders, r).map_err(|e| e.0)))
             .collect()
+    }
+
+    /// The instance params (a shader's header) of the nodes that component `id`'s exposed
+    /// params lead to; empty for any other node.
+    fn exposed_instance_params(
+        &self,
+        net: &Network,
+        types: &NodeTypes,
+        id: NodeId,
+    ) -> BTreeMap<NodeId, Vec<ParamSpec>> {
+        let mut out = BTreeMap::new();
+        for x in net.exposed(types, id) {
+            let Ok(target) = x.target.and_then(|t| net.resolve_alias(types, &t).map_err(|e| e.0)) else {
+                continue;
+            };
+            let Some(inner) = net.resolve(target.node()) else { continue };
+            if out.contains_key(&inner) {
+                continue;
+            }
+            if let Some(params) = self.cooker.status(inner).and_then(|s| s.params) {
+                out.insert(inner, params);
+            }
+        }
+        out
     }
 
     /// What paces the show clock: a vsync is a real output's while one arrived recently, else
@@ -478,6 +505,7 @@ impl CookState {
     fn publish(
         &mut self,
         net: &Network,
+        types: &NodeTypes,
         request: &ViewRequest,
         wall: Instant,
         free: Vec<(freeview::Request, Result<freeview::Picture, String>)>,
@@ -537,6 +565,8 @@ impl CookState {
         }
         frame.pictures.retain(|id| frame.outputs.contains_key(id));
         frame.detail_params = request.detail.and_then(|id| Some((id, self.cooker.status(id)?.params?)));
+        frame.inner_params =
+            request.detail.map(|id| self.exposed_instance_params(net, types, id)).unwrap_or_default();
         *lock(&self.view.frame) = Arc::new(frame);
     }
 }
@@ -559,6 +589,9 @@ pub struct Engine {
     switching: Mutex<()>,
     /// The user's component library (`comp.*`); `None` until set or asked for.
     library: Mutex<Option<std::path::PathBuf>>,
+    /// The component library shipped with penumbra (`library/` beside the executable); `None`
+    /// offers none (tests).
+    shipped: Mutex<Option<std::path::PathBuf>>,
     /// Where the recently opened projects are listed; `None` lists nothing (tests, headless).
     recent: Mutex<Option<std::path::PathBuf>>,
     /// The nodes copied last (`node.copy`, Ctrl+C).
@@ -640,6 +673,7 @@ impl Engine {
             threads: Mutex::new(Vec::new()),
             switching: Mutex::new(()),
             library: Mutex::new(None),
+            shipped: Mutex::new(None),
             recent: Mutex::new(None),
             clipboard: Mutex::new(None),
             crash_marker: Mutex::new(None),
@@ -894,6 +928,18 @@ impl Engine {
     /// Points the component library somewhere else (tests, a project that brings its own).
     pub fn set_library(&self, dir: Option<std::path::PathBuf>) {
         *lock(&self.library) = dir;
+    }
+
+    /// The component library shipped with penumbra, if the app found one
+    /// ([`crate::components::shipped_source`]).
+    pub fn shipped_library(&self) -> Option<std::path::PathBuf> {
+        lock(&self.shipped).clone()
+    }
+
+    /// Offers the components in `dir` as penumbra's own (the app passes
+    /// [`crate::components::shipped_source`]; tests a folder of their own).
+    pub fn set_shipped_library(&self, dir: Option<std::path::PathBuf>) {
+        *lock(&self.shipped) = dir;
     }
 
     /// Where a lost GPU device is recorded for the next start (see [`crate::crash`]); `None`

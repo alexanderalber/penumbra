@@ -1,0 +1,13 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/glow_rim": (kind: "comp.base", params: {"expose": "clock = rim.clock\nlid = rim.lid\nbox = rim.box\nreach = rim.reach\nbelow = rim.below\ngain = rim.gain\nflicker = rim.flicker\nignite = rim.ignite\ncolor = rim.color"}),
+        "/glow_rim/labels": (kind: "tex.in"),
+        "/glow_rim/out": (kind: "tex.out", inputs: {"in": "rim"}),
+        "/glow_rim/regions": (kind: "tex.in"),
+        "/glow_rim/rim": (kind: "tex.shader", params: {"file": "library/glow_rim/rim.wgsl"}, inputs: {"in0": "regions", "in1": "sdf", "in2": "labels"}),
+        "/glow_rim/sdf": (kind: "tex.in"),
+    },
+)

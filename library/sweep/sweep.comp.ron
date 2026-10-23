@@ -1,0 +1,11 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/sweep": (kind: "comp.base", params: {"expose": "speed = scan.speed\nangle = scan.angle\nline = scan.line\ntrail = scan.trail\ncolor = scan.color\ntint = scan.tint\npause = scan.pause\nclock = scan.clock"}),
+        "/sweep/labels": (kind: "tex.in"),
+        "/sweep/out": (kind: "tex.out", inputs: {"in": "scan"}),
+        "/sweep/scan": (kind: "tex.shader", params: {"file": "library/sweep/sweep.wgsl"}, inputs: {"in0": "labels"}),
+    },
+)

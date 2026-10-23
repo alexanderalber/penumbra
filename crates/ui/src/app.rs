@@ -888,6 +888,7 @@ impl PenumbraApp {
                                 node: id,
                                 status: view.status.get(&id),
                                 instance: detail.map(Vec::as_slice),
+                                inner: &view.inner_params,
                                 can_edit,
                                 project_dir: Some(session.dir()),
                                 new_group: &new_group,

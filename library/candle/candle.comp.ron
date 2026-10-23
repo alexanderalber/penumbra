@@ -1,0 +1,12 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/candle": (kind: "comp.base", params: {"expose": "radius = light.radius\nintensity = light.intensity\nflicker = light.flicker\ncolor = light.color\nwobble = light.wobble"}),
+        "/candle/labels": (kind: "tex.in"),
+        "/candle/light": (kind: "tex.shader", params: {"file": "library/candle/candle.wgsl"}, inputs: {"in0": "labels", "in1": "sdf"}),
+        "/candle/out": (kind: "tex.out", inputs: {"in": "light"}),
+        "/candle/sdf": (kind: "tex.in"),
+    },
+)

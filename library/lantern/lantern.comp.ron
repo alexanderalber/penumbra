@@ -1,0 +1,13 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/lantern": (kind: "comp.base", params: {"expose": "clock = face.clock\nseek = face.seek\nlength = face.length\npart = face.part\nmouth = face.mouth\nobject = face.object\nlid = face.lid\nbright = face.bright\ncore = face.core\nedge = face.edge\nhalo = face.halo\nhalo_width = face.halo_width\nskin = face.skin\nskin_color = face.skin_color\nspill = face.spill\nspill_radius = face.spill_radius\nflicker = face.flicker\neven = face.even\neven_max = face.even_max\nyaw = face.yaw\ndrop = face.drop\nscale = face.scale\neye_size = face.eye_size\neye_apart = face.eye_apart\neye_height = face.eye_height\nlook_range = face.look_range\ncenter = face.center\nsize = face.size\nstem = face.stem"}),
+        "/lantern/face": (kind: "tex.shader", params: {"file": "library/lantern/lantern.wgsl"}, inputs: {"in0": "labels", "in1": "regions", "in2": "photo"}),
+        "/lantern/labels": (kind: "tex.in"),
+        "/lantern/out": (kind: "tex.out", inputs: {"in": "face"}),
+        "/lantern/photo": (kind: "tex.in"),
+        "/lantern/regions": (kind: "tex.in"),
+    },
+)

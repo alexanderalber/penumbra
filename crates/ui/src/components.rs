@@ -183,8 +183,9 @@ pub fn add(
 ) -> Result<(), Error> {
     let net = engine.session().doc().snapshot();
     let level_path = level_path(&net, level);
-    let (path, out) = comps::load(engine, Actor::User, name, None, &level_path).map_err(err)?;
-    place(engine, &out, [(path.clone(), at)], now)?;
+    let loaded = comps::load(engine, Actor::User, name, None, &level_path).map_err(err)?;
+    let path = loaded.path;
+    place(engine, &loaded.outcome, [(path.clone(), at)], now)?;
     if let Some(id) = engine.session().doc().snapshot().resolve(&path) {
         editor.select([id]);
     }

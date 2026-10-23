@@ -1,0 +1,15 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/photo_detail": (kind: "comp.base", params: {"expose": "fine_size = blur_fine.size\nwide_size = blur_wide.size"}),
+        "/photo_detail/blur_fine": (kind: "tex.blur", params: {"size": 3.0}, inputs: {"in": "on"}),
+        "/photo_detail/blur_wide": (kind: "tex.blur", params: {"size": 24.0}, inputs: {"in": "on"}),
+        "/photo_detail/fine": (kind: "tex.out", inputs: {"in": "blur_fine"}),
+        "/photo_detail/labels": (kind: "tex.in"),
+        "/photo_detail/on": (kind: "tex.shader", params: {"file": "library/photo_detail/on_object.wgsl"}, inputs: {"in0": "photo", "in1": "labels"}),
+        "/photo_detail/photo": (kind: "tex.in"),
+        "/photo_detail/wide": (kind: "tex.out", inputs: {"in": "blur_wide"}),
+    },
+)

@@ -529,6 +529,9 @@ Content is made once, in the camera's picture, and each projector takes its shar
    Without `live`, the outlines are written into the node's `shapes` text once, to edit by hand.
 2. `tex.shape_content` from the shapes' `id` output: fill, pulse, chase or ripple per object.
    Because there is one set of shapes, ripples and chases run across all projectors as one.
+   Or any effect of the [content library](../library/README.md) (edges, water, a lamp going
+   round an object, tiles, ...): they take the scan's pictures and draw in the camera's
+   picture too.
 3. Per projector: `tex.remap` with the content as `in` and a `tex.image` of
    `objects/proj_to_cam_smooth_N.exr` as `map`, `extend` zero.
 4. `tex.composite` with `op` multiply: the remap as layer1, a `tex.image` of

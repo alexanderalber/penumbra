@@ -1,0 +1,15 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/relight": (kind: "comp.base", params: {"expose": "radius = lamp.radius\nribs = lamp.ribs\nspeed = lamp.speed\nelevation = lamp.elevation\nambient = lamp.ambient\ncolor = lamp.color\nrim = lamp.rim\nclock = lamp.clock\nsoften = soft.size"}),
+        "/relight/fine": (kind: "tex.in"),
+        "/relight/labels": (kind: "tex.in"),
+        "/relight/lamp": (kind: "tex.shader", params: {"file": "library/relight/relight.wgsl"}, inputs: {"in0": "labels", "in1": "soft", "in2": "fine", "in3": "wide"}),
+        "/relight/out": (kind: "tex.out", inputs: {"in": "lamp"}),
+        "/relight/sdf": (kind: "tex.in"),
+        "/relight/soft": (kind: "tex.blur", params: {"size": 40.0}, inputs: {"in": "sdf"}),
+        "/relight/wide": (kind: "tex.in"),
+    },
+)

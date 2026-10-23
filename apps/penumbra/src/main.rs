@@ -102,6 +102,7 @@ fn run() -> Result<(), String> {
     let session = Arc::new(session);
     log::info!("project: {}", session.file().display());
     let engine = Engine::start(session).map_err(|e| e.to_string())?;
+    engine.set_shipped_library(penumbra_engine::components::shipped_source());
     if args.fresh {
         // Before the GPU arrives, so the start restore leaves the state out.
         engine.state().start_fresh();
@@ -358,5 +359,45 @@ mod tests {
             count += 1;
         }
         assert!(count >= 7, "only {count} examples found");
+    }
+
+    /// The content library ships in the release zip and is offered in the add dialog: every
+    /// entry must load, bring the files its nodes name, declare its shaders' params, have a
+    /// preview and be in the catalog.
+    #[test]
+    fn the_library_loads() {
+        let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library");
+        let catalog = std::fs::read_to_string(root.join("README.md")).unwrap();
+        let mut count = 0;
+        for entry in std::fs::read_dir(&root).unwrap() {
+            let dir = entry.unwrap().path();
+            if !dir.is_dir() {
+                continue;
+            }
+            let name = dir.file_name().unwrap().to_str().unwrap().to_string();
+            let file = dir.join(format!("{name}.comp.ron"));
+            let text = std::fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+            let comp = penumbra_project::component::parse(&text, &types)
+                .unwrap_or_else(|e| panic!("{}: {}", file.display(), e.0));
+            assert!(comp.nodes.len() > 1, "{name}");
+            // The files its nodes name lie in its own folder, under the path a project gets them.
+            for part in text.split("\"file\": \"").skip(1) {
+                let path = part.split('"').next().unwrap();
+                let inside = path.strip_prefix(&format!("library/{name}/")).unwrap_or_else(|| {
+                    panic!("{name}: {path} is not in library/{name}/");
+                });
+                let source = dir.join(inside);
+                assert!(source.is_file(), "{name}: {path} is missing");
+                if path.ends_with(".wgsl") {
+                    let code = std::fs::read_to_string(&source).unwrap();
+                    penumbra_gpu::header::parse(&code).unwrap_or_else(|e| panic!("{path}: {}", e.0));
+                }
+            }
+            assert!(dir.join("preview.png").is_file(), "{name} has no preview.png");
+            assert!(catalog.contains(&format!("### {name}\n")), "{name} is not in library/README.md");
+            count += 1;
+        }
+        assert!(count >= 10, "only {count} library entries found");
     }
 }
