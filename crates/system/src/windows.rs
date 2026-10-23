@@ -1,6 +1,6 @@
 //! The Windows calls behind [`crate::display`], [`crate::checks`] and [`crate::awake`]: display
 //! configuration (`QueryDisplayConfig`), the monitors' EDIDs and the current user's settings in
-//! the registry, and power requests. With
+//! the registry, power requests, and the mouse pointer with the displays' rectangles. With
 //! NVML's loader the crate's only `unsafe`; every call checks its status code and every buffer is
 //! sized by the API or by its type.
 #![allow(unsafe_code)]
@@ -542,4 +542,75 @@ impl Drop for DisplayRequest {
         // SAFETY: the handle from PowerCreateRequest, closed once.
         unsafe { windows_sys::Win32::Foundation::CloseHandle(self.handle) };
     }
+}
+
+/// The pointer's position and the logical buttons held; `None` when Windows refuses (no
+/// desktop, or a secure one).
+pub fn pointer() -> Option<crate::pointer::Pointer> {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_LBUTTON, VK_MBUTTON, VK_RBUTTON,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetSystemMetrics, SM_SWAPBUTTON};
+
+    use crate::pointer::{LEFT, MIDDLE, Pointer, RIGHT};
+
+    let mut at = POINT { x: 0, y: 0 };
+    // SAFETY: writes one POINT into `at`.
+    if unsafe { GetCursorPos(&mut at) } == 0 {
+        return None;
+    }
+    // SAFETY: plain queries by value; the high bit of the result is "held now".
+    let held = |vk: u16| unsafe { GetAsyncKeyState(i32::from(vk)) } < 0;
+    // SAFETY: a plain query by value.
+    let swapped = unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0;
+    // The physical buttons; with swapped buttons the right one is the logical left.
+    let (left, right) = if swapped { (VK_RBUTTON, VK_LBUTTON) } else { (VK_LBUTTON, VK_RBUTTON) };
+    let mut buttons = 0;
+    for (vk, bit) in [(left, LEFT), (right, RIGHT), (VK_MBUTTON, MIDDLE)] {
+        if held(vk) {
+            buttons |= bit;
+        }
+    }
+    Some(Pointer { x: at.x, y: at.y, buttons })
+}
+
+/// Every display of the desktop with its rectangle (`EnumDisplayMonitors`).
+pub fn monitors() -> Vec<crate::pointer::Monitor> {
+    use windows_sys::Win32::Foundation::{LPARAM, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO, MONITORINFOEXW,
+    };
+    use windows_sys::core::BOOL;
+
+    use crate::pointer::Monitor;
+
+    unsafe extern "system" fn each(monitor: HMONITOR, _dc: HDC, _rect: *mut RECT, data: LPARAM) -> BOOL {
+        // SAFETY: `data` is the `&mut Vec<Monitor>` passed below, alive for the whole
+        // enumeration, which calls back on the calling thread only.
+        let list = unsafe { &mut *(data as *mut Vec<Monitor>) };
+        let mut info = MONITORINFOEXW::default();
+        info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        // SAFETY: `cbSize` tells the call it may write the extended struct.
+        if unsafe { GetMonitorInfoW(monitor, (&raw mut info).cast::<MONITORINFO>()) } != 0 {
+            let r = info.monitorInfo.rcMonitor;
+            list.push(Monitor {
+                os_name: wide(&info.szDevice),
+                left: r.left,
+                top: r.top,
+                right: r.right,
+                bottom: r.bottom,
+            });
+        }
+        // Go on; a desktop has a handful of displays.
+        i32::from(list.len() < 64)
+    }
+
+    let mut list: Vec<Monitor> = Vec::new();
+    // SAFETY: no DC and no clip rectangle (the whole desktop); the callback gets a pointer to
+    // `list`, which outlives the call.
+    unsafe {
+        EnumDisplayMonitors(std::ptr::null_mut(), std::ptr::null(), Some(each), (&raw mut list) as LPARAM);
+    }
+    list
 }

@@ -1086,7 +1086,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.speed](#chanspeed), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.mouse_in](#chanmouse_in), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.spacemouse_in](#chanspacemouse_in), [chan.speed](#chanspeed), [chan.trail](#chantrail)
 
 ### chan.audio_analysis
 
@@ -1295,6 +1295,22 @@ Inputs:
 
 Outputs: `out` (chan).
 
+### chan.mouse_in
+
+The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): `x`, `y`: the pointer as shares of the display, 0 to 1 from the top left; `inside`: 1 while it is on that display; `left`, `right`, `middle`: 1 while held; `wheel`: notches turned over a projector output window, summed (up positive)
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `display` | text |  |  | The display `x` and `y` are shares of, named as an output's `display` (or `\\.\DISPLAY2`); empty: the display the pointer is on |
+
 ### chan.noise
 
 A number that wanders smoothly at random: organic motion that never repeats
@@ -1426,6 +1442,18 @@ Outputs:
 | `run` | float | `1` | 0 to 1 (soft) | On from 0.5 up (with `equals` set: while it equals that number). Each time it turns on the show starts from its beginning; while it is off it shows black and every run gate is 0 |
 | `equals` | int | `-1` (off) | -1 to 20 (soft) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the show's own number. While off, `run` is on from 0.5 up; -1: off |
 | `mode` | once \| loop | `"once"` |  | What the show does after its last step; once: it ends in black and stays there; loop: it starts over from its lead-in, round after round |
+
+### chan.spacemouse_in
+
+The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): -1 to 1 each: `right` (slide the cap right), `up` (lift it), `forward` (push it away), `pitch` (tilt it, nose up), `yaw` (twist it clockwise), `roll` (tilt it sideways, to the right); `button_left`, `button_right`: 1 while held; `connected`: 1 while the device is there
 
 ### chan.speed
 

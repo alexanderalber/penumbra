@@ -27,6 +27,9 @@ windows-sys = { workspace = true, features = [
     "Win32_Security",
     "Win32_System_Performance",
     "Win32_System_Power",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [lints]

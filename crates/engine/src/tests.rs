@@ -955,6 +955,9 @@ mod osc_tests;
 #[path = "keyboard_tests.rs"]
 mod keyboard_tests;
 
+#[path = "mouse_tests.rs"]
+mod mouse_tests;
+
 #[path = "dmx_tests.rs"]
 mod dmx_tests;
 

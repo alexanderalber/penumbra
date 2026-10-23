@@ -12,7 +12,9 @@
 //!   while Claude holds the claim) and are refused on locked nodes and bound params.
 //! - **Learn** (`osc.learn`): the next address with a number binds the param to that address's
 //!   channel on the `chan.osc_in` that takes it; one undo step. A key pressed meanwhile that a
-//!   `chan.keyboard_in` lists counts too: the param is bound to that key's gate.
+//!   `chan.keyboard_in` lists counts too: the param is bound to that key's gate. So does the 3D
+//!   mouse while a `chan.spacemouse_in` exists: a button pressed, or an axis pushed past half
+//!   way, binds the param to that channel.
 //!
 //! Commands: `osc.status`, `osc.config`, `osc.learn`, `osc.send`.
 
@@ -25,10 +27,12 @@ use penumbra_core::{Name, NodeId, NodePath, ParamKind, ParamPath, ParamSpec, Val
 use penumbra_graph::{Network, NodeDef, NodeTypes, Op};
 use penumbra_ops::keyboard::{DEFAULT_KEYS, KEYBOARD_IN, Key, Keyboard, parse_keys};
 use penumbra_ops::osc::{Filter, OSC_IN, channels_of};
+use penumbra_ops::spacemouse::{SPACEMOUSE_IN, heard as spacemouse_heard};
 use penumbra_osc::codec::{self, Arg, Message};
 use penumbra_osc::hub::{self, Config, Hub, Incoming};
 use penumbra_osc::{Budget, Pattern};
 use penumbra_project::{Actor, Session};
+use penumbra_spacenav::{BUTTONS, SpaceNav};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
@@ -85,8 +89,11 @@ pub struct Learned {
 /// Shared between the osc thread, the commands and the UI.
 pub struct OscShared {
     hub: Hub,
-    /// Learn also listens to the keys.
+    /// Learn also listens to the keys and the 3D mouse.
     keyboard: Keyboard,
+    spacenav: SpaceNav,
+    /// The 3D mouse's presses when learn was armed.
+    spacenav_counts: Mutex<[u64; BUTTONS]>,
     stop: AtomicBool,
     stats: Mutex<ParamStats>,
     learning: Mutex<Option<Learning>>,
@@ -94,10 +101,12 @@ pub struct OscShared {
 }
 
 impl OscShared {
-    pub fn new(hub: Hub, keyboard: Keyboard) -> Self {
+    pub fn new(hub: Hub, keyboard: Keyboard, spacenav: SpaceNav) -> Self {
         Self {
             hub,
             keyboard,
+            spacenav_counts: Mutex::new(spacenav.press_counts()),
+            spacenav,
             stop: AtomicBool::new(false),
             stats: Mutex::new(ParamStats::default()),
             learning: Mutex::new(None),
@@ -146,6 +155,7 @@ impl OscShared {
         });
         self.hub.learn(true);
         self.keyboard.learn(true);
+        *lock(&self.spacenav_counts) = self.spacenav.press_counts();
         Ok(())
     }
 
@@ -484,6 +494,36 @@ fn learn_step(session: &Session, shared: &OscShared, now: Instant) {
         }
         return;
     }
+    if heard.is_none() {
+        let counts = *lock(&shared.spacenav_counts);
+        if let Some(channel) = spacemouse_heard(&shared.spacenav, counts) {
+            let address = format!("3D mouse {channel}");
+            match bind_learned_spacemouse(session, &learning, channel) {
+                Ok(from) => {
+                    finish(Learned {
+                        param: learning.param.clone(),
+                        address: Some(address),
+                        from: Some(from),
+                        channels: vec![channel.to_string()],
+                        error: None,
+                    });
+                    return;
+                }
+                // No node reads the 3D mouse: not meant for this learn.
+                Err(None) => {}
+                Err(Some(e)) => {
+                    finish(Learned {
+                        param: learning.param.clone(),
+                        address: Some(address),
+                        from: None,
+                        channels: Vec::new(),
+                        error: Some(e),
+                    });
+                    return;
+                }
+            }
+        }
+    }
     let Some(heard) = heard else {
         if now >= learning.until {
             finish(Learned {
@@ -579,23 +619,47 @@ fn bind_learned_key(
         .collect();
     nodes.sort();
     let from = nodes.first().ok_or(None)?;
-    let (param, component) = &learning.target;
-    let target = net.resolve_alias(types, param).map_err(|e| Some(e.0))?;
-    let (_, spec) = param_spec(&net, types, &target).map_err(Some)?;
-    // One gate for one number: a vector as a whole takes it in its first component.
-    let component = component.or(if spec.bind_components() > 1 { Some(0) } else { None });
     let channel = key.channel();
-    let op = bind(param, component, from, &channel).map_err(Some)?;
-    session
-        .edit(
-            Actor::Osc,
-            &[op],
-            None,
-            &format!("learn {} from key {}", learning.param, key.name()),
-            Instant::now(),
-        )
-        .map_err(|e| Some(e.0))?;
+    bind_one(session, &net, learning, from, &channel, &format!("key {}", key.name())).map_err(Some)?;
     Ok((from.to_string(), channel))
+}
+
+/// Binds the learning param to the 3D mouse's `channel` on the first `chan.spacemouse_in` (by
+/// path); `Err(None)` when there is none.
+fn bind_learned_spacemouse(
+    session: &Session,
+    learning: &Learning,
+    channel: &str,
+) -> Result<String, Option<String>> {
+    let net = session.doc().snapshot();
+    let mut nodes: Vec<NodePath> =
+        net.nodes().filter(|n| n.kind == SPACEMOUSE_IN).filter_map(|n| net.path_of(n.id)).collect();
+    nodes.sort();
+    let from = nodes.first().ok_or(None)?;
+    bind_one(session, &net, learning, from, channel, &format!("3D mouse {channel}")).map_err(Some)?;
+    Ok(from.to_string())
+}
+
+/// Binds the learning param to one channel of `from`, as one undo step labelled by `what`.
+fn bind_one(
+    session: &Session,
+    net: &Network,
+    learning: &Learning,
+    from: &NodePath,
+    channel: &str,
+    what: &str,
+) -> Result<(), String> {
+    let types = session.types();
+    let (param, component) = &learning.target;
+    let target = net.resolve_alias(types, param).map_err(|e| e.0)?;
+    let (_, spec) = param_spec(net, types, &target)?;
+    // One channel for one number: a vector as a whole takes it in its first component.
+    let component = component.or(if spec.bind_components() > 1 { Some(0) } else { None });
+    let op = bind(param, component, from, channel)?;
+    session
+        .edit(Actor::Osc, &[op], None, &format!("learn {} from {what}", learning.param), Instant::now())
+        .map_err(|e| e.0)?;
+    Ok(())
 }
 
 fn bind(param: &ParamPath, component: Option<u8>, from: &NodePath, channel: &str) -> Result<Op, String> {
@@ -626,7 +690,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "osc.learn",
-        "Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists); {param, timeout?, wait?} or {cancel: true}",
+        "Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}",
         osc_learn,
     );
     add(

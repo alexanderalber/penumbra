@@ -22,7 +22,7 @@ use penumbra_gpu::Gpu;
 use penumbra_ops::keyboard::{Key, Source};
 use penumbra_ops::out::{DisplayInfo, OutputBoard, ProjectorState};
 use penumbra_system::{DisplayDetails, KeepAwake, Problem};
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key as LogicalKey, ModifiersState, PhysicalKey};
 use winit::monitor::MonitorHandle;
@@ -115,6 +115,17 @@ impl Outputs {
                         || self.modifiers.super_key();
                     let key = if down && !shortcut { key_of(event) } else { None };
                     keyboard.key(Source::Output, &format!("{:?}", event.physical_key), key, down);
+                }
+            }
+            // The wheel over a projector, for `chan.mouse_in` (position and buttons it polls).
+            WindowEvent::MouseWheel { delta, .. } => {
+                let mouse = self.engine.mouse();
+                if mouse.wanted() {
+                    mouse.wheel(match delta {
+                        MouseScrollDelta::LineDelta(_, y) => f64::from(*y),
+                        // Windows reports lines; a pixel delta is taken as 120 to the notch.
+                        MouseScrollDelta::PixelDelta(p) => p.y / 120.0,
+                    });
                 }
             }
             // Keys held when the focus goes elsewhere never see their release here.

@@ -100,6 +100,28 @@ them. **learn from OSC** in a param's link menu also takes a key a `chan.keyboar
 and binds its gate. From the control channel: `keyboard.press {key}` (or `{key, down}` to hold
 and let go) and `keyboard.status`.
 
+### Mouse and 3D mouse
+
+`chan.mouse_in` turns the mouse pointer into channels, wherever it is on the desktop, inside
+penumbra or not: `x` and `y` are shares of a display, 0 to 1 from its top left; `inside` is 1
+while the pointer is on that display; `left`, `right` and `middle` are 1 while held. Its
+`display` names the display as an output's `display` does (or `\\.\DISPLAY2`); empty, it
+is the display the pointer is on. On a named display `x` and `y` keep following the pointer
+past 0 and 1 when it leaves. Name a projector's display, and the pointer over the projection
+is a position in the projector's picture. `wheel` sums the notches turned (up positive), but
+only over a projector output window: reading the wheel anywhere would need a hook into every
+mouse event of the machine. The node reads the pointer once a frame, so a click shorter than
+a frame can be missed. From the control channel: `mouse.status` (pointer, displays, wheel) and
+`mouse.fake {x, y, buttons?}` (desktop pixels; `{real: true}` ends it; `{wheel}` turns the
+wheel).
+
+`chan.spacemouse_in` turns the 3D mouse (see [navigation](navigation.md)) into channels, each
+-1 to 1: `right`, `up`, `forward` (slide, lift, push the cap away), `pitch`, `yaw`, `roll`
+(tilt it nose up, twist it clockwise, tilt it to the right), `button_left` and `button_right`
+(1 while held), `connected`. A viewer flying a free view and the node both follow the cap at
+the same time. **learn from OSC** also takes the 3D mouse while such a node exists: press a
+button, or push the cap clearly along one axis.
+
 ### A clock per piece
 
 `chan.clock` counts the seconds since it was switched on. Its `run` is on from 0.5 up; each

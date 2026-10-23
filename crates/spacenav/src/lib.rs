@@ -58,6 +58,9 @@ const REST_SPAN: i32 = 4;
 /// as a deflection once let go).
 const REST_TIME: Duration = Duration::from_secs(2);
 
+/// Buttons of the SpaceNavigator: bit 0 the left one, bit 1 the right one.
+pub const BUTTONS: usize = 2;
+
 /// Axis order in reports and in [`Motion::axes`].
 pub const AXES: [&str; 6] = ["tx", "ty", "tz", "rx", "ry", "rz"];
 
@@ -232,6 +235,9 @@ struct Inner {
     axes_at: [Option<Instant>; 2],
     /// Buttons pressed (rising edges) since [`SpaceNav::take_presses`].
     presses: u8,
+    /// Presses per button since the start, for readers that must not take them from the
+    /// viewer ([`SpaceNav::press_counts`]).
+    counts: [u64; BUTTONS],
     /// Report shapes not understood, warned about once each.
     unknown: Vec<(u8, usize)>,
 }
@@ -291,6 +297,11 @@ impl Shared {
             Some(Update::Buttons(b)) => {
                 let pressed = b & !inner.status.motion.buttons;
                 inner.presses |= pressed;
+                for (i, n) in inner.counts.iter_mut().enumerate() {
+                    if pressed & (1 << i) != 0 {
+                        *n += 1;
+                    }
+                }
                 inner.status.motion.buttons = b;
             }
             None => {
@@ -342,6 +353,12 @@ impl SpaceNav {
         }
     }
 
+    /// Never opens the device: [`SpaceNav::start`] does nothing from now on, so only
+    /// [`SpaceNav::feed`] moves the axes (tests on a machine that may have the device).
+    pub fn detach(&self) {
+        self.0.started.store(true, Ordering::Release);
+    }
+
     /// What the cap does now; at rest (all zero) while the device is away or silent.
     pub fn motion(&self) -> Motion {
         let inner = self.0.lock();
@@ -358,6 +375,18 @@ impl SpaceNav {
     /// The buttons pressed since the last call, as bits (1: left, 2: right).
     pub fn take_presses(&self) -> u8 {
         std::mem::take(&mut self.0.lock().presses)
+    }
+
+    /// Presses per button (left, right) since the reader started. Unlike
+    /// [`SpaceNav::take_presses`] this takes nothing away, so several readers can count.
+    pub fn press_counts(&self) -> [u64; BUTTONS] {
+        self.0.lock().counts
+    }
+
+    /// Takes `report` (id byte first) as if the device had sent it now: for tests and for
+    /// driving the 3D mouse's nodes without the device.
+    pub fn feed(&self, report: &[u8]) {
+        self.0.report(report, Instant::now());
     }
 
     pub fn status(&self) -> Status {
@@ -439,6 +468,7 @@ mod tests {
         nav.0.report(&[3, 0, 0, 0, 0, 0, 0], now);
         assert_eq!(nav.take_presses(), 3);
         assert_eq!(nav.take_presses(), 0);
+        assert_eq!(nav.press_counts(), [1, 1], "counted apart, and not taken");
         // Hostile reports change nothing.
         for bad in [&[][..], &[1], &[1, 2, 3], &[9, 1, 2, 3, 4, 5, 6], &[3]] {
             nav.0.report(bad, now);

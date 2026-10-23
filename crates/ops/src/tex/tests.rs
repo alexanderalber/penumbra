@@ -132,6 +132,14 @@ impl Rig {
         let record = penumbra_record::Hub::new();
         cooker.provide(record.clone());
         cooker.provide(crate::keyboard::Keyboard::new());
+        // A pointer that is always there (a build machine may have no desktop), and a 3D mouse
+        // that never opens the real device.
+        let mouse = crate::mouse::Mouse::new();
+        mouse.fake(Some(penumbra_system::pointer::Pointer::default()));
+        cooker.provide(mouse);
+        let spacenav = penumbra_spacenav::SpaceNav::new();
+        spacenav.detach();
+        cooker.provide(spacenav);
         cooker.set_base_dir(dir.map(Path::to_path_buf));
         Self {
             types,

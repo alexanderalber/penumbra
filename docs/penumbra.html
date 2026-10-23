@@ -117,7 +117,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -263,6 +263,9 @@ details.target { outline: 2px solid var(--accent); }
 <p>A bound row shows its name in the channel colour, the live value, and the source. The stored value stays and comes back when the binding is removed; it is also used, with a warning, while the channel is missing. Integers round, booleans are on from 0.5, hard ranges clamp. The editor draws every binding as a dashed green line into the top of the node. With &quot;All binding lines&quot; unticked in the editor's right-click menu, a binding shows as a short stub on the bound node, and as a line only while the source or the bound node is selected or under the pointer.</p>
 <h4 id="concepts-keys">Keys</h4>
 <p><a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a> turns keys into channels: with <code>keys</code> at <code>1 2 3 4</code> (the default) it has <code>key_1</code> to <code>key_4</code>, each 1 while its key is held, and <code>last</code>, the index in <code>keys</code> (from 0) of the key pressed last, which stays until another listed key is pressed and starts at 0 when the project opens. Bind a switch's <code>index</code> (or a <a class="ref" href="#chan.constant"><code>chan.constant</code></a> that several switches follow) to <code>last</code>, and the number keys switch the show's pieces. Keys count only while a penumbra window has the focus: the editor, the viewer's own window or a projector output (click it once). A key typed into a text field and a key held with Ctrl, Alt or the Windows key do not count. The number pad's digits are the digits; letters are named as the keyboard layout labels them. <strong>learn from OSC</strong> in a param's link menu also takes a key a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a> lists, and binds its gate. From the control channel: <a class="ref" href="#keyboard.press"><code>keyboard.press {key}</code></a> (or <code>{key, down}</code> to hold and let go) and <a class="ref" href="#keyboard.status"><code>keyboard.status</code></a>.</p>
+<h4 id="concepts-mouse-and-3d-mouse">Mouse and 3D mouse</h4>
+<p><a class="ref" href="#chan.mouse_in"><code>chan.mouse_in</code></a> turns the mouse pointer into channels, wherever it is on the desktop, inside penumbra or not: <code>x</code> and <code>y</code> are shares of a display, 0 to 1 from its top left; <code>inside</code> is 1 while the pointer is on that display; <code>left</code>, <code>right</code> and <code>middle</code> are 1 while held. Its <code>display</code> names the display as an output's <code>display</code> does (or <code>\\.\DISPLAY2</code>); empty, it is the display the pointer is on. On a named display <code>x</code> and <code>y</code> keep following the pointer past 0 and 1 when it leaves. Name a projector's display, and the pointer over the projection is a position in the projector's picture. <code>wheel</code> sums the notches turned (up positive), but only over a projector output window: reading the wheel anywhere would need a hook into every mouse event of the machine. The node reads the pointer once a frame, so a click shorter than a frame can be missed. From the control channel: <a class="ref" href="#mouse.status"><code>mouse.status</code></a> (pointer, displays, wheel) and <a class="ref" href="#mouse.fake"><code>mouse.fake {x, y, buttons?}</code></a> (desktop pixels; <code>{real: true}</code> ends it; <code>{wheel}</code> turns the wheel).</p>
+<p><a class="ref" href="#chan.spacemouse_in"><code>chan.spacemouse_in</code></a> turns the 3D mouse (see <a href="#navigation">navigation</a>) into channels, each -1 to 1: <code>right</code>, <code>up</code>, <code>forward</code> (slide, lift, push the cap away), <code>pitch</code>, <code>yaw</code>, <code>roll</code> (tilt it nose up, twist it clockwise, tilt it to the right), <code>button_left</code> and <code>button_right</code> (1 while held), <code>connected</code>. A viewer flying a free view and the node both follow the cap at the same time. <strong>learn from OSC</strong> also takes the 3D mouse while such a node exists: press a button, or push the cap clearly along one axis.</p>
 <h4 id="concepts-a-clock-per-piece">A clock per piece</h4>
 <p><a class="ref" href="#chan.clock"><code>chan.clock</code></a> counts the seconds since it was switched on. Its <code>run</code> is on from 0.5 up; each time it turns on, the clock starts over from 0, and while it is off the clock stands at 0. With <code>equals</code> set, <code>run</code> is on while it equals that number instead: bind <code>run</code> to the channel that says which piece plays (<code>last</code> of a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a>, or the <a class="ref" href="#chan.constant"><code>chan.constant</code></a> bound to it) and set <code>equals</code> to the piece's number, and the piece has a clock that starts with it, with one binding. <code>mode</code> says what happens after <code>length</code> seconds: <code>once</code> holds at the end, <code>loop</code> starts over, <code>free</code> runs on. Its channels are <code>seconds</code>, <code>fraction</code> (of <code>length</code>) and <code>done</code> (1 once a full length has passed). A seek back starts every clock over. To compare channels elsewhere, <a class="ref" href="#chan.math"><code>chan.math</code></a> has <code>op</code> <code>equal</code>: 1 where a equals b, else 0.</p>
 <p><code>run</code> is the only way a clock starts over: a clock left at <code>run</code> 1 runs on while its piece is not shown. A clock cooks in every frame, shown or not, so it sees its <code>run</code> turn off and on again even while a <a class="ref" href="#tex.switch"><code>tex.switch</code></a> or <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> skips the piece it drives, and it behaves the same with the editor's thumbnails on or off and headless.</p>
@@ -1039,7 +1042,7 @@ water      15
 </table>
 <h3 id="navigation-3d-mouse">3D mouse</h3>
 <p>penumbra reads a 3Dconnexion SpaceNavigator directly, <strong>without</strong> the 3DxWare driver. The driver claims the device for itself; if it is installed, penumbra cannot open the device and <a class="ref" href="#spacenav.status"><code>spacenav.status</code></a> says so. Plugging in, unplugging and plugging in again work while the app runs.</p>
-<p>The 3D mouse flies the viewer that shows a free view or steers (the main viewer first, else the viewer's window). It flies like a camera operator:</p>
+<p>The 3D mouse flies the viewer that shows a free view or steers (the main viewer first, else the viewer's window). To steer a show with it instead, <a class="ref" href="#chan.spacemouse_in"><code>chan.spacemouse_in</code></a> gives its axes and buttons as channels (<a href="#concepts">concepts</a>, &quot;Mouse and 3D mouse&quot;); both follow the cap at once. It flies like a camera operator:</p>
 <table>
 <thead><tr><th>Cap</th><th>Camera</th></tr></thead>
 <tbody>
@@ -2707,7 +2710,7 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_in">chan.audio_in</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.in">chan.in</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.out">chan.out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.speed">chan.speed</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_in">chan.audio_in</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.in">chan.in</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.out">chan.out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.speed">chan.speed</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_analysis"><summary><code class="name">chan.audio_analysis</code><span class="sum">Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</span></summary>
 <div class="body">
 <p>Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</p>
@@ -3003,6 +3006,25 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </ul>
 <p class="mentions">Mentioned in: <a href="#dmx-setting-up">DMX › Setting up</a></p>
 </div></details>
+<details class="entry node" id="chan.mouse_in"><summary><code class="name">chan.mouse_in</code><span class="sum">The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</span></summary>
+<div class="body">
+<p>The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: <code>x</code>, <code>y</code>: the pointer as shares of the display, 0 to 1 from the top left; <code>inside</code>: 1 while it is on that display; <code>left</code>, <code>right</code>, <code>middle</code>: 1 while held; <code>wheel</code>: notches turned over a projector output window, summed (up positive)</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>display</code></td><td>text</td><td></td><td></td><td>The display <code>x</code> and <code>y</code> are shares of, named as an output's <code>display</code> (or <code>\\.\DISPLAY2</code>); empty: the display the pointer is on</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-mouse-and-3d-mouse">Concepts › Mouse and 3D mouse</a></p>
+</div></details>
 <details class="entry node" id="chan.noise"><summary><code class="name">chan.noise</code><span class="sum">A number that wanders smoothly at random: organic motion that never repeats</span></summary>
 <div class="body">
 <p>A number that wanders smoothly at random: organic motion that never repeats</p>
@@ -3165,6 +3187,18 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-shows">Concepts › Shows</a></p>
+</div></details>
+<details class="entry node" id="chan.spacemouse_in"><summary><code class="name">chan.spacemouse_in</code><span class="sum">The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show</span></summary>
+<div class="body">
+<p>The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: -1 to 1 each: <code>right</code> (slide the cap right), <code>up</code> (lift it), <code>forward</code> (push it away), <code>pitch</code> (tilt it, nose up), <code>yaw</code> (twist it clockwise), <code>roll</code> (tilt it sideways, to the right); <code>button_left</code>, <code>button_right</code>: 1 while held; <code>connected</code>: 1 while the device is there</li>
+</ul>
+<p class="mentions">Mentioned in: <a href="#concepts-mouse-and-3d-mouse">Concepts › Mouse and 3D mouse</a>, <a href="#navigation-3d-mouse">Looking around in 3D › 3D mouse</a></p>
 </div></details>
 <details class="entry node" id="chan.speed"><summary><code class="name">chan.speed</code><span class="sum">Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting</span></summary>
 <div class="body">
@@ -4187,6 +4221,19 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <p class="mentions">Mentioned in: <a href="#concepts-keys">Concepts › Keys</a></p>
 </div></details>
 </div>
+<div class="group" id="group-mouse">
+<h3>mouse</h3>
+<details class="entry command" id="mouse.fake"><summary><code class="name">mouse.fake</code><span class="sum">Stand in for the mouse, for chan.mouse_in: {x?, y?, buttons?: [left, right, middle], wheel?: notches}; x and y in desktop pixels put a fake pointer in place of the real one, {real: true} brings the real one back; wheel turns it by that many notches (up positive)</span></summary>
+<div class="body">
+<p>Stand in for the mouse, for chan.mouse_in: {x?, y?, buttons?: [left, right, middle], wheel?: notches}; x and y in desktop pixels put a fake pointer in place of the real one, {real: true} brings the real one back; wheel turns it by that many notches (up positive)</p>
+<p class="mentions">Mentioned in: <a href="#concepts-mouse-and-3d-mouse">Concepts › Mouse and 3D mouse</a></p>
+</div></details>
+<details class="entry command" id="mouse.status"><summary><code class="name">mouse.status</code><span class="sum">The mouse pointer as chan.mouse_in sees it (desktop pixels, buttons, faked or real), the wheel so far, the displays' rectangles</span></summary>
+<div class="body">
+<p>The mouse pointer as chan.mouse_in sees it (desktop pixels, buttons, faked or real), the wheel so far, the displays' rectangles</p>
+<p class="mentions">Mentioned in: <a href="#concepts-mouse-and-3d-mouse">Concepts › Mouse and 3D mouse</a></p>
+</div></details>
+</div>
 <div class="group" id="group-ndi">
 <h3>ndi</h3>
 <details class="entry command" id="ndi.sources"><summary><code class="name">ndi.sources</code><span class="sum">The NDI sources on the network, this process's out.ndi nodes included (name as <code>PC (Source)</code>, address), and the NDI runtime in use. The first call starts looking: <code>settling</code> is true while the list may still be filling</span></summary>
@@ -4294,9 +4341,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="body">
 <p>OSC settings for this run: {enabled?, max_packet?, rate?, burst?, pattern_rate?, max_addresses?}</p>
 </div></details>
-<details class="entry command" id="osc.learn"><summary><code class="name">osc.learn</code><span class="sum">Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists)</span></summary>
+<details class="entry command" id="osc.learn"><summary><code class="name">osc.learn</code><span class="sum">Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists)</span></summary>
 <div class="body">
-<p>Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists); {param, timeout?, wait?} or {cancel: true}</p>
+<p>Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}</p>
 </div></details>
 <details class="entry command" id="osc.send"><summary><code class="name">osc.send</code><span class="sum">Send one OSC message</span></summary>
 <div class="body">

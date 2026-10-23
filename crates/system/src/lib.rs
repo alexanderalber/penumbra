@@ -3,7 +3,7 @@
 //! fixed on request ([`checks`], the commands `system.check` and `system.fix`). Also whether the
 //! taskbar is light, for the app icon ([`appearance`]). How busy CPU and GPU are ([`load`]),
 //! with NVIDIA GPUs' power, temperature and clock ([`nvml`]). Keeping the displays on while
-//! output windows are open ([`awake`]).
+//! output windows are open ([`awake`]). Where the mouse pointer is ([`pointer`]).
 //!
 //! OS-specific code lives here and in the output crate only; the Windows calls are in one module
 //! and NVIDIA's library in another, the crate's only `unsafe`. No graphics API, no UI.
@@ -14,6 +14,7 @@ pub mod checks;
 pub mod display;
 pub mod load;
 pub mod nvml;
+pub mod pointer;
 pub mod process;
 #[cfg(windows)]
 mod windows;

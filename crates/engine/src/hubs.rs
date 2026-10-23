@@ -1,5 +1,6 @@
 //! The device hubs: what outlives a project and talks to hardware or the network on threads of
-//! its own (OSC, audio, DMX out and in, cameras, recordings, scans, the 3D mouse).
+//! its own (OSC, audio, DMX out and in, cameras, recordings, scans, the 3D mouse), and the
+//! keyboard and mouse the windows pass on.
 //!
 //! The engine drives every hub through [`DeviceHub`]: provided to each new cooker, told when the
 //! network changes, told when a project closes, shut down when the app closes. [`Hubs`] holds
@@ -15,6 +16,7 @@ use penumbra_dmx::Hub as DmxHub;
 use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_graph::{Cooker, Network, NodeTypes};
 use penumbra_ops::keyboard::Keyboard;
+use penumbra_ops::mouse::Mouse;
 use penumbra_ops::tex::scan::Scans;
 use penumbra_record::Hub as RecordHub;
 use penumbra_spacenav::SpaceNav;
@@ -49,35 +51,39 @@ pub struct Hubs {
     pub record: RecordHub,
     /// The structured light scans of `tex.scan` nodes (`scan.run`).
     pub scans: Scans,
-    /// The 3D mouse; its reader starts when the UI first asks for it.
+    /// The 3D mouse; its reader starts when the UI or a `chan.spacemouse_in` first asks for it.
     pub spacenav: SpaceNav,
     /// The keys the windows (and `keyboard.press`) pass on, for `chan.keyboard_in`.
     pub keyboard: Keyboard,
+    /// The wheel the output windows pass on, and a fake pointer, for `chan.mouse_in`.
+    pub mouse: Mouse,
 }
 
 impl Hubs {
     pub fn new() -> Self {
         let keyboard = Keyboard::new();
+        let spacenav = SpaceNav::new();
         Hubs {
-            osc: Arc::new(OscShared::new(penumbra_osc::Hub::new(), keyboard.clone())),
+            osc: Arc::new(OscShared::new(penumbra_osc::Hub::new(), keyboard.clone(), spacenav.clone())),
             audio: AudioHub::new(),
             dmx: DmxHub::new(),
             dmx_in: DmxInputs::new(),
             camera: CameraHub::new(),
             record: RecordHub::new(),
             scans: Scans::new(),
-            spacenav: SpaceNav::new(),
+            spacenav,
             keyboard,
+            mouse: Mouse::new(),
         }
     }
 
     /// Every hub, in the order they shut down. Recordings come first: when the app closes, the
     /// cook thread has dropped its nodes and every recording is finishing its file, which the
     /// shutdown waits for.
-    pub fn all(&self) -> [&dyn DeviceHub; 9] {
+    pub fn all(&self) -> [&dyn DeviceHub; 10] {
         // Destructured so that a field missing here does not compile.
-        let Hubs { osc, audio, dmx, dmx_in, camera, record, scans, spacenav, keyboard } = self;
-        [record, osc.as_ref(), audio, dmx, dmx_in, camera, scans, spacenav, keyboard]
+        let Hubs { osc, audio, dmx, dmx_in, camera, record, scans, spacenav, keyboard, mouse } = self;
+        [record, osc.as_ref(), audio, dmx, dmx_in, camera, scans, spacenav, keyboard, mouse]
     }
 }
 
@@ -171,8 +177,17 @@ impl DeviceHub for Scans {
 }
 
 impl DeviceHub for SpaceNav {
-    /// The 3D mouse is the UI's, not a resource of the nodes.
-    fn provide(&self, _cooker: &mut Cooker) {}
+    /// The viewer and `chan.spacemouse_in` read the same reader.
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    /// A `chan.spacemouse_in` opens the device (headless runs too); it stays open.
+    fn network_changed(&self, net: &Network, _types: &NodeTypes) {
+        if penumbra_ops::spacemouse::wanted(net) {
+            self.start();
+        }
+    }
 
     fn shutdown(&self) {
         SpaceNav::shutdown(self);
@@ -189,6 +204,21 @@ impl DeviceHub for Keyboard {
     }
 
     /// The next project starts with no key pressed, so its `last` channels are 0.
+    fn project_closing(&self) {
+        self.reset();
+    }
+}
+
+impl DeviceHub for Mouse {
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    fn network_changed(&self, net: &Network, _types: &NodeTypes) {
+        self.set_wanted(penumbra_ops::mouse::wanted(net));
+    }
+
+    /// The next project's `wheel` starts at 0.
     fn project_closing(&self) {
         self.reset();
     }
@@ -216,7 +246,8 @@ mod tests {
         assert!(cooker.resource::<RecordHub>().is_some());
         assert!(cooker.resource::<Scans>().is_some());
         assert!(cooker.resource::<Keyboard>().is_some());
-        assert!(cooker.resource::<SpaceNav>().is_none());
+        assert!(cooker.resource::<SpaceNav>().is_some());
+        assert!(cooker.resource::<Mouse>().is_some());
         for hub in hubs.all() {
             hub.shutdown();
         }

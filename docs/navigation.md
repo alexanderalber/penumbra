@@ -53,7 +53,9 @@ driver claims the device for itself; if it is installed, penumbra cannot open th
 runs.
 
 The 3D mouse flies the viewer that shows a free view or steers (the main viewer first, else
-the viewer's window). It flies like a camera operator:
+the viewer's window). To steer a show with it instead, `chan.spacemouse_in` gives its axes and
+buttons as channels ([concepts](concepts.md), "Mouse and 3D mouse"); both follow the cap at
+once. It flies like a camera operator:
 
 | Cap | Camera |
 |---|---|

@@ -1057,6 +1057,11 @@ impl Engine {
         &self.hubs.keyboard
     }
 
+    /// The mouse: the wheel the output windows pass on while a `chan.mouse_in` exists.
+    pub fn mouse(&self) -> &penumbra_ops::mouse::Mouse {
+        &self.hubs.mouse
+    }
+
     /// CPU and GPU load; sampled on a thread of its own while asked for.
     pub fn load(&self) -> &LoadMeter {
         &self.load
