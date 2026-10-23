@@ -71,7 +71,9 @@ impl SpoutIn {
             self.receiver = Some(Receiver::new(gpu).map_err(CookError::failed)?);
         }
         let Some(receiver) = self.receiver.as_mut() else { return Err(CookError::failed("no receiver")) };
-        let alpha = Alpha::parse(cx.text("alpha")?).unwrap_or_default();
+        let alpha = cx.text("alpha")?;
+        let alpha =
+            Alpha::parse(alpha).ok_or_else(|| CookError::failed(format!("unknown alpha `{alpha}`")))?;
         let again = cx.params_changed() || !self.has_output;
         match receiver.receive(gpu, &name, alpha, again) {
             Ok(Received::Frame(tex)) => {

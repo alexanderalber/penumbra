@@ -151,10 +151,6 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), Error> {
     std::fs::rename(&tmp, path).map_err(fail)
 }
 
-fn same(a: &Arc<Network>, b: &Arc<Network>) -> bool {
-    Arc::ptr_eq(a, b) || a == b
-}
-
 impl Session {
     /// Opens the project in `dir`, creating the directory and, if there is no project file yet,
     /// writing `template` as its content. A project file that cannot be read or does not load
@@ -302,7 +298,7 @@ impl Session {
         SessionStatus {
             dir: self.dir.display().to_string(),
             nodes: current.len(),
-            unsaved: state.file_text.is_none() || !same(&current, &state.written),
+            unsaved: state.file_text.is_none() || !Network::same(&current, &state.written),
             merge_waiting: state.waiting.is_some(),
             file_error: state.file_error.clone(),
             write_error: state.write_error.clone(),
@@ -411,7 +407,7 @@ impl Session {
             if state.waiting.is_some() || state.file_error.is_some() {
                 return;
             }
-            let dirty = state.file_text.is_none() || !same(&self.doc.snapshot(), &state.written);
+            let dirty = state.file_text.is_none() || !Network::same(&self.doc.snapshot(), &state.written);
             if !dirty {
                 state.dirty_since = None;
                 return;

@@ -4,7 +4,6 @@
 //! lock. Writers (UI, control channel, project file merges) go through one mutex, apply their
 //! batch to the current snapshot, record it in the history and publish the result.
 
-use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -94,21 +93,6 @@ impl Document {
         Ok(history.current().clone())
     }
 
-    /// Replaces the whole network, e.g. after merging an external edit of the project file.
-    pub fn replace(
-        &self,
-        network: Network,
-        source: Source,
-        group: GroupId,
-        label: &str,
-        touched: BTreeSet<NodeId>,
-    ) -> Recorded {
-        let mut history = self.lock();
-        let recorded = history.record(Arc::new(network), source, group, label, touched);
-        self.current.store(history.current().clone());
-        recorded
-    }
-
     /// Undo one entry; returns its label.
     pub fn undo(&self) -> Option<String> {
         let mut history = self.lock();
@@ -123,14 +107,6 @@ impl Document {
         let label = history.redo()?.label.clone();
         self.current.store(history.current().clone());
         Some(label)
-    }
-
-    pub fn mark_saved(&self) {
-        self.lock().mark_saved();
-    }
-
-    pub fn is_modified(&self) -> bool {
-        self.lock().is_modified()
     }
 
     /// Read access to the history, e.g. for the change log.

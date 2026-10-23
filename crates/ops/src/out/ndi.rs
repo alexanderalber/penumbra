@@ -8,7 +8,7 @@
 //! Tools or the NDI Runtime installer); without it the node fails with where to get it.
 
 use penumbra_core::{Error, ParamSpec, Value};
-use penumbra_gpu::{Alpha, Gpu};
+use penumbra_gpu::Alpha;
 use penumbra_graph::{CookContext, CookError, Cooked, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator};
 use penumbra_ndi::Sender;
 
@@ -52,7 +52,7 @@ struct NdiOut {
 
 impl Operator for NdiOut {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let gpu = cx.resource::<Gpu>().ok_or_else(|| CookError::failed("no GPU"))?;
+        let gpu = crate::gpu(cx)?;
         let set = cx.text("name")?.trim();
         let wanted =
             if set.is_empty() { format!("penumbra {}", cx.def().name.as_str()) } else { set.to_string() };
@@ -90,7 +90,9 @@ impl Operator for NdiOut {
             cx.warn("nothing connected: receivers see the last picture");
             return Ok(Cooked::Outputs(Vec::new()));
         };
-        let alpha = Alpha::parse(cx.text("alpha")?).unwrap_or(Alpha::Opaque);
+        let alpha = cx.text("alpha")?;
+        let alpha =
+            Alpha::parse(alpha).ok_or_else(|| CookError::failed(format!("unknown alpha `{alpha}`")))?;
         let rate = cx.rate();
         sender.send(gpu, tex, alpha, (rate.num(), rate.den())).map_err(CookError::failed)?;
         Ok(Cooked::Outputs(Vec::new()))

@@ -358,6 +358,11 @@ impl Network {
         Self::default()
     }
 
+    /// Whether two snapshots hold the same network; cheap when they share the allocation.
+    pub fn same(a: &Arc<Self>, b: &Arc<Self>) -> bool {
+        Arc::ptr_eq(a, b) || a == b
+    }
+
     pub fn len(&self) -> usize {
         self.nodes.len()
     }

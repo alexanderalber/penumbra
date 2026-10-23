@@ -484,7 +484,8 @@ mod tests {
         let tex = Tex::new(gpu, 64, 16, "white").unwrap();
         let source = "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(1.0); }";
         let pass = crate::Pass::compile(gpu, "white", source, &[]).unwrap();
-        pass.render(gpu, &tex, &crate::PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &|_| None });
+        pass.render(gpu, &tex, &crate::PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &|_| None })
+            .unwrap();
         tex
     }
 
@@ -719,7 +720,8 @@ mod tests {
             "@fragment fn main(v: PnVertex) -> @location(0) vec4f {{ let uv = v.uv; return vec4f({rgb}, 1.0); }}"
         );
         let pass = crate::Pass::compile(gpu, "painted", &source, &[]).unwrap();
-        pass.render(gpu, &tex, &crate::PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &|_| None });
+        pass.render(gpu, &tex, &crate::PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &|_| None })
+            .unwrap();
         tex
     }
 

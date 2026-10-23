@@ -29,6 +29,21 @@ type CmdResult<T> = std::result::Result<T, CommandError>;
 pub const DEFAULT_PROJECTOR: [u32; 2] = [1920, 1080];
 /// Hole fill in projector pixels unless another is asked for.
 pub const DEFAULT_FILL: u32 = 32;
+/// Writes `bytes` to `file`; the file's path for the reply.
+fn write_file(file: &Path, bytes: Vec<u8>) -> CmdResult<String> {
+    std::fs::write(file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
+    Ok(file.display().to_string())
+}
+
+/// `fill` (hole fill in projector pixels) of a scan command, checked.
+pub(crate) fn fill_of(fill: Option<u32>) -> CmdResult<u32> {
+    let fill = fill.unwrap_or(DEFAULT_FILL);
+    if fill > scan::MAX_FILL {
+        return Err(CommandError(format!("`fill` is 0 to {} projector pixels", scan::MAX_FILL)));
+    }
+    Ok(fill)
+}
+
 /// Largest side of a camera picture read.
 const MAX_PICTURE_SIDE: u32 = 8192;
 /// Most files a frames folder may hold (a scan of the largest projector has 58 pictures).
@@ -83,7 +98,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.objects",
-        "The objects in front of a surface, from a scan of the empty scene (reference) and one with          the objects, per projector (folders scan.decode wrote): parts by parallax, numbered alike in          every projector (top of the camera picture first); writes labels_N.png (8-bit, 0 background,          k the object) and parts_N.png per projector, objects_camera.png (the same labels in camera          space, for shapes.trace with labels) and objects_camera_view.png; {projectors: [{reference,          scan}, ...], out? (folder, objects), threshold? (camera px, 25), split? (camera px per          projector px, 2), min_area? (projector px, 1/256 of the projector), erode? (projector px, 2),          unmeasured? (projector px, 4), rim? (projector px, 25)}",
+        "The objects in front of a surface, from a scan of the empty scene (reference) and one with the objects, per projector (folders scan.decode wrote): parts by parallax, numbered alike in every projector (top of the camera picture first); writes labels_N.png (8-bit, 0 background, k the object) and parts_N.png per projector, objects_camera.png (the same labels in camera space, for shapes.trace with labels) and objects_camera_view.png; {projectors: [{reference, scan}, ...], out? (folder, objects), threshold? (camera px, 25), split? (camera px per projector px, 2), min_area? (projector px, 1/256 of the projector), erode? (projector px, 2), unmeasured? (projector px, 4), rim? (projector px, 25)}",
         move |p| {
             let a: ObjectsArgs = args(p)?;
             objects(e.session().dir(), &a)
@@ -92,7 +107,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "scan.blend",
-        "Blend weights for projectors lighting the same surface, from their scans (folders          scan.decode wrote): weight_N.png (16-bit, sRGB-encoded so tex.image gives the weight;          multiply the projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed,          for tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects'          labels_N.png), out? (folder, objects), ramp? (projector px, 200), blur? (projector px, 3),          reach? (camera px, 6), sigma? (projector px, 6), into_scans? (write weight.png and          proj_to_cam_smooth.exr into each scan's folder, where tex.scan reads them, false)}",
+        "Blend weights for projectors lighting the same surface, from their scans (folders scan.decode wrote): weight_N.png (16-bit, sRGB-encoded so tex.image gives the weight; multiply the projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed, for tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? (folder, objects), ramp? (projector px, 200), blur? (projector px, 3), reach? (camera px, 6), sigma? (projector px, 6), into_scans? (write weight.png and proj_to_cam_smooth.exr into each scan's folder, where tex.scan reads them, false)}",
         move |p| {
             let a: BlendArgs = args(p)?;
             blend(e.session().dir(), &a)
@@ -118,10 +133,7 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
     let [pw, ph] = a.projector.unwrap_or(DEFAULT_PROJECTOR);
     let patterns = Patterns::new(pw, ph).map_err(CommandError)?;
     a.options.check().map_err(CommandError)?;
-    let fill = a.fill.unwrap_or(DEFAULT_FILL);
-    if fill > scan::MAX_FILL {
-        return Err(CommandError(format!("`fill` is 0 to {} projector pixels", scan::MAX_FILL)));
-    }
+    let fill = fill_of(a.fill)?;
     let frames = dir.join(&a.frames);
     let files = pictures(&frames)?;
     if files.len() != patterns.count() {
@@ -183,11 +195,7 @@ pub(crate) fn write_decoded(decoder: &Decoder, options: &Options, fill: u32, out
 
     let t = Instant::now();
     std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let write = |name: &str, bytes: Vec<u8>| -> CmdResult<String> {
-        let file = out.join(name);
-        std::fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
-        Ok(file.display().to_string())
-    };
+    let write = |name: &str, bytes: Vec<u8>| write_file(&out.join(name), bytes);
     let (cw, ch) = result.camera;
     let png = |w: u32, h: u32, data: Vec<[f32; 4]>| Pixels { width: w, height: h, data }.to_png();
     let files = json!({
@@ -416,11 +424,7 @@ pub fn objects(dir: &Path, a: &ObjectsArgs) -> CmdResult<Json> {
     let t = Instant::now();
     let out = dir.join(a.out.as_deref().unwrap_or(Path::new(DEFAULT_OBJECTS_OUT)));
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let write = |name: &str, bytes: Vec<u8>| -> CmdResult<String> {
-        let file = out.join(name);
-        std::fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
-        Ok(file.display().to_string())
-    };
+    let write = |name: &str, bytes: Vec<u8>| write_file(&out.join(name), bytes);
     let byte = |l: u16| u8::try_from(l).unwrap_or(0);
     let mut per_projector = Vec::new();
     for (n, p) in parts.iter().enumerate() {
@@ -580,10 +584,6 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
     if !into_scans {
         std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     }
-    let write = |file: PathBuf, bytes: Vec<u8>| -> CmdResult<String> {
-        std::fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
-        Ok(file.display().to_string())
-    };
     let files = |n: usize| -> (PathBuf, PathBuf) {
         match a.scans.get(n).filter(|_| into_scans) {
             Some(scan) => {
@@ -605,8 +605,8 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
             |v: f32| (penumbra_gpu::readback::linear_to_srgb(v) * 65535.0).round().clamp(0.0, 65535.0) as u16;
         let values: Vec<u16> = w.iter().map(|v| encode(*v)).collect();
         let (weight_path, map_path) = files(n);
-        let weight = write(weight_path, penumbra_gpu::image::encode_png_gray16(pw, ph, &values)?)?;
-        let map_file = write(map_path, penumbra_gpu::image::encode_exr_rgba32f(pw, ph, smooth)?)?;
+        let weight = write_file(&weight_path, penumbra_gpu::image::encode_png_gray16(pw, ph, &values)?)?;
+        let map_file = write_file(&map_path, penumbra_gpu::image::encode_exr_rgba32f(pw, ph, smooth)?)?;
         let shared = b.shared.get(n).copied().unwrap_or(0);
         if shared == 0 && a.scans.len() > 1 {
             warnings.push(format!(

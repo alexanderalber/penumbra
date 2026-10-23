@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
+use crate::commands::no_args;
 use crate::engine::Engine;
 use crate::state::{BROKEN, DISCARDED, LATEST, PREVIOUS};
 
@@ -78,7 +79,7 @@ fn file_info(path: &std::path::Path) -> Json {
 }
 
 fn state_info(e: &Engine, p: &Json) -> Result<Json> {
-    args::<Empty>(p)?;
+    no_args(p)?;
     let dir = e.state_dir();
     let session = e.session().clone();
     let now = e.on_cook(move |st| {
@@ -116,10 +117,6 @@ fn state_info(e: &Engine, p: &Json) -> Result<Json> {
     }))
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Empty {}
-
 fn state_save(e: &Engine, p: &Json) -> Result<Json> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -156,7 +153,7 @@ fn state_restore(e: &Engine, p: &Json) -> Result<Json> {
 }
 
 fn state_discard(e: &Engine, p: &Json) -> Result<Json> {
-    args::<Empty>(p)?;
+    no_args(p)?;
     Ok(json!({"done": e.discard_state()?}))
 }
 
@@ -233,7 +230,7 @@ fn cook_meter(e: &Engine, p: &Json) -> Result<Json> {
 }
 
 fn system_load(e: &Engine, p: &Json) -> Result<Json> {
-    args::<Empty>(p)?;
+    no_args(p)?;
     // Two readings make a rate, so a sampler that was asleep needs a little over a second.
     let load = e.load().wait_newer(None, penumbra_system::load::INTERVAL * 3);
     let age = load.at.map(|at| at.elapsed().as_secs_f64());
@@ -245,7 +242,7 @@ fn system_load(e: &Engine, p: &Json) -> Result<Json> {
 }
 
 fn system_process(e: &Engine, p: &Json) -> Result<Json> {
-    args::<Empty>(p)?;
+    no_args(p)?;
     let process = penumbra_system::process::stats()?;
     let gpu = e.gpu().and_then(|g| g.memory());
     let gpu_errors = e.gpu().map(|g| g.errors().count);

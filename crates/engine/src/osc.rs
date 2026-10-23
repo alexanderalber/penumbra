@@ -30,7 +30,8 @@ use penumbra_project::{Actor, Session};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
-use crate::command::{CommandError, FnCommand, Registry, args};
+use crate::command::{CommandError, Registry, args};
+use crate::commands::{engine_commands, no_args};
 use crate::engine::Engine;
 
 /// At most one edit per this (about a frame), so a burst becomes one edit.
@@ -70,7 +71,7 @@ pub struct Learning {
 }
 
 /// How the last learn ended.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Learned {
     pub param: String,
     pub address: Option<String>,
@@ -539,10 +540,7 @@ fn bind(param: &ParamPath, component: Option<u8>, from: &NodePath, channel: &str
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
-    let mut add = |id: &'static str, summary: &'static str, f: fn(&Engine, &Json) -> CmdResult<Json>| {
-        let engine = Arc::clone(engine);
-        registry.register(FnCommand::new(id, summary, move |p| f(&engine, p)));
-    };
+    let mut add = engine_commands(registry, engine);
     add(
         "osc.status",
         "OSC listeners (port, bound, packets, drops, sources), senders, recent messages, params set by address, learn",
@@ -565,7 +563,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
 }
 
-fn osc_status(e: &Engine, _p: &Json) -> CmdResult<Json> {
+fn osc_status(e: &Engine, p: &Json) -> CmdResult<Json> {
+    no_args(p)?;
     let osc = e.osc();
     let mut status = osc.hub().status();
     // Senders are labelled with their node id; show the path.
@@ -649,12 +648,12 @@ fn osc_learn(e: &Engine, p: &Json) -> CmdResult<Json> {
     let param = a.param.ok_or("`param` is missing (or say {cancel: true})")?;
     let secs = |x: Option<f64>, d: f64| x.filter(|x| x.is_finite()).unwrap_or(d).clamp(0.0, 600.0);
     let timeout = Duration::from_secs_f64(secs(a.timeout, LEARN_TIMEOUT.as_secs_f64()).max(0.1));
-    let before = osc.learned().map(|l| format!("{l:?}"));
+    let before = osc.learned();
     osc.learn(&e.session(), &param, timeout)?;
     let wait = Duration::from_secs_f64(secs(a.wait, 0.0)).min(timeout + Duration::from_millis(200));
     let deadline = Instant::now() + wait;
     while Instant::now() < deadline {
-        if osc.learning().is_none() && osc.learned().map(|l| format!("{l:?}")) != before {
+        if osc.learning().is_none() && osc.learned() != before {
             let l = osc.learned();
             if let Some(err) = l.as_ref().and_then(|l| l.error.clone()) {
                 return Err(err.into());

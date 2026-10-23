@@ -9,16 +9,14 @@ use penumbra_audio::capture::{self, Config};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
-use crate::command::{CommandError, FnCommand, Registry, args};
+use crate::command::{CommandError, Registry, args};
+use crate::commands::engine_commands;
 use crate::engine::Engine;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
-    let mut add = |id: &'static str, summary: &'static str, f: fn(&Engine, &Json) -> CmdResult<Json>| {
-        let engine = Arc::clone(engine);
-        registry.register(FnCommand::new(id, summary, move |p| f(&engine, p)));
-    };
+    let mut add = engine_commands(registry, engine);
     add(
         "audio.devices",
         "The audio inputs of this machine: name, default, rate, channels, format",

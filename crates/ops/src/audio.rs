@@ -307,7 +307,7 @@ impl Operator for Analysis {
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let Some(audio) = cx.input_as::<Chans>(0) else {
-            return Err(crate::chan::waiting(cx));
+            return Err(crate::waiting(cx));
         };
         if !cx.inputs_changed() && !cx.params_changed() && !cx.first_cook() {
             // No new audio: only the meters may want drawing, because they came to be read or

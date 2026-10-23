@@ -24,7 +24,7 @@ use serde_json::{Value as Json, json};
 use crate::command::{CommandError, FnCommand, Registry, args};
 use crate::commands::{edit, outcome};
 use crate::engine::Engine;
-use crate::projector::{CameraStream, Claim, Rig, projector_list};
+use crate::projector::{CameraStream, Claim, Rig, projector_list, settle_of, timeout_of};
 use crate::scan::{CAMERA_MAP, PROJECTOR_MAP, read_map};
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
@@ -166,14 +166,8 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
     if !(1..=32).contains(&frames) {
         return Err("`frames` is 1 to 32".into());
     }
-    let settle = a.settle.unwrap_or(crate::projector::DEFAULT_SETTLE);
-    if !(settle.is_finite() && (0.0..=10.0).contains(&settle)) {
-        return Err("`settle` is 0 to 10 seconds".into());
-    }
-    let timeout = a.timeout.unwrap_or(crate::projector::DEFAULT_TIMEOUT);
-    if !(timeout.is_finite() && (0.05..=60.0).contains(&timeout)) {
-        return Err("`timeout` is 0.05 to 60 seconds".into());
-    }
+    let settle = settle_of(a.settle, crate::projector::DEFAULT_SETTLE)?;
+    let timeout = timeout_of(a.timeout)?;
     let degree = a.degree.unwrap_or(DEFAULT_DEGREE);
     if degree > flatfield::MAX_DEGREE {
         return Err(format!("`degree` is 0 to {}", flatfield::MAX_DEGREE).into());
@@ -363,7 +357,7 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
             let kept: Vec<f64> = samples.iter().zip(&fit).map(|(s, f)| f.residual(s, trim).1).collect();
             if kept.iter().any(|v| *v > UNEVEN) {
                 warnings.push(format!(
-                    "{path}: the surface is far from even (a relief, objects or a pattern; {:.0} % from the fit):                      its shading is in the gain too. Measure on a flat, evenly coloured surface, or use even: colour",
+                    "{path}: the surface is far from even (a relief, objects or a pattern; {:.0} % from the fit): its shading is in the gain too. Measure on a flat, evenly coloured surface, or use even: colour",
                     kept.iter().fold(0.0f64, |a, v| a.max(*v)) * 100.0
                 ));
             }

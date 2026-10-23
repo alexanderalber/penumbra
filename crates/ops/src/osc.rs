@@ -312,7 +312,7 @@ impl Operator for OscOut {
             self.sender = Some(s);
         }
         if cx.input(0).is_none() && cx.input(1).is_none() {
-            return Err(crate::chan::waiting(cx));
+            return Err(crate::waiting(cx));
         }
         let now = cx.time().seconds();
         let period = 1.0 / cx.float("rate")?.max(0.1);

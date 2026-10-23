@@ -29,7 +29,7 @@ fn desc() -> NodeDesc {
             .range(1.0, 64.0)
             .curve(Curve::Log)
             .doc(
-                "About how many frames are averaged where the picture is still, for brightness noise; more                  is calmer; 1: off",
+                "About how many frames are averaged where the picture is still, for brightness noise; more is calmer; 1: off",
             ),
     )
     .param(
@@ -116,7 +116,7 @@ impl Operator for Denoise {
                 frame: i64::from(self.frame),
                 param: &param,
             },
-        );
+        )?;
         self.last = (!reset).then(|| target.clone());
         self.input = Some(data.clone());
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))

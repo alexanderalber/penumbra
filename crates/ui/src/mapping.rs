@@ -395,24 +395,7 @@ impl MapEditor {
             if let Some(handle) = self.selected
                 && response.hovered()
             {
-                let (dx, dy) = ui.input_mut(|i| {
-                    let mut d = (0.0, 0.0);
-                    for (key, step) in [
-                        (egui::Key::ArrowLeft, (-1.0, 0.0)),
-                        (egui::Key::ArrowRight, (1.0, 0.0)),
-                        (egui::Key::ArrowUp, (0.0, -1.0)),
-                        (egui::Key::ArrowDown, (0.0, 1.0)),
-                    ] {
-                        // Shift first: `consume_key` matches logically, so without Shift it would take both.
-                        for m in [egui::Modifiers::SHIFT, egui::Modifiers::NONE] {
-                            if i.consume_key(m, key) {
-                                let k = if m.shift { 10.0 } else { 1.0 };
-                                d = (d.0 + step.0 * k, d.1 + step.1 * k);
-                            }
-                        }
-                    }
-                    d
-                });
+                let (dx, dy) = ui.input_mut(arrow_nudge);
                 if dx != 0.0 || dy != 0.0 {
                     let o = offset_of(input, handle);
                     let group = *self.nudge_group.get_or_insert_with(|| (input.new_group)());
@@ -475,4 +458,25 @@ impl MapEditor {
             );
         }
     }
+}
+
+/// The arrow keys pressed this frame as a nudge in pixels (`x` right, `y` down): 1 per press,
+/// 10 with Shift. Consumes the keys.
+pub(crate) fn arrow_nudge(i: &mut egui::InputState) -> (f64, f64) {
+    let mut d = (0.0, 0.0);
+    for (key, step) in [
+        (egui::Key::ArrowLeft, (-1.0, 0.0)),
+        (egui::Key::ArrowRight, (1.0, 0.0)),
+        (egui::Key::ArrowUp, (0.0, -1.0)),
+        (egui::Key::ArrowDown, (0.0, 1.0)),
+    ] {
+        // Shift first: `consume_key` matches logically, so without Shift it would take both.
+        for m in [egui::Modifiers::SHIFT, egui::Modifiers::NONE] {
+            if i.consume_key(m, key) {
+                let k = if m.shift { 10.0 } else { 1.0 };
+                d = (d.0 + step.0 * k, d.1 + step.1 * k);
+            }
+        }
+    }
+    d
 }

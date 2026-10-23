@@ -540,21 +540,7 @@ impl ShapeEditor {
             && let Some(shape) = list.get(i)
         {
             let (dx, dy, delete) = ui.input_mut(|inp| {
-                let mut d = (0.0, 0.0);
-                for (key, step) in [
-                    (egui::Key::ArrowLeft, (-1.0, 0.0)),
-                    (egui::Key::ArrowRight, (1.0, 0.0)),
-                    (egui::Key::ArrowUp, (0.0, -1.0)),
-                    (egui::Key::ArrowDown, (0.0, 1.0)),
-                ] {
-                    // Shift first: `consume_key` matches logically, so without Shift it would take both.
-                    for m in [egui::Modifiers::SHIFT, egui::Modifiers::NONE] {
-                        if inp.consume_key(m, key) {
-                            let k = if m.shift { 10.0 } else { 1.0 };
-                            d = (d.0 + step.0 * k, d.1 + step.1 * k);
-                        }
-                    }
-                }
+                let d = crate::mapping::arrow_nudge(inp);
                 let delete = inp.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || inp.consume_key(egui::Modifiers::NONE, egui::Key::Backspace);
                 (d.0, d.1, delete)

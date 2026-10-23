@@ -346,7 +346,7 @@ impl FromTex {
                 gpu,
                 &target,
                 &PassInput { inputs: &[Some(&from)], seconds: 0.0, frame: 0, param: &|_| None },
-            );
+            )?;
             from = target;
         }
         let waker = cx.waker();

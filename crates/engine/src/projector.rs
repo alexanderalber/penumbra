@@ -44,6 +44,24 @@ pub const DEFAULT_SETTLE: f64 = 0.5;
 pub const DEFAULT_SAMPLES: usize = 17;
 pub const DEFAULT_TIMEOUT: f64 = 5.0;
 pub const DEFAULT_REFINE: u32 = 5;
+
+/// `settle` (seconds to wait after the picture changed) of a projector command, checked.
+pub(crate) fn settle_of(settle: Option<f64>, default: f64) -> CmdResult<f64> {
+    let settle = settle.unwrap_or(default);
+    if !(settle.is_finite() && (0.0..=10.0).contains(&settle)) {
+        return Err("`settle` is 0 to 10 seconds".into());
+    }
+    Ok(settle)
+}
+
+/// `timeout` (seconds to wait for the camera) of a projector command, checked.
+pub(crate) fn timeout_of(timeout: Option<f64>) -> CmdResult<f64> {
+    let timeout = timeout.unwrap_or(DEFAULT_TIMEOUT);
+    if !(timeout.is_finite() && (0.05..=60.0).contains(&timeout)) {
+        return Err("`timeout` is 0.05 to 60 seconds".into());
+    }
+    Ok(timeout)
+}
 pub const DEFAULT_GREY_LEVELS: u32 = 3;
 /// A grey between the refined ones, read for the report only: how well the curves interpolate.
 const PROBE: f64 = 0.375;
@@ -458,14 +476,8 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     if !(2..=32).contains(&levels) {
         return Err("`levels` is 2 to 32".into());
     }
-    let settle = a.settle.unwrap_or(DEFAULT_SETTLE);
-    if !(0.0..=10.0).contains(&settle) {
-        return Err("`settle` is 0 to 10 seconds".into());
-    }
-    let timeout = a.timeout.unwrap_or(DEFAULT_TIMEOUT);
-    if !(0.05..=60.0).contains(&timeout) {
-        return Err("`timeout` is 0.05 to 60 seconds".into());
-    }
+    let settle = settle_of(a.settle, DEFAULT_SETTLE)?;
+    let timeout = timeout_of(a.timeout)?;
     let samples = a.samples.unwrap_or(DEFAULT_SAMPLES);
     if !(2..=penumbra_gpu::projection::MAX_CURVE).contains(&samples) {
         return Err(format!("`samples` is 2 to {}", penumbra_gpu::projection::MAX_CURVE).into());
