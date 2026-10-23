@@ -40,7 +40,7 @@ pub const SEND_PACKET: usize = 1400;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new(OSC_IN, "OSC from the network: every address a channel with its latest number")
+        NodeDesc::new(OSC_IN, "OSC from apps, controllers and other programs (TouchOSC on a phone, say): every address a channel")
             .param(
                 ParamSpec::int("port", DEFAULT_IN_PORT)
                     .clamp(0.0, 65535.0)
@@ -67,7 +67,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(OscIn::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new(OSC_OUT, "Sends channels (and table rows: address, values) as OSC to a host and port")
+        NodeDesc::new(OSC_OUT, "Sends channels and table rows as OSC to another program or device")
             .param(
                 ParamSpec::text("host", "127.0.0.1")
                     .doc("IP address to send to, or localhost; names are not looked up"),

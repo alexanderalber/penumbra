@@ -11,7 +11,7 @@ pub(super) fn builtin() -> Builtin {
     Builtin {
         desc: sized(NodeDesc::new(
             "tex.scan_pattern",
-            "Structured light: Gray-code stripes by index (white, black, then columns and rows, each bit with its inverse); 46 pictures at 1920 x 1080",
+            "The striped pictures of a structured light scan (Gray code), one per `pattern`: for scanning with another camera by hand",
         ))
         .param(
             ParamSpec::int("pattern", 0)

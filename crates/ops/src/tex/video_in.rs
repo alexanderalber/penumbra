@@ -31,7 +31,7 @@ pub const VIDEO_IN: &str = "tex.video_in";
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new(VIDEO_IN, "A live camera or capture card; resolution of the camera's mode")
+        NodeDesc::new(VIDEO_IN, "A live camera or capture card")
             .param(ParamSpec::text("device", "").doc(
                 "Part of the camera's name (the ... menu lists them), e.g. `Cam Link`; empty: the first camera",
             ))
@@ -49,7 +49,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             )
             .output("out", DataKind::Tex)
             .output("info", DataKind::Chan)
-            .describe_output("out", "The camera's picture")
+            .describe_output("out", "The camera's picture, at the size of its mode")
             .describe_output("info", "The stream: fps, delay_ms, age_ms, frames, dropped"),
         || Box::new(VideoIn::default()) as Box<dyn Operator>,
     )

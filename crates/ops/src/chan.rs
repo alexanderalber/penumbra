@@ -17,7 +17,7 @@ use crate::{Null, waiting};
 /// Registers the `chan` node types.
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new("chan.constant", "Fixed numbers: one channel per row of name and value")
+        NodeDesc::new("chan.constant", "Numbers set by hand, each a named channel: values to bind params to, one setting that drives several things")
             .param(constant_value("value0"))
             .param(ParamSpec::text("name0", "chan0").doc(CONSTANT_NAME_DOC))
             .param(
@@ -32,7 +32,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))?;
     generator(
         types,
-        NodeDesc::new("chan.lfo", "Low-frequency oscillator: offset + amplitude * wave(time * rate + phase)")
+        NodeDesc::new("chan.lfo", "A number that swings up and down by itself (sine, triangle, square, saw): regular motion, pulsing, blinking")
             .param(
                 ParamSpec::float("rate", 1.0).range(0.01, 100.0).curve(Curve::Log).unit(Unit::Hertz).doc(
                     "Full waves per second: 1 Hz is one up and down each second, 0.1 one every ten seconds",
@@ -85,7 +85,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         types,
         NodeDesc::new(
             "chan.noise",
-            "Smooth random motion over time: offset + amplitude * noise, the same on every machine",
+            "A number that wanders smoothly at random: organic motion that never repeats",
         )
         .param(
             ParamSpec::float("frequency", 1.0)
@@ -132,8 +132,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "chan.math",
-            "a op b per channel. Each channel of a meets b's channel of the same name, else b's first \
-             channel. While input b is unconnected, the param `b` stands in",
+            "Calculates with channels: adds, multiplies or compares two inputs, or one input and a number",
         )
         .param(
             ParamSpec::choice(
@@ -162,37 +161,41 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .input("a", DataKind::Chan)
         .input("b", DataKind::Chan)
+        .describe_input("b", "Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param `b`")
         .output("out", DataKind::Chan),
         || Box::new(Math) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("chan.filter", "Smooths each channel over time, rising and falling at their own pace")
-            .stateful()
-            .param(
-                ParamSpec::float("rise", 0.2)
-                    .clamp(0.0, 3600.0)
-                    .range(0.0, 5.0)
-                    .curve(Curve::Power(2.0))
-                    .unit(Unit::Seconds)
-                    .doc("Time to cover 63 % of a step up; 0 follows at once"),
-            )
-            .param(
-                ParamSpec::float("fall", 0.2)
-                    .clamp(0.0, 3600.0)
-                    .range(0.0, 5.0)
-                    .curve(Curve::Power(2.0))
-                    .unit(Unit::Seconds)
-                    .doc("Time to cover 63 % of a step down"),
-            )
-            .input("in", DataKind::Chan)
-            .output("out", DataKind::Chan)
-            .time_dependent(),
+        NodeDesc::new(
+            "chan.filter",
+            "Smooths jumpy numbers over time, at their own pace up and down: calms a sensor, softens a jump",
+        )
+        .stateful()
+        .param(
+            ParamSpec::float("rise", 0.2)
+                .clamp(0.0, 3600.0)
+                .range(0.0, 5.0)
+                .curve(Curve::Power(2.0))
+                .unit(Unit::Seconds)
+                .doc("Time to cover 63 % of a step up; 0 follows at once"),
+        )
+        .param(
+            ParamSpec::float("fall", 0.2)
+                .clamp(0.0, 3600.0)
+                .range(0.0, 5.0)
+                .curve(Curve::Power(2.0))
+                .unit(Unit::Seconds)
+                .doc("Time to cover 63 % of a step down"),
+        )
+        .input("in", DataKind::Chan)
+        .output("out", DataKind::Chan)
+        .time_dependent(),
         || Box::new(Filter::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             "chan.speed",
-            "Adds up each channel over time, as a rate per second: a speed becomes a position",
+            "Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting",
         )
         .stateful()
         .param(
@@ -224,8 +227,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             CLOCK,
-            "Seconds since it was switched on: starts over from 0 each time `run` turns on, then plays \
-             once, loops or runs on. A clock per piece of a show that starts with its piece",
+            "A stopwatch: counts seconds from when `run` turns on, once, looping or on and on. Gives each \
+             piece of a show a clock that starts with it",
         )
         .stateful()
         .param(ParamSpec::float("run", 1.0).range(0.0, 1.0).doc(
@@ -268,8 +271,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "chan.trail",
-            "The recent history of each input channel as samples, oldest first: a time graph to look \
-             at or to feed on",
+            "Records the recent past of each channel: a graph over time to look at, or a history to work with",
         )
         .stateful()
         .sampled()
@@ -311,7 +313,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Trail::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("chan.merge", "The channels of all inputs side by side")
+        NodeDesc::new("chan.merge", "Puts the channels of up to four inputs together into one")
             .input("a", DataKind::Chan)
             .input("b", DataKind::Chan)
             .input("c", DataKind::Chan)
@@ -320,27 +322,33 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Merge) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("chan.select", "The input's channels matching patterns, in the patterns' order")
-            .param(ParamSpec::text("channels", "*").doc(
-                "Space-separated names, `*` matches any run of characters: `x y pos*`; `^name` leaves \
+        NodeDesc::new(
+            "chan.select",
+            "Picks some of the input's channels by name or pattern, in the order given",
+        )
+        .param(ParamSpec::text("channels", "*").doc(
+            "Space-separated names, `*` matches any run of characters: `x y pos*`; `^name` leaves \
              channels out. To rename, add a chan.rename",
-            ))
-            .input("in", DataKind::Chan)
-            .output("out", DataKind::Chan),
+        ))
+        .input("in", DataKind::Chan)
+        .output("out", DataKind::Chan),
         || Box::new(Select) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("chan.rename", "The input's channels, renamed by `from=to` pairs")
-            .param(ParamSpec::text("names", "").doc(
-                "Space-separated `from=to` pairs, the first match wins: `tx=x ty=y`. With one `*` \
+        NodeDesc::new(
+            "chan.rename",
+            "Renames channels by `from=to` pairs, so they match what other nodes and bindings expect",
+        )
+        .param(ParamSpec::text("names", "").doc(
+            "Space-separated `from=to` pairs, the first match wins: `tx=x ty=y`. With one `*` \
                  on each side the matched part carries over: `pos*=p*` makes pos_a into p_a",
-            ))
-            .input("in", DataKind::Chan)
-            .output("out", DataKind::Chan),
+        ))
+        .input("in", DataKind::Chan)
+        .output("out", DataKind::Chan),
         || Box::new(Rename) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("chan.null", "The input, unchanged: a fixed point to refer to or to bind to")
+        NodeDesc::new("chan.null", "Passes its input on unchanged: a fixed point to look at, or to bind params to while the chain before it changes")
             .input("in", DataKind::Chan)
             .output("out", DataKind::Chan),
         || Box::new(Null) as Box<dyn Operator>,

@@ -27,7 +27,7 @@ const SMOOTH_Y: f64 = 2.0;
 const DRAW_SMOOTHED: f64 = 3.0;
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(KIND, "Contour lines of a channel: a line at every multiple of an interval")
+    NodeDesc::new(KIND, "Contour lines as on a map: a line wherever a channel (a height map, say) crosses a step of `interval`")
         .param(
             ParamSpec::float("interval", 0.05)
                 .range(0.005, 0.25)

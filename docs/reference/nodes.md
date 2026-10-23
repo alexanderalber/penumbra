@@ -12,7 +12,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ### tex.blob_track
 
-Finds blobs (people, hands, spots of light) and follows them with ids that stay
+Finds people, hands or spots of light in a camera picture and follows each with an id that stays: positions to drive content with
 
 Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -45,7 +45,7 @@ Outputs:
 
 ### tex.blur
 
-Gaussian blur
+Softens a picture: a Gaussian blur, in every direction or only across or only up and down
 
 Inputs:
 
@@ -61,7 +61,7 @@ Outputs: `out` (tex).
 
 ### tex.cache
 
-The last frames of the input; outputs one of them, some frames back
+Keeps the last frames of its input and shows one from a few frames back: a delay, or a moment held
 
 Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -80,7 +80,7 @@ Outputs: `out` (tex).
 
 ### tex.channel_mix
 
-Each output channel a weighted sum of the input's channels
+Mixes the colour channels anew: swap red and blue, make grey from one channel, turn alpha into colour
 
 Inputs:
 
@@ -98,7 +98,7 @@ Outputs: `out` (tex).
 
 ### tex.chroma_key
 
-Make pixels near a key colour transparent (green or blue screen)
+Cuts out a green or blue screen: pixels near a key colour become transparent
 
 Inputs:
 
@@ -117,11 +117,11 @@ Outputs: `out` (tex).
 
 ### tex.composite
 
-layer2 onto layer1, then layer3 onto that, then layer4; resolution of the first connected input
+Lays up to four pictures on top of each other: over, add, multiply, screen and other blend modes
 
 Inputs:
 
-- `layer1` (tex)
+- `layer1` (tex): The bottom layer. The output has the size of the first connected layer
 - `layer2` (tex)
 - `layer3` (tex)
 - `layer4` (tex)
@@ -135,7 +135,7 @@ Outputs: `out` (tex).
 
 ### tex.constant
 
-One colour everywhere
+A picture in one colour: a background, a fill, a black to start from
 
 Inputs: none.
 
@@ -150,7 +150,7 @@ Outputs: `out` (tex).
 
 ### tex.contour
 
-Contour lines of a channel: a line at every multiple of an interval
+Contour lines as on a map: a line wherever a channel (a height map, say) crosses a step of `interval`
 
 Inputs:
 
@@ -171,11 +171,11 @@ Outputs: `out` (tex).
 
 ### tex.cross
 
-Mix of two inputs; resolution of a
+Crossfades between two pictures: 0 shows a, 1 shows b
 
 Inputs:
 
-- `a` (tex)
+- `a` (tex): The output has its size
 - `b` (tex)
 
 Outputs: `out` (tex).
@@ -207,7 +207,7 @@ Outputs: `out` (tex).
 
 ### tex.displace
 
-Push each pixel of the input by the values of a map
+Warps a picture by another: each pixel is pushed by the values of a map (ripples, heat haze, flow)
 
 Inputs:
 
@@ -226,7 +226,7 @@ Outputs: `out` (tex).
 
 ### tex.edge
 
-Edges of the luminance (Sobel)
+Finds the edges in a picture and draws them as lines: outlines, a sketched look
 
 Inputs:
 
@@ -243,13 +243,13 @@ Outputs: `out` (tex).
 
 ### tex.feedback
 
-A loop: wire the end of the chain back into `previous`. Until `previous` has a frame, `initial` is passed
+Feeds a chain's result back into it the next frame: trails, echoes, patterns that grow. Wire the end of the chain into `previous`
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
-- `initial` (tex)
+- `initial` (tex): Passed on until `previous` has a frame, and while `reset` is on: what the loop starts from
 - `previous` (tex) Sees the previous frame, so it may close a loop.
 
 Outputs: `out` (tex).
@@ -261,7 +261,7 @@ Outputs: `out` (tex).
 
 ### tex.fit
 
-The input fitted into a frame of its own size, aspect kept or not
+Fits a picture into a frame of another size or shape: whole with bars, cropped to fill, or stretched
 
 Inputs:
 
@@ -280,7 +280,7 @@ Outputs: `out` (tex).
 
 ### tex.flip
 
-Mirror left to right or top to bottom; flop swaps the axes
+Mirrors a picture left to right or top to bottom, or turns its rows into columns
 
 Inputs:
 
@@ -296,7 +296,7 @@ Outputs: `out` (tex).
 
 ### tex.fluid
 
-A 2D fluid: motion pushes it, dye flows with it (Stable Fluids)
+A simulated fluid like smoke or ink: motion (a camera's, tracked hands) stirs it and colour flows along
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -334,7 +334,7 @@ Outputs:
 
 ### tex.from_chan
 
-Channels as a picture: a row per channel, a pixel per sample; r, g, b as a colour
+Turns channels into a picture: a row per channel, a pixel per sample. Numbers for shaders and geo.tex_instance
 
 Inputs:
 
@@ -350,7 +350,7 @@ Outputs: `out` (tex).
 
 ### tex.hsv
 
-Turn the hue, scale saturation and value
+Turns the colours round the colour wheel and makes them more vivid or paler, brighter or darker
 
 Inputs:
 
@@ -366,7 +366,7 @@ Outputs: `out` (tex).
 
 ### tex.image
 
-An image file (8-bit, 16-bit or float); reloads when the file changes
+A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it
 
 Inputs: none.
 
@@ -390,7 +390,7 @@ Outputs: `out` (tex).
 
 ### tex.layer
 
-A layer of a PSD/PSB file or of a directory of images, or the whole picture; reloads on change
+One layer of a Photoshop file (PSD/PSB) or of a folder of images, or the whole picture; updates when the file changes
 
 Inputs: none.
 
@@ -407,7 +407,7 @@ Outputs:
 
 ### tex.lens_distort
 
-Radial lens distortion (barrel or pincushion) around a centre
+Bends a picture as a lens does (barrel or pincushion), or straightens what a lens bent
 
 Inputs:
 
@@ -425,7 +425,7 @@ Outputs: `out` (tex).
 
 ### tex.level
 
-Levels, gamma, contrast, brightness, invert, opacity
+Adjusts black and white, gamma, contrast and brightness, inverts, or fades a picture out
 
 Inputs:
 
@@ -445,7 +445,7 @@ Outputs: `out` (tex).
 
 ### tex.limit
 
-Keep values within a range: clamp, wrap around or mirror
+Keeps values within a range: clips them, or wraps or mirrors them back in (a ramp becomes repeating stripes)
 
 Inputs:
 
@@ -462,7 +462,7 @@ Outputs: `out` (tex).
 
 ### tex.lookup
 
-Colours from a lookup texture, indexed by the input's values
+Recolours a picture through a strip of colours: brightness picks the colour (a gradient map), or a curve per channel
 
 Inputs:
 
@@ -478,7 +478,7 @@ Outputs: `out` (tex).
 
 ### tex.mapper
 
-Maps a part of its input onto a projector: corners, mesh warp, soft edges with other mappers of the same input
+Fits a part of the content onto one projector: corner pinning, mesh warp, soft edges where projectors overlap
 
 Inputs:
 
@@ -504,12 +504,12 @@ Outputs: `out` (tex).
 
 ### tex.matte
 
-Where the matte is white a shows, where it is black b; resolution of a
+Shows one picture where a mask is white and another where it is black
 
 Inputs:
 
-- `a` (tex)
-- `b` (tex)
+- `a` (tex): Shows where the matte is white. The output has its size
+- `b` (tex): Shows where the matte is black
 - `matte` (tex)
 
 Outputs: `out` (tex).
@@ -521,7 +521,7 @@ Outputs: `out` (tex).
 
 ### tex.monochrome
 
-Grey from luminance, average, maximum or one channel
+Makes a picture grey: by brightness, by the average or the brightest channel, or from one channel
 
 Inputs:
 
@@ -536,13 +536,13 @@ Outputs: `out` (tex).
 
 ### tex.ndi_in
 
-An NDI® source on the network (needs the NDI runtime, ndi.video); resolution of the source's
+A picture (and sound) from another program or computer on the network, through NDI®; needs the NDI runtime (ndi.video)
 
 Inputs: none.
 
 Outputs:
 
-- `out` (tex): The source's picture
+- `out` (tex): The source's picture, at its size
 - `audio` (chan): The source's audio since the last cook: ch1, ch2, ... at its sample rate
 
 | param | type | default | range | meaning |
@@ -553,7 +553,7 @@ Outputs:
 
 ### tex.noise
 
-Fractal noise: offset + amplitude * noise, the same on every GPU
+Cloudy random patterns, still or slowly changing: textures, masks, organic motion for a displacement
 
 Inputs: none.
 
@@ -579,7 +579,7 @@ Outputs: `out` (tex).
 
 ### tex.null
 
-The input, unchanged: a fixed point to refer to or to view
+Passes its input on unchanged: a fixed point to look at, or for other nodes to refer to while the chain before it changes
 
 Inputs:
 
@@ -589,7 +589,7 @@ Outputs: `out` (tex).
 
 ### tex.optical_flow
 
-How far each part of the picture moved since the previous frame (optical flow)
+Measures how each part of the picture moves from frame to frame: motion to stir a fluid or drive a displacement
 
 Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -624,7 +624,7 @@ Outputs: `out` (tex).
 
 ### tex.quantize
 
-Fewer colours (levels per channel) and fewer pixels (blocks)
+Fewer colours and bigger pixels: posterised, banded or retro pixel looks
 
 Inputs:
 
@@ -642,7 +642,7 @@ Outputs: `out` (tex).
 
 ### tex.ramp
 
-Colours at positions, blended in between: a gradient
+A colour gradient: across, up, in rings or once around a centre, with colours at chosen positions
 
 Inputs: none.
 
@@ -658,7 +658,7 @@ Outputs: `out` (tex).
 
 ### tex.remap
 
-Fetch the input where a map's red and green point
+Rearranges a picture by a map: each pixel shows the input where the map's red and green point. Undistorts, unwraps, carries a camera's view onto a projector
 
 Inputs:
 
@@ -673,7 +673,7 @@ Outputs: `out` (tex).
 
 ### tex.render
 
-Geometry through a camera: the picture, and a data pass (uv, part id + 1, depth)
+Renders 3D geometry through a camera into a picture, with a second picture of data for shaders and masks
 
 Inputs:
 
@@ -703,7 +703,7 @@ Outputs:
 
 ### tex.resolution
 
-The input at another resolution. Shrinking averages the pixels, so nothing aliases
+Scales a picture to another size, smaller to save work, say; shrinking stays smooth, without aliasing
 
 Inputs:
 
@@ -721,7 +721,7 @@ Outputs: `out` (tex).
 
 ### tex.scan
 
-One projector's structured light scan, held. The scan button (scan.run) measures the projector with the camera; the outputs are the maps the scan wrote, kept until the next scan
+Measures with a camera what a projector lights (structured light) and keeps the result until the next scan: maps to put content onto real objects
 
 Inputs: none.
 
@@ -745,7 +745,7 @@ Outputs:
 
 ### tex.scan_pattern
 
-Structured light: Gray-code stripes by index (white, black, then columns and rows, each bit with its inverse); 46 pictures at 1920 x 1080
+The striped pictures of a structured light scan (Gray code), one per `pattern`: for scanning with another camera by hand
 
 Inputs: none.
 
@@ -761,7 +761,7 @@ Outputs: `out` (tex).
 
 ### tex.select
 
-The output of another node, named by path instead of wired
+Another node's output without a wire, named by its path: to reach across components or far through the network
 
 Inputs: none.
 
@@ -774,7 +774,7 @@ Outputs: `out` (tex).
 
 ### tex.sequence
 
-The picture of a show: the inputs a chan.sequence says, cut or blended, with black and white made in between. Only the inputs shown cook
+The picture of a timed show: plays the pieces a chan.sequence lists, with cuts and fades. Only the piece on screen runs
 
 Inputs:
 
@@ -815,7 +815,7 @@ Outputs: `out` (tex).
 
 ### tex.shader
 
-A WGSL fragment shader from a file, hot reloaded; parameters come from its `// @param` header
+An effect or generator of your own, written as a WGSL shader in a file; reloads when saved, its `// @param` lines become params
 
 Declares further params per node, from its file or code.
 
@@ -838,7 +838,7 @@ Outputs: `out` (tex).
 
 ### tex.shape_content
 
-Pulses, chases or ripples per shape, from tex.shapes' id output
+Animates the shapes of a tex.shapes one by one: pulses, light running along the outlines, ripples
 
 Inputs:
 
@@ -864,7 +864,7 @@ Outputs: `out` (tex).
 
 ### tex.shapes
 
-Tagged shapes on the surface: a mask and a distance field per tag, outlines, a table
+Shapes drawn on the surface (rectangles, ellipses, polygons) with tags: masks and outlines to light parts of a facade or object on their own
 
 Inputs:
 
@@ -897,7 +897,7 @@ Outputs:
 
 ### tex.slope
 
-How steeply a channel rises: left to right in red, top to bottom in green
+How steeply a height map or picture rises, left to right in red and top to bottom in green: relief, or a map for tex.displace
 
 Inputs:
 
@@ -913,13 +913,13 @@ Outputs: `out` (tex).
 
 ### tex.spout_in
 
-Another program's Spout sender (Windows); resolution of the sender's
+A picture from another program on this machine, through Spout (Windows)
 
 Inputs: none.
 
 Outputs:
 
-- `out` (tex): The sender's picture
+- `out` (tex): The sender's picture, at its size
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -951,7 +951,7 @@ Outputs: `out` (tex).
 
 ### tex.text
 
-Text in any installed or bundled font, placed at a position
+Writes text into a picture, in an installed font or a bundled one
 
 Inputs: none.
 
@@ -972,7 +972,7 @@ Outputs: `out` (tex).
 
 ### tex.threshold
 
-White where a channel is above a threshold, black (or transparent) elsewhere
+A mask from brightness: white where a channel is above a value, black or transparent elsewhere
 
 Inputs:
 
@@ -990,7 +990,7 @@ Outputs: `out` (tex).
 
 ### tex.tile
 
-The input repeated across and down, at its own resolution
+Repeats a picture as a grid of smaller copies, at the input's size
 
 Inputs:
 
@@ -1006,14 +1006,14 @@ Outputs: `out` (tex).
 
 ### tex.time_machine
 
-Per pixel, a frame from the past: the map says how far back (black now, white oldest)
+Shows each pixel from another moment in the past, as a map says: time smears, slit scans, echoes
 
 Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
 Inputs:
 
 - `in` (tex)
-- `map` (tex)
+- `map` (tex): Per pixel, how far back: black is now, white `length` frames ago; unconnected: `offset` alone
 
 Outputs: `out` (tex).
 
@@ -1030,7 +1030,7 @@ Outputs: `out` (tex).
 
 ### tex.transform
 
-Translate, rotate and scale around a pivot; resolution of the input
+Moves, turns and scales a picture within its own frame
 
 Inputs:
 
@@ -1048,7 +1048,7 @@ Outputs: `out` (tex).
 
 ### tex.video
 
-A video file or animated GIF, looping seamlessly; resolution of the file
+Plays a video file or animated GIF, looping without a gap
 
 Follows the show clock: cooks again whenever time moves.
 
@@ -1056,7 +1056,7 @@ Inputs: none.
 
 Outputs:
 
-- `out` (tex): The video's picture
+- `out` (tex): The video's picture, at the file's size
 - `info` (chan): Playback: frame, progress (0 to 1), loops, late, seeks
 
 | param | type | default | range | meaning |
@@ -1069,13 +1069,13 @@ Outputs:
 
 ### tex.video_in
 
-A live camera or capture card; resolution of the camera's mode
+A live camera or capture card
 
 Inputs: none.
 
 Outputs:
 
-- `out` (tex): The camera's picture
+- `out` (tex): The camera's picture, at the size of its mode
 - `info` (chan): The stream: fps, delay_ms, age_ms, frames, dropped
 
 | param | type | default | range | meaning |
@@ -1090,7 +1090,7 @@ Outputs:
 
 ### chan.audio_analysis
 
-Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audio_in)
+Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat
 
 Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -1123,7 +1123,7 @@ Outputs:
 
 ### chan.audio_in
 
-Audio from an input device: one channel per device channel, at its sample rate
+Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel
 
 Inputs: none.
 
@@ -1135,7 +1135,7 @@ Outputs: `out` (chan).
 
 ### chan.clock
 
-Seconds since it was switched on: starts over from 0 each time `run` turns on, then plays once, loops or runs on. A clock per piece of a show that starts with its piece
+A stopwatch: counts seconds from when `run` turns on, once, looping or on and on. Gives each piece of a show a clock that starts with it
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over. Cooks in every frame, whether anything shows it or not, so it sees every change of its params.
 
@@ -1154,7 +1154,7 @@ Outputs:
 
 ### chan.constant
 
-Fixed numbers: one channel per row of name and value
+Numbers set by hand, each a named channel: values to bind params to, one setting that drives several things
 
 Declares further params per node, from its file or code.
 
@@ -1170,7 +1170,7 @@ Outputs: `out` (chan).
 
 ### chan.dmx_in
 
-DMX slots from the network (Art-Net or sACN) as channels, from a lighting desk say
+DMX from a lighting desk over the network (Art-Net or sACN): each slot a channel to drive content with
 
 Inputs: none.
 
@@ -1190,7 +1190,7 @@ Outputs:
 
 ### chan.filter
 
-Smooths each channel over time, rising and falling at their own pace
+Smooths jumpy numbers over time, at their own pace up and down: calms a sensor, softens a jump
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -1207,7 +1207,7 @@ Outputs: `out` (chan).
 
 ### chan.from_tex
 
-A picture as channels: averaged down to a few pixels, one channel per row and colour
+Turns a picture into numbers: its average colour, or the colours of a few areas, as channels to drive things with
 
 Inputs:
 
@@ -1235,7 +1235,7 @@ Outputs: `out` (chan).
 
 ### chan.keyboard_in
 
-Keys of the keyboard while a penumbra window has the focus: a gate per key, and which was pressed last
+Keys of the keyboard as channels, to switch scenes or trigger things by hand during a show (while a penumbra window has the focus)
 
 Inputs: none.
 
@@ -1249,7 +1249,7 @@ Outputs:
 
 ### chan.lfo
 
-Low-frequency oscillator: offset + amplitude * wave(time * rate + phase)
+A number that swings up and down by itself (sine, triangle, square, saw): regular motion, pulsing, blinking
 
 Follows the show clock: cooks again whenever time moves.
 
@@ -1268,12 +1268,12 @@ Outputs: `out` (chan).
 
 ### chan.math
 
-a op b per channel. Each channel of a meets b's channel of the same name, else b's first channel. While input b is unconnected, the param `b` stands in
+Calculates with channels: adds, multiplies or compares two inputs, or one input and a number
 
 Inputs:
 
 - `a` (chan)
-- `b` (chan)
+- `b` (chan): Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param `b`
 
 Outputs: `out` (chan).
 
@@ -1284,7 +1284,7 @@ Outputs: `out` (chan).
 
 ### chan.merge
 
-The channels of all inputs side by side
+Puts the channels of up to four inputs together into one
 
 Inputs:
 
@@ -1297,7 +1297,7 @@ Outputs: `out` (chan).
 
 ### chan.noise
 
-Smooth random motion over time: offset + amplitude * noise, the same on every machine
+A number that wanders smoothly at random: organic motion that never repeats
 
 Follows the show clock: cooks again whenever time moves.
 
@@ -1317,7 +1317,7 @@ Outputs: `out` (chan).
 
 ### chan.null
 
-The input, unchanged: a fixed point to refer to or to bind to
+Passes its input on unchanged: a fixed point to look at, or to bind params to while the chain before it changes
 
 Inputs:
 
@@ -1327,7 +1327,7 @@ Outputs: `out` (chan).
 
 ### chan.osc_in
 
-OSC from the network: every address a channel with its latest number
+OSC from apps, controllers and other programs (TouchOSC on a phone, say): every address a channel
 
 Inputs: none.
 
@@ -1345,7 +1345,7 @@ Outputs:
 
 ### chan.osc_out
 
-Sends channels (and table rows: address, values) as OSC to a host and port
+Sends channels and table rows as OSC to another program or device
 
 Follows the show clock: cooks again whenever time moves.
 
@@ -1379,7 +1379,7 @@ Outputs: `out` (chan).
 
 ### chan.rename
 
-The input's channels, renamed by `from=to` pairs
+Renames channels by `from=to` pairs, so they match what other nodes and bindings expect
 
 Inputs:
 
@@ -1393,7 +1393,7 @@ Outputs: `out` (chan).
 
 ### chan.select
 
-The input's channels matching patterns, in the patterns' order
+Picks some of the input's channels by name or pattern, in the order given
 
 Inputs:
 
@@ -1407,7 +1407,7 @@ Outputs: `out` (chan).
 
 ### chan.sequence
 
-A show: pieces one after another with cuts, fades, dips to black and flashes. Drives a tex.sequence per output and a run gate per piece
+A timed show: pieces one after another with cuts, fades, dips to black and flashes. Drives the tex.sequence that shows it, and a run channel per piece
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over. Cooks in every frame, whether anything shows it or not, so it sees every change of its params.
 
@@ -1429,7 +1429,7 @@ Outputs:
 
 ### chan.speed
 
-Adds up each channel over time, as a rate per second: a speed becomes a position
+Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -1448,7 +1448,7 @@ Outputs: `out` (chan).
 
 ### chan.trail
 
-The recent history of each input channel as samples, oldest first: a time graph to look at or to feed on
+Records the recent past of each channel: a graph over time to look at, or a history to work with
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -1472,7 +1472,7 @@ Outputs:
 
 ### table.file
 
-A text, TSV or CSV file; reloads when the file changes
+A table from a text, TSV or CSV file; updates when the file changes
 
 Inputs: none.
 
@@ -1497,7 +1497,7 @@ Outputs: `out` (table).
 
 ### table.null
 
-The input, unchanged: a fixed point to refer to
+Passes its input on unchanged: a fixed point to refer to while the chain before it changes
 
 Inputs:
 
@@ -1519,7 +1519,7 @@ Outputs: `out` (table).
 
 ### table.text
 
-A table typed in: one row per line, cells by tab or comma
+A table typed into the node: one row per line, cells split by tab or comma
 
 Inputs: none.
 
@@ -1536,7 +1536,7 @@ Outputs: `out` (table).
 
 ### geo.assign_material
 
-Puts a material on every model of the input
+Gives geometry a material: how it looks when rendered
 
 Inputs:
 
@@ -1547,7 +1547,7 @@ Outputs: `out` (geo).
 
 ### geo.file
 
-A mesh file (OBJ, STL, glTF/GLB) with its parts; reloads when the file changes
+A 3D model from a file (OBJ, STL, glTF/GLB) with its parts; updates when the file changes
 
 Inputs: none.
 
@@ -1566,18 +1566,20 @@ Outputs:
 
 ### geo.instance
 
-One copy of the input per table row. The first row names the columns that place each copy: tx ty tz, rx ry rz (degrees), sx sy sz. Part ids continue from copy to copy
+Many copies of a model, each placed by a row of a table: a grid, a ring, a crowd of objects
 
 Inputs:
 
 - `in` (geo)
-- `table` (table)
+- `table` (table): One row per copy. The first row names the columns: tx ty tz to move, rx ry rz to turn (degrees), sx sy sz to scale
 
-Outputs: `out` (geo).
+Outputs:
+
+- `out` (geo): The copies; part ids continue from copy to copy
 
 ### geo.merge
 
-Several inputs as one; part ids continue from input to input
+Combines several pieces of geometry into one, to render them together
 
 Inputs:
 
@@ -1590,11 +1592,13 @@ Inputs:
 - `in6` (geo)
 - `in7` (geo)
 
-Outputs: `out` (geo).
+Outputs:
+
+- `out` (geo): All inputs as one; part ids continue from input to input
 
 ### geo.primitive
 
-A box, a sphere or a plane, centred on the origin
+A simple shape: a box, a sphere or a plane, centred on the origin
 
 Inputs: none.
 
@@ -1609,15 +1613,15 @@ Outputs: `out` (geo).
 
 ### geo.tex_instance
 
-One copy of the input per texel of position, drawn on the GPU. Copy i reads texel (i % width, i / width) of each texture: position's rgb moves the copy, scale's rgb scales it, aim's rgb turns its +y that way (+z kept up), color's rgb multiplies its colour
+Thousands of copies of a model, placed, scaled, turned and coloured by pictures, all on the GPU: particles, swarms
 
 Inputs:
 
 - `in` (geo)
-- `position` (tex)
-- `aim` (tex)
-- `scale` (tex)
-- `color` (tex)
+- `position` (tex): One texel per copy: copy i reads texel (i % width, i / width). Its rgb moves the copy (x, y, z in metres)
+- `aim` (tex): Its rgb turns the copy's +y towards that direction, keeping +z up
+- `scale` (tex): Its rgb scales the copy per axis
+- `color` (tex): Its rgb multiplies the copy's colour
 
 Outputs: `out` (geo).
 
@@ -1627,7 +1631,7 @@ Outputs: `out` (geo).
 
 ### geo.transform
 
-Scale, rotate, then translate
+Moves, turns and scales geometry (scale first, then rotate, then move)
 
 Inputs:
 
@@ -1648,7 +1652,7 @@ Outputs: `out` (geo).
 
 ### mat.constant
 
-A colour as it is, unlit: the usual choice for projection content
+A surface in its colour as it is, unaffected by light: the usual choice for projection content
 
 Inputs:
 
@@ -1670,7 +1674,7 @@ Outputs: `out` (mat).
 
 ### mat.pbr
 
-Physically based (metallic, roughness as in glTF): lit by the render's lights, best with an environment light
+A realistic surface, metal or plastic, rough or glossy, lit by the render's lights; best with a light.environment
 
 Inputs:
 
@@ -1687,7 +1691,7 @@ Outputs: `out` (mat).
 
 ### mat.phong
 
-Lit by the render's lights, with a highlight; black without lights
+A simple lit surface with a shiny highlight; black without lights
 
 Inputs:
 
@@ -1704,7 +1708,7 @@ Outputs: `out` (mat).
 
 ### mat.wireframe
 
-The edges as lines of a width in pixels, the faces open, filled or hidden; unlit
+Draws the edges of geometry as lines, the faces open, filled or hidden: a technical or retro look
 
 Inputs:
 
@@ -1727,7 +1731,7 @@ Outputs: `out` (mat).
 
 ### light.ambient
 
-Light from everywhere alike, also where a surface faces away
+Even light from every side, also on surfaces that face away: lifts the shadows
 
 Inputs: none.
 
@@ -1740,7 +1744,7 @@ Outputs: `out` (light).
 
 ### light.directional
 
-Parallel light from far away, as the sun
+Parallel light from far away, like the sun
 
 Inputs: none.
 
@@ -1757,7 +1761,7 @@ Outputs: `out` (light).
 
 ### light.environment
 
-Light from a picture of everything around (equirectangular): soft light and reflections
+Light from a panorama picture of the surroundings (equirectangular): soft, natural light and reflections
 
 Inputs:
 
@@ -1774,7 +1778,7 @@ Outputs: `out` (light).
 
 ### light.merge
 
-The lights of several inputs, for one render
+Combines several lights for one render
 
 Inputs:
 
@@ -1787,7 +1791,7 @@ Outputs: `out` (light).
 
 ### light.point
 
-Light from a point, in every direction
+Light from a point in every direction, like a bare bulb
 
 Inputs: none.
 
@@ -1802,7 +1806,7 @@ Outputs: `out` (light).
 
 ### light.projector
 
-A projector: throws its texture onto the geometry through a camera node's view
+A projector in the 3D scene: throws its picture onto the geometry from where a camera node stands
 
 Inputs:
 
@@ -1821,7 +1825,7 @@ Outputs: `out` (light).
 
 ### light.spot
 
-Light from a point, in a cone towards the target
+Light from a point in a cone towards a target, like a stage spot
 
 Inputs: none.
 
@@ -1845,7 +1849,7 @@ Outputs: `out` (light).
 
 ### view.camera
 
-A camera: where it is, what it looks at, its lens; for tex.render's camera input and light.projector
+A viewpoint into the 3D scene (position, target, lens): for tex.render, and as the lens of a light.projector
 
 Inputs: none.
 
@@ -1870,7 +1874,7 @@ Outputs: `out` (view).
 
 ### script.python
 
-A Python script: cook(cx) turns channels and tables in into channels and a table out
+Logic of your own in Python: turns channels and tables into new channels and a table
 
 Declares further params per node, from its file or code.
 
@@ -1899,7 +1903,7 @@ Outputs:
 
 ### out.dmx
 
-Channels to DMX slots: Enttec Open DMX USB, Art-Net, sACN or DDP
+Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP
 
 Inputs:
 
@@ -1919,7 +1923,7 @@ Outputs: none.
 
 ### out.ndi
 
-Offers its input on the network as an NDI® source (needs the NDI runtime, ndi.video)
+Sends a picture over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)
 
 Inputs:
 
@@ -1934,7 +1938,7 @@ Outputs: none.
 
 ### out.projector
 
-A projector: shows its input fullscreen on a display, or in a part of it
+Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors
 
 Follows the show clock: cooks again whenever time moves.
 
@@ -1963,7 +1967,7 @@ Outputs: none.
 
 ### out.spout
 
-Shares its input with other programs on this machine through Spout (Windows)
+Shares a picture with other programs on this machine through Spout (Windows)
 
 Inputs:
 
@@ -2007,7 +2011,7 @@ Outputs: none.
 
 ### comp.base
 
-Holds nodes; its input and output nodes are its ports
+A box of nodes: groups part of a network into one node, with inputs and outputs of its own (the in and out nodes inside)
 
 Holds nodes of its own (a component).
 
@@ -2025,7 +2029,7 @@ Outputs: none.
 
 ### node.broken
 
-A node whose entry in the project file did not load, kept as it was
+Stands in for a node the project file could not load, and keeps its entry as it was, so nothing is lost
 
 Inputs: none.
 

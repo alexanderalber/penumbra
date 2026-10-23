@@ -35,8 +35,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             SEQUENCE,
-            "A show: pieces one after another with cuts, fades, dips to black and flashes. Drives a \
-             tex.sequence per output and a run gate per piece",
+            "A timed show: pieces one after another with cuts, fades, dips to black and flashes. Drives \
+             the tex.sequence that shows it, and a run channel per piece",
         )
         .stateful()
         .param(ParamSpec::text("steps", "").multiline().doc(

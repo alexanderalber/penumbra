@@ -26,7 +26,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "tex.shader",
-            "A WGSL fragment shader from a file, hot reloaded; parameters come from its `// @param` header",
+            "An effect or generator of your own, written as a WGSL shader in a file; reloads when saved, its `// @param` lines become params",
         )
         .param(
             ParamSpec::file("file", &["wgsl"])

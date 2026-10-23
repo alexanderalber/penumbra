@@ -35,7 +35,7 @@ const SOURCE: &str = include_str!("text.wgsl");
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new(TEXT, "Text in any installed or bundled font, placed at a position")
+        NodeDesc::new(TEXT, "Writes text into a picture, in an installed font or a bundled one")
             .param(
                 ParamSpec::text("text", "Text")
                     .multiline()

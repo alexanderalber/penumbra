@@ -22,23 +22,26 @@ const LUT: usize = 1024;
 const MAX_KEYS: usize = 256;
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(KIND, "Colours at positions, blended in between: a gradient")
-        .param(super::width_param())
-        .param(super::height_param())
-        .param(keep_size())
-        .param(ParamSpec::text("keys", "0 0 0 0 1\n1 1 1 1 1").multiline().doc(
-            "One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; \
+    NodeDesc::new(
+        KIND,
+        "A colour gradient: across, up, in rings or once around a centre, with colours at chosen positions",
+    )
+    .param(super::width_param())
+    .param(super::height_param())
+    .param(keep_size())
+    .param(ParamSpec::text("keys", "0 0 0 0 1\n1 1 1 1 1").multiline().doc(
+        "One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; \
              1 when left out)",
-        ))
-        .param(
-            ParamSpec::choice("shape", &["horizontal", "vertical", "radial", "circular"])
-                .doc("How the key positions 0 to 1 lie on the picture")
-                .choice_doc("horizontal", "left (0) to right (1)")
-                .choice_doc("vertical", "bottom (0) to top (1)")
-                .choice_doc("radial", "the centre (0) out to the middle of the top edge (1), in rings")
-                .choice_doc("circular", "once around the centre, counter-clockwise from the right (0)"),
-        )
-        .output("out", DataKind::Tex)
+    ))
+    .param(
+        ParamSpec::choice("shape", &["horizontal", "vertical", "radial", "circular"])
+            .doc("How the key positions 0 to 1 lie on the picture")
+            .choice_doc("horizontal", "left (0) to right (1)")
+            .choice_doc("vertical", "bottom (0) to top (1)")
+            .choice_doc("radial", "the centre (0) out to the middle of the top edge (1), in rings")
+            .choice_doc("circular", "once around the centre, counter-clockwise from the right (0)"),
+    )
+    .output("out", DataKind::Tex)
 }
 
 fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {

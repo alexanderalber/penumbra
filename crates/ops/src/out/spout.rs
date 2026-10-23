@@ -18,7 +18,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             SPOUT_OUT,
-            "Shares its input with other programs on this machine through Spout (Windows)",
+            "Shares a picture with other programs on this machine through Spout (Windows)",
         )
         .param(ParamSpec::text("name", "").doc(
             "The sender name receivers pick, ASCII only; empty: `penumbra` and the node's name, such as \

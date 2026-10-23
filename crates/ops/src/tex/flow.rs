@@ -20,7 +20,7 @@ pub const SWITCH_INPUTS: usize = 8;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new("tex.null", "The input, unchanged: a fixed point to refer to or to view")
+        NodeDesc::new("tex.null", "Passes its input on unchanged: a fixed point to look at, or for other nodes to refer to while the chain before it changes")
             .input("in", DataKind::Tex)
             .output("out", DataKind::Tex),
         || Box::new(Null) as Box<dyn Operator>,
@@ -60,7 +60,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     )?;
 
     types.register(FnNodeType::new(
-        NodeDesc::new("tex.select", "The output of another node, named by path instead of wired")
+        NodeDesc::new("tex.select", "Another node's output without a wire, named by its path: to reach across components or far through the network")
             .param(
                 ParamSpec::node("node")
                     .doc("Path of the node (/name), or the name of a node beside this one"),
@@ -78,7 +78,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "tex.feedback",
-            "A loop: wire the end of the chain back into `previous`. Until `previous` has a frame, `initial` is passed",
+            "Feeds a chain's result back into it the next frame: trails, echoes, patterns that grow. Wire the end of the chain into `previous`",
         )
         .stateful()
         .param(ParamSpec::bool("reset", false).doc("Pass `initial` instead, while on"))
@@ -89,6 +89,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .input("initial", DataKind::Tex)
         .input_previous("previous", DataKind::Tex)
+        .describe_input("initial", "Passed on until `previous` has a frame, and while `reset` is on: what the loop starts from")
         .output("out", DataKind::Tex)
         .time_dependent(),
         || Box::new(Feedback::default()) as Box<dyn Operator>,

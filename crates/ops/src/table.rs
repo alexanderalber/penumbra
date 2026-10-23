@@ -17,24 +17,27 @@ const EXTENSIONS: &[&str] = &["csv", "tsv", "tab", "txt"];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new("table.text", "A table typed in: one row per line, cells by tab or comma")
-            .param(
-                ParamSpec::text("text", "")
-                    .multiline()
-                    .doc("The table as text: one row per line, cells split as format says"),
-            )
-            .param(
-                ParamSpec::choice("format", &Format::NAMES)
-                    .doc("How a line is split into cells")
-                    .choice_doc("lines", "not at all: one cell per row")
-                    .choice_doc("tsv", "at tabs")
-                    .choice_doc("csv", "at commas; \"a, b\" in quotes is one cell, \"\" a quote"),
-            )
-            .output("out", DataKind::Table),
+        NodeDesc::new(
+            "table.text",
+            "A table typed into the node: one row per line, cells split by tab or comma",
+        )
+        .param(
+            ParamSpec::text("text", "")
+                .multiline()
+                .doc("The table as text: one row per line, cells split as format says"),
+        )
+        .param(
+            ParamSpec::choice("format", &Format::NAMES)
+                .doc("How a line is split into cells")
+                .choice_doc("lines", "not at all: one cell per row")
+                .choice_doc("tsv", "at tabs")
+                .choice_doc("csv", "at commas; \"a, b\" in quotes is one cell, \"\" a quote"),
+        )
+        .output("out", DataKind::Table),
         || Box::new(Text) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("table.file", "A text, TSV or CSV file; reloads when the file changes")
+        NodeDesc::new("table.file", "A table from a text, TSV or CSV file; updates when the file changes")
             .param(
                 ParamSpec::file("file", EXTENSIONS).doc(
                     "The text file, relative to the project directory; saving it again reloads the node",
@@ -52,9 +55,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(File::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("table.null", "The input, unchanged: a fixed point to refer to")
-            .input("in", DataKind::Table)
-            .output("out", DataKind::Table),
+        NodeDesc::new(
+            "table.null",
+            "Passes its input on unchanged: a fixed point to refer to while the chain before it changes",
+        )
+        .input("in", DataKind::Table)
+        .output("out", DataKind::Table),
         || Box::new(Null) as Box<dyn Operator>,
     ))?;
     Ok(())

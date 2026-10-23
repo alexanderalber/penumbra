@@ -27,14 +27,17 @@ pub const FALLOFF: [&str; 2] = ["none", "inverse square"];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new("light.ambient", "Light from everywhere alike, also where a surface faces away")
-            .param(color())
-            .param(intensity(0.2))
-            .output("out", DataKind::Light),
+        NodeDesc::new(
+            "light.ambient",
+            "Even light from every side, also on surfaces that face away: lifts the shadows",
+        )
+        .param(color())
+        .param(intensity(0.2))
+        .output("out", DataKind::Light),
         || Box::new(LightNode(LightKind::Ambient)) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("light.directional", "Parallel light from far away, as the sun")
+        NodeDesc::new("light.directional", "Parallel light from far away, like the sun")
             .param(
                 ParamSpec::vec3("position", [-2.0, -3.0, 4.0])
                     .range(-10.0, 10.0)
@@ -49,7 +52,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(LightNode(LightKind::Directional)) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("light.point", "Light from a point, in every direction")
+        NodeDesc::new("light.point", "Light from a point in every direction, like a bare bulb")
             .param(position([1.5, -2.5, 2.5]))
             .param(color())
             .param(intensity(1.0))
@@ -58,7 +61,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(LightNode(LightKind::Point)) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("light.spot", "Light from a point, in a cone towards the target")
+        NodeDesc::new("light.spot", "Light from a point in a cone towards a target, like a stage spot")
             .param(position([0.0, -3.0, 3.0]))
             .param(target())
             .param(
@@ -84,7 +87,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "light.projector",
-            "A projector: throws its texture onto the geometry through a camera node's view",
+            "A projector in the 3D scene: throws its picture onto the geometry from where a camera node stands",
         )
         .input("camera", DataKind::View)
         .input("texture", DataKind::Tex)
@@ -99,7 +102,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "light.environment",
-            "Light from a picture of everything around (equirectangular): soft light and reflections",
+            "Light from a panorama picture of the surroundings (equirectangular): soft, natural light and reflections",
         )
         .input("texture", DataKind::Tex)
         .param(color())
@@ -121,7 +124,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(EnvironmentNode::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("light.merge", "The lights of several inputs, for one render")
+        NodeDesc::new("light.merge", "Combines several lights for one render")
             .input("in0", DataKind::Light)
             .input("in1", DataKind::Light)
             .input("in2", DataKind::Light)

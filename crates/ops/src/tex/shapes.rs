@@ -49,7 +49,7 @@ const RESTLESS: Duration = Duration::from_secs(1);
 fn desc() -> NodeDesc {
     NodeDesc::new(
         SHAPES,
-        "Tagged shapes on the surface: a mask and a distance field per tag, outlines, a table",
+        "Shapes drawn on the surface (rectangles, ellipses, polygons) with tags: masks and outlines to light parts of a facade or object on their own",
     )
     .param(
         ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).doc(

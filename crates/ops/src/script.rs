@@ -46,7 +46,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "script.python",
-            "A Python script: cook(cx) turns channels and tables in into channels and a table out",
+            "Logic of your own in Python: turns channels and tables into new channels and a table",
         )
         .param(
             ParamSpec::file("file", &["py"])

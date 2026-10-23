@@ -33,7 +33,7 @@ pub const NAMED_OUTPUT: u32 = 1 << 16;
 
 /// The declaration of [`BROKEN_KIND`].
 pub fn desc() -> NodeDesc {
-    NodeDesc::new(BROKEN_KIND, "A node whose entry in the project file did not load, kept as it was")
+    NodeDesc::new(BROKEN_KIND, "Stands in for a node the project file could not load, and keeps its entry as it was, so nothing is lost")
         .param(
             ParamSpec::text(ENTRY, "")
                 .multiline()

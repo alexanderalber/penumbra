@@ -40,7 +40,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         FnNodeType::new(
             NodeDesc::new(
                 KIND,
-                "Per pixel, a frame from the past: the map says how far back (black now, white oldest)",
+                "Shows each pixel from another moment in the past, as a map says: time smears, slit scans, echoes",
             )
             .stateful()
             .param(
@@ -90,6 +90,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             )
             .input("in", DataKind::Tex)
             .input("map", DataKind::Tex)
+            .describe_input("map", "Per pixel, how far back: black is now, white `length` frames ago; unconnected: `offset` alone")
             .output("out", DataKind::Tex),
             || Box::new(TimeMachine::default()) as Box<dyn Operator>,
         )

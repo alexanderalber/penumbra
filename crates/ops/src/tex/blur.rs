@@ -16,7 +16,7 @@ const KIND: &str = "tex.blur";
 const SOURCE: &str = include_str!("blur.wgsl");
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(KIND, "Gaussian blur")
+    NodeDesc::new(KIND, "Softens a picture: a Gaussian blur, in every direction or only across or only up and down")
         .param(
             ParamSpec::float("size", 8.0)
                 .clamp(0.0, 512.0)

@@ -18,7 +18,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "tex.layer",
-            "A layer of a PSD/PSB file or of a directory of images, or the whole picture; reloads on change",
+            "One layer of a Photoshop file (PSD/PSB) or of a folder of images, or the whole picture; updates when the file changes",
         )
         .param(
             ParamSpec::file("file", &["psd", "psb"])

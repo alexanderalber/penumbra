@@ -128,7 +128,7 @@ fn builtins() -> Vec<Builtin> {
 fn core_builtins() -> Vec<Builtin> {
     vec![
         Builtin {
-            desc: sized(NodeDesc::new("tex.constant", "One colour everywhere"))
+            desc: sized(NodeDesc::new("tex.constant", "A picture in one colour: a background, a fill, a black to start from"))
                 .param(
                     ParamSpec::color("color", [0.0, 0.0, 0.0, 1.0])
                         .doc("The colour, linear RGBA with straight alpha; above 1 is brighter than white"),
@@ -142,7 +142,7 @@ fn core_builtins() -> Vec<Builtin> {
         Builtin {
             desc: sized(NodeDesc::new(
                 "tex.noise",
-                "Fractal noise: offset + amplitude * noise, the same on every GPU",
+                "Cloudy random patterns, still or slowly changing: textures, masks, organic motion for a displacement",
             ))
             .param(
                 ParamSpec::choice("basis", &["gradient", "value"])
@@ -213,7 +213,7 @@ fn core_builtins() -> Vec<Builtin> {
         Builtin {
             desc: NodeDesc::new(
                 "tex.transform",
-                "Translate, rotate and scale around a pivot; resolution of the input",
+                "Moves, turns and scales a picture within its own frame",
             )
             .param(
                 ParamSpec::vec2("translate", [0.0; 2])
@@ -247,7 +247,7 @@ fn core_builtins() -> Vec<Builtin> {
             fold: false,
         },
         Builtin {
-            desc: NodeDesc::new("tex.level", "Levels, gamma, contrast, brightness, invert, opacity")
+            desc: NodeDesc::new("tex.level", "Adjusts black and white, gamma, contrast and brightness, inverts, or fades a picture out")
                 .param(
                     ParamSpec::float("black", 0.0)
                         .range(0.0, 1.0)
@@ -294,7 +294,7 @@ fn core_builtins() -> Vec<Builtin> {
         Builtin {
             desc: NodeDesc::new(
                 "tex.quantize",
-                "Fewer colours (levels per channel) and fewer pixels (blocks)",
+                "Fewer colours and bigger pixels: posterised, banded or retro pixel looks",
             )
             .param(
                 ParamSpec::int("levels", 4)
@@ -341,7 +341,7 @@ fn core_builtins() -> Vec<Builtin> {
         Builtin {
             desc: NodeDesc::new(
                 "tex.composite",
-                "layer2 onto layer1, then layer3 onto that, then layer4; resolution of the first connected input",
+                "Lays up to four pictures on top of each other: over, add, multiply, screen and other blend modes",
             )
             .param(ParamSpec::choice(
                 "op",
@@ -390,6 +390,7 @@ fn core_builtins() -> Vec<Builtin> {
             .input("layer2", DataKind::Tex)
             .input("layer3", DataKind::Tex)
             .input("layer4", DataKind::Tex)
+            .describe_input("layer1", "The bottom layer. The output has the size of the first connected layer")
             .output("out", DataKind::Tex),
             source: include_str!("composite.wgsl"),
             size: Size::Input,

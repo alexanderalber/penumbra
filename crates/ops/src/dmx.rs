@@ -31,8 +31,12 @@ pub const DMX_IN: &str = "chan.dmx_in";
 pub const OPEN_DMX_MAX_RATE: f64 = 35.0;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    types.register(FnNodeType::new(
-        NodeDesc::new(DMX, "Channels to DMX slots: Enttec Open DMX USB, Art-Net, sACN or DDP")
+    types.register(
+        FnNodeType::new(
+            NodeDesc::new(
+                DMX,
+                "Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP",
+            )
             .param(
                 ParamSpec::choice("protocol", &["open_dmx", "art_net", "sacn", "ddp"])
                     .doc("How the slots leave this machine")
@@ -69,13 +73,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 "Frames per second, sent whether or not anything changed; the Open DMX USB manages about 35",
             ))
             .input("chans", DataKind::Chan),
-        || Box::new(DmxOut::default()) as Box<dyn Operator>,
-    )
-    .inactive(inactive))?;
+            || Box::new(DmxOut::default()) as Box<dyn Operator>,
+        )
+        .inactive(inactive),
+    )?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             DMX_IN,
-            "DMX slots from the network (Art-Net or sACN) as channels, from a lighting desk say",
+            "DMX from a lighting desk over the network (Art-Net or sACN): each slot a channel to drive content with",
         )
         .param(
             ParamSpec::choice("protocol", &["art_net", "sacn"])

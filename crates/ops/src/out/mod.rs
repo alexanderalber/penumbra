@@ -211,7 +211,7 @@ impl OutputBoard {
 
 /// Registers the `out` node types.
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    let desc = NodeDesc::new(PROJECTOR, "A projector: shows its input fullscreen on a display, or in a part of it")
+    let desc = NodeDesc::new(PROJECTOR, "Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors")
         .param(
             ParamSpec::text("display", "")
                 .doc("Display id from output.list, e.g. `EPSON PJ [SECA519] @ target 168194` (model and connector) or `AW3225QF [DELA246 #BY4BYZ3]` (model and serial number). The monitor name alone works when unique"),

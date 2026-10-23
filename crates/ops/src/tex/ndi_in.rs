@@ -28,7 +28,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             NDI_IN,
-            "An NDI\u{ae} source on the network (needs the NDI runtime, ndi.video); resolution of the source's",
+            "A picture (and sound) from another program or computer on the network, through NDI\u{ae}; needs \
+             the NDI runtime (ndi.video)",
         )
         .param(ParamSpec::text("source", "").doc(
             "The source's name as `PC (Source)` or a part of it, e.g. `OBS` (the ... menu lists those on \
@@ -38,13 +39,16 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::choice("bandwidth", &["full", "low"])
                 .doc("Which of the sender's streams to take")
                 .choice_doc("full", "the stream as sent")
-                .choice_doc("low", "a smaller, lower-quality stream the sender offers beside it, for previews"),
+                .choice_doc(
+                    "low",
+                    "a smaller, lower-quality stream the sender offers beside it, for previews",
+                ),
         )
         .param(alpha_param("How the source's transparency is taken (NDI's alpha is straight)"))
         .output("out", DataKind::Tex)
         .output("audio", DataKind::Chan)
         .lazy_output("audio")
-        .describe_output("out", "The source's picture")
+        .describe_output("out", "The source's picture, at its size")
         .describe_output("audio", "The source's audio since the last cook: ch1, ch2, ... at its sample rate"),
         || Box::new(NdiIn::default()) as Box<dyn Operator>,
     ))

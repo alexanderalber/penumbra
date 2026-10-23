@@ -63,7 +63,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             AUDIO_IN,
-            "Audio from an input device: one channel per device channel, at its sample rate",
+            "Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel",
         )
         .sampled()
         .param(ParamSpec::text("device", "").doc(
@@ -77,7 +77,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             AUDIO_ANALYSIS,
-            "Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audio_in)",
+            "Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat",
         )
         .stateful()
         .param(ParamSpec::text("channel", "").doc("The channel to analyse, e.g. `ch1`; empty: all mixed"))

@@ -47,7 +47,7 @@ const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new(FROM_CHAN, "Channels as a picture: a row per channel, a pixel per sample; r, g, b as a colour")
+        NodeDesc::new(FROM_CHAN, "Turns channels into a picture: a row per channel, a pixel per sample. Numbers for shaders and geo.tex_instance")
             .param(
                 ParamSpec::choice("layout", &["auto", "rows", "rgba"])
                     .doc("How the channels become pixels")
@@ -78,7 +78,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             FROM_TEX,
-            "A picture as channels: averaged down to a few pixels, one channel per row and colour",
+            "Turns a picture into numbers: its average colour, or the colours of a few areas, as channels to drive things with",
         )
         .param(
             ParamSpec::int("columns", 1)

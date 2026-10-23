@@ -438,7 +438,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             KEYBOARD_IN,
-            "Keys of the keyboard while a penumbra window has the focus: a gate per key, and which was pressed last",
+            "Keys of the keyboard as channels, to switch scenes or trigger things by hand during a show (while a penumbra window has the focus)",
         )
         .param(ParamSpec::text("keys", DEFAULT_KEYS).doc(
             "Space-separated keys: digits (the number pad's too), letters, f1 to f12, space, left right up \

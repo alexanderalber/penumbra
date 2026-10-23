@@ -311,7 +311,7 @@ fn field_key(geo: &Geo, view: &View, cull: bool, size: (u32, u32)) -> u64 {
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let desc = super::sized(NodeDesc::new(
         RENDER,
-        "Geometry through a camera: the picture, and a data pass (uv, part id + 1, depth)",
+        "Renders 3D geometry through a camera into a picture, with a second picture of data for shaders and masks",
     ))
     .output("data", DataKind::Tex)
     .input("geo", DataKind::Geo)

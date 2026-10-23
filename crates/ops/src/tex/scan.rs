@@ -43,8 +43,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             SCAN,
-            "One projector's structured light scan, held. The scan button (scan.run) measures the projector \
-             with the camera; the outputs are the maps the scan wrote, kept until the next scan",
+            "Measures with a camera what a projector lights (structured light) and keeps the result until the \
+             next scan: maps to put content onto real objects",
         )
         .param(ParamSpec::text("projector", "").doc("The out.projector scanned (a path, or a name beside this node)"))
         .param(ParamSpec::text("camera", "").doc(

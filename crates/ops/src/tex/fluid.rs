@@ -54,7 +54,7 @@ const JACOBI2: i64 = 9;
 const COLUMNS: [&str; 8] = ["x", "y", "vx", "vy", "r", "g", "b", "radius"];
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(KIND, "A 2D fluid: motion pushes it, dye flows with it (Stable Fluids)")
+    NodeDesc::new(KIND, "A simulated fluid like smoke or ink: motion (a camera's, tracked hands) stirs it and colour flows along")
         .stateful()
         .time_dependent()
         .param(width_param())

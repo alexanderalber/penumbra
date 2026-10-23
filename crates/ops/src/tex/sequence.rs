@@ -29,8 +29,7 @@ const WHITE_RGBA: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let mut desc = NodeDesc::new(
         "tex.sequence",
-        "The picture of a show: the inputs a chan.sequence says, cut or blended, with black and white \
-         made in between. Only the inputs shown cook",
+        "The picture of a timed show: plays the pieces a chan.sequence lists, with cuts and fades. Only the piece on screen runs",
     )
     .param(
         ParamSpec::int("width", 1920)

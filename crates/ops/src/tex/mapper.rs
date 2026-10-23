@@ -40,7 +40,7 @@ pub(crate) const TINTS: [[f32; 3]; 6] = [
 fn desc() -> NodeDesc {
     let desc = sized(NodeDesc::new(
         MAPPER,
-        "Maps a part of its input onto a projector: corners, mesh warp, soft edges with other mappers of the same input",
+        "Fits a part of the content onto one projector: corner pinning, mesh warp, soft edges where projectors overlap",
     ))
     .param(ParamSpec::vec4("region", [0.0, 0.0, 1.0, 1.0]).clamp(0.0, 1.0).doc(
         "The part of the input (the surface) shown: x, y, width, height in input sizes",

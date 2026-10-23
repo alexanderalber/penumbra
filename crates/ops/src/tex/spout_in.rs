@@ -19,14 +19,14 @@ pub const SPOUT_IN: &str = "tex.spout_in";
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new(SPOUT_IN, "Another program's Spout sender (Windows); resolution of the sender's")
+        NodeDesc::new(SPOUT_IN, "A picture from another program on this machine, through Spout (Windows)")
             .param(ParamSpec::text("sender", "").doc(
                 "The sender's name (the ... menu lists those running); empty: the active sender, the one \
                  picked last in a Spout program, else the first",
             ))
             .param(alpha_param("How the sender's transparency is taken"))
             .output("out", DataKind::Tex)
-            .describe_output("out", "The sender's picture"),
+            .describe_output("out", "The sender's picture, at its size"),
         || Box::new(SpoutIn::default()) as Box<dyn Operator>,
     ))
 }

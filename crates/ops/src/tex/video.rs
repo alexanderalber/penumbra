@@ -36,7 +36,7 @@ const LATE_WARNING_SECONDS: f64 = 2.0;
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(
         FnNodeType::new(
-            NodeDesc::new(VIDEO, "A video file or animated GIF, looping seamlessly; resolution of the file")
+            NodeDesc::new(VIDEO, "Plays a video file or animated GIF, looping without a gap")
                 .param(
                     ParamSpec::file("file", penumbra_video::EXTENSIONS).doc(
                         "MP4, MOV, MKV, WebM, MXF, MPEG (H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP) or GIF",
@@ -60,7 +60,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 )
                 .output("out", DataKind::Tex)
                 .output("info", DataKind::Chan)
-                .describe_output("out", "The video's picture")
+                .describe_output("out", "The video's picture, at the file's size")
                 .describe_output("info", "Playback: frame, progress (0 to 1), loops, late, seeks")
                 .time_dependent(),
             || Box::new(Video::default()) as Box<dyn Operator>,

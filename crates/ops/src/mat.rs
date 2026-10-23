@@ -23,16 +23,19 @@ use penumbra_mesh::prim;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new("mat.constant", "A colour as it is, unlit: the usual choice for projection content")
-            .param(color())
-            .input("texture", DataKind::Tex)
-            .output("out", DataKind::Mat),
+        NodeDesc::new(
+            "mat.constant",
+            "A surface in its colour as it is, unaffected by light: the usual choice for projection content",
+        )
+        .param(color())
+        .input("texture", DataKind::Tex)
+        .output("out", DataKind::Mat),
         || Box::new(MatNode::new(Shading::Constant)) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             "mat.pbr",
-            "Physically based (metallic, roughness as in glTF): lit by the render's lights, best with an environment light",
+            "A realistic surface, metal or plastic, rough or glossy, lit by the render's lights; best with a light.environment",
         )
         .param(color())
         .param(
@@ -47,7 +50,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(MatNode::new(Shading::Pbr)) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("mat.phong", "Lit by the render's lights, with a highlight; black without lights")
+        NodeDesc::new("mat.phong", "A simple lit surface with a shiny highlight; black without lights")
             .param(color())
             .param(
                 ParamSpec::color("specular", [0.5, 0.5, 0.5, 1.0])
@@ -66,7 +69,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(MatNode::new(Shading::Phong)) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("mat.wireframe", "The edges as lines of a width in pixels, the faces open, filled or hidden; unlit")
+        NodeDesc::new("mat.wireframe", "Draws the edges of geometry as lines, the faces open, filled or hidden: a technical or retro look")
             .param(
                 ParamSpec::color("color", [1.0; 4])
                     .doc("The lines' colour: linear RGBA, straight alpha; times the texture input"),

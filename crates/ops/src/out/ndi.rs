@@ -28,7 +28,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             NDI_OUT,
-            "Offers its input on the network as an NDI\u{ae} source (needs the NDI runtime, ndi.video)",
+            "Sends a picture over the network as an NDI\u{ae} source, to other programs and computers; needs \
+             the NDI runtime (ndi.video)",
         )
         .param(ParamSpec::text("name", "").doc(
             "The source name receivers pick. NDI puts the machine's name before the source name, as in \

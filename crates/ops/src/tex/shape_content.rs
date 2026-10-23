@@ -15,7 +15,7 @@ pub(super) fn builtin() -> Builtin {
         .choice_doc("ripple", "rings run inwards from the edge")
         .choice_doc("fill", "the shape in its colour, still");
     Builtin {
-        desc: NodeDesc::new("tex.shape_content", "Pulses, chases or ripples per shape, from tex.shapes' id output")
+        desc: NodeDesc::new("tex.shape_content", "Animates the shapes of a tex.shapes one by one: pulses, light running along the outlines, ripples")
             .param(mode)
             .param(ParamSpec::color("color_a", [1.0, 0.45, 0.1, 1.0]).doc("Colour of the shapes; with variety, one end of their range"))
             .param(ParamSpec::color("color_b", [0.15, 0.35, 1.0, 1.0]).doc("The other end of the shapes' colour range"))

@@ -42,7 +42,7 @@ pub const COLUMNS: [&str; 14] =
     ["id", "x", "y", "left", "top", "width", "height", "area", "age", "vx", "vy", "r", "g", "b"];
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(BLOB_TRACK, "Finds blobs (people, hands, spots of light) and follows them with ids that stay")
+    NodeDesc::new(BLOB_TRACK, "Finds people, hands or spots of light in a camera picture and follows each with an id that stays: positions to drive content with")
         .stateful()
         .param(
             ParamSpec::choice("detect", &["background", "bright"])

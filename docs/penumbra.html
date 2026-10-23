@@ -1245,9 +1245,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-tex">
 <h3>tex</h3>
 <p class="kinds"><a href="#tex.blob_track">tex.blob_track</a> <a href="#tex.blur">tex.blur</a> <a href="#tex.cache">tex.cache</a> <a href="#tex.channel_mix">tex.channel_mix</a> <a href="#tex.chroma_key">tex.chroma_key</a> <a href="#tex.composite">tex.composite</a> <a href="#tex.constant">tex.constant</a> <a href="#tex.contour">tex.contour</a> <a href="#tex.cross">tex.cross</a> <a href="#tex.denoise">tex.denoise</a> <a href="#tex.displace">tex.displace</a> <a href="#tex.edge">tex.edge</a> <a href="#tex.feedback">tex.feedback</a> <a href="#tex.fit">tex.fit</a> <a href="#tex.flip">tex.flip</a> <a href="#tex.fluid">tex.fluid</a> <a href="#tex.from_chan">tex.from_chan</a> <a href="#tex.hsv">tex.hsv</a> <a href="#tex.image">tex.image</a> <a href="#tex.in">tex.in</a> <a href="#tex.layer">tex.layer</a> <a href="#tex.lens_distort">tex.lens_distort</a> <a href="#tex.level">tex.level</a> <a href="#tex.limit">tex.limit</a> <a href="#tex.lookup">tex.lookup</a> <a href="#tex.mapper">tex.mapper</a> <a href="#tex.matte">tex.matte</a> <a href="#tex.monochrome">tex.monochrome</a> <a href="#tex.ndi_in">tex.ndi_in</a> <a href="#tex.noise">tex.noise</a> <a href="#tex.null">tex.null</a> <a href="#tex.optical_flow">tex.optical_flow</a> <a href="#tex.out">tex.out</a> <a href="#tex.quantize">tex.quantize</a> <a href="#tex.ramp">tex.ramp</a> <a href="#tex.remap">tex.remap</a> <a href="#tex.render">tex.render</a> <a href="#tex.resolution">tex.resolution</a> <a href="#tex.scan">tex.scan</a> <a href="#tex.scan_pattern">tex.scan_pattern</a> <a href="#tex.select">tex.select</a> <a href="#tex.sequence">tex.sequence</a> <a href="#tex.shader">tex.shader</a> <a href="#tex.shape_content">tex.shape_content</a> <a href="#tex.shapes">tex.shapes</a> <a href="#tex.slope">tex.slope</a> <a href="#tex.spout_in">tex.spout_in</a> <a href="#tex.switch">tex.switch</a> <a href="#tex.text">tex.text</a> <a href="#tex.threshold">tex.threshold</a> <a href="#tex.tile">tex.tile</a> <a href="#tex.time_machine">tex.time_machine</a> <a href="#tex.transform">tex.transform</a> <a href="#tex.video">tex.video</a> <a href="#tex.video_in">tex.video_in</a></p>
-<details class="entry node" id="tex.blob_track"><summary><code class="name">tex.blob_track</code><span class="sum">Finds blobs (people, hands, spots of light) and follows them with ids that stay</span></summary>
+<details class="entry node" id="tex.blob_track"><summary><code class="name">tex.blob_track</code><span class="sum">Finds people, hands or spots of light in a camera picture and follows each with an id that stays: positions to drive content with</span></summary>
 <div class="body">
-<p>Finds blobs (people, hands, spots of light) and follows them with ids that stay</p>
+<p>Finds people, hands or spots of light in a camera picture and follows each with an id that stays: positions to drive content with</p>
 <p class="note">Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -1282,9 +1282,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#tracking">Tracking</a></p>
 </div></details>
-<details class="entry node" id="tex.blur"><summary><code class="name">tex.blur</code><span class="sum">Gaussian blur</span></summary>
+<details class="entry node" id="tex.blur"><summary><code class="name">tex.blur</code><span class="sum">Softens a picture: a Gaussian blur, in every direction or only across or only up and down</span></summary>
 <div class="body">
-<p>Gaussian blur</p>
+<p>Softens a picture: a Gaussian blur, in every direction or only across or only up and down</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1304,9 +1304,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.cache"><summary><code class="name">tex.cache</code><span class="sum">The last frames of the input; outputs one of them, some frames back</span></summary>
+<details class="entry node" id="tex.cache"><summary><code class="name">tex.cache</code><span class="sum">Keeps the last frames of its input and shows one from a few frames back: a delay, or a moment held</span></summary>
 <div class="body">
-<p>The last frames of the input; outputs one of them, some frames back</p>
+<p>Keeps the last frames of its input and shows one from a few frames back: a delay, or a moment held</p>
 <p class="note">Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -1329,9 +1329,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#tracking-setting-up">Tracking › Setting up</a></p>
 </div></details>
-<details class="entry node" id="tex.channel_mix"><summary><code class="name">tex.channel_mix</code><span class="sum">Each output channel a weighted sum of the input's channels</span></summary>
+<details class="entry node" id="tex.channel_mix"><summary><code class="name">tex.channel_mix</code><span class="sum">Mixes the colour channels anew: swap red and blue, make grey from one channel, turn alpha into colour</span></summary>
 <div class="body">
-<p>Each output channel a weighted sum of the input's channels</p>
+<p>Mixes the colour channels anew: swap red and blue, make grey from one channel, turn alpha into colour</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1353,9 +1353,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.chroma_key"><summary><code class="name">tex.chroma_key</code><span class="sum">Make pixels near a key colour transparent (green or blue screen)</span></summary>
+<details class="entry node" id="tex.chroma_key"><summary><code class="name">tex.chroma_key</code><span class="sum">Cuts out a green or blue screen: pixels near a key colour become transparent</span></summary>
 <div class="body">
-<p>Make pixels near a key colour transparent (green or blue screen)</p>
+<p>Cuts out a green or blue screen: pixels near a key colour become transparent</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1377,12 +1377,12 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.composite"><summary><code class="name">tex.composite</code><span class="sum">layer2 onto layer1, then layer3 onto that, then layer4; resolution of the first connected input</span></summary>
+<details class="entry node" id="tex.composite"><summary><code class="name">tex.composite</code><span class="sum">Lays up to four pictures on top of each other: over, add, multiply, screen and other blend modes</span></summary>
 <div class="body">
-<p>layer2 onto layer1, then layer3 onto that, then layer4; resolution of the first connected input</p>
+<p>Lays up to four pictures on top of each other: over, add, multiply, screen and other blend modes</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>layer1</code> <span class="kind">tex</span></li>
+<li><code>layer1</code> <span class="kind">tex</span>: The bottom layer. The output has the size of the first connected layer</li>
 <li><code>layer2</code> <span class="kind">tex</span></li>
 <li><code>layer3</code> <span class="kind">tex</span></li>
 <li><code>layer4</code> <span class="kind">tex</span></li>
@@ -1401,9 +1401,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
 </div></details>
-<details class="entry node" id="tex.constant"><summary><code class="name">tex.constant</code><span class="sum">One colour everywhere</span></summary>
+<details class="entry node" id="tex.constant"><summary><code class="name">tex.constant</code><span class="sum">A picture in one colour: a background, a fill, a black to start from</span></summary>
 <div class="body">
-<p>One colour everywhere</p>
+<p>A picture in one colour: a background, a fill, a black to start from</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -1423,9 +1423,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a></p>
 </div></details>
-<details class="entry node" id="tex.contour"><summary><code class="name">tex.contour</code><span class="sum">Contour lines of a channel: a line at every multiple of an interval</span></summary>
+<details class="entry node" id="tex.contour"><summary><code class="name">tex.contour</code><span class="sum">Contour lines as on a map: a line wherever a channel (a height map, say) crosses a step of <code>interval</code></span></summary>
 <div class="body">
-<p>Contour lines of a channel: a line at every multiple of an interval</p>
+<p>Contour lines as on a map: a line wherever a channel (a height map, say) crosses a step of <code>interval</code></p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1451,12 +1451,12 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
 </div></details>
-<details class="entry node" id="tex.cross"><summary><code class="name">tex.cross</code><span class="sum">Mix of two inputs; resolution of a</span></summary>
+<details class="entry node" id="tex.cross"><summary><code class="name">tex.cross</code><span class="sum">Crossfades between two pictures: 0 shows a, 1 shows b</span></summary>
 <div class="body">
-<p>Mix of two inputs; resolution of a</p>
+<p>Crossfades between two pictures: 0 shows a, 1 shows b</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>a</code> <span class="kind">tex</span></li>
+<li><code>a</code> <span class="kind">tex</span>: The output has its size</li>
 <li><code>b</code> <span class="kind">tex</span></li>
 </ul>
 <h4>Outputs</h4>
@@ -1498,9 +1498,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#camera-noise">Camera › Noise</a>, <a href="#camera-motion">Camera › Motion</a></p>
 </div></details>
-<details class="entry node" id="tex.displace"><summary><code class="name">tex.displace</code><span class="sum">Push each pixel of the input by the values of a map</span></summary>
+<details class="entry node" id="tex.displace"><summary><code class="name">tex.displace</code><span class="sum">Warps a picture by another: each pixel is pushed by the values of a map (ripples, heat haze, flow)</span></summary>
 <div class="body">
-<p>Push each pixel of the input by the values of a map</p>
+<p>Warps a picture by another: each pixel is pushed by the values of a map (ripples, heat haze, flow)</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1524,9 +1524,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#camera-motion">Camera › Motion</a></p>
 </div></details>
-<details class="entry node" id="tex.edge"><summary><code class="name">tex.edge</code><span class="sum">Edges of the luminance (Sobel)</span></summary>
+<details class="entry node" id="tex.edge"><summary><code class="name">tex.edge</code><span class="sum">Finds the edges in a picture and draws them as lines: outlines, a sketched look</span></summary>
 <div class="body">
-<p>Edges of the luminance (Sobel)</p>
+<p>Finds the edges in a picture and draws them as lines: outlines, a sketched look</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1546,13 +1546,13 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.feedback"><summary><code class="name">tex.feedback</code><span class="sum">A loop: wire the end of the chain back into <code>previous</code>. Until <code>previous</code> has a frame, <code>initial</code> is passed</span></summary>
+<details class="entry node" id="tex.feedback"><summary><code class="name">tex.feedback</code><span class="sum">Feeds a chain's result back into it the next frame: trails, echoes, patterns that grow. Wire the end of the chain into <code>previous</code></span></summary>
 <div class="body">
-<p>A loop: wire the end of the chain back into <code>previous</code>. Until <code>previous</code> has a frame, <code>initial</code> is passed</p>
+<p>Feeds a chain's result back into it the next frame: trails, echoes, patterns that grow. Wire the end of the chain into <code>previous</code></p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>initial</code> <span class="kind">tex</span></li>
+<li><code>initial</code> <span class="kind">tex</span>: Passed on until <code>previous</code> has a frame, and while <code>reset</code> is on: what the loop starts from</li>
 <li><code>previous</code> <span class="kind">tex</span> Sees the previous frame, so it may close a loop.</li>
 </ul>
 <h4>Outputs</h4>
@@ -1568,11 +1568,30 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <tr><td><code>persist</code></td><td>bool</td><td><code>true</code></td><td></td><td>Keep the loop's last frame in the state snapshots, so a restart carries on from it</td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="tex.feedback-what-it-is-for">What it is for</h5>
+<p>Normally a picture flows one way, from left to right through the chain, and every frame starts from scratch. A feedback loop hands each frame's result back to the start of the chain, so the next frame builds on it. That is how trails, echoes, smears and patterns that grow by themselves come about: whatever the chain does to a frame (move it a little, dim it, shift its colour) happens again and again, and adds up.</p>
+<h5 id="tex.feedback-wiring-it">Wiring it</h5>
+<ol>
+<li>Put a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> at the start of the chain and wire the picture to start from into <code>initial</code> (a black <a class="ref" href="#tex.constant"><code>tex.constant</code></a> is the usual choice).
+</li>
+<li>Build the chain from the feedback's output: what should happen to the last frame each time.
+</li>
+<li>Wire the end of the chain back into the feedback's <code>previous</code>. That wire is drawn dashed: it carries the previous frame, so it may run backwards without making a cycle.
+</li>
+</ol>
+<p>Until the end of the chain has made a first frame, and while <code>reset</code> is on, <code>initial</code> is passed on. R, the reset button or <a class="ref" href="#node.reset"><code>node.reset</code></a> clear the loop the same way.</p>
+<h5 id="tex.feedback-keeping-it-in-check">Keeping it in check</h5>
+<p>Every step repeats every frame, so small values matter: a <a class="ref" href="#tex.level"><code>tex.level</code></a> with <code>brightness</code> 0.96 lets a trail die out within a few seconds, at 1 nothing ever fades and the picture fills up. A <a class="ref" href="#tex.transform"><code>tex.transform</code></a> with <code>scale</code> 1.01 zooms the trails slowly outwards. Mix new content in near the end of the chain (a <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with the content as <code>layer2</code>), or the loop has nothing to work on but <code>initial</code>.</p>
+<p>With <code>persist</code> on (the default), the loop's last frame goes into the state snapshots, so a restart carries on from where it stopped.</p>
+<h5 id="tex.feedback-example">Example</h5>
+<p>The <code>feedback</code> example project: text drawn over a loop that zooms, turns, dims and shifts the hue of the last frame a little, so the text leaves trails that drift outwards and change colour.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#helpers-state">The Helpers window › State</a></p>
 </div></details>
-<details class="entry node" id="tex.fit"><summary><code class="name">tex.fit</code><span class="sum">The input fitted into a frame of its own size, aspect kept or not</span></summary>
+<details class="entry node" id="tex.fit"><summary><code class="name">tex.fit</code><span class="sum">Fits a picture into a frame of another size or shape: whole with bars, cropped to fill, or stretched</span></summary>
 <div class="body">
-<p>The input fitted into a frame of its own size, aspect kept or not</p>
+<p>Fits a picture into a frame of another size or shape: whole with bars, cropped to fill, or stretched</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1595,9 +1614,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.flip"><summary><code class="name">tex.flip</code><span class="sum">Mirror left to right or top to bottom; flop swaps the axes</span></summary>
+<details class="entry node" id="tex.flip"><summary><code class="name">tex.flip</code><span class="sum">Mirrors a picture left to right or top to bottom, or turns its rows into columns</span></summary>
 <div class="body">
-<p>Mirror left to right or top to bottom; flop swaps the axes</p>
+<p>Mirrors a picture left to right or top to bottom, or turns its rows into columns</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1616,9 +1635,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.fluid"><summary><code class="name">tex.fluid</code><span class="sum">A 2D fluid: motion pushes it, dye flows with it (Stable Fluids)</span></summary>
+<details class="entry node" id="tex.fluid"><summary><code class="name">tex.fluid</code><span class="sum">A simulated fluid like smoke or ink: motion (a camera's, tracked hands) stirs it and colour flows along</span></summary>
 <div class="body">
-<p>A 2D fluid: motion pushes it, dye flows with it (Stable Fluids)</p>
+<p>A simulated fluid like smoke or ink: motion (a camera's, tracked hands) stirs it and colour flows along</p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -1675,9 +1694,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </ul>
 </div>
 </div></details>
-<details class="entry node" id="tex.from_chan"><summary><code class="name">tex.from_chan</code><span class="sum">Channels as a picture: a row per channel, a pixel per sample; r, g, b as a colour</span></summary>
+<details class="entry node" id="tex.from_chan"><summary><code class="name">tex.from_chan</code><span class="sum">Turns channels into a picture: a row per channel, a pixel per sample. Numbers for shaders and geo.tex_instance</span></summary>
 <div class="body">
-<p>Channels as a picture: a row per channel, a pixel per sample; r, g, b as a colour</p>
+<p>Turns channels into a picture: a row per channel, a pixel per sample. Numbers for shaders and geo.tex_instance</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">chan</span></li>
@@ -1697,9 +1716,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
-<details class="entry node" id="tex.hsv"><summary><code class="name">tex.hsv</code><span class="sum">Turn the hue, scale saturation and value</span></summary>
+<details class="entry node" id="tex.hsv"><summary><code class="name">tex.hsv</code><span class="sum">Turns the colours round the colour wheel and makes them more vivid or paler, brighter or darker</span></summary>
 <div class="body">
-<p>Turn the hue, scale saturation and value</p>
+<p>Turns the colours round the colour wheel and makes them more vivid or paler, brighter or darker</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1718,9 +1737,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.image"><summary><code class="name">tex.image</code><span class="sum">An image file (8-bit, 16-bit or float); reloads when the file changes</span></summary>
+<details class="entry node" id="tex.image"><summary><code class="name">tex.image</code><span class="sum">A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it</span></summary>
 <div class="body">
-<p>An image file (8-bit, 16-bit or float); reloads when the file changes</p>
+<p>A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -1750,9 +1769,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
-<details class="entry node" id="tex.layer"><summary><code class="name">tex.layer</code><span class="sum">A layer of a PSD/PSB file or of a directory of images, or the whole picture; reloads on change</span></summary>
+<details class="entry node" id="tex.layer"><summary><code class="name">tex.layer</code><span class="sum">One layer of a Photoshop file (PSD/PSB) or of a folder of images, or the whole picture; updates when the file changes</span></summary>
 <div class="body">
-<p>A layer of a PSD/PSB file or of a directory of images, or the whole picture; reloads on change</p>
+<p>One layer of a Photoshop file (PSD/PSB) or of a folder of images, or the whole picture; updates when the file changes</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -1771,9 +1790,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.lens_distort"><summary><code class="name">tex.lens_distort</code><span class="sum">Radial lens distortion (barrel or pincushion) around a centre</span></summary>
+<details class="entry node" id="tex.lens_distort"><summary><code class="name">tex.lens_distort</code><span class="sum">Bends a picture as a lens does (barrel or pincushion), or straightens what a lens bent</span></summary>
 <div class="body">
-<p>Radial lens distortion (barrel or pincushion) around a centre</p>
+<p>Bends a picture as a lens does (barrel or pincushion), or straightens what a lens bent</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1795,9 +1814,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.level"><summary><code class="name">tex.level</code><span class="sum">Levels, gamma, contrast, brightness, invert, opacity</span></summary>
+<details class="entry node" id="tex.level"><summary><code class="name">tex.level</code><span class="sum">Adjusts black and white, gamma, contrast and brightness, inverts, or fades a picture out</span></summary>
 <div class="body">
-<p>Levels, gamma, contrast, brightness, invert, opacity</p>
+<p>Adjusts black and white, gamma, contrast and brightness, inverts, or fades a picture out</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1820,9 +1839,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.limit"><summary><code class="name">tex.limit</code><span class="sum">Keep values within a range: clamp, wrap around or mirror</span></summary>
+<details class="entry node" id="tex.limit"><summary><code class="name">tex.limit</code><span class="sum">Keeps values within a range: clips them, or wraps or mirrors them back in (a ramp becomes repeating stripes)</span></summary>
 <div class="body">
-<p>Keep values within a range: clamp, wrap around or mirror</p>
+<p>Keeps values within a range: clips them, or wraps or mirrors them back in (a ramp becomes repeating stripes)</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1842,9 +1861,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.lookup"><summary><code class="name">tex.lookup</code><span class="sum">Colours from a lookup texture, indexed by the input's values</span></summary>
+<details class="entry node" id="tex.lookup"><summary><code class="name">tex.lookup</code><span class="sum">Recolours a picture through a strip of colours: brightness picks the colour (a gradient map), or a curve per channel</span></summary>
 <div class="body">
-<p>Colours from a lookup texture, indexed by the input's values</p>
+<p>Recolours a picture through a strip of colours: brightness picks the colour (a gradient map), or a curve per channel</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1864,9 +1883,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
 </div></details>
-<details class="entry node" id="tex.mapper"><summary><code class="name">tex.mapper</code><span class="sum">Maps a part of its input onto a projector: corners, mesh warp, soft edges with other mappers of the same input</span></summary>
+<details class="entry node" id="tex.mapper"><summary><code class="name">tex.mapper</code><span class="sum">Fits a part of the content onto one projector: corner pinning, mesh warp, soft edges where projectors overlap</span></summary>
 <div class="body">
-<p>Maps a part of its input onto a projector: corners, mesh warp, soft edges with other mappers of the same input</p>
+<p>Fits a part of the content onto one projector: corner pinning, mesh warp, soft edges where projectors overlap</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1898,13 +1917,13 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#getting-started-a-first-network">Getting started › A first network</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-2-line-projectors-up-scanalign">Scanning › 2. Line projectors up: scan.align</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
-<details class="entry node" id="tex.matte"><summary><code class="name">tex.matte</code><span class="sum">Where the matte is white a shows, where it is black b; resolution of a</span></summary>
+<details class="entry node" id="tex.matte"><summary><code class="name">tex.matte</code><span class="sum">Shows one picture where a mask is white and another where it is black</span></summary>
 <div class="body">
-<p>Where the matte is white a shows, where it is black b; resolution of a</p>
+<p>Shows one picture where a mask is white and another where it is black</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>a</code> <span class="kind">tex</span></li>
-<li><code>b</code> <span class="kind">tex</span></li>
+<li><code>a</code> <span class="kind">tex</span>: Shows where the matte is white. The output has its size</li>
+<li><code>b</code> <span class="kind">tex</span>: Shows where the matte is black</li>
 <li><code>matte</code> <span class="kind">tex</span></li>
 </ul>
 <h4>Outputs</h4>
@@ -1920,9 +1939,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.monochrome"><summary><code class="name">tex.monochrome</code><span class="sum">Grey from luminance, average, maximum or one channel</span></summary>
+<details class="entry node" id="tex.monochrome"><summary><code class="name">tex.monochrome</code><span class="sum">Makes a picture grey: by brightness, by the average or the brightest channel, or from one channel</span></summary>
 <div class="body">
-<p>Grey from luminance, average, maximum or one channel</p>
+<p>Makes a picture grey: by brightness, by the average or the brightest channel, or from one channel</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -1940,14 +1959,14 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.ndi_in"><summary><code class="name">tex.ndi_in</code><span class="sum">An NDI® source on the network (needs the NDI runtime, ndi.video); resolution of the source's</span></summary>
+<details class="entry node" id="tex.ndi_in"><summary><code class="name">tex.ndi_in</code><span class="sum">A picture (and sound) from another program or computer on the network, through NDI®; needs the NDI runtime (ndi.video)</span></summary>
 <div class="body">
-<p>An NDI® source on the network (needs the NDI runtime, ndi.video); resolution of the source's</p>
+<p>A picture (and sound) from another program or computer on the network, through NDI®; needs the NDI runtime (ndi.video)</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">tex</span>: The source's picture</li>
+<li><code>out</code> <span class="kind">tex</span>: The source's picture, at its size</li>
 <li><code>audio</code> <span class="kind">chan</span>: The source's audio since the last cook: ch1, ch2, ... at its sample rate</li>
 </ul>
 <h4>Params</h4>
@@ -1961,9 +1980,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
 </div></details>
-<details class="entry node" id="tex.noise"><summary><code class="name">tex.noise</code><span class="sum">Fractal noise: offset + amplitude * noise, the same on every GPU</span></summary>
+<details class="entry node" id="tex.noise"><summary><code class="name">tex.noise</code><span class="sum">Cloudy random patterns, still or slowly changing: textures, masks, organic motion for a displacement</span></summary>
 <div class="body">
-<p>Fractal noise: offset + amplitude * noise, the same on every GPU</p>
+<p>Cloudy random patterns, still or slowly changing: textures, masks, organic motion for a displacement</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -1994,9 +2013,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
-<details class="entry node" id="tex.null"><summary><code class="name">tex.null</code><span class="sum">The input, unchanged: a fixed point to refer to or to view</span></summary>
+<details class="entry node" id="tex.null"><summary><code class="name">tex.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or for other nodes to refer to while the chain before it changes</span></summary>
 <div class="body">
-<p>The input, unchanged: a fixed point to refer to or to view</p>
+<p>Passes its input on unchanged: a fixed point to look at, or for other nodes to refer to while the chain before it changes</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2005,10 +2024,24 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <ul>
 <li><code>out</code> <span class="kind">tex</span></li>
 </ul>
+<div class="more">
+<h5 id="tex.null-what-it-is-for">What it is for</h5>
+<p>A <a class="ref" href="#tex.null"><code>tex.null</code></a> does nothing to the picture, and that is the point: it is a fixed place in the network that stays put while everything around it changes.</p>
+<ul>
+<li><strong>A stable end of a chain.</strong> Bindings and <a class="ref" href="#tex.select"><code>tex.select</code></a> refer to a node by its path. Point them at a null at the end of a chain, and you can rebuild, insert or delete nodes before it without touching anything that refers to it.
+</li>
+<li><strong>A place to look.</strong> Pin the viewer to a null at an interesting point of a chain, and it keeps showing that point while you work elsewhere.
+</li>
+<li><strong>A tidy network.</strong> One null where a picture fans out to several nodes keeps the wires readable, and its name says what the picture is (<code>content</code>, <code>mask</code>, <code>camera_clean</code>).
+</li>
+</ul>
+<p>The input is passed on as it is, without a copy, so a null costs nothing.</p>
+<p><a class="ref" href="#chan.null"><code>chan.null</code></a> and <a class="ref" href="#table.null"><code>table.null</code></a> do the same for channels and tables. A <a class="ref" href="#chan.null"><code>chan.null</code></a> is the usual thing to bind params to: rebuild the chain that makes the numbers, and the bindings stay.</p>
+</div>
 </div></details>
-<details class="entry node" id="tex.optical_flow"><summary><code class="name">tex.optical_flow</code><span class="sum">How far each part of the picture moved since the previous frame (optical flow)</span></summary>
+<details class="entry node" id="tex.optical_flow"><summary><code class="name">tex.optical_flow</code><span class="sum">Measures how each part of the picture moves from frame to frame: motion to stir a fluid or drive a displacement</span></summary>
 <div class="body">
-<p>How far each part of the picture moved since the previous frame (optical flow)</p>
+<p>Measures how each part of the picture moves from frame to frame: motion to stir a fluid or drive a displacement</p>
 <p class="note">Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -2049,9 +2082,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
-<details class="entry node" id="tex.quantize"><summary><code class="name">tex.quantize</code><span class="sum">Fewer colours (levels per channel) and fewer pixels (blocks)</span></summary>
+<details class="entry node" id="tex.quantize"><summary><code class="name">tex.quantize</code><span class="sum">Fewer colours and bigger pixels: posterised, banded or retro pixel looks</span></summary>
 <div class="body">
-<p>Fewer colours (levels per channel) and fewer pixels (blocks)</p>
+<p>Fewer colours and bigger pixels: posterised, banded or retro pixel looks</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2073,9 +2106,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.ramp"><summary><code class="name">tex.ramp</code><span class="sum">Colours at positions, blended in between: a gradient</span></summary>
+<details class="entry node" id="tex.ramp"><summary><code class="name">tex.ramp</code><span class="sum">A colour gradient: across, up, in rings or once around a centre, with colours at chosen positions</span></summary>
 <div class="body">
-<p>Colours at positions, blended in between: a gradient</p>
+<p>A colour gradient: across, up, in rings or once around a centre, with colours at chosen positions</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2096,9 +2129,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
 </div></details>
-<details class="entry node" id="tex.remap"><summary><code class="name">tex.remap</code><span class="sum">Fetch the input where a map's red and green point</span></summary>
+<details class="entry node" id="tex.remap"><summary><code class="name">tex.remap</code><span class="sum">Rearranges a picture by a map: each pixel shows the input where the map's red and green point. Undistorts, unwraps, carries a camera's view onto a projector</span></summary>
 <div class="body">
-<p>Fetch the input where a map's red and green point</p>
+<p>Rearranges a picture by a map: each pixel shows the input where the map's red and green point. Undistorts, unwraps, carries a camera's view onto a projector</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2117,9 +2150,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning">Scanning</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
-<details class="entry node" id="tex.render"><summary><code class="name">tex.render</code><span class="sum">Geometry through a camera: the picture, and a data pass (uv, part id + 1, depth)</span></summary>
+<details class="entry node" id="tex.render"><summary><code class="name">tex.render</code><span class="sum">Renders 3D geometry through a camera into a picture, with a second picture of data for shaders and masks</span></summary>
 <div class="body">
-<p>Geometry through a camera: the picture, and a data pass (uv, part id + 1, depth)</p>
+<p>Renders 3D geometry through a camera into a picture, with a second picture of data for shaders and masks</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>geo</code> <span class="kind">geo</span>: What to render</li>
@@ -2153,9 +2186,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a></p>
 </div></details>
-<details class="entry node" id="tex.resolution"><summary><code class="name">tex.resolution</code><span class="sum">The input at another resolution. Shrinking averages the pixels, so nothing aliases</span></summary>
+<details class="entry node" id="tex.resolution"><summary><code class="name">tex.resolution</code><span class="sum">Scales a picture to another size, smaller to save work, say; shrinking stays smooth, without aliasing</span></summary>
 <div class="body">
-<p>The input at another resolution. Shrinking averages the pixels, so nothing aliases</p>
+<p>Scales a picture to another size, smaller to save work, say; shrinking stays smooth, without aliasing</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2177,9 +2210,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.scan"><summary><code class="name">tex.scan</code><span class="sum">One projector's structured light scan, held. The scan button (scan.run) measures the projector with the camera; the outputs are the maps the scan wrote, kept until the next scan</span></summary>
+<details class="entry node" id="tex.scan"><summary><code class="name">tex.scan</code><span class="sum">Measures with a camera what a projector lights (structured light) and keeps the result until the next scan: maps to put content onto real objects</span></summary>
 <div class="body">
-<p>One projector's structured light scan, held. The scan button (scan.run) measures the projector with the camera; the outputs are the maps the scan wrote, kept until the next scan</p>
+<p>Measures with a camera what a projector lights (structured light) and keeps the result until the next scan: maps to put content onto real objects</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2206,9 +2239,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
-<details class="entry node" id="tex.scan_pattern"><summary><code class="name">tex.scan_pattern</code><span class="sum">Structured light: Gray-code stripes by index (white, black, then columns and rows, each bit with its inverse); 46 pictures at 1920 x 1080</span></summary>
+<details class="entry node" id="tex.scan_pattern"><summary><code class="name">tex.scan_pattern</code><span class="sum">The striped pictures of a structured light scan (Gray code), one per <code>pattern</code>: for scanning with another camera by hand</span></summary>
 <div class="body">
-<p>Structured light: Gray-code stripes by index (white, black, then columns and rows, each bit with its inverse); 46 pictures at 1920 x 1080</p>
+<p>The striped pictures of a structured light scan (Gray code), one per <code>pattern</code>: for scanning with another camera by hand</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2229,9 +2262,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a></p>
 </div></details>
-<details class="entry node" id="tex.select"><summary><code class="name">tex.select</code><span class="sum">The output of another node, named by path instead of wired</span></summary>
+<details class="entry node" id="tex.select"><summary><code class="name">tex.select</code><span class="sum">Another node's output without a wire, named by its path: to reach across components or far through the network</span></summary>
 <div class="body">
-<p>The output of another node, named by path instead of wired</p>
+<p>Another node's output without a wire, named by its path: to reach across components or far through the network</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2247,11 +2280,28 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <tr><td><code>output</code></td><td>int</td><td><code>0</code></td><td>0 to 63</td><td>Which output of that node, counted from 0 (tex.render's data is 1)</td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="tex.select-what-it-is-for">What it is for</h5>
+<p><a class="ref" href="#tex.select"><code>tex.select</code></a> brings in the picture of another node without a wire: you name the node in <code>node</code>, and its output comes out here. The editor draws the reference as a dashed line.</p>
+<p>That helps where a wire would be awkward or impossible:</p>
+<ul>
+<li><strong>Across components.</strong> Wires cross a component's edge only through its ports. A <a class="ref" href="#tex.select"><code>tex.select</code></a> inside a component can reach any node of the project by path, without adding a port for it.
+</li>
+<li><strong>Far across the network.</strong> One picture used in many places (the camera, a mask) need not be wired to every one of them.
+</li>
+<li><strong>A picture to choose by name.</strong> <code>node</code> is a param like any other, so it can be changed from the control channel to show another node's picture.
+</li>
+</ul>
+<h5 id="tex.select-naming-the-node">Naming the node</h5>
+<p><code>node</code> is read from where the <a class="ref" href="#tex.select"><code>tex.select</code></a> sits: <code>x</code> is the node <code>x</code> beside it, <code>../x</code> one level up, <code>sub/x</code> inside the component <code>sub</code>, and <code>/a/b</code> the full path from the top. Paths relative to the select keep working when its component is moved or saved to the library.</p>
+<p><code>output</code> picks which output of that node, counted from 0, for nodes with more than one: <a class="ref" href="#tex.render"><code>tex.render</code></a>'s <code>data</code> is 1.</p>
+<p>A select that points at a <a class="ref" href="#tex.null"><code>tex.null</code></a> at the end of a chain stays valid however that chain changes.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#concepts-paths">Concepts › Paths</a></p>
 </div></details>
-<details class="entry node" id="tex.sequence"><summary><code class="name">tex.sequence</code><span class="sum">The picture of a show: the inputs a chan.sequence says, cut or blended, with black and white made in between. Only the inputs shown cook</span></summary>
+<details class="entry node" id="tex.sequence"><summary><code class="name">tex.sequence</code><span class="sum">The picture of a timed show: plays the pieces a chan.sequence lists, with cuts and fades. Only the piece on screen runs</span></summary>
 <div class="body">
-<p>The picture of a show: the inputs a chan.sequence says, cut or blended, with black and white made in between. Only the inputs shown cook</p>
+<p>The picture of a timed show: plays the pieces a chan.sequence lists, with cuts and fades. Only the piece on screen runs</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>sequence</code> <span class="kind">chan</span>: A chan.sequence: its from, to and mix pick the inputs (piece k is in&lt;k&gt;, -1 black, -2 white)</li>
@@ -2297,9 +2347,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#concepts-shows">Concepts › Shows</a></p>
 </div></details>
-<details class="entry node" id="tex.shader"><summary><code class="name">tex.shader</code><span class="sum">A WGSL fragment shader from a file, hot reloaded; parameters come from its <code>// @param</code> header</span></summary>
+<details class="entry node" id="tex.shader"><summary><code class="name">tex.shader</code><span class="sum">An effect or generator of your own, written as a WGSL shader in a file; reloads when saved, its <code>// @param</code> lines become params</span></summary>
 <div class="body">
-<p>A WGSL fragment shader from a file, hot reloaded; parameters come from its <code>// @param</code> header</p>
+<p>An effect or generator of your own, written as a WGSL shader in a file; reloads when saved, its <code>// @param</code> lines become params</p>
 <p class="note">Declares further params per node, from its file or code.</p>
 <h4>Inputs</h4>
 <ul>
@@ -2326,9 +2376,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#shaders">Shaders</a></p>
 </div></details>
-<details class="entry node" id="tex.shape_content"><summary><code class="name">tex.shape_content</code><span class="sum">Pulses, chases or ripples per shape, from tex.shapes' id output</span></summary>
+<details class="entry node" id="tex.shape_content"><summary><code class="name">tex.shape_content</code><span class="sum">Animates the shapes of a tex.shapes one by one: pulses, light running along the outlines, ripples</span></summary>
 <div class="body">
-<p>Pulses, chases or ripples per shape, from tex.shapes' id output</p>
+<p>Animates the shapes of a tex.shapes one by one: pulses, light running along the outlines, ripples</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>id</code> <span class="kind">tex</span>: tex.shapes' <code>id</code> output; the output has the same size</li>
@@ -2359,9 +2409,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
 </div></details>
-<details class="entry node" id="tex.shapes"><summary><code class="name">tex.shapes</code><span class="sum">Tagged shapes on the surface: a mask and a distance field per tag, outlines, a table</span></summary>
+<details class="entry node" id="tex.shapes"><summary><code class="name">tex.shapes</code><span class="sum">Shapes drawn on the surface (rectangles, ellipses, polygons) with tags: masks and outlines to light parts of a facade or object on their own</span></summary>
 <div class="body">
-<p>Tagged shapes on the surface: a mask and a distance field per tag, outlines, a table</p>
+<p>Shapes drawn on the surface (rectangles, ellipses, polygons) with tags: masks and outlines to light parts of a facade or object on their own</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>table</code> <span class="kind">table</span>: Shapes from a table (as the <code>table</code> output has them) instead of the node's own</li>
@@ -2398,9 +2448,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
 </div></details>
-<details class="entry node" id="tex.slope"><summary><code class="name">tex.slope</code><span class="sum">How steeply a channel rises: left to right in red, top to bottom in green</span></summary>
+<details class="entry node" id="tex.slope"><summary><code class="name">tex.slope</code><span class="sum">How steeply a height map or picture rises, left to right in red and top to bottom in green: relief, or a map for tex.displace</span></summary>
 <div class="body">
-<p>How steeply a channel rises: left to right in red, top to bottom in green</p>
+<p>How steeply a height map or picture rises, left to right in red and top to bottom in green: relief, or a map for tex.displace</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2419,14 +2469,14 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.spout_in"><summary><code class="name">tex.spout_in</code><span class="sum">Another program's Spout sender (Windows); resolution of the sender's</span></summary>
+<details class="entry node" id="tex.spout_in"><summary><code class="name">tex.spout_in</code><span class="sum">A picture from another program on this machine, through Spout (Windows)</span></summary>
 <div class="body">
-<p>Another program's Spout sender (Windows); resolution of the sender's</p>
+<p>A picture from another program on this machine, through Spout (Windows)</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">tex</span>: The sender's picture</li>
+<li><code>out</code> <span class="kind">tex</span>: The sender's picture, at its size</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -2481,9 +2531,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
 </div></details>
-<details class="entry node" id="tex.text"><summary><code class="name">tex.text</code><span class="sum">Text in any installed or bundled font, placed at a position</span></summary>
+<details class="entry node" id="tex.text"><summary><code class="name">tex.text</code><span class="sum">Writes text into a picture, in an installed font or a bundled one</span></summary>
 <div class="body">
-<p>Text in any installed or bundled font, placed at a position</p>
+<p>Writes text into a picture, in an installed font or a bundled one</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2508,9 +2558,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.threshold"><summary><code class="name">tex.threshold</code><span class="sum">White where a channel is above a threshold, black (or transparent) elsewhere</span></summary>
+<details class="entry node" id="tex.threshold"><summary><code class="name">tex.threshold</code><span class="sum">A mask from brightness: white where a channel is above a value, black or transparent elsewhere</span></summary>
 <div class="body">
-<p>White where a channel is above a threshold, black (or transparent) elsewhere</p>
+<p>A mask from brightness: white where a channel is above a value, black or transparent elsewhere</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2531,9 +2581,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.tile"><summary><code class="name">tex.tile</code><span class="sum">The input repeated across and down, at its own resolution</span></summary>
+<details class="entry node" id="tex.tile"><summary><code class="name">tex.tile</code><span class="sum">Repeats a picture as a grid of smaller copies, at the input's size</span></summary>
 <div class="body">
-<p>The input repeated across and down, at its own resolution</p>
+<p>Repeats a picture as a grid of smaller copies, at the input's size</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2553,14 +2603,14 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.time_machine"><summary><code class="name">tex.time_machine</code><span class="sum">Per pixel, a frame from the past: the map says how far back (black now, white oldest)</span></summary>
+<details class="entry node" id="tex.time_machine"><summary><code class="name">tex.time_machine</code><span class="sum">Shows each pixel from another moment in the past, as a map says: time smears, slit scans, echoes</span></summary>
 <div class="body">
-<p>Per pixel, a frame from the past: the map says how far back (black now, white oldest)</p>
+<p>Shows each pixel from another moment in the past, as a map says: time smears, slit scans, echoes</p>
 <p class="note">Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
-<li><code>map</code> <span class="kind">tex</span></li>
+<li><code>map</code> <span class="kind">tex</span>: Per pixel, how far back: black is now, white <code>length</code> frames ago; unconnected: <code>offset</code> alone</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -2583,9 +2633,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#getting-started-when-the-gpu-gives-up">Getting started › When the GPU gives up</a></p>
 </div></details>
-<details class="entry node" id="tex.transform"><summary><code class="name">tex.transform</code><span class="sum">Translate, rotate and scale around a pivot; resolution of the input</span></summary>
+<details class="entry node" id="tex.transform"><summary><code class="name">tex.transform</code><span class="sum">Moves, turns and scales a picture within its own frame</span></summary>
 <div class="body">
-<p>Translate, rotate and scale around a pivot; resolution of the input</p>
+<p>Moves, turns and scales a picture within its own frame</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2607,15 +2657,15 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.video"><summary><code class="name">tex.video</code><span class="sum">A video file or animated GIF, looping seamlessly; resolution of the file</span></summary>
+<details class="entry node" id="tex.video"><summary><code class="name">tex.video</code><span class="sum">Plays a video file or animated GIF, looping without a gap</span></summary>
 <div class="body">
-<p>A video file or animated GIF, looping seamlessly; resolution of the file</p>
+<p>Plays a video file or animated GIF, looping without a gap</p>
 <p class="note">Follows the show clock: cooks again whenever time moves.</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">tex</span>: The video's picture</li>
+<li><code>out</code> <span class="kind">tex</span>: The video's picture, at the file's size</li>
 <li><code>info</code> <span class="kind">chan</span>: Playback: frame, progress (0 to 1), loops, late, seeks</li>
 </ul>
 <h4>Params</h4>
@@ -2632,14 +2682,14 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#recording">Recording</a>, <a href="#recording-colour">Recording › Colour</a></p>
 </div></details>
-<details class="entry node" id="tex.video_in"><summary><code class="name">tex.video_in</code><span class="sum">A live camera or capture card; resolution of the camera's mode</span></summary>
+<details class="entry node" id="tex.video_in"><summary><code class="name">tex.video_in</code><span class="sum">A live camera or capture card</span></summary>
 <div class="body">
-<p>A live camera or capture card; resolution of the camera's mode</p>
+<p>A live camera or capture card</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">tex</span>: The camera's picture</li>
+<li><code>out</code> <span class="kind">tex</span>: The camera's picture, at the size of its mode</li>
 <li><code>info</code> <span class="kind">chan</span>: The stream: fps, delay_ms, age_ms, frames, dropped</li>
 </ul>
 <h4>Params</h4>
@@ -2658,9 +2708,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-chan">
 <h3>chan</h3>
 <p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_in">chan.audio_in</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.in">chan.in</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.out">chan.out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.speed">chan.speed</a> <a href="#chan.trail">chan.trail</a></p>
-<details class="entry node" id="chan.audio_analysis"><summary><code class="name">chan.audio_analysis</code><span class="sum">Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audio_in)</span></summary>
+<details class="entry node" id="chan.audio_analysis"><summary><code class="name">chan.audio_analysis</code><span class="sum">Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</span></summary>
 <div class="body">
-<p>Levels, onsets, tempo, beat and bar phase, and a spectrum, from audio (a chan.audio_in)</p>
+<p>Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</p>
 <p class="note">Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -2697,9 +2747,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
 </div></details>
-<details class="entry node" id="chan.audio_in"><summary><code class="name">chan.audio_in</code><span class="sum">Audio from an input device: one channel per device channel, at its sample rate</span></summary>
+<details class="entry node" id="chan.audio_in"><summary><code class="name">chan.audio_in</code><span class="sum">Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel</span></summary>
 <div class="body">
-<p>Audio from an input device: one channel per device channel, at its sample rate</p>
+<p>Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2715,9 +2765,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
 </div></details>
-<details class="entry node" id="chan.clock"><summary><code class="name">chan.clock</code><span class="sum">Seconds since it was switched on: starts over from 0 each time <code>run</code> turns on, then plays once, loops or runs on. A clock per piece of a show that starts with its piece</span></summary>
+<details class="entry node" id="chan.clock"><summary><code class="name">chan.clock</code><span class="sum">A stopwatch: counts seconds from when <code>run</code> turns on, once, looping or on and on. Gives each piece of a show a clock that starts with it</span></summary>
 <div class="body">
-<p>Seconds since it was switched on: starts over from 0 each time <code>run</code> turns on, then plays once, loops or runs on. A clock per piece of a show that starts with its piece</p>
+<p>A stopwatch: counts seconds from when <code>run</code> turns on, once, looping or on and on. Gives each piece of a show a clock that starts with it</p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over. Cooks in every frame, whether anything shows it or not, so it sees every change of its params.</p>
 <h4>Inputs</h4>
 <p>none</p>
@@ -2737,9 +2787,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
 </div></details>
-<details class="entry node" id="chan.constant"><summary><code class="name">chan.constant</code><span class="sum">Fixed numbers: one channel per row of name and value</span></summary>
+<details class="entry node" id="chan.constant"><summary><code class="name">chan.constant</code><span class="sum">Numbers set by hand, each a named channel: values to bind params to, one setting that drives several things</span></summary>
 <div class="body">
-<p>Fixed numbers: one channel per row of name and value</p>
+<p>Numbers set by hand, each a named channel: values to bind params to, one setting that drives several things</p>
 <p class="note">Declares further params per node, from its file or code.</p>
 <h4>Inputs</h4>
 <p>none</p>
@@ -2759,9 +2809,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-keys">Concepts › Keys</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
 </div></details>
-<details class="entry node" id="chan.dmx_in"><summary><code class="name">chan.dmx_in</code><span class="sum">DMX slots from the network (Art-Net or sACN) as channels, from a lighting desk say</span></summary>
+<details class="entry node" id="chan.dmx_in"><summary><code class="name">chan.dmx_in</code><span class="sum">DMX from a lighting desk over the network (Art-Net or sACN): each slot a channel to drive content with</span></summary>
 <div class="body">
-<p>DMX slots from the network (Art-Net or sACN) as channels, from a lighting desk say</p>
+<p>DMX from a lighting desk over the network (Art-Net or sACN): each slot a channel to drive content with</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2784,9 +2834,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#dmx">DMX</a>, <a href="#dmx-receiving">DMX › Receiving</a></p>
 </div></details>
-<details class="entry node" id="chan.filter"><summary><code class="name">chan.filter</code><span class="sum">Smooths each channel over time, rising and falling at their own pace</span></summary>
+<details class="entry node" id="chan.filter"><summary><code class="name">chan.filter</code><span class="sum">Smooths jumpy numbers over time, at their own pace up and down: calms a sensor, softens a jump</span></summary>
 <div class="body">
-<p>Smooths each channel over time, rising and falling at their own pace</p>
+<p>Smooths jumpy numbers over time, at their own pace up and down: calms a sensor, softens a jump</p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -2806,9 +2856,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
-<details class="entry node" id="chan.from_tex"><summary><code class="name">chan.from_tex</code><span class="sum">A picture as channels: averaged down to a few pixels, one channel per row and colour</span></summary>
+<details class="entry node" id="chan.from_tex"><summary><code class="name">chan.from_tex</code><span class="sum">Turns a picture into numbers: its average colour, or the colours of a few areas, as channels to drive things with</span></summary>
 <div class="body">
-<p>A picture as channels: averaged down to a few pixels, one channel per row and colour</p>
+<p>Turns a picture into numbers: its average colour, or the colours of a few areas, as channels to drive things with</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span></li>
@@ -2842,9 +2892,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
-<details class="entry node" id="chan.keyboard_in"><summary><code class="name">chan.keyboard_in</code><span class="sum">Keys of the keyboard while a penumbra window has the focus: a gate per key, and which was pressed last</span></summary>
+<details class="entry node" id="chan.keyboard_in"><summary><code class="name">chan.keyboard_in</code><span class="sum">Keys of the keyboard as channels, to switch scenes or trigger things by hand during a show (while a penumbra window has the focus)</span></summary>
 <div class="body">
-<p>Keys of the keyboard while a penumbra window has the focus: a gate per key, and which was pressed last</p>
+<p>Keys of the keyboard as channels, to switch scenes or trigger things by hand during a show (while a penumbra window has the focus)</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2860,9 +2910,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-keys">Concepts › Keys</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
 </div></details>
-<details class="entry node" id="chan.lfo"><summary><code class="name">chan.lfo</code><span class="sum">Low-frequency oscillator: offset + amplitude * wave(time * rate + phase)</span></summary>
+<details class="entry node" id="chan.lfo"><summary><code class="name">chan.lfo</code><span class="sum">A number that swings up and down by itself (sine, triangle, square, saw): regular motion, pulsing, blinking</span></summary>
 <div class="body">
-<p>Low-frequency oscillator: offset + amplitude * wave(time * rate + phase)</p>
+<p>A number that swings up and down by itself (sine, triangle, square, saw): regular motion, pulsing, blinking</p>
 <p class="note">Follows the show clock: cooks again whenever time moves.</p>
 <h4>Inputs</h4>
 <p>none</p>
@@ -2885,13 +2935,13 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
-<details class="entry node" id="chan.math"><summary><code class="name">chan.math</code><span class="sum">a op b per channel. Each channel of a meets b's channel of the same name, else b's first channel. While input b is unconnected, the param <code>b</code> stands in</span></summary>
+<details class="entry node" id="chan.math"><summary><code class="name">chan.math</code><span class="sum">Calculates with channels: adds, multiplies or compares two inputs, or one input and a number</span></summary>
 <div class="body">
-<p>a op b per channel. Each channel of a meets b's channel of the same name, else b's first channel. While input b is unconnected, the param <code>b</code> stands in</p>
+<p>Calculates with channels: adds, multiplies or compares two inputs, or one input and a number</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>a</code> <span class="kind">chan</span></li>
-<li><code>b</code> <span class="kind">chan</span></li>
+<li><code>b</code> <span class="kind">chan</span>: Each channel of a meets b's channel of the same name, else b's first channel. Unconnected: the param <code>b</code></li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -2905,11 +2955,41 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <tr><td><code>b</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>The b side as a number, used while input b is unconnected</td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="chan.math-what-it-is-for">What it is for</h5>
+<p>Channels rarely arrive in the range a param wants. An audio level runs from 0 to 1, a rotation wants degrees; a tracked position runs across the picture, a light wants it the other way round. <a class="ref" href="#chan.math"><code>chan.math</code></a> is the node in between: it scales, shifts, limits and compares channels, so that one number fits where it goes.</p>
+<h5 id="chan.math-two-inputs-or-one-and-a-number">Two inputs, or one and a number</h5>
+<p><code>a</code> is the channel (or channels) to work on. <code>b</code> is what to work with:</p>
+<ul>
+<li><strong>Unconnected <code>b</code>:</strong> the param <code>b</code> stands in, one number for every channel of <code>a</code>. This is the usual case: <code>multiply</code> with <code>b</code> 360 turns 0 to 1 into 0 to 360 degrees, <code>add</code> with <code>b</code> -0.5 moves 0 to 1 to -0.5 to 0.5.
+</li>
+<li><strong>Connected <code>b</code>:</strong> each channel of <code>a</code> meets the channel of <code>b</code> with the same name, else <code>b</code>'s first channel. So <code>x</code> and <code>y</code> of a tracker multiplied by <code>x</code> and <code>y</code> of a <a class="ref" href="#chan.constant"><code>chan.constant</code></a> scale each axis on its own, and a single channel in <code>b</code> acts on all of <code>a</code>.
+</li>
+</ul>
+<p>The output has <code>a</code>'s channels, with their names. Every sample is computed on its own, so a channel with many samples (a spectrum, a trail) comes out with as many.</p>
+<h5 id="chan.math-which-op-for-what">Which op for what</h5>
+<table>
+<thead><tr><th>to ...</th><th>op</th><th>b</th></tr></thead>
+<tbody>
+<tr><td>scale (0 to 1 into 0 to 360)</td><td><code>multiply</code></td><td>360</td></tr>
+<tr><td>shift (move the centre)</td><td><code>add</code> or <code>subtract</code></td><td>the shift</td></tr>
+<tr><td>cap at a highest value</td><td><code>min</code></td><td>the cap</td></tr>
+<tr><td>keep above a lowest value</td><td><code>max</code></td><td>the floor</td></tr>
+<tr><td>count round and round (an angle that grows into 0 to 360)</td><td><code>modulo</code></td><td>360</td></tr>
+<tr><td>make steps (whole numbers only)</td><td><code>floor</code></td><td>1</td></tr>
+<tr><td>bend a curve (gentle start, steep end)</td><td><code>power</code></td><td>2</td></tr>
+<tr><td>switch something on for one piece of a show</td><td><code>equal</code></td><td>the piece's number</td></tr>
+</tbody>
+</table>
+<p>For a whole range in one go (0 to 1 into 20 to 80), chain two: <code>multiply</code> by 60, then <code>add</code> 20.</p>
+<h5 id="chan.math-example">Example</h5>
+<p>A rotation that follows the music: a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> level into <a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>multiply</code> and <code>b</code> 90, and bind a <a class="ref" href="#tex.transform"><code>tex.transform</code></a>'s <code>rotate</code> to the output. Loud passages turn the picture by up to 90 degrees.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
-<details class="entry node" id="chan.merge"><summary><code class="name">chan.merge</code><span class="sum">The channels of all inputs side by side</span></summary>
+<details class="entry node" id="chan.merge"><summary><code class="name">chan.merge</code><span class="sum">Puts the channels of up to four inputs together into one</span></summary>
 <div class="body">
-<p>The channels of all inputs side by side</p>
+<p>Puts the channels of up to four inputs together into one</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>a</code> <span class="kind">chan</span></li>
@@ -2923,9 +3003,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </ul>
 <p class="mentions">Mentioned in: <a href="#dmx-setting-up">DMX › Setting up</a></p>
 </div></details>
-<details class="entry node" id="chan.noise"><summary><code class="name">chan.noise</code><span class="sum">Smooth random motion over time: offset + amplitude * noise, the same on every machine</span></summary>
+<details class="entry node" id="chan.noise"><summary><code class="name">chan.noise</code><span class="sum">A number that wanders smoothly at random: organic motion that never repeats</span></summary>
 <div class="body">
-<p>Smooth random motion over time: offset + amplitude * noise, the same on every machine</p>
+<p>A number that wanders smoothly at random: organic motion that never repeats</p>
 <p class="note">Follows the show clock: cooks again whenever time moves.</p>
 <h4>Inputs</h4>
 <p>none</p>
@@ -2948,9 +3028,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="chan.null"><summary><code class="name">chan.null</code><span class="sum">The input, unchanged: a fixed point to refer to or to bind to</span></summary>
+<details class="entry node" id="chan.null"><summary><code class="name">chan.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to bind params to while the chain before it changes</span></summary>
 <div class="body">
-<p>The input, unchanged: a fixed point to refer to or to bind to</p>
+<p>Passes its input on unchanged: a fixed point to look at, or to bind params to while the chain before it changes</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">chan</span></li>
@@ -2960,9 +3040,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <li><code>out</code> <span class="kind">chan</span></li>
 </ul>
 </div></details>
-<details class="entry node" id="chan.osc_in"><summary><code class="name">chan.osc_in</code><span class="sum">OSC from the network: every address a channel with its latest number</span></summary>
+<details class="entry node" id="chan.osc_in"><summary><code class="name">chan.osc_in</code><span class="sum">OSC from apps, controllers and other programs (TouchOSC on a phone, say): every address a channel</span></summary>
 <div class="body">
-<p>OSC from the network: every address a channel with its latest number</p>
+<p>OSC from apps, controllers and other programs (TouchOSC on a phone, say): every address a channel</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -2982,9 +3062,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#helpers-osc">The Helpers window › OSC</a></p>
 </div></details>
-<details class="entry node" id="chan.osc_out"><summary><code class="name">chan.osc_out</code><span class="sum">Sends channels (and table rows: address, values) as OSC to a host and port</span></summary>
+<details class="entry node" id="chan.osc_out"><summary><code class="name">chan.osc_out</code><span class="sum">Sends channels and table rows as OSC to another program or device</span></summary>
 <div class="body">
-<p>Sends channels (and table rows: address, values) as OSC to a host and port</p>
+<p>Sends channels and table rows as OSC to another program or device</p>
 <p class="note">Follows the show clock: cooks again whenever time moves.</p>
 <h4>Inputs</h4>
 <ul>
@@ -3021,9 +3101,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <li><code>out</code> <span class="kind">chan</span></li>
 </ul>
 </div></details>
-<details class="entry node" id="chan.rename"><summary><code class="name">chan.rename</code><span class="sum">The input's channels, renamed by <code>from=to</code> pairs</span></summary>
+<details class="entry node" id="chan.rename"><summary><code class="name">chan.rename</code><span class="sum">Renames channels by <code>from=to</code> pairs, so they match what other nodes and bindings expect</span></summary>
 <div class="body">
-<p>The input's channels, renamed by <code>from=to</code> pairs</p>
+<p>Renames channels by <code>from=to</code> pairs, so they match what other nodes and bindings expect</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">chan</span></li>
@@ -3041,9 +3121,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#dmx-setting-up">DMX › Setting up</a></p>
 </div></details>
-<details class="entry node" id="chan.select"><summary><code class="name">chan.select</code><span class="sum">The input's channels matching patterns, in the patterns' order</span></summary>
+<details class="entry node" id="chan.select"><summary><code class="name">chan.select</code><span class="sum">Picks some of the input's channels by name or pattern, in the order given</span></summary>
 <div class="body">
-<p>The input's channels matching patterns, in the patterns' order</p>
+<p>Picks some of the input's channels by name or pattern, in the order given</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">chan</span></li>
@@ -3061,9 +3141,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#dmx-setting-up">DMX › Setting up</a></p>
 </div></details>
-<details class="entry node" id="chan.sequence"><summary><code class="name">chan.sequence</code><span class="sum">A show: pieces one after another with cuts, fades, dips to black and flashes. Drives a tex.sequence per output and a run gate per piece</span></summary>
+<details class="entry node" id="chan.sequence"><summary><code class="name">chan.sequence</code><span class="sum">A timed show: pieces one after another with cuts, fades, dips to black and flashes. Drives the tex.sequence that shows it, and a run channel per piece</span></summary>
 <div class="body">
-<p>A show: pieces one after another with cuts, fades, dips to black and flashes. Drives a tex.sequence per output and a run gate per piece</p>
+<p>A timed show: pieces one after another with cuts, fades, dips to black and flashes. Drives the tex.sequence that shows it, and a run channel per piece</p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over. Cooks in every frame, whether anything shows it or not, so it sees every change of its params.</p>
 <h4>Inputs</h4>
 <p>none</p>
@@ -3086,9 +3166,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-shows">Concepts › Shows</a></p>
 </div></details>
-<details class="entry node" id="chan.speed"><summary><code class="name">chan.speed</code><span class="sum">Adds up each channel over time, as a rate per second: a speed becomes a position</span></summary>
+<details class="entry node" id="chan.speed"><summary><code class="name">chan.speed</code><span class="sum">Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting</span></summary>
 <div class="body">
-<p>Adds up each channel over time, as a rate per second: a speed becomes a position</p>
+<p>Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting</p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -3126,9 +3206,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <p>Spin something at a speed the music sets: a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> level through <a class="ref" href="#chan.math"><code>chan.math</code></a> (scale it to degrees per second) into <a class="ref" href="#chan.speed"><code>chan.speed</code></a> with <code>limit: loop</code>, <code>min</code> 0, <code>max</code> 360, and bind a rotation param to the output.</p>
 </div>
 </div></details>
-<details class="entry node" id="chan.trail"><summary><code class="name">chan.trail</code><span class="sum">The recent history of each input channel as samples, oldest first: a time graph to look at or to feed on</span></summary>
+<details class="entry node" id="chan.trail"><summary><code class="name">chan.trail</code><span class="sum">Records the recent past of each channel: a graph over time to look at, or a history to work with</span></summary>
 <div class="body">
-<p>The recent history of each input channel as samples, oldest first: a time graph to look at or to feed on</p>
+<p>Records the recent past of each channel: a graph over time to look at, or a history to work with</p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -3153,9 +3233,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-table">
 <h3>table</h3>
 <p class="kinds"><a href="#table.file">table.file</a> <a href="#table.in">table.in</a> <a href="#table.null">table.null</a> <a href="#table.out">table.out</a> <a href="#table.text">table.text</a></p>
-<details class="entry node" id="table.file"><summary><code class="name">table.file</code><span class="sum">A text, TSV or CSV file; reloads when the file changes</span></summary>
+<details class="entry node" id="table.file"><summary><code class="name">table.file</code><span class="sum">A table from a text, TSV or CSV file; updates when the file changes</span></summary>
 <div class="body">
-<p>A text, TSV or CSV file; reloads when the file changes</p>
+<p>A table from a text, TSV or CSV file; updates when the file changes</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3184,9 +3264,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <li><code>out</code> <span class="kind">table</span></li>
 </ul>
 </div></details>
-<details class="entry node" id="table.null"><summary><code class="name">table.null</code><span class="sum">The input, unchanged: a fixed point to refer to</span></summary>
+<details class="entry node" id="table.null"><summary><code class="name">table.null</code><span class="sum">Passes its input on unchanged: a fixed point to refer to while the chain before it changes</span></summary>
 <div class="body">
-<p>The input, unchanged: a fixed point to refer to</p>
+<p>Passes its input on unchanged: a fixed point to refer to while the chain before it changes</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">table</span></li>
@@ -3209,9 +3289,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <li><code>out</code> <span class="kind">table</span></li>
 </ul>
 </div></details>
-<details class="entry node" id="table.text"><summary><code class="name">table.text</code><span class="sum">A table typed in: one row per line, cells by tab or comma</span></summary>
+<details class="entry node" id="table.text"><summary><code class="name">table.text</code><span class="sum">A table typed into the node: one row per line, cells split by tab or comma</span></summary>
 <div class="body">
-<p>A table typed in: one row per line, cells by tab or comma</p>
+<p>A table typed into the node: one row per line, cells split by tab or comma</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3231,9 +3311,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-geo">
 <h3>geo</h3>
 <p class="kinds"><a href="#geo.assign_material">geo.assign_material</a> <a href="#geo.file">geo.file</a> <a href="#geo.instance">geo.instance</a> <a href="#geo.merge">geo.merge</a> <a href="#geo.primitive">geo.primitive</a> <a href="#geo.tex_instance">geo.tex_instance</a> <a href="#geo.transform">geo.transform</a></p>
-<details class="entry node" id="geo.assign_material"><summary><code class="name">geo.assign_material</code><span class="sum">Puts a material on every model of the input</span></summary>
+<details class="entry node" id="geo.assign_material"><summary><code class="name">geo.assign_material</code><span class="sum">Gives geometry a material: how it looks when rendered</span></summary>
 <div class="body">
-<p>Puts a material on every model of the input</p>
+<p>Gives geometry a material: how it looks when rendered</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">geo</span></li>
@@ -3245,9 +3325,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
-<details class="entry node" id="geo.file"><summary><code class="name">geo.file</code><span class="sum">A mesh file (OBJ, STL, glTF/GLB) with its parts; reloads when the file changes</span></summary>
+<details class="entry node" id="geo.file"><summary><code class="name">geo.file</code><span class="sum">A 3D model from a file (OBJ, STL, glTF/GLB) with its parts; updates when the file changes</span></summary>
 <div class="body">
-<p>A mesh file (OBJ, STL, glTF/GLB) with its parts; reloads when the file changes</p>
+<p>A 3D model from a file (OBJ, STL, glTF/GLB) with its parts; updates when the file changes</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3268,22 +3348,22 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="geo.instance"><summary><code class="name">geo.instance</code><span class="sum">One copy of the input per table row. The first row names the columns that place each copy: tx ty tz, rx ry rz (degrees), sx sy sz. Part ids continue from copy to copy</span></summary>
+<details class="entry node" id="geo.instance"><summary><code class="name">geo.instance</code><span class="sum">Many copies of a model, each placed by a row of a table: a grid, a ring, a crowd of objects</span></summary>
 <div class="body">
-<p>One copy of the input per table row. The first row names the columns that place each copy: tx ty tz, rx ry rz (degrees), sx sy sz. Part ids continue from copy to copy</p>
+<p>Many copies of a model, each placed by a row of a table: a grid, a ring, a crowd of objects</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">geo</span></li>
-<li><code>table</code> <span class="kind">table</span></li>
+<li><code>table</code> <span class="kind">table</span>: One row per copy. The first row names the columns: tx ty tz to move, rx ry rz to turn (degrees), sx sy sz to scale</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">geo</span></li>
+<li><code>out</code> <span class="kind">geo</span>: The copies; part ids continue from copy to copy</li>
 </ul>
 </div></details>
-<details class="entry node" id="geo.merge"><summary><code class="name">geo.merge</code><span class="sum">Several inputs as one; part ids continue from input to input</span></summary>
+<details class="entry node" id="geo.merge"><summary><code class="name">geo.merge</code><span class="sum">Combines several pieces of geometry into one, to render them together</span></summary>
 <div class="body">
-<p>Several inputs as one; part ids continue from input to input</p>
+<p>Combines several pieces of geometry into one, to render them together</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in0</code> <span class="kind">geo</span></li>
@@ -3297,12 +3377,12 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </ul>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">geo</span></li>
+<li><code>out</code> <span class="kind">geo</span>: All inputs as one; part ids continue from input to input</li>
 </ul>
 </div></details>
-<details class="entry node" id="geo.primitive"><summary><code class="name">geo.primitive</code><span class="sum">A box, a sphere or a plane, centred on the origin</span></summary>
+<details class="entry node" id="geo.primitive"><summary><code class="name">geo.primitive</code><span class="sum">A simple shape: a box, a sphere or a plane, centred on the origin</span></summary>
 <div class="body">
-<p>A box, a sphere or a plane, centred on the origin</p>
+<p>A simple shape: a box, a sphere or a plane, centred on the origin</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3321,16 +3401,16 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="geo.tex_instance"><summary><code class="name">geo.tex_instance</code><span class="sum">One copy of the input per texel of position, drawn on the GPU. Copy i reads texel (i % width, i / width) of each texture: position's rgb moves the copy, scale's rgb scales it, aim's rgb turns its +y that way (+z kept up), color's rgb multiplies its colour</span></summary>
+<details class="entry node" id="geo.tex_instance"><summary><code class="name">geo.tex_instance</code><span class="sum">Thousands of copies of a model, placed, scaled, turned and coloured by pictures, all on the GPU: particles, swarms</span></summary>
 <div class="body">
-<p>One copy of the input per texel of position, drawn on the GPU. Copy i reads texel (i % width, i / width) of each texture: position's rgb moves the copy, scale's rgb scales it, aim's rgb turns its +y that way (+z kept up), color's rgb multiplies its colour</p>
+<p>Thousands of copies of a model, placed, scaled, turned and coloured by pictures, all on the GPU: particles, swarms</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">geo</span></li>
-<li><code>position</code> <span class="kind">tex</span></li>
-<li><code>aim</code> <span class="kind">tex</span></li>
-<li><code>scale</code> <span class="kind">tex</span></li>
-<li><code>color</code> <span class="kind">tex</span></li>
+<li><code>position</code> <span class="kind">tex</span>: One texel per copy: copy i reads texel (i % width, i / width). Its rgb moves the copy (x, y, z in metres)</li>
+<li><code>aim</code> <span class="kind">tex</span>: Its rgb turns the copy's +y towards that direction, keeping +z up</li>
+<li><code>scale</code> <span class="kind">tex</span>: Its rgb scales the copy per axis</li>
+<li><code>color</code> <span class="kind">tex</span>: Its rgb multiplies the copy's colour</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -3362,9 +3442,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <p>For a few copies placed by numbers (a table of positions), <a class="ref" href="#geo.instance"><code>geo.instance</code></a> is the simpler node.</p>
 </div>
 </div></details>
-<details class="entry node" id="geo.transform"><summary><code class="name">geo.transform</code><span class="sum">Scale, rotate, then translate</span></summary>
+<details class="entry node" id="geo.transform"><summary><code class="name">geo.transform</code><span class="sum">Moves, turns and scales geometry (scale first, then rotate, then move)</span></summary>
 <div class="body">
-<p>Scale, rotate, then translate</p>
+<p>Moves, turns and scales geometry (scale first, then rotate, then move)</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">geo</span></li>
@@ -3388,9 +3468,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-mat">
 <h3>mat</h3>
 <p class="kinds"><a href="#mat.constant">mat.constant</a> <a href="#mat.occluder">mat.occluder</a> <a href="#mat.pbr">mat.pbr</a> <a href="#mat.phong">mat.phong</a> <a href="#mat.wireframe">mat.wireframe</a></p>
-<details class="entry node" id="mat.constant"><summary><code class="name">mat.constant</code><span class="sum">A colour as it is, unlit: the usual choice for projection content</span></summary>
+<details class="entry node" id="mat.constant"><summary><code class="name">mat.constant</code><span class="sum">A surface in its colour as it is, unaffected by light: the usual choice for projection content</span></summary>
 <div class="body">
-<p>A colour as it is, unlit: the usual choice for projection content</p>
+<p>A surface in its colour as it is, unaffected by light: the usual choice for projection content</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>texture</code> <span class="kind">tex</span></li>
@@ -3422,9 +3502,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <p>Occluders draw before everything else and write only depth, no colour. Assign it with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a> like any other material.</p>
 </div>
 </div></details>
-<details class="entry node" id="mat.pbr"><summary><code class="name">mat.pbr</code><span class="sum">Physically based (metallic, roughness as in glTF): lit by the render's lights, best with an environment light</span></summary>
+<details class="entry node" id="mat.pbr"><summary><code class="name">mat.pbr</code><span class="sum">A realistic surface, metal or plastic, rough or glossy, lit by the render's lights; best with a light.environment</span></summary>
 <div class="body">
-<p>Physically based (metallic, roughness as in glTF): lit by the render's lights, best with an environment light</p>
+<p>A realistic surface, metal or plastic, rough or glossy, lit by the render's lights; best with a light.environment</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>texture</code> <span class="kind">tex</span></li>
@@ -3445,9 +3525,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="mat.phong"><summary><code class="name">mat.phong</code><span class="sum">Lit by the render's lights, with a highlight; black without lights</span></summary>
+<details class="entry node" id="mat.phong"><summary><code class="name">mat.phong</code><span class="sum">A simple lit surface with a shiny highlight; black without lights</span></summary>
 <div class="body">
-<p>Lit by the render's lights, with a highlight; black without lights</p>
+<p>A simple lit surface with a shiny highlight; black without lights</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>texture</code> <span class="kind">tex</span></li>
@@ -3468,9 +3548,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="mat.wireframe"><summary><code class="name">mat.wireframe</code><span class="sum">The edges as lines of a width in pixels, the faces open, filled or hidden; unlit</span></summary>
+<details class="entry node" id="mat.wireframe"><summary><code class="name">mat.wireframe</code><span class="sum">Draws the edges of geometry as lines, the faces open, filled or hidden: a technical or retro look</span></summary>
 <div class="body">
-<p>The edges as lines of a width in pixels, the faces open, filled or hidden; unlit</p>
+<p>Draws the edges of geometry as lines, the faces open, filled or hidden: a technical or retro look</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>texture</code> <span class="kind">tex</span></li>
@@ -3496,9 +3576,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-light">
 <h3>light</h3>
 <p class="kinds"><a href="#light.ambient">light.ambient</a> <a href="#light.directional">light.directional</a> <a href="#light.environment">light.environment</a> <a href="#light.merge">light.merge</a> <a href="#light.point">light.point</a> <a href="#light.projector">light.projector</a> <a href="#light.spot">light.spot</a></p>
-<details class="entry node" id="light.ambient"><summary><code class="name">light.ambient</code><span class="sum">Light from everywhere alike, also where a surface faces away</span></summary>
+<details class="entry node" id="light.ambient"><summary><code class="name">light.ambient</code><span class="sum">Even light from every side, also on surfaces that face away: lifts the shadows</span></summary>
 <div class="body">
-<p>Light from everywhere alike, also where a surface faces away</p>
+<p>Even light from every side, also on surfaces that face away: lifts the shadows</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3514,9 +3594,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="light.directional"><summary><code class="name">light.directional</code><span class="sum">Parallel light from far away, as the sun</span></summary>
+<details class="entry node" id="light.directional"><summary><code class="name">light.directional</code><span class="sum">Parallel light from far away, like the sun</span></summary>
 <div class="body">
-<p>Parallel light from far away, as the sun</p>
+<p>Parallel light from far away, like the sun</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3537,9 +3617,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="light.environment"><summary><code class="name">light.environment</code><span class="sum">Light from a picture of everything around (equirectangular): soft light and reflections</span></summary>
+<details class="entry node" id="light.environment"><summary><code class="name">light.environment</code><span class="sum">Light from a panorama picture of the surroundings (equirectangular): soft, natural light and reflections</span></summary>
 <div class="body">
-<p>Light from a picture of everything around (equirectangular): soft light and reflections</p>
+<p>Light from a panorama picture of the surroundings (equirectangular): soft, natural light and reflections</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>texture</code> <span class="kind">tex</span></li>
@@ -3560,9 +3640,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="light.merge"><summary><code class="name">light.merge</code><span class="sum">The lights of several inputs, for one render</span></summary>
+<details class="entry node" id="light.merge"><summary><code class="name">light.merge</code><span class="sum">Combines several lights for one render</span></summary>
 <div class="body">
-<p>The lights of several inputs, for one render</p>
+<p>Combines several lights for one render</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in0</code> <span class="kind">light</span></li>
@@ -3575,9 +3655,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <li><code>out</code> <span class="kind">light</span></li>
 </ul>
 </div></details>
-<details class="entry node" id="light.point"><summary><code class="name">light.point</code><span class="sum">Light from a point, in every direction</span></summary>
+<details class="entry node" id="light.point"><summary><code class="name">light.point</code><span class="sum">Light from a point in every direction, like a bare bulb</span></summary>
 <div class="body">
-<p>Light from a point, in every direction</p>
+<p>Light from a point in every direction, like a bare bulb</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3596,9 +3676,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="light.projector"><summary><code class="name">light.projector</code><span class="sum">A projector: throws its texture onto the geometry through a camera node's view</span></summary>
+<details class="entry node" id="light.projector"><summary><code class="name">light.projector</code><span class="sum">A projector in the 3D scene: throws its picture onto the geometry from where a camera node stands</span></summary>
 <div class="body">
-<p>A projector: throws its texture onto the geometry through a camera node's view</p>
+<p>A projector in the 3D scene: throws its picture onto the geometry from where a camera node stands</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>camera</code> <span class="kind">view</span></li>
@@ -3622,9 +3702,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#navigation-orthographic-cameras">Looking around in 3D › Orthographic cameras</a></p>
 </div></details>
-<details class="entry node" id="light.spot"><summary><code class="name">light.spot</code><span class="sum">Light from a point, in a cone towards the target</span></summary>
+<details class="entry node" id="light.spot"><summary><code class="name">light.spot</code><span class="sum">Light from a point in a cone towards a target, like a stage spot</span></summary>
 <div class="body">
-<p>Light from a point, in a cone towards the target</p>
+<p>Light from a point in a cone towards a target, like a stage spot</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3652,9 +3732,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-view">
 <h3>view</h3>
 <p class="kinds"><a href="#view.camera">view.camera</a></p>
-<details class="entry node" id="view.camera"><summary><code class="name">view.camera</code><span class="sum">A camera: where it is, what it looks at, its lens; for tex.render's camera input and light.projector</span></summary>
+<details class="entry node" id="view.camera"><summary><code class="name">view.camera</code><span class="sum">A viewpoint into the 3D scene (position, target, lens): for tex.render, and as the lens of a light.projector</span></summary>
 <div class="body">
-<p>A camera: where it is, what it looks at, its lens; for tex.render's camera input and light.projector</p>
+<p>A viewpoint into the 3D scene (position, target, lens): for tex.render, and as the lens of a light.projector</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>
@@ -3684,9 +3764,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-script">
 <h3>script</h3>
 <p class="kinds"><a href="#script.python">script.python</a></p>
-<details class="entry node" id="script.python"><summary><code class="name">script.python</code><span class="sum">A Python script: cook(cx) turns channels and tables in into channels and a table out</span></summary>
+<details class="entry node" id="script.python"><summary><code class="name">script.python</code><span class="sum">Logic of your own in Python: turns channels and tables into new channels and a table</span></summary>
 <div class="body">
-<p>A Python script: cook(cx) turns channels and tables in into channels and a table out</p>
+<p>Logic of your own in Python: turns channels and tables into new channels and a table</p>
 <p class="note">Declares further params per node, from its file or code.</p>
 <h4>Inputs</h4>
 <ul>
@@ -3716,9 +3796,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-out">
 <h3>out</h3>
 <p class="kinds"><a href="#out.dmx">out.dmx</a> <a href="#out.ndi">out.ndi</a> <a href="#out.projector">out.projector</a> <a href="#out.spout">out.spout</a> <a href="#out.video">out.video</a></p>
-<details class="entry node" id="out.dmx"><summary><code class="name">out.dmx</code><span class="sum">Channels to DMX slots: Enttec Open DMX USB, Art-Net, sACN or DDP</span></summary>
+<details class="entry node" id="out.dmx"><summary><code class="name">out.dmx</code><span class="sum">Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</span></summary>
 <div class="body">
-<p>Channels to DMX slots: Enttec Open DMX USB, Art-Net, sACN or DDP</p>
+<p>Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>chans</code> <span class="kind">chan</span></li>
@@ -3740,9 +3820,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#dmx">DMX</a>, <a href="#dmx-setting-up">DMX › Setting up</a>, <a href="#dmx-how-it-sends">DMX › How it sends</a></p>
 </div></details>
-<details class="entry node" id="out.ndi"><summary><code class="name">out.ndi</code><span class="sum">Offers its input on the network as an NDI® source (needs the NDI runtime, ndi.video)</span></summary>
+<details class="entry node" id="out.ndi"><summary><code class="name">out.ndi</code><span class="sum">Sends a picture over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)</span></summary>
 <div class="body">
-<p>Offers its input on the network as an NDI® source (needs the NDI runtime, ndi.video)</p>
+<p>Sends a picture over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span>: The picture to send</li>
@@ -3759,9 +3839,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#ndi-sending-outndi">NDI › Sending: out.ndi</a></p>
 </div></details>
-<details class="entry node" id="out.projector"><summary><code class="name">out.projector</code><span class="sum">A projector: shows its input fullscreen on a display, or in a part of it</span></summary>
+<details class="entry node" id="out.projector"><summary><code class="name">out.projector</code><span class="sum">Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors</span></summary>
 <div class="body">
-<p>A projector: shows its input fullscreen on a display, or in a part of it</p>
+<p>Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors</p>
 <p class="note">Follows the show clock: cooks again whenever time moves.</p>
 <h4>Inputs</h4>
 <ul>
@@ -3793,9 +3873,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#helpers-outputs">The Helpers window › Outputs</a>, <a href="#helpers-matching-projectors">The Helpers window › Matching projectors</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
-<details class="entry node" id="out.spout"><summary><code class="name">out.spout</code><span class="sum">Shares its input with other programs on this machine through Spout (Windows)</span></summary>
+<details class="entry node" id="out.spout"><summary><code class="name">out.spout</code><span class="sum">Shares a picture with other programs on this machine through Spout (Windows)</span></summary>
 <div class="body">
-<p>Shares its input with other programs on this machine through Spout (Windows)</p>
+<p>Shares a picture with other programs on this machine through Spout (Windows)</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span>: The picture to share</li>
@@ -3845,9 +3925,9 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="group" id="family-comp">
 <h3>comp</h3>
 <p class="kinds"><a href="#comp.base">comp.base</a></p>
-<details class="entry node" id="comp.base"><summary><code class="name">comp.base</code><span class="sum">Holds nodes; its input and output nodes are its ports</span></summary>
+<details class="entry node" id="comp.base"><summary><code class="name">comp.base</code><span class="sum">A box of nodes: groups part of a network into one node, with inputs and outputs of its own (the in and out nodes inside)</span></summary>
 <div class="body">
-<p>Holds nodes; its input and output nodes are its ports</p>
+<p>A box of nodes: groups part of a network into one node, with inputs and outputs of its own (the in and out nodes inside)</p>
 <p class="note">Holds nodes of its own (a component).</p>
 <h4>Inputs</h4>
 <p>none</p>
@@ -3861,15 +3941,35 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <tr><td><code>expose</code></td><td>text</td><td></td><td></td><td>Inner params shown on the component, one per line: <code>name = node.param</code> or <code>node.param</code></td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="comp.base-what-it-is-for">What it is for</h5>
+<p>A network grows fast: a few scenes, a mapping, some audio analysis, and the editor is full. A component packs part of the network into a single node. From outside it looks like any other node, with inputs, outputs and a few params; inside it holds its own nodes, and you go in to work on them.</p>
+<p>That is good for three things:</p>
+<ul>
+<li><strong>Order.</strong> Each scene of a show, the mapping of each projector, the audio analysis: one component each, and the top level shows how they connect.
+</li>
+<li><strong>Reuse.</strong> A component can go into the library and be added to any project, as a copy.
+</li>
+<li><strong>A simple surface.</strong> Only the params you expose show on the component. The scene's speed and colour are on the outside; the twenty nodes that make it are tucked away.
+</li>
+</ul>
+<h5 id="comp.base-making-one">Making one</h5>
+<p>Select nodes and press Ctrl+G. penumbra puts them into a new component and adds a port wherever a wire crossed the edge of the selection. I or a double-click goes in, U goes back up. The node menu's &quot;Dissolve&quot; undoes the grouping.</p>
+<h5 id="comp.base-ports">Ports</h5>
+<p>Wires enter and leave a component only through ports, which are nodes inside it: <a class="ref" href="#tex.in"><code>tex.in</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#table.in"><code>table.in</code></a> are its inputs, <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.out"><code>chan.out</code></a> and <a class="ref" href="#table.out"><code>table.out</code></a> its outputs. What is wired to an input outside comes out of the matching <code>.in</code> node inside; what is wired into a <code>.out</code> node inside comes out of the component. Bindings and <a class="ref" href="#tex.select"><code>tex.select</code></a> are not wires: they may reach in and out of components by path.</p>
+<h5 id="comp.base-exposed-params">Exposed params</h5>
+<p><code>expose</code> lists inner params to show on the component, one per line: <code>noise1.speed</code>, or with a name of its own, <code>speed = noise1.speed</code>. Changing the exposed param changes the inner one, and you can bind it like any param.</p>
+<p>More in the Components section of the concepts guide.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
 </div>
 <div class="group" id="family-node">
 <h3>node</h3>
 <p class="kinds"><a href="#node.broken">node.broken</a></p>
-<details class="entry node" id="node.broken"><summary><code class="name">node.broken</code><span class="sum">A node whose entry in the project file did not load, kept as it was</span></summary>
+<details class="entry node" id="node.broken"><summary><code class="name">node.broken</code><span class="sum">Stands in for a node the project file could not load, and keeps its entry as it was, so nothing is lost</span></summary>
 <div class="body">
-<p>A node whose entry in the project file did not load, kept as it was</p>
+<p>Stands in for a node the project file could not load, and keeps its entry as it was, so nothing is lost</p>
 <h4>Inputs</h4>
 <p>none</p>
 <h4>Outputs</h4>

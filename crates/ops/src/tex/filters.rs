@@ -98,7 +98,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 }
             },
             ..pass(
-                filter("tex.flip", "Mirror left to right or top to bottom; flop swaps the axes")
+                filter("tex.flip", "Mirrors a picture left to right or top to bottom, or turns its rows into columns")
                     .param(ParamSpec::bool("flip_x", false).doc("Mirror left to right: the left edge becomes the right"))
                     .param(ParamSpec::bool("flip_y", false).doc("Mirror top to bottom: the top edge becomes the bottom"))
                     .param(
@@ -109,7 +109,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             )
         },
         pass(
-            filter("tex.channel_mix", "Each output channel a weighted sum of the input's channels")
+            filter("tex.channel_mix", "Mixes the colour channels anew: swap red and blue, make grey from one channel, turn alpha into colour")
                 .param(
                     ParamSpec::vec4("red", [1.0, 0.0, 0.0, 0.0])
                         .range(-2.0, 2.0)
@@ -139,7 +139,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             include_str!("channel_mix.wgsl"),
         ),
         pass(
-            filter("tex.chroma_key", "Make pixels near a key colour transparent (green or blue screen)")
+            filter("tex.chroma_key", "Cuts out a green or blue screen: pixels near a key colour become transparent")
                 .param(
                     ParamSpec::color("key", [0.0, 1.0, 0.0, 1.0])
                         .doc("The screen's colour; only its hue and saturation count, so shadows on the screen key too"),
@@ -169,7 +169,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             include_str!("chroma_key.wgsl"),
         ),
         pass(
-            NodeDesc::new("tex.cross", "Mix of two inputs; resolution of a")
+            NodeDesc::new("tex.cross", "Crossfades between two pictures: 0 shows a, 1 shows b")
                 .param(
                     ParamSpec::float("cross", 0.5)
                         .range(0.0, 1.0)
@@ -177,11 +177,12 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 )
                 .input("a", DataKind::Tex)
                 .input("b", DataKind::Tex)
+                .describe_input("a", "The output has its size")
                 .output("out", DataKind::Tex),
             include_str!("cross.wgsl"),
         ),
         pass(
-            NodeDesc::new("tex.displace", "Push each pixel of the input by the values of a map")
+            NodeDesc::new("tex.displace", "Warps a picture by another: each pixel is pushed by the values of a map (ripples, heat haze, flow)")
                 .param(push(
                     "horizontal",
                     "red",
@@ -205,7 +206,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             include_str!("displace.wgsl"),
         ),
         pass(
-            filter("tex.edge", "Edges of the luminance (Sobel)")
+            filter("tex.edge", "Finds the edges in a picture and draws them as lines: outlines, a sketched look")
                 .param(
                     ParamSpec::float("strength", 2.0)
                         .range(0.0, 10.0)
@@ -233,7 +234,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             fold: false,
             ..pass(
                 size_params(
-                    filter("tex.fit", "The input fitted into a frame of its own size, aspect kept or not"),
+                    filter("tex.fit", "Fits a picture into a frame of another size or shape: whole with bars, cropped to fill, or stretched"),
                     false,
                     "",
                 )
@@ -262,7 +263,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             )
         },
         pass(
-            filter("tex.lens_distort", "Radial lens distortion (barrel or pincushion) around a centre")
+            filter("tex.lens_distort", "Bends a picture as a lens does (barrel or pincushion), or straightens what a lens bent")
                 .param(
                     ParamSpec::float("k1", 0.1)
                         .range(-1.0, 1.0)
@@ -287,7 +288,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             include_str!("lens_distort.wgsl"),
         ),
         pass(
-            filter("tex.limit", "Keep values within a range: clamp, wrap around or mirror")
+            filter("tex.limit", "Keeps values within a range: clips them, or wraps or mirrors them back in (a ramp becomes repeating stripes)")
                 .param(
                     ParamSpec::float("min", 0.0)
                         .range(-1.0, 2.0)
@@ -315,7 +316,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             // The lookup texture is read along a row by value, not shown.
             density: |_, _, input, _| if input == 1 { Density::Unrelated } else { Density::SAME },
             ..pass(
-                NodeDesc::new("tex.lookup", "Colours from a lookup texture, indexed by the input's values")
+                NodeDesc::new("tex.lookup", "Recolours a picture through a strip of colours: brightness picks the colour (a gradient map), or a curve per channel")
                     .param(
                         ParamSpec::choice("index", &["luminance", "channels"])
                             .doc("Which input values pick the place in the lookup row (0 its left end, 1 its right)")
@@ -336,7 +337,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
         pass(
             NodeDesc::new(
                 "tex.matte",
-                "Where the matte is white a shows, where it is black b; resolution of a",
+                "Shows one picture where a mask is white and another where it is black",
             )
             .param(
                 channel("Channel of the matte that chooses; colour is read on black (premultiplied)"),
@@ -345,11 +346,13 @@ pub(super) fn builtins() -> Vec<Builtin> {
             .input("a", DataKind::Tex)
             .input("b", DataKind::Tex)
             .input("matte", DataKind::Tex)
+            .describe_input("a", "Shows where the matte is white. The output has its size")
+            .describe_input("b", "Shows where the matte is black")
             .output("out", DataKind::Tex),
             include_str!("matte.wgsl"),
         ),
         pass(
-            filter("tex.monochrome", "Grey from luminance, average, maximum or one channel")
+            filter("tex.monochrome", "Makes a picture grey: by brightness, by the average or the brightest channel, or from one channel")
                 .param(
                     ParamSpec::choice("method", &["luminance", "average", "maximum", "red", "green", "blue", "alpha"])
                         .doc("How the grey is made from the colour")
@@ -365,7 +368,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             include_str!("monochrome.wgsl"),
         ),
         pass(
-            filter("tex.hsv", "Turn the hue, scale saturation and value")
+            filter("tex.hsv", "Turns the colours round the colour wheel and makes them more vivid or paler, brighter or darker")
                 .param(
                     ParamSpec::float("hue", 0.0)
                         .range(-180.0, 180.0)
@@ -385,7 +388,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             include_str!("hsv.wgsl"),
         ),
         pass(
-            NodeDesc::new("tex.remap", "Fetch the input where a map's red and green point")
+            NodeDesc::new("tex.remap", "Rearranges a picture by a map: each pixel shows the input where the map's red and green point. Undistorts, unwraps, carries a camera's view onto a projector")
                 .param(extend("hold").doc("What shows where the map points outside 0 to 1"))
                 .input("in", DataKind::Tex)
                 .input("map", DataKind::Tex)
@@ -422,7 +425,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 size_params(
                     filter(
                         "tex.resolution",
-                        "The input at another resolution. Shrinking averages the pixels, so nothing aliases",
+                        "Scales a picture to another size, smaller to save work, say; shrinking stays smooth, without aliasing",
                     )
                     .param(
                         ParamSpec::choice("mode", &["multiply", "custom"])
@@ -444,7 +447,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
             )
         },
         pass(
-            filter("tex.slope", "How steeply a channel rises: left to right in red, top to bottom in green")
+            filter("tex.slope", "How steeply a height map or picture rises, left to right in red and top to bottom in green: relief, or a map for tex.displace")
                 .param(channel("Channel whose slope is measured"))
                 .param(
                     ParamSpec::float("strength", 4.0)
@@ -462,7 +465,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
         pass(
             filter(
                 "tex.threshold",
-                "White where a channel is above a threshold, black (or transparent) elsewhere",
+                "A mask from brightness: white where a channel is above a value, black or transparent elsewhere",
             )
             .param(
                 ParamSpec::float("threshold", 0.5)
@@ -491,7 +494,7 @@ pub(super) fn builtins() -> Vec<Builtin> {
                 _ => Density::SAME,
             },
             ..pass(
-                filter("tex.tile", "The input repeated across and down, at its own resolution")
+                filter("tex.tile", "Repeats a picture as a grid of smaller copies, at the input's size")
                     .param(
                         ParamSpec::vec2("repeat", [2.0, 2.0])
                             .range(1.0, 16.0)

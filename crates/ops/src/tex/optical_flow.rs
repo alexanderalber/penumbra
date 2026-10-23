@@ -37,7 +37,7 @@ const SMOOTH: i64 = 4;
 const MAX_SMOOTH: i64 = 6;
 
 fn desc() -> NodeDesc {
-    NodeDesc::new(KIND, "How far each part of the picture moved since the previous frame (optical flow)")
+    NodeDesc::new(KIND, "Measures how each part of the picture moves from frame to frame: motion to stir a fluid or drive a displacement")
         .stateful()
         .param(ParamSpec::bool("colors", false).doc(
             "Show the motion as colours: direction as hue, speed as brightness. For looking at the \

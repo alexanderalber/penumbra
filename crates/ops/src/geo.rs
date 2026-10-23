@@ -34,7 +34,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "geo.file",
-            "A mesh file (OBJ, STL, glTF/GLB) with its parts; reloads when the file changes",
+            "A 3D model from a file (OBJ, STL, glTF/GLB) with its parts; updates when the file changes",
         )
         .param(
             ParamSpec::file("file", penumbra_mesh::EXTENSIONS)
@@ -71,7 +71,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(GeoFile::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("geo.primitive", "A box, a sphere or a plane, centred on the origin")
+        NodeDesc::new("geo.primitive", "A simple shape: a box, a sphere or a plane, centred on the origin")
             .param(
                 ParamSpec::choice("shape", &["box", "sphere", "plane"])
                     .doc("Which shape, centred on the origin; size sets its measures")
@@ -103,40 +103,45 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Primitive) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("geo.transform", "Scale, rotate, then translate")
-            .param(
-                ParamSpec::vec3("translate", [0.0; 3])
-                    .range(-10.0, 10.0)
-                    .doc("Move along x, y, z (z up), in scene units (metres), after scale and rotate"),
-            )
-            .param(
-                ParamSpec::vec3("rotate", [0.0; 3])
-                    .range(-180.0, 180.0)
-                    .unit(Unit::Degrees)
-                    .doc("Turn about x, then y, then z, after scale and before translate"),
-            )
-            .param(ParamSpec::vec3("scale", [1.0; 3]).range(0.0, 4.0).doc(
+        NodeDesc::new(
+            "geo.transform",
+            "Moves, turns and scales geometry (scale first, then rotate, then move)",
+        )
+        .param(
+            ParamSpec::vec3("translate", [0.0; 3])
+                .range(-10.0, 10.0)
+                .doc("Move along x, y, z (z up), in scene units (metres), after scale and rotate"),
+        )
+        .param(
+            ParamSpec::vec3("rotate", [0.0; 3])
+                .range(-180.0, 180.0)
+                .unit(Unit::Degrees)
+                .doc("Turn about x, then y, then z, after scale and before translate"),
+        )
+        .param(
+            ParamSpec::vec3("scale", [1.0; 3]).range(0.0, 4.0).doc(
                 "Size along x, y, z around the origin, applied first: 1 keeps the size, negative mirrors",
-            ))
-            .param(
-                ParamSpec::float("uniform", 1.0)
-                    .range(0.001, 1000.0)
-                    .curve(Curve::Log)
-                    .doc("Times the scale: 0.001 turns millimetres into metres"),
-            )
-            .input("in", DataKind::Geo)
-            .output("out", DataKind::Geo),
+            ),
+        )
+        .param(
+            ParamSpec::float("uniform", 1.0)
+                .range(0.001, 1000.0)
+                .curve(Curve::Log)
+                .doc("Times the scale: 0.001 turns millimetres into metres"),
+        )
+        .input("in", DataKind::Geo)
+        .output("out", DataKind::Geo),
         || Box::new(Transform) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("geo.assign_material", "Puts a material on every model of the input")
+        NodeDesc::new("geo.assign_material", "Gives geometry a material: how it looks when rendered")
             .input("in", DataKind::Geo)
             .input("mat", DataKind::Mat)
             .output("out", DataKind::Geo),
         || Box::new(PutMaterial) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("geo.merge", "Several inputs as one; part ids continue from input to input")
+        NodeDesc::new("geo.merge", "Combines several pieces of geometry into one, to render them together")
             .input("in0", DataKind::Geo)
             .input("in1", DataKind::Geo)
             .input("in2", DataKind::Geo)
@@ -145,23 +150,26 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .input("in5", DataKind::Geo)
             .input("in6", DataKind::Geo)
             .input("in7", DataKind::Geo)
-            .output("out", DataKind::Geo),
+            .output("out", DataKind::Geo)
+            .describe_output("out", "All inputs as one; part ids continue from input to input"),
         || Box::new(Merge) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             "geo.instance",
-            "One copy of the input per table row. The first row names the columns that place each copy: tx ty tz, rx ry rz (degrees), sx sy sz. Part ids continue from copy to copy",
+            "Many copies of a model, each placed by a row of a table: a grid, a ring, a crowd of objects",
         )
         .input("in", DataKind::Geo)
         .input("table", DataKind::Table)
-        .output("out", DataKind::Geo),
+        .describe_input("table", "One row per copy. The first row names the columns: tx ty tz to move, rx ry rz to turn (degrees), sx sy sz to scale")
+        .output("out", DataKind::Geo)
+        .describe_output("out", "The copies; part ids continue from copy to copy"),
         || Box::new(Instance) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             "geo.tex_instance",
-            "One copy of the input per texel of position, drawn on the GPU. Copy i reads texel (i % width, i / width) of each texture: position's rgb moves the copy, scale's rgb scales it, aim's rgb turns its +y that way (+z kept up), color's rgb multiplies its colour",
+            "Thousands of copies of a model, placed, scaled, turned and coloured by pictures, all on the GPU: particles, swarms",
         )
         .param(
             ParamSpec::float("extent", 10.0)
@@ -176,6 +184,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .input("aim", DataKind::Tex)
         .input("scale", DataKind::Tex)
         .input("color", DataKind::Tex)
+        .describe_input("position", "One texel per copy: copy i reads texel (i % width, i / width). Its rgb moves the copy (x, y, z in metres)")
+        .describe_input("aim", "Its rgb turns the copy's +y towards that direction, keeping +z up")
+        .describe_input("scale", "Its rgb scales the copy per axis")
+        .describe_input("color", "Its rgb multiplies the copy's colour")
         .output("out", DataKind::Geo),
         || Box::new(TexInstance) as Box<dyn Operator>,
     ))?;

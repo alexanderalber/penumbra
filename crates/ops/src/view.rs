@@ -212,7 +212,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let more = penumbra_core::MORE;
     let desc = NodeDesc::new(
         CAMERA,
-        "A camera: where it is, what it looks at, its lens; for tex.render's camera input and light.projector",
+        "A viewpoint into the 3D scene (position, target, lens): for tex.render, and as the lens of a light.projector",
     )
     .param(
         ParamSpec::vec3("position", [2.4, -3.2, 1.6]).range(-10.0, 10.0).doc("Where the camera is, in metres (z up)"),
