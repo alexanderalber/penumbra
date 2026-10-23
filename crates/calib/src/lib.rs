@@ -9,7 +9,9 @@
 //! - Structured light ([`scan`]): Gray-code patterns for a projector and the decoding of a
 //!   camera's pictures of them into maps between camera and projector pixels; [`objects`]:
 //!   the objects in front of a surface from two such scans, and the blend of projectors on them;
-//!   [`relief`]: height maps of a mostly flat object from one scan, without a reference.
+//!   [`relief`]: height maps of a mostly flat object from one scan, without a reference;
+//!   [`scene`]: the planes of a scene and the objects on them from one scan ([`synthetic`]: a
+//!   ray-cast room to test it on).
 //! - Colour ([`colour`]): matching projectors to each other from a camera's pictures of their
 //!   red, green and blue ramps; [`flatfield`]: brightness and colour that vary across one
 //!   projector's picture, and the black level where projectors overlap.
@@ -22,7 +24,9 @@ pub mod objects;
 mod raster;
 pub mod relief;
 pub mod scan;
+pub mod scene;
 mod solve;
+pub mod synthetic;
 
 pub use camera::{Camera, Intrinsics, MAX_COORDINATE, Pose, unproject_clip};
 pub use homography::{Homography, MAX_PAIRS, ROBUST_SAMPLE, RobustFit};
@@ -36,5 +40,7 @@ mod objects_tests;
 mod relief_tests;
 #[cfg(test)]
 mod scan_tests;
+#[cfg(test)]
+mod scene_tests;
 #[cfg(test)]
 mod tests;

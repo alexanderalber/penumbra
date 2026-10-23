@@ -1365,6 +1365,185 @@ fn objects_and_blend_from_decoded_scans() {
 }
 
 #[test]
+fn scene_planes_top_and_heights_from_two_scans() {
+    use penumbra_calib::synthetic::{BOX, Room};
+    let f = Fixture::new("scan_scene");
+    let dir = f.engine.session().dir().to_path_buf();
+    // A crate on the floor in front of a wall, a ball on it, two projectors left and right of the
+    // camera, everything ray cast.
+    let room = Room::default();
+    let exr = |m: &penumbra_calib::objects::Map| {
+        penumbra_gpu::image::encode_exr_rgba32f(m.width as u32, m.height as u32, &m.rgba).unwrap()
+    };
+    for (p, name) in ["a", "b"].iter().enumerate() {
+        let folder = dir.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("proj_to_cam.exr"), exr(&room.to_camera(p).0)).unwrap();
+        std::fs::write(folder.join("cam_to_proj.exr"), exr(&room.from_camera(p))).unwrap();
+    }
+    let r = f.call("scan.scene", json!({"scans": ["a", "b"], "min_object": 500}));
+    if let Ok(to) = std::env::var("PENUMBRA_DUMP") {
+        for file in ["scene_view.png", "scene_0.png", "scene_1.png"] {
+            std::fs::copy(dir.join("scene").join(file), PathBuf::from(&to).join(file)).unwrap();
+        }
+    }
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    // Wall, top, front, floor: numbered top of the camera picture first, alike in both.
+    let planes = r["planes"].as_array().unwrap();
+    assert_eq!(planes.len(), 4, "{r}");
+    assert!(planes.iter().all(|p| p["seen_by"] == json!([0, 1])), "{r}");
+    assert_eq!(r["support"]["plane"], 2, "{r}");
+    assert_eq!(r["objects"].as_array().unwrap().len(), 1, "{r}");
+    // The top's corners where the camera sees them.
+    let corners = r["rectified"][0]["corners"].as_array().unwrap();
+    for (k, (u, v)) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)].iter().enumerate() {
+        let want = room.camera_point(room.top_point(0, *u, *v)).unwrap();
+        let got = [corners[k][0].as_f64().unwrap(), corners[k][1].as_f64().unwrap()];
+        assert!((got[0] - want[0]).hypot(got[1] - want[1]) < 1.5, "corner {k}: {got:?} vs {want:?}");
+    }
+    // Projector 0's pixel on the top's middle: its u and v.
+    let uv = penumbra_gpu::image::decode_file_raw(&dir.join("scene/uv_2_0.exr"), 8192, 1 << 24).unwrap();
+    let (pw, _) = room.projector;
+    let (map, truth) = room.to_camera(0);
+    let mut checked = 0;
+    for (i, t) in truth.iter().enumerate() {
+        let Some((penumbra_calib::synthetic::Surface::Top, pt)) = t else { continue };
+        let px = uv.rgba[i];
+        if px[2] < 1.0 {
+            continue;
+        }
+        let want = [(pt[0] - BOX[0][0]) / 6.0, (BOX[2][1] - pt[2]) / 4.0];
+        assert!(
+            (f64::from(px[0]) - want[0]).abs() < 0.02 && (f64::from(px[1]) - want[1]).abs() < 0.03,
+            "{i}: {px:?} vs {want:?}"
+        );
+        checked += 1;
+    }
+    assert!(checked > 1000, "{checked} top pixels with u and v");
+    let _ = (map, pw);
+    // Heights: the ball's top high, its rim on the crate low; mask on the ball.
+    let p0 = &r["projectors"][0]["heights"];
+    assert_eq!(p0["sign"]["heuristic"]["by"], "planes below", "{r}");
+    assert!(r["projectors"][1]["heights"]["to_first"]["correlation"].as_f64().unwrap() > 0.95, "{r}");
+    let h = penumbra_gpu::image::decode_file_raw(&dir.join("scene/height_0.exr"), 8192, 1 << 24).unwrap();
+    let m = penumbra_gpu::image::decode_file_raw(&dir.join("scene/mask_0.png"), 8192, 1 << 24).unwrap();
+    let (mut hi, mut lo) = (Vec::new(), Vec::new());
+    for (i, t) in truth.iter().enumerate() {
+        if let Some((penumbra_calib::synthetic::Surface::Ball, pt)) = t
+            && m.rgba[i][0] > 0.5
+        {
+            let above = pt[1] - BOX[1][1];
+            if above > 2.6 {
+                hi.push(h.rgba[i][0]);
+            } else if above < 1.0 {
+                lo.push(h.rgba[i][0]);
+            }
+        }
+    }
+    let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len().max(1) as f32;
+    assert!(
+        !hi.is_empty() && !lo.is_empty() && mean(&hi) > 0.8 && mean(&lo) < 0.4,
+        "{} {}",
+        mean(&hi),
+        mean(&lo)
+    );
+    for file in [
+        "planes_0.png",
+        "labels_1.png",
+        "planes_camera.png",
+        "objects_camera.png",
+        "uv_2_camera.exr",
+        "height_camera.exr",
+        "scene_view.png",
+        "scene.json",
+    ] {
+        assert!(dir.join("scene").join(file).exists(), "{file}");
+    }
+
+    assert!(f.fail("scan.scene", json!({"scans": []})).contains("scans"));
+    assert!(f.fail("scan.scene", json!({"scans": ["a"], "tolerance": 0})).contains("tolerance"));
+    assert!(
+        f.fail("scan.scene", json!({"scans": ["a"], "rectify": [{"plane": 1, "aspect": [60, -1]}]}))
+            .contains("aspect")
+    );
+    assert!(
+        f.fail("scan.scene", json!({"scans": ["a"], "rectify": [{"plane": 99, "aspect": [60, 40]}]}))
+            .contains("99")
+    );
+    assert!(f.fail("scan.scene", json!({"scans": ["a"], "support": 9})).contains("support"));
+}
+
+#[test]
+fn scene_rectifies_any_face_of_a_crate_landscape() {
+    use penumbra_calib::synthetic::Room;
+    let f = Fixture::new("scan_scene_landscape");
+    let dir = f.engine.session().dir().to_path_buf();
+    let room = Room::landscape();
+    let exr = |m: &penumbra_calib::objects::Map| {
+        penumbra_gpu::image::encode_exr_rgba32f(m.width as u32, m.height as u32, &m.rgba).unwrap()
+    };
+    for (p, name) in ["a", "b"].iter().enumerate() {
+        let folder = dir.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("proj_to_cam.exr"), exr(&room.to_camera(p).0)).unwrap();
+        std::fs::write(folder.join("cam_to_proj.exr"), exr(&room.from_camera(p))).unwrap();
+    }
+    let r = f.call("scan.scene", json!({"scans": ["a", "b"], "min_object": 1500}));
+    // Floor, wall, three tops and three fronts at least (the sliver of a side in the gap, pieces
+    // of floor and wall cut off by the crates may come on top).
+    assert!(r["planes"].as_array().unwrap().len() >= 8, "{r}");
+    assert_eq!(r["objects"].as_array().unwrap().len(), 1, "{r}");
+    // The stacked crate's front: its number from the camera picture of the faces.
+    let (cw, _) = room.camera;
+    let faces =
+        penumbra_gpu::image::decode_file_raw(&dir.join("scene/planes_camera.png"), 8192, 1 << 24).unwrap();
+    let at = |p: [f64; 3]| {
+        let c = room.camera_point(p).unwrap();
+        (faces.rgba[c[1] as usize * cw + c[0] as usize][0] * faces.scale).round() as u16
+    };
+    let front = at(room.front_point(2, 0.5, 0.5));
+    assert!(front > 0 && front != at(room.front_point(0, 0.5, 0.5)), "{r}");
+    // The support is the right crate's top, and differs from the left one's.
+    assert_eq!(r["support"]["plane"].as_u64().unwrap() as u16, at(room.top_point(1, 0.2, 0.8)), "{r}");
+    assert_ne!(at(room.top_point(0, 0.5, 0.5)), at(room.top_point(1, 0.2, 0.8)), "{r}");
+
+    let r = f.call(
+        "scan.scene",
+        json!({"scans": ["a", "b"], "min_object": 1500, "out": "front", "rectify": [{"plane": front, "aspect": [60, 31]}]}),
+    );
+    if let Ok(to) = std::env::var("PENUMBRA_DUMP") {
+        for file in ["scene_view.png", "scene_0.png", "scene_1.png"] {
+            std::fs::copy(dir.join("front").join(file), PathBuf::from(&to).join(format!("landscape_{file}")))
+                .unwrap();
+        }
+    }
+    let face = &r["rectified"][0];
+    assert_eq!(face["corners_from"], "found", "{r}");
+    let corners = face["corners"].as_array().unwrap();
+    for (k, (u, v)) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)].iter().enumerate() {
+        let want = room.camera_point(room.front_point(2, *u, *v)).unwrap();
+        let got = [corners[k][0].as_f64().unwrap(), corners[k][1].as_f64().unwrap()];
+        assert!((got[0] - want[0]).hypot(got[1] - want[1]) < 2.0, "corner {k}: {got:?} vs {want:?}");
+    }
+    let uv = penumbra_gpu::image::decode_file_raw(
+        &dir.join(format!("front/uv_{front}_camera.exr")),
+        8192,
+        1 << 24,
+    )
+    .unwrap();
+    let c = room.camera_point(room.front_point(2, 0.3, 0.6)).unwrap();
+    let px = uv.rgba[c[1] as usize * cw + c[0] as usize];
+    assert!((px[0] - 0.3).abs() < 0.02 && (px[1] - 0.6).abs() < 0.02 && px[2] == 1.0, "{px:?}");
+    // Corners given are taken as they are.
+    let given = json!([[100, 100], [200, 100], [200, 150], [100, 150]]);
+    let r = f.call(
+        "scan.scene",
+        json!({"scans": ["a"], "out": "given", "rectify": [{"plane": 1, "aspect": [1, 1], "corners": given}]}),
+    );
+    assert_eq!(r["rectified"][0]["corners_from"], "given", "{r}");
+}
+
+#[test]
 fn relief_heights_and_masks_from_two_scans() {
     let f = Fixture::new("scan_relief");
     let dir = f.engine.session().dir().to_path_buf();

@@ -116,6 +116,12 @@ pub enum Heuristic {
     Wall { pixels: usize, median: f32 },
     /// The skewness of the heights on the panel before orienting.
     Skew { skew: f32 },
+    /// An object on a plane ([`crate::scene::relief`]): the measured pixels of the other planes
+    /// below the support in the camera picture (count, their median height before orienting).
+    Below { pixels: usize, median: f32 },
+    /// An object on a plane, no other plane below it: the object's pixels next to its support
+    /// (count, their median height minus the object's, before orienting).
+    Contact { pixels: usize, median: f32 },
 }
 
 impl Heuristic {
@@ -123,6 +129,8 @@ impl Heuristic {
         match self {
             Heuristic::Wall { .. } => "wall behind",
             Heuristic::Skew { .. } => "skew",
+            Heuristic::Below { .. } => "planes below",
+            Heuristic::Contact { .. } => "contact low",
         }
     }
 }
@@ -244,7 +252,9 @@ pub fn analyse(map: &Map, from_camera: &Map, o: &ReliefOptions) -> Result<Relief
         Heuristic::Skew { skew: skewness(&on_piece) }
     };
     let up = match heuristic {
-        Heuristic::Wall { median, .. } => median <= 0.0,
+        Heuristic::Wall { median, .. }
+        | Heuristic::Below { median, .. }
+        | Heuristic::Contact { median, .. } => median <= 0.0,
         Heuristic::Skew { skew } => skew >= 0.0,
     };
     if !up {
@@ -367,7 +377,7 @@ fn largest(w: usize, h: usize, mask: &[bool]) -> Vec<bool> {
 }
 
 /// The unit main axis of 2-D points around their mean.
-fn main_direction(points: &[[f64; 2]]) -> [f64; 2] {
+pub(crate) fn main_direction(points: &[[f64; 2]]) -> [f64; 2] {
     let n = points.len().max(1) as f64;
     let mx = points.iter().map(|p| p[0]).sum::<f64>() / n;
     let my = points.iter().map(|p| p[1]).sum::<f64>() / n;
@@ -382,7 +392,7 @@ fn main_direction(points: &[[f64; 2]]) -> [f64; 2] {
     [t.cos(), t.sin()]
 }
 
-fn quantile(sorted: &[f64], q: f64) -> f64 {
+pub(crate) fn quantile(sorted: &[f64], q: f64) -> f64 {
     let at = ((sorted.len().max(1) as f64 - 1.0) * q).round() as usize;
     sorted.get(at).copied().unwrap_or(f64::NAN)
 }
