@@ -90,7 +90,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          quality.png; {frames (folder, relative to the project; or a list of folders: scans of one projector \
          at different levels of light, merged per camera pixel, the surest decode winning, the first's colour), projector?: [w, h] (1920, 1080), \
          out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, \
-         saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture)}}",
+         saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture), \
+         epipolar? (px a decoded pixel may lie off the geometry the decode as a whole obeys, else it is dropped: light thrown on by the walls decodes wrong, 4; 0 off)}}",
         move |p| {
             let a: DecodeArgs = args(p)?;
             decode(e.session().dir(), &a)
@@ -347,6 +348,7 @@ pub(crate) fn write_decoded(
         "bits": stats.bits,
         "resolved_bits": stats.resolved,
         "step": stats.step,
+        "off_geometry": stats.off_geometry,
         "files": files,
     });
     let Json::Object(mut fields) = fields else { return Err("lost the counts".into()) };

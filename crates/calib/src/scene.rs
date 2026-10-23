@@ -109,6 +109,9 @@ const REGROW: u32 = 6;
 const FACE_WINS: f64 = 0.5;
 const FACE_WINS_MIN: usize = 200;
 const CAMERA_REACH: u32 = 2;
+/// [`carve_disputed_objects`]: how far (camera pixels) another projector's object reaches when it
+/// is asked whether it agrees.
+const AGREE_REACH: u32 = 6;
 /// Closing and opening of the objects, projector pixels.
 const OBJECT_CLOSE: u32 = 3;
 const OBJECT_OPEN: u32 = 3;
@@ -620,6 +623,106 @@ pub fn drop_objects_on_faces(scenes: &mut [SceneParts], maps: &[&Map], camera: (
         }
     }
     dropped
+}
+
+/// Where two projectors disagree about an object, pixel by pixel, the object loses: a box's face
+/// one projector sees at a grazing angle decodes too noisily for a plane and joins the object
+/// standing next to it, as do the seams and rims between faces, while the other projector,
+/// facing them, finds the face or leaves them out as surface detail. Each projector's object
+/// pixels that land, in the camera picture, where another projector measures but sees no object
+/// are taken out of the objects (left unexplained); what is left is opened, its holes filled (not with faces, so
+/// a face the other projector found inside an object, a flat patch on a curved one, does not cut
+/// it) and its pieces smaller than `min_object[p]` dropped, and the objects are numbered again by
+/// size. Returns per projector the projector pixels taken out.
+pub fn carve_disputed_objects(
+    scenes: &mut [SceneParts],
+    maps: &[&Map],
+    camera: (usize, usize),
+    min_object: &[usize],
+) -> Vec<usize> {
+    let (cw, ch) = camera;
+    let mut carved = vec![0usize; scenes.len()];
+    if scenes.len() < 2 || maps.len() != scenes.len() || cw == 0 || ch == 0 {
+        return carved;
+    }
+    // Per projector the camera pixels it measures, and those on its objects (grown a little: the
+    // projectors' outlines of an object differ by a few pixels), gaps the decode leaves closed.
+    let views: Vec<(Vec<bool>, Vec<bool>)> = scenes
+        .iter()
+        .zip(maps)
+        .map(|(s, map)| {
+            let (mut seen, mut object) = (vec![false; cw * ch], vec![false; cw * ch]);
+            for i in 0..map.len() {
+                if !map.measured(i) {
+                    continue;
+                }
+                let Some(c) = map.pixel_in(i, cw, ch) else { continue };
+                if let Some(x) = seen.get_mut(c) {
+                    *x = true;
+                }
+                if s.object_labels.get(i).is_some_and(|l| *l > 0)
+                    && let Some(x) = object.get_mut(c)
+                {
+                    *x = true;
+                }
+            }
+            let object = raster::dilate(cw, ch, &raster::close(cw, ch, &object, CAMERA_REACH), AGREE_REACH);
+            (raster::close(cw, ch, &seen, CAMERA_REACH), object)
+        })
+        .collect();
+    for (p, (s, map)) in scenes.iter_mut().zip(maps).enumerate() {
+        let (w, h) = (s.width, s.height);
+        if s.object_labels.iter().all(|l| *l == 0) || map.len() != w * h {
+            continue;
+        }
+        let on_other: Vec<bool> = (0..w * h)
+            .map(|i| {
+                s.object_labels.get(i).is_some_and(|l| *l > 0)
+                    && map.measured(i)
+                    && map.pixel_in(i, cw, ch).is_some_and(|c| {
+                        views.iter().enumerate().any(|(q, (seen, object))| {
+                            q != p && seen.get(c) == Some(&true) && object.get(c) != Some(&true)
+                        })
+                    })
+            })
+            .collect();
+        if !on_other.iter().any(|x| *x) {
+            continue;
+        }
+        // The unmeasured pixels between carved ones go with them.
+        let cut = raster::close(w, h, &on_other, CAMERA_REACH);
+        let mask: Vec<bool> = s.object_labels.iter().zip(&cut).map(|(l, c)| *l > 0 && !*c).collect();
+        let mask = raster::open(w, h, &mask, OBJECT_OPEN);
+        let filled = raster::fill_holes(w, h, &mask);
+        let mask: Vec<bool> =
+            filled.iter().zip(&mask).zip(&s.plane_labels).map(|((f, m), l)| *m || (*f && *l == 0)).collect();
+        let least = min_object.get(p).copied().unwrap_or(1);
+        let mask = keep_large(w, h, &mask, least);
+        let (comp, sizes) = raster::components(w, h, &mask);
+        let mut order: Vec<(usize, usize)> = sizes.iter().enumerate().map(|(k, z)| (*z, k + 1)).collect();
+        order.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        order.truncate(MAX_PARTS);
+        let mut number = vec![0u16; sizes.len() + 1];
+        for (k, (_, c)) in order.iter().enumerate() {
+            if let Some(m) = number.get_mut(*c) {
+                *m = u16::try_from(k + 1).unwrap_or(0);
+            }
+        }
+        let mut gone = 0usize;
+        for (i, (l, c)) in s.object_labels.iter_mut().zip(&comp).enumerate() {
+            let next = number.get(*c as usize).copied().unwrap_or(0);
+            if *l > 0 && next == 0 && map.measured(i) && s.plane_labels.get(i) == Some(&0) {
+                gone += 1;
+            }
+            *l = next;
+        }
+        s.unexplained += gone;
+        s.objects = order.len();
+        if let Some(x) = carved.get_mut(p) {
+            *x = gone;
+        }
+    }
+    carved
 }
 
 /// Per pixel the first face whose region holds it.

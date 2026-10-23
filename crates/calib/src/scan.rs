@@ -47,6 +47,15 @@ pub const MAX_FILL: u32 = 1024;
 /// [`Options::window`]: its default and largest value, camera pixels.
 pub const DEFAULT_WINDOW: u32 = 7;
 pub const MAX_WINDOW: u32 = 256;
+/// Default of [`Options::epipolar`], pixels. Measured on real scans of crates and a pumpkin: 99 %
+/// of the decoded pixels lie within 2.1 to 2.7 px of the decode's own geometry, 0.1 to 1.1 %
+/// beyond 4 px; pixels decoded from light thrown back by the walls (not from the projector)
+/// lie a median 50 to 200 px off.
+pub const DEFAULT_EPIPOLAR: f32 = 4.0;
+/// Fewest decoded pixels the geometry check runs on, and the least share of them its fit must
+/// hold to be trusted (else nothing is dropped).
+const GEOMETRY_MIN: usize = 2000;
+const GEOMETRY_TRUST: f64 = 0.2;
 /// A window holding fewer reached pixels than this share of its area judges by the whole picture.
 const WINDOW_SHARE: f64 = 0.25;
 /// Most bits per axis a window may resolve fewer than the whole picture and still judge alone.
@@ -211,6 +220,9 @@ pub struct Options {
     /// Which bits count towards a pixel's confidence is judged over this many camera pixels
     /// around it (a square of `2 window + 1`); 0 judges over the whole picture.
     pub window: u32,
+    /// A decoded pixel further than this (pixels) off the epipolar geometry that the decode as a
+    /// whole obeys is dropped as inconsistent ([`crate::epipolar`]); 0 keeps every pixel.
+    pub epipolar: f32,
 }
 
 impl Default for Options {
@@ -221,6 +233,7 @@ impl Default for Options {
             min_confidence: 0.2,
             tolerance: 3.0,
             window: DEFAULT_WINDOW,
+            epipolar: DEFAULT_EPIPOLAR,
         }
     }
 }
@@ -240,6 +253,9 @@ impl Options {
         }
         if !ok(self.tolerance, 0.0, 1e6) {
             return Err("`tolerance` is 0 or more projector pixels".into());
+        }
+        if !ok(self.epipolar, 0.0, 1e6) {
+            return Err("`epipolar` is 0 (off) or more pixels".into());
         }
         if self.window > MAX_WINDOW {
             return Err(format!("`window` is 0 to {MAX_WINDOW} camera pixels"));
@@ -599,6 +615,7 @@ impl Decoder {
                 *st = Status::Inconsistent;
             }
         }
+        let off_geometry = drop_off_geometry(&mut points, &mut status, &contrast, w, options.epipolar);
         for (c, p) in confidence.iter_mut().zip(&points) {
             if p.is_none() {
                 *c = 0.0;
@@ -618,6 +635,7 @@ impl Decoder {
                 bits: [self.patterns.column_bits(), self.patterns.row_bits()],
                 resolved: resolved_count,
                 step,
+                off_geometry,
             },
         })
     }
@@ -719,6 +737,64 @@ fn box_sums(w: usize, h: usize, r: usize, value: impl Fn(usize) -> f64) -> Vec<f
     out
 }
 
+/// Drops the decoded pixels (`points`, per camera pixel of a picture `w` wide) that lie further
+/// than `threshold` off the epipolar geometry most of them obey, marking them inconsistent;
+/// returns how many. Light the projector throws onto a wall that throws it on to another surface
+/// carries the stripes of where it came from, coarse ones mostly: the camera decodes them as if
+/// the projector lit that surface directly, often with a fair margin, at a projector pixel that
+/// lies nowhere near the surface. A bright pass in a niche of light surfaces decodes much of the
+/// picture so. The fit's hypotheses come from the brighter half of the decoded pixels (`contrast`,
+/// white minus black), which the projector lights directly; nothing is dropped when no fit holds
+/// [`GEOMETRY_TRUST`] of them.
+pub(crate) fn drop_off_geometry(
+    points: &mut [Option<[f32; 2]>],
+    status: &mut [Status],
+    contrast: &[f32],
+    w: usize,
+    threshold: f32,
+) -> usize {
+    if threshold.is_nan() || threshold <= 0.0 {
+        return 0;
+    }
+    let idx: Vec<usize> = points.iter().enumerate().filter(|(_, p)| p.is_some()).map(|(i, _)| i).collect();
+    if idx.len() < GEOMETRY_MIN {
+        return 0;
+    }
+    let w = w.max(1);
+    let from: Vec<[f64; 2]> = idx.iter().map(|i| [(i % w) as f64 + 0.5, (i / w) as f64 + 0.5]).collect();
+    let to: Vec<[f64; 2]> = idx
+        .iter()
+        .map(|i| {
+            points.get(*i).copied().flatten().map_or([f64::NAN; 2], |p| [f64::from(p[0]), f64::from(p[1])])
+        })
+        .collect();
+    let brightness: Vec<f32> = idx.iter().map(|i| contrast.get(*i).copied().unwrap_or(0.0)).collect();
+    let mut sorted = brightness.clone();
+    sorted.sort_by(f32::total_cmp);
+    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
+    let seeds: Vec<usize> =
+        brightness.iter().enumerate().filter(|(_, c)| **c >= median).map(|(k, _)| k).collect();
+    let Some(fit) = crate::epipolar::fit(&from, &to, &seeds, f64::from(threshold)) else { return 0 };
+    if fit.share < GEOMETRY_TRUST {
+        return 0;
+    }
+    let mut dropped = 0usize;
+    for (k, i) in idx.iter().enumerate() {
+        let (Some(p), Some(q)) = (from.get(k), to.get(k)) else { continue };
+        if fit.fundamental.distance(*p, *q) <= f64::from(threshold) {
+            continue;
+        }
+        if let Some(slot) = points.get_mut(*i) {
+            *slot = None;
+        }
+        if let Some(s) = status.get_mut(*i) {
+            *s = Status::Inconsistent;
+        }
+        dropped += 1;
+    }
+    dropped
+}
+
 /// Camera pixels per [`Status`], in the order of [`Status::ALL`].
 fn status_counts(status: &[Status]) -> [usize; 6] {
     let mut counts = [0usize; 6];
@@ -761,6 +837,8 @@ pub struct Stats {
     pub resolved: [u32; 2],
     /// Median step between neighbouring camera pixels, in projector pixels.
     pub step: f32,
+    /// Decoded pixels dropped (as inconsistent) for lying off the decode's epipolar geometry.
+    pub off_geometry: usize,
 }
 
 impl Stats {
@@ -900,6 +978,7 @@ pub fn fuse(scans: Vec<Scan>) -> Result<Fusion, String> {
         for (a, b) in out.stats.resolved.iter_mut().zip(s.stats.resolved) {
             *a = (*a).max(b);
         }
+        out.stats.off_geometry += s.stats.off_geometry;
     }
     let apart = (!apart.is_empty()).then(|| {
         apart.sort_by(f32::total_cmp);

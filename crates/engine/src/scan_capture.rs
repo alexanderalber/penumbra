@@ -90,7 +90,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          clips; the first level's colour; 1 to 4 levels), frames? (keep the camera frames as PNG in \
          out/<projector>/frames, frames_1, ... per level, false), verify? (take a picture only when two frames agree, true), \
          retries? (frames that may disagree, 3), fill? (projector px, 32), options?: {min_contrast?, \
-         saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture)}}",
+         saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture), \
+         epipolar? (px a decoded pixel may lie off the geometry the decode as a whole obeys, else it is dropped: light thrown on by the walls decodes wrong, 4; 0 off)}}",
         move |p| {
             let a: CaptureArgs = args(p)?;
             capture(&e, &a)

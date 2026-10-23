@@ -299,11 +299,13 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
     let t = Instant::now();
     let mut warnings: Vec<String> = Vec::new();
     let mut found: Vec<SceneParts> = Vec::new();
+    let mut min_objects: Vec<usize> = Vec::new();
     for (map, folder) in to_camera.iter().zip(&a.scans) {
         let min_object = match a.min_object {
             Some(m) => m as usize,
             None => (map.len() / 256).max(1),
         };
+        min_objects.push(min_object);
         let o = SceneOptions { min_object, ..base };
         let s = scene::analyse(map, camera, &o)
             .map_err(|e| CommandError(format!("{}: {e}", dir.join(folder).display())))?;
@@ -311,6 +313,9 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
     }
     let scans: Vec<&Map> = to_camera.iter().collect();
     // A face in one projector beats an object in another (a top one projector decodes badly).
+    // First pixel by pixel: a face one projector sees at a grazing angle joins the object next to
+    // it, where the other projector, facing it, finds the face; then whole objects.
+    let carved = scene::carve_disputed_objects(&mut found, &scans, camera, &min_objects);
     let objects_on_faces = scene::drop_objects_on_faces(&mut found, &scans, camera);
     // Faces given by their corners alone, claimed in every projector before the numbering.
     let mut claimed: Vec<(usize, Vec<Option<usize>>)> = Vec::new();
@@ -358,6 +363,14 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
         }
         claimed.push((j, per));
     }
+    // A claimed face is no object any more where one projector claimed it: the other one's object
+    // pixels there (it claims only the pixels it decoded well enough) lose to it.
+    let carved: Vec<usize> = if claimed.is_empty() {
+        carved
+    } else {
+        let again = scene::carve_disputed_objects(&mut found, &scans, camera, &min_objects);
+        carved.iter().zip(again).map(|(a, b)| a + b).collect()
+    };
 
     // Planes and objects numbered alike in every projector, top of the camera picture first.
     let plane_counts: Vec<usize> = found.iter().map(|s| s.planes.len()).collect();
@@ -637,6 +650,7 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             "planes": own,
             "dropped_planes": s.dropped_planes,
             "objects_on_faces": objects_on_faces.get(p).copied().unwrap_or(0),
+            "carved_px": carved.get(p).copied().unwrap_or(0),
             "objects": op.labels.iter().copied().max().unwrap_or(0),
             "unexplained": s.unexplained,
             "files": {"planes": planes, "labels": labels, "picture": picture, "uv": uv},

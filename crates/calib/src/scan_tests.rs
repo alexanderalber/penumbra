@@ -851,3 +851,57 @@ fn a_bright_and_a_dim_scan_merge_where_each_decodes() {
     let other = Setup::plain((128, 160), (240, 180)).scan(&Options::default()).0;
     assert!(fuse(vec![dim, other]).unwrap_err().contains("cannot merge"));
 }
+
+/// Light thrown on by a wall decodes as if the projector lit the surface directly, at a
+/// projector pixel nowhere near it: the decode's own epipolar geometry finds those pixels.
+#[test]
+fn pixels_off_the_geometry_are_dropped() {
+    let (w, h) = (320usize, 240usize);
+    let mut rng = Lcg(5);
+    // Camera at the origin looking at a wall with a box in front; the projector shifted and
+    // turned, at a projector of 640 x 480.
+    let project = |x: f64, y: f64, z: f64| {
+        let (c, s) = (0.25f64.cos(), 0.25f64.sin());
+        let (px, pz) = (c * x + s * z - 0.6, -s * x + c * z);
+        [320.0 + 500.0 * px / pz, 240.0 + 500.0 * y / pz]
+    };
+    let mut points: Vec<Option<[f32; 2]>> = vec![None; w * h];
+    let mut status = vec![Status::Dark; w * h];
+    let mut contrast = vec![0.0f32; w * h];
+    let mut bounced = vec![false; w * h];
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let (rx, ry) = ((x as f64 + 0.5 - 160.0) / 250.0, (y as f64 + 0.5 - 120.0) / 250.0);
+            // The box: nearer in the middle of the picture.
+            let z = if (100..220).contains(&x) && (80..200).contains(&y) { 2.0 } else { 3.0 };
+            let q = project(rx * z, ry * z, z);
+            // The right quarter of the picture: lit only by light the wall throws on, decoded at
+            // random coarse codes, dimmer.
+            let wrong = x >= 240;
+            let p = if wrong {
+                [(rng.next() * 8.0).floor() * 80.0 + 40.0, (rng.next() * 8.0).floor() * 60.0 + 30.0]
+            } else {
+                [(q[0] as f32).floor() + 0.5, (q[1] as f32).floor() + 0.5]
+            };
+            points[i] = Some(p);
+            status[i] = Status::Valid;
+            contrast[i] = if wrong { 0.05 } else { 0.4 + 0.1 * rng.next() };
+            bounced[i] = wrong;
+        }
+    }
+    let dropped = crate::scan::drop_off_geometry(&mut points, &mut status, &contrast, w, 4.0);
+    let kept_right = (0..w * h).filter(|i| !bounced[*i] && points[*i].is_some()).count();
+    let right = bounced.iter().filter(|b| !**b).count();
+    let kept_wrong = (0..w * h).filter(|i| bounced[*i] && points[*i].is_some()).count();
+    let wrong = bounced.iter().filter(|b| **b).count();
+    eprintln!("dropped {dropped}; kept {kept_right} of {right} right, {kept_wrong} of {wrong} wrong");
+    assert_eq!(kept_right, right);
+    assert!(kept_wrong * 20 < wrong, "{kept_wrong} of {wrong}");
+    assert!(status.iter().zip(&points).all(|(s, p)| p.is_some() == (*s == Status::Valid)));
+    assert!(status.iter().filter(|s| **s == Status::Inconsistent).count() == dropped);
+    // Off: nothing dropped.
+    let mut p2 = vec![Some([1.0f32, 1.0]); w * h];
+    let mut s2 = vec![Status::Valid; w * h];
+    assert_eq!(crate::scan::drop_off_geometry(&mut p2, &mut s2, &contrast, w, 0.0), 0);
+}

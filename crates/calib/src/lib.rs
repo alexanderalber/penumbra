@@ -11,13 +11,15 @@
 //!   the objects in front of a surface from two such scans, and the blend of projectors on them;
 //!   [`relief`]: height maps of a mostly flat object from one scan, without a reference;
 //!   [`scene`]: the planes of a scene and the objects on them from one scan ([`synthetic`]: a
-//!   ray-cast room to test it on).
+//!   ray-cast room to test it on); [`epipolar`]: the geometry every right pair of camera and
+//!   projector pixel obeys, which drops wrong decodes.
 //! - Colour ([`colour`]): matching projectors to each other from a camera's pictures of their
 //!   red, green and blue ramps; [`flatfield`]: brightness and colour that vary across one
 //!   projector's picture, and the black level where projectors overlap.
 
 mod camera;
 pub mod colour;
+pub mod epipolar;
 pub mod flatfield;
 mod homography;
 pub mod objects;

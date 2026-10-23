@@ -518,3 +518,45 @@ fn a_sagging_top_given_by_its_corners_is_claimed_whole() {
     assert!(m.corrected());
     assert!(m.error_px[1] < 0.7 * m.error_px[0] && m.error_px[1] < 1.5, "{:?}", m.error_px);
 }
+
+#[test]
+fn a_top_one_projector_merges_with_the_pumpkin_is_carved_out_by_the_other() {
+    let room = Room::pumpkin(2.0);
+    let least = |m: &crate::objects::Map| (m.rgba.len() / 256).max(1);
+    let o = |m: &crate::objects::Map| SceneOptions { min_object: least(m), ..SceneOptions::default() };
+    let (mut map0, truth0) = room.to_camera(0);
+    let (map1, _) = room.to_camera(1);
+    // The pumpkin's crate: projector 0 decodes its top far too noisy for any fit, so the top
+    // joins the pumpkin into one object there; projector 1 finds the top.
+    noisy_top(&room, &mut map0, &truth0, 1, 12.0);
+    let mut scenes = vec![
+        analyse(&map0, room.camera, &o(&map0)).unwrap(),
+        analyse(&map1, room.camera, &o(&map1)).unwrap(),
+    ];
+    let pumpkin_share = |s: &crate::scene::SceneParts| {
+        let (mut all, mut on) = (0usize, 0usize);
+        for (i, t) in truth0.iter().enumerate() {
+            if matches!(t, Some((Surface::Pumpkin, _))) && map0.measured(i) {
+                all += 1;
+                on += usize::from(s.object_labels[i] > 0);
+            }
+        }
+        on as f64 / all.max(1) as f64
+    };
+    let before = (top_shares(&scenes[0], &map0, &truth0, &room, 1), pumpkin_share(&scenes[0]));
+    // The whole object lies mostly on the pumpkin, which projector 1 sees as an object too: not
+    // dropped whole.
+    let carved = crate::scene::carve_disputed_objects(
+        &mut scenes,
+        &[&map0, &map1],
+        room.camera,
+        &[least(&map0), least(&map1)],
+    );
+    let after = (top_shares(&scenes[0], &map0, &truth0, &room, 1), pumpkin_share(&scenes[0]));
+    eprintln!("before {before:?}, after {after:?}, carved {carved:?}, {} objects", scenes[0].objects);
+    assert!(before.0.1 > 0.3, "the top is part of the object: {before:?}");
+    assert!(after.0.1 < 0.05, "the top is carved out: {after:?}");
+    assert!(after.1 > 0.9 * before.1, "the pumpkin stays: {before:?} {after:?}");
+    assert!(carved[0] > 0);
+    assert_eq!(scenes[0].object_labels.iter().copied().max(), Some(scenes[0].objects as u16));
+}
