@@ -410,7 +410,7 @@ pub(crate) fn read_map(file: &Path) -> CmdResult<objects::Map> {
 }
 
 /// A label or mask picture: per pixel the integer in its first channel (0 outside).
-fn read_labels(file: &Path, size: (usize, usize)) -> CmdResult<Vec<u16>> {
+pub(crate) fn read_labels(file: &Path, size: (usize, usize)) -> CmdResult<Vec<u16>> {
     let raw = penumbra_gpu::image::decode_file_raw(file, scan::MAX_SIDE, objects::MAX_PIXELS as u64)?;
     if (raw.width as usize, raw.height as usize) != size {
         return Err(CommandError(format!(

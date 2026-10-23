@@ -1557,6 +1557,86 @@ fn scene_planes_top_and_heights_from_two_scans() {
 }
 
 #[test]
+fn regions_group_faces_by_pixel_and_switch_the_floor_off() {
+    use penumbra_calib::synthetic::Room;
+    let f = Fixture::new("scan_regions");
+    let dir = f.engine.session().dir().to_path_buf();
+    let room = Room::default();
+    let exr = |m: &penumbra_calib::objects::Map| {
+        penumbra_gpu::image::encode_exr_rgba32f(m.width as u32, m.height as u32, &m.rgba).unwrap()
+    };
+    for (p, name) in ["a", "b"].iter().enumerate() {
+        let folder = dir.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("proj_to_cam.exr"), exr(&room.to_camera(p).0)).unwrap();
+        std::fs::write(folder.join("cam_to_proj.exr"), exr(&room.from_camera(p))).unwrap();
+    }
+    f.call("scan.scene", json!({"scans": ["a", "b"], "min_object": 500}));
+    // Wall, top, front, floor: every face its own region, the floor off.
+    let r = f.call("scan.regions", json!({}));
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    assert_eq!(r["regions"].as_array().unwrap().len(), 3, "{r}");
+    assert_eq!(r["disabled"].as_array().unwrap().len(), 1, "{r}");
+    assert_eq!(r["disabled"][0]["kind"], "floor", "{r}");
+    assert_eq!(r["disabled"][0]["by"], "floor", "{r}");
+    let at = |face: u64| -> Json {
+        r["faces"].as_array().unwrap().iter().find(|x| x["face"] == face).unwrap()["at"].clone()
+    };
+    let (wall, top, front, floor) = (at(1), at(2), at(3), at(4));
+    for file in
+        ["regions_camera.png", "regions_0.png", "regions_1.png", "regions_view.png", "regions_reply.json"]
+    {
+        assert!(dir.join("scene").join(file).exists(), "{file}");
+    }
+    assert!(!dir.join("scene/regions.json").exists(), "nothing to save yet");
+    // The front and the top one region; saved; the floor still off.
+    let r = f.call("scan.regions", json!({"edit": [{"op": "merge", "at": [front, top], "name": "crate"}]}));
+    let regions = r["regions"].as_array().unwrap();
+    assert_eq!(regions.len(), 2, "{r}");
+    let crate_region = regions.iter().find(|x| x["name"] == "crate").unwrap();
+    assert_eq!(crate_region["faces"], json!([2, 3]), "{r}");
+    let saved: Json =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("scene/regions.json")).unwrap()).unwrap();
+    assert_eq!(saved["regions"].as_array().unwrap().len(), 1, "{saved}");
+    // The wall off, then back to the default; the floor on.
+    let r = f.call("scan.regions", json!({"edit": [{"op": "disable", "at": wall}]}));
+    assert_eq!(r["regions"].as_array().unwrap().len(), 1, "{r}");
+    let r =
+        f.call("scan.regions", json!({"edit": [{"op": "auto", "at": wall}, {"op": "enable", "at": floor}]}));
+    assert_eq!(r["regions"].as_array().unwrap().len(), 3, "{r}");
+    assert!(r["disabled"].as_array().unwrap().is_empty(), "{r}");
+    // The top out of the crate again: four regions, the crate's name and the floor's flag kept.
+    let r = f.call("scan.regions", json!({"edit": [{"op": "split", "at": top}]}));
+    assert_eq!(r["regions"].as_array().unwrap().len(), 4, "{r}");
+    let saved: Json =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("scene/regions.json")).unwrap()).unwrap();
+    assert_eq!(saved["regions"].as_array().unwrap().len(), 2, "{saved}");
+    assert_eq!(saved["regions"][0]["name"], "crate", "{saved}");
+    assert_eq!(saved["regions"][1]["enabled"], true, "{saved}");
+    // The camera's labels: four regions, 8-bit, nothing on the ball.
+    let labels =
+        penumbra_gpu::image::decode_file_raw(&dir.join("scene/regions_camera.png"), 8192, 1 << 24).unwrap();
+    let objects =
+        penumbra_gpu::image::decode_file_raw(&dir.join("scene/objects_camera.png"), 8192, 1 << 24).unwrap();
+    let value = |p: &[f32; 4], s: f32| (p[0] * s).round() as u32;
+    let highest = labels.rgba.iter().map(|p| value(p, labels.scale)).max().unwrap();
+    assert_eq!(highest, 4);
+    let on_ball = labels
+        .rgba
+        .iter()
+        .zip(&objects.rgba)
+        .filter(|(l, o)| value(l, labels.scale) > 0 && value(o, objects.scale) > 0)
+        .count();
+    assert_eq!(on_ball, 0);
+    // Seeds on nothing are reported, bad edits refused.
+    let r = f.call("scan.regions", json!({"edit": [{"op": "disable", "at": [-5, -5]}]}));
+    assert!(r["warnings"][0].as_str().unwrap().contains("no face"), "{r}");
+    assert!(f.fail("scan.regions", json!({"edit": [{"op": "glue", "at": [1, 1]}]})).contains("glue"));
+    assert!(f.fail("scan.regions", json!({"seam": 99})).contains("seam"));
+    assert!(f.fail("scan.regions", json!({"scene": "nowhere"})).contains("scan.scene"));
+}
+
+#[test]
 fn scene_rectifies_any_face_of_a_crate_landscape() {
     use penumbra_calib::synthetic::Room;
     let f = Fixture::new("scan_scene_landscape");

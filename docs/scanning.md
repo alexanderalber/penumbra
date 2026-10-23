@@ -8,7 +8,8 @@ once, in the camera's picture, so it lands on every object the same way in every
 A mostly flat object (a relief panel) needs no reference scan: `scan.relief` turns one scan
 per projector into height maps and light masks. Nor does a scene of flat faces with objects
 among them (boxes, a floor, a wall, a pumpkin on a crate): `scan.scene` finds every face and
-every object in one scan per projector, and rectifies any face of known aspect.
+every object in one scan per projector, and rectifies any face of known aspect; `scan.regions`
+groups its faces into one region per crate front, side or lid and switches the floor off.
 
 Everything here is a command (see [Control](control.md)); the results are plain files in the
 project, read by `tex.image`. Nothing of it runs per frame: during the show what remains is a
@@ -397,6 +398,94 @@ landscape would, so the content after it can be built before the real scan exist
 
     penumbra-cli ctl scan.synthetic '{"out": "synthetic"}'
     penumbra-cli ctl scan.scene '{"scans": ["synthetic/a", "synthetic/b"], "out": "scene"}'
+
+### 5.1 Regions: `scan.regions`
+
+The face search splits what a person sees as one surface: a Euro crate's front falls apart into
+its panels and the rib strips between them (the ribs stand a centimetre or two proud, a plane of
+their own), a slightly bulged panel into two fits with a ragged border between them, and every
+face's edge is as ragged as the decode there. Content that colours "each crate front" wants
+regions instead: one per part of the scene, with clean edges, and the floor left dark.
+
+Which faces belong together the geometry cannot tell: two crates standing side by side or
+stacked have coplanar fronts, separated by a seam much like a rib groove. So the grouping is
+given, by pixels of the camera picture, and `scan.regions` does the rest:
+
+    penumbra-cli ctl scan.regions '{"scene": "scene", "edit": [{"op": "merge",
+        "at": [[300, 600], [280, 520], [160, 600]], "name": "left crate"}]}'
+
+**The grouping** is a list of regions, each a set of seed pixels in the camera picture, an
+optional name and an optional `enabled`. The face under a seed (or the nearest one within
+`reach`, 12 camera pixels) belongs to the region; a face goes to the first region that names it.
+Faces under no seed are regions of their own. Seeds rather than face numbers, because face
+numbers change with every rescan while a pixel keeps showing the same crate as long as the
+camera and the crates stay. The grouping lives in a file, `regions.json` in the scene folder
+(`file` names another), so it survives a rescan and `scan.scene` running again:
+
+    {"regions": [
+      {"name": "left crate", "seeds": [[300, 600], [280, 520], [160, 600]]},
+      {"name": "post between the crates", "seeds": [[1163, 526]], "enabled": false}
+    ]}
+
+`regions` in the params replaces the file's list; `edit` changes it, one step after the other,
+and the file is written back. The steps, all by camera pixel:
+
+| step | what |
+|---|---|
+| `{"op": "merge", "at": [[x, y], ...], "name"?}` | the faces under the points, and every region they are already in, become one region |
+| `{"op": "split", "at": [x, y]}` | the face under the point leaves its region and is a region of its own again |
+| `{"op": "disable", "at": [x, y]}` | the region under the point is off (nothing in the label pictures) |
+| `{"op": "enable", "at": [x, y]}` | it is on, also when it lies on the floor |
+| `{"op": "auto", "at": [x, y]}` | back to the default: on, unless it lies on the floor |
+| `{"op": "name", "at": [x, y], "name": "..."}` | names it |
+| `{"op": "clear"}` | forgets the whole grouping |
+
+An editor that lets someone click faces needs nothing but this command: a click is a camera
+pixel, the reply lists every region with its faces, seeds, size and kind, and every face with
+`at`, a pixel well inside it.
+
+**The floor** is switched off by default. Against the support (the face the objects stand on),
+every other face's plane shows how it lies: faces parallel to the support meet it only at the
+horizon, faces that are not meet it in a line that runs between or across them (a crate's front
+meets its lid along their shared edge). The floor is the lowest large face in the camera picture
+below the support that lies parallel to it; faces on its plane are `floor`, other faces parallel
+to it `level` (the support, other tops), the rest `upright`. A region is the kind most of its
+pixels are. Without a support in `scene.json` nothing is classed and the floor stays on; `enable`
+switches a floor region on, `disable` switches anything off.
+
+**Cleaning**, per region in the camera picture: the seams between its faces up to about twice
+`seam` wide (camera pixels, 10) are closed with pixels nothing measured, holes filled the same
+way, the edge smoothed (`smooth`, a Gaussian of 2.5 pixels). Then, with `straight` (on by
+default), four straight lines are fitted to the region's border (along an object standing in
+front the border is left out, notches such as a crate's handle recess are closed first); where
+the quadrilateral fits (at most 4 % of the region outside it, at most 4 % of it on other faces,
+three quarters of it filled), it replaces the region, and the reply lists its corners. Regions
+that are no quadrilateral (a front half hidden behind another crate, one cut by the picture's
+frame) keep their cleaned raster. Objects always stay out, and where two regions claim a pixel
+the one whose own face lies nearest gets it. Each projector's regions are the camera regions it
+lights: per projector pixel the region of the camera pixel it lands on (pixels the decode only
+filled in count where they continue the region of the nearest measured pixel), gaps of a few
+pixels closed.
+
+**Suggestions:** thin faces (rib strips, rims; at most 20 camera pixels across) that touch a
+larger face across a narrow seam and lie on its plane within 3 camera pixels are listed in the
+reply as `suggestions` (both faces, a pixel inside each). They are never applied: a person
+confirms them with a `merge`.
+
+Written into `out` (default: the scene folder):
+
+| file | what |
+|---|---|
+| `regions_camera.png` | 8-bit, camera size: 0 none or off, enabled regions numbered top of the picture first. In place of `planes_camera.png` |
+| `regions_N.png` | the same per projector, projector size. In place of `planes_N.png` |
+| `regions_view.png` | to look at: regions in colour with dark borders, faces that are off striped grey, objects white, the grouping's seeds as dots |
+| `regions_reply.json` | the reply: per region its number, name, faces, seeds, kind, size, straight corners and per projector the plane through its faces (`projector_to_camera`, a homography, and the worst median error of a face against it); the regions that are off and why; every face with its region, kind, height (support 1, floor 0) and a pixel inside it; the suggestions; the grouping as used |
+| `regions.json` | the grouping (in the scene folder or `file`), written when `regions` or `edit` changed it |
+
+Content made for `planes_camera.png` takes `regions_camera.png` as it is: the same 8-bit
+labels, one per crate front instead of one per strip. The region numbers change when the
+grouping does (they are counted top of the picture first), so content that picks single regions
+should pick them by name or seed from the reply, not by number.
 
 ## 6. Blend: `scan.blend`
 
