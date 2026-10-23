@@ -452,3 +452,69 @@ fn a_face_in_one_projector_beats_an_object_in_the_other() {
     let labels = &scenes[0].object_labels;
     assert_eq!(labels.iter().copied().max(), Some(scenes[0].objects as u16));
 }
+
+#[test]
+fn a_sagging_top_given_by_its_corners_is_claimed_whole() {
+    let room = Room::pumpkin(2.0);
+    let (mut map, truth) = room.to_camera(0);
+    // The pumpkin's crate top sags 8 camera pixels in its middle (a lid under a load, seen at a
+    // grazing angle), with a real decode's noise on top: no plane holds it within the tolerance.
+    let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+        .map(|(u, v)| room.camera_point(room.top_point(1, u, v)).unwrap());
+    let to_face = Homography::square_to_quad(corners).unwrap().inverse().unwrap();
+    let (cw, ch) = (room.camera.0 as f64, room.camera.1 as f64);
+    let mut state = 0x9e37_79b9_u64;
+    let mut uniform = || {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+    };
+    for (px, t) in map.rgba.iter_mut().zip(&truth) {
+        if let Some((Surface::Top, at)) = t
+            && room.box_of(*at) == Some(1)
+            && px[0] >= 0.0
+        {
+            let q = [f64::from(px[0]) * cw, f64::from(px[1]) * ch];
+            let [u, v] = to_face.apply(q).unwrap();
+            let sag = 8.0 * 16.0 * u * (1.0 - u) * v * (1.0 - v);
+            let mut g = || (0..12).map(|_| uniform()).sum::<f64>();
+            px[0] = ((q[0] + g()) / cw).clamp(0.0, 1.0) as f32;
+            px[1] = ((q[1] + sag + g()) / ch).clamp(0.0, 1.0) as f32;
+        }
+    }
+    let o = SceneOptions { min_object: (map.rgba.len() / 256).max(1), ..SceneOptions::default() };
+    let mut s = analyse(&map, room.camera, &o).unwrap();
+    let (face_before, object_before) = top_shares(&s, &map, &truth, &room, 1);
+    let claim =
+        crate::scene::claim_face(&mut s, &map, room.camera, &to_face, f64::from(o.tolerance), 0.01, None)
+            .unwrap();
+    let label = claim.plane as u16 + 1;
+    let (mut top, mut on, mut pumpkin, mut pumpkin_on) = (0usize, 0usize, 0usize, 0usize);
+    for (i, t) in truth.iter().enumerate() {
+        if !map.measured(i) {
+            continue;
+        }
+        match t {
+            Some((Surface::Top, at)) if room.box_of(*at) == Some(1) => {
+                top += 1;
+                on += usize::from(s.plane_labels[i] == label);
+            }
+            Some((Surface::Pumpkin, _)) => {
+                pumpkin += 1;
+                pumpkin_on += usize::from(s.plane_labels[i] == label);
+            }
+            _ => {}
+        }
+    }
+    let (on, pumpkin_on) = (on as f64 / top as f64, pumpkin_on as f64 / pumpkin as f64);
+    eprintln!(
+        "before: {face_before:.2} of the top on a face, {object_before:.2} on an object; claimed {on:.2} of it, {pumpkin_on:.3} of the pumpkin"
+    );
+    assert!(on > 0.9, "{on}");
+    assert!(pumpkin_on < 0.02, "{pumpkin_on}");
+    // The map with the bend lands content where the camera sees the top.
+    let h = s.planes[claim.plane].homography;
+    let m = crate::scene::face_map(&map, room.camera, &h, &to_face, f64::from(o.tolerance), 0.01);
+    eprintln!("face map: {:?} {:?} corrected {}", m.error_px, m.bend_px, m.corrected());
+    assert!(m.corrected());
+    assert!(m.error_px[1] < 0.7 * m.error_px[0] && m.error_px[1] < 1.5, "{:?}", m.error_px);
+}

@@ -724,3 +724,79 @@ fn write_synthetic_captures() {
     }
     ppm(&out.join("truth/scene.ppm"), proj.0, proj.1, scene.into_iter());
 }
+
+/// The plain wall, but on a patch of the camera picture each camera pixel spans 8 projector
+/// pixels across (a face seen at a grazing angle squeezes the stripes): the finest two column
+/// bits average out there, while the rest of the picture resolves them.
+fn squeezed() -> (Setup, impl Fn(f32, f32) -> bool + Copy) {
+    let patch = |x: f32, y: f32| (60.0..140.0).contains(&x) && (50.0..120.0).contains(&y);
+    let mut s = Setup::plain((256, 160), (240, 180));
+    s.noise = 0.004;
+    s.supersample = 8;
+    let inner = Setup::plain((256, 160), (240, 180)).scene;
+    s.scene = Box::new(move |x, y| {
+        if !patch(x, y) {
+            return inner(x, y);
+        }
+        let mut f = inner(x.floor() + 0.5, y);
+        if let Some(p) = f.proj.as_mut() {
+            p[0] += (x - x.floor() - 0.5) * 8.0;
+        }
+        f
+    });
+    (s, patch)
+}
+
+#[test]
+fn a_patch_that_does_not_resolve_the_finest_bits_still_decodes() {
+    let (setup, patch) = squeezed();
+    let on_patch = |scan: &Scan, truth: &Truth| {
+        let w = scan.camera.0 as usize;
+        let (mut all, mut kept, mut far) = (0usize, 0usize, 0usize);
+        for (i, p) in scan.points.iter().enumerate() {
+            let (x, y) = ((i % w) as f32 + 0.5, (i / w) as f32 + 0.5);
+            // Clear of the patch's edge, where the window sees both.
+            if !patch(x - 8.0, y - 8.0) || !patch(x + 8.0, y + 8.0) {
+                continue;
+            }
+            let Some((Some(t), _)) = truth.get(i) else { continue };
+            all += 1;
+            if let Some(p) = p {
+                kept += 1;
+                far += usize::from((p[0] - t[0]).abs() > 6.0 || (p[1] - t[1]).abs() > 2.0);
+            }
+        }
+        (kept as f64 / all.max(1) as f64, far)
+    };
+    let (local, truth) = setup.scan(&Options::default());
+    let (global, _) = setup.scan(&Options { window: 0, ..Options::default() });
+    let (kept_local, far_local) = on_patch(&local, &truth);
+    let (kept_global, _) = on_patch(&global, &truth);
+    eprintln!(
+        "on the patch: kept {kept_local:.2} judged locally, {kept_global:.2} over the picture; {far_local} off;          resolved {:?}",
+        local.stats.resolved
+    );
+    assert!(kept_global < 0.5, "{kept_global}");
+    assert!(kept_local > 0.9, "{kept_local}");
+    assert_eq!(far_local, 0);
+    // Off the patch both judge alike.
+    let off = |scan: &Scan| {
+        scan.points
+            .iter()
+            .enumerate()
+            .filter(|(i, p)| {
+                let w = scan.camera.0 as usize;
+                let (x, y) = ((i % w) as f32 + 0.5, (i / w) as f32 + 0.5);
+                p.is_some() && !patch(x + 10.0, y + 10.0) && !patch(x - 10.0, y - 10.0) && !patch(x, y)
+            })
+            .count()
+    };
+    assert!(off(&local).abs_diff(off(&global)) < 50, "{} {}", off(&local), off(&global));
+}
+
+#[test]
+fn the_window_is_checked() {
+    let bad = Options { window: crate::scan::MAX_WINDOW + 1, ..Options::default() };
+    assert!(bad.check().is_err());
+    assert!(Options { window: 0, ..Options::default() }.check().is_ok());
+}

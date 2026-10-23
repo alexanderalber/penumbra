@@ -40,6 +40,18 @@ pub const MAX_CAMERA_PIXELS: usize = 1 << 24;
 pub const RESOLVED_MARGIN: f32 = 0.3;
 /// Largest hole fill, in projector pixels.
 pub const MAX_FILL: u32 = 1024;
+/// [`Options::window`]: its default and largest value, camera pixels.
+pub const DEFAULT_WINDOW: u32 = 7;
+pub const MAX_WINDOW: u32 = 256;
+/// A window holding fewer reached pixels than this share of its area judges by the whole picture.
+const WINDOW_SHARE: f64 = 0.25;
+/// Most bits per axis a window may resolve fewer than the whole picture and still judge alone.
+const MAX_DROP: u32 = 2;
+
+/// The bits of `slots` as a mask (slots past 31 left out).
+fn mask_of(slots: std::ops::Range<usize>) -> u32 {
+    slots.filter(|s| *s < 32).fold(0, |m, s| m | 1 << s)
+}
 
 /// Pattern minus inverse is kept as `i16` in units of `1 / DIFF_SCALE`, clamped to about +-4.
 const DIFF_SCALE: f32 = 8192.0;
@@ -192,11 +204,20 @@ pub struct Options {
     pub min_confidence: f32,
     /// Projector pixels by which a neighbour may differ beyond the expected step and still agree.
     pub tolerance: f32,
+    /// Which bits count towards a pixel's confidence is judged over this many camera pixels
+    /// around it (a square of `2 window + 1`); 0 judges over the whole picture.
+    pub window: u32,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Self { min_contrast: 0.02, saturation: 0.98, min_confidence: 0.2, tolerance: 3.0 }
+        Self {
+            min_contrast: 0.02,
+            saturation: 0.98,
+            min_confidence: 0.2,
+            tolerance: 3.0,
+            window: DEFAULT_WINDOW,
+        }
     }
 }
 
@@ -215,6 +236,9 @@ impl Options {
         }
         if !ok(self.tolerance, 0.0, 1e6) {
             return Err("`tolerance` is 0 or more projector pixels".into());
+        }
+        if self.window > MAX_WINDOW {
+            return Err(format!("`window` is 0 to {MAX_WINDOW} camera pixels"));
         }
         Ok(())
     }
@@ -458,6 +482,7 @@ impl Decoder {
             resolved.get(range).map_or(0, |r| r.iter().filter(|x| **x).count() as u32)
         };
         let resolved_count = [resolved_axis(0..cb), resolved_axis(cb..diffs.len())];
+        let counts_mask = self.counting_bits(&diffs, &contrast, &lit_status, &resolved, options.window);
 
         // Per pixel: the code of both axes and the confidence.
         let mut status = lit_status;
@@ -470,6 +495,7 @@ impl Decoder {
                 continue;
             }
             let c = contrast.get(i).copied().unwrap_or(1.0);
+            let counts = counts_mask.get(i).copied().unwrap_or(0);
             let axis = |slots: std::ops::Range<usize>| -> (u32, f32) {
                 let mut g = 0u32;
                 let (mut lo1, mut lo2) = (f32::INFINITY, f32::INFINITY);
@@ -477,7 +503,7 @@ impl Decoder {
                 for s in slots {
                     let d = diffs.get(s).and_then(|d| d.get(i)).copied().unwrap_or(0);
                     g = (g << 1) | u32::from(d > 0);
-                    if resolved.get(s).copied().unwrap_or(false) {
+                    if counts >> s & 1 == 1 {
                         let m = (f32::from(d) / DIFF_SCALE / c).abs();
                         counted += 1;
                         if m < lo1 {
@@ -538,24 +564,30 @@ impl Decoder {
             let unresolved = (bits as u32).saturating_sub(count).min(16);
             ((1u32 << unresolved) - 1) as f32
         };
-        let tol = [
-            options.tolerance + 2.0 * step + unresolved_span(cb, *resolved_count.first().unwrap_or(&0)),
-            options.tolerance
-                + 2.0 * step
-                + unresolved_span(diffs.len() - cb, *resolved_count.get(1).unwrap_or(&0)),
-        ];
+        let all = diffs.len();
+        let tol = |i: usize| -> [f32; 2] {
+            let m = counts_mask.get(i).copied().unwrap_or(0);
+            let counted = |r: std::ops::Range<usize>| r.filter(|s| m >> s & 1 == 1).count() as u32;
+            [
+                options.tolerance + 2.0 * step + unresolved_span(cb, counted(0..cb)),
+                options.tolerance + 2.0 * step + unresolved_span(all - cb, counted(cb..all)),
+            ]
+        };
 
         // Neighbours that agree: at least two of eight, or the pixel is an outlier.
         let before = points.clone();
         for (i, (pt, st)) in points.iter_mut().zip(status.iter_mut()).enumerate() {
             let Some(p) = *pt else { continue };
+            let t = tol(i);
             let agree = neighbours(i, w, h)
                 .filter(|j| {
+                    let u = tol(*j);
+                    let (tx, ty) = (t[0].max(u[0]), t[1].max(u[1]));
                     before
                         .get(*j)
                         .copied()
                         .flatten()
-                        .is_some_and(|q| (p[0] - q[0]).abs() <= tol[0] && (p[1] - q[1]).abs() <= tol[1])
+                        .is_some_and(|q| (p[0] - q[0]).abs() <= tx && (p[1] - q[1]).abs() <= ty)
                 })
                 .count();
             if agree < 2 {
@@ -592,6 +624,102 @@ impl Decoder {
             },
         })
     }
+}
+
+impl Decoder {
+    /// Per camera pixel the bits (bit `s` for slot `s`, columns first) that count towards its
+    /// confidence. With `window` 0 the bits the camera resolves over the whole picture
+    /// (`resolved`). Otherwise per pixel the bits whose mean margin over the reached pixels in
+    /// the window is at least [`RESOLVED_MARGIN`]: a surface the camera or the projector sees at
+    /// a grazing angle squeezes the stripes, so the finest bits the rest of the picture resolves
+    /// are noise there, and light the walls around throw back flattens a coarse one; counting
+    /// those would call most of it ambiguous. An axis that resolves more than [`MAX_DROP`] bits
+    /// fewer than the whole picture, and a window with too few reached pixels, fall back to
+    /// `resolved`: light that comes not from the projector but bounced off another surface (a
+    /// shadow lit by the object casting it) carries that surface's coarse bits only, and must
+    /// stay ambiguous.
+    fn counting_bits(
+        &self,
+        diffs: &[&Vec<i16>],
+        contrast: &[f32],
+        lit: &[Status],
+        resolved: &[bool],
+        window: u32,
+    ) -> Vec<u32> {
+        let (w, h) = (self.width as usize, self.height as usize);
+        let n = w * h;
+        let global: u32 =
+            resolved.iter().enumerate().filter(|(s, r)| **r && *s < 32).fold(0, |m, (s, _)| m | 1 << s);
+        if window == 0 || diffs.len() > 32 {
+            return vec![global; n];
+        }
+        let r = window as usize;
+        let reached: Vec<bool> = lit.iter().map(|s| *s == Status::Valid).collect();
+        let count = box_sums(w, h, r, |i| f64::from(u8::from(reached.get(i).copied().unwrap_or(false))));
+        let side = (2 * r + 1) as f64;
+        let enough: Vec<bool> = count.iter().map(|c| *c >= WINDOW_SHARE * side * side).collect();
+        let mut local = vec![0u32; n];
+        for (s, d) in diffs.iter().enumerate() {
+            let sums = box_sums(w, h, r, |i| {
+                if !reached.get(i).copied().unwrap_or(false) {
+                    return 0.0;
+                }
+                let c = contrast.get(i).copied().unwrap_or(1.0).max(1e-6);
+                f64::from((f32::from(d.get(i).copied().unwrap_or(0)) / DIFF_SCALE / c).abs().min(1.0))
+            });
+            for (i, m) in local.iter_mut().enumerate() {
+                let (Some(sum), Some(c), Some(ok)) = (sums.get(i), count.get(i), enough.get(i)) else {
+                    continue;
+                };
+                let on = if *ok { sum / c >= f64::from(RESOLVED_MARGIN) } else { global >> s & 1 == 1 };
+                if on {
+                    *m |= 1 << s;
+                }
+            }
+        }
+        let cb = self.patterns.column_bits() as usize;
+        let all = diffs.len();
+        let axes = [mask_of(0..cb), mask_of(cb..all)];
+        for m in &mut local {
+            let mut keep = 0u32;
+            for axis in axes {
+                let here = (*m & axis).count_ones();
+                keep |=
+                    if here + MAX_DROP >= (global & axis).count_ones() { *m & axis } else { global & axis };
+            }
+            *m = keep;
+        }
+        local
+    }
+}
+
+/// Per pixel of a `w` x `h` picture the sum of `value` over the square of radius `r` around it
+/// (clipped at the picture's edges), by a summed-area table.
+fn box_sums(w: usize, h: usize, r: usize, value: impl Fn(usize) -> f64) -> Vec<f64> {
+    let (tw, th) = (w + 1, h + 1);
+    let mut table = vec![0.0f64; tw * th];
+    for y in 0..h {
+        let mut row = 0.0;
+        for x in 0..w {
+            row += value(y * w + x);
+            let above = table.get(y * tw + x + 1).copied().unwrap_or(0.0);
+            if let Some(t) = table.get_mut((y + 1) * tw + x + 1) {
+                *t = above + row;
+            }
+        }
+    }
+    let at = |x: usize, y: usize| table.get(y * tw + x).copied().unwrap_or(0.0);
+    let mut out = vec![0.0f64; w * h];
+    for y in 0..h {
+        let (y0, y1) = (y.saturating_sub(r), (y + r + 1).min(h));
+        for x in 0..w {
+            let (x0, x1) = (x.saturating_sub(r), (x + r + 1).min(w));
+            if let Some(o) = out.get_mut(y * w + x) {
+                *o = at(x1, y1) - at(x0, y1) - at(x1, y0) + at(x0, y0);
+            }
+        }
+    }
+    out
 }
 
 /// Brightness of a camera pixel: the mean of red, green and blue.

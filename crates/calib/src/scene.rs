@@ -1345,3 +1345,409 @@ pub fn fill_gaps(w: usize, h: usize, labels: &[u16], r: u32) -> Vec<u16> {
     }
     out
 }
+
+/// A rectified face's measured pixels this far from its homography (in tolerances) are fitted by
+/// [`face_map`]: a face that sags or warps a few pixels, not the object standing on it.
+const WARP_REACH: f64 = 6.0;
+/// Fewest pixels [`face_map`] fits a correction to.
+const WARP_MIN: usize = 300;
+/// IRLS rounds of the correction.
+const WARP_ROUNDS: usize = 6;
+/// The correction is kept when it lowers the median error by at least this share.
+const WARP_GAIN: f64 = 0.1;
+/// The grid over the face (per side) on which the correction is checked for running away.
+const WARP_GRID: usize = 9;
+
+/// How a rectified face's projector pixels map to the camera: its homography, and where the
+/// face is not quite flat (a lid sagging under the object on it, a warped board) a smooth
+/// quadratic correction on top, fitted to every measured pixel inside the face's outline that
+/// lies near the plane. Without it a plane fit leaves such a face a few camera pixels off in
+/// places, and at a grazing angle a pixel spans centimetres of the face, so content drawn per
+/// projector lands off and two projectors disagree.
+#[derive(Clone, Copy, Debug)]
+pub struct FaceMap {
+    /// Projector pixels to camera pixels.
+    pub homography: Homography,
+    bowl: Option<Bowl>,
+    /// Pixels fitted, their median error under the homography and under the corrected map, the
+    /// correction's RMS over them and its largest size over the face, camera pixels.
+    pub pixels: usize,
+    pub error_px: [f64; 2],
+    pub bend_px: [f64; 2],
+}
+
+impl FaceMap {
+    /// The camera position of projector point `p`.
+    pub fn apply(&self, p: [f64; 2]) -> Option<[f64; 2]> {
+        let q = self.homography.apply(p)?;
+        Some(match &self.bowl {
+            Some(b) => {
+                let d = b.at(p);
+                [q[0] + d[0], q[1] + d[1]]
+            }
+            None => q,
+        })
+    }
+
+    /// Whether a correction is applied.
+    pub fn corrected(&self) -> bool {
+        self.bowl.is_some()
+    }
+}
+
+/// The map of a rectified face in one projector: `h` its plane's homography (projector to
+/// camera), `to_face` the camera picture to the face's (u, v), `tolerance` the scene's (camera
+/// pixels). Fits a quadratic correction, by reweighted least squares, to the measured pixels of
+/// `map` that land inside the face (with a margin of `margin` in u and v) within [`WARP_REACH`]
+/// tolerances of `h`, whatever they are labelled: parts of a sagging lid fail the plane's
+/// tolerance and end up as objects or unexplained. Keeps it only when it fits clearly better
+/// and stays within that reach over the whole face (it also extrapolates under objects).
+pub fn face_map(
+    map: &Map,
+    camera: (usize, usize),
+    h: &Homography,
+    to_face: &Homography,
+    tolerance: f64,
+    margin: f64,
+) -> FaceMap {
+    let plain = FaceMap { homography: *h, bowl: None, pixels: 0, error_px: [0.0; 2], bend_px: [0.0; 2] };
+    let reach = WARP_REACH * tolerance;
+    let pairs = Pairs::of(map, camera);
+    let on = |u: f64, v: f64| (-margin..=1.0 + margin).contains(&u) && (-margin..=1.0 + margin).contains(&v);
+    let pts: Vec<([f64; 2], [f64; 2])> = (0..pairs.idx.len())
+        .filter_map(|k| {
+            let (p, q) = (*pairs.from.get(k)?, *pairs.to.get(k)?);
+            let [u, v] = to_face.apply(q)?;
+            let r = pairs.residual(h, k)?;
+            (on(u, v) && r[0].hypot(r[1]) <= reach).then_some((p, r))
+        })
+        .collect();
+    let m = pts.len();
+    if m < WARP_MIN {
+        return FaceMap { pixels: m, ..plain };
+    }
+    let mf = m as f64;
+    let (mx, my) =
+        (pts.iter().map(|p| p.0[0]).sum::<f64>() / mf, pts.iter().map(|p| p.0[1]).sum::<f64>() / mf);
+    let s = pts.iter().map(|p| (p.0[0] - mx).hypot(p.0[1] - my)).sum::<f64>() / mf;
+    let s = if s > 1e-9 { s } else { 1.0 };
+    let norm = |r: [f64; 2]| r[0].hypot(r[1]);
+    let median = |mut v: Vec<f64>| -> f64 {
+        v.sort_by(f64::total_cmp);
+        v.get(v.len() / 2).copied().unwrap_or(0.0)
+    };
+    let before = median(pts.iter().map(|p| norm(p.1)).collect());
+    let mut fit = FaceMap { pixels: m, error_px: [before, before], ..plain };
+    // Quadratic first; when that runs away over the parts of the face nothing measured, the
+    // linear terms alone (a better plane over all of the face's pixels).
+    for terms in [6, 3] {
+        let Some(bowl) = fit_bowl(&pts, terms, [mx, my], s) else { continue };
+        let corrected = |(p, r): &([f64; 2], [f64; 2])| {
+            let d = bowl.at(*p);
+            (r[0] - d[0]).hypot(r[1] - d[1])
+        };
+        let after = median(pts.iter().map(corrected).collect());
+        let rms = (pts.iter().map(|(p, _)| norm(bowl.at(*p)).powi(2)).sum::<f64>() / mf).sqrt();
+        // Over the whole face: through the camera picture's quad back to the projector.
+        let largest = to_face.inverse().zip(h.inverse()).map_or(f64::INFINITY, |(from_face, back)| {
+            let mut most = 0.0f64;
+            for i in 0..WARP_GRID {
+                for j in 0..WARP_GRID {
+                    let uv = [i as f64 / (WARP_GRID - 1) as f64, j as f64 / (WARP_GRID - 1) as f64];
+                    let Some(p) = from_face.apply(uv).and_then(|q| back.apply(q)) else {
+                        return f64::INFINITY;
+                    };
+                    most = most.max(norm(bowl.at(p)));
+                }
+            }
+            most
+        });
+        fit = FaceMap { pixels: m, error_px: [before, after], bend_px: [rms, largest], ..plain };
+        if after <= before * (1.0 - WARP_GAIN) && largest.is_finite() && largest <= reach {
+            return FaceMap { bowl: Some(bowl), ..fit };
+        }
+    }
+    fit
+}
+
+/// The first `terms` (3 or 6) of a quadratic in the projector position fitted to the residuals
+/// `pts` (projector position, camera pixels off), by least squares reweighted with Cauchy
+/// weights: rims, ribs and the foot of an object near the plane fade.
+fn fit_bowl(pts: &[([f64; 2], [f64; 2])], terms: usize, centre: [f64; 2], scale: f64) -> Option<Bowl> {
+    use nalgebra::{SMatrix, SVector};
+    let basis = |p: [f64; 2]| {
+        let (x, y) = ((p[0] - centre[0]) / scale, (p[1] - centre[1]) / scale);
+        let v = [1.0, x, y, x * x, x * y, y * y];
+        SVector::<f64, 6>::from_fn(|j, _| if j < terms { v.get(j).copied().unwrap_or(0.0) } else { 0.0 })
+    };
+    let mut weights = vec![1.0f64; pts.len()];
+    let mut bowl = None;
+    for _ in 0..WARP_ROUNDS {
+        let mut a = SMatrix::<f64, 6, 6>::zeros();
+        let mut b = [SVector::<f64, 6>::zeros(), SVector::<f64, 6>::zeros()];
+        for ((p, r), w) in pts.iter().zip(&weights) {
+            let v = basis(*p);
+            a += v * v.transpose() * *w;
+            b[0] += v * (r[0] * w);
+            b[1] += v * (r[1] * w);
+        }
+        for j in terms..6 {
+            if let Some(d) = a.get_mut((j, j)) {
+                *d = 1.0;
+            }
+        }
+        let inv = a.try_inverse()?;
+        let fitted = Bowl { centre, scale, coef: [inv * b[0], inv * b[1]] };
+        let mut errors: Vec<f64> = pts
+            .iter()
+            .map(|(p, r)| {
+                let d = fitted.at(*p);
+                (r[0] - d[0]).hypot(r[1] - d[1])
+            })
+            .collect();
+        let mut sorted = errors.clone();
+        sorted.sort_by(f64::total_cmp);
+        let c = (sorted.get(sorted.len() / 2).copied().unwrap_or(1.0) * 2.0).max(0.1);
+        for e in &mut errors {
+            *e = 1.0 / (1.0 + (*e / c).powi(2));
+        }
+        weights = errors;
+        bowl = Some(fitted);
+    }
+    bowl
+}
+
+/// Hypotheses of [`claim_face`]'s search, and the most pairs each is scored on.
+const CLAIM_HYPOTHESES: usize = 400;
+const CLAIM_SAMPLE: usize = 4000;
+/// A prior's camera pixels are grown by this (camera pixels) before [`claim_face`] searches
+/// among them.
+const PRIOR_GROW: u32 = 4;
+/// Cells per side of the grid over the face [`claim_face`] scores coverage on.
+const CLAIM_CELLS: usize = 12;
+/// Rounds in which a claimed face grows with its bend.
+const CLAIM_GROW: usize = 4;
+
+/// A face given by its corners in the camera picture (`to_face`: camera picture to the face's
+/// u and v, the face 0 to 1), claimed in one projector's `parts`: the plane that most of the
+/// measured pixels inside the corners lie on, with [`face_map`]'s correction where the face is
+/// not quite flat, and every pixel inside that fits it within [`ROUGH`] tolerances becomes this
+/// face, taken from the faces and objects it was given to. For a face the search cannot find
+/// alone: a lid seen at a grazing angle that sags under the object on it fits no plane within the
+/// tolerance, falls apart into patches that each look curved, and ends up as part of that
+/// object. The plane is searched among the pixels inside the corners, or when `prior` (a mask
+/// of the camera picture: where another projector found the face) holds enough of them, among
+/// those: a projector that decodes the face sparsely may see more of the object in front.
+/// Returns the new face's index in `parts.planes` and the camera pixels its measured pixels land
+/// on; `None` when too few pixels inside the corners fit one plane.
+pub fn claim_face(
+    parts: &mut SceneParts,
+    map: &Map,
+    camera: (usize, usize),
+    to_face: &Homography,
+    tolerance: f64,
+    margin: f64,
+    prior: Option<&[bool]>,
+) -> Option<Claim> {
+    let (w, h) = (map.width, map.height);
+    if parts.width != w || parts.height != h || parts.planes.len() >= MAX_PLANES {
+        return None;
+    }
+    let pairs = Pairs::of(map, camera);
+    let on = |q: &[f64; 2]| {
+        to_face.apply(*q).is_some_and(|[u, v]| {
+            (-margin..=1.0 + margin).contains(&u) && (-margin..=1.0 + margin).contains(&v)
+        })
+    };
+    let inside: Vec<usize> = (0..pairs.idx.len()).filter(|k| pairs.to.get(*k).is_some_and(on)).collect();
+    if inside.len() < WARP_MIN {
+        return None;
+    }
+    let cam_index = |q: &[f64; 2]| -> Option<usize> {
+        let (x, y) = (q[0].floor(), q[1].floor());
+        (x >= 0.0 && y >= 0.0 && (x as usize) < camera.0 && (y as usize) < camera.1)
+            .then(|| y as usize * camera.0 + x as usize)
+    };
+    let grown = prior.map(|m| raster::dilate(camera.0, camera.1, m, PRIOR_GROW));
+    let in_prior: Vec<usize> = match &grown {
+        Some(mask) => inside
+            .iter()
+            .copied()
+            .filter(|k| pairs.to.get(*k).and_then(cam_index).is_some_and(|c| mask.get(c) == Some(&true)))
+            .collect(),
+        None => Vec::new(),
+    };
+    let search = if in_prior.len() >= WARP_MIN { &in_prior } else { &inside };
+    let rough = ROUGH * tolerance;
+    let stride = search.len().div_ceil(CLAIM_SAMPLE).max(1);
+    let scored: Vec<usize> = search.iter().copied().step_by(stride).collect();
+    // The face covers the corners' whole quad: a hypothesis scores by the cells of the face it
+    // reaches before its pixel count, so a dense patch of the object standing on a sparsely
+    // decoded face does not win.
+    let g = CLAIM_CELLS as f64;
+    let cell_of: Vec<usize> = scored
+        .iter()
+        .map(|k| {
+            pairs.to.get(*k).and_then(|q| to_face.apply(*q)).map_or(0, |[u, v]| {
+                let (x, y) = ((u.clamp(0.0, 1.0) * g) as usize, (v.clamp(0.0, 1.0) * g) as usize);
+                y.min(CLAIM_CELLS - 1) * CLAIM_CELLS + x.min(CLAIM_CELLS - 1)
+            })
+        })
+        .collect();
+    let cell = (w.max(h) / SAMPLE_CELLS).max(MIN_CELL) as f64;
+    let mut rng = Lcg(0xc1a1);
+    let mut best: Option<(usize, Homography)> = None;
+    for _ in 0..CLAIM_HYPOTHESES {
+        let pick: Vec<usize> = (0..4).filter_map(|_| search.get(rng.below(search.len())).copied()).collect();
+        let points: Vec<[f64; 2]> = pick.iter().filter_map(|k| pairs.from.get(*k).copied()).collect();
+        if points.len() < 4 || !spread(&points, cell * cell) {
+            continue;
+        }
+        let quad: Vec<([f64; 2], [f64; 2])> =
+            pick.iter().filter_map(|k| Some((*pairs.from.get(*k)?, *pairs.to.get(*k)?))).collect();
+        let Ok(hyp) = Homography::from_pairs(&quad) else { continue };
+        let mut hits = [0u8; CLAIM_CELLS * CLAIM_CELLS];
+        let mut count = 0usize;
+        for (k, c) in scored.iter().zip(&cell_of) {
+            if pairs.error(&hyp, *k) < rough {
+                count += 1;
+                if let Some(h) = hits.get_mut(*c) {
+                    *h = h.saturating_add(1);
+                }
+            }
+        }
+        let cells = hits.iter().filter(|h| **h >= 2).count();
+        let score = cells * scored.len() + count;
+        if best.as_ref().is_none_or(|(s, _)| score > *s) {
+            best = Some((score, hyp));
+        }
+    }
+    let (_, mut hom) = best?;
+    for _ in 0..REFITS {
+        let (f, t): (Vec<[f64; 2]>, Vec<[f64; 2]>) = search
+            .iter()
+            .filter(|k| pairs.error(&hom, **k) < rough)
+            .filter_map(|k| Some((*pairs.from.get(*k)?, *pairs.to.get(*k)?)))
+            .unzip();
+        if f.len() < WARP_MIN {
+            return None;
+        }
+        hom = Homography::fit_cauchy(&f, &t, CAUCHY_ROUNDS).ok()?;
+    }
+    // Grown with the bend: a bowl fitted to the pixels the map so far takes, which takes more of
+    // a sagging face each round, while it stays within reach of the plane over the whole face.
+    let mut fm = FaceMap { homography: hom, bowl: None, pixels: 0, error_px: [0.0; 2], bend_px: [0.0; 2] };
+    let error_of = |fm: &FaceMap, k: usize| -> f64 {
+        match (pairs.from.get(k).and_then(|p| fm.apply(*p)), pairs.to.get(k)) {
+            (Some(r), Some(q)) => (r[0] - q[0]).hypot(r[1] - q[1]),
+            _ => f64::INFINITY,
+        }
+    };
+    let back = to_face.inverse().zip(hom.inverse());
+    for _ in 0..CLAIM_GROW {
+        let pts: Vec<([f64; 2], [f64; 2])> = inside
+            .iter()
+            .filter(|k| error_of(&fm, **k) < rough)
+            .filter_map(|k| Some((*pairs.from.get(*k)?, pairs.residual(&hom, *k)?)))
+            .collect();
+        if pts.len() < WARP_MIN {
+            break;
+        }
+        let m = pts.len() as f64;
+        let centre =
+            [pts.iter().map(|p| p.0[0]).sum::<f64>() / m, pts.iter().map(|p| p.0[1]).sum::<f64>() / m];
+        let scale = pts.iter().map(|p| (p.0[0] - centre[0]).hypot(p.0[1] - centre[1])).sum::<f64>() / m;
+        let Some(bowl) = fit_bowl(&pts, 6, centre, if scale > 1e-9 { scale } else { 1.0 }) else { break };
+        let tame = back.is_some_and(|(from_face, to_proj)| {
+            (0..WARP_GRID * WARP_GRID).all(|g| {
+                let uv = [
+                    (g % WARP_GRID) as f64 / (WARP_GRID - 1) as f64,
+                    (g / WARP_GRID) as f64 / (WARP_GRID - 1) as f64,
+                ];
+                from_face.apply(uv).and_then(|q| to_proj.apply(q)).is_some_and(|p| {
+                    let d = bowl.at(p);
+                    d[0].hypot(d[1]) <= WARP_REACH * tolerance
+                })
+            })
+        });
+        if !tame {
+            break;
+        }
+        fm.bowl = Some(bowl);
+    }
+    let error = |k: usize| error_of(&fm, k);
+    let mut member = vec![false; pairs.idx.len()];
+    for k in &inside {
+        if error(*k) < rough
+            && let Some(m) = member.get_mut(*k)
+        {
+            *m = true;
+        }
+    }
+    // Pixels: measured members, and the unmeasured ones whose nearest measured pixel is one.
+    let n = w * h;
+    let measured: Vec<bool> = (0..n).map(|i| map.measured(i)).collect();
+    let (dist, nearest) = raster::distance(w, h, &measured);
+    let mut point_at = vec![u32::MAX; n];
+    for (k, i) in pairs.idx.iter().enumerate() {
+        if let Some(p) = point_at.get_mut(*i) {
+            *p = k as u32;
+        }
+    }
+    let mask: Vec<bool> = (0..n)
+        .map(|i| match (nearest.get(i).copied().flatten(), dist.get(i)) {
+            (Some(j), Some(d)) if *d <= GAP && map.uv(i).is_some() => {
+                point_at.get(j as usize).is_some_and(|k| member.get(*k as usize) == Some(&true))
+            }
+            _ => false,
+        })
+        .collect();
+    let mask = raster::close(w, h, &mask, REGION_CLOSE);
+    let mask = raster::open(w, h, &mask, REGION_OPEN);
+    let mask = keep_large(w, h, &mask, WARP_MIN);
+    let label = u16::try_from(parts.planes.len() + 1).ok()?;
+    let mut errors = Vec::new();
+    let mut seen = vec![false; camera.0 * camera.1];
+    for (i, m) in mask.iter().enumerate() {
+        if !*m {
+            continue;
+        }
+        if let Some(l) = parts.plane_labels.get_mut(i) {
+            *l = label;
+        }
+        if let Some(o) = parts.object_labels.get_mut(i) {
+            *o = 0;
+        }
+        if let Some(&k) = point_at.get(i)
+            && k != u32::MAX
+        {
+            errors.push(error(k as usize));
+            if let Some(c) = pairs.to.get(k as usize).and_then(cam_index)
+                && let Some(x) = seen.get_mut(c)
+            {
+                *x = true;
+            }
+        }
+    }
+    if errors.len() < WARP_MIN {
+        return None;
+    }
+    errors.sort_by(f64::total_cmp);
+    let group = parts.planes.iter().map(|p| p.group + 1).max().unwrap_or(0);
+    parts.planes.push(Plane {
+        homography: hom,
+        pixels: errors.len(),
+        error_px: [quantile(&errors, 0.5), quantile(&errors, 0.9)],
+        group,
+        bend: [0.0; 3],
+    });
+    Some(Claim { plane: parts.planes.len() - 1, camera: seen })
+}
+
+/// What [`claim_face`] claimed: the face's index in the projector's planes, and per camera pixel
+/// whether a measured pixel of it lands there.
+#[derive(Clone, Debug)]
+pub struct Claim {
+    pub plane: usize,
+    pub camera: Vec<bool>,
+}

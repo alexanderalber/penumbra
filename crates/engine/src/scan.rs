@@ -89,7 +89,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          proj_to_cam.exr (maps for tex.remap), scene.png (the scene as the projector sees it) and \
          quality.png; {frames (folder, relative to the project), projector?: [w, h] (1920, 1080), \
          out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, \
-         saturation?, min_confidence?, tolerance?}}",
+         saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture)}}",
         move |p| {
             let a: DecodeArgs = args(p)?;
             decode(e.session().dir(), &a)

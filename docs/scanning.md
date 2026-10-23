@@ -99,6 +99,17 @@ against its inverse, the latency, the frames that had to be taken again, the tim
 warnings. `level` (1) lowers the lit stripes if the camera clips even with its exposure down;
 `fill` and `options` are those of `scan.decode`.
 
+Which bits a camera pixel resolves is judged around it (`options.window`, 7: a square of 15
+camera pixels; 0 judges over the whole picture as before): a face the camera or the projector
+sees at a grazing angle squeezes the stripes, so the finest bits the rest of the picture
+resolves are noise there, and light the walls around throw back flattens a coarse one. Such
+bits are still read but no longer make the pixel ambiguous. A neighbourhood that resolves more
+than two bits fewer than the whole picture is judged by the picture's bits, so a shadow lit only
+by light bouncing off the object casting it (which carries that object's coarse bits) stays
+ambiguous. On a crate lid seen at a grazing angle this doubled the decoded share, at the same
+accuracy. A dark face also falls under `min_contrast` (0.02 of full scale): at a dim `level`,
+`"options": {"min_contrast": 0.01}` decodes it too.
+
 Without a camera node (photos from another camera), the same files come from the pictures in a
 folder: a `tex.scan_pattern` into the projector, stepped through its `pattern` 0, 1, 2, ...
 (`scan.patterns` lists them), one picture of each, then
@@ -329,6 +340,24 @@ content fills the face and not just the pixels that decoded; mask by blue above 
 off the objects. `scene_view.png` draws the outline and a grid of true squares over it, to
 check by eye. Into a `tex.shader`, `u *
 aspect[0]` and `v * aspect[1]` are the face's own units.
+
+A face that is not quite flat (a crate's lid sagging under the pumpkin on it, a warped board)
+is mapped with a smooth correction on top of its plane: per projector, a quadratic fitted to
+every measured pixel inside the outline within a few pixels of the plane, kept when it fits
+clearly better and stays small over the whole face (the reply's `projector_fit`: pixels, the
+median error with the plane alone and corrected, the correction's size). At a grazing angle a
+camera pixel spans centimetres of the face, so without it tiles drawn per projector land a
+centimetre or more off and the two projectors' tiles drift apart.
+
+**A face given by its corners.** Such a lid also fails the face search itself: no plane holds it
+within the tolerance, it falls apart into patches that each look curved, and its pixels end up
+in the object standing on it. Give its four corners without a `plane`,
+`[{"aspect": [60, 40], "corners": [[653, 551], [1148, 617], [1090, 742], [505, 663]]}]`, and
+the face is claimed: in each projector the plane most of the measured pixels inside the corners
+lie on (scored by how much of the quad its pixels cover, so a dense patch of the object in
+front does not win), grown with its bend, takes every pixel inside that fits it, from the faces
+and objects they were given to; the other projectors search where the first found it. It gets
+a number of its own like any face, and `"support": "rectified"` makes it the support.
 
 Everything the reply holds is also written to `scene.json`.
 

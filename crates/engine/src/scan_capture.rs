@@ -86,7 +86,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          level? (signal of the lit stripes, 1), frames? (keep the camera frames as PNG in \
          out/<projector>/frames, false), verify? (take a picture only when two frames agree, true), \
          retries? (frames that may disagree, 3), fill? (projector px, 32), options?: {min_contrast?, \
-         saturation?, min_confidence?, tolerance?}}",
+         saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture)}}",
         move |p| {
             let a: CaptureArgs = args(p)?;
             capture(&e, &a)

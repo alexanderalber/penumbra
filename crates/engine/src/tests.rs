@@ -1734,3 +1734,47 @@ fn relief_heights_and_masks_from_two_scans() {
     assert!(f.fail("scan.relief", json!({"scans": ["a"], "scale": "median"})).contains("symmetric"));
     assert!(f.fail("scan.relief", json!({"scans": ["a"], "jump": -1})).contains("jump"));
 }
+
+#[test]
+fn a_face_given_by_its_corners_alone_is_claimed_and_carries_the_objects() {
+    use penumbra_calib::synthetic::Room;
+    let f = Fixture::new("scan_scene_claim");
+    let dir = f.engine.session().dir().to_path_buf();
+    let room = Room::default();
+    let exr = |m: &penumbra_calib::objects::Map| {
+        penumbra_gpu::image::encode_exr_rgba32f(m.width as u32, m.height as u32, &m.rgba).unwrap()
+    };
+    for (p, name) in ["a", "b"].iter().enumerate() {
+        let folder = dir.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("proj_to_cam.exr"), exr(&room.to_camera(p).0)).unwrap();
+        std::fs::write(folder.join("cam_to_proj.exr"), exr(&room.from_camera(p))).unwrap();
+    }
+    let corners: Vec<Json> = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+        .iter()
+        .map(|(u, v)| json!(room.camera_point(room.top_point(0, *u, *v)).unwrap()))
+        .collect();
+    let r = f.call(
+        "scan.scene",
+        json!({"scans": ["a", "b"], "min_object": 500, "support": "rectified",
+               "rectify": [{"aspect": [60, 40], "corners": corners}]}),
+    );
+    let plane = r["rectified"][0]["plane"].as_u64().unwrap();
+    assert_eq!(r["support"]["plane"].as_u64(), Some(plane), "{r}");
+    assert_eq!(r["support"]["by"], "the rectified face", "{r}");
+    assert_eq!(r["objects"].as_array().unwrap().len(), 1, "{r}");
+    let faces =
+        penumbra_gpu::image::decode_file_raw(&dir.join("scene/planes_camera.png"), 8192, 1 << 24).unwrap();
+    let (cw, _) = room.camera;
+    let c = room.camera_point(room.top_point(0, 0.2, 0.8)).unwrap();
+    let at = (faces.rgba[c[1] as usize * cw + c[0] as usize][0] * faces.scale).round() as u64;
+    assert_eq!(at, plane, "{r}");
+    // Both projectors light the top: one face in both, with its fit reported.
+    let fits = r["rectified"][0]["projector_fit"].as_array().unwrap();
+    assert!(fits.iter().all(|f| f["pixels"].as_u64().unwrap() > 1000), "{r}");
+
+    let bad = f.fail("scan.scene", json!({"scans": ["a"], "rectify": [{"aspect": [1, 1]}]}));
+    assert!(bad.contains("`plane`, its `corners`"), "{bad}");
+    let bad = f.fail("scan.scene", json!({"scans": ["a"], "support": "top"}));
+    assert!(bad.contains("rectified"), "{bad}");
+}

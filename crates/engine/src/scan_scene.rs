@@ -11,7 +11,7 @@ use std::time::Instant;
 use penumbra_calib::Homography;
 use penumbra_calib::objects::{self, Map, Parts};
 use penumbra_calib::relief::{self, Relief, View};
-use penumbra_calib::scene::{self, Outline, SceneOptions, SceneParts};
+use penumbra_calib::scene::{self, FaceMap, Outline, SceneOptions, SceneParts};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
@@ -79,9 +79,12 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          height_N.exr and mask_N.png (the objects' height over the support, as scan.relief writes them); in camera \
          space planes_camera.png, objects_camera.png, uv_K_camera.exr, height_camera.exr and \
          scene_view.png (with the rectified faces' outlines and a grid in true squares); scene.json (the \
-         reply). {scans: [folder, ...], out? (folder, scene), rectify? ([{plane, aspect: [width, depth], \
-         corners? ([[x, y] x 4] camera px, instead of finding them)}, ...], else the support at 60:40), \
-         support? (plane number, else the one below the objects), sign?, scale? (as scan.relief), \
+         reply). {scans: [folder, ...], out? (folder, scene), rectify? ([{plane?, aspect: [width, depth], \
+         corners? ([[x, y] x 4] camera px, instead of finding them; without plane they give the face: the \
+         plane most pixels inside lie on, taken from the faces and objects it was split into, also where \
+         it sags a little)}, ...], else the support at 60:40), \
+         support? (plane number, or \"rectified\" for the first face in rectify; else the one below the \
+         objects), sign?, scale? (as scan.relief), \
          tolerance? (camera px a pixel may lie off its face, 2), min_plane? (share of the measured \
          pixels, 0.002), max_planes? (most faces kept, 255), min_object? (projector px, 1/256 of the \
          projector), erode? (projector px the light mask shrinks, 2)}",
@@ -98,7 +101,7 @@ pub struct SceneArgs {
     pub scans: Vec<PathBuf>,
     pub out: Option<PathBuf>,
     pub rectify: Option<Vec<RectifyArgs>>,
-    pub support: Option<u16>,
+    pub support: Option<SupportArg>,
     pub sign: Option<Json>,
     pub scale: Option<ScaleKind>,
     pub tolerance: Option<f32>,
@@ -108,26 +111,45 @@ pub struct SceneArgs {
     pub erode: Option<u32>,
 }
 
+/// The support: a plane number, or `"rectified"` for the first face in `rectify`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum SupportArg {
+    Plane(u16),
+    Named(String),
+}
+
 /// A face to rectify: its number, its aspect (width along the outline's first edge, then depth
 /// along its last) and optionally its corners in the camera picture (far left first, then
-/// clockwise), instead of finding them.
+/// clockwise), instead of finding them. Corners without a number (or number 0) give the face
+/// itself: whatever plane most of the pixels inside them lie on, claimed from the faces and
+/// objects it was split into ([`scene::claim_face`]).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RectifyArgs {
-    pub plane: u16,
+    #[serde(default)]
+    pub plane: Option<u16>,
     pub aspect: [f64; 2],
     pub corners: Option<[[f64; 2]; 4]>,
 }
 
 /// A rectified face: its number, aspect, outline (when found rather than given), corners, the
-/// homography camera -> (u, v) and per projector projector -> (u, v).
+/// homography camera -> (u, v) and per projector its map projector -> camera.
 struct Rectified {
     plane: u16,
     aspect: [f64; 2],
     outline: Option<Outline>,
     corners: [[f64; 2]; 4],
     to_face: Homography,
-    projectors: Vec<Option<Homography>>,
+    projectors: Vec<Option<FaceMap>>,
+}
+
+impl Rectified {
+    /// The face's (u, v) at projector `p`'s point `at`.
+    fn uv(&self, p: usize, at: [f64; 2]) -> Option<[f64; 2]> {
+        let m = self.projectors.get(p)?.as_ref()?;
+        self.to_face.apply(m.apply(at)?)
+    }
 }
 
 /// Per camera pixel the face it shows: the label of the projector pixel that lights it, the
@@ -290,6 +312,52 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
     let scans: Vec<&Map> = to_camera.iter().collect();
     // A face in one projector beats an object in another (a top one projector decodes badly).
     let objects_on_faces = scene::drop_objects_on_faces(&mut found, &scans, camera);
+    // Faces given by their corners alone, claimed in every projector before the numbering.
+    let mut claimed: Vec<(usize, Vec<Option<usize>>)> = Vec::new();
+    for (j, r) in a.rectify.iter().flatten().enumerate() {
+        if r.plane.is_some_and(|p| p != 0) {
+            continue;
+        }
+        let Some(corners) = r.corners else {
+            return Err("a face to rectify names its `plane`, its `corners` or both".into());
+        };
+        let Some(to_face) = Homography::square_to_quad(corners).ok().and_then(|h| h.inverse()) else {
+            return Err("a face's `corners` do not form a convex quadrilateral".into());
+        };
+        let tol = f64::from(base.tolerance);
+        // Each projector alone first; then the others again, searching where the one that
+        // claimed most found the face.
+        let alone: Vec<Option<(SceneParts, scene::Claim)>> = found
+            .iter()
+            .zip(&to_camera)
+            .map(|(s, m)| {
+                let mut s = s.clone();
+                scene::claim_face(&mut s, m, camera, &to_face, tol, UV_MARGIN, None).map(|c| (s, c))
+            })
+            .collect();
+        let count = |c: &scene::Claim| c.camera.iter().filter(|x| **x).count();
+        let lead = alone
+            .iter()
+            .enumerate()
+            .filter_map(|(p, c)| Some((p, count(&c.as_ref()?.1))))
+            .max_by_key(|(_, n)| *n)
+            .map(|(p, _)| p);
+        let prior = lead.and_then(|p| alone.get(p)?.as_ref()).map(|(_, c)| c.camera.clone());
+        let mut per: Vec<Option<usize>> = Vec::new();
+        for (p, ((s, m), mine)) in found.iter_mut().zip(&to_camera).zip(alone).enumerate() {
+            if Some(p) == lead
+                && let Some((claimed_parts, c)) = mine
+            {
+                *s = claimed_parts;
+                per.push(Some(c.plane));
+                continue;
+            }
+            per.push(
+                scene::claim_face(s, m, camera, &to_face, tol, UV_MARGIN, prior.as_deref()).map(|c| c.plane),
+            );
+        }
+        claimed.push((j, per));
+    }
 
     // Planes and objects numbered alike in every projector, top of the camera picture first.
     let plane_counts: Vec<usize> = found.iter().map(|s| s.planes.len()).collect();
@@ -301,7 +369,31 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
     let planes_found = objects::number_faces(&mut plane_parts, &scans, camera, NUMBER_ERODE)?;
     let objects_found = objects::number(&mut object_parts, &scans, camera, NUMBER_ERODE)?;
     let plane_before: Vec<Vec<u16>> = found.iter().map(|s| s.plane_labels.clone()).collect();
-    let plane_numbers = renumbering(&plane_before, &plane_parts, &plane_counts);
+    let mut plane_numbers = renumbering(&plane_before, &plane_parts, &plane_counts);
+    // A claimed face is one face in every projector, whatever the numbering matched it with: the
+    // projectors may light different parts of it.
+    for (_, per) in &claimed {
+        let first = per
+            .iter()
+            .enumerate()
+            .find_map(|(p, k)| plane_numbers.get(p)?.get((*k)? + 1).copied().filter(|n| *n > 0));
+        let Some(target) = first else { continue };
+        for (p, k) in per.iter().enumerate() {
+            let (Some(k), Some(numbers), Some(parts)) = (k, plane_numbers.get_mut(p), plane_parts.get_mut(p))
+            else {
+                continue;
+            };
+            let Some(slot) = numbers.get_mut(k + 1) else { continue };
+            let old = *slot;
+            if old == target || old == 0 {
+                continue;
+            }
+            *slot = target;
+            for l in parts.labels.iter_mut().filter(|l| **l == old) {
+                *l = target;
+            }
+        }
+    }
     let planes_camera =
         scene::fill_gaps(cw, ch, &camera_view_of(&to_camera, &from_camera, &plane_parts, camera), CAMERA_GAP);
     let objects_camera = objects::camera_labels(&object_parts, &scans, camera, NUMBER_ERODE)?;
@@ -320,11 +412,32 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
 
     // The support: asked for, or the plane below the objects.
     let scores = scene::support_scores(cw, ch, &planes_camera, &objects_camera, planes_found.count);
-    let support: Option<(u16, &str)> = match a.support {
-        Some(s) if s == 0 || usize::from(s) > planes_found.count => {
+    let claimed_number = |j: usize| -> Option<u16> {
+        let (_, per) = claimed.iter().find(|(i, _)| *i == j)?;
+        per.iter()
+            .enumerate()
+            .find_map(|(p, k)| plane_numbers.get(p)?.get((*k)? + 1).copied().filter(|n| *n > 0))
+    };
+    let first_rectified = a.rectify.as_ref().and_then(|l| l.first()).and_then(|r| match r.plane {
+        Some(p) if p != 0 => Some(p),
+        _ => claimed_number(0),
+    });
+    let support: Option<(u16, &str)> = match &a.support {
+        Some(SupportArg::Plane(s)) if *s == 0 || usize::from(*s) > planes_found.count => {
             return Err(CommandError(format!("`support` is a plane number, 1 to {}", planes_found.count)));
         }
-        Some(s) => Some((s, "given")),
+        Some(SupportArg::Plane(s)) => Some((*s, "given")),
+        Some(SupportArg::Named(n)) if n == "rectified" => match first_rectified {
+            Some(s) => Some((s, "the rectified face")),
+            None => {
+                return Err(CommandError(
+                    "`support` is \"rectified\" but the first face in `rectify` was not found".into(),
+                ));
+            }
+        },
+        Some(SupportArg::Named(n)) => {
+            return Err(CommandError(format!("`support` is a plane number or \"rectified\", not {n:?}")));
+        }
         None => scores
             .iter()
             .enumerate()
@@ -336,7 +449,19 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
 
     // The faces to rectify: asked for, else the support as a Euro crate's top.
     let asked_faces: Vec<FaceToRectify> = match &a.rectify {
-        Some(list) => list.iter().map(|r| (r.plane, r.aspect, r.corners)).collect(),
+        Some(list) => list
+            .iter()
+            .enumerate()
+            .filter_map(|(j, r)| match r.plane.filter(|p| *p != 0).or_else(|| claimed_number(j)) {
+                Some(plane) => Some((plane, r.aspect, r.corners)),
+                None => {
+                    warnings.push(format!(
+                        "face {j} to rectify: no plane holds most of the pixels inside its corners; not rectified"
+                    ));
+                    None
+                }
+            })
+            .collect(),
         None => support.map(|(s, _)| (s, DEFAULT_ASPECT, None)).into_iter().collect(),
     };
     if support.is_none() && objects_found.count > 0 {
@@ -372,7 +497,15 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
         let projectors = (0..found.len())
             .map(|p| {
                 let k = own_plane(p, plane)?;
-                Some(to_face.after(&found.get(p)?.planes.get(k)?.homography))
+                let h = &found.get(p)?.planes.get(k)?.homography;
+                Some(scene::face_map(
+                    to_camera.get(p)?,
+                    camera,
+                    h,
+                    &to_face,
+                    f64::from(base.tolerance),
+                    UV_MARGIN,
+                ))
             })
             .collect();
         rectified.push(Rectified { plane, aspect, outline, corners, to_face, projectors });
@@ -439,7 +572,9 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             write(&scene_file(p), penumbra_gpu::encode_png_rgba8(w, h, view(&pp.labels, &op.labels))?)?;
         let mut uv = Vec::new();
         for r in &rectified {
-            let Some(to_face) = r.projectors.get(p).copied().flatten() else { continue };
+            if r.projectors.get(p).is_none_or(|m| m.is_none()) {
+                continue;
+            }
             let rgba: Vec<[f32; 4]> = pp
                 .labels
                 .iter()
@@ -447,7 +582,7 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
                 .enumerate()
                 .map(|(i, (l, o))| {
                     let c = [(i % s.width.max(1)) as f64 + 0.5, (i / s.width.max(1)) as f64 + 0.5];
-                    match to_face.apply(c) {
+                    match r.uv(p, c) {
                         Some([u, v]) if inside(u, v) => [u as f32, v as f32, cover(r.plane, *l, *o), 1.0],
                         _ => [-1.0, -1.0, 0.0, 1.0],
                     }
@@ -546,7 +681,13 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             "edge_points": r.outline.as_ref().map(|o| o.edges.map(|e| e.points)),
             "border_points": r.outline.as_ref().map(|o| o.border),
             "camera_to_uv": rows_json(&r.to_face),
-            "projector_to_uv": r.projectors.iter().map(|h| h.as_ref().map_or(Json::Null, rows_json)).collect::<Vec<_>>(),
+            "projector_to_uv": r.projectors.iter().map(|m| m.as_ref().map_or(Json::Null, |m| rows_json(&r.to_face.after(&m.homography)))).collect::<Vec<_>>(),
+            "projector_fit": r.projectors.iter().map(|m| m.as_ref().map_or(Json::Null, |m| json!({
+                "pixels": m.pixels,
+                "error_px": {"plane": round(m.error_px[0]), "corrected": round(m.error_px[1])},
+                "bend_px": {"rms": round(m.bend_px[0]), "largest": round(m.bend_px[1])},
+                "corrected": m.corrected(),
+            }))).collect::<Vec<_>>(),
             "uv_camera": file,
         }));
     }
