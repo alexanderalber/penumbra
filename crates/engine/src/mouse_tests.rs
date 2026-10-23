@@ -29,7 +29,7 @@ fn a_fake_pointer_and_the_wheel_become_channels() {
     assert_eq!(f.call("mouse.status", json!({}))["wanted"], false);
     f.call("node.create", json!({"path": "/mouse", "kind": "chan.mouse_in"}));
     f.call("node.watch", json!({"path": "/mouse"}));
-    eventually("the outputs to pass the wheel on", || f.engine.mouse().wanted());
+    eventually("the event loop to pass the wheel on", || f.engine.mouse().wanted());
     let names: Vec<String> = read(&f, "/mouse")
         .as_array()
         .unwrap()
@@ -49,7 +49,7 @@ fn a_fake_pointer_and_the_wheel_become_channels() {
         );
         f.call("mouse.fake", json!({"x": (l + r) / 2, "y": t + (b - t) / 4, "buttons": ["left", "middle"]}));
         until(&f, "/mouse", "x", 0.5);
-        until(&f, "/mouse", "y", 0.25);
+        until(&f, "/mouse", "y", 0.75);
         until(&f, "/mouse", "inside", 1.0);
         until(&f, "/mouse", "left", 1.0);
         until(&f, "/mouse", "right", 0.0);

@@ -18,8 +18,8 @@ use penumbra_core::lock;
 use penumbra_engine::Engine;
 use penumbra_output::Outputs;
 use winit::application::ApplicationHandler;
-use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event::{DeviceEvent, DeviceId, MouseScrollDelta, StartCause, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents};
 use winit::window::WindowId;
 
 /// Filled by the app creator once eframe has its device: the instance that created it, which
@@ -46,6 +46,8 @@ pub struct Host<'a> {
     attached: bool,
     /// Set once the app is going down after a crash; nothing is forwarded to eframe any more.
     crashed: bool,
+    /// Raw device events are listened to everywhere, not only while focused.
+    device_events_always: bool,
 }
 
 impl<'a> Host<'a> {
@@ -61,6 +63,7 @@ impl<'a> Host<'a> {
             instance,
             attached: false,
             crashed: false,
+            device_events_always: false,
         }
     }
 
@@ -175,6 +178,17 @@ impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
     }
 
     fn device_event(&mut self, event_loop: &ActiveEventLoop, device_id: DeviceId, event: DeviceEvent) {
+        // The wheel for `chan.mouse_in`, turned anywhere (raw input, while one exists).
+        if let DeviceEvent::MouseWheel { delta } = &event {
+            let mouse = self.engine.mouse();
+            if mouse.wanted() {
+                mouse.wheel(match delta {
+                    MouseScrollDelta::LineDelta(_, y) => f64::from(*y),
+                    // Windows reports lines; a pixel delta is taken as 120 to the notch.
+                    MouseScrollDelta::PixelDelta(p) => p.y / 120.0,
+                });
+            }
+        }
         self.guard(|e| e.device_event(event_loop, device_id, event));
     }
 
@@ -184,6 +198,17 @@ impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
             return;
         }
         self.attach();
+        // Raw mouse input from everywhere only while a `chan.mouse_in` wants the wheel; otherwise
+        // only while a penumbra window has the focus, as winit does by default.
+        let wanted = self.engine.mouse().wanted();
+        if wanted != self.device_events_always {
+            self.device_events_always = wanted;
+            event_loop.listen_device_events(if wanted {
+                DeviceEvents::Always
+            } else {
+                DeviceEvents::WhenFocused
+            });
+        }
         if self.attached {
             self.outputs.tick(event_loop);
         }

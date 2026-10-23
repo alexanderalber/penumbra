@@ -103,14 +103,14 @@ and let go) and `keyboard.status`.
 ### Mouse and 3D mouse
 
 `chan.mouse_in` turns the mouse pointer into channels, wherever it is on the desktop, inside
-penumbra or not: `x` and `y` are shares of a display, 0 to 1 from its top left; `inside` is 1
+penumbra or not: `x` and `y` are shares of a display, 0 to 1 from its bottom left (`y` is 1 at
+the top); `inside` is 1
 while the pointer is on that display; `left`, `right` and `middle` are 1 while held. Its
 `display` names the display as an output's `display` does (or `\\.\DISPLAY2`); empty, it
 is the display the pointer is on. On a named display `x` and `y` keep following the pointer
 past 0 and 1 when it leaves. Name a projector's display, and the pointer over the projection
-is a position in the projector's picture. `wheel` sums the notches turned (up positive), but
-only over a projector output window: reading the wheel anywhere would need a hook into every
-mouse event of the machine. The node reads the pointer once a frame, so a click shorter than
+is a position in the projector's picture. `wheel` sums the notches turned anywhere (up
+positive); headless runs have no wheel. The node reads the pointer once a frame, so a click shorter than
 a frame can be missed. From the control channel: `mouse.status` (pointer, displays, wheel) and
 `mouse.fake {x, y, buttons?}` (desktop pixels; `{real: true}` ends it; `{wheel}` turns the
 wheel).

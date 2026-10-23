@@ -1305,7 +1305,7 @@ Inputs: none.
 
 Outputs:
 
-- `out` (chan): `x`, `y`: the pointer as shares of the display, 0 to 1 from the top left; `inside`: 1 while it is on that display; `left`, `right`, `middle`: 1 while held; `wheel`: notches turned over a projector output window, summed (up positive)
+- `out` (chan): `x`, `y`: the pointer as shares of the display, 0 to 1 from the bottom left (`y` 1 at the top); `inside`: 1 while it is on that display; `left`, `right`, `middle`: 1 while held; `wheel`: notches turned anywhere, summed (up positive)
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|

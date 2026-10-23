@@ -4,12 +4,13 @@
 //!   ([`penumbra_system::pointer`]): polled when the node cooks, so the node is time dependent
 //!   and costs nothing unless something shown or output reads it. A click shorter than a frame
 //!   can be missed.
-//! - **The wheel** needs a global hook, which would sit in every mouse move of the machine; so
-//!   it counts only the notches turned over a projector output window, which the output side
-//!   passes on while a `chan.mouse_in` exists ([`Mouse::wanted`]).
+//! - **The wheel** is not polled but counted: the app's event loop listens to the mouse's raw
+//!   input everywhere while a `chan.mouse_in` exists ([`Mouse::wanted`]) and passes each turn
+//!   on. Raw input is a copy of what the mouse sends, not a hook in its path, so it cannot slow
+//!   the desktop down. Headless runs have no event loop; there only `mouse.fake` turns it.
 //! - **`display`** names the display the position is relative to, as an output's `display`
 //!   does; empty means the display the pointer is on. `x` and `y` are shares of that display,
-//!   origin top left; on a named display they follow the pointer beyond 0..1 when it leaves,
+//!   origin bottom left (`y` 1 at the top, as a chart's axes); on a named display they follow the pointer beyond 0..1 when it leaves,
 //!   and `inside` says whether it is on it.
 //! - `mouse.fake` stands in for the pointer (tests, remote control); `mouse.status` reports.
 
@@ -44,7 +45,7 @@ struct State {
 /// What `mouse.status` reports.
 #[derive(Clone, Debug, Serialize)]
 pub struct Status {
-    /// A `chan.mouse_in` is in the network, so the output windows pass the wheel on.
+    /// A `chan.mouse_in` is in the network, so the event loop passes the wheel on.
     pub wanted: bool,
     /// The pointer as the nodes see it now (`None`: cannot be read here).
     pub pointer: Option<Pointer>,
@@ -53,7 +54,7 @@ pub struct Status {
     pub monitors: Vec<Monitor>,
 }
 
-/// The mouse hub: the wheel the output windows pass on, and a fake pointer. Cheap to clone.
+/// The mouse hub: the wheel the event loop passes on, and a fake pointer. Cheap to clone.
 #[derive(Clone, Default)]
 pub struct Mouse {
     wanted: Arc<AtomicBool>,
@@ -65,7 +66,7 @@ impl Mouse {
         Self::default()
     }
 
-    /// Whether any `chan.mouse_in` exists; the output windows pass the wheel on only then.
+    /// Whether any `chan.mouse_in` exists; the event loop passes the wheel on only then.
     pub fn wanted(&self) -> bool {
         self.wanted.load(Ordering::Relaxed)
     }
@@ -130,9 +131,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Chan)
         .describe_output(
             "out",
-            "`x`, `y`: the pointer as shares of the display, 0 to 1 from the top left; `inside`: 1 while it is on \
-             that display; `left`, `right`, `middle`: 1 while held; `wheel`: notches turned over a projector \
-             output window, summed (up positive)",
+            "`x`, `y`: the pointer as shares of the display, 0 to 1 from the bottom left (`y` 1 at the top); \
+             `inside`: 1 while it is on that display; `left`, `right`, `middle`: 1 while held; `wheel`: notches \
+             turned anywhere, summed (up positive)",
         )
         .time_dependent(),
         || Box::new(MouseIn::default()) as Box<dyn Operator>,
@@ -151,8 +152,8 @@ pub fn values(pointer: Option<Pointer>, monitor: Option<&Monitor>, held: (f64, f
     let gate = |p: &Pointer, bit: u8| if p.buttons & bit != 0 { 1.0 } else { 0.0 };
     let (x, y, inside) = match (pointer, monitor) {
         (Some(p), Some(m)) => {
-            let (x, y) = m.share(p.x, p.y);
-            (x, y, if m.contains(p.x, p.y) { 1.0 } else { 0.0 })
+            let (x, down) = m.share(p.x, p.y);
+            (x, 1.0 - down, if m.contains(p.x, p.y) { 1.0 } else { 0.0 })
         }
         _ => (held.0, held.1, 0.0),
     };
@@ -249,7 +250,7 @@ mod tests {
     #[test]
     fn shares_of_the_display_and_held_buttons() {
         let p = Pointer { x: 2880, y: 270, buttons: LEFT | MIDDLE };
-        assert_eq!(values(Some(p), Some(&monitor()), (0.0, 0.0), 2.0), [0.5, 0.25, 1.0, 1.0, 0.0, 1.0, 2.0]);
+        assert_eq!(values(Some(p), Some(&monitor()), (0.0, 0.0), 2.0), [0.5, 0.75, 1.0, 1.0, 0.0, 1.0, 2.0]);
         // Off the display: the shares go on, `inside` is 0.
         let off = Pointer { x: 960, y: 540, buttons: 0 };
         let v = values(Some(off), Some(&monitor()), (0.0, 0.0), 0.0);
