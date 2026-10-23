@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
 
 ### tex.blob_track
 
@@ -772,6 +772,47 @@ Outputs: `out` (tex).
 | `node` | node |  |  | Path of the node (/name), or the name of a node beside this one |
 | `output` *(more)* | int | `0` | 0 to 63 | Which output of that node, counted from 0 (tex.render's data is 1) |
 
+### tex.sequence
+
+The picture of a show: the inputs a chan.sequence says, cut or blended, with black and white made in between. Only the inputs shown cook
+
+Inputs:
+
+- `sequence` (chan): A chan.sequence: its from, to and mix pick the inputs (piece k is in<k>, -1 black, -2 white)
+- `black` (tex)
+- `white` (tex)
+- `in0` (tex)
+- `in1` (tex)
+- `in2` (tex)
+- `in3` (tex)
+- `in4` (tex)
+- `in5` (tex)
+- `in6` (tex)
+- `in7` (tex)
+- `in8` (tex)
+- `in9` (tex)
+- `in10` (tex)
+- `in11` (tex)
+- `in12` (tex)
+- `in13` (tex)
+- `in14` (tex)
+- `in15` (tex)
+- `in16` (tex)
+- `in17` (tex)
+- `in18` (tex)
+- `in19` (tex)
+- `in20` (tex)
+- `in21` (tex)
+- `in22` (tex)
+- `in23` (tex)
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` *(more)* | int | `1920` | 64 to 3840 (soft) | Width of the black or white made while no picture is shown to take the size from |
+| `height` *(more)* | int | `1080` | 64 to 2160 (soft) | Height of the black or white made while no picture is shown to take the size from |
+
 ### tex.shader
 
 A WGSL fragment shader from a file, hot reloaded; parameters come from its `// @param` header
@@ -1045,7 +1086,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.speed](#chanspeed), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.speed](#chanspeed), [chan.trail](#chantrail)
 
 ### chan.audio_analysis
 
@@ -1096,13 +1137,13 @@ Outputs: `out` (chan).
 
 Seconds since it was switched on: starts over from 0 each time `run` turns on, then plays once, loops or runs on. A clock per piece of a show that starts with its piece
 
-Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over. Cooks in every frame, whether anything shows it or not, so it sees every change of its params.
 
 Inputs: none.
 
 Outputs:
 
-- `out` (chan): `seconds` since it was switched on (once: at most `length`; loop: within the round), `fraction` of `length` (0 to 1 for once and loop), `done` (1 once a full length has passed since it was switched on, else 0). It also starts over when it was not computed for more than half a second of show time while on (nothing showed it, as when its piece was not picked) and after a seek
+- `out` (chan): `seconds` since it was switched on (once: at most `length`; loop: within the round), `fraction` of `length` (0 to 1 for once and loop), `done` (1 once a full length has passed since it was switched on, else 0). It cooks in every frame, shown or not, so it sees `run` turn off while its piece is not shown; a seek back starts it over
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -1363,6 +1404,28 @@ Outputs: `out` (chan).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `channels` | text | `"*"` |  | Space-separated names, `*` matches any run of characters: `x y pos*`; `^name` leaves channels out. To rename, add a chan.rename |
+
+### chan.sequence
+
+A show: pieces one after another with cuts, fades, dips to black and flashes. Drives a tex.sequence per output and a run gate per piece
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over. Cooks in every frame, whether anything shows it or not, so it sees every change of its params.
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): `seconds` into the show (loop: into the round), `step` (counted from 0; -1 in the lead-in, the number of steps after the last), `piece` (the step's piece number, -1 for none), `from`, `to` and `mix` (the entries shown: a piece number, -1 black, -2 white; mix is the share of `to`, 0 while one entry shows), `done` (1 once the show has played through), `length` (the show's seconds) and `run_<name>` per piece: 1 while it is shown, also during its fades
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `steps` | text |  |  | One step per line: piece, seconds, transition into the next step, its length. E.g. `faces 10 fade 2`. Transitions: cut, fade (cross-fade over the step's last seconds), black (fade out to black, the next cuts in), flash (cut to white, which fades into the next step over its first seconds). # starts a comment. The last step's transition leads into the black the show ends in |
+| `file` | file (json, txt) |  |  | Read the steps from this file instead (relative to the project directory; saving it reloads): lines as in `steps`, or JSON {"lead_in": s, "steps": [{"piece", "duration", "transition", "length"}]}, whose lead_in then wins over the param |
+| `names` | text |  |  | The pieces in input order, separated by spaces: piece k is input in<k> of a tex.sequence and has a channel run_<name>. Steps naming another piece are left out. Empty: the pieces in the order the steps first name them |
+| `lead_in` | float | `1` | 0 to 10 s (soft) | Black before the first step, so its piece starts over when the show starts |
+| `run` | float | `1` | 0 to 1 (soft) | On from 0.5 up (with `equals` set: while it equals that number). Each time it turns on the show starts from its beginning; while it is off it shows black and every run gate is 0 |
+| `equals` | int | `-1` (off) | -1 to 20 (soft) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the show's own number. While off, `run` is on from 0.5 up; -1: off |
+| `mode` | once \| loop | `"once"` |  | What the show does after its last step; once: it ends in black and stays there; loop: it starts over from its lead-in, round after round |
 
 ### chan.speed
 

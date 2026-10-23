@@ -25,6 +25,7 @@ mod ramp;
 pub mod render;
 pub mod scan;
 mod scan_pattern;
+mod sequence;
 mod shader;
 mod shape_content;
 pub mod shapes;
@@ -474,6 +475,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     convert::register(types)?;
     denoise::register(types)?;
     flow::register(types)?;
+    sequence::register(types)?;
     fluid::register(types)?;
     image::register(types)?;
     layer::register(types)?;

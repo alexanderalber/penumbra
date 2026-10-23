@@ -567,6 +567,7 @@ fn every_builtin_cooks_without_warnings() {
                 ("count", Value::Int(4)),
             ]),
             "tex.video_in" => params.push(("device", "test".into())),
+            "chan.sequence" => params.push(("steps", "a 1".into())),
             // Its trace input gets the black feed: the whole picture is one dark region, on a
             // surface of the feed's size.
             "tex.shapes" => params.extend(size().into_iter().chain([("trace_invert", true.into())])),
@@ -585,7 +586,10 @@ fn every_builtin_cooks_without_warnings() {
                 // Component ports and nulls pass on what they get and complain about nothing wired.
                 penumbra_graph::DataKind::Chan if kind == "chan.audio_analysis" => Some("/audio_feed"),
                 penumbra_graph::DataKind::Chan
-                    if desc.port.is_some() || passes_on(kind) || kind == "tex.from_chan" =>
+                    if desc.port.is_some()
+                        || passes_on(kind)
+                        || kind == "tex.from_chan"
+                        || kind == "tex.sequence" =>
                 {
                     Some("/chan_feed")
                 }
@@ -2762,4 +2766,132 @@ fn scan_pattern_matches_the_decoders_patterns_pixel_for_pixel() {
             }
         }
     }
+}
+
+fn bind(param: &str, from: &str, channel: &str) -> Op {
+    Op::Bind {
+        param: ParamPath::parse(param).unwrap(),
+        component: None,
+        from: from.parse().unwrap(),
+        channel: Some(penumbra_core::Name::new(channel).unwrap()),
+    }
+}
+
+/// A show of three pieces with every transition, played by a chan.sequence and pictured by a
+/// tex.sequence: the picture at the boundaries, the run gates, only the inputs shown cooked,
+/// and a piece's clock that starts over with it though nothing showed the clock meanwhile.
+#[test]
+fn a_sequence_plays_a_show_and_cooks_only_what_it_shows() {
+    let Some(gpu) = gpu() else { return };
+    // Lead-in 1 s; a 1..5 fading into b over 4..5; b 5..9 out to black over 8..9; c 9..12, then
+    // a flash: white at 12 fading into the end's black over 12..12.5.
+    let steps = "a 4 fade 1\nb 4 black 1\nc 3 flash 0.5";
+    let ops = [
+        constant("/a", 0.2),
+        constant("/b", 0.6),
+        constant("/c", 0.4),
+        constant("/unused", 0.9),
+        create("/seq", "chan.sequence", &[("steps", steps.into()), ("names", "a b c d".into())]),
+        create("/pic", "tex.sequence", &[("width", Value::Int(8)), ("height", Value::Int(4))]),
+        connect("/seq", "/pic", 0),
+        connect("/a", "/pic", 3),
+        connect("/b", "/pic", 4),
+        connect("/c", "/pic", 5),
+        connect("/unused", "/pic", 6),
+        create("/clock_a", "chan.clock", &[("length", Value::Float(100.0)), ("mode", "free".into())]),
+        bind("/clock_a.run", "/seq", "run_a"),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let cooked = |rig: &Rig, p: &str| rig.cooker.outputs(rig.id(p)).is_some();
+    let chan = |rig: &Rig, p: &str, name: &str| {
+        rig.cooker
+            .output(Port { node: rig.id(p), output: 0 })
+            .and_then(|d| d.get::<penumbra_core::Chans>())
+            .and_then(|c| c.value(Some(name)))
+            .unwrap()
+    };
+    // Plays from the first cook; 60 frames a second, cooked every 15 frames.
+    let mut frame = 0;
+    let mut at = |rig: &mut Rig, seconds: f64| {
+        let target = (seconds * 60.0).round() as u64;
+        while frame + 15 < target {
+            frame += 15;
+            rig.clock.advance(15);
+            rig.cook("/pic");
+        }
+        rig.clock.advance(target - frame);
+        frame = target;
+        red(rig, "/pic")
+    };
+    // The lead-in: black, nothing cooked but the show.
+    assert!(at(&mut rig, 0.0) < 0.01);
+    assert_eq!(chan(&rig, "/seq", "step"), -1.0);
+    assert_eq!(chan(&rig, "/seq", "from"), -1.0);
+    assert!(!cooked(&rig, "/a") && !cooked(&rig, "/b") && !cooked(&rig, "/c"));
+    // The cut into a.
+    assert!((at(&mut rig, 1.0) - 0.2).abs() < 0.01);
+    assert_eq!((chan(&rig, "/seq", "step"), chan(&rig, "/seq", "run_a")), (0.0, 1.0));
+    assert!(!cooked(&rig, "/b"));
+    // Half way through the cross-fade: both shown, both gates on.
+    assert!((at(&mut rig, 4.5) - 0.4).abs() < 0.01);
+    assert_eq!((chan(&rig, "/seq", "run_a"), chan(&rig, "/seq", "run_b")), (1.0, 1.0));
+    assert!((chan(&rig, "/seq", "mix") - 0.5).abs() < 1e-9);
+    // b alone; a's gate is off.
+    assert!((at(&mut rig, 5.0) - 0.6).abs() < 0.01);
+    assert_eq!((chan(&rig, "/seq", "step"), chan(&rig, "/seq", "run_a")), (1.0, 0.0));
+    // Out to black: half of b at 8.5, then c cuts in at 9 (c never cooked before).
+    assert!(!cooked(&rig, "/c"));
+    assert!((at(&mut rig, 8.5) - 0.3).abs() < 0.01);
+    assert!((at(&mut rig, 9.0) - 0.4).abs() < 0.01);
+    assert_eq!((chan(&rig, "/seq", "run_b"), chan(&rig, "/seq", "run_c")), (0.0, 1.0));
+    // The flash: white, then half way to black.
+    assert!(at(&mut rig, 12.0) > 0.99);
+    assert_eq!(chan(&rig, "/seq", "run_c"), 0.0);
+    assert!((at(&mut rig, 12.25) - 0.5).abs() < 0.01);
+    assert!(at(&mut rig, 13.0) < 0.01);
+    assert_eq!(chan(&rig, "/seq", "done"), 1.0);
+    // Never shown, never cooked; a gate for the piece without steps, always off.
+    assert!(!cooked(&rig, "/unused"));
+    assert_eq!(chan(&rig, "/seq", "run_d"), 0.0);
+    // Nothing reads a's clock, yet it saw a's gate: it stood at 0 from 5 s on.
+    assert_eq!(chan(&rig, "/clock_a", "seconds"), 0.0);
+
+    // Off: black, gates off; on again: from the start, and a's clock from 0 with a.
+    rig.edit(&[set("/seq.run", Value::Float(0.0))]);
+    assert!(at(&mut rig, 13.5) < 0.01);
+    assert_eq!(chan(&rig, "/seq", "step"), -1.0);
+    rig.edit(&[set("/seq.run", Value::Float(1.0))]);
+    assert!(at(&mut rig, 14.0) < 0.01, "the lead-in again");
+    assert!((at(&mut rig, 15.0) - 0.2).abs() < 0.01);
+    assert!((at(&mut rig, 15.5) - 0.2).abs() < 0.01);
+    // a came in one lead-in into the show.
+    let into_a = chan(&rig, "/seq", "seconds") - 1.0;
+    assert!(into_a > 0.0 && (chan(&rig, "/clock_a", "seconds") - into_a).abs() < 1e-9);
+}
+
+/// Wired black and white replace the ones made (a projector's own black, a white limited to
+/// what it reaches), and a black alone is made once, not each frame.
+#[test]
+fn a_sequence_takes_wired_black_and_white() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        constant("/a", 0.2),
+        constant("/dark", 0.1),
+        constant("/light", 0.7),
+        create("/seq", "chan.sequence", &[("steps", "a 1 flash 1".into()), ("lead_in", Value::Float(1.0))]),
+        create("/pic", "tex.sequence", &[]),
+        connect("/seq", "/pic", 0),
+        connect("/a", "/pic", 3),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.cook("/pic");
+    let made = rig.tex("/pic").unwrap();
+    assert_eq!(made.size(), (1920, 1080), "black made at width x height");
+    rig.clock.advance(15);
+    rig.cook("/pic");
+    assert!(rig.tex("/pic").unwrap().same(&made), "black alone is not made again");
+    rig.edit(&[connect("/dark", "/pic", 1), connect("/light", "/pic", 2)]);
+    assert!((red(&mut rig, "/pic") - 0.1).abs() < 0.01);
+    rig.clock.advance(105);
+    assert!((red(&mut rig, "/pic") - 0.7).abs() < 0.01, "the flash at 2 s");
 }

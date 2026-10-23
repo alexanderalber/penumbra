@@ -233,6 +233,8 @@ pub struct InputChoice<'a> {
     def: &'a NodeDef,
     desc: &'a NodeDesc,
     bound: &'a BTreeMap<Name, Value>,
+    /// Per input, the channels on it when it is a steering input with something on it.
+    chans: Vec<Option<&'a Chans>>,
 }
 
 impl InputChoice<'_> {
@@ -260,6 +262,12 @@ impl InputChoice<'_> {
     /// Whether a wire leads into input `index`.
     pub fn connected(&self, index: usize) -> bool {
         self.def.inputs.get(index).is_some_and(Option::is_some)
+    }
+
+    /// The channels on input `index`, if it is a steering input ([`InputSpec::steers`](crate::node::InputSpec::steers)) and its
+    /// source has made some (steering inputs cook before the choice).
+    pub fn chans(&self, index: usize) -> Option<&Chans> {
+        self.chans.get(index).copied().flatten()
     }
 }
 
@@ -536,6 +544,8 @@ pub struct Cooker {
     /// reference). Only kept while [`Cooker::lazy`] holds.
     read: BTreeSet<Port>,
     read_all: BTreeSet<NodeId>,
+    /// The nodes cooked in every pass ([`NodeDesc::eager`]), as of the last sync.
+    eager: Vec<NodeId>,
 }
 
 impl Cooker {
@@ -556,6 +566,7 @@ impl Cooker {
             lazy: false,
             read: BTreeSet::new(),
             read_all: BTreeSet::new(),
+            eager: Vec::new(),
         }
     }
 
@@ -620,6 +631,9 @@ impl Cooker {
         }
         self.find_reads(outputs, thumbnails, shown);
         for &id in outputs.iter().chain(shown.iter().map(|p| &p.node)) {
+            self.evaluate(id, time, &mut report);
+        }
+        for id in self.eager.clone() {
             self.evaluate(id, time, &mut report);
         }
         self.cook_thumbnails(thumbnails, time, &mut report);
@@ -690,6 +704,12 @@ impl Cooker {
                 }
             }
         }
+        self.eager = self
+            .runtimes
+            .iter()
+            .filter(|(_, rt)| rt.ty.as_ref().is_some_and(|t| t.desc().eager))
+            .map(|(id, _)| *id)
+            .collect();
         self.lazy = self
             .runtimes
             .values()
@@ -708,7 +728,8 @@ impl Cooker {
         }
         let mut read: BTreeSet<Port> = shown.iter().copied().collect();
         let mut read_all = BTreeSet::new();
-        let mut stack: Vec<NodeId> = outputs.iter().chain(shown.iter().map(|p| &p.node)).copied().collect();
+        let mut stack: Vec<NodeId> =
+            outputs.iter().chain(shown.iter().map(|p| &p.node)).chain(&self.eager).copied().collect();
         if self.thumbs.mode == ThumbnailMode::Always {
             stack.extend(thumbnails.iter().copied());
         }
@@ -766,7 +787,14 @@ impl Cooker {
                     }
                     if chooser(rt).is_some() {
                         stack.push((id, Visit::Choose));
-                        rt.def.binds.values().map(|b| b.node).chain(self.current_refs(rt)).collect()
+                        let steering = steering(rt).filter_map(|i| rt.def.inputs.get(i).copied().flatten());
+                        rt.def
+                            .binds
+                            .values()
+                            .map(|b| b.node)
+                            .chain(self.current_refs(rt))
+                            .chain(steering.map(|p| p.node))
+                            .collect()
                     } else {
                         stack.push((id, Visit::Cook));
                         rt.def.upstream().chain(self.current_refs(rt)).collect()
@@ -794,7 +822,16 @@ impl Cooker {
     fn needed(&self, rt: &Runtime, bound: &BTreeMap<Name, Value>) -> Option<Vec<bool>> {
         let choose = chooser(rt)?;
         let desc = rt.ty.as_ref()?.desc();
-        let cx = InputChoice { def: &rt.def, desc, bound };
+        let mut chans = vec![None; rt.def.inputs.len()];
+        for i in steering(rt) {
+            let data = rt.def.inputs.get(i).copied().flatten().and_then(|port| {
+                self.runtimes.get(&port.node)?.outputs.as_ref()?.get(port.output as usize)?.get::<Chans>()
+            });
+            if let Some(slot) = chans.get_mut(i) {
+                *slot = data;
+            }
+        }
+        let cx = InputChoice { def: &rt.def, desc, bound, chans };
         let picked = match catch_unwind(AssertUnwindSafe(|| choose(&cx))) {
             Ok(picked) => picked?,
             Err(p) => {
@@ -803,6 +840,11 @@ impl Cooker {
             }
         };
         let mut mask = vec![false; rt.def.inputs.len()];
+        for i in steering(rt) {
+            if let Some(m) = mask.get_mut(i) {
+                *m = true;
+            }
+        }
         for i in picked {
             if let Some(m) = mask.get_mut(i) {
                 *m = true;
@@ -1299,6 +1341,17 @@ enum Visit {
 
 fn chooser(rt: &Runtime) -> Option<InputChooser> {
     rt.ty.as_ref()?.input_chooser()
+}
+
+/// The indices of a node's steering inputs ([`InputSpec::steers`](crate::node::InputSpec::steers)): its chooser reads them, so
+/// they cook before it chooses and are always needed.
+fn steering(rt: &Runtime) -> impl Iterator<Item = usize> + '_ {
+    let inputs = rt.ty.as_ref().map(|t| t.desc().inputs.as_slice()).unwrap_or_default();
+    inputs
+        .iter()
+        .enumerate()
+        .filter(|(_, i)| i.steers && i.kind == DataKind::Chan && !i.previous)
+        .map(|(i, _)| i)
 }
 
 /// Whether input `i` is needed by a mask from [`Cooker::needed`] (`None`: all are).

@@ -16,6 +16,7 @@ pub mod osc;
 pub mod out;
 pub mod res;
 pub mod script;
+pub mod sequence;
 pub mod shapes;
 pub mod table;
 pub mod tex;
@@ -43,6 +44,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     osc::register(types)?;
     out::register(types)?;
     script::register(types)?;
+    sequence::register(types)?;
     table::register(types)?;
     tex::register(types)?;
     view::register(types)?;

@@ -72,6 +72,12 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
                 .to_string(),
         );
     }
+    if desc.eager {
+        notes.push(
+            "Cooks in every frame, whether anything shows it or not, so it sees every change of its params."
+                .to_string(),
+        );
+    }
     if desc.container {
         notes.push("Holds nodes of its own (a component).".to_string());
     }

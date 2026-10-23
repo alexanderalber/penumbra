@@ -258,11 +258,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "out",
             "`seconds` since it was switched on (once: at most `length`; loop: within the round), \
              `fraction` of `length` (0 to 1 for once and loop), `done` (1 once a full length has passed \
-             since it was switched on, else 0). It also starts over when it was not computed for more \
-             than half a second of show time while on (nothing showed it, as when its piece was not \
-             picked) and after a seek",
+             since it was switched on, else 0). It cooks in every frame, shown or not, so it sees `run` \
+             turn off while its piece is not shown; a seek back starts it over",
         )
-        .time_dependent(),
+        .time_dependent()
+        .eager(),
         || Box::new(Clock::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
@@ -843,8 +843,6 @@ impl Operator for Speed {
 pub const CLOCK: &str = "chan.clock";
 /// Shortest `length` of a `chan.clock`, in seconds.
 const CLOCK_MIN_LENGTH: f64 = 0.001;
-/// A `chan.clock` not computed for longer than this while on starts over: nothing showed it.
-const CLOCK_GAP: f64 = 0.5;
 
 /// Whether `a` and `b` count as equal for `chan.math`'s `equal` and `chan.clock`'s `equals`:
 /// within a millionth, so numbers that went through a sum or a binding still match.
@@ -853,6 +851,10 @@ fn equal(a: f64, b: f64) -> bool {
 }
 
 /// `chan.clock`: the show time when it was switched on, and the time it was last computed.
+/// It cooks in every pass ([`penumbra_graph::NodeDesc::eager`]), so `run` turning off is seen
+/// even while nothing shows the clock. (Starting over after half a second without a cook
+/// instead never happened while the editor's thumbnails cooked every node, and would strike
+/// mid-piece after a frame late by that much.)
 #[derive(Default)]
 struct Clock {
     start: Option<Tick>,
@@ -878,16 +880,12 @@ impl Operator for Clock {
         let run = cx.float("run")?;
         let equals = cx.int("equals")?;
         let on = if equals >= 0 { equal(run, equals as f64) } else { run >= 0.5 };
-        // A seek back, or time that passed without this clock being computed (nothing showed
-        // it), starts it over: from where it is seen again, it is a new start.
-        let gap = match self.last {
-            Some(last) => now.0 < last.0 || Tick(now.0 - last.0).seconds() > CLOCK_GAP,
-            None => true,
-        };
+        // A seek back starts it over.
+        let back = self.last.is_some_and(|last| now.0 < last.0);
         self.last = Some(now);
         if !on {
             self.start = None;
-        } else if self.start.is_none() || gap {
+        } else if self.start.is_none() || back {
             self.start = Some(now);
         }
         let elapsed = self.start.map_or(0.0, |s| Tick(now.0.saturating_sub(s.0)).seconds());
@@ -1394,13 +1392,16 @@ mod tests {
         f.clock.advance(15);
         assert_eq!(seconds(&mut f), 0.0);
         assert_eq!(f.chans("/clock").value(Some("done")), Some(0.0));
-        // Not computed for a second (nothing showed it) while its piece stays: from 0 again.
+        // A second later it has run on (it no longer starts over after a pause between cooks).
         f.clock.advance(15);
         assert!((seconds(&mut f) - 0.25).abs() < 1e-9);
         f.clock.advance(60);
-        assert_eq!(seconds(&mut f), 0.0);
-        // Looping, and on from 0.5 up without `equals`.
+        assert_eq!(seconds(&mut f), 1.0);
+        // Looping, and on from 0.5 up without `equals` (off for a frame first).
+        apply(&mut f, &[set("/piece.value0", 0.0)]);
+        seconds(&mut f);
         apply(&mut f, &[set("/clock.mode", "loop"), set("/clock.equals", -1_i64), set("/piece.value0", 1.0)]);
+        seconds(&mut f);
         for _ in 0..5 {
             f.clock.advance(15);
             seconds(&mut f);

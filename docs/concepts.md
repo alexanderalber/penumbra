@@ -46,7 +46,10 @@ Every type, with every param, is in the [node reference](reference/nodes.md). No
 when something needs them (an output, the viewer, a visible thumbnail) and only when something
 they depend on changed. A node may need only some of its inputs: `tex.switch` with
 `inactive: skip` cooks only the chain it shows, and the others stand still (their state pauses,
-their thumbnails cook only as thumbnails) until it switches to them.
+their thumbnails cook only as thumbnails) until it switches to them; `tex.sequence` does the
+same for a show. A few cheap nodes cook in every frame whether anything shows them or not
+(`chan.clock`, `chan.sequence`; the reference says so), so they see every change of their
+params.
 
 ## Params
 
@@ -106,10 +109,64 @@ says which piece plays (`last` of a `chan.keyboard_in`, or the `chan.constant` b
 set `equals` to the piece's number, and the piece has a clock that starts with it, with one
 binding. `mode` says what happens after `length` seconds: `once` holds at the end, `loop` starts
 over, `free` runs on. Its channels are `seconds`, `fraction` (of `length`) and `done` (1 once a
-full length has passed). A clock that nothing computed for more than half a second while on
-(its piece was not picked in a `tex.switch`, so nothing asked for it) also starts over, and so
-does every clock after a seek. To compare channels elsewhere, `chan.math` has `op` `equal`: 1
-where a equals b, else 0.
+full length has passed). A seek back starts every clock over. To compare channels elsewhere,
+`chan.math` has `op` `equal`: 1 where a equals b, else 0.
+
+`run` is the only way a clock starts over: a clock left at `run` 1 runs on while its piece is
+not shown. A clock cooks in every frame, shown or not, so it sees its `run` turn off and on
+again even while a `tex.switch` or `tex.sequence` skips the piece it drives, and it behaves the
+same with the editor's thumbnails on or off and headless.
+
+### Shows
+
+A show plays pieces one after another, with cuts, cross-fades, dips to black and flashes
+between them. Two kinds of node make it:
+
+- **`chan.sequence`** holds the steps and the show's clock. Its `steps` are one line per step:
+  piece, seconds, the transition into the next step and its length.
+
+  ```
+  # piece    seconds  transition  length
+  intro      21
+  faces      10       fade        2
+  pumpkin    10       black       1.5
+  tiles      12       flash       0.6
+  water      15
+  ```
+
+  `cut` (or nothing) cuts at the end of the step; `fade` cross-fades into the next piece over
+  the step's last seconds; `black` fades this piece out to black over its last seconds and the
+  next one cuts in; `flash` cuts to white at the end, and the white fades into the next piece
+  over its first seconds. A step's seconds are its whole slot, its transitions included. Before
+  the first step there are `lead_in` seconds of black, after the last the show ends in black (the
+  last step's transition leads into it). Instead of `steps`, `file` may name a file with such
+  lines or with JSON: `{"lead_in": 1, "steps": [{"piece": "faces", "duration": 10,
+  "transition": "fade", "length": 2}, ...]}`; saving the file applies it.
+
+  `names` lists the pieces in a fixed order (`intro faces pumpkin tiles water show`): piece k
+  is input `in<k>` of a `tex.sequence` and gets a channel `run_<name>`. Steps naming a piece not
+  in the list are left out with a warning. Left empty, the pieces are numbered as the steps first
+  name them.
+
+  `run` (with `equals`, as for a clock) starts the show from its beginning each time it turns
+  on; while it is off the show is black. `mode` `loop` plays it round after round. Its channels:
+  `seconds`, `step` (counted from 0; -1 in the lead-in), `piece`, `from`, `to` and `mix` (the
+  entries shown, a piece number, -1 for black or -2 for white, and the share of `to`), `done`,
+  `length`, and `run_<name>` per piece, 1 while that piece is shown, also during its fades. Bind a
+  piece's clock's `run` to its `run_<name>` and the piece starts from its beginning each time
+  the show brings it in (a piece listed twice in a row runs on).
+
+- **`tex.sequence`** makes the picture: wire the `chan.sequence` into its `sequence` input and
+  each piece's picture into `in<k>`. It passes the piece shown on as it is and blends two during
+  a transition; only the one or two inputs shown cook, the others cost nothing. Black and white
+  are made by the node (at the size of the picture they blend with, else `width` x `height`),
+  unless `black` or `white` are wired: a projector's output can take its own black and a white
+  limited to what it reaches. An input not wired shows black. For pictures per projector, use
+  one `tex.sequence` per output, all wired to the same `chan.sequence`.
+
+A saved component could hold the same nodes, but the show itself (the steps, the row of
+entries, the gates) is the native node; a component around a `chan.sequence` and its
+`tex.sequence` nodes is only worth it to reuse a whole show setup.
 
 ## Paths
 

@@ -93,11 +93,14 @@ pub struct InputSpec {
     /// source may lie downstream, and a wire into it may close a loop (tex.feedback's
     /// `previous`).
     pub previous: bool,
+    /// A `chan` input the node's choice of inputs reads ([`InputChooser`]): it cooks before the
+    /// choice and is always needed (`tex.sequence`'s `sequence`).
+    pub steers: bool,
 }
 
 impl InputSpec {
     pub fn new(name: &str, kind: DataKind) -> Self {
-        Self { name: name.to_string(), kind, doc: String::new(), previous: false }
+        Self { name: name.to_string(), kind, doc: String::new(), previous: false, steers: false }
     }
 }
 
@@ -159,6 +162,11 @@ pub struct NodeDesc {
     /// Its first output's channels usually carry many samples each (a trail, an audio block):
     /// the editor gives it a taller body with a plot.
     pub sampled: bool,
+    /// Cooked in every pass, whether anything reads it or not, so it sees every change of its
+    /// params and bound channels as it happens: a clock that starts over when its `run` turns
+    /// on must see `run` turn off while its picture is not shown. Only for cheap nodes; what
+    /// its bindings and inputs need cooks with it.
+    pub eager: bool,
 }
 
 impl NodeDesc {
@@ -175,6 +183,7 @@ impl NodeDesc {
             extra_params: false,
             stateful: false,
             sampled: false,
+            eager: false,
         }
     }
 
@@ -185,6 +194,12 @@ impl NodeDesc {
 
     pub fn input(mut self, name: &str, kind: DataKind) -> Self {
         self.inputs.push(InputSpec::new(name, kind));
+        self
+    }
+
+    /// A `chan` input the choice of inputs reads ([`InputSpec::steers`]).
+    pub fn input_steering(mut self, name: &str) -> Self {
+        self.inputs.push(InputSpec { steers: true, ..InputSpec::new(name, DataKind::Chan) });
         self
     }
 
@@ -251,6 +266,12 @@ impl NodeDesc {
     /// Declares [`NodeDesc::stateful`].
     pub fn stateful(mut self) -> Self {
         self.stateful = true;
+        self
+    }
+
+    /// Declares [`NodeDesc::eager`].
+    pub fn eager(mut self) -> Self {
+        self.eager = true;
         self
     }
 
@@ -351,9 +372,10 @@ impl From<Error> for CookError {
 }
 
 /// Which inputs a node needs this frame, decided from its parameters (bound ones already
-/// evaluated) and its wiring, before anything upstream of those inputs cooks: the indices of
-/// the needed inputs, or `None` for all of them. Inputs left out are not cooked for this node
-/// and read as nothing in its cook. Must be cheap and depend on nothing but what
+/// evaluated), its wiring and the channels on its steering inputs ([`InputSpec::steers`]),
+/// before anything upstream of its other inputs cooks: the indices of the needed inputs, or
+/// `None` for all of them. Inputs left out are not cooked for this node and read as nothing in
+/// its cook; steering inputs are always needed (they cook first, so the choice can read them). Must be cheap and depend on nothing but what
 /// [`InputChoice`] offers, since the cooker also asks it to judge whether a picture is current.
 pub type InputChooser = fn(&InputChoice<'_>) -> Option<Vec<usize>>;
 
