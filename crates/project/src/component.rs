@@ -198,6 +198,7 @@ pub fn collapse(
             inputs: Vec::new(),
             binds: BTreeMap::new(),
             locked: false,
+            pos: None,
         },
     );
     for (path, node) in &base.nodes {
@@ -313,6 +314,7 @@ fn port_node(kind: &str, source: Option<PortRef>) -> NodeContent {
         inputs: vec![source],
         binds: BTreeMap::new(),
         locked: false,
+        pos: None,
     }
 }
 

@@ -10,6 +10,10 @@
 //! step to, so stepping through the history does not roll them back. A recorded edit that
 //! changes such a param takes it back into the history: the live value is written into every
 //! earlier snapshot (undoing that edit returns to it) and is forgotten.
+//!
+//! Node positions the editor gives nodes that came without one are live the same way: placing
+//! such a node is no edit of the user's, but undoing an unrelated edit must not take its place
+//! away again.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -65,6 +69,8 @@ pub struct History {
     limit: usize,
     /// Params set outside the history, with their values (`None`: the default).
     live: BTreeMap<(NodeId, Name), Option<Value>>,
+    /// Node positions set outside the history.
+    live_pos: BTreeMap<NodeId, Option<[f32; 2]>>,
 }
 
 impl History {
@@ -78,6 +84,7 @@ impl History {
             cursor: 0,
             limit: Self::DEFAULT_LIMIT,
             live: BTreeMap::new(),
+            live_pos: BTreeMap::new(),
         }
     }
 
@@ -105,17 +112,22 @@ impl History {
         if let Some(net) = self.current().with_params(&self.live) {
             *self.current_mut() = Arc::new(net);
         }
+        if let Some(net) = self.current().with_positions(&self.live_pos) {
+            *self.current_mut() = Arc::new(net);
+        }
     }
 
     /// Replaces the current snapshot without recording an entry: `snapshot` differs from it in
-    /// param values of `touched` only, and those are kept through undo and redo (see the module
-    /// docs). Returns whether anything changed.
+    /// param values and positions of `touched` only, and those are kept through undo and redo
+    /// (see the module docs). Returns whether anything changed.
     pub fn live(&mut self, snapshot: Arc<Network>, touched: &BTreeSet<NodeId>) -> bool {
         let changes = self.current().param_changes(&snapshot, touched);
-        if changes.is_empty() {
+        let moves = self.current().pos_changes(&snapshot, touched);
+        if changes.is_empty() && moves.is_empty() {
             return false;
         }
         self.live.extend(changes);
+        self.live_pos.extend(moves);
         *self.current_mut() = snapshot;
         true
     }
@@ -134,19 +146,33 @@ impl History {
             .filter(|(id, name)| current.stored_param(*id, name) != snapshot.stored_param(*id, name))
             .cloned()
             .collect();
-        if taken.is_empty() {
+        let pos_of = |net: &Network, id: NodeId| net.node(id).map(|n| n.pos);
+        let moved: Vec<NodeId> = self
+            .live_pos
+            .keys()
+            .filter(|id| pos_of(&current, **id) != pos_of(snapshot, **id))
+            .copied()
+            .collect();
+        if taken.is_empty() && moved.is_empty() {
             return;
         }
         let values: BTreeMap<(NodeId, Name), Option<Value>> =
             taken.iter().filter_map(|k| Some((k.clone(), self.live.remove(k)?))).collect();
+        let places: BTreeMap<NodeId, Option<[f32; 2]>> =
+            moved.iter().filter_map(|id| Some((*id, self.live_pos.remove(id)?))).collect();
         // Every snapshot up to the current one: they hold the value lazily until now.
         let upto = self.cursor;
-        if let Some(net) = self.base.with_params(&values) {
-            self.base = Arc::new(net);
+        let fill = |net: &Arc<Network>| -> Option<Arc<Network>> {
+            let with = net.with_params(&values).map(Arc::new);
+            let from = with.as_ref().unwrap_or(net);
+            from.with_positions(&places).map(Arc::new).or(with)
+        };
+        if let Some(net) = fill(&self.base) {
+            self.base = net;
         }
         for e in self.entries.iter_mut().take(upto) {
-            if let Some(net) = e.snapshot.with_params(&values) {
-                e.snapshot = Arc::new(net);
+            if let Some(net) = fill(&e.snapshot) {
+                e.snapshot = net;
             }
         }
     }
@@ -154,16 +180,18 @@ impl History {
     /// Before a new entry drops the redo branch: forgets live params of nodes that only the
     /// dropped entries had, so a node created later with the same id does not inherit them.
     fn forget_dropped(&mut self) {
-        if self.live.is_empty() || self.cursor == self.entries.len() {
+        if (self.live.is_empty() && self.live_pos.is_empty()) || self.cursor == self.entries.len() {
             return;
         }
-        let ids: BTreeSet<NodeId> = self.live.keys().map(|(id, _)| *id).collect();
+        let ids: BTreeSet<NodeId> =
+            self.live.keys().map(|(id, _)| *id).chain(self.live_pos.keys().copied()).collect();
         let kept: Vec<&Arc<Network>> = std::iter::once(&self.base)
             .chain(self.entries.iter().take(self.cursor).map(|e| &e.snapshot))
             .collect();
         let gone: BTreeSet<NodeId> =
             ids.into_iter().filter(|id| !kept.iter().rev().any(|n| n.node(*id).is_some())).collect();
         self.live.retain(|(id, _), _| !gone.contains(id));
+        self.live_pos.retain(|id, _| !gone.contains(id));
     }
 
     /// State before entry `i`.
@@ -185,7 +213,7 @@ impl History {
         if Network::same(self.current(), &snapshot) {
             return Recorded::NoChange;
         }
-        if !self.live.is_empty() {
+        if !self.live.is_empty() || !self.live_pos.is_empty() {
             self.take_back(&snapshot);
         }
         let on_top = self.cursor == self.entries.len();
@@ -476,6 +504,38 @@ mod tests {
         h.undo();
         h.redo();
         assert!(h.current().node(b2).unwrap().params.is_empty());
+    }
+
+    fn place(net: &Network, path: &str, pos: [f32; 2]) -> Arc<Network> {
+        let op = Op::Place { path: path.parse().unwrap(), pos: Some(pos) };
+        Arc::new(net.apply(&test_types(), &[op]).unwrap().network)
+    }
+
+    fn pos_of(net: &Network, path: &str) -> Option<[f32; 2]> {
+        net.node(net.resolve(&path.parse().unwrap())?)?.pos
+    }
+
+    #[test]
+    fn live_positions_survive_undo_and_a_move_undoes_to_them() {
+        let s0 = start();
+        let mut h = History::new(s0.clone());
+        let s1 = with_b(&s0);
+        rec(&mut h, s1.clone(), 1);
+        let b = s1.resolve(&"/b".parse().unwrap()).unwrap();
+        // The editor places the new node without an entry.
+        assert!(h.live(place(&s1, "/b", [10.0, 20.0]), &BTreeSet::from([b])));
+        assert_eq!(h.entries().len(), 1);
+        h.undo();
+        assert!(h.current().node(b).is_none());
+        h.redo();
+        assert_eq!(pos_of(h.current(), "/b"), Some([10.0, 20.0]), "back where it was placed");
+        // A recorded move takes it back into the history: undoing the move returns to it.
+        let moved = place(h.current(), "/b", [300.0, 0.0]);
+        assert_eq!(rec(&mut h, moved, 2), Recorded::New);
+        h.undo();
+        assert_eq!(pos_of(h.current(), "/b"), Some([10.0, 20.0]));
+        h.redo();
+        assert_eq!(pos_of(h.current(), "/b"), Some([300.0, 0.0]));
     }
 
     #[test]

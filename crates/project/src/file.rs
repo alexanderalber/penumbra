@@ -3,13 +3,13 @@
 //! ```ron
 //! // penumbra project
 //! (
-//!     version: 1,
+//!     version: 2,
 //!     settings: {"persist_state": true},
 //!     nodes: {
-//!         "/lfo1": (kind: "chan.lfo", params: {"rate": 0.5}),
-//!         "/mix": (kind: "chan.math", inputs: {"a": "lfo1", "b": "split:right"}, locked: true),
-//!         "/scene": (kind: "comp.base"),
-//!         "/scene/move": (kind: "tex.transform", binds: {"rotate": "/lfo1", "translate.0": "pos:x"}),
+//!         "/lfo1": (kind: "chan.lfo", params: {"rate": 0.5}, pos: [0.0, 0.0]),
+//!         "/mix": (kind: "chan.math", inputs: {"a": "lfo1", "b": "split:right"}, locked: true, pos: [200.0, 0.0]),
+//!         "/scene": (kind: "comp.base", pos: [400.0, 0.0]),
+//!         "/scene/move": (kind: "tex.transform", binds: {"rotate": "/lfo1", "translate.0": "pos:x"}, pos: [0.0, 0.0]),
 //!     },
 //! )
 //! ```
@@ -23,15 +23,24 @@
 //! absolute; the paths in `inputs` and `binds` are read on the level of the node they belong to, by
 //! the rule node references use ([`NodePath::resolve_ref`]): absolute (`/a/b`), a name beside the
 //! node, `sub/x` below, `../x` up. The app writes the shorter form ([`NodePath::write_ref`]).
+//! `pos` is where the node sits in the editor, in graph units on the plane of the component it
+//! is in (each component's inside has a plane of its own); without it the editor places the node
+//! and the next save writes where. A position that is not two finite numbers is dropped when
+//! the file is read.
 //! `settings` holds the project settings that differ from their default
-//! ([`penumbra_graph::SETTINGS`]). Missing `settings`, `params`, `inputs`, `binds` and `locked`
-//! mean empty and `false`. Unknown fields are refused, so a typo is an error rather than silently
-//! ignored.
+//! ([`penumbra_graph::SETTINGS`]). Missing `settings`, `params`, `inputs`, `binds`, `locked` and
+//! `pos` mean empty, `false` and not placed. Unknown fields are refused, so a typo is an error
+//! rather than silently ignored.
+//!
+//! Version 2 added `pos` (older builds refuse it as an unknown field, so the version tells them
+//! instead); files of version 1 read as they are.
 
 use std::collections::BTreeMap;
 
 use penumbra_core::{Error, Name, NodePath, ParamPart, Value};
-use penumbra_graph::{DataKind, Network, NodeDesc, NodeTypes, Params, broken, check_param, check_setting};
+use penumbra_graph::{
+    DataKind, Network, NodeDesc, NodeTypes, Params, broken, check_param, check_pos, check_setting,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::content::{BindRef, Content, NodeContent, PortRef};
@@ -39,7 +48,7 @@ use crate::content::{BindRef, Content, NodeContent, PortRef};
 /// File name inside the project directory.
 pub const FILE_NAME: &str = "project.ron";
 /// Newest format this build reads and the one it writes.
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 /// Largest project file read. Far above any real project; a hostile or runaway file is
 /// refused before it is parsed.
 pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
@@ -57,7 +66,7 @@ struct FileRepr {
     nodes: BTreeMap<NodePath, NodeRepr>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct NodeRepr {
     kind: String,
@@ -69,10 +78,42 @@ struct NodeRepr {
     binds: BTreeMap<ParamPart, String>,
     #[serde(default, skip_serializing_if = "is_false")]
     locked: bool,
+    /// Written as `[x, y]` (a list, like vector params), not as `Some((x, y))`; `(x, y)` reads
+    /// too.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "write_pos",
+        deserialize_with = "read_pos"
+    )]
+    pos: Option<[f32; 2]>,
 }
 
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+fn write_pos<S: serde::Serializer>(pos: &Option<[f32; 2]>, s: S) -> Result<S::Ok, S::Error> {
+    match pos {
+        Some(p) => s.collect_seq(p.iter()),
+        None => s.serialize_none(),
+    }
+}
+
+fn read_pos<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<[f32; 2]>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Form {
+        List(Vec<f32>),
+        Pair((f32, f32)),
+    }
+    match Form::deserialize(d)? {
+        Form::Pair((x, y)) => Ok(Some([x, y])),
+        Form::List(list) => match list.as_slice() {
+            [x, y] => Ok(Some([*x, *y])),
+            _ => Err(serde::de::Error::custom(format!("a position is [x, y], got {} numbers", list.len()))),
+        },
+    }
 }
 
 fn desc<'t>(types: &'t NodeTypes, path: &NodePath, kind: &str) -> Result<&'t NodeDesc, Error> {
@@ -155,12 +196,15 @@ fn read(text: &str, types: &NodeTypes, what: &str, outside: bool, tolerant: bool
         if failed.contains_key(path) {
             continue;
         }
-        let content = load_node(path, node, &repr.nodes, &failed, &mut outputs, types, outside, tolerant)
+        let mut content = load_node(path, node, &repr.nodes, &failed, &mut outputs, types, outside, tolerant)
             .map_err(|e| e.context(format!("{what}: {path} loaded once, then not")))?;
+        content.pos = position(path, node.pos);
         nodes.insert(path.clone(), content);
     }
     for (path, error) in failed {
-        let entry = ron::to_string(repr.nodes.get(path).ok_or_else(|| Error::new("lost a node"))?)
+        let node = repr.nodes.get(path).ok_or_else(|| Error::new("lost a node"))?;
+        // The position lives on the placeholder like on any node, so it can be moved.
+        let entry = ron::to_string(&NodeRepr { pos: None, ..node.clone() })
             .map_err(|e| Error::new(format!("{path}: {e}")))?;
         if entry.len() > penumbra_core::param::MAX_TEXT {
             return Err(error.context(format!("{what} (the entry is too long to keep as a placeholder)")));
@@ -180,10 +224,24 @@ fn read(text: &str, types: &NodeTypes, what: &str, outside: bool, tolerant: bool
                 inputs: Vec::new(),
                 binds: BTreeMap::new(),
                 locked: false,
+                pos: position(path, node.pos),
             },
         );
     }
     Ok(Content { nodes, settings })
+}
+
+/// A node's position as read, dropped (with a warning) when it is no place: a position is
+/// convenience, and the editor places a node without one.
+fn position(path: &NodePath, pos: Option<[f32; 2]>) -> Option<[f32; 2]> {
+    let pos = pos?;
+    match check_pos(pos) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            log::warn!("{path}: {e}; the editor places it anew");
+            None
+        }
+    }
 }
 
 /// What can be checked of the node at `path` without looking at other nodes; its declaration.
@@ -277,6 +335,7 @@ fn load_node(
         inputs,
         binds,
         locked: node.locked,
+        pos: None,
     })
 }
 
@@ -432,7 +491,7 @@ pub fn print(content: &Content, types: &NodeTypes) -> Result<String, Error> {
             let entry = node.params.get(broken::ENTRY).and_then(Value::as_str).unwrap_or_default();
             let repr: NodeRepr = ron::from_str(entry)
                 .map_err(|e| Error::new(format!("{path}: the entry it keeps does not read: {e}")))?;
-            nodes.insert(path.clone(), repr);
+            nodes.insert(path.clone(), NodeRepr { pos: node.pos, ..repr });
             continue;
         }
         let d = desc(types, path, &node.kind)?;
@@ -469,6 +528,7 @@ pub fn print(content: &Content, types: &NodeTypes) -> Result<String, Error> {
                 inputs,
                 binds,
                 locked: node.locked,
+                pos: node.pos,
             },
         );
     }
@@ -623,7 +683,7 @@ mod tests {
     fn bad_files_are_refused_with_a_reason() {
         let types = test_types();
         let cases = [
-            ("(version: 2)", "version 2"),
+            ("(version: 3)", "version 3"),
             ("(version: 1, extra: 3)", "extra"),
             ("(version: 1, nodes: {\"a\": (kind: \"test.const\")})", "must start with"),
             ("(version: 1, nodes: {\"/a\": (kind: \"nope.x\")})", "unknown node kind"),
@@ -708,6 +768,63 @@ mod tests {
         // All or nothing where a project is not opened.
         let e = parse(BROKEN, &types).unwrap_err();
         assert!(e.0.contains("/g: unknown node kind"), "{e}");
+    }
+
+    #[test]
+    fn positions_are_written_plainly_and_read_in_either_form() {
+        let types = test_types();
+        let text = r#"(version: 1, nodes: {
+            "/a": (kind: "test.const", pos: (10, -20.4)),
+            "/b": (kind: "test.const", pos: [300.0, 0.0]),
+            "/c": (kind: "test.const"),
+            "/d": (kind: "test.const", pos: (NaN, 1.0)),
+        })"#;
+        let c = load(text, &types).unwrap();
+        let pos = |c: &Content, p: &str| c.nodes[&p.parse::<NodePath>().unwrap()].pos;
+        // Whole units, as the network keeps them; nonsense is dropped, the node stays.
+        assert_eq!(pos(&c, "/a"), Some([10.0, -20.0]));
+        assert_eq!(pos(&c, "/b"), Some([300.0, 0.0]));
+        assert_eq!(pos(&c, "/c"), None);
+        assert_eq!(pos(&c, "/d"), None);
+        assert_eq!(c.nodes[&"/d".parse::<NodePath>().unwrap()].kind, "test.const");
+        let printed = print(&c, &types).unwrap();
+        assert!(printed.contains("version: 2,"), "{printed}");
+        assert_eq!(line(&printed, "/a"), r#""/a": (kind: "test.const", pos: [10.0, -20.0]),"#);
+        assert_eq!(line(&printed, "/c"), r#""/c": (kind: "test.const"),"#);
+        assert_eq!(parse(&printed, &types).unwrap(), c);
+        for bad in ["Some((1, 2))", "[1, 2, 3]", "\"here\""] {
+            let text = format!(r#"(version: 2, nodes: {{"/a": (kind: "test.const", pos: {bad})}})"#);
+            assert!(parse(&text, &types).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_placeholder_keeps_its_position_outside_its_entry() {
+        let types = test_types();
+        let text =
+            r#"(version: 2, nodes: {"/x": (kind: "gone.kind", params: {"rate": 2}, pos: (40.0, 50.0))})"#;
+        let c = load(text, &types).unwrap();
+        let x = &c.nodes[&"/x".parse::<NodePath>().unwrap()];
+        assert_eq!(x.kind, broken::BROKEN_KIND);
+        assert_eq!(x.pos, Some([40.0, 50.0]));
+        let entry = x.params[broken::ENTRY].as_str().unwrap_or_default();
+        assert!(!entry.contains("pos"), "{entry}");
+        let printed = print(&c, &types).unwrap();
+        assert_eq!(
+            line(&printed, "/x"),
+            r#""/x": (kind: "gone.kind", params: {"rate": 2}, pos: [40.0, 50.0]),"#
+        );
+        // Moved, it is written where it went.
+        let mut moved = c.clone();
+        if let Some(n) = moved.nodes.get_mut(&"/x".parse::<NodePath>().unwrap()) {
+            n.pos = Some([0.0, 0.0]);
+        }
+        let printed = print(&moved, &types).unwrap();
+        assert_eq!(
+            line(&printed, "/x"),
+            r#""/x": (kind: "gone.kind", params: {"rate": 2}, pos: [0.0, 0.0]),"#
+        );
+        assert_eq!(load(&printed, &types).unwrap(), moved);
     }
 
     #[test]

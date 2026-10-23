@@ -9,6 +9,7 @@ pub mod component;
 pub mod content;
 pub mod file;
 pub mod gate;
+pub mod legacy;
 pub mod session;
 
 #[cfg(test)]

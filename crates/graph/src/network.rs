@@ -142,6 +142,10 @@ pub struct NodeDef {
     /// Locked: the node keeps its current outputs and does not cook, whatever happens upstream;
     /// its inputs may even be disconnected or deleted (TouchDesigner's lock flag).
     pub locked: bool,
+    /// Where the node sits in the editor, in graph units on its component's plane (the top
+    /// left corner); `None` until it is placed. Part of the document like any other state, so
+    /// a move is undoable and written to the project file; the cooker does not look at it.
+    pub pos: Option<[f32; 2]>,
 }
 
 impl NodeDef {
@@ -241,6 +245,13 @@ pub enum Op {
         #[serde(default)]
         component: Option<u8>,
     },
+    /// Move a node in the editor ([`NodeDef::pos`]); `None` leaves it to the editor to place.
+    /// Placeholders ([`broken`]) can be moved like any node.
+    Place {
+        path: NodePath,
+        #[serde(default)]
+        pos: Option<[f32; 2]>,
+    },
     /// Set a project setting ([`SETTINGS`]); `None` (or its default) resets it.
     Setting {
         name: Name,
@@ -270,6 +281,8 @@ impl Op {
                 }
             }
             Op::Unbind { param, component } => format!("unbind {}", part_label(param, *component)),
+            Op::Place { path, pos: Some(_) } => format!("move {path}"),
+            Op::Place { path, pos: None } => format!("unplace {path}"),
             Op::Setting { name, value: Some(v) } => format!("project setting {name} = {v}"),
             Op::Setting { name, value: None } => format!("reset project setting {name}"),
         }
@@ -588,6 +601,36 @@ impl Network {
         out
     }
 
+    /// The positions of the nodes in `ids` that differ between `self` and `after`. Nodes missing
+    /// on either side are skipped.
+    pub fn pos_changes(&self, after: &Network, ids: &BTreeSet<NodeId>) -> Vec<(NodeId, Option<[f32; 2]>)> {
+        ids.iter()
+            .filter_map(|id| Some((*id, self.nodes.get(id)?.pos, after.nodes.get(id)?.pos)))
+            .filter(|(_, old, new)| old != new)
+            .map(|(id, _, new)| (id, new))
+            .collect()
+    }
+
+    /// A copy with `positions` written into the nodes that exist; `None` when that changes
+    /// nothing. Like [`Self::with_params`], the values were checked when they were first set.
+    pub fn with_positions<'a>(
+        &self,
+        positions: impl IntoIterator<Item = (&'a NodeId, &'a Option<[f32; 2]>)>,
+    ) -> Option<Network> {
+        let mut out: Option<Network> = None;
+        for (id, pos) in positions {
+            let net = out.as_ref().unwrap_or(self);
+            if net.nodes.get(id).is_none_or(|n| n.pos == *pos) {
+                continue;
+            }
+            let net = out.get_or_insert_with(|| self.clone());
+            if let Some(node) = net.nodes.get_mut(id) {
+                Arc::make_mut(node).pos = *pos;
+            }
+        }
+        out
+    }
+
     /// Applies a batch of operations. All or nothing: on error the network is untouched and the
     /// error names the failing step, e.g. `op 2 (set /noise1.scale): ...`.
     pub fn apply(&self, types: &NodeTypes, ops: &[Op]) -> Result<Applied, Error> {
@@ -749,6 +792,7 @@ impl Applied {
                     previous: desc.inputs.iter().map(|i| i.previous).collect(),
                     binds: BTreeMap::new(),
                     locked: false,
+                    pos: None,
                 };
                 self.network.next_id = self.network.next_id.saturating_add(1);
                 self.network.index.insert((parent, name.clone()), id);
@@ -866,6 +910,13 @@ impl Applied {
                     *slot = Some(port);
                 }
             }
+            Op::Place { path, pos } => {
+                let id = net.require(path)?;
+                let pos = pos.map(check_pos).transpose()?;
+                if net.nodes.get(&id).is_some_and(|n| n.pos != pos) {
+                    self.node_mut(id)?.pos = pos;
+                }
+            }
             Op::Setting { name, value } => match check_setting(name, value.as_ref())? {
                 Some(v) => {
                     self.network.settings.insert(name.clone(), v);
@@ -931,6 +982,22 @@ impl Applied {
     }
 }
 
+/// The farthest a node may sit from the origin of its plane, in graph units.
+pub const MAX_POS: f32 = 1.0e7;
+
+/// A position as stored: finite, within [`MAX_POS`], in whole graph units (so the project file
+/// has one form per place and a drag does not write float noise).
+pub fn check_pos(pos: [f32; 2]) -> Result<[f32; 2], Error> {
+    if pos.iter().any(|c| !c.is_finite() || c.abs() > MAX_POS) {
+        return Err(Error::new(format!(
+            "a position is two finite numbers within {MAX_POS}, got [{}, {}]",
+            pos[0], pos[1]
+        )));
+    }
+    // `+ 0.0` turns a rounded -0.0 into 0.0.
+    Ok(pos.map(|c| c.round() + 0.0))
+}
+
 fn desc_of<'t>(net: &Network, types: &'t NodeTypes, id: NodeId) -> Result<&'t NodeDesc, Error> {
     let kind = net.nodes.get(&id).map(|n| n.kind.as_str()).unwrap_or_default();
     types.desc(kind).ok_or_else(|| Error::new(format!("node {id} has unknown kind `{kind}`")))
@@ -973,6 +1040,28 @@ mod tests {
 
     fn pp(s: &str) -> ParamPath {
         ParamPath::parse(s).unwrap()
+    }
+
+    #[test]
+    fn positions_are_whole_units_and_nonsense_is_refused() {
+        let types = test_types();
+        let net = Network::new().apply(&types, &[create("/a", "test.const")]).unwrap().network;
+        let place = |pos: Option<[f32; 2]>| Op::Place { path: p("/a"), pos };
+        let a = net.resolve(&p("/a")).unwrap();
+        let applied = net.apply(&types, &[place(Some([10.4, -0.2]))]).unwrap();
+        assert_eq!(applied.network.node(a).unwrap().pos, Some([10.0, 0.0]));
+        assert!(applied.touched.contains(&a));
+        for bad in [[f32::NAN, 0.0], [0.0, f32::INFINITY], [2.0e7, 0.0]] {
+            let e = net.apply(&types, &[place(Some(bad))]).unwrap_err();
+            assert!(e.0.contains("finite"), "{e}");
+        }
+        let back = applied.network.apply(&types, &[place(None)]).unwrap().network;
+        assert_eq!(back.node(a).unwrap().pos, None);
+        assert_eq!(back, net, "unplaced again is the network it was");
+        // Placing where it is already touches nothing.
+        let again = applied.network.apply(&types, &[place(Some([10.0, 0.0]))]).unwrap();
+        assert!(again.touched.is_empty());
+        assert!(net.apply(&types, &[Op::Place { path: p("/nope"), pos: None }]).is_err());
     }
 
     #[test]

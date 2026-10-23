@@ -34,6 +34,8 @@ pub struct NodeContent {
     pub inputs: Vec<Option<PortRef>>,
     pub binds: BTreeMap<ParamPart, BindRef>,
     pub locked: bool,
+    /// Where the node sits in the editor ([`penumbra_graph::NodeDef::pos`]).
+    pub pos: Option<[f32; 2]>,
 }
 
 /// All nodes of a project by path. Paths sort parents before their children (a path is a
@@ -73,6 +75,7 @@ impl Content {
                     inputs,
                     binds,
                     locked: def.locked,
+                    pos: def.pos,
                 },
             );
         }
@@ -124,10 +127,14 @@ pub fn diff(base: &Content, theirs: &Content) -> Vec<Op> {
     let mut sets = Vec::new();
     let mut connects = Vec::new();
     let mut locks = Vec::new();
+    let mut places = Vec::new();
     for (path, t) in &theirs.nodes {
         let base_node = base.nodes.get(path).filter(|_| kept(path));
         let Some(b) = base_node else {
             creates.push(Op::Create { path: path.clone(), kind: t.kind.clone(), params: t.params.clone() });
+            if t.pos.is_some() {
+                places.push(Op::Place { path: path.clone(), pos: t.pos });
+            }
             for (input, slot) in t.inputs.iter().enumerate() {
                 if let Some(src) = slot {
                     connects.push(connect(src, path, input));
@@ -180,6 +187,9 @@ pub fn diff(base: &Content, theirs: &Content) -> Vec<Op> {
         if t.locked != b.locked {
             locks.push(Op::Lock { path: path.clone(), locked: t.locked });
         }
+        if t.pos != b.pos {
+            places.push(Op::Place { path: path.clone(), pos: t.pos });
+        }
     }
 
     let mut settings = Vec::new();
@@ -201,6 +211,7 @@ pub fn diff(base: &Content, theirs: &Content) -> Vec<Op> {
     ops.extend(connects);
     ops.extend(binds);
     ops.extend(locks);
+    ops.extend(places);
     ops
 }
 
@@ -373,6 +384,36 @@ mod tests {
         ba.nodes.get_mut(&"/a".parse::<NodePath>().unwrap()).unwrap().binds.insert(part, src("/b"));
         let swapped = apply(&load(&ab), &diff(&ab, &ba));
         assert_eq!(Content::from_network(&swapped).unwrap(), ba);
+    }
+
+    #[test]
+    fn positions_load_merge_and_go() {
+        let at = |c: &mut Content, path: &str, pos: Option<[f32; 2]>| {
+            if let Some(n) = c.nodes.get_mut(&path.parse::<NodePath>().unwrap()) {
+                n.pos = pos;
+            }
+        };
+        let mut base =
+            content(&[("/a", "test.const", &[], &[], false), ("/b", "test.const", &[], &[], false)]);
+        at(&mut base, "/a", Some([10.0, 20.0]));
+        roundtrip(&base);
+        let net = load(&base);
+        // The user moves /b; the file edit moves /a and nothing else.
+        let ours = apply(&net, &[Op::Place { path: "/b".parse().unwrap(), pos: Some([0.0, 300.0]) }]);
+        let mut theirs = base.clone();
+        at(&mut theirs, "/a", Some([50.0, 20.0]));
+        assert_eq!(
+            diff(&base, &theirs),
+            vec![Op::Place { path: "/a".parse().unwrap(), pos: Some([50.0, 20.0]) }]
+        );
+        let merged = Content::from_network(&apply(&ours, &diff(&base, &theirs))).unwrap();
+        let pos = |c: &Content, p: &str| c.nodes[&p.parse::<NodePath>().unwrap()].pos;
+        assert_eq!((pos(&merged, "/a"), pos(&merged, "/b")), (Some([50.0, 20.0]), Some([0.0, 300.0])));
+        // A position taken out of the file leaves the node to the editor to place.
+        let mut gone = base.clone();
+        at(&mut gone, "/a", None);
+        let after = Content::from_network(&apply(&net, &diff(&base, &gone))).unwrap();
+        assert_eq!(after, gone);
     }
 
     #[test]

@@ -18,6 +18,9 @@ use crate::node::NodeTypes;
 #[derive(Clone, Debug)]
 pub struct EditOutcome {
     pub recorded: Recorded,
+    /// The group the edit was recorded with: a follow-up edit with the same group (and source)
+    /// joins its history entry.
+    pub group: GroupId,
     pub created: Vec<NodeId>,
     pub snapshot: Arc<Network>,
 }
@@ -75,18 +78,45 @@ impl Document {
         let recorded = history.record(Arc::new(applied.network), source, group, &label, applied.touched);
         let snapshot = history.current().clone();
         self.current.store(snapshot.clone());
-        Ok(EditOutcome { recorded, created: applied.created, snapshot })
+        Ok(EditOutcome { recorded, group, created: applied.created, snapshot })
     }
 
-    /// Applies param values outside the history ([`History::live`]): no entry, and undo or redo
-    /// keep them. Only [`Op::Set`] and [`Op::Reset`]; anything else is refused. Returns the
-    /// published snapshot.
+    /// Applies param values or node positions outside the history ([`History::live`]): no
+    /// entry, and undo or redo keep them. Only [`Op::Set`], [`Op::Reset`] and [`Op::Place`];
+    /// anything else is refused. Returns the published snapshot.
     pub fn edit_live(&self, ops: &[Op]) -> Result<Arc<Network>, Error> {
-        if let Some(op) = ops.iter().find(|op| !matches!(op, Op::Set { .. } | Op::Reset { .. })) {
-            return Err(Error::new(format!("{}: only param values can be set live", op.label())));
+        let live = |op: &Op| matches!(op, Op::Set { .. } | Op::Reset { .. } | Op::Place { .. });
+        if let Some(op) = ops.iter().find(|op| !live(op)) {
+            return Err(Error::new(format!(
+                "{}: only param values and positions can be set live",
+                op.label()
+            )));
         }
         let mut history = self.lock();
         let applied = history.current().apply_with(&self.types, ops, Params::Strict)?;
+        if history.live(Arc::new(applied.network), &applied.touched) {
+            self.current.store(history.current().clone());
+        }
+        Ok(history.current().clone())
+    }
+
+    /// Gives the nodes in `at` that have no position yet the one listed, outside the history
+    /// ([`History::live`]): placing a node that came without a position is no edit of anyone's,
+    /// so it makes no entry and undo keeps it. A node placed meanwhile keeps its place. Returns
+    /// the published snapshot.
+    pub fn place_unplaced(&self, at: &[(NodeId, [f32; 2])]) -> Result<Arc<Network>, Error> {
+        let mut history = self.lock();
+        let current = history.current().clone();
+        let ops: Vec<Op> = at
+            .iter()
+            .filter(|(id, _)| current.node(*id).is_some_and(|n| n.pos.is_none()))
+            .filter_map(|(id, pos)| Some(Op::Place { path: current.path_of(*id)?, pos: Some(*pos) }))
+            .collect();
+        if ops.is_empty() {
+            return Ok(current);
+        }
+        // Placeholders take positions like any node; nothing else is touched.
+        let applied = current.apply_with(&self.types, &ops, Params::Keep)?;
         if history.live(Arc::new(applied.network), &applied.touched) {
             self.current.store(history.current().clone());
         }
@@ -154,6 +184,24 @@ mod tests {
         assert!(doc.snapshot().is_empty());
         assert!(doc.redo().is_some());
         assert_eq!(doc.snapshot().len(), 1);
+    }
+
+    #[test]
+    fn placing_unplaced_nodes_makes_no_entry_and_leaves_placed_ones() {
+        let doc = Document::new(Arc::new(test_types()), Network::new());
+        let ops = [create("/a", "test.const"), create("/b", "test.const")];
+        doc.edit(&ops, Source::ControlChannel, doc.new_group(), "").unwrap();
+        let net = doc.snapshot();
+        let id = |p: &str| net.resolve(&p.parse().unwrap()).unwrap();
+        let (a, b) = (id("/a"), id("/b"));
+        let place = Op::Place { path: "/b".parse().unwrap(), pos: Some([7.0, 7.0]) };
+        doc.edit(&[place], Source::Ui, doc.new_group(), "").unwrap();
+        let after = doc.place_unplaced(&[(a, [1.0, 2.0]), (b, [3.0, 4.0])]).unwrap();
+        assert_eq!(after.node(a).unwrap().pos, Some([1.0, 2.0]));
+        assert_eq!(after.node(b).unwrap().pos, Some([7.0, 7.0]), "placed already");
+        doc.with_history(|h| assert_eq!(h.entries().len(), 2));
+        doc.undo();
+        assert_eq!(doc.snapshot().node(a).unwrap().pos, Some([1.0, 2.0]));
     }
 
     #[test]
