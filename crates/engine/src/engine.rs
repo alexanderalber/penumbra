@@ -566,6 +566,9 @@ pub struct Engine {
     ticker: Arc<Ticker>,
     /// CPU and GPU load, sampled while asked for.
     load: LoadMeter,
+    /// A measurement (`projector.match`, `scan.capture`, `projector.flatfield`) is running: one
+    /// at a time, two would fight over the projectors.
+    measuring: AtomicBool,
     shut: AtomicBool,
 }
 
@@ -635,6 +638,7 @@ impl Engine {
             hubs: Arc::new(Hubs::new()),
             ticker: Arc::new(Ticker::default()),
             load: LoadMeter::new(),
+            measuring: AtomicBool::new(false),
             shut: AtomicBool::new(false),
         });
         engine.launch(&session, 0)?;
@@ -815,6 +819,16 @@ impl Engine {
         }
         self.remember(session.dir());
         Ok(())
+    }
+
+    /// Marks a measurement as running; false when one already is.
+    pub(crate) fn begin_measurement(&self) -> bool {
+        self.measuring.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok()
+    }
+
+    /// The measurement [`Engine::begin_measurement`] marked has ended.
+    pub(crate) fn end_measurement(&self) {
+        self.measuring.store(false, Ordering::Release);
     }
 
     /// The open project.
@@ -1344,4 +1358,35 @@ fn handle(msgs: impl Iterator<Item = CookMsg>, session: &Session, state: &mut Co
         run_frame(session, state, due, Instant::now());
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pass_stats_count_slow_late_and_stalled_passes() {
+        let period = Duration::from_millis(16);
+        let ms = Duration::from_millis;
+        let t0 = Instant::now();
+        let mut s = PassStats::default();
+        s.add(t0, ms(10), 1, period);
+        s.add(t0 + ms(16), ms(20), 1, period);
+        // 44 ms after the one before: a frame shown twice.
+        s.add(t0 + ms(60), ms(5), 3, period);
+        // 140 ms: a visible stall too.
+        s.add(t0 + ms(200), ms(5), 9, period);
+        assert_eq!((s.passes, s.frames, s.slow, s.late, s.stalls), (4, 14, 1, 2, 1));
+        assert!((s.cook_ms_total - 40.0).abs() < 1e-9 && (s.cook_ms_max - 20.0).abs() < 1e-9);
+        assert!((s.gap_ms_max - 140.0).abs() < 1e-9);
+        assert!((s.seconds - 0.2).abs() < 1e-9);
+
+        // Taken: counting starts afresh, the next gap is still measured.
+        let taken = s.take();
+        assert_eq!(taken.passes, 4);
+        assert_eq!((s.passes, s.late), (0, 0));
+        s.add(t0 + ms(400), ms(5), 1, period);
+        assert_eq!((s.passes, s.late, s.stalls), (1, 1, 1));
+        assert_eq!(s.seconds, 0.0);
+    }
 }

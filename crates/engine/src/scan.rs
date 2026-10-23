@@ -12,7 +12,7 @@
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use penumbra_calib::objects;
 use penumbra_calib::scan::{self, Decoder, Options, Patterns, Status};
@@ -172,20 +172,84 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
         Some(o) => dir.join(o),
         None => frames.join("decoded"),
     };
-    let mut reply = write_decoded(&decoder, &a.options, fill, &out)?;
-    if let Some(o) = reply.as_object_mut() {
-        let decoded = o.remove("ms").unwrap_or(Json::Null);
-        o.insert(
-            "ms".into(),
-            json!({"read": ms(read), "decode": decoded.get("decode"), "total": ms(started.elapsed())}),
-        );
-    }
-    Ok(reply)
+    let decoded = write_decoded(&decoder, &a.options, fill, &out)?;
+    let mut reply = decoded.fields.clone();
+    reply.insert("message".into(), json!(decoded.message()));
+    reply.insert("warnings".into(), json!(decoded.warnings));
+    reply.insert(
+        "next".into(),
+        json!(format!(
+            "tex.image of {PROJECTOR_MAP} into tex.remap's map, the camera into its in: the camera's view in projector pixels"
+        )),
+    );
+    reply.insert(
+        "ms".into(),
+        json!({"read": ms(read), "decode": ms(decoded.decode), "total": ms(started.elapsed())}),
+    );
+    Ok(Json::Object(reply))
 }
 
-/// Decodes what `decoder` collected and writes `scan.decode`'s files into `out`; the reply
-/// counts what was found (`ms.decode` the decoding's time, `ms.write` the writing's).
-pub(crate) fn write_decoded(decoder: &Decoder, options: &Options, fill: u32, out: &Path) -> CmdResult<Json> {
+/// What [`write_decoded`] found and wrote.
+pub(crate) struct Decoded {
+    /// The counts and files as the replies list them: `camera`, `projector`, `pictures`,
+    /// `camera_pixels`, `projector_pixels`, `bits`, `resolved_bits`, `step`, `files`.
+    pub fields: serde_json::Map<String, Json>,
+    /// Camera pixels decoded, of all.
+    pub valid: usize,
+    pub total: usize,
+    /// Projector pixels seen by the camera, and filled in between.
+    pub measured: usize,
+    pub filled: usize,
+    pub warnings: Vec<String>,
+    /// How long decoding and writing took.
+    pub decode: Duration,
+    pub write: Duration,
+}
+
+impl Decoded {
+    pub(crate) fn message(&self) -> String {
+        format!(
+            "{} of {} camera pixels decoded; {} projector pixels seen, {} filled",
+            self.valid, self.total, self.measured, self.filled
+        )
+    }
+}
+
+/// What a decode's counts warn of: few camera pixels decoded (`valid` of `total`), bits the
+/// camera does not resolve, much of the picture clipped.
+fn decode_warnings(
+    valid: usize,
+    total: usize,
+    clipped: usize,
+    bits: [u32; 2],
+    resolved: [u32; 2],
+) -> Vec<String> {
+    let mut warnings: Vec<String> = Vec::new();
+    if valid * 10 < total {
+        warnings.push(format!(
+            "only {valid} of {total} camera pixels decoded: is the projector in view, the room dark and the order right?"
+        ));
+    }
+    if resolved != bits {
+        warnings.push(format!(
+            "the camera resolves {} of {} column and {} of {} row bits: the map is a few projector pixels coarse",
+            resolved[0], bits[0], resolved[1], bits[1]
+        ));
+    }
+    if clipped * 100 > total {
+        warnings
+            .push("more than 1 % of the camera picture clipped in white: lower the camera's exposure".into());
+    }
+    warnings
+}
+
+/// Decodes what `decoder` collected and writes `scan.decode`'s files into `out`.
+pub(crate) fn write_decoded(
+    decoder: &Decoder,
+    options: &Options,
+    fill: u32,
+    out: &Path,
+) -> CmdResult<Decoded> {
     let patterns = decoder.patterns();
     let (pw, ph) = patterns.size();
     let t = Instant::now();
@@ -209,29 +273,11 @@ pub(crate) fn write_decoded(decoder: &Decoder, options: &Options, fill: u32, out
     let stats = &result.stats;
     let total = result.status.len().max(1);
     let valid = stats.count(Status::Valid);
-    let mut warnings: Vec<String> = Vec::new();
-    if valid * 10 < total {
-        warnings.push(format!(
-            "only {valid} of {total} camera pixels decoded: is the projector in view, the room dark and the order right?"
-        ));
-    }
-    if stats.resolved != stats.bits {
-        warnings.push(format!(
-            "the camera resolves {} of {} column and {} of {} row bits: the map is a few projector pixels coarse",
-            stats.resolved[0], stats.bits[0], stats.resolved[1], stats.bits[1]
-        ));
-    }
-    if stats.count(Status::Clipped) * 100 > total {
-        warnings
-            .push("more than 1 % of the camera picture clipped in white: lower the camera's exposure".into());
-    }
+    let warnings = decode_warnings(valid, total, stats.count(Status::Clipped), stats.bits, stats.resolved);
     let counts: serde_json::Map<String, Json> =
         Status::ALL.iter().map(|s| (s.name().to_string(), json!(stats.count(*s)))).collect();
     let [measured, filled, empty] = inverse.counts();
-    Ok(json!({
-        "message": format!(
-            "{valid} of {total} camera pixels decoded; {measured} projector pixels seen, {filled} filled"
-        ),
+    let fields = json!({
         "camera": [cw, ch],
         "projector": [pw, ph],
         "pictures": patterns.count(),
@@ -241,12 +287,9 @@ pub(crate) fn write_decoded(decoder: &Decoder, options: &Options, fill: u32, out
         "resolved_bits": stats.resolved,
         "step": stats.step,
         "files": files,
-        "ms": {"decode": ms(decoded), "write": ms(written)},
-        "warnings": warnings,
-        "next": format!(
-            "tex.image of {PROJECTOR_MAP} into tex.remap's map, the camera into its in: the camera's view in projector pixels"
-        ),
-    }))
+    });
+    let Json::Object(fields) = fields else { return Err("lost the counts".into()) };
+    Ok(Decoded { fields, valid, total, measured, filled, warnings, decode: decoded, write: written })
 }
 
 /// Where `scan.objects` and `scan.blend` write unless told otherwise (relative to the project).
@@ -334,18 +377,14 @@ fn colour(k: u16) -> [u8; 3] {
     [r, g, b].map(|t| ((t + m) * 255.0).round() as u8)
 }
 
-pub(crate) fn ms(d: std::time::Duration) -> f64 {
+pub(crate) fn ms(d: Duration) -> f64 {
     (d.as_secs_f64() * 1000.0).round()
 }
 
-/// Finds the objects of `a` (paths relative to `dir`) and writes their labels.
-pub fn objects(dir: &Path, a: &ObjectsArgs) -> CmdResult<Json> {
-    let started = Instant::now();
-    if a.projectors.is_empty() || a.projectors.len() > objects::MAX_PROJECTORS {
-        return Err(CommandError(format!("`projectors` lists 1 to {} projectors", objects::MAX_PROJECTORS)));
-    }
+/// `scan.objects`' options from its arguments, checked; `min_area` is set per projector.
+fn object_options(a: &ObjectsArgs) -> CmdResult<objects::ObjectOptions> {
     let defaults = objects::ObjectOptions::default();
-    let mut o = objects::ObjectOptions {
+    let o = objects::ObjectOptions {
         threshold: a.threshold.unwrap_or(defaults.threshold),
         split: a.split.unwrap_or(defaults.split),
         min_area: 0,
@@ -354,122 +393,124 @@ pub fn objects(dir: &Path, a: &ObjectsArgs) -> CmdResult<Json> {
         rim: a.rim.unwrap_or(defaults.rim),
     };
     o.check().map_err(CommandError)?;
+    Ok(o)
+}
 
-    let mut scans = Vec::new();
-    let mut parts = Vec::new();
-    let mut camera: Option<(usize, usize)> = None;
-    let mut warnings: Vec<String> = Vec::new();
-    let mut read = std::time::Duration::ZERO;
-    let mut work = std::time::Duration::ZERO;
-    for (n, pair) in a.projectors.iter().enumerate() {
-        let t = Instant::now();
-        let scan_dir = dir.join(&pair.scan);
-        let reference = read_map(&dir.join(&pair.reference).join(PROJECTOR_MAP))?;
-        let scan_map = read_map(&scan_dir.join(PROJECTOR_MAP))?;
-        let cam = read_map(&scan_dir.join(CAMERA_MAP))?;
-        read += t.elapsed();
-        let size = (cam.width, cam.height);
-        match camera {
-            None => camera = Some(size),
-            Some(c) if c != size => {
-                return Err(CommandError(format!(
-                    "projector {n}'s camera picture is {} x {}, projector 0's {} x {}: one camera for all",
-                    size.0, size.1, c.0, c.1
-                )));
-            }
-            Some(_) => {}
-        }
-        if (reference.width, reference.height) != (scan_map.width, scan_map.height) {
+/// One projector's maps for `scan.objects`: the `proj_to_cam` maps of the empty scene and of the
+/// one with the objects, and the latter's `cam_to_proj`.
+struct ObjectScans {
+    reference: objects::Map,
+    scan: objects::Map,
+    camera: objects::Map,
+}
+
+fn read_object_scans(dir: &Path, pair: &ScanPair) -> CmdResult<ObjectScans> {
+    let scan_dir = dir.join(&pair.scan);
+    let reference = read_map(&dir.join(&pair.reference).join(PROJECTOR_MAP))?;
+    let scan = read_map(&scan_dir.join(PROJECTOR_MAP))?;
+    let camera = read_map(&scan_dir.join(CAMERA_MAP))?;
+    Ok(ObjectScans { reference, scan, camera })
+}
+
+/// Checks projector `n`'s maps against each other and its camera against the one of the
+/// projectors before (`camera`, set by the first).
+fn check_object_scans(
+    n: usize,
+    s: &ObjectScans,
+    camera: &mut Option<(usize, usize)>,
+) -> CmdResult<(usize, usize)> {
+    let size = (s.camera.width, s.camera.height);
+    match *camera {
+        None => *camera = Some(size),
+        Some(c) if c != size => {
             return Err(CommandError(format!(
-                "projector {n}: the reference is {} x {}, the scan {} x {}; both must be of the same projector",
-                reference.width, reference.height, scan_map.width, scan_map.height
+                "projector {n}'s camera picture is {} x {}, projector 0's {} x {}: one camera for all",
+                size.0, size.1, c.0, c.1
             )));
         }
-        let t = Instant::now();
-        o.min_area = match a.min_area {
-            Some(m) => m as usize,
-            None => (scan_map.len() / 256).max(1),
-        };
-        let p = objects::segment(&reference, &scan_map, size, &o).map_err(CommandError)?;
-        work += t.elapsed();
-        if p.compared * 10 < p.labels.len() {
-            warnings.push(format!(
-                "projector {n}: only {} of {} pixels measured in both scans; are they of the same projector and camera?",
-                p.compared,
-                p.labels.len()
-            ));
-        }
-        if p.over > 0 {
-            warnings.push(format!("projector {n}: {} parts beyond {} dropped", p.over, objects::MAX_PARTS));
-        }
-        scans.push(scan_map);
-        parts.push(p);
+        Some(_) => {}
     }
-    let camera = camera.ok_or("no projectors")?;
-    let t = Instant::now();
-    let refs: Vec<&objects::Map> = scans.iter().collect();
-    let found = objects::number(&mut parts, &refs, camera, o.erode).map_err(CommandError)?;
-    let cam_labels = objects::camera_labels(&parts, &refs, camera, o.erode).map_err(CommandError)?;
-    work += t.elapsed();
+    if (s.reference.width, s.reference.height) != (s.scan.width, s.scan.height) {
+        return Err(CommandError(format!(
+            "projector {n}: the reference is {} x {}, the scan {} x {}; both must be of the same projector",
+            s.reference.width, s.reference.height, s.scan.width, s.scan.height
+        )));
+    }
+    Ok(size)
+}
+
+/// The smallest part kept: `min_area` if given, else 1/256 of the projector's pixels.
+fn min_area_of(min_area: Option<u32>, pixels: usize) -> usize {
+    match min_area {
+        Some(m) => m as usize,
+        None => (pixels / 256).max(1),
+    }
+}
+
+/// What projector `n`'s parts warn of.
+fn parts_warnings(n: usize, p: &objects::Parts) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if p.compared * 10 < p.labels.len() {
+        warnings.push(format!(
+            "projector {n}: only {} of {} pixels measured in both scans; are they of the same projector and camera?",
+            p.compared,
+            p.labels.len()
+        ));
+    }
+    if p.over > 0 {
+        warnings.push(format!("projector {n}: {} parts beyond {} dropped", p.over, objects::MAX_PARTS));
+    }
+    warnings
+}
+
+/// What the numbering warns of.
+fn found_warnings(found: &objects::Objects, threshold: f32) -> Vec<String> {
+    let mut warnings = Vec::new();
     if found.over > 0 {
         warnings.push(format!("{} objects beyond {} dropped", found.over, objects::MAX_PARTS));
     }
     if found.count == 0 {
         warnings.push(format!(
-            "no objects found: nothing moved more than {} camera pixels against the reference",
-            o.threshold
+            "no objects found: nothing moved more than {threshold} camera pixels against the reference"
         ));
     }
+    warnings
+}
 
-    let t = Instant::now();
-    let out = dir.join(a.out.as_deref().unwrap_or(Path::new(DEFAULT_OBJECTS_OUT)));
-    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
-    let write = |name: &str, bytes: Vec<u8>| write_file(&out.join(name), bytes);
-    let byte = |l: u16| u8::try_from(l).unwrap_or(0);
-    let mut per_projector = Vec::new();
-    for (n, p) in parts.iter().enumerate() {
-        let (w, h) = (p.width as u32, p.height as u32);
-        let labels = write(
-            &labels_file(n),
-            penumbra_gpu::image::encode_png_gray8(w, h, p.labels.iter().map(|l| byte(*l)).collect())?,
-        )?;
-        // Objects in colour, cuts at parallax jumps darker, dropped pixels dark red.
-        let mut view = Vec::with_capacity(p.labels.len() * 4);
-        for ((l, cut), dropped) in p.labels.iter().zip(&p.cuts).zip(&p.dropped) {
-            let mut c = if *l > 0 { colour(*l) } else { [0, 0, 0] };
-            if *dropped {
-                c = [110, 0, 0];
-            } else if *cut && *l > 0 {
-                c = c.map(|v| v / 2);
-            }
-            view.extend_from_slice(&[c[0], c[1], c[2], 255]);
+/// Labels as 8-bit grey (0 beyond 255).
+fn label_bytes(labels: &[u16]) -> Vec<u8> {
+    labels.iter().map(|l| u8::try_from(*l).unwrap_or(0)).collect()
+}
+
+/// A projector's parts as RGBA bytes: objects in colour, cuts at parallax jumps darker, dropped
+/// pixels dark red.
+fn parts_view(p: &objects::Parts) -> Vec<u8> {
+    let mut view = Vec::with_capacity(p.labels.len() * 4);
+    for ((l, cut), dropped) in p.labels.iter().zip(&p.cuts).zip(&p.dropped) {
+        let mut c = if *l > 0 { colour(*l) } else { [0, 0, 0] };
+        if *dropped {
+            c = [110, 0, 0];
+        } else if *cut && *l > 0 {
+            c = c.map(|v| v / 2);
         }
-        let picture = write(&parts_file(n), penumbra_gpu::encode_png_rgba8(w, h, view)?)?;
-        per_projector.push(json!({
-            "reference": a.projectors.get(n).map(|x| x.reference.display().to_string()),
-            "scan": a.projectors.get(n).map(|x| x.scan.display().to_string()),
-            "size": [w, h],
-            "pixels": p.pixels(),
-            "silhouette": p.silhouette,
-            "dropped": p.dropped.iter().filter(|d| **d).count(),
-            "compared": p.compared,
-            "labels": labels,
-            "picture": picture,
-        }));
+        view.extend_from_slice(&[c[0], c[1], c[2], 255]);
     }
-    let (cw, ch) = (camera.0 as u32, camera.1 as u32);
-    let camera_file = write(
-        OBJECTS_CAMERA,
-        penumbra_gpu::image::encode_png_gray8(cw, ch, cam_labels.iter().map(|l| byte(*l)).collect())?,
-    )?;
-    let mut view = Vec::with_capacity(cam_labels.len() * 4);
-    for l in &cam_labels {
+    view
+}
+
+/// Labels as RGBA bytes, each object in its colour.
+fn labels_view(labels: &[u16]) -> Vec<u8> {
+    let mut view = Vec::with_capacity(labels.len() * 4);
+    for l in labels {
         let c = if *l > 0 { colour(*l) } else { [0, 0, 0] };
         view.extend_from_slice(&[c[0], c[1], c[2], 255]);
     }
-    let camera_view = write(OBJECTS_CAMERA_VIEW, penumbra_gpu::encode_png_rgba8(cw, ch, view)?)?;
-    let written = t.elapsed();
+    view
+}
 
+/// Per object its height in the camera, its pixels per projector, the projectors that see it
+/// and its camera pixels.
+fn object_list(found: &objects::Objects, parts: &[objects::Parts], cam_labels: &[u16]) -> Vec<Json> {
     let mut list = Vec::new();
     for k in 1..=found.count {
         let label = u16::try_from(k).unwrap_or(0);
@@ -485,12 +526,103 @@ pub fn objects(dir: &Path, a: &ObjectsArgs) -> CmdResult<Json> {
             "camera_pixels": cam_labels.iter().filter(|l| **l == label).count(),
         }));
     }
+    list
+}
+
+/// What `scan.objects` wrote: per projector its report, and the camera's files.
+struct ObjectFiles {
+    per_projector: Vec<Json>,
+    camera: String,
+    camera_view: String,
+}
+
+/// Writes the labels and their pictures into `out`: per projector and in the camera.
+fn write_objects(
+    out: &Path,
+    a: &ObjectsArgs,
+    parts: &[objects::Parts],
+    cam_labels: &[u16],
+    camera: (usize, usize),
+) -> CmdResult<ObjectFiles> {
+    std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let write = |name: &str, bytes: Vec<u8>| write_file(&out.join(name), bytes);
+    let mut per_projector = Vec::new();
+    for (n, p) in parts.iter().enumerate() {
+        let (w, h) = (p.width as u32, p.height as u32);
+        let labels =
+            write(&labels_file(n), penumbra_gpu::image::encode_png_gray8(w, h, label_bytes(&p.labels))?)?;
+        let picture = write(&parts_file(n), penumbra_gpu::encode_png_rgba8(w, h, parts_view(p))?)?;
+        per_projector.push(json!({
+            "reference": a.projectors.get(n).map(|x| x.reference.display().to_string()),
+            "scan": a.projectors.get(n).map(|x| x.scan.display().to_string()),
+            "size": [w, h],
+            "pixels": p.pixels(),
+            "silhouette": p.silhouette,
+            "dropped": p.dropped.iter().filter(|d| **d).count(),
+            "compared": p.compared,
+            "labels": labels,
+            "picture": picture,
+        }));
+    }
+    let (cw, ch) = (camera.0 as u32, camera.1 as u32);
+    let camera_file =
+        write(OBJECTS_CAMERA, penumbra_gpu::image::encode_png_gray8(cw, ch, label_bytes(cam_labels))?)?;
+    let camera_view =
+        write(OBJECTS_CAMERA_VIEW, penumbra_gpu::encode_png_rgba8(cw, ch, labels_view(cam_labels))?)?;
+    Ok(ObjectFiles { per_projector, camera: camera_file, camera_view })
+}
+
+/// Finds the objects of `a` (paths relative to `dir`) and writes their labels: per projector its
+/// maps read and checked ([`read_object_scans`], [`check_object_scans`]) and its parts found;
+/// then the parts numbered as objects across the projectors, the files written
+/// ([`write_objects`]) and the objects listed ([`object_list`]).
+pub fn objects(dir: &Path, a: &ObjectsArgs) -> CmdResult<Json> {
+    let started = Instant::now();
+    if a.projectors.is_empty() || a.projectors.len() > objects::MAX_PROJECTORS {
+        return Err(CommandError(format!("`projectors` lists 1 to {} projectors", objects::MAX_PROJECTORS)));
+    }
+    let mut o = object_options(a)?;
+
+    let mut scans = Vec::new();
+    let mut parts = Vec::new();
+    let mut camera: Option<(usize, usize)> = None;
+    let mut warnings: Vec<String> = Vec::new();
+    let mut read = Duration::ZERO;
+    let mut work = Duration::ZERO;
+    for (n, pair) in a.projectors.iter().enumerate() {
+        let t = Instant::now();
+        let s = read_object_scans(dir, pair)?;
+        read += t.elapsed();
+        let size = check_object_scans(n, &s, &mut camera)?;
+        let t = Instant::now();
+        o.min_area = min_area_of(a.min_area, s.scan.len());
+        let p = objects::segment(&s.reference, &s.scan, size, &o).map_err(CommandError)?;
+        work += t.elapsed();
+        warnings.extend(parts_warnings(n, &p));
+        scans.push(s.scan);
+        parts.push(p);
+    }
+    let camera = camera.ok_or("no projectors")?;
+    let t = Instant::now();
+    let refs: Vec<&objects::Map> = scans.iter().collect();
+    let found = objects::number(&mut parts, &refs, camera, o.erode).map_err(CommandError)?;
+    let cam_labels = objects::camera_labels(&parts, &refs, camera, o.erode).map_err(CommandError)?;
+    work += t.elapsed();
+    warnings.extend(found_warnings(&found, o.threshold));
+
+    let t = Instant::now();
+    let out = dir.join(a.out.as_deref().unwrap_or(Path::new(DEFAULT_OBJECTS_OUT)));
+    let files = write_objects(&out, a, &parts, &cam_labels, camera)?;
+    let written = t.elapsed();
+
+    let list = object_list(&found, &parts, &cam_labels);
+    let (cw, ch) = (camera.0 as u32, camera.1 as u32);
     Ok(json!({
         "message": format!("{} object(s) in {} projector(s)", found.count, parts.len()),
         "camera": [cw, ch],
         "objects": list,
-        "projectors": per_projector,
-        "files": {"camera": camera_file, "camera_view": camera_view},
+        "projectors": files.per_projector,
+        "files": {"camera": files.camera, "camera_view": files.camera_view},
         "options": {
             "threshold": o.threshold, "split": o.split, "min_area": o.min_area, "erode": o.erode,
             "unmeasured": o.unmeasured, "rim": o.rim,
@@ -707,8 +839,7 @@ fn natural(a: &str, b: &str) -> Ordering {
 
 #[cfg(test)]
 mod tests {
-    use super::natural;
-    use std::cmp::Ordering;
+    use super::*;
 
     #[test]
     fn names_sort_with_numbers_by_value() {
@@ -716,5 +847,113 @@ mod tests {
         v.sort_by(|a, b| natural(a, b));
         assert_eq!(v, ["1.png", "2.png", "10.png", "a.png", "B.png", "img_9.jpg", "img_011.jpg"]);
         assert_eq!(natural("007", "7"), Ordering::Greater);
+    }
+
+    fn map(w: usize, h: usize) -> objects::Map {
+        objects::Map::new(w, h, vec![[0.5, 0.5, 1.0, 1.0]; w * h]).unwrap()
+    }
+
+    fn parts(labels: Vec<u16>, cuts: Vec<bool>, dropped: Vec<bool>) -> objects::Parts {
+        let count = labels.iter().copied().max().unwrap_or(0) as usize;
+        objects::Parts {
+            width: labels.len(),
+            height: 1,
+            cuts,
+            dropped,
+            count,
+            silhouette: 0,
+            compared: labels.len(),
+            over: 0,
+            labels,
+        }
+    }
+
+    #[test]
+    fn decode_warnings_say_what_went_wrong() {
+        assert!(decode_warnings(50, 100, 1, [3, 2], [3, 2]).is_empty());
+        let w = decode_warnings(5, 100, 2, [3, 2], [2, 2]);
+        assert_eq!(w.len(), 3, "{w:?}");
+        assert!(w[0].starts_with("only 5 of 100 camera pixels decoded"));
+        assert!(w[1].starts_with("the camera resolves 2 of 3 column and 2 of 2 row bits"));
+        assert!(w[2].starts_with("more than 1 % of the camera picture clipped"));
+    }
+
+    #[test]
+    fn object_options_and_the_smallest_part() {
+        let args = |v: Json| -> ObjectsArgs { serde_json::from_value(v).unwrap() };
+        let o = object_options(&args(json!({"projectors": [], "threshold": 10.0}))).unwrap();
+        assert_eq!((o.threshold, o.min_area, o.erode), (10.0, 0, objects::ObjectOptions::default().erode));
+        let err = object_options(&args(json!({"projectors": [], "split": 0.0}))).unwrap_err();
+        assert!(err.0.contains("`split`"));
+        assert_eq!(min_area_of(Some(7), 1_000_000), 7);
+        assert_eq!(min_area_of(None, 2560), 10);
+        assert_eq!(min_area_of(None, 100), 1);
+    }
+
+    #[test]
+    fn object_scans_must_fit_each_other_and_one_camera() {
+        let scans = |cam: (usize, usize), reference: (usize, usize)| ObjectScans {
+            reference: map(reference.0, reference.1),
+            scan: map(8, 4),
+            camera: map(cam.0, cam.1),
+        };
+        let mut camera = None;
+        assert_eq!(check_object_scans(0, &scans((16, 8), (8, 4)), &mut camera).unwrap(), (16, 8));
+        assert_eq!(camera, Some((16, 8)));
+        let err = check_object_scans(1, &scans((12, 8), (8, 4)), &mut camera).unwrap_err();
+        assert!(
+            err.0.starts_with("projector 1's camera picture is 12 x 8, projector 0's 16 x 8"),
+            "{}",
+            err.0
+        );
+        let err = check_object_scans(1, &scans((16, 8), (8, 5)), &mut camera).unwrap_err();
+        assert!(err.0.starts_with("projector 1: the reference is 8 x 5, the scan 8 x 4"), "{}", err.0);
+    }
+
+    #[test]
+    fn parts_and_objects_drawn_and_listed() {
+        let p = parts(
+            vec![0, 1, 1, 2, 300],
+            vec![false, true, false, false, false],
+            vec![false, false, false, true, false],
+        );
+        assert_eq!(label_bytes(&p.labels), [0, 1, 1, 2, 0]);
+        let view = parts_view(&p);
+        assert_eq!(view.len(), 5 * 4);
+        assert_eq!(&view[0..4], &[0, 0, 0, 255]);
+        let c1 = colour(1);
+        assert_eq!(&view[4..8], &[c1[0] / 2, c1[1] / 2, c1[2] / 2, 255], "a cut is darker");
+        assert_eq!(&view[8..12], &[c1[0], c1[1], c1[2], 255]);
+        assert_eq!(&view[12..16], &[110, 0, 0, 255], "dropped");
+        assert_eq!(labels_view(&[0, 1]), [0, 0, 0, 255, c1[0], c1[1], c1[2], 255]);
+        // Colours a golden angle apart: neighbours differ.
+        assert_ne!(colour(1), colour(2));
+
+        let other = parts(vec![2, 2, 0], vec![false; 3], vec![false; 3]);
+        let found = objects::Objects { count: 2, camera_y: vec![10.4, 30.6], over: 0 };
+        let list = object_list(&found, &[p, other], &[1, 2, 2, 0]);
+        assert_eq!(
+            list,
+            [
+                json!({"object": 1, "camera_y": 10.0, "pixels": [2, 0], "seen_by": [0], "camera_pixels": 1}),
+                json!({"object": 2, "camera_y": 31.0, "pixels": [1, 2], "seen_by": [0, 1], "camera_pixels": 2}),
+            ]
+        );
+    }
+
+    #[test]
+    fn warnings_of_the_parts_and_the_objects() {
+        let mut p = parts(vec![0; 20], vec![false; 20], vec![false; 20]);
+        p.compared = 1;
+        p.over = 3;
+        let w = parts_warnings(2, &p);
+        assert_eq!(w.len(), 2);
+        assert!(w[0].starts_with("projector 2: only 1 of 20 pixels measured in both scans"));
+        assert!(w[1].starts_with("projector 2: 3 parts beyond"));
+        let none = objects::Objects { count: 0, camera_y: Vec::new(), over: 0 };
+        assert_eq!(
+            found_warnings(&none, 25.0),
+            ["no objects found: nothing moved more than 25 camera pixels against the reference"]
+        );
     }
 }

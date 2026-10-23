@@ -16,13 +16,13 @@ use std::time::{Duration, Instant};
 use penumbra_calib::colour::{self, Picture};
 use penumbra_calib::flatfield::{self, Surface};
 use penumbra_calib::objects::Map;
-use penumbra_core::{Name, NodePath, ParamPath, Value};
+use penumbra_core::{Name, NodeId, NodePath, ParamPath, Value};
 use penumbra_graph::{Network, Op};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
-use crate::commands::{edit, outcome};
+use crate::commands::{edit_in, outcome};
 use crate::engine::Engine;
 use crate::projector::{CameraStream, Claim, Rig, projector_list, settle_of, timeout_of};
 use crate::scan::{CAMERA_MAP, PROJECTOR_MAP, read_map};
@@ -152,8 +152,29 @@ fn stats(values: &[[f32; 3]]) -> Json {
     json!({"r": per(0), "g": per(1), "b": per(2)})
 }
 
-pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
-    let started = Instant::now();
+/// `projector.flatfield`'s numeric arguments, checked, the defaults filled in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Settings {
+    levels: usize,
+    low: f64,
+    frames: usize,
+    settle: f64,
+    timeout: f64,
+    fit: GainFit,
+    floor: f64,
+    cover: f32,
+    blur: f32,
+}
+
+/// How the gain is fitted over a projector.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GainFit {
+    degree: usize,
+    trim: f64,
+    even: Even,
+}
+
+fn settings(a: &FlatfieldArgs) -> CmdResult<Settings> {
     let levels = a.levels.unwrap_or(DEFAULT_LEVELS) as usize;
     if !(2..=flatfield::MAX_LEVELS).contains(&levels) {
         return Err(format!("`levels` is 2 to {}", flatfield::MAX_LEVELS).into());
@@ -180,8 +201,8 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
     if !(floor.is_finite() && (0.0..=0.3).contains(&floor)) {
         return Err("`floor` is 0 to 0.3".into());
     }
-    let cover_share = a.cover.unwrap_or(DEFAULT_COVER);
-    if !(cover_share.is_finite() && (0.01..=0.9).contains(&cover_share)) {
+    let cover = a.cover.unwrap_or(DEFAULT_COVER);
+    if !(cover.is_finite() && (0.01..=0.9).contains(&cover)) {
         return Err("`cover` is 0.01 to 0.9".into());
     }
     let blur = a.blur.unwrap_or(DEFAULT_BLUR);
@@ -196,9 +217,352 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
     if a.projectors.is_empty() || a.projectors.len() != a.scans.len() {
         return Err("`projectors` and `scans` list one scan folder per projector".into());
     }
-    let even = a.even;
-    let dir = e.session().dir().to_path_buf();
-    let net = e.session().doc().snapshot();
+    let fit = GainFit { degree, trim, even: a.even };
+    Ok(Settings { levels, low, frames, settle, timeout, fit, floor, cover, blur })
+}
+
+/// The drives each primary is shown at: `levels` from `low` to full, evenly.
+fn drives(levels: usize, low: f64) -> Vec<f64> {
+    (0..levels).map(|l| low + (1.0 - low) * l as f64 / (levels - 1).max(1) as f64).collect()
+}
+
+/// The camera's pictures: all black, each projector's white alone, and per projector, channel
+/// and drive that primary alone.
+struct Pictures {
+    black: Picture,
+    whites: Vec<Picture>,
+    ramps: Vec<[Vec<Picture>; 3]>,
+}
+
+/// Takes the [`Pictures`] of `count` projectors: `frames` camera frames averaged per picture,
+/// three times as many for black (its values are the faintest).
+fn measure(rig: &mut Rig<'_>, count: usize, drives: &[f64], frames: usize) -> CmdResult<Pictures> {
+    rig.frames = frames * 3;
+    let black = rig.shot(|_| [0.0; 3])?;
+    rig.frames = frames;
+    let mut whites = Vec::with_capacity(count);
+    for k in 0..count {
+        whites.push(rig.shot(|j| if j == k { [1.0; 3] } else { [0.0; 3] })?);
+    }
+    let mut ramps: Vec<[Vec<Picture>; 3]> = Vec::with_capacity(count);
+    for k in 0..count {
+        let mut per: [Vec<Picture>; 3] = Default::default();
+        for (c, ramp) in per.iter_mut().enumerate() {
+            for d in drives {
+                let mut s = [0.0f32; 3];
+                if let Some(v) = s.get_mut(c) {
+                    *v = *d as f32;
+                }
+                ramp.push(rig.shot(|j| if j == k { s } else { [0.0; 3] })?);
+            }
+        }
+        ramps.push(per);
+    }
+    Ok(Pictures { black, whites, ramps })
+}
+
+/// Where each projector lights the camera's picture: at all (`covers`, the gain's samples and
+/// the black) and strongly (the measuring spots, picked as `projector.match` picks them).
+struct Lighting {
+    covers: Vec<Vec<bool>>,
+    spots: colour::Spots,
+}
+
+fn lighting(
+    projectors: &[(NodeId, String)],
+    pictures: &Pictures,
+    cover_share: f32,
+    warnings: &mut Vec<String>,
+) -> CmdResult<Lighting> {
+    let black = &pictures.black;
+    let mut lit = Vec::with_capacity(projectors.len());
+    for ((_, path), white) in projectors.iter().zip(&pictures.whites) {
+        let mask = colour::lit(white, black).ok_or_else(|| {
+            format!("{path} lights no camera pixel (is it in the camera's view, on, and the exposure right?)")
+        })?;
+        lit.push(mask);
+    }
+    let covers: Vec<Vec<bool>> =
+        pictures.whites.iter().map(|w| flatfield::cover(&w.rgb, &black.rgb, cover_share)).collect();
+    let spots = colour::spots(&lit, black.width, black.height);
+    if projectors.len() > 1 && !spots.shared {
+        warnings.push(
+            "the projectors do not overlap in the camera's view: each one's gain is relative to its own centre, \
+             so a match made by projector.match may not hold across them"
+                .into(),
+        );
+    }
+    Ok(Lighting { covers, spots })
+}
+
+/// One projector's gain: its surfaces (log gain over the projector, per channel), taken
+/// relative to the spot by `offset`.
+struct Gain {
+    surfaces: [Surface; 3],
+    offset: [f64; 3],
+    /// The fitted log gains (relative to the spot) at the samples, all channels.
+    logs: Vec<f64>,
+    /// The measured gains (relative to the spot) in the camera's picture, before the fit.
+    picture: Vec<[f32; 3]>,
+    report: Json,
+    warnings: Vec<String>,
+}
+
+/// The gain of the projector at `path`: per camera sample it lights (`cover`, eroded) how much
+/// dimmer it is than the projector's typical pixel (`ramps` read against `drives`), fitted over
+/// the projector by the scan's `map` (`cam_to_proj`), then taken relative to the fit at `spot`.
+#[allow(clippy::too_many_arguments)]
+fn gain(
+    path: &str,
+    map: &Map,
+    ramps: &[Vec<Picture>; 3],
+    black: &Picture,
+    cover: &[bool],
+    spot: &[bool],
+    drives: &[f64],
+    fit: GainFit,
+) -> CmdResult<Gain> {
+    let GainFit { degree, trim, even } = fit;
+    let (cw, ch) = (black.width, black.height);
+    let levels = drives.len();
+    let mut warnings = Vec::new();
+    // All the projector lights, not only its brightest part: on a surface of mixed colours
+    // (a dark relief before a white wall) that would be the white wall alone.
+    let inner = colour::erode(cover, cw, ch, EDGE);
+    let candidates: Vec<usize> = (0..cw * ch).filter(|i| inner.get(*i).copied().unwrap_or(false)).collect();
+    let stride = candidates.len().div_ceil(MAX_SAMPLES).max(1);
+    let mut points = Vec::with_capacity(candidates.len() / stride + 1);
+    let mut unmapped = 0usize;
+    for &i in candidates.iter().step_by(stride) {
+        match projector_uv(map, i, cw, ch) {
+            Some(uv) => points.push((i, uv)),
+            None => unmapped += 1,
+        }
+    }
+    let reading = |pic: &Picture, i: usize, c: usize| {
+        let at = |p: &Picture| p.rgb.get(i).and_then(|x| x.get(c)).copied().unwrap_or(0.0);
+        f64::from(at(pic) - at(black))
+    };
+    // The reference: per channel and level the median over the projector's pixels.
+    let mut reference = [vec![0.0; levels], vec![0.0; levels], vec![0.0; levels]];
+    for (c, (refs, ramp)) in reference.iter_mut().zip(ramps).enumerate() {
+        for (r, pic) in refs.iter_mut().zip(ramp) {
+            let values: Vec<f64> = points.iter().map(|(i, _)| reading(pic, *i, c)).collect();
+            *r = flatfield::quantile(&values, 0.5).ok_or_else(|| {
+                format!("{path}: no camera pixel it lights has a position in its scan (does the scan fit the setup?)")
+            })?;
+        }
+    }
+    let mut samples: [Vec<[f64; 3]>; 3] = Default::default();
+    let mut picture = vec![[0f32; 3]; cw * ch];
+    for (i, [u, v]) in &points {
+        let mut gains = [None; 3];
+        for (c, (g, ramp)) in gains.iter_mut().zip(ramps).enumerate() {
+            let readings: Vec<f64> = ramp.iter().map(|p| reading(p, *i, c)).collect();
+            let refs = reference.get(c).ok_or("lost a reference")?;
+            *g = flatfield::relative_gain(drives, &readings, refs).map(f64::ln);
+        }
+        let logs = match even {
+            Even::All => gains,
+            Even::Colour => match gains {
+                [Some(r), Some(g), Some(b)] => flatfield::colour_only([r, g, b]).map(Some),
+                _ => [None; 3],
+            },
+        };
+        for (c, (out, l)) in samples.iter_mut().zip(logs).enumerate() {
+            if let Some(l) = l {
+                out.push([f64::from(*u), f64::from(*v), l]);
+                if let Some(px) = picture.get_mut(*i).and_then(|p| p.get_mut(c)) {
+                    *px = l.exp() as f32;
+                }
+            }
+        }
+    }
+    let mut fitted: Vec<Surface> = Vec::with_capacity(3);
+    let mut fit_report = Vec::new();
+    for (c, s) in samples.iter().enumerate() {
+        let surface = Surface::fit(s, degree, trim, 3).map_err(|err| {
+            format!(
+                "{path}, {}: {err} (does the scan fit the setup? is the camera's view lit?)",
+                ["red", "green", "blue"].get(c).copied().unwrap_or("?")
+            )
+        })?;
+        let (all, best) = surface.residual(s, trim);
+        fit_report.push(json!({
+            "samples": s.len(),
+            "rms_log": round(all, 4),
+            "rms_log_kept": round(best, 4),
+            "relative_range": [round(surface.range[0].exp(), 4), round(surface.range[1].exp(), 4)],
+        }));
+        fitted.push(surface);
+    }
+    let [r, g, b]: [Surface; 3] = fitted.try_into().map_err(|_| "lost a fit")?;
+    let surfaces = [r, g, b];
+    if even == Even::All {
+        let kept: Vec<f64> = samples.iter().zip(&surfaces).map(|(s, f)| f.residual(s, trim).1).collect();
+        if kept.iter().any(|v| *v > UNEVEN) {
+            warnings.push(format!(
+                "{path}: the surface is far from even (a relief, objects or a pattern; {:.0} % from the fit): its shading is in the gain too. Measure on a flat, evenly coloured surface, or use even: colour",
+                kept.iter().fold(0.0f64, |a, v| a.max(*v)) * 100.0
+            ));
+        }
+    }
+    // The fit at the spot: the gains are taken relative to it.
+    let mut at_spot = [0.0f64; 3];
+    let mut n = 0usize;
+    for (i, _) in spot.iter().enumerate().filter(|(_, m)| **m) {
+        if let Some([u, v]) = projector_uv(map, i, cw, ch) {
+            for (o, sf) in at_spot.iter_mut().zip(&surfaces) {
+                *o += sf.value(f64::from(u), f64::from(v));
+            }
+            n += 1;
+        }
+    }
+    let offset = if n > 0 {
+        at_spot.map(|v| v / n as f64)
+    } else {
+        warnings.push(format!(
+            "{path}: its scan has no position at the measuring spot; its gain is relative to its typical pixel"
+        ));
+        [0.0; 3]
+    };
+    let mut logs = Vec::new();
+    for ((s, sf), o) in samples.iter().zip(&surfaces).zip(offset) {
+        logs.extend(s.iter().map(|x| sf.value(x[0], x[1]) - o));
+    }
+    for p in &mut picture {
+        for (v, o) in p.iter_mut().zip(offset) {
+            *v *= (-o).exp() as f32;
+        }
+    }
+    let report = json!({
+        "path": path,
+        "lit_pixels": colour::count(cover),
+        "camera_samples": points.len(),
+        "unmapped": unmapped,
+        "reference": reference.iter().map(|r| r.iter().map(|v| round(*v, 5)).collect::<Vec<_>>()).collect::<Vec<_>>(),
+        "spot_relative": offset.map(|o| round(o.exp(), 4)),
+        "fit": fit_report,
+    });
+    Ok(Gain { surfaces, offset, logs, picture, report, warnings })
+}
+
+/// The black lift: per projector its black (measured, or estimated from `contrast`) lifted
+/// where the others are brighter, in the camera's picture.
+struct Blacks {
+    lifts: Vec<Vec<Option<[f32; 3]>>>,
+    report: Vec<Json>,
+    /// The black where no projector lights.
+    room: [f64; 3],
+}
+
+fn blacks(
+    projectors: &[(NodeId, String)],
+    pictures: &Pictures,
+    lighting: &Lighting,
+    contrast: Option<f64>,
+    warnings: &mut Vec<String>,
+) -> Blacks {
+    let black = &pictures.black;
+    let (cw, ch) = (black.width, black.height);
+    let (covers, spots) = (&lighting.covers, &lighting.spots);
+    // Each white smoothed within where it lights: the lift is relative to the projector's light
+    // there, not to the surface's shading (dark slopes would get a lift they show darker anyway).
+    let white_sigma = (cw.max(ch) as f32 / 40.0).max(1.0);
+    let subtracted: Vec<Vec<[f32; 3]>> = pictures
+        .whites
+        .iter()
+        .zip(covers)
+        .map(|(w, cover)| {
+            let raw: Vec<[f32; 3]> =
+                w.rgb.iter().zip(&black.rgb).map(|(w, b)| [w[0] - b[0], w[1] - b[1], w[2] - b[2]]).collect();
+            flatfield::smooth_within(cw, ch, &raw, cover, white_sigma)
+        })
+        .collect();
+    let (measured_blacks, room) = flatfield::blacks(&black.rgb, covers);
+    let mut used_blacks = Vec::with_capacity(projectors.len());
+    let mut report = Vec::new();
+    for (k, (_, path)) in projectors.iter().enumerate() {
+        let measured = measured_blacks.get(k).copied().flatten();
+        let white_spot = spots
+            .masks
+            .get(k)
+            .and_then(|s| colour::trimmed_mean(pictures.whites.get(k)?, s))
+            .zip(colour::trimmed_mean(black, spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[])))
+            .map(|(w, b)| [w[0] - b[0], w[1] - b[1], w[2] - b[2]]);
+        let readable = measured.is_some_and(|m| m.iter().any(|v| *v > flatfield::MIN_BLACK));
+        let (used, source) = match (contrast, readable, white_spot) {
+            (Some(c), false, Some(w)) => (w.map(|v| v / c), "contrast"),
+            (_, true, _) => (measured.unwrap_or([0.0; 3]), "measured"),
+            _ => ([0.0; 3], "none"),
+        };
+        if source == "none" && projectors.len() > 1 {
+            warnings.push(format!(
+                "{path}: its black is too faint for the camera (or it lights nothing alone); no lift from it. \
+                 Give `contrast` to estimate it"
+            ));
+        }
+        report.push(json!({
+            "path": path,
+            "measured": measured.map(|m| m.map(|v| round(v, 6))),
+            "used": used.map(|v| round(v, 6)),
+            "source": source,
+            "white_at_spot": white_spot.map(|w| w.map(|v| round(v, 4))),
+        }));
+        used_blacks.push(used);
+    }
+    let lifts = flatfield::lift(covers, &subtracted, &used_blacks);
+    Blacks { lifts, report, room }
+}
+
+/// Keeps the camera's pictures as 16-bit PNGs in `folder`.
+fn save_pictures(folder: &Path, pictures: &Pictures, drives: &[f64]) -> CmdResult<()> {
+    std::fs::create_dir_all(folder).map_err(|err| format!("{}: {err}", folder.display()))?;
+    let save = |name: String, pic: &Picture| -> CmdResult<()> {
+        let file = folder.join(name);
+        std::fs::write(&file, png16(pic.width, pic.height, &pic.rgb)?)
+            .map_err(|err| format!("{}: {err}", file.display()).into())
+    };
+    save("black.png".into(), &pictures.black)?;
+    for (k, (white, per)) in pictures.whites.iter().zip(&pictures.ramps).enumerate() {
+        save(format!("p{k}_white.png"), white)?;
+        for (c, ramp) in per.iter().enumerate() {
+            for (pic, d) in ramp.iter().zip(drives) {
+                save(format!("p{k}_c{c}_{:.3}.png", d), pic)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A projector's maps in its own pixels: the gain (`gain`'s surfaces, relative to the spot,
+/// times the common `scale`) and the black lift (`lift`, in the camera's `cw` x `ch` picture,
+/// taken to the projector by its `proj_to_cam` map and blurred by `blur`).
+fn projector_maps(
+    gain: &Gain,
+    scale: f64,
+    lift: &[Option<[f32; 3]>],
+    (cw, ch): (usize, usize),
+    p2c: &Map,
+    blur: f32,
+) -> (Vec<[f32; 3]>, Vec<[f32; 3]>) {
+    let (pw, ph) = (p2c.width, p2c.height);
+    let scales = gain.offset.map(|o| scale * (-o).exp());
+    let gain_map = flatfield::gain_map(&gain.surfaces, scales, pw, ph);
+    let lift = flatfield::to_projector(lift, cw, ch, p2c, blur, [0.0; 3]);
+    (gain_map, lift)
+}
+
+/// `projector.flatfield` in stages: the settings; the scans read; the pictures taken
+/// ([`measure`]); where each projector lights ([`lighting`]); per projector its gain ([`gain`])
+/// and their common scale; the black lift ([`blacks`]); the maps written per projector
+/// ([`projector_maps`]) and connected as one undo step.
+pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
+    let started = Instant::now();
+    let Settings { levels, low, frames, settle, timeout, fit, floor, cover, blur } = settings(a)?;
+    let session = e.session();
+    let dir = session.dir().to_path_buf();
+    let net = session.doc().snapshot();
     let projectors = projector_list(e, &net, Some(&a.projectors))?;
 
     // The scans first: a missing file fails before anything is shown.
@@ -222,259 +586,39 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
         pass: e.output().pass,
         frames: frames * 3,
     };
-    // Black three times as long: its values are the faintest.
-    let black = rig.shot(|_| [0.0; 3])?;
-    rig.frames = frames;
-    let (cw, ch) = (black.width, black.height);
-    let mut whites = Vec::with_capacity(projectors.len());
-    for k in 0..projectors.len() {
-        whites.push(rig.shot(|j| if j == k { [1.0; 3] } else { [0.0; 3] })?);
-    }
-    let drives: Vec<f64> = (0..levels).map(|l| low + (1.0 - low) * l as f64 / (levels - 1) as f64).collect();
-    // Per projector, channel and level the picture of that primary.
-    let mut ramps: Vec<[Vec<Picture>; 3]> = Vec::with_capacity(projectors.len());
-    for k in 0..projectors.len() {
-        let mut per: [Vec<Picture>; 3] = Default::default();
-        for (c, ramp) in per.iter_mut().enumerate() {
-            for d in &drives {
-                let mut s = [0.0f32; 3];
-                if let Some(v) = s.get_mut(c) {
-                    *v = *d as f32;
-                }
-                ramp.push(rig.shot(|j| if j == k { s } else { [0.0; 3] })?);
-            }
-        }
-        ramps.push(per);
-    }
+    let drives = drives(levels, low);
+    let pictures = measure(&mut rig, projectors.len(), &drives, frames)?;
     drop(claim);
     let measured_s = started.elapsed().as_secs_f64();
+    let (cw, ch) = (pictures.black.width, pictures.black.height);
 
-    // Where each lights the picture: strongly (the spots, picked as projector.match picks them)
-    // and at all (the gain's samples, the black).
-    let mut lit = Vec::with_capacity(projectors.len());
-    for ((_, path), white) in projectors.iter().zip(&whites) {
-        let mask = colour::lit(white, &black).ok_or_else(|| {
-            format!("{path} lights no camera pixel (is it in the camera's view, on, and the exposure right?)")
-        })?;
-        lit.push(mask);
-    }
-    let covers: Vec<Vec<bool>> =
-        whites.iter().map(|w| flatfield::cover(&w.rgb, &black.rgb, cover_share)).collect();
-    let spots = colour::spots(&lit, cw, ch);
     let mut warnings: Vec<String> = Vec::new();
-    if projectors.len() > 1 && !spots.shared {
-        warnings.push(
-            "the projectors do not overlap in the camera's view: each one's gain is relative to its own centre, \
-             so a match made by projector.match may not hold across them"
-                .into(),
-        );
-    }
+    let lighting = lighting(&projectors, &pictures, cover, &mut warnings)?;
 
     // The gain: per camera sample how much dimmer it is than the projector's typical pixel,
     // fitted over the projector, then taken relative to the spot.
-    let mut surfaces: Vec<[Surface; 3]> = Vec::with_capacity(projectors.len());
-    let mut offsets: Vec<[f64; 3]> = Vec::with_capacity(projectors.len());
-    let mut fitted: Vec<Vec<f64>> = Vec::with_capacity(projectors.len());
-    let mut reports = Vec::with_capacity(projectors.len());
-    let mut raw: Vec<Vec<[f32; 3]>> = Vec::with_capacity(projectors.len());
+    let mut gains: Vec<Gain> = Vec::with_capacity(projectors.len());
     for (k, (_, path)) in projectors.iter().enumerate() {
         let map = from_camera.get(k).ok_or("lost a map")?;
-        let per = ramps.get(k).ok_or("lost a ramp")?;
-        // All the projector lights, not only its brightest part: on a surface of mixed colours
-        // (a dark relief before a white wall) that would be the white wall alone.
-        let inner = colour::erode(covers.get(k).ok_or("lost a mask")?, cw, ch, EDGE);
-        let candidates: Vec<usize> =
-            (0..cw * ch).filter(|i| inner.get(*i).copied().unwrap_or(false)).collect();
-        let stride = candidates.len().div_ceil(MAX_SAMPLES).max(1);
-        let mut points = Vec::with_capacity(candidates.len() / stride + 1);
-        let mut unmapped = 0usize;
-        for &i in candidates.iter().step_by(stride) {
-            match projector_uv(map, i, cw, ch) {
-                Some(uv) => points.push((i, uv)),
-                None => unmapped += 1,
-            }
-        }
-        let reading = |pic: &Picture, i: usize, c: usize| {
-            let at = |p: &Picture| p.rgb.get(i).and_then(|x| x.get(c)).copied().unwrap_or(0.0);
-            f64::from(at(pic) - at(&black))
-        };
-        // The reference: per channel and level the median over the projector's pixels.
-        let mut reference = [vec![0.0; levels], vec![0.0; levels], vec![0.0; levels]];
-        for (c, (refs, ramp)) in reference.iter_mut().zip(per).enumerate() {
-            for (r, pic) in refs.iter_mut().zip(ramp) {
-                let values: Vec<f64> = points.iter().map(|(i, _)| reading(pic, *i, c)).collect();
-                *r = flatfield::quantile(&values, 0.5).ok_or_else(|| {
-                    format!("{path}: no camera pixel it lights has a position in its scan (does the scan fit the setup?)")
-                })?;
-            }
-        }
-        let mut samples: [Vec<[f64; 3]>; 3] = Default::default();
-        let mut picture = vec![[0f32; 3]; cw * ch];
-        for (i, [u, v]) in &points {
-            let mut gains = [None; 3];
-            for (c, (g, ramp)) in gains.iter_mut().zip(per).enumerate() {
-                let readings: Vec<f64> = ramp.iter().map(|p| reading(p, *i, c)).collect();
-                let refs = reference.get(c).ok_or("lost a reference")?;
-                *g = flatfield::relative_gain(&drives, &readings, refs).map(f64::ln);
-            }
-            let logs = match even {
-                Even::All => gains,
-                Even::Colour => match gains {
-                    [Some(r), Some(g), Some(b)] => flatfield::colour_only([r, g, b]).map(Some),
-                    _ => [None; 3],
-                },
-            };
-            for (c, (out, l)) in samples.iter_mut().zip(logs).enumerate() {
-                if let Some(l) = l {
-                    out.push([f64::from(*u), f64::from(*v), l]);
-                    if let Some(px) = picture.get_mut(*i).and_then(|p| p.get_mut(c)) {
-                        *px = l.exp() as f32;
-                    }
-                }
-            }
-        }
-        let mut fit: Vec<Surface> = Vec::with_capacity(3);
-        let mut fit_report = Vec::new();
-        for (c, s) in samples.iter().enumerate() {
-            let surface = Surface::fit(s, degree, trim, 3).map_err(|err| {
-                format!(
-                    "{path}, {}: {err} (does the scan fit the setup? is the camera's view lit?)",
-                    ["red", "green", "blue"].get(c).copied().unwrap_or("?")
-                )
-            })?;
-            let (all, best) = surface.residual(s, trim);
-            fit_report.push(json!({
-                "samples": s.len(),
-                "rms_log": round(all, 4),
-                "rms_log_kept": round(best, 4),
-                "relative_range": [round(surface.range[0].exp(), 4), round(surface.range[1].exp(), 4)],
-            }));
-            fit.push(surface);
-        }
-        let [r, g, b]: [Surface; 3] = fit.try_into().map_err(|_| "lost a fit")?;
-        let fit = [r, g, b];
-        if even == Even::All {
-            let kept: Vec<f64> = samples.iter().zip(&fit).map(|(s, f)| f.residual(s, trim).1).collect();
-            if kept.iter().any(|v| *v > UNEVEN) {
-                warnings.push(format!(
-                    "{path}: the surface is far from even (a relief, objects or a pattern; {:.0} % from the fit): its shading is in the gain too. Measure on a flat, evenly coloured surface, or use even: colour",
-                    kept.iter().fold(0.0f64, |a, v| a.max(*v)) * 100.0
-                ));
-            }
-        }
-        // The fit at the spot: the gains are taken relative to it.
-        let spot = spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[]);
-        let mut at_spot = [0.0f64; 3];
-        let mut n = 0usize;
-        for (i, _) in spot.iter().enumerate().filter(|(_, m)| **m) {
-            if let Some([u, v]) = projector_uv(map, i, cw, ch) {
-                for (o, sf) in at_spot.iter_mut().zip(&fit) {
-                    *o += sf.value(f64::from(u), f64::from(v));
-                }
-                n += 1;
-            }
-        }
-        let offset = if n > 0 {
-            at_spot.map(|v| v / n as f64)
-        } else {
-            warnings.push(format!(
-                "{path}: its scan has no position at the measuring spot; its gain is relative to its typical pixel"
-            ));
-            [0.0; 3]
-        };
-        let mut logs = Vec::new();
-        for ((s, sf), o) in samples.iter().zip(&fit).zip(offset) {
-            logs.extend(s.iter().map(|x| sf.value(x[0], x[1]) - o));
-        }
-        for p in &mut picture {
-            for (v, o) in p.iter_mut().zip(offset) {
-                *v *= (-o).exp() as f32;
-            }
-        }
-        surfaces.push(fit);
-        offsets.push(offset);
-        fitted.push(logs);
-        raw.push(picture);
-        reports.push(json!({
-            "path": path,
-            "lit_pixels": colour::count(covers.get(k).map(Vec::as_slice).unwrap_or(&[])),
-            "camera_samples": points.len(),
-            "unmapped": unmapped,
-            "reference": reference.iter().map(|r| r.iter().map(|v| round(*v, 5)).collect::<Vec<_>>()).collect::<Vec<_>>(),
-            "spot_relative": offset.map(|o| round(o.exp(), 4)),
-            "fit": fit_report,
-        }));
+        let per = pictures.ramps.get(k).ok_or("lost a ramp")?;
+        let cover = lighting.covers.get(k).ok_or("lost a mask")?;
+        let spot = lighting.spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[]);
+        let g = gain(path, map, per, &pictures.black, cover, spot, &drives, fit)?;
+        warnings.extend(g.warnings.iter().cloned());
+        gains.push(g);
     }
+    let fitted: Vec<Vec<f64>> = gains.iter().map(|g| g.logs.clone()).collect();
     let scale = flatfield::common_scale(&fitted, floor).ok_or("no samples to scale the gain by")?;
 
     // The black.
-    // Each white smoothed within where it lights: the lift is relative to the projector's light
-    // there, not to the surface's shading (dark slopes would get a lift they show darker anyway).
-    let white_sigma = (cw.max(ch) as f32 / 40.0).max(1.0);
-    let subtracted: Vec<Vec<[f32; 3]>> = whites
-        .iter()
-        .zip(&covers)
-        .map(|(w, cover)| {
-            let raw: Vec<[f32; 3]> =
-                w.rgb.iter().zip(&black.rgb).map(|(w, b)| [w[0] - b[0], w[1] - b[1], w[2] - b[2]]).collect();
-            flatfield::smooth_within(cw, ch, &raw, cover, white_sigma)
-        })
-        .collect();
-    let (measured_blacks, room) = flatfield::blacks(&black.rgb, &covers);
-    let mut used_blacks = Vec::with_capacity(projectors.len());
-    let mut black_report = Vec::new();
-    for (k, (_, path)) in projectors.iter().enumerate() {
-        let measured = measured_blacks.get(k).copied().flatten();
-        let white_spot = spots
-            .masks
-            .get(k)
-            .and_then(|s| colour::trimmed_mean(whites.get(k)?, s))
-            .zip(colour::trimmed_mean(&black, spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[])))
-            .map(|(w, b)| [w[0] - b[0], w[1] - b[1], w[2] - b[2]]);
-        let readable = measured.is_some_and(|m| m.iter().any(|v| *v > flatfield::MIN_BLACK));
-        let (used, source) = match (a.contrast, readable, white_spot) {
-            (Some(c), false, Some(w)) => (w.map(|v| v / c), "contrast"),
-            (_, true, _) => (measured.unwrap_or([0.0; 3]), "measured"),
-            _ => ([0.0; 3], "none"),
-        };
-        if source == "none" && projectors.len() > 1 {
-            warnings.push(format!(
-                "{path}: its black is too faint for the camera (or it lights nothing alone); no lift from it. \
-                 Give `contrast` to estimate it"
-            ));
-        }
-        black_report.push(json!({
-            "path": path,
-            "measured": measured.map(|m| m.map(|v| round(v, 6))),
-            "used": used.map(|v| round(v, 6)),
-            "source": source,
-            "white_at_spot": white_spot.map(|w| w.map(|v| round(v, 4))),
-        }));
-        used_blacks.push(used);
-    }
-    let lifts = flatfield::lift(&covers, &subtracted, &used_blacks);
+    let blacks = blacks(&projectors, &pictures, &lighting, a.contrast, &mut warnings);
 
     // The files.
     let out_rel = a.out.clone().unwrap_or_else(|| PathBuf::from(DEFAULT_OUT));
     let out = dir.join(&out_rel);
     std::fs::create_dir_all(&out).map_err(|err| format!("{}: {err}", out.display()))?;
     if a.pictures.unwrap_or(false) {
-        let folder = out.join("pictures");
-        std::fs::create_dir_all(&folder).map_err(|err| format!("{}: {err}", folder.display()))?;
-        let save = |name: String, pic: &Picture| -> CmdResult<()> {
-            let file = folder.join(name);
-            std::fs::write(&file, png16(pic.width, pic.height, &pic.rgb)?)
-                .map_err(|err| format!("{}: {err}", file.display()).into())
-        };
-        save("black.png".into(), &black)?;
-        for (k, (white, per)) in whites.iter().zip(&ramps).enumerate() {
-            save(format!("p{k}_white.png"), white)?;
-            for (c, ramp) in per.iter().enumerate() {
-                for (pic, d) in ramp.iter().zip(&drives) {
-                    save(format!("p{k}_c{c}_{:.3}.png", d), pic)?;
-                }
-            }
-        }
+        save_pictures(&out.join("pictures"), &pictures, &drives)?;
     }
     let write = |name: &str, bytes: Vec<u8>| -> CmdResult<String> {
         let file = out.join(name);
@@ -482,39 +626,36 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
         Ok(file.display().to_string())
     };
     let mut files = Vec::with_capacity(projectors.len());
-    for (k, ((_, path), report)) in projectors.iter().zip(reports.iter_mut()).enumerate() {
+    let mut reports = Vec::with_capacity(projectors.len());
+    for (k, ((_, path), g)) in projectors.iter().zip(&gains).enumerate() {
         let name =
             NodePath::parse(path)?.name().map(|n| n.as_str().to_string()).unwrap_or_else(|| format!("{k}"));
         let p2c = to_camera.get(k).ok_or("lost a map")?;
         let (pw, ph) = (p2c.width, p2c.height);
-        let surfaces = surfaces.get(k).ok_or("lost a fit")?;
-        let offset = offsets.get(k).copied().unwrap_or([0.0; 3]);
-        let scales = offset.map(|o| scale * (-o).exp());
-        let gain = flatfield::gain_map(surfaces, scales, pw, ph);
-        let lift_camera = lifts.get(k).map(Vec::as_slice).unwrap_or(&[]);
-        let lift = flatfield::to_projector(lift_camera, cw, ch, p2c, blur, [0.0; 3]);
-        let gain_path = write(&gain_file(&name), png16(pw, ph, &gain)?)?;
+        let lift_camera = blacks.lifts.get(k).map(Vec::as_slice).unwrap_or(&[]);
+        let (gain_map, lift) = projector_maps(g, scale, lift_camera, (cw, ch), p2c, blur);
+        let gain_path = write(&gain_file(&name), png16(pw, ph, &gain_map)?)?;
         let black_path = write(&black_file(&name), png16(pw, ph, &lift)?)?;
-        let scaled: Vec<[f32; 3]> = raw
-            .get(k)
-            .map(|r| r.iter().map(|p| p.map(|v| (v * scale as f32).clamp(0.0, 1.0))).collect())
-            .unwrap_or_default();
+        let scaled: Vec<[f32; 3]> =
+            g.picture.iter().map(|p| p.map(|v| (v * scale as f32).clamp(0.0, 1.0))).collect();
         let measured_path = write(&measured_file(&name), png16(cw, ch, &scaled)?)?;
+        let mut report = g.report.clone();
         if let Some(o) = report.as_object_mut() {
-            o.insert("gain".into(), stats(&gain));
+            o.insert("gain".into(), stats(&gain_map));
             o.insert("lift".into(), stats(&lift));
             o.insert(
                 "files".into(),
                 json!({"gain": gain_path, "black": black_path, "measured": measured_path}),
             );
         }
+        reports.push(report);
         files.push((path.clone(), name));
     }
 
     let apply = a.apply.unwrap_or(true);
     let history = if apply {
         let ops = connect_ops(e, &net, &files, &out_rel)?;
-        Some(outcome(&edit(e, &ops, "projector.flatfield")?))
+        Some(outcome(&edit_in(&session, &ops, "projector.flatfield")?))
     } else {
         None
     };
@@ -529,9 +670,9 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
         "scale": round(scale, 5),
         "levels": drives.iter().map(|d| round(*d, 4)).collect::<Vec<_>>(),
         "camera_picture": [cw, ch],
-        "shared_spot": spots.shared,
-        "room_black": room.map(|v| round(v, 6)),
-        "blacks": black_report,
+        "shared_spot": lighting.spots.shared,
+        "room_black": blacks.room.map(|v| round(v, 6)),
+        "blacks": blacks.report,
         "projectors": reports,
         "applied": apply,
         "history": history,
@@ -583,4 +724,147 @@ fn connect_ops(e: &Engine, net: &Network, files: &[(String, String)], out: &Path
         }
     }
     Ok(ops)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const N: usize = 32;
+
+    /// A `cam_to_proj` (or `proj_to_cam`) map of an `N` x `N` picture onto itself.
+    fn identity() -> Map {
+        let mut rgba = Vec::with_capacity(N * N);
+        for y in 0..N {
+            for x in 0..N {
+                rgba.push([(x as f32 + 0.5) / N as f32, (y as f32 + 0.5) / N as f32, 1.0, 1.0]);
+            }
+        }
+        Map::new(N, N, rgba).unwrap()
+    }
+
+    fn picture(value: impl Fn(usize) -> [f32; 3]) -> Picture {
+        Picture { width: N, height: N, rgb: (0..N * N).map(value).collect() }
+    }
+
+    /// A projector whose light at camera column x is `field(u)` times its drive's light, over a
+    /// room black of 0.01: its black, white and ramps at `drives`.
+    fn pictures(drives: &[f64], field: impl Fn(f64) -> f64) -> Pictures {
+        let u = |i: usize| ((i % N) as f64 + 0.5) / N as f64;
+        let light = |i: usize, d: f64| (0.01 + 0.5 * field(u(i)) * colour::decode(d)) as f32;
+        let black = picture(|_| [0.01; 3]);
+        let white = picture(|i| [light(i, 1.0); 3]);
+        let ramps = [0, 1, 2].map(|c| {
+            drives
+                .iter()
+                .map(|d| {
+                    picture(|i| {
+                        let mut v = [0.01f32; 3];
+                        v[c] = light(i, *d);
+                        v
+                    })
+                })
+                .collect()
+        });
+        Pictures { black, whites: vec![white], ramps: vec![ramps] }
+    }
+
+    const FIT: GainFit = GainFit { degree: 3, trim: 0.25, even: Even::All };
+
+    fn gain_of(field: impl Fn(f64) -> f64) -> (Gain, f64, Vec<[f32; 3]>) {
+        let drives = drives(5, 0.6);
+        let p = pictures(&drives, field);
+        let all = vec![true; N * N];
+        let g = gain("/p", &identity(), &p.ramps[0], &p.black, &all, &all, &drives, FIT).unwrap();
+        let scale = flatfield::common_scale(std::slice::from_ref(&g.logs), DEFAULT_FLOOR).unwrap();
+        let (map, lift) = projector_maps(&g, scale, &vec![None; N * N], (N, N), &identity(), 0.0);
+        assert!(lift.iter().all(|p| *p == [0.0; 3]), "no lift");
+        (g, scale, map)
+    }
+
+    #[test]
+    fn a_flat_field_gets_gain_one() {
+        let (g, scale, map) = gain_of(|_| 1.0);
+        assert!(g.warnings.is_empty(), "{:?}", g.warnings);
+        assert!(g.offset.iter().all(|o| o.abs() < 1e-6), "{:?}", g.offset);
+        assert!((scale - 1.0).abs() < 1e-6, "{scale}");
+        assert!(map.iter().flatten().all(|v| (v - 1.0).abs() < 1e-4));
+        assert_eq!(g.report["unmapped"], 0);
+        assert_eq!(g.report["spot_relative"], json!([1.0, 1.0, 1.0]));
+    }
+
+    #[test]
+    fn a_brighter_side_gets_less_gain() {
+        // Brighter to the right, smoothly: e^(0.4 u).
+        let (_, _, map) = gain_of(|u| (0.4 * u).exp());
+        let at = |x: usize| map[(N / 2) * N + x][1];
+        assert!(at(1) > at(N - 2), "{} {}", at(1), at(N - 2));
+        let ratio = f64::from(at(1) / at(N - 2));
+        let want = (0.4 * (N - 3) as f64 / N as f64).exp();
+        // Within the interpolation between the drive levels.
+        assert!((ratio - want).abs() < 0.05 * want, "{ratio} {want}");
+        assert!(map.iter().flatten().all(|v| *v <= 1.0));
+    }
+
+    #[test]
+    fn settings_fill_defaults_and_check_ranges() {
+        let args = |v: Json| -> FlatfieldArgs { serde_json::from_value(v).unwrap() };
+        let base = json!({"camera": "/cam", "projectors": ["/p"], "scans": ["s"]});
+        let s = settings(&args(base.clone())).unwrap();
+        assert_eq!((s.levels, s.low, s.frames, s.fit), (5, DEFAULT_LOW, DEFAULT_FRAMES, FIT));
+        for (key, bad, says) in [
+            ("levels", json!(1), "`levels`"),
+            ("low", json!(0.1), "`low`"),
+            ("frames", json!(0), "`frames`"),
+            ("degree", json!(99), "`degree`"),
+            ("trim", json!(0.7), "`trim`"),
+            ("floor", json!(0.5), "`floor`"),
+            ("cover", json!(0.0), "`cover`"),
+            ("blur", json!(65.0), "`blur`"),
+            ("contrast", json!(5.0), "`contrast`"),
+            ("scans", json!([]), "one scan folder per projector"),
+        ] {
+            let mut v = base.clone();
+            v[key] = bad;
+            let err = settings(&args(v)).unwrap_err();
+            assert!(err.0.contains(says), "{key}: {}", err.0);
+        }
+    }
+
+    #[test]
+    fn small_helpers() {
+        assert_eq!(
+            drives(5, 0.6).iter().map(|d| round(*d, 6)).collect::<Vec<_>>(),
+            [0.6, 0.7, 0.8, 0.9, 1.0]
+        );
+        assert_eq!(round(1.23456, 2), 1.23);
+        assert_eq!(round(f64::NAN, 2), 0.0);
+        // A 2 x 1 map seen by a 4 x 2 camera.
+        let map = Map::new(2, 1, vec![[0.1, 0.2, 1.0, 1.0], [0.9, 0.8, 1.0, 1.0]]).unwrap();
+        assert_eq!(projector_uv(&map, 1, 4, 2), Some([0.1, 0.2]));
+        assert_eq!(projector_uv(&map, 6, 4, 2), Some([0.9, 0.8]));
+        let s = stats(&[[0.0, 1.0, 2.0], [1.0, 1.0, 2.0], [2.0, 1.0, 2.0]]);
+        assert_eq!(s["r"]["median"], 1.0);
+        assert_eq!(s["r"]["max"], 2.0);
+        assert_eq!(s["b"]["min"], 2.0);
+        assert!(png16(2, 1, &[[0.0; 3], [1.0; 3]]).unwrap().starts_with(b"\x89PNG"));
+    }
+
+    #[test]
+    fn lighting_finds_the_projector_and_its_black() {
+        let p = pictures(&drives(2, 0.6), |_| 1.0);
+        let one = vec![(NodeId(1), "/p".to_string())];
+        let mut warnings = Vec::new();
+        let l = lighting(&one, &p, DEFAULT_COVER, &mut warnings).unwrap();
+        assert!(warnings.is_empty() && l.spots.shared);
+        assert_eq!(colour::count(&l.covers[0]), N * N);
+        let b = blacks(&one, &p, &l, Some(100.0), &mut warnings);
+        assert!(warnings.is_empty(), "one projector: no warning about its black");
+        assert_eq!(b.report[0]["source"], "measured");
+        assert_eq!(b.report[0]["measured"], json!([0.01, 0.01, 0.01]));
+        assert_eq!(b.lifts.len(), 1);
+        let dark = Pictures { whites: vec![p.black.clone()], ..p };
+        let err = lighting(&one, &dark, DEFAULT_COVER, &mut warnings).err().unwrap();
+        assert!(err.0.starts_with("/p lights no camera pixel"));
+    }
 }
