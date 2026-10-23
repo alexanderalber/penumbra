@@ -5,8 +5,8 @@
     nodes: {
         "/cam_to_proj_a": (kind: "tex.image", params: {"file": "camera/cam_to_proj_0.png"}, pos: [1200.0, 577.0]),
         "/cam_to_proj_b": (kind: "tex.image", params: {"file": "camera/cam_to_proj_1.png"}, pos: [1200.0, 952.0]),
-        "/contour_a": (kind: "tex.contour", params: {"color": [0.0, 0.0, 0.0, 0.6], "mode": "alpha", "thickness": 1.0}, inputs: {"in": "height_a"}, pos: [200.0, 280.0]),
-        "/contour_b": (kind: "tex.contour", params: {"color": [0.0, 0.0, 0.0, 0.6], "mode": "alpha", "thickness": 1.0}, inputs: {"in": "height_b"}, pos: [200.0, 1429.0]),
+        "/contour_a": (kind: "tex.contour", params: {"color": [0.0, 0.0, 0.0, 0.6], "mode": "alpha", "smooth": 4.0, "thickness": 1.0}, inputs: {"in": "height_a"}, pos: [200.0, 280.0]),
+        "/contour_b": (kind: "tex.contour", params: {"color": [0.0, 0.0, 0.0, 0.6], "mode": "alpha", "smooth": 4.0, "thickness": 1.0}, inputs: {"in": "height_b"}, pos: [200.0, 1429.0]),
         "/drift": (kind: "tex.noise", params: {"amplitude": 0.05, "frequency": 10.0, "height": 540, "keep_size": true, "octaves": 4, "offset": 0.0, "seed": 3, "width": 960}, pos: [0.0, 178.0]),
         "/drifts_a": (kind: "tex.composite", params: {"op": "subtract"}, inputs: {"layer1": "height_a", "layer2": "drift"}, pos: [200.0, 0.0]),
         "/drifts_b": (kind: "tex.composite", params: {"op": "subtract"}, inputs: {"layer1": "height_b", "layer2": "drift"}, pos: [200.0, 609.0]),

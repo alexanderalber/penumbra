@@ -36,7 +36,9 @@ The network, per projector (`_a` is the lower projector, `_b` the upper):
   draws the shore.
 - `/snowfield_a` is white above `/snowline`, on the height moved by still noise (`/drift`), so
   the snow line is ragged; `/snow_a` colours it.
-- `/contour_a`: a dark line every twentieth of the height range.
+- `/contour_a`: a dark line every twentieth of the height range. Its `smooth` (4 pixels) blurs
+  the height inside the node before the lines are found, so the scan's noise does not break
+  them into wobbles and islands; the colours keep the sharp height.
 - `/map_a` lays snow, water and lines over the shaded land. `/out_a` multiplies it by
   `/weight_a`, which also leaves the wall around the relief dark. `/proj_a` is the projector;
   it has no `display` yet, so it opens no window until you choose one.
