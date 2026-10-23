@@ -257,7 +257,7 @@ impl PenumbraApp {
     }
 
     fn selected(&self) -> Option<NodeId> {
-        match self.editor.selection.iter().copied().collect::<Vec<_>>().as_slice() {
+        match self.editor.selection().iter().copied().collect::<Vec<_>>().as_slice() {
             [only] => Some(*only),
             _ => None,
         }
@@ -270,7 +270,7 @@ impl PenumbraApp {
                 Action::Edit { ops, label, group } => {
                     session.edit(Actor::User, &ops, group, &label, now).map(|out| {
                         if let Some(id) = out.created.first() {
-                            self.editor.selection = [*id].into();
+                            self.editor.select([*id]);
                         }
                     })
                 }
@@ -280,9 +280,8 @@ impl PenumbraApp {
                     session.take_over();
                     Ok(())
                 }
-                Action::Selected => Ok(()),
                 Action::SelectNodes(set) => {
-                    self.editor.selection = set;
+                    self.editor.select(set);
                     Ok(())
                 }
                 Action::Pin(id) => {
@@ -341,24 +340,19 @@ impl PenumbraApp {
                     self.message = Some((report.message(), now));
                 }),
                 Action::LearnBackground { node, delay } => {
-                    let wait = Duration::from_secs_f64(delay);
-                    let learned = self.engine.on_cook(move |st| {
-                        st.cooker
-                            .resource::<penumbra_ops::tex::blob_track::BlobTracks>()
-                            .is_some_and(|t| t.learn(node, wait))
-                    });
-                    match learned {
-                        Ok(true) => {
-                            let text = if delay > 0.0 {
-                                format!("the background is taken in {delay:.0} s")
-                            } else {
-                                "the background is taken from the next frame".to_string()
-                            };
-                            self.message = Some((text, now));
-                            Ok(())
-                        }
-                        Ok(false) => Err(penumbra_core::Error::new("the tracker has not cooked yet")),
-                        Err(e) => Err(e),
+                    let net = self.engine.session().doc().snapshot();
+                    match net.path_of(node) {
+                        Some(path) => penumbra_engine::blob_track::learn(&self.engine, &path, delay)
+                            .map(|_| {
+                                let text = if delay > 0.0 {
+                                    format!("the background is taken in {delay:.0} s")
+                                } else {
+                                    "the background is taken from the next frame".to_string()
+                                };
+                                self.message = Some((text, now));
+                            })
+                            .map_err(|e| penumbra_core::Error::new(e.0)),
+                        None => Err(penumbra_core::Error::new("the node is gone")),
                     }
                 }
                 Action::Trace { node, from } => {
@@ -439,7 +433,7 @@ impl PenumbraApp {
         let label = format!("replace {path} with {kind}");
         let out = session.edit(Actor::User, &r.ops, None, &label, now)?;
         if let Some(id) = out.created.first() {
-            self.editor.selection = [*id].into();
+            self.editor.select([*id]);
         }
         let text = if r.lost.is_empty() {
             format!("{path} is a {kind} now")
@@ -893,7 +887,7 @@ impl PenumbraApp {
                             self.params.show(ui, &input, &mut self.auto, &mut actions);
                         }
                         None => {
-                            let n = self.editor.selection.len();
+                            let n = self.editor.selection().len();
                             let text = if n == 0 {
                                 "Select a node to edit its parameters.".to_string()
                             } else {

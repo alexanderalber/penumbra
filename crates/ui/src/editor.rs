@@ -87,7 +87,8 @@ enum Drag {
 }
 
 pub struct Editor {
-    pub selection: BTreeSet<NodeId>,
+    /// Changed only through [`Editor::select`].
+    selection: BTreeSet<NodeId>,
     drag: Drag,
     add_menu: Option<AddDialog>,
     /// The family the add dialog showed last.
@@ -97,8 +98,6 @@ pub struct Editor {
     frame_request: bool,
     /// The canvas rect of the last frame, for `ui.arrange` and framing from outside.
     pub canvas: Rect,
-    /// The component whose inside is shown; `None` for the top level.
-    pub level: Option<NodeId>,
     /// The node under the pointer in the last frame, whose binding lines show.
     hovered: Option<NodeId>,
     /// The node the add dialog replaces ("Replace node..." in the node menu) instead of adding.
@@ -189,7 +188,6 @@ impl Default for Editor {
             paused: BTreeSet::new(),
             frame_request: true,
             canvas: Rect::NOTHING,
-            level: None,
             hovered: None,
             replacing: None,
             hovered_wire: None,
@@ -500,6 +498,17 @@ impl Editor {
         }
     }
 
+    /// The selected nodes.
+    pub fn selection(&self) -> &BTreeSet<NodeId> {
+        &self.selection
+    }
+
+    /// Selects `nodes` instead of what was selected: the one way the selection changes, from
+    /// the editor itself, the app and the `ui.*` commands alike.
+    pub fn select(&mut self, nodes: impl IntoIterator<Item = NodeId>) {
+        self.selection = nodes.into_iter().collect();
+    }
+
     /// Frames all nodes on the next frame.
     pub fn frame_all(&mut self) {
         self.frame_request = true;
@@ -508,11 +517,10 @@ impl Editor {
     /// Shows the inside of component `level` (`None`: the top level); the selection goes, the
     /// view comes back as it was left, a level not seen before is framed.
     pub fn enter(&mut self, level: Option<NodeId>, layout: &mut Layout, now: Instant) {
-        if level == self.level {
+        if level == layout.level() {
             return;
         }
-        self.level = level;
-        self.selection.clear();
+        self.select([]);
         self.add_menu = None;
         self.replacing = None;
         self.drag = Drag::None;
@@ -532,7 +540,7 @@ impl Editor {
         auto: &mut automation::Registry,
         now: Instant,
     ) {
-        let Some(level) = self.level else { return };
+        let Some(level) = layout.level() else { return };
         let mut chain: Vec<NodeId> = vec![level];
         while let Some(parent) = chain.last().and_then(|id| net.node(*id)).and_then(|n| n.parent) {
             if chain.len() > NodePath::MAX_DEPTH {
@@ -594,7 +602,7 @@ impl Editor {
         canvas: Rect,
     ) -> (Vec<NodeId>, Vec<NodeId>) {
         let view = layout.view;
-        net.children(self.level)
+        net.children(layout.level())
             .filter(|n| types.desc(&n.kind).is_some_and(|d| !d.outputs.is_empty()))
             .filter(|n| {
                 layout.get(n.id).is_some_and(|p| {
@@ -633,7 +641,7 @@ impl Editor {
         }
         draw_grid(&painter, canvas, view);
 
-        let placed = Placed::new(net, input.types, self.level, layout, canvas);
+        let placed = Placed::new(net, input.types, layout.level(), layout, canvas);
         let pointer = ui.input(|i| i.pointer.hover_pos());
         let outside_readers = placed.outside_readers();
         // Wires, bindings and references, under the nodes.
@@ -682,7 +690,7 @@ impl Editor {
         }
 
         // Empty canvas: box selection, clicks, menus.
-        self.box_select(ui, &painter, &canvas_resp, geos, pointer, released, actions);
+        self.box_select(ui, &painter, &canvas_resp, geos, pointer, released);
         self.canvas_clicks(&canvas_resp, canvas, view, clicked_node, input, layout, auto, actions);
         if released || !ui.input(|i| i.pointer.any_down()) {
             // The whole drag is one edit, made as it ends.
@@ -700,7 +708,7 @@ impl Editor {
 
         self.keys(ui, input, canvas, layout, actions);
         self.breadcrumb(ui, net, canvas, layout, auto, input.now);
-        self.add_menu(ui, input, auto, actions);
+        self.add_menu(ui, input, layout.level(), auto, actions);
         self.visible(net, input.types, layout, canvas)
     }
 
@@ -708,15 +716,22 @@ impl Editor {
     /// dissolved, undone), the layout synced, the selection and paused thumbnails without nodes
     /// that are gone, and a requested framing done once the canvas has a size.
     fn follow_network(&mut self, net: &Network, canvas: Rect, layout: &mut Layout, now: Instant) {
-        if self.level.is_some_and(|l| net.node(l).is_none()) {
+        if layout.level().is_some_and(|l| net.node(l).is_none()) {
             self.enter(None, layout, now);
         }
-        layout.level = self.level;
         let shown = layout.view;
         layout.visible = Some(Rect::from_min_size(shown.origin.to_pos2(), canvas.size() / shown.zoom));
         layout.sync(net);
-        let level = self.level;
-        self.selection.retain(|id| net.node(*id).is_some_and(|n| n.parent == level));
+        let level = layout.level();
+        let kept: Vec<NodeId> = self
+            .selection
+            .iter()
+            .copied()
+            .filter(|id| net.node(*id).is_some_and(|n| n.parent == level))
+            .collect();
+        if kept.len() != self.selection.len() {
+            self.select(kept);
+        }
         self.paused.retain(|id| net.node(*id).is_some());
 
         if self.frame_request && canvas.width() > 10.0 {
@@ -965,7 +980,6 @@ impl Editor {
     }
 
     /// Selecting by a box dragged on empty canvas; Shift or Ctrl adds to the selection.
-    #[allow(clippy::too_many_arguments)]
     fn box_select(
         &mut self,
         ui: &Ui,
@@ -974,7 +988,6 @@ impl Editor {
         geos: &[Geo],
         pointer: Option<Pos2>,
         released: bool,
-        actions: &mut Vec<Action>,
     ) {
         if resp.drag_started_by(PointerButton::Primary)
             && matches!(self.drag, Drag::None)
@@ -995,16 +1008,10 @@ impl Editor {
             );
             if released {
                 let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
-                if !add {
-                    self.selection.clear();
-                }
-                for g in geos {
-                    if r.intersects(g.rect) {
-                        self.selection.insert(g.id);
-                    }
-                }
+                let kept = if add { self.selection.clone() } else { BTreeSet::new() };
+                let boxed = geos.iter().filter(|g| r.intersects(g.rect)).map(|g| g.id);
+                self.select(kept.into_iter().chain(boxed));
                 self.drag = Drag::None;
-                actions.push(Action::Selected);
             }
         }
     }
@@ -1024,8 +1031,7 @@ impl Editor {
         actions: &mut Vec<Action>,
     ) {
         if resp.clicked() && !clicked_node {
-            self.selection.clear();
-            actions.push(Action::Selected);
+            self.select([]);
         }
         // A fast double-click right after another click counts as a triple in egui.
         let double = resp.double_clicked() || resp.triple_clicked();
@@ -1055,7 +1061,7 @@ impl Editor {
     /// it), as one edit.
     fn arrange(&mut self, input: &Inputs<'_>, layout: &Layout, actions: &mut Vec<Action>) {
         let only = (self.selection.len() > 1).then_some(&self.selection);
-        let to = crate::arrange::level(input.net, input.types, layout, self.level, only);
+        let to = crate::arrange::level(input.net, input.types, layout, layout.level(), only);
         let ops = crate::layout::place_ops(input.net, &to);
         if !ops.is_empty() {
             actions.push(Action::Edit { ops, label: "arrange".into(), group: None });
@@ -1124,9 +1130,7 @@ impl Editor {
         // Moving is an edit: not while Claude edits.
         if resp.drag_started_by(PointerButton::Primary) && matches!(self.drag, Drag::None) && input.can_edit {
             if !self.selection.contains(&id) {
-                self.selection.clear();
-                self.selection.insert(id);
-                actions.push(Action::Selected);
+                self.select([id]);
             }
             self.drag = Drag::Nodes;
             layout.begin_move(self.selection.iter().copied());
@@ -1138,14 +1142,14 @@ impl Editor {
             *clicked_node = true;
             let toggle = ui.input(|i| i.modifiers.shift || i.modifiers.command);
             if toggle {
-                if !self.selection.remove(&id) {
-                    self.selection.insert(id);
+                let mut toggled = self.selection.clone();
+                if !toggled.remove(&id) {
+                    toggled.insert(id);
                 }
+                self.select(toggled);
             } else {
-                self.selection.clear();
-                self.selection.insert(id);
+                self.select([id]);
             }
-            actions.push(Action::Selected);
         }
         let net = input.net;
         let is_comp = net.node(id).and_then(|n| input.types.desc(&n.kind)).is_some_and(|d| d.container);
@@ -1636,7 +1640,7 @@ impl Editor {
             let ids: Vec<NodeId> = if self.selection.is_empty() {
                 input
                     .net
-                    .children(self.level)
+                    .children(layout.level())
                     .filter(|n| input.types.desc(&n.kind).is_some_and(|d| d.stateful || d.container))
                     .map(|n| n.id)
                     .collect()
@@ -1670,7 +1674,7 @@ impl Editor {
                 }
                 egui::Event::Paste(text) if input.can_edit => actions.push(Action::Paste {
                     text: Some(text),
-                    level: self.level,
+                    level: layout.level(),
                     at: to_graph(canvas, layout.view, pointer),
                 }),
                 _ => {}
@@ -1682,12 +1686,11 @@ impl Editor {
         {
             self.enter(Some(*only), layout, input.now);
         }
-        if up && let Some(level) = self.level {
+        if up && let Some(level) = layout.level() {
             let parent = input.net.node(level).and_then(|n| n.parent);
             self.enter(parent, layout, input.now);
             // Coming out, the component just left is selected.
-            self.selection = [level].into();
-            actions.push(Action::Selected);
+            self.select([level]);
         }
         if delete && input.can_edit && !self.selection.is_empty() {
             let ops: Vec<Op> = self
@@ -1709,8 +1712,7 @@ impl Editor {
             }
         }
         if all {
-            self.selection = input.net.children(self.level).map(|n| n.id).collect();
-            actions.push(Action::Selected);
+            self.select(input.net.children(layout.level()).map(|n| n.id));
         }
     }
 
@@ -1718,6 +1720,7 @@ impl Editor {
         &mut self,
         ui: &mut Ui,
         input: &Inputs<'_>,
+        level: Option<NodeId>,
         auto: &mut automation::Registry,
         actions: &mut Vec<Action>,
     ) {
@@ -1744,12 +1747,12 @@ impl Editor {
             },
             Outcome::Chosen(kind) if kind.starts_with(crate::add_dialog::LIBRARY_MARK) => {
                 let name = kind.trim_start_matches(crate::add_dialog::LIBRARY_MARK).to_string();
-                actions.push(Action::AddComponent { name, level: self.level, at });
+                actions.push(Action::AddComponent { name, level, at });
             }
             Outcome::Chosen(kind) => {
-                let name = fresh_name(input.net, self.level, &kind);
+                let name = fresh_name(input.net, level, &kind);
                 if let Ok(name) = name.parse()
-                    && let Ok(path) = level_path(input.net, self.level).child(name)
+                    && let Ok(path) = level_path(input.net, level).child(name)
                 {
                     let mut ops = vec![Op::Create { path: path.clone(), kind, params: Default::default() }];
                     // A single selected node with a matching output feeds the new node, which

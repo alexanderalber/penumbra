@@ -52,8 +52,6 @@ pub enum Action {
     Undo,
     Redo,
     TakeOver,
-    /// The editor changed its selection itself (nothing to do; kept for the record).
-    Selected,
     SelectNodes(BTreeSet<NodeId>),
     /// Pin the viewer to a node, or follow the selection with `None`.
     Pin(Option<NodeId>),

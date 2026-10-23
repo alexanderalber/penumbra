@@ -19,11 +19,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     registry.register(FnCommand::new(
         "blob_track.learn",
         "A tex.blob_track takes a frame as the background (the empty scene): {path, delay?} (seconds before it does, default 0)",
-        move |p| learn(&e, p),
+        move |p| learn_command(&e, p),
     ));
 }
 
-fn learn(e: &Engine, p: &Json) -> CmdResult<Json> {
+fn learn_command(e: &Engine, p: &Json) -> CmdResult<Json> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct A {
@@ -31,13 +31,19 @@ fn learn(e: &Engine, p: &Json) -> CmdResult<Json> {
         delay: Option<f64>,
     }
     let a: A = args(p)?;
+    let delay = learn(e, &a.path, a.delay.unwrap_or(0.0))?;
+    Ok(json!({"path": a.path.to_string(), "delay": delay.as_secs_f64()}))
+}
+
+/// `blob_track.learn`: the `tex.blob_track` at `path` takes the first frame after `delay`
+/// seconds as its background. Returns the delay.
+pub fn learn(e: &Engine, path: &NodePath, delay: f64) -> CmdResult<Duration> {
     let net = e.session().doc().snapshot();
-    let id = require(&net, &a.path)?;
+    let id = require(&net, path)?;
     let kind = net.node(id).map(|n| n.kind.clone()).unwrap_or_default();
     if kind != BLOB_TRACK {
-        return Err(CommandError(format!("{} is a {kind}, not a {BLOB_TRACK}", a.path)));
+        return Err(CommandError(format!("{path} is a {kind}, not a {BLOB_TRACK}")));
     }
-    let delay = a.delay.unwrap_or(0.0);
     if !(0.0..=600.0).contains(&delay) {
         return Err(CommandError("`delay` must be 0 to 600 seconds".into()));
     }
@@ -45,7 +51,7 @@ fn learn(e: &Engine, p: &Json) -> CmdResult<Json> {
     let learned =
         e.on_cook(move |st| st.cooker.resource::<BlobTracks>().is_some_and(|t| t.learn(id, delay)))?;
     if !learned {
-        return Err(CommandError(format!("{} has not cooked yet (is it shown or connected?)", a.path)));
+        return Err(CommandError(format!("{path} has not cooked yet (is it shown or connected?)")));
     }
-    Ok(json!({"path": a.path.to_string(), "delay": delay.as_secs_f64()}))
+    Ok(delay)
 }

@@ -1393,15 +1393,21 @@ fn res_overlay(e: &Engine, p: &Json) -> Result<Json> {
         on: bool,
     }
     let a: A = args(p)?;
-    let on = a.on;
+    let (mappers, renders) = set_overlay(e, a.on)?;
+    Ok(json!({"on": a.on, "mappers": mappers, "renders": renders}))
+}
+
+/// `res.overlay`: switches the resolution overlay on the mappers' and render nodes' pictures;
+/// returns how many of each there are.
+pub fn set_overlay(e: &Engine, on: bool) -> Result<(usize, usize)> {
     let session = e.session().clone();
-    let (mappers, renders) = e.on_cook(move |st| {
+    let counts = e.on_cook(move |st| {
         let net = session.doc().snapshot();
         st.set_overlay(on, &net, session.types());
         let count = |kind: &str| net.nodes().filter(|n| n.kind == kind).count();
         (count(penumbra_ops::tex::mapper::MAPPER), count(penumbra_ops::tex::render::RENDER))
     })?;
-    Ok(json!({"on": on, "mappers": mappers, "renders": renders}))
+    Ok(counts)
 }
 
 fn system_check(_e: &Engine, p: &Json) -> Result<Json> {

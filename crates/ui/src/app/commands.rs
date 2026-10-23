@@ -83,7 +83,7 @@ impl PenumbraApp {
             "ui.measure" => {
                 let session = self.engine.session();
                 let net = session.doc().snapshot();
-                let m = editor::measure(&net, session.types(), self.editor.level, &self.layout);
+                let m = editor::measure(&net, session.types(), self.layout.level(), &self.layout);
                 let round = |v: f32| (v * 10.0).round() / 10.0;
                 done(json!({
                     "nodes": m.nodes,
@@ -135,7 +135,7 @@ impl PenumbraApp {
         let session = self.engine.session().clone();
         let net = session.doc().snapshot();
         let path = |id: NodeId| path_of(&net, id);
-        let selection: Vec<Option<String>> = self.editor.selection.iter().map(|id| path(*id)).collect();
+        let selection: Vec<Option<String>> = self.editor.selection().iter().map(|id| path(*id)).collect();
         let selected = self.selected();
         let mut state = json!({
             "selection": selection,
@@ -146,7 +146,7 @@ impl PenumbraApp {
             "window": rect_json(ctx.content_rect()),
             "editing": session.status(now).edit,
             "thumbnails_paused": self.editor.paused.iter().filter_map(|id| path(*id)).collect::<Vec<_>>(),
-            "level": editor::level_path(&net, self.editor.level),
+            "level": editor::level_path(&net, self.layout.level()),
             "message": self.message.as_ref().map(|(m, _)| m.clone()),
         });
         if let Some(id) = selected
@@ -254,7 +254,7 @@ impl PenumbraApp {
         if !set.is_empty() {
             self.editor.enter(level, &mut self.layout, now);
         }
-        self.editor.selection = set;
+        self.editor.select(set);
         Ok(json!({"selected": paths}))
     }
 
