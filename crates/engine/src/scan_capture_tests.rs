@@ -49,7 +49,8 @@ fn frame(luma: Vec<u8>) -> CameraFrame {
 /// `fine`: a projector pixel is half a camera pixel (each camera pixel averages 2 x 2), so the
 /// finest stripes of each axis are a flat grey to the camera. Also returns where a camera pixel
 /// sees lit and dark projector pixels at once (where a real camera flickers).
-fn picture(stripes: &[Option<Stripes>], fine: bool) -> (Vec<u8>, Vec<bool>) {
+/// `glare`: the camera's left 40 columns see the light twice as bright, so a full level clips there.
+fn picture(stripes: &[Option<Stripes>], fine: bool, glare: bool) -> (Vec<u8>, Vec<bool>) {
     let mut luma = vec![40u8; W * H];
     let mut mixed = vec![false; W * H];
     for (s, (ox, oy)) in stripes.iter().zip(OFFSETS) {
@@ -81,7 +82,8 @@ fn picture(stripes: &[Option<Stripes>], fine: bool) -> (Vec<u8>, Vec<bool>) {
             }
             let (u, w) = (((x - ox) / 2) as u32, ((y - oy) / 2) as u32);
             if u < s.size[0] && w < s.size[1] && patterns.lit(pattern, u, w) {
-                *v = v.saturating_add((160.0 * s.level) as u8);
+                let gain = if glare && x < 40 { 320.0 } else { 160.0 };
+                *v = v.saturating_add((gain * s.level) as u8);
             }
         }
     }
@@ -103,6 +105,8 @@ struct Flaws {
     fine: bool,
     /// Between frames.
     interval: Option<Duration>,
+    /// See [`picture`].
+    glare: bool,
 }
 
 /// Feeds the camera `key` every few milliseconds with what the projectors showed [`LATENCY`]
@@ -157,7 +161,7 @@ impl Camera {
                     .or(history.front())
                     .map(|(_, s)| s.clone())
                     .unwrap_or_default();
-                let (mut luma, mixed) = picture(&seen, flaws.fine);
+                let (mut luma, mixed) = picture(&seen, flaws.fine, flaws.glare);
                 count += 1;
                 if flaws.flicker && count % 4 == 2 {
                     burst = (0..W * H).map(|_| random() < 0.5).collect();
@@ -379,6 +383,7 @@ fn scan_capture_keeps_in_step_through_a_flickering_late_camera() {
         flicker: true,
         fine: true,
         interval: Some(Duration::from_millis(16)),
+        ..Flaws::default()
     };
     let _camera = Camera::with(f.engine.clone(), key, vec![a], flaws);
     let r = f.call("scan.capture", json!({"camera": "/cam", "settle": 0.05, "retries": 6}));
@@ -393,6 +398,57 @@ fn scan_capture_keeps_in_step_through_a_flickering_late_camera() {
     }
     let valid = p["camera_pixels"]["valid"].as_u64().unwrap();
     assert!(valid >= 800, "{valid} of 960: {r}");
+}
+
+#[test]
+fn scan_capture_at_two_levels_decodes_where_the_bright_one_clips() {
+    let f = Fixture::new("scan-capture-levels");
+    let key = Key::new("sim", "");
+    f.engine.camera().feed(&key, frame(vec![40; W * H]));
+    f.call("node.create", json!({"path": "/cam", "kind": "tex.video_in", "params": {"device": "sim"}}));
+    let viewport = json!([0.0, 0.0, f64::from(PW) / 1920.0, f64::from(PH) / 1080.0]);
+    f.call(
+        "node.create",
+        json!({"path": "/proj_a", "kind": "out.projector", "params": {"viewport": viewport}}),
+    );
+    f.call("cook.play", json!({"playing": true}));
+    let net = f.engine.session().doc().snapshot();
+    let a = net.resolve(&"/proj_a".parse().unwrap()).unwrap();
+    let _camera = Camera::with(f.engine.clone(), key, vec![a], Flaws { glare: true, ..Flaws::default() });
+    let valid = |r: &serde_json::Value| r["projectors"][0]["camera_pixels"]["valid"].as_u64().unwrap();
+
+    // The full level alone clips on the camera's left 34 of A's 80 columns.
+    let bright = f.call("scan.capture", json!({"camera": "/cam", "out": "bright", "settle": 0.0}));
+    let clipped = bright["projectors"][0]["camera_pixels"]["clipped"].as_u64().unwrap();
+    assert!(clipped > 1500, "{bright}");
+    assert!(valid(&bright) < 2300, "{bright}");
+
+    let r = f
+        .call("scan.capture", json!({"camera": "/cam", "levels": [1.0, 0.4], "frames": true, "settle": 0.0}));
+    let p = &r["projectors"][0];
+    assert!((3700..=3840).contains(&valid(&r)), "{r}");
+    assert!(p["camera_pixels"]["clipped"].as_u64().unwrap() < 50, "{r}");
+    let levels = p["levels"].as_array().unwrap();
+    assert_eq!(levels.len(), 2, "{r}");
+    assert_eq!(levels[1]["level"], 0.4);
+    // The dim pass decodes everything, but at the lower margin loses the ties to the bright one.
+    assert!(levels[1]["only"].as_u64().unwrap() > 1500, "{r}");
+    assert!(levels[0]["taken"].as_u64().unwrap() > 1500, "{r}");
+    assert!(levels[1]["margins"]["columns"][0].as_f64().unwrap() > 0.9, "{r}");
+    assert!(p["apart_px"]["median"].as_f64().unwrap() < 0.5, "{r}");
+    assert!(p["warnings"].as_array().unwrap().is_empty(), "{r}");
+    assert!(f.engine.board().state().stripes.is_empty() && f.engine.board().state().flat.is_empty());
+
+    // Both passes' frames are kept and decode alike, merged.
+    let d = f.call(
+        "scan.decode",
+        json!({"frames": ["scan/proj_a/frames", "scan/proj_a/frames_1"], "projector": [PW, PH], "out": "redecoded"}),
+    );
+    assert_eq!(d["camera_pixels"]["valid"], p["camera_pixels"]["valid"], "{d}");
+    assert_eq!(d["levels"][1]["only"], levels[1]["only"], "{d}");
+    let one = f.call("scan.decode", json!({"frames": ["scan/proj_a/frames_1"], "projector": [PW, PH]}));
+    assert!(one.get("levels").is_none(), "{one}");
+    assert!(f.fail("scan.decode", json!({"frames": []})).contains("1 to 4"));
 }
 
 #[test]

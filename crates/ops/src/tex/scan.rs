@@ -74,6 +74,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down"),
         )
         .param(
+            ParamSpec::float("second_level", 0.0)
+                .clamp(0.0, 1.0)
+                .more()
+                .doc(
+                    "A second pass at this brightness, merged per camera pixel with the first, the surer decode \
+                     winning: a dimmer one decodes where the first clips (white surfaces, highlights). 0: one pass",
+                ),
+        )
+        .param(
             ParamSpec::int("fill", 32)
                 .clamp(0.0, 1024.0)
                 .range(0.0, 128.0)

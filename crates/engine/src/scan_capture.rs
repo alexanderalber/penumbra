@@ -71,6 +71,8 @@ const UNSTABLE_SHARE: f64 = 0.02;
 const MIN_MARGIN: f64 = 0.35;
 /// The coarsest bits of each axis whose pattern and inverse are checked.
 const CHECKED_BITS: u32 = 2;
+/// Most levels a projector is scanned at.
+const MAX_LEVELS: usize = 4;
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
@@ -83,8 +85,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          light-to-camera latency on the way. Blocks about 15 s per projector; {camera (tex.video_in \
          path), projectors? (paths, default every \
          active out.projector), out? (folder, scan), settle? (s after the latency, 0.05), timeout? (s, 5), \
-         level? (signal of the lit stripes, 1), frames? (keep the camera frames as PNG in \
-         out/<projector>/frames, false), verify? (take a picture only when two frames agree, true), \
+         level? (signal of the lit stripes, 1), levels? (instead of level: a scan per level, e.g. [1, 0.4], \
+         merged per camera pixel, the surest decode winning, so the dim pass decodes where the bright one \
+         clips; the first level's colour; 1 to 4 levels), frames? (keep the camera frames as PNG in \
+         out/<projector>/frames, frames_1, ... per level, false), verify? (take a picture only when two frames agree, true), \
          retries? (frames that may disagree, 3), fill? (projector px, 32), options?: {min_contrast?, \
          saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture)}}",
         move |p| {
@@ -103,6 +107,7 @@ pub struct CaptureArgs {
     pub settle: Option<f64>,
     pub timeout: Option<f64>,
     pub level: Option<f32>,
+    pub levels: Option<Vec<f32>>,
     pub frames: Option<bool>,
     pub verify: Option<bool>,
     pub retries: Option<u32>,
@@ -206,6 +211,9 @@ struct Scanner<'a> {
     verify: bool,
     retries: u32,
     level: f32,
+    /// The share of a projector's scan done before the pass at this level, and the share it
+    /// takes: for the progress.
+    share: (f32, f32),
     pass: u64,
     /// Time between consecutive camera frames, as seen.
     intervals: Vec<Duration>,
@@ -426,11 +434,11 @@ fn seconds(d: Duration) -> f64 {
 }
 
 /// `scan.capture`'s arguments, checked, the defaults filled in.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Settings {
     settle: f64,
     timeout: f64,
-    level: f32,
+    levels: Vec<f32>,
     retries: u32,
     fill: u32,
     keep_frames: bool,
@@ -440,8 +448,15 @@ struct Settings {
 fn settings(a: &CaptureArgs) -> CmdResult<Settings> {
     let settle = settle_of(a.settle, DEFAULT_SETTLE)?;
     let timeout = timeout_of(a.timeout)?;
-    let level = a.level.unwrap_or(1.0);
-    if !(level.is_finite() && level > 0.0 && level <= 1.0) {
+    let levels = match (a.level, &a.levels) {
+        (Some(_), Some(_)) => return Err("`level` or `levels`, not both".into()),
+        (_, Some(l)) if l.is_empty() || l.len() > MAX_LEVELS => {
+            return Err(format!("`levels` lists 1 to {MAX_LEVELS} levels").into());
+        }
+        (_, Some(l)) => l.clone(),
+        (l, None) => vec![l.unwrap_or(1.0)],
+    };
+    if !levels.iter().all(|l| l.is_finite() && *l > 0.0 && *l <= 1.0) {
         return Err("`level` is above 0, at most 1".into());
     }
     let retries = a.retries.unwrap_or(DEFAULT_RETRIES);
@@ -453,7 +468,7 @@ fn settings(a: &CaptureArgs) -> CmdResult<Settings> {
     Ok(Settings {
         settle,
         timeout,
-        level,
+        levels,
         retries,
         fill,
         keep_frames: a.frames.unwrap_or(false),
@@ -628,7 +643,8 @@ fn scan_projector(
         let shot = s.take(path, shown, latency, Some((&previous, Way::Any)), Some(&lit), Some(latency))?;
         c.add(&s.camera, index, &shot)?;
         if let Some(w) = s.watch {
-            (w.progress)(k, index as f32 / patterns.count().max(1) as f32);
+            let (before, part) = s.share;
+            (w.progress)(k, before + part * index as f32 / patterns.count().max(1) as f32);
         }
         if shot.changed_at.is_none() {
             unchanged += 1;
@@ -700,18 +716,43 @@ struct ProjectorScan {
     report: Json,
 }
 
-/// The reply's entry of a projector scanned (`scanned`) and decoded (`decoded`) into `folder`.
+/// One projector's scan at one level.
+struct Pass {
+    level: f32,
+    scanned: Scanned,
+    margins: [Vec<Option<f64>>; 2],
+}
+
+/// The folder of the camera frames kept of the pass at level `l` (0 the first).
+fn frames_folder(l: usize) -> String {
+    if l == 0 { FRAMES.to_string() } else { format!("{FRAMES}_{l}") }
+}
+
+/// The reply's entry of a projector scanned at one level or more (`passes`) and decoded
+/// (`decoded`) into `folder`. The latency, margins and frames are the first pass's; with more
+/// than one, `levels` lists each pass's level, margins and counts.
 fn projector_report(
     path: &str,
     folder: &std::path::Path,
-    scanned: &Scanned,
+    passes: &[Pass],
     decoded: &Decoded,
-    margins: &[Vec<Option<f64>>; 2],
     warnings: &[String],
 ) -> Json {
+    let Some(Pass { scanned, margins, .. }) = passes.first() else { return Json::Null };
     let c = &scanned.collect;
-    let pictures = c.patterns.count();
+    let pictures = c.patterns.count() * passes.len();
+    let captured: Duration = passes.iter().map(|p| p.scanned.captured).sum();
     let mut o = decoded.fields.clone();
+    if let Some(Json::Array(list)) = o.get_mut("levels") {
+        for (entry, p) in list.iter_mut().zip(passes) {
+            if let Json::Object(e) = entry {
+                e.insert("level".into(), json!((f64::from(p.level) * 1000.0).round() / 1000.0));
+                e.insert("margins".into(), json!({"columns": p.margins[0], "rows": p.margins[1]}));
+                e.insert("retaken_pairs".into(), json!(p.scanned.retaken));
+                e.insert("ms".into(), json!(ms(p.scanned.captured)));
+            }
+        }
+    }
     o.insert("path".into(), json!(path));
     o.insert("folder".into(), json!(folder.display().to_string()));
     o.insert(
@@ -726,16 +767,16 @@ fn projector_report(
     o.insert("margins".into(), json!({"columns": margins[0], "rows": margins[1]}));
     o.insert("lit_samples".into(), json!(scanned.lit_samples));
     o.insert("retaken_pairs".into(), json!(scanned.retaken));
-    o.insert("unstable_frames".into(), json!(c.unstable));
+    o.insert("unstable_frames".into(), json!(passes.iter().map(|p| p.scanned.collect.unstable).sum::<u32>()));
     o.insert("unchanged_pictures".into(), json!(scanned.unchanged));
     o.insert("frames".into(), json!(c.frames.as_ref().map(|f| f.display().to_string())));
     o.insert(
         "ms".into(),
         json!({
-            "capture": ms(scanned.captured),
+            "capture": ms(captured),
             "decode": ms(decoded.decode),
             "write": ms(decoded.write),
-            "per_picture": ms(scanned.captured / u32::try_from(pictures + 1).unwrap_or(1)),
+            "per_picture": ms(captured / u32::try_from(pictures + passes.len()).unwrap_or(1)),
         }),
     );
     o.insert("warnings".into(), json!(warnings));
@@ -795,7 +836,7 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
 /// ([`scan_projector`]), then its decode written and its report; the reply ([`capture_reply`]).
 pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -> CmdResult<Json> {
     let started = Instant::now();
-    let Settings { settle, timeout, level, retries, fill, keep_frames, verify } = settings(a)?;
+    let Settings { settle, timeout, levels, retries, fill, keep_frames, verify } = settings(a)?;
 
     let session = e.session();
     let net = session.doc().snapshot();
@@ -822,7 +863,8 @@ pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -
         timeout: Duration::from_secs_f64(timeout),
         verify,
         retries,
-        level,
+        level: levels.first().copied().unwrap_or(1.0),
+        share: (0.0, 1.0),
         pass: e.output().pass,
         intervals: Vec::new(),
         watch,
@@ -836,22 +878,39 @@ pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -
     for (k, (id, path)) in projectors.iter().enumerate() {
         let patterns = *all_patterns.get(k).ok_or("lost a projector")?;
         let folder = out.join(folders.get(k).map(String::as_str).unwrap_or("projector"));
-        let frames = keep_frames.then(|| folder.join(FRAMES));
-        let mut scanned = scan_projector(&mut s, k, (*id, path), patterns, frames, known_latency)?;
-        known_latency = scanned.latency;
-
-        let margins = margins(&patterns, &scanned.collect.lumas);
-        let mut warnings =
-            scan_warnings(path, &margins, &scanned.collect.unsettled, retries, scanned.rise, scanned.fall);
-        let decoder = scanned.collect.decoder.take().ok_or("no camera pictures")?;
-        let decoded = write_decoded(&decoder, &a.options, fill, &folder)?;
+        let mut passes: Vec<Pass> = Vec::new();
+        let mut decoders = Vec::new();
+        let mut warnings = Vec::new();
+        for (l, level) in levels.iter().enumerate() {
+            s.level = *level;
+            s.share = (l as f32 / levels.len() as f32, 1.0 / levels.len() as f32);
+            let frames = keep_frames.then(|| folder.join(frames_folder(l)));
+            // Only one level: the warnings name the projector alone, as they always did.
+            let name = if levels.len() > 1 { format!("{path} at level {level}") } else { path.clone() };
+            let mut scanned = scan_projector(&mut s, k, (*id, &name), patterns, frames, known_latency)?;
+            known_latency = scanned.latency;
+            let margins = margins(&patterns, &scanned.collect.lumas);
+            warnings.extend(scan_warnings(
+                &name,
+                &margins,
+                &scanned.collect.unsettled,
+                retries,
+                scanned.rise,
+                scanned.fall,
+            ));
+            decoders.push(scanned.collect.decoder.take().ok_or("no camera pictures")?);
+            passes.push(Pass { level: *level, scanned, margins });
+        }
+        let decoded = write_decoded(&decoders, &a.options, fill, &folder)?;
         warnings.extend(decoded.warnings.iter().map(|w| format!("{path}: {w}")));
-        let report = projector_report(path, &folder, &scanned, &decoded, &margins, &warnings);
+        let first = passes.first().ok_or("no scan")?;
+        let (rise, fall) = (first.scanned.rise, first.scanned.fall);
+        let report = projector_report(path, &folder, &passes, &decoded, &warnings);
         all_warnings.extend(warnings);
         collected.push(ProjectorScan {
             path: path.clone(),
-            rise: scanned.rise,
-            fall: scanned.fall,
+            rise,
+            fall,
             valid: decoded.valid,
             measured: decoded.measured,
             report,
@@ -988,12 +1047,23 @@ mod tests {
         let args = |v: Json| -> CaptureArgs { serde_json::from_value(v).unwrap() };
         let s = settings(&args(json!({"camera": "/cam"}))).unwrap();
         assert_eq!(
-            (s.settle, s.level, s.retries, s.keep_frames, s.verify),
-            (DEFAULT_SETTLE, 1.0, 3, false, true)
+            (s.settle, s.levels.as_slice(), s.retries, s.keep_frames, s.verify),
+            (DEFAULT_SETTLE, [1.0].as_slice(), 3, false, true)
         );
+        assert_eq!(settings(&args(json!({"camera": "/cam", "level": 0.5}))).unwrap().levels, [0.5]);
+        assert_eq!(
+            settings(&args(json!({"camera": "/cam", "levels": [1, 0.4]}))).unwrap().levels,
+            [1.0, 0.4]
+        );
+        assert_eq!(frames_folder(0), FRAMES);
+        assert_eq!(frames_folder(2), "frames_2");
         for (bad, says) in [
             (json!({"level": 0.0}), "`level`"),
             (json!({"level": 1.5}), "`level`"),
+            (json!({"levels": [1.0, 0.0]}), "`level`"),
+            (json!({"levels": []}), "`levels`"),
+            (json!({"levels": [1.0, 0.8, 0.6, 0.4, 0.2]}), "`levels`"),
+            (json!({"level": 1.0, "levels": [0.5]}), "not both"),
             (json!({"retries": 21}), "`retries`"),
             (json!({"timeout": 0.0}), "`timeout`"),
             (json!({"fill": 100000}), "`fill`"),

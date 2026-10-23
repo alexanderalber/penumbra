@@ -740,6 +740,7 @@ Outputs:
 | `smooth` | bool | `true` |  | proj_to_cam is the map smoothed within the decoded area, for clean remapped edges. The run's blend writes the smoothed map. Off: the map as decoded |
 | `settle` *(more)* | float | `0.05` | 0 to 0.5 (soft) | Seconds waited past the measured light-to-camera latency before a picture is taken |
 | `level` *(more)* | float | `1` | 0.05 to 1 | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
+| `second_level` *(more)* | float | `0` | 0 to 1 | A second pass at this brightness, merged per camera pixel with the first, the surer decode winning: a dimmer one decodes where the first clips (white surfaces, highlights). 0: one pass |
 | `fill` *(more)* | int | `32` | 0 to 128 (soft) | Projector pixels the decode fills in from measured neighbours |
 
 ### tex.scan_pattern

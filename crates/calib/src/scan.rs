@@ -31,6 +31,10 @@
 //! sees the projector coarser than its pixels, and shadows the projector does not reach. The
 //! colour is the white picture's: the scene as the projector sees it, so a mask drawn on it is
 //! in projector pixels.
+//!
+//! **Levels** ([`fuse`]): no single brightness suits a scene with white and dark surfaces, since
+//! the camera clips on the one and loses the other in its noise. Scans at two or more levels of
+//! the projector's light merge per camera pixel, the surest decode winning.
 
 /// Largest projector side, in pixels.
 pub const MAX_SIDE: u32 = 16384;
@@ -601,14 +605,7 @@ impl Decoder {
             }
         }
 
-        let mut counts = [0usize; 6];
-        for s in &status {
-            if let Some(k) = Status::ALL.iter().position(|a| a == s)
-                && let Some(c) = counts.get_mut(k)
-            {
-                *c += 1;
-            }
-        }
+        let counts = status_counts(&status);
         Ok(Scan {
             camera: (self.width, self.height),
             projector: (pw, ph),
@@ -722,6 +719,19 @@ fn box_sums(w: usize, h: usize, r: usize, value: impl Fn(usize) -> f64) -> Vec<f
     out
 }
 
+/// Camera pixels per [`Status`], in the order of [`Status::ALL`].
+fn status_counts(status: &[Status]) -> [usize; 6] {
+    let mut counts = [0usize; 6];
+    for s in status {
+        if let Some(k) = Status::ALL.iter().position(|a| a == s)
+            && let Some(c) = counts.get_mut(k)
+        {
+            *c += 1;
+        }
+    }
+    counts
+}
+
 /// Brightness of a camera pixel: the mean of red, green and blue.
 fn brightness(p: &[f32; 4]) -> f32 {
     let [r, g, b, _] = *p;
@@ -775,6 +785,128 @@ pub struct Scan {
     /// The white picture: the scene lit by the projector, linear RGB.
     pub color: Vec<[f32; 3]>,
     pub stats: Stats,
+}
+
+/// Scans of one projector at several levels of light, merged ([`fuse`]).
+#[derive(Clone, Debug)]
+pub struct Fusion {
+    pub scan: Scan,
+    /// Per scan given: the camera pixels decoded in it, those taken from it, and those decoded
+    /// in it alone.
+    pub valid: Vec<usize>,
+    pub taken: Vec<usize>,
+    pub only: Vec<usize>,
+    /// Where two or more scans decoded a pixel: how far each other one lies from the one taken,
+    /// projector pixels (the larger of the two axes), median and 90th percentile; `None` where
+    /// none overlap.
+    pub apart: Option<[f32; 2]>,
+}
+
+/// Merges scans of the same projector seen by the same camera, taken at different levels of light
+/// (a bright one clips on light surfaces and in highlights, a dim one loses dark and grazing ones):
+/// per camera pixel the decode of the surest scan, ties to the earlier one. Where none decoded,
+/// the pixel's status is that of the first scan not clipped there (else clipped). The scene colour
+/// and the counts of resolved bits and the step are the first scan's, so its exposure sets the
+/// look of the scene picture; resolved bits are the most any scan resolved.
+pub fn fuse(scans: Vec<Scan>) -> Result<Fusion, String> {
+    let mut it = scans.into_iter();
+    let Some(mut out) = it.next() else { return Err("no scans to merge".into()) };
+    let rest: Vec<Scan> = it.collect();
+    if let Some(s) = rest.iter().find(|s| s.camera != out.camera || s.projector != out.projector) {
+        return Err(format!(
+            "scans of a {} x {} camera and {} x {} projector cannot merge with one of {} x {} and {} x {}",
+            out.camera.0,
+            out.camera.1,
+            out.projector.0,
+            out.projector.1,
+            s.camera.0,
+            s.camera.1,
+            s.projector.0,
+            s.projector.1
+        ));
+    }
+    let n = out.points.len();
+    let count = 1 + rest.len();
+    let valid_of = |s: &Scan| s.points.iter().filter(|p| p.is_some()).count();
+    let mut valid = vec![valid_of(&out)];
+    valid.extend(rest.iter().map(valid_of));
+    let mut taken = vec![0usize; count];
+    let mut only = vec![0usize; count];
+    let mut apart: Vec<f32> = Vec::new();
+    for i in 0..n {
+        // The surest decode: (scan, point, confidence).
+        let first = out
+            .points
+            .get(i)
+            .copied()
+            .flatten()
+            .map(|p| (0, p, out.confidence.get(i).copied().unwrap_or(0.0)));
+        let mut best = first;
+        let mut decoded = usize::from(first.is_some());
+        let mut alone = first.map(|_| 0);
+        for (k, s) in rest.iter().enumerate() {
+            let Some(p) = s.points.get(i).copied().flatten() else { continue };
+            let c = s.confidence.get(i).copied().unwrap_or(0.0);
+            decoded += 1;
+            alone = Some(k + 1);
+            if best.is_none_or(|(_, _, b)| c > b) {
+                best = Some((k + 1, p, c));
+            }
+        }
+        if decoded == 1
+            && let Some(o) = alone.and_then(|k| only.get_mut(k))
+        {
+            *o += 1;
+        }
+        let Some((k, p, c)) = best else {
+            // Nothing decoded: the first scan's reason, unless it clipped and another had a say.
+            let first_status = out.status.get(i).copied().unwrap_or(Status::Dark);
+            if first_status == Status::Clipped
+                && let Some(st) =
+                    rest.iter().filter_map(|s| s.status.get(i).copied()).find(|s| *s != Status::Clipped)
+                && let Some(slot) = out.status.get_mut(i)
+            {
+                *slot = st;
+            }
+            continue;
+        };
+        if let Some(t) = taken.get_mut(k) {
+            *t += 1;
+        }
+        if decoded > 1 {
+            let others = std::iter::once(&out.points).chain(rest.iter().map(|s| &s.points));
+            for (j, points) in others.enumerate() {
+                if j != k
+                    && let Some(Some(q)) = points.get(i)
+                {
+                    apart.push((p[0] - q[0]).abs().max((p[1] - q[1]).abs()));
+                }
+            }
+        }
+        if k > 0 {
+            if let Some(slot) = out.points.get_mut(i) {
+                *slot = Some(p);
+            }
+            if let Some(slot) = out.confidence.get_mut(i) {
+                *slot = c;
+            }
+            if let Some(slot) = out.status.get_mut(i) {
+                *slot = Status::Valid;
+            }
+        }
+    }
+    out.stats.counts = status_counts(&out.status);
+    for s in &rest {
+        for (a, b) in out.stats.resolved.iter_mut().zip(s.stats.resolved) {
+            *a = (*a).max(b);
+        }
+    }
+    let apart = (!apart.is_empty()).then(|| {
+        apart.sort_by(f32::total_cmp);
+        let at = |q: f32| apart.get(((apart.len() - 1) as f32 * q).round() as usize).copied().unwrap_or(0.0);
+        [at(0.5), at(0.9)]
+    });
+    Ok(Fusion { scan: out, valid, taken, only, apart })
 }
 
 /// What a projector pixel of an [`Inverse`] holds.

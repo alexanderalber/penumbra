@@ -87,7 +87,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Decode a structured light scan from the camera's pictures of tex.scan_pattern 0, 1, 2, ... \
          (files in a folder, sorted by name, numbers by value). Writes cam_to_proj.exr and \
          proj_to_cam.exr (maps for tex.remap), scene.png (the scene as the projector sees it) and \
-         quality.png; {frames (folder, relative to the project), projector?: [w, h] (1920, 1080), \
+         quality.png; {frames (folder, relative to the project; or a list of folders: scans of one projector \
+         at different levels of light, merged per camera pixel, the surest decode winning, the first's colour), projector?: [w, h] (1920, 1080), \
          out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, \
          saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture)}}",
         move |p| {
@@ -131,13 +132,25 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecodeArgs {
-    pub frames: PathBuf,
+    pub frames: Frames,
     pub projector: Option<[u32; 2]>,
     pub out: Option<PathBuf>,
     pub fill: Option<u32>,
     #[serde(default)]
     pub options: Options,
 }
+
+/// One folder of camera pictures, or several: scans of the same projector at different levels of
+/// light, merged.
+#[derive(Deserialize)]
+#[serde(untagged)]
+pub enum Frames {
+    One(PathBuf),
+    Several(Vec<PathBuf>),
+}
+
+/// Most frame folders `scan.decode` merges.
+const MAX_LEVELS: usize = 4;
 
 /// Decodes the pictures in `a.frames` (relative to `dir`) and writes the results; the reply
 /// counts what was found.
@@ -147,8 +160,44 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
     let patterns = Patterns::new(pw, ph).map_err(CommandError)?;
     a.options.check().map_err(CommandError)?;
     let fill = fill_of(a.fill)?;
-    let frames = dir.join(&a.frames);
-    let files = pictures(&frames)?;
+    let folders: Vec<PathBuf> = match &a.frames {
+        Frames::One(f) => vec![dir.join(f)],
+        Frames::Several(list) => list.iter().map(|f| dir.join(f)).collect(),
+    };
+    if folders.is_empty() || folders.len() > MAX_LEVELS {
+        return Err(format!("`frames` is a folder or a list of 1 to {MAX_LEVELS}").into());
+    }
+    let mut decoders = Vec::with_capacity(folders.len());
+    for frames in &folders {
+        decoders.push(decode_folder(frames, patterns)?);
+    }
+    let read = started.elapsed();
+    let first = folders.first().ok_or("no frames")?;
+    let out = match &a.out {
+        Some(o) => dir.join(o),
+        None => first.join("decoded"),
+    };
+    let decoded = write_decoded(&decoders, &a.options, fill, &out)?;
+    let mut reply = decoded.fields.clone();
+    reply.insert("message".into(), json!(decoded.message()));
+    reply.insert("warnings".into(), json!(decoded.warnings));
+    reply.insert(
+        "next".into(),
+        json!(format!(
+            "tex.image of {PROJECTOR_MAP} into tex.remap's map, the camera into its in: the camera's view in projector pixels"
+        )),
+    );
+    reply.insert(
+        "ms".into(),
+        json!({"read": ms(read), "decode": ms(decoded.decode), "total": ms(started.elapsed())}),
+    );
+    Ok(Json::Object(reply))
+}
+
+/// The pictures of one scan in `frames`, added to a decoder.
+fn decode_folder(frames: &Path, patterns: Patterns) -> CmdResult<Decoder> {
+    let (pw, ph) = patterns.size();
+    let files = pictures(frames)?;
     if files.len() != patterns.count() {
         return Err(CommandError(format!(
             "{} holds {} picture(s); a scan of a {pw} x {ph} projector has {} (scan.patterns lists them)",
@@ -179,27 +228,7 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
         let rgba = picture.to_rgba32f();
         d.add(k, &rgba).map_err(|e| CommandError(format!("{}: {e}", file.display())))?;
     }
-    let read = started.elapsed();
-    let decoder = decoder.ok_or("no pictures")?;
-    let out = match &a.out {
-        Some(o) => dir.join(o),
-        None => frames.join("decoded"),
-    };
-    let decoded = write_decoded(&decoder, &a.options, fill, &out)?;
-    let mut reply = decoded.fields.clone();
-    reply.insert("message".into(), json!(decoded.message()));
-    reply.insert("warnings".into(), json!(decoded.warnings));
-    reply.insert(
-        "next".into(),
-        json!(format!(
-            "tex.image of {PROJECTOR_MAP} into tex.remap's map, the camera into its in: the camera's view in projector pixels"
-        )),
-    );
-    reply.insert(
-        "ms".into(),
-        json!({"read": ms(read), "decode": ms(decoded.decode), "total": ms(started.elapsed())}),
-    );
-    Ok(Json::Object(reply))
+    Ok(decoder.ok_or("no pictures")?)
 }
 
 /// What [`write_decoded`] found and wrote.
@@ -256,17 +285,36 @@ fn decode_warnings(
     warnings
 }
 
-/// Decodes what `decoder` collected and writes `scan.decode`'s files into `out`.
+/// Decodes what `decoders` collected (scans of one projector at different levels of light,
+/// merged by [`scan::fuse`] if more than one) and writes `scan.decode`'s files into `out`. With
+/// more than one the fields also hold `levels` (per scan the camera pixels decoded, taken from it
+/// and decoded in it alone) and `apart_px` (how far overlapping decodes lie apart, median and 90th
+/// percentile).
 pub(crate) fn write_decoded(
-    decoder: &Decoder,
+    decoders: &[Decoder],
     options: &Options,
     fill: u32,
     out: &Path,
 ) -> CmdResult<Decoded> {
-    let patterns = decoder.patterns();
+    let patterns = decoders.first().ok_or("no pictures")?.patterns();
     let (pw, ph) = patterns.size();
     let t = Instant::now();
-    let result = decoder.finish(options).map_err(CommandError)?;
+    let mut scans = Vec::with_capacity(decoders.len());
+    for d in decoders {
+        scans.push(d.finish(options).map_err(CommandError)?);
+    }
+    let fusion = scan::fuse(scans).map_err(CommandError)?;
+    let levels: Option<Json> = (decoders.len() > 1).then(|| {
+        let list: Vec<Json> = (0..decoders.len())
+            .map(|k| {
+                let at = |v: &[usize]| v.get(k).copied().unwrap_or(0);
+                json!({"valid": at(&fusion.valid), "taken": at(&fusion.taken), "only": at(&fusion.only)})
+            })
+            .collect();
+        Json::Array(list)
+    });
+    let apart = fusion.apart;
+    let result = fusion.scan;
     let inverse = result.inverse(fill);
     let decoded = t.elapsed();
 
@@ -301,7 +349,11 @@ pub(crate) fn write_decoded(
         "step": stats.step,
         "files": files,
     });
-    let Json::Object(fields) = fields else { return Err("lost the counts".into()) };
+    let Json::Object(mut fields) = fields else { return Err("lost the counts".into()) };
+    if let Some(levels) = levels {
+        fields.insert("levels".into(), levels);
+        fields.insert("apart_px".into(), json!(apart.map(|[m, p]| json!({"median": m, "p90": p}))));
+    }
     Ok(Decoded { fields, valid, total, measured, filled, warnings, decode: decoded, write: written })
 }
 

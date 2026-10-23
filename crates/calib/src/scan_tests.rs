@@ -4,7 +4,7 @@
 //! noise, decoded and compared with the truth.
 
 use crate::Homography;
-use crate::scan::{Decoder, Options, Pattern, Patterns, Sample, Scan, Status, bits, from_gray, gray};
+use crate::scan::{Decoder, Options, Pattern, Patterns, Sample, Scan, Status, bits, from_gray, fuse, gray};
 
 /// A tiny deterministic generator, so the synthetic data is the same on every run.
 struct Lcg(u64);
@@ -799,4 +799,55 @@ fn the_window_is_checked() {
     let bad = Options { window: crate::scan::MAX_WINDOW + 1, ..Options::default() };
     assert!(bad.check().is_err());
     assert!(Options { window: 0, ..Options::default() }.check().is_ok());
+}
+
+#[test]
+fn a_bright_and_a_dim_scan_merge_where_each_decodes() {
+    // Left a white surface the bright scan clips on, right a dark one the dim scan loses.
+    let mut setup = Setup::plain((256, 160), (240, 180));
+    setup.noise = 0.002;
+    let inner = Setup::plain((256, 160), (240, 180)).scene;
+    setup.scene = Box::new(move |x, y| {
+        let mut f = inner(x, y);
+        f.albedo = if x < 120.0 { [1.6; 3] } else { [0.04; 3] };
+        f
+    });
+    let left = |scan: &Scan, i: usize| (i % scan.camera.0 as usize) < 120;
+    setup.gain = 0.8;
+    let (bright, truth) = setup.scan(&Options::default());
+    setup.gain = 0.3;
+    let (dim, _) = setup.scan(&Options::default());
+    let share = |scan: &Scan, on_left: bool| {
+        let r = compare(scan, &truth, |i| left(scan, i) == on_left);
+        r.kept_share()
+    };
+    eprintln!(
+        "bright: left {:.2}, right {:.2}; dim: left {:.2}, right {:.2}",
+        share(&bright, true),
+        share(&bright, false),
+        share(&dim, true),
+        share(&dim, false)
+    );
+    assert!(share(&bright, true) < 0.05 && share(&bright, false) > 0.95);
+    assert!(share(&dim, true) > 0.95 && share(&dim, false) < 0.05);
+    let clipped = bright.stats.count(Status::Clipped);
+
+    let f = fuse(vec![bright.clone(), dim.clone()]).unwrap();
+    let r = compare(&f.scan, &truth, |_| true);
+    eprintln!("merged: {r:?}, taken {:?}, only {:?}, apart {:?}", f.taken, f.only, f.apart);
+    assert!(r.kept_share() > 0.95, "{r:?}");
+    assert!(r.within1_share() > 0.99, "{r:?}");
+    assert_eq!(r.false_kept, 0);
+    assert_eq!(f.valid, [bright.stats.count(Status::Valid), dim.stats.count(Status::Valid)]);
+    assert_eq!(f.taken.iter().sum::<usize>(), f.scan.stats.count(Status::Valid));
+    assert!(f.only[0] > 5000 && f.only[1] > 5000, "{:?}", f.only);
+    // The bright scan's clipped pixels are the dim one's now; its colour stays.
+    assert!(f.scan.stats.count(Status::Clipped) < clipped / 20, "{clipped} -> {:?}", f.scan.stats);
+    assert_eq!(f.scan.color, bright.color);
+    // Each alone merges to itself; mismatched sizes and nothing refuse.
+    let alone = fuse(vec![dim.clone()]).unwrap();
+    assert_eq!((alone.scan.points, alone.apart), (dim.points.clone(), None));
+    assert!(fuse(Vec::new()).is_err());
+    let other = Setup::plain((128, 160), (240, 180)).scan(&Options::default()).0;
+    assert!(fuse(vec![dim, other]).unwrap_err().contains("cannot merge"));
 }

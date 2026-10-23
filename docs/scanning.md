@@ -23,8 +23,9 @@ example projection-onto-objects.
 The quickest way: one `tex.scan` node per projector. Its params name the `projector`
 (`out.projector`), the `camera` (`tex.video_in`), the `folder` scans go to (`scan`, the
 projector's scan is the folder named after its path inside, `scan/proj_a`) and, optionally, the
-`mapper` (`tex.mapper`) feeding the projector. Under *more*: `settle`, `level` and `fill`, as
-for `scan.capture` below.
+`mapper` (`tex.mapper`) feeding the projector. Under *more*: `settle`, `level`, `second_level`
+(0, off: a second pass at that level, see "Two levels" below) and `fill`, as for
+`scan.capture` below.
 
 The **scan** button in its param panel scans the projectors of every `tex.scan` naming the same
 camera, one after another; then, if every one of them names its mapper, lines them up
@@ -91,7 +92,7 @@ The results go into `out` (default `scan/`), one folder per projector named by i
 | `proj_to_cam.exr` | projector size; per projector pixel the camera position, blue 1 where measured, 0.5 where filled in from a neighbour, -1 where none |
 | `scene.png` | the scene as the projector sees it |
 | `quality.png` | per camera pixel what was decoded (grey by confidence; black: not reached; magenta: clipped; blue: ambiguous; red: outliers) |
-| `frames/00.png` ... | the camera's pictures, with `frames: true` only |
+| `frames/00.png` ... | the camera's pictures, with `frames: true` only (`frames_1/` ... for further `levels`) |
 
 The reply has per projector the camera pixels decoded, the projector pixels measured, the bits
 the camera resolves (`resolved_bits` of `bits`), the median margin of every bit's pattern
@@ -109,6 +110,19 @@ by light bouncing off the object casting it (which carries that object's coarse 
 ambiguous. On a crate lid seen at a grazing angle this doubled the decoded share, at the same
 accuracy. A dark face also falls under `min_contrast` (0.02 of full scale): at a dim `level`,
 `"options": {"min_contrast": 0.01}` decodes it too.
+
+**Two levels.** No single brightness suits a scene with white and dark surfaces: at full level
+the camera clips on the white ones (magenta in `quality.png`), dimmed it loses the dark and
+grazing ones. `"levels": [1, 0.4]` (instead of `level`, up to four) scans each projector once
+per level and merges the decodes per camera pixel, the surer one winning; a clipped pixel is
+not decoded, so the dim pass fills it. It costs a full scan per level. The scene colour is the
+first level's. The reply lists per level the camera pixels it decoded, those taken from it and
+those only it decoded (`levels`), and how far the levels' decodes lie apart where they overlap
+(`apart_px`, projector pixels). On a scene of crates and a pumpkin, a full and a half-level scan
+merged decoded 3 % more camera pixels than the full one alone; most of that where it clipped.
+
+Kept frames of several levels merge again with `scan.decode` and a list:
+`"frames": ["scan/proj_a/frames", "scan/proj_a/frames_1"]`.
 
 Without a camera node (photos from another camera), the same files come from the pictures in a
 folder: a `tex.scan_pattern` into the projector, stepped through its `pattern` 0, 1, 2, ...

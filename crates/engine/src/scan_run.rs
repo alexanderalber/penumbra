@@ -102,6 +102,8 @@ struct Item {
     mapper: Option<NodePath>,
     settle: f64,
     level: f32,
+    /// A second pass at this level, merged with the first; 0 none.
+    second_level: f32,
     fill: u32,
 }
 
@@ -211,6 +213,7 @@ fn plan(e: &Engine, nodes: Option<&[NodePath]>) -> CmdResult<Plan> {
             mapper,
             settle: number(&net, e, id, "settle").unwrap_or(crate::scan_capture::DEFAULT_SETTLE),
             level: number(&net, e, id, "level").unwrap_or(1.0) as f32,
+            second_level: number(&net, e, id, "second_level").unwrap_or(0.0) as f32,
             fill: number(&net, e, id, "fill")
                 .map_or(crate::scan::DEFAULT_FILL, |f| f.clamp(0.0, 1024.0) as u32),
         });
@@ -345,7 +348,8 @@ fn run(e: &Engine, plan: &Plan, ticket: &RunTicket, actor: Actor) -> CmdResult<J
             out: Some(item.root.clone()),
             settle: Some(item.settle),
             timeout: None,
-            level: Some(item.level),
+            level: (item.second_level <= 0.0).then_some(item.level),
+            levels: (item.second_level > 0.0).then(|| vec![item.level, item.second_level]),
             frames: None,
             verify: None,
             retries: None,
