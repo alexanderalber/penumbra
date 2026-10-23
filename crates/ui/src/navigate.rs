@@ -298,7 +298,6 @@ impl Navigation {
                     ops: orbit_ops(net, target, &orbit, false),
                     label: "steer the camera".into(),
                     group: Some(group),
-                    place: None,
                 });
                 self.steering = Some((group, orbit, now));
                 Ok(())

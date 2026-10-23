@@ -27,7 +27,6 @@
 //! wider than tall; single unconnected nodes go in rows below them.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::time::Instant;
 
 use egui::{Pos2, pos2};
 use penumbra_core::NodeId;
@@ -126,30 +125,30 @@ fn on_level(net: &Network, level: Option<NodeId>, id: NodeId) -> Option<NodeId> 
     None
 }
 
-/// Arranges the nodes of `level`, or only those in `only`, as one undo step. The arrangement
-/// keeps the top left corner of what it arranges. Returns how many nodes moved.
+/// The arranged places of the nodes of `level`, or only those in `only`, for one edit
+/// ([`crate::layout::place_ops`]). The arrangement keeps the top left corner of what it
+/// arranges.
 pub fn level(
     net: &Network,
     types: &NodeTypes,
-    layout: &mut Layout,
+    layout: &Layout,
     level: Option<NodeId>,
     only: Option<&BTreeSet<NodeId>>,
-    now: Instant,
-) -> usize {
+) -> HashMap<NodeId, Pos2> {
     let g = graph(net, types, level, only);
     let old: HashMap<NodeId, Pos2> =
         g.nodes.iter().filter_map(|(id, _)| Some((*id, layout.get(*id)?))).collect();
     let origin = old.values().fold(None::<Pos2>, |acc, p| Some(acc.map_or(*p, |a| a.min(*p))));
-    let placed = arrange(&g, &old, origin.unwrap_or(Pos2::ZERO));
-    layout.move_to(&placed, now)
+    arrange(&g, &old, origin.unwrap_or(Pos2::ZERO))
 }
 
-/// Every level of the network, as separate undo steps; how many nodes moved.
-pub fn everything(net: &Network, types: &NodeTypes, layout: &mut Layout, now: Instant) -> usize {
+/// The arranged places of every level of the network (each component's inside is a plane of its
+/// own), for one edit.
+pub fn everything(net: &Network, types: &NodeTypes, layout: &Layout) -> HashMap<NodeId, Pos2> {
     let mut levels: Vec<Option<NodeId>> = vec![None];
     levels
         .extend(net.nodes().filter(|n| types.desc(&n.kind).is_some_and(|d| d.container)).map(|n| Some(n.id)));
-    levels.into_iter().map(|l| level(net, types, layout, l, None, now)).sum()
+    levels.into_iter().flat_map(|l| level(net, types, layout, l, None)).collect()
 }
 
 /// The value at `i`, or the default for an index out of range (none is, by construction).

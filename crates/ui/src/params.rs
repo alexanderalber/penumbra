@@ -606,7 +606,6 @@ impl ParamPanel {
                 ops: vec![Op::Set { param: param.clone(), value }],
                 label: String::new(),
                 group,
-                place: None,
             });
         }
         if reset.clicked() {
@@ -2045,7 +2044,6 @@ fn record_row(
                 ops: vec![Op::Set { param, value: Value::Bool(!on) }],
                 label: if on { "stop recording" } else { "start recording" }.into(),
                 group: None,
-                place: None,
             });
         }
         let Some(s) = &status else {

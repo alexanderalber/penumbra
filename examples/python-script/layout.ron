@@ -1,17 +1,10 @@
-// penumbra editor layout: node positions, pan and zoom. Not part of the project content.
+// penumbra editor layout: pan and zoom, open sections, editor options. Not part of the project content.
 (
     version: 1,
     view: Some((
         pan: (-221.0, -260.8),
         zoom: 1.25,
     )),
-    nodes: {
-        "/backdrop": (200.0, 0.0),
-        "/ball": (0.0, 0.0),
-        "/physics": (0.0, 142.0),
-        "/place": (200.0, 142.0),
-        "/view": (400.0, 0.0),
-    },
     sections: Some((
         params: true,
         viewer: true,

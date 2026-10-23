@@ -1,17 +1,19 @@
 //! The editor's side of components: grouping, dissolving, saving and adding through
 //! `penumbra_engine::components`, as the user, with the nodes keeping their places on screen.
+//! Each is one undo step: the nodes' new places join the entry of the edit that moved them.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Instant;
 
 use egui::{Pos2, Rect, pos2, vec2};
 use penumbra_core::{Error, NodeId, NodePath};
 use penumbra_engine::Engine;
 use penumbra_engine::components as comps;
+use penumbra_graph::EditOutcome;
 use penumbra_project::Actor;
 
 use crate::editor::{Editor, level_path};
-use crate::layout::{Layout, NODE_SIZE};
+use crate::layout::{Layout, NODE_SIZE, place_ops};
 
 fn err(e: penumbra_engine::CommandError) -> Error {
     Error::new(e.0)
@@ -27,14 +29,21 @@ fn positions_by_path(
     paths.keys().filter_map(|p| Some((p.clone(), layout.get(net.resolve(p)?)?))).collect()
 }
 
-/// Puts each node at `new path` to `pos`, in the network as it is now.
-fn place(engine: &Engine, layout: &mut Layout, at: impl IntoIterator<Item = (NodePath, Pos2)>, now: Instant) {
-    let net = engine.session().doc().snapshot();
-    for (path, pos) in at {
-        if let Some(id) = net.resolve(&path) {
-            layout.set(id, pos, now);
-        }
+/// Puts each node at `new path` to `pos`, in the network `out` left, joining its history entry.
+fn place(
+    engine: &Engine,
+    out: &EditOutcome,
+    at: impl IntoIterator<Item = (NodePath, Pos2)>,
+    now: Instant,
+) -> Result<(), Error> {
+    let net = &out.snapshot;
+    let to: HashMap<NodeId, Pos2> =
+        at.into_iter().filter_map(|(path, pos)| Some((net.resolve(&path)?, pos))).collect();
+    let ops = place_ops(net, &to);
+    if !ops.is_empty() {
+        engine.session().edit(Actor::User, &ops, Some(out.group), "", now)?;
     }
+    Ok(())
 }
 
 /// Groups `ids` into a new component, keeping each node's place inside it; the component sits
@@ -42,7 +51,7 @@ fn place(engine: &Engine, layout: &mut Layout, at: impl IntoIterator<Item = (Nod
 pub fn group(
     engine: &Engine,
     editor: &mut Editor,
-    layout: &mut Layout,
+    layout: &Layout,
     ids: &[NodeId],
     now: Instant,
 ) -> Result<(), Error> {
@@ -84,7 +93,7 @@ pub fn group(
             }
         }
     }
-    place(engine, layout, at, now);
+    place(engine, &g.outcome, at, now)?;
     if let Some(id) = engine.session().doc().snapshot().resolve(&g.path) {
         editor.selection = [id].into();
     }
@@ -95,7 +104,7 @@ pub fn group(
 pub fn dissolve(
     engine: &Engine,
     editor: &mut Editor,
-    layout: &mut Layout,
+    layout: &Layout,
     id: NodeId,
     now: Instant,
 ) -> Result<(), Error> {
@@ -112,7 +121,7 @@ pub fn dissolve(
         })
         .collect();
     let before = positions_by_path(engine, layout, &inside);
-    let (moved, _) = comps::expand(engine, Actor::User, &path).map_err(err)?;
+    let (moved, out) = comps::expand(engine, Actor::User, &path).map_err(err)?;
     // The direct children land centred where the component was: grouping put the component
     // at the centre of its nodes, so grouping and dissolving again puts everything back.
     let direct = moved
@@ -129,7 +138,7 @@ pub fn dissolve(
             Some((new.clone(), shifted))
         })
         .collect();
-    place(engine, layout, at, now);
+    place(engine, &out, at, now)?;
     let net = engine.session().doc().snapshot();
     editor.selection = moved
         .iter()
@@ -166,7 +175,6 @@ pub fn remove(engine: &Engine, name: &str) -> Result<String, Error> {
 pub fn add(
     engine: &Engine,
     editor: &mut Editor,
-    layout: &mut Layout,
     name: &str,
     level: Option<NodeId>,
     at: Pos2,
@@ -174,8 +182,8 @@ pub fn add(
 ) -> Result<(), Error> {
     let net = engine.session().doc().snapshot();
     let level_path = level_path(&net, level);
-    let (path, _) = comps::load(engine, Actor::User, name, None, &level_path).map_err(err)?;
-    place(engine, layout, [(path.clone(), at)], now);
+    let (path, out) = comps::load(engine, Actor::User, name, None, &level_path).map_err(err)?;
+    place(engine, &out, [(path.clone(), at)], now)?;
     if let Some(id) = engine.session().doc().snapshot().resolve(&path) {
         editor.selection = [id].into();
     }
