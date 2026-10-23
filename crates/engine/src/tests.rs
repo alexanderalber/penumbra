@@ -1544,6 +1544,97 @@ fn scene_rectifies_any_face_of_a_crate_landscape() {
 }
 
 #[test]
+fn a_rectified_face_is_covered_where_it_does_not_decode() {
+    use penumbra_calib::synthetic::{BOX, Room, Surface};
+    let f = Fixture::new("scan_scene_cover");
+    let dir = f.engine.session().dir().to_path_buf();
+    let room = Room::default();
+    // A glossy patch on the crate's top, front left of the ball, that decodes in no projector.
+    let glossy = |s: Surface, pt: [f64; 3]| {
+        let (u, v) = ((pt[0] - BOX[0][0]) / 6.0, (BOX[2][1] - pt[2]) / 4.0);
+        s == Surface::Top && (0.03..0.25).contains(&u) && (0.55..0.95).contains(&v)
+    };
+    let none = [-1.0, -1.0, 0.0, 1.0];
+    let exr = |m: &penumbra_calib::objects::Map| {
+        penumbra_gpu::image::encode_exr_rgba32f(m.width as u32, m.height as u32, &m.rgba).unwrap()
+    };
+    let seen = room.camera_truth();
+    let mut dark = Vec::new();
+    for (p, name) in ["a", "b"].iter().enumerate() {
+        let (mut to, truth) = room.to_camera(p);
+        for (px, t) in to.rgba.iter_mut().zip(&truth) {
+            if t.is_some_and(|(s, pt)| glossy(s, pt)) {
+                *px = none;
+            }
+        }
+        let mut from = room.from_camera(p);
+        for (px, t) in from.rgba.iter_mut().zip(&seen) {
+            if t.is_some_and(|(s, pt)| glossy(s, pt)) {
+                *px = none;
+            }
+        }
+        if p == 0 {
+            dark = truth.iter().map(|t| t.is_some_and(|(s, pt)| glossy(s, pt))).collect();
+        }
+        let folder = dir.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("proj_to_cam.exr"), exr(&to)).unwrap();
+        std::fs::write(folder.join("cam_to_proj.exr"), exr(&from)).unwrap();
+    }
+    let r = f.call("scan.scene", json!({"scans": ["a", "b"], "min_object": 500}));
+    let top = r["support"]["plane"].as_u64().unwrap();
+    let corners: Vec<Json> = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+        .iter()
+        .map(|(u, v)| json!(room.camera_point(room.top_point(0, *u, *v)).unwrap()))
+        .collect();
+    let r = f.call(
+        "scan.scene",
+        json!({"scans": ["a", "b"], "min_object": 500, "out": "cover",
+               "rectify": [{"plane": top, "aspect": [60, 40], "corners": corners}]}),
+    );
+    assert_eq!(r["rectified"][0]["corners_from"], "given", "{r}");
+    let read = |name: String| {
+        penumbra_gpu::image::decode_file_raw(&dir.join("cover").join(name), 8192, 1 << 24).unwrap()
+    };
+    // In the camera's picture: the glossy patch is the face, with its u and v; the ball is an object.
+    let uv = read(format!("uv_{top}_camera.exr"));
+    let (cw, _) = room.camera;
+    let (mut patch, mut ball, mut ball_inside) = (0, 0, 0);
+    for (c, t) in seen.iter().enumerate() {
+        let px = uv.rgba[c];
+        match t {
+            Some((s, pt)) if glossy(*s, *pt) => {
+                let want = [(pt[0] - BOX[0][0]) / 6.0, (BOX[2][1] - pt[2]) / 4.0];
+                assert!(
+                    px[2] == 1.0
+                        && (f64::from(px[0]) - want[0]).abs() < 0.02
+                        && (f64::from(px[1]) - want[1]).abs() < 0.02,
+                    "camera {} {}: {px:?} vs {want:?}",
+                    c % cw,
+                    c / cw
+                );
+                patch += 1;
+            }
+            // The ball's foot may go to the face it stands on; above it, it is an object.
+            Some((Surface::Ball, pt)) if px[2] > 0.0 && pt[1] > BOX[1][1] + 0.5 => {
+                ball_inside += 1;
+                ball += usize::from(px[2] == 0.5);
+            }
+            _ => {}
+        }
+    }
+    assert!(patch > 300, "{patch} camera pixels on the glossy patch");
+    assert!(
+        ball_inside > 300 && ball * 10 > ball_inside * 9,
+        "{ball} of {ball_inside} ball pixels an object"
+    );
+    // In projector 0's: the same.
+    let uv = read(format!("uv_{top}_0.exr"));
+    let lit: Vec<&[f32; 4]> = dark.iter().zip(&uv.rgba).filter(|(d, _)| **d).map(|(_, px)| px).collect();
+    assert!(lit.len() > 300 && lit.iter().all(|px| px[2] == 1.0), "{} glossy projector pixels", lit.len());
+}
+
+#[test]
 fn synthetic_scans_go_through_scan_scene_like_real_ones() {
     let f = Fixture::new("scan_synthetic");
     let dir = f.engine.session().dir().to_path_buf();

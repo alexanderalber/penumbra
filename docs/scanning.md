@@ -321,8 +321,13 @@ object is completed from its visible parts; the lines' crossings are the corners
 one first. A face whose edge is hidden by another face in front (not by an object) gets that
 face's edge instead; then give its four corners in camera pixels with `corners`. Per rectified
 face K: `uv_K_N.exr` per projector (red and green the face's u along the outline's first edge
-and v along its last, 0 to 1; blue 1 on the face) and `uv_K_camera.exr`; `scene_view.png` draws
-the outline and a grid of true squares over it, to check by eye. Into a `tex.shader`, `u *
+and v along its last, 0 to 1) and `uv_K_camera.exr`. Both cover the whole outline, and their
+blue tells what each pixel shows: 1 the face, 0.5 an object standing on it, 0.25 another face,
+-1 outside the outline. Pixels inside the outline that nothing measured (a dark or glossy part
+of the face, a band in an object's shadow) and the face's rims and ribs count as the face, so
+content fills the face and not just the pixels that decoded; mask by blue above 0.9 to keep it
+off the objects. `scene_view.png` draws the outline and a grid of true squares over it, to
+check by eye. Into a `tex.shader`, `u *
 aspect[0]` and `v * aspect[1]` are the face's own units.
 
 Everything the reply holds is also written to `scene.json`.

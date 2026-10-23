@@ -74,8 +74,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          homography to its u and v. Writes per projector planes_N.png and labels_N.png (8-bit, 0 none, k \
          the face or object, numbered alike in every projector; labels_N.png as scan.objects writes it), \
          scene_N.png (faces in colour, objects white), uv_K_N.exr per rectified face K (red and green its \
-         u along the outline's first edge and v along its last, 0 to 1; blue 1 on the face), height_N.exr \
-         and mask_N.png (the objects' height over the support, as scan.relief writes them); in camera \
+         u along the outline's first edge and v along its last, 0 to 1; blue 1 on the face, also where \
+         nothing was measured, 0.5 on an object, 0.25 on another face; -1 outside the outline), \
+         height_N.exr and mask_N.png (the objects' height over the support, as scan.relief writes them); in camera \
          space planes_camera.png, objects_camera.png, uv_K_camera.exr, height_camera.exr and \
          scene_view.png (with the rectified faces' outlines and a grid in true squares); scene.json (the \
          reply). {scans: [folder, ...], out? (folder, scene), rectify? ([{plane, aspect: [width, depth], \
@@ -442,11 +443,12 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             let rgba: Vec<[f32; 4]> = pp
                 .labels
                 .iter()
+                .zip(&op.labels)
                 .enumerate()
-                .map(|(i, l)| {
+                .map(|(i, (l, o))| {
                     let c = [(i % s.width.max(1)) as f64 + 0.5, (i / s.width.max(1)) as f64 + 0.5];
                     match to_face.apply(c) {
-                        Some([u, v]) if *l == r.plane && inside(u, v) => [u as f32, v as f32, 1.0, 1.0],
+                        Some([u, v]) if inside(u, v) => [u as f32, v as f32, cover(r.plane, *l, *o), 1.0],
                         _ => [-1.0, -1.0, 0.0, 1.0],
                     }
                 })
@@ -523,13 +525,11 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
                 let q = [(c % cw.max(1)) as f64 + 0.5, (c / cw.max(1)) as f64 + 0.5];
                 match r.to_face.apply(q) {
                     Some([u, v]) if inside(u, v) => {
-                        let on = if planes_camera.get(c) == Some(&r.plane) {
-                            1.0
-                        } else if objects_camera.get(c).is_some_and(|l| *l > 0) {
-                            0.5
-                        } else {
-                            0.25
-                        };
+                        let on = cover(
+                            r.plane,
+                            planes_camera.get(c).copied().unwrap_or(0),
+                            objects_camera.get(c).copied().unwrap_or(0),
+                        );
                         [u as f32, v as f32, on, 1.0]
                     }
                     _ => [-1.0, -1.0, 0.0, 1.0],
@@ -653,6 +653,23 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
 }
 
 /// `(u, v)` lies on the top (with a hair of margin).
+/// What a pixel inside a rectified face's outline shows, for the uv files' blue: 1 the face, 0.5
+/// an object, 0.25 another face. Inside the outline, a pixel no face and no object claims (not
+/// measured, such as a dark or glossy part of the face, or the rims and ribs kept out of the
+/// objects) is the face too, so content fills the whole outline and not just the pixels that
+/// happened to decode.
+fn cover(face: u16, plane: u16, object: u16) -> f32 {
+    if plane == face {
+        1.0
+    } else if object > 0 {
+        0.5
+    } else if plane == 0 {
+        1.0
+    } else {
+        0.25
+    }
+}
+
 fn inside(u: f64, v: f64) -> bool {
     let r = -UV_MARGIN..=1.0 + UV_MARGIN;
     r.contains(&u) && r.contains(&v)
