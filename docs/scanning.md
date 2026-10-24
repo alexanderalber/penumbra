@@ -468,6 +468,36 @@ An editor that lets someone click faces needs nothing but this command: a click 
 pixel, the reply lists every region with its faces, seeds, size and kind, and every face with
 `at`, a pixel well inside it.
 
+**In the viewer.** Load `regions_camera.png` from the scene folder into a `tex.image` (it can
+be named before it exists) and select it: the viewer shows the camera picture of the scan with
+every face in the colour of its region (neighbouring regions never share one), dark lines
+between regions, faint ones between a region's faces, regions that are off striped grey with
+"off" on them, the names on the regions, and the suggestions as dashed lines with a `+` in the
+middle. Opening it reads the last reply when nothing changed since, else runs `scan.regions`
+once.
+
+| on the picture | what |
+|---|---|
+| click a face | selects it (its edge turns white); a click beside every face forgets the selection |
+| Shift or Ctrl + click | adds the face to the selection or takes it away |
+| M | merge: the selected faces' regions become one |
+| S | split: the selected faces leave their regions, each a region of its own again |
+| D | off, or on again when everything selected is off |
+| A | back to the default (on, unless on the floor) |
+| click a `+` | confirms the suggestion: merges the strip into the panel beside it |
+| Esc | forgets the selection |
+| Ctrl+Z, Ctrl+Y | undo, redo of the region changes |
+| wheel, right or middle drag | zoom, pan |
+
+The header has the same as buttons, and a name field for the one region the selection is in
+(Enter names it). Every change is one `scan.regions` call with the clicked faces' pixels (a
+second or two; the status line says `working...`, changes made meanwhile follow in one call),
+so `regions.json`, the label pictures and the reply are rewritten and every `tex.image` showing
+them reloads. The options the command ran with last (`seam`, `smooth`, ...) are kept. Undo and
+redo send the grouping as it was (`regions`); they work while the pointer is over the picture
+and only for the changes made since the editor opened, since the grouping is a file beside the
+scan, not part of the project's history.
+
 **The floor** is switched off by default. Against the support (the face the objects stand on),
 every other face's plane shows how it lies: faces parallel to the support meet it only at the
 horizon, faces that are not meet it in a line that runs between or across them (a crate's front

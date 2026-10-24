@@ -20,6 +20,7 @@ use crate::mapping::{MapEditor, MapInputs};
 use crate::meters::{AudioMeters, AudioNode};
 use crate::navigate::{Mode, Move, Navigation, Scene};
 use crate::plot::{self, Scale, Series, XAxis};
+use crate::regions::{RegionEditor, RegionInputs};
 use crate::shapes::{ShapeEditor, ShapeInputs};
 use crate::textures::Textures;
 use crate::{Action, theme};
@@ -44,6 +45,7 @@ pub struct Viewer {
     last_frame: Option<i64>,
     pub map: MapEditor,
     pub shapes: ShapeEditor,
+    pub regions: RegionEditor,
     /// The node shown in the viewer's window of its own, if one is open (the main viewer's).
     pub window: Option<NodeId>,
     /// The free view's cameras and the modes chosen for 3D nodes.
@@ -252,6 +254,7 @@ impl Viewer {
         textures: &mut Textures,
         map: Option<&MapInputs<'_>>,
         shapes: Option<&ShapeInputs<'_>>,
+        regions: Option<&RegionInputs>,
         nav: Option<&NavInputs<'_>>,
         auto: &mut automation::Registry,
         actions: &mut Vec<Action>,
@@ -262,6 +265,10 @@ impl Viewer {
         }
         if let Some(input) = shapes {
             self.shapes.header(ui, input, auto, actions);
+        }
+        match regions {
+            Some(input) => self.regions.header(ui, input, auto),
+            None => self.regions.close(),
         }
         if let Some(nav) = nav.filter(|n| n.scene.render) {
             // A line of its own, as the mapping controls: the header is full already.
@@ -280,6 +287,12 @@ impl Viewer {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, CornerRadius::ZERO, background);
         let Some(id) = target else { return };
+        if let Some(input) = regions {
+            // The editor draws the camera picture itself: the node's own (the labels) shows
+            // nothing to the eye, and it may not exist before the first call.
+            self.regions.canvas(ui, rect, input, auto);
+            return;
+        }
         if let (Some(nav), Some(mode)) = (nav, mode)
             && mode != Mode::Picture
         {

@@ -26,6 +26,7 @@ pub mod navigate;
 pub mod params;
 pub mod plot;
 pub mod projects;
+mod regions;
 mod shapes;
 pub mod textures;
 pub mod theme;

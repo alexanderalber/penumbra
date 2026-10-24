@@ -478,7 +478,9 @@ impl PenumbraApp {
     }
 
     fn global_keys(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
-        if ctx.text_edit_focused() {
+        // Over the region editor's picture, undo and redo step through its own changes: they
+        // are files next to the scene, not edits of the network.
+        if ctx.text_edit_focused() || self.viewer.regions.has_pointer(ctx) {
             return;
         }
         let (undo, redo) = ctx.input_mut(|i| {
@@ -808,6 +810,7 @@ impl PenumbraApp {
                     let new_group = || doc.new_group();
                     let (map, shapes, output_names) =
                         node_editors(&net, session.types(), &view, target, can_edit, &new_group);
+                    let regions = region_inputs(&net, session.types(), target, session.dir(), can_edit);
                     let viewer = &mut self.viewer;
                     let scene =
                         target.and_then(|id| navigate::scene(&net, session.types(), id, viewer.output));
@@ -852,6 +855,7 @@ impl PenumbraApp {
                             &mut self.textures,
                             map.as_ref(),
                             shapes.as_ref(),
+                            regions.as_ref(),
                             nav.as_ref(),
                             &mut self.auto,
                             &mut actions,
@@ -1067,6 +1071,7 @@ impl PenumbraApp {
         let mut content = |ui: &mut Ui| {
             let (map, shapes, names) =
                 node_editors(net, session.types(), view, Some(id), can_edit, &new_group);
+            let regions = region_inputs(net, session.types(), Some(id), session.dir(), can_edit);
             let outputs = view.outputs.get(&id);
             let scene = navigate::scene(net, session.types(), id, window.output);
             ui.horizontal(|ui| {
@@ -1089,6 +1094,7 @@ impl PenumbraApp {
                 textures,
                 map.as_ref(),
                 shapes.as_ref(),
+                regions.as_ref(),
                 nav.as_ref(),
                 auto,
                 actions,
@@ -1558,6 +1564,19 @@ impl eframe::App for PenumbraApp {
 /// The viewer's own window (`viewer.window`).
 fn viewer_viewport() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("penumbra.viewer")
+}
+
+/// The region editor's inputs when `target` shows a scanned scene's regions.
+fn region_inputs(
+    net: &penumbra_graph::Network,
+    types: &penumbra_graph::NodeTypes,
+    target: Option<NodeId>,
+    dir: &std::path::Path,
+    can_edit: bool,
+) -> Option<crate::regions::RegionInputs> {
+    let node = target?;
+    let scene = crate::regions::scene_of(net, types, node, dir)?;
+    Some(crate::regions::RegionInputs { node, dir: dir.to_path_buf(), scene, can_edit })
 }
 
 /// What the viewer edits for node `target`: a mapper's handles, a `tex.shapes`' shapes; and the

@@ -45,7 +45,7 @@ pub(crate) fn fill_of(fill: Option<u32>) -> CmdResult<u32> {
 }
 
 /// Largest side of a camera picture read.
-const MAX_PICTURE_SIDE: u32 = 8192;
+pub(crate) const MAX_PICTURE_SIDE: u32 = 8192;
 /// Most files a frames folder may hold (a scan of the largest projector has 58 pictures).
 const MAX_FILES: usize = 1000;
 /// Extensions taken as pictures; decoding goes by content.

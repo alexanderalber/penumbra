@@ -93,6 +93,9 @@ press play once the cause is fixed. The record of that lives in
   (`ui.options {chan_scale}`). A `chan.audio_analysis` shows its meters instead (see
   [Audio](audio.md#the-meters-in-the-viewer)); `view: meters` in the header switches to the
   plot and back, kept with the project as well (`ui.options {audio_view}`).
+  Some nodes are edited right in the viewer: a mapper's corners and mesh, a `tex.shapes`' shapes,
+  and a `tex.image` showing a scanned scene's `regions_camera.png`, whose faces are grouped
+  into regions there ([Scanning](scanning.md#51-regions-scanregions)).
 - **Changes** (bottom right): every edit, newest first, with who made it (you, Claude, the
   project file). Hover an entry to outline the nodes it touched, click it to select them.
   Undo and Redo sit in its header.
@@ -169,5 +172,7 @@ an entry is the page's address with `#` and the kind or command: `penumbra.html#
 | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y | undo, redo |
 
 Keys go to the pane under the pointer, so F over the viewer does not frame the editor. Undo and
-redo work everywhere except while a text field has the focus. Moving nodes is an edit too: a
+redo work everywhere except while a text field has the focus, and over the region editor's
+picture, where they step through its own changes (the grouping is a file next to the scan, not
+part of the project). Moving nodes is an edit too: a
 drag is one step in the same history.

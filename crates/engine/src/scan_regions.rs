@@ -81,7 +81,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     ));
 }
 
-#[derive(Deserialize)]
+#[derive(Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegionsArgs {
     pub scene: Option<PathBuf>,
@@ -114,7 +114,7 @@ pub struct Grouping {
 }
 
 /// A change to the grouping, by camera pixel.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(tag = "op", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Edit {
     Merge { at: Vec<[f64; 2]>, name: Option<String> },
@@ -124,6 +124,54 @@ pub enum Edit {
     Auto { at: [f64; 2] },
     Name { at: [f64; 2], name: String },
     Clear,
+}
+
+/// What an editor that lets someone click faces draws: the camera's face labels (numbered as
+/// `faces` in the reply) and, to recognise the scene by, the camera picture of the first
+/// projector's scan where it has one.
+pub struct EditorPictures {
+    pub width: usize,
+    pub height: usize,
+    pub faces: Vec<u16>,
+    /// RGBA bytes, camera size.
+    pub photo: Option<Vec<u8>>,
+}
+
+/// The pictures for an editor of the regions of the scene `scan.scene` wrote into `scene`
+/// (relative to `dir`, the project folder).
+pub fn editor_pictures(dir: &Path, scene: &Path) -> CmdResult<EditorPictures> {
+    let scene_dir = dir.join(scene);
+    let scene_file = scene_dir.join(SCENE_JSON);
+    let text = std::fs::read_to_string(&scene_file)
+        .map_err(|e| format!("{}: {e} (run scan.scene first)", scene_file.display()))?;
+    let json: Json = serde_json::from_str(&text).map_err(|e| format!("{}: {e}", scene_file.display()))?;
+    let side = |k: usize| json.get("camera")?.get(k)?.as_u64().and_then(|v| usize::try_from(v).ok());
+    let (width, height) = side(0).zip(side(1)).ok_or("scene.json names no camera size")?;
+    if width == 0 || height == 0 || width.saturating_mul(height) > objects::MAX_PIXELS {
+        return Err("scene.json's camera size is out of range".into());
+    }
+    let faces = read_labels(&scene_dir.join(PLANES_CAMERA), (width, height))?;
+    // The photo only helps; without it the editor shows the faces alone.
+    let photo = json
+        .get("projectors")
+        .and_then(|p| p.get(0))
+        .and_then(|p| p.get("scan"))
+        .and_then(Json::as_str)
+        .map(|s| dir.join(s).join(crate::scan::SCENE))
+        .and_then(|f| {
+            penumbra_gpu::image::decode_file_raw(
+                &f,
+                crate::scan::MAX_PICTURE_SIDE,
+                objects::MAX_PIXELS as u64,
+            )
+            .ok()
+        })
+        .filter(|raw| (raw.width as usize, raw.height as usize) == (width, height))
+        .map(|raw| {
+            let byte = |c: f32| (c * 255.0).round().clamp(0.0, 255.0) as u8;
+            raw.rgba.iter().flat_map(|p| [byte(p[0]), byte(p[1]), byte(p[2]), 255]).collect()
+        });
+    Ok(EditorPictures { width, height, faces, photo })
 }
 
 /// The camera's face labels and how points find faces on them.
