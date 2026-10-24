@@ -259,6 +259,11 @@ impl PenumbraApp {
         self.synthetic.pop_front()
     }
 
+    /// Whether the element with automation id `id` was on screen in the last frame.
+    pub fn shows(&self, id: &str) -> bool {
+        self.auto.find(id).is_some()
+    }
+
     fn selected(&self) -> Option<NodeId> {
         match self.editor.selection().iter().copied().collect::<Vec<_>>().as_slice() {
             [only] => Some(*only),

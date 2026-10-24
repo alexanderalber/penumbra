@@ -69,8 +69,12 @@ cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [-
 
 runs the real UI without a window and feeds it a script: one request per line
 (`{"method": ..., "params": {...}}`, any command including `ui.*`), `{"wait": seconds}` to
-let the show run, or `{"resize": [width, height]}` to change the window's size as a maximize
-would. Empty lines and lines starting with `//` are skipped. Each reply is printed.
+let the show run, `{"wait_for": id, "timeout": seconds}` to let it run until the element `id`
+is on screen (`timeout` optional, 30 s by default), or `{"resize": [width, height]}` to change
+the window's size as a maximize would. `wait` is wall-clock time, so on a busy machine less
+has happened by its end; `wait_for` an element that appears only once something cooked (the
+viewer's handles, a helper's list) before clicking it. Empty lines and lines starting with
+`//` are skipped. Each reply is printed.
 Without `--project` it works on a fresh copy of the demo in the temp directory, so no project
 is touched. `--software` renders on a software adapter (WARP on Windows): slow but the same on
 every machine. `--size` is the window size in points.

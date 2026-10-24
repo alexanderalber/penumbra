@@ -344,13 +344,13 @@ fn map_by_dragging_handles_zoom_and_open_the_window() {
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"method": "ui.select", "params": {"paths": ["/m"]}}),
-        json!({"wait": 1.0}),
+        json!({"wait_for": "viewer.mesh"}),
         // A 3 x 3 mesh, its centre dragged onto the top right corner, the top left corner
         // dragged onto the middle of the left edge, then the mesh point nudged one projector
         // pixel right with the arrow key.
         json!({"method": "ui.click", "params": {"id": "viewer.mesh"}}),
         json!({"method": "ui.click", "params": {"id": "viewer.mesh.1"}}),
-        json!({"wait": 0.5}),
+        json!({"wait_for": "viewer.mesh.1.1"}),
         json!({"method": "ui.drag", "params": {"from": {"id": "viewer.mesh.1.1"}, "to": {"id": "viewer.corner.1"}, "steps": 4}}),
         json!({"wait": 0.5}),
         json!({"method": "ui.drag", "params": {"from": {"id": "viewer.corner.0"}, "to": {"id": "viewer.mesh.0.1"}, "steps": 4}}),
@@ -375,6 +375,9 @@ fn map_by_dragging_handles_zoom_and_open_the_window() {
     let script: Vec<String> = script.iter().map(Json::to_string).collect();
     let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
     let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+    for (m, r) in &replies {
+        eprintln!("{m}: {}", r.to_string().chars().take(300).collect::<String>());
+    }
     let param = |nth: usize, name: &str| {
         let info = reply(&replies, "node.info", nth);
         info["params"].as_array().unwrap().iter().find(|p| p["name"] == name).unwrap()["value"].clone()
@@ -431,7 +434,7 @@ fn draw_move_repeat_and_delete_shapes_in_the_viewer() {
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"method": "ui.select", "params": {"paths": ["/s"]}}),
-        json!({"wait": 1.0}),
+        json!({"wait_for": "viewer.shape.0"}),
         // Select the window and drag it by its middle onto its own bottom right corner.
         json!({"method": "ui.click", "params": {"id": "viewer.shape.0"}}),
         json!({"wait": 0.3}),
@@ -634,7 +637,7 @@ fn optimize_resolutions_from_the_helpers_window() {
         json!({"wait": 1.0}),
         json!({"method": "ui.click", "params": {"x": 30, "y": 820, "button": "right"}}),
         json!({"method": "ui.click", "params": {"id": "options.helpers"}}),
-        json!({"wait": 0.5}),
+        json!({"wait_for": "helpers.res./noise1"}),
         json!({"method": "ui.elements", "params": {"prefix": "helpers.res."}}),
         json!({"method": "ui.click", "params": {"id": "helpers.overlay"}}),
         json!({"wait": 0.3}),

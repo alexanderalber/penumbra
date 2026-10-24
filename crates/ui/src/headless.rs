@@ -4,8 +4,14 @@
 //!
 //! The script is JSON lines. Each line is a request (`{"method": ..., "params": {...}}`, any
 //! engine or `ui.*` command), `{"wait": seconds}` to let the show run (thumbnails cook at
-//! 10 Hz, a shader compiles in a job), or `{"resize": [width, height]}` to change the window's
-//! size in points, as a maximize would. Empty lines and lines starting with `//` are skipped.
+//! 10 Hz, a shader compiles in a job), `{"wait_for": id, "timeout"?: seconds}` to let it run
+//! until the element `id` is on screen (at most `timeout`, 30 s unless given), or
+//! `{"resize": [width, height]}` to change the window's size in points, as a maximize would.
+//! Empty lines and lines starting with `//` are skipped.
+//!
+//! `wait` takes wall-clock time, so how far the show got in it depends on the machine's load;
+//! before acting on an element that appears only once something cooked (the viewer's handles,
+//! a helper's list), `wait_for` it.
 
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -19,6 +25,8 @@ use crate::control::{self, Bridge};
 
 /// How long one request may take, synthetic input included.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+/// Seconds a `wait_for` line waits unless it says.
+const WAIT_FOR_TIMEOUT: f64 = 30.0;
 
 pub struct Options {
     /// Window size in points.
@@ -100,6 +108,22 @@ pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(
     for line in lines {
         if let Some(s) = line.get("wait").and_then(Json::as_f64) {
             step_for(&mut harness, Duration::from_secs_f64(s.clamp(0.0, 600.0)));
+            continue;
+        }
+        if let Some(id) = line.get("wait_for").and_then(Json::as_str) {
+            let timeout = line.get("timeout").and_then(Json::as_f64).unwrap_or(WAIT_FOR_TIMEOUT);
+            let timeout = if timeout.is_finite() { timeout.clamp(0.0, 600.0) } else { WAIT_FOR_TIMEOUT };
+            let end = Instant::now() + Duration::from_secs_f64(timeout);
+            while !harness.state().shows(id) && Instant::now() < end {
+                step(&mut harness);
+                std::thread::sleep(Duration::from_millis(8));
+            }
+            let reply = if harness.state().shows(id) {
+                json!({"ok": true, "result": {"id": id}})
+            } else {
+                json!({"ok": false, "error": format!("no element `{id}` on screen after {timeout} s")})
+            };
+            out.push(("wait_for".into(), reply));
             continue;
         }
         if let Some(size) = line.get("resize") {
