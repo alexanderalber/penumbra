@@ -1,7 +1,9 @@
 //! Project automation. `cargo xtask` with no arguments runs `ci`.
 //!
 //! - `ci`: everything that must pass before a commit: `fmt`, `clippy`, `test`, `linux`, `layers`,
-//!   `notices`.
+//!   `notices`. `layers` and `notices` read only the dependency set and their own configuration,
+//!   so `ci` skips them while all of that is the same as when they last passed (run on their own,
+//!   they always run).
 //! - `fmt`: `cargo fmt --check`.
 //! - `clippy`: clippy on all targets with `-D warnings`.
 //! - `test`: the workspace tests.
@@ -101,8 +103,8 @@ fn ci() -> Result<(), String> {
     clippy()?;
     test()?;
     linux()?;
-    layers()?;
-    notices()?;
+    unless_unchanged("layers", layers_key(), layers)?;
+    unless_unchanged("notices", notices_key(), notices)?;
     eprintln!("xtask: ci passed in {:.0} s", start.elapsed().as_secs_f64());
     Ok(())
 }
@@ -122,7 +124,7 @@ fn test() -> Result<(), String> {
 fn bless() -> Result<(), String> {
     let args = ["test", "-p", "penumbra-ops", "golden"];
     eprintln!("xtask: PENUMBRA_BLESS=1 cargo {}", args.join(" "));
-    let status = Command::new(cargo_bin())
+    let status = cargo_command()
         .args(args)
         .env("PENUMBRA_BLESS", "1")
         .status()
@@ -139,7 +141,7 @@ fn bless() -> Result<(), String> {
 fn docs() -> Result<(), String> {
     let args = ["test", "-p", "penumbra-ui", "reference_docs_are_current"];
     eprintln!("xtask: PENUMBRA_BLESS=1 cargo {}", args.join(" "));
-    let status = Command::new(cargo_bin())
+    let status = cargo_command()
         .args(args)
         .env("PENUMBRA_BLESS", "1")
         .status()
@@ -158,11 +160,11 @@ fn root() -> Result<&'static Path, String> {
 fn notices() -> Result<(), String> {
     let root = root()?;
     let template = root.join("about.hbs");
-    let out = root.join("target").join("THIRD-PARTY-NOTICES.html");
+    let out = notices_file(root);
     let (template, out) = (template.to_string_lossy(), out.to_string_lossy());
     let args = ["about", "generate", "--workspace", "--locked", "--fail", "-o", &out, &template];
     eprintln!("xtask: cargo {}", args.join(" "));
-    let status = Command::new(cargo_bin())
+    let status = cargo_command()
         .args(args)
         .current_dir(root)
         .status()
@@ -174,6 +176,75 @@ fn notices() -> Result<(), String> {
     }
     eprintln!("xtask: notices written to {out}");
     Ok(())
+}
+
+fn notices_file(root: &Path) -> std::path::PathBuf {
+    root.join("target").join("THIRD-PARTY-NOTICES.html")
+}
+
+/// Runs `step` unless it passed before with exactly the same inputs. `key` hashes everything the
+/// step reads (`None`: something could not be read, so the step runs); the key of the last pass
+/// is kept in `target/xtask-NAME.inputs`.
+fn unless_unchanged(name: &str, key: Option<String>, step: fn() -> Result<(), String>) -> Result<(), String> {
+    let stamp = root()?.join("target").join(format!("xtask-{name}.inputs"));
+    if let Some(key) = &key
+        && std::fs::read_to_string(&stamp).is_ok_and(|s| s == *key)
+    {
+        eprintln!("xtask: {name}: inputs unchanged since it last passed");
+        return Ok(());
+    }
+    step()?;
+    if let Some(key) = key {
+        if let Some(dir) = stamp.parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        }
+        std::fs::write(&stamp, key).map_err(|e| format!("cannot write {}: {e}", stamp.display()))?;
+    }
+    Ok(())
+}
+
+/// What `layers` reads: cargo's version, `Cargo.lock`, every manifest in the workspace and the
+/// layering rules themselves.
+fn layers_key() -> Option<String> {
+    inputs_key(&["--version"], &[], &format!("{LAYERS:?}"))
+}
+
+/// What `notices` reads: cargo-about's version, `Cargo.lock`, every manifest, `about.toml` and
+/// `about.hbs`, plus the notices file itself, so a missing or overwritten file is made again. The
+/// crate sources behind a locked version or git revision do not change. cargo-about takes about
+/// ten seconds on all cores, so this is worth skipping.
+fn notices_key() -> Option<String> {
+    let root = root().ok()?;
+    let files = [root.join("about.toml"), root.join("about.hbs"), notices_file(root)];
+    inputs_key(&["about", "--version"], &files, "")
+}
+
+/// A hash of the output of `cargo VERSION_ARGS`, `Cargo.lock`, every manifest in the workspace,
+/// `files` and `extra`. `None` when any of it cannot be read.
+fn inputs_key(version_args: &[&str], files: &[std::path::PathBuf], extra: &str) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    let root = root().ok()?;
+    let version = cargo_command().args(version_args).output().ok().filter(|o| o.status.success())?;
+    let mut all =
+        vec![root.join("Cargo.lock"), root.join("Cargo.toml"), root.join("xtask").join("Cargo.toml")];
+    for group in ["crates", "apps"] {
+        let mut members: Vec<_> = std::fs::read_dir(root.join(group))
+            .ok()?
+            .filter_map(|e| e.ok().map(|e| e.path().join("Cargo.toml")))
+            .filter(|p| p.is_file())
+            .collect();
+        members.sort();
+        all.extend(members);
+    }
+    all.extend(files.iter().cloned());
+    let mut hasher = std::hash::DefaultHasher::new();
+    version.stdout.hash(&mut hasher);
+    extra.hash(&mut hasher);
+    for file in &all {
+        file.hash(&mut hasher);
+        std::fs::read(file).ok()?.hash(&mut hasher);
+    }
+    Some(format!("{:016x}", hasher.finish()))
 }
 
 /// The Windows target, named explicitly so that the static CRT applies to the shipped binaries
@@ -195,7 +266,7 @@ fn dist() -> Result<(), String> {
     let args = ["build", "--release", "--locked", "--target", WINDOWS_TARGET];
     let packages = ["-p", "penumbra", "-p", "penumbra-cli", "-p", "penumbra-pyhost"];
     eprintln!("xtask: cargo {} {}", args.join(" "), packages.join(" "));
-    let status = Command::new(cargo_bin())
+    let status = cargo_command()
         .args(args)
         .args(packages)
         .env("CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS", "-C target-feature=+crt-static")
@@ -300,7 +371,7 @@ fn layers() -> Result<(), String> {
     eprintln!("xtask: layers");
     let mut broken = Vec::new();
     for (krate, forbidden) in LAYERS {
-        let out = Command::new(cargo_bin())
+        let out = cargo_command()
             .args(["tree", "--quiet", "-p", krate, "-e", "normal", "--target", "all"])
             .args(["--prefix", "none", "--format", "{p}"])
             .output()
@@ -326,9 +397,39 @@ fn cargo_bin() -> String {
     std::env::var("CARGO").unwrap_or_else(|_| "cargo".into())
 }
 
+/// A cargo command with the `PATH` of the shell that started `cargo xtask`.
+///
+/// `cargo xtask` runs through `cargo run`, which puts the target directory and the toolchain's
+/// library directory in front of `PATH`. pyo3's build script reruns whenever `PATH` changes, so
+/// with that `PATH` passed on, every `cargo` command typed in between and the next `cargo xtask`
+/// would each rebuild pyo3 and all crates above it.
+fn cargo_command() -> Command {
+    let mut command = Command::new(cargo_bin());
+    if let Some(path) = shell_path() {
+        command.env("PATH", path);
+    }
+    command
+}
+
+/// `PATH` without the leading entries `cargo run` added: directories in the target directory
+/// this program runs from and the toolchain's `rustlib`. `None` when there is nothing to remove.
+fn shell_path() -> Option<std::ffi::OsString> {
+    let path = std::env::var_os("PATH")?;
+    let exe = std::env::current_exe().ok()?;
+    let target = exe.parent()?.parent()?;
+    let entries: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
+    let added = entries
+        .iter()
+        .take_while(|p| p.starts_with(target) || p.components().any(|c| c.as_os_str() == "rustlib"))
+        .count();
+    if added == 0 {
+        return None;
+    }
+    std::env::join_paths(entries.get(added..)?).ok()
+}
+
 fn cargo(args: &[&str]) -> Result<(), String> {
     eprintln!("xtask: cargo {}", args.join(" "));
-    let status =
-        Command::new(cargo_bin()).args(args).status().map_err(|e| format!("cannot run cargo: {e}"))?;
+    let status = cargo_command().args(args).status().map_err(|e| format!("cannot run cargo: {e}"))?;
     if status.success() { Ok(()) } else { Err(format!("`cargo {}` failed ({status})", args.join(" "))) }
 }
