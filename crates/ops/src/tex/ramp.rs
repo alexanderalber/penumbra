@@ -1,6 +1,6 @@
-//! `tex.ramp`: colours at positions (keys), blended in between, along a direction, around the
-//! centre or out from it. The keys become a lookup row on the CPU, uploaded when they change;
-//! `ramp.wgsl` spreads it over the picture.
+//! `tex.ramp`: colours at positions (keys) or a palette, blended in between, along a direction,
+//! around the centre or out from it. The keys become a lookup row on the CPU, uploaded when they
+//! change; `ramp.wgsl` spreads it over the picture.
 
 use std::sync::Arc;
 
@@ -33,6 +33,13 @@ fn desc() -> NodeDesc {
         "One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; \
              1 when left out)",
     ))
+    .param(ParamSpec::palette("palette", "").doc(
+        "A palette or colormap instead of the keys, its colours spread evenly from 0 to 1 (a name, hex colours, or a number from a channel); empty uses the keys",
+    ))
+    .param(
+        ParamSpec::bool("steps", false)
+            .doc("With a palette: equal bands, one per colour, instead of blending between them"),
+    )
     .param(
         ParamSpec::choice("shape", &["horizontal", "vertical", "radial", "circular"])
             .doc("How the key positions 0 to 1 lie on the picture")
@@ -51,7 +58,12 @@ fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(
         FnNodeType::new(desc(), || {
-            Box::new(Ramp { pass: PassCell::default(), lut: None, out: TexRing::new() }) as Box<dyn Operator>
+            Box::new(Ramp {
+                pass: PassCell::default(),
+                lut: None,
+                palettes: Default::default(),
+                out: TexRing::new(),
+            }) as Box<dyn Operator>
         })
         .warm_up(on_gpu(warm_up)),
     )
@@ -121,11 +133,12 @@ fn at(keys: &[Key], t: f64) -> [f64; 4] {
     last.1
 }
 
-/// The lookup row as half-float RGBA bytes, premultiplied.
-fn row(keys: &[Key]) -> Vec<u8> {
+/// The lookup row of `colour` (0..1 to linear RGBA, straight alpha) as half-float RGBA bytes,
+/// premultiplied.
+fn row(colour: impl Fn(f64) -> [f64; 4]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(LUT * 8);
     for i in 0..LUT {
-        let c = at(keys, i as f64 / (LUT - 1) as f64);
+        let c = colour(i as f64 / (LUT - 1) as f64);
         let a = c[3].clamp(0.0, 1.0);
         for v in [c[0] * a, c[1] * a, c[2] * a, a] {
             // Half floats reach 65504; brighter keys are clipped there.
@@ -137,8 +150,9 @@ fn row(keys: &[Key]) -> Vec<u8> {
 
 struct Ramp {
     pass: PassCell,
-    /// The keys text last uploaded, and its row.
+    /// What the row last uploaded was made from (the keys text, or the palette), and the row.
     lut: Option<(String, Tex)>,
+    palettes: crate::palette::Palettes,
     out: TexRing,
 }
 
@@ -150,13 +164,31 @@ impl Operator for Ramp {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let text = cx.text("keys")?;
+        let palette = match cx.param("palette") {
+            Some(v) => {
+                self.palettes.resolve(cx, v).map_err(|e| CookError::failed(format!("`palette`: {e}")))?
+            }
+            None => None,
+        };
+        let steps = cx.bool("steps")?;
+        // The palette as text, so the row is only made again when its colours change.
+        let made_from = match &palette {
+            Some(p) => format!("palette {steps} {}", p.hex().join(" ")),
+            None => format!("keys {text}"),
+        };
         let lut = match &self.lut {
-            Some((t, lut)) if t == text => lut.clone(),
+            Some((t, lut)) if *t == made_from => lut.clone(),
             _ => {
-                let keys = keys(text).map_err(|e| CookError::failed(format!("`keys`: {e}")))?;
-                let mut bytes = row(&keys);
+                let mut bytes = match &palette {
+                    Some(p) if steps => row(|t| p.band(t)),
+                    Some(p) => row(|t| p.at(t)),
+                    None => {
+                        let keys = keys(text).map_err(|e| CookError::failed(format!("`keys`: {e}")))?;
+                        row(|t| at(&keys, t))
+                    }
+                };
                 let lut = gpu.upload_rgba16f(LUT as u32, 1, &mut bytes, KIND)?;
-                self.lut = Some((text.to_string(), lut.clone()));
+                self.lut = Some((made_from, lut.clone()));
                 lut
             }
         };

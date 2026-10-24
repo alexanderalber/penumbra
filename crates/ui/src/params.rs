@@ -16,7 +16,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use egui::{RichText, Ui};
-use penumbra_core::{Chans, GroupId, Name, NodeId, ParamKind, ParamPath, ParamSpec, Value};
+use penumbra_core::{Chans, GroupId, Name, NodeId, ParamKind, ParamPath, ParamSpec, Value, palette};
 use penumbra_graph::{Data, DataKind, Network, NodeDef, NodeStatus, NodeTypes, Op};
 
 use crate::icons::{self, Icon};
@@ -86,9 +86,24 @@ pub struct ParamPanel {
     /// The row being drawn is row k of a constant and may be taken away; `removed` says it was.
     removable: Option<usize>,
     removed: bool,
+    /// The project's own palettes, when they were read and from which directory: read again
+    /// after a second, so an edit of the file shows without reading it every frame.
+    palettes: Option<(std::time::Instant, Option<std::path::PathBuf>, Vec<palette::Palette>)>,
 }
 
 impl ParamPanel {
+    /// The project's own palettes (its palettes file), read at most once a second.
+    fn project_palettes(&mut self, dir: Option<&Path>) -> Vec<palette::Palette> {
+        let fresh = self.palettes.as_ref().is_some_and(|(at, d, _)| {
+            at.elapsed() < std::time::Duration::from_secs(1) && d.as_deref() == dir
+        });
+        if !fresh {
+            let list = dir.map(|d| penumbra_ops::palette::load(&d.join(palette::FILE)).0).unwrap_or_default();
+            self.palettes = Some((std::time::Instant::now(), dir.map(Path::to_path_buf), list));
+        }
+        self.palettes.as_ref().map(|(_, _, l)| l.clone()).unwrap_or_default()
+    }
+
     pub fn show(
         &mut self,
         ui: &mut Ui,
@@ -812,6 +827,53 @@ impl ParamPanel {
                 let options: Vec<&str> = choices.iter().map(String::as_str).collect();
                 choice_box(ui, key, current, &options, new);
             }
+            ParamKind::Palette => {
+                let project = self.project_palettes(input.project_dir);
+                let resolved = palette::resolve(value, &project);
+                // A channel gives a number: show the name it picks.
+                let current = match (value, &resolved) {
+                    (Value::Text(t), _) => t.clone(),
+                    (_, Ok(Some(p))) => p.name.clone(),
+                    (v, _) => v.to_string(),
+                };
+                let one = ui.spacing().interact_size.y;
+                line(ui, one, egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if !whole_bound {
+                        palette_menu(ui, key, &project, &resolved, auto, new);
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let colours =
+                            resolved.as_ref().ok().and_then(|p| p.as_ref()).map(|p| p.colours.as_slice());
+                        let r = palette_strip(ui, colours, egui::vec2(64.0, one - 4.0));
+                        match &resolved {
+                            Err(e) => {
+                                r.on_hover_text(e);
+                            }
+                            Ok(Some(p)) => {
+                                r.on_hover_text(p.hex().join(" "));
+                            }
+                            Ok(None) => {
+                                r.on_hover_text("no palette");
+                            }
+                        }
+                        let buffer = self.buffers.entry(key.to_string()).or_insert_with(|| current.clone());
+                        let width = ui.available_width();
+                        let r = ui.add_enabled(
+                            !whole_bound,
+                            egui::TextEdit::singleline(buffer)
+                                .desired_width(width)
+                                .hint_text("a name or hex colours"),
+                        );
+                        track(&r);
+                        if !r.has_focus() && !r.lost_focus() && *buffer != current {
+                            buffer.clone_from(&current);
+                        }
+                        if r.lost_focus() && *buffer != current {
+                            *new = Some(Value::Text(buffer.clone()));
+                        }
+                    });
+                });
+            }
             ParamKind::Text | ParamKind::File { .. } => {
                 if node.kind == penumbra_ops::tex::TEXT
                     && let Some(options) = font_options(node, spec)
@@ -1501,6 +1563,95 @@ fn float_drag<'a>(
 
 /// A menu of `options` as wide as `ui` offers. A value not among them (a font that is not
 /// installed here) stays shown as the current one.
+/// A strip of `colours` side by side in `size` (a dashed outline for none).
+fn palette_strip(ui: &mut Ui, colours: Option<&[[f64; 4]]>, size: egui::Vec2) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter();
+    match colours.filter(|c| !c.is_empty()) {
+        Some(colours) => {
+            let w = rect.width() / colours.len() as f32;
+            for (i, c) in colours.iter().enumerate() {
+                let [cr, cg, cb, ca] = c.map(|x| x as f32);
+                let fill = egui::Color32::from(egui::Rgba::from_rgba_unmultiplied(cr, cg, cb, ca));
+                let x = rect.left() + w * i as f32;
+                let cell =
+                    egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(x + w, rect.bottom()));
+                painter.rect_filled(cell, 0.0, fill);
+            }
+            painter.rect_stroke(
+                rect,
+                2.0,
+                egui::Stroke::new(1.0, theme::TEXT_WEAK),
+                egui::StrokeKind::Inside,
+            );
+        }
+        None => {
+            painter.rect_stroke(
+                rect,
+                2.0,
+                egui::Stroke::new(1.0, theme::TEXT_WEAK),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    r
+}
+
+/// The palettes to pick from for a palette param (`param.<path>.menu`, entries
+/// `palette.<name>` and `palette.none`): the built-in palettes, colormaps and the project's
+/// own, each with its colours.
+fn palette_menu(
+    ui: &mut Ui,
+    key: &str,
+    project: &[palette::Palette],
+    current: &Result<Option<palette::Palette>, String>,
+    auto: &mut automation::Registry,
+    new: &mut Option<Value>,
+) {
+    let picked = current.as_ref().ok().and_then(|p| p.as_ref()).map(|p| p.name.as_str());
+    let r = ui.menu_button("\u{2026}", |ui| {
+        let all = palette::all(project);
+        let sections = [
+            ("palettes", palette::Source::Builtin, palette::Kind::Palette),
+            ("colormaps", palette::Source::Builtin, palette::Kind::Colormap),
+            ("this project (palettes.txt)", palette::Source::Project, palette::Kind::Palette),
+        ];
+        egui::ScrollArea::vertical().max_height(480.0).show(ui, |ui| {
+            for (title, source, kind) in sections {
+                let list: Vec<&palette::Palette> = all
+                    .iter()
+                    .filter(|p| p.source == source && (source == palette::Source::Project || p.kind == kind))
+                    .collect();
+                if list.is_empty() {
+                    continue;
+                }
+                ui.label(RichText::new(title).color(theme::TEXT_WEAK).small());
+                for p in list {
+                    let r = ui
+                        .horizontal(|ui| {
+                            palette_strip(ui, Some(&p.colours), egui::vec2(72.0, 14.0));
+                            ui.selectable_label(picked == Some(p.name.as_str()), &p.name)
+                        })
+                        .inner;
+                    auto.add(format!("palette.{}", p.name), r.rect, p.name.clone());
+                    if r.clicked() {
+                        *new = Some(Value::Text(p.name.clone()));
+                        ui.close();
+                    }
+                }
+            }
+            ui.separator();
+            let r = ui.button("none").on_hover_text("Leaves the palette empty");
+            auto.add("palette.none", r.rect, "no palette");
+            if r.clicked() {
+                *new = Some(Value::Text(String::new()));
+                ui.close();
+            }
+        });
+    });
+    auto.add(format!("param.{key}.menu"), r.response.rect, "palettes");
+}
+
 fn choice_box(ui: &mut Ui, key: &str, current: &str, options: &[&str], new: &mut Option<Value>) {
     egui::ComboBox::from_id_salt(key)
         .selected_text(current)

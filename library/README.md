@@ -95,7 +95,8 @@ shapes, `tex.shape_content` pulses them.
 
 - In: `labels`, `gate` (optional: white where faces may light, e.g. only faces a projector
   reaches entirely). Params: `speed`, `stagger`, `scatter`, `depth` of the pulse; `count` and
-  `c0` to `c4` the palette; `gain`; `brightness`.
+  `c0` to `c4` the colours, or `palette` (a named palette such as `candy`, or hex colours: all
+  of its colours, in place of the five); `gain`; `brightness`.
 
 ### sweep
 
@@ -118,8 +119,9 @@ left to right; now and then a wipe crosses the picture and lights the regions' o
   k / 255, green its phase 0..1; without it slot k * 3 mod count and the phase from left to
   right across the picture) and `outlines` (white lines; without them they are found from the
   regions, `line` wide).
-- Params: `count`, `c0` to `c3`, `edge` (outline colour), `gain`, `base`, `period`, `spread`,
-  `fade`; the wipe's `first`, `every`, `wipe`, `breadth`, `angle`, `turn`, `lines`, `lift`;
+- Params: `count`, `c0` to `c3`, `edge` (outline colour), or `palette` (a named palette such as
+  `blood`, or hex colours: all of its colours in place of the four, the brightest for the
+  outlines), `gain`, `base`, `period`, `spread`, `fade`; the wipe's `first`, `every`, `wipe`, `breadth`, `angle`, `turn`, `lines`, `lift`;
   `clock`.
 
 ## On a round object

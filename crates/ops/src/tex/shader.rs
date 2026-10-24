@@ -67,6 +67,7 @@ struct Shader {
     current: Option<Compiled>,
     watch: Option<FileWatch>,
     ring: TexRing,
+    palettes: crate::palette::Palettes,
 }
 
 impl Operator for Shader {
@@ -149,7 +150,8 @@ impl Operator for Shader {
             (0.0, 0)
         };
         let target = self.ring.next(gpu, w, h, "tex.shader")?;
-        let param = |name: &str| cx.param(name).cloned();
+        let palettes = self.palettes.pass_values(cx, &current.header.params);
+        let param = |name: &str| palettes.get(name).cloned().or_else(|| cx.param(name).cloned());
         current.pass.render(gpu, &target, &PassInput { inputs: &inputs, seconds, frame, param: &param })?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, target)]))
     }

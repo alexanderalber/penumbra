@@ -475,6 +475,8 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `index` | luminance \| channels | `"luminance"` |  | Which input values pick the place in the lookup row (0 its left end, 1 its right); luminance: the brightness picks one colour of the row (a gradient map); channels: red, green and blue each through the row's own channel (a curve per channel) |
 | `row` | float | `0.5` | 0 to 1 (soft) | Height in the lookup texture that is read; 0 is the top |
+| `palette` | palette |  |  | A palette or colormap to read instead of the lut (a name, hex colours, or a number from a channel); empty reads the lut |
+| `steps` | bool | `false` |  | With a palette: equal bands, one per colour, instead of blending between them |
 
 ### tex.mapper
 
@@ -654,6 +656,8 @@ Outputs: `out` (tex).
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `keys` | text | an example script |  | One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; 1 when left out) |
+| `palette` | palette |  |  | A palette or colormap instead of the keys, its colours spread evenly from 0 to 1 (a name, hex colours, or a number from a channel); empty uses the keys |
+| `steps` | bool | `false` |  | With a palette: equal bands, one per colour, instead of blending between them |
 | `shape` | horizontal \| vertical \| radial \| circular | `"horizontal"` |  | How the key positions 0 to 1 lie on the picture; horizontal: left (0) to right (1); vertical: bottom (0) to top (1); radial: the centre (0) out to the middle of the top edge (1), in rings; circular: once around the centre, counter-clockwise from the right (0) |
 
 ### tex.remap

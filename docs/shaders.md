@@ -44,9 +44,11 @@ shader declaring one of those names does not load, so call a line width `line`, 
 | `vec2`, `vec3`, `vec4` | `vec2f` to `vec4f` |
 | `color` | `vec4f`, linear, straight alpha |
 | `choice(a\|b\|c)` | `i32`, plus a constant per entry: `const <name>_a: i32` |
+| `palette` | `PnPalette`: `count` and up to 32 `colours`, linear, straight alpha (see [Palettes](concepts.md#palettes)) |
 
-The default is JSON (`1.5`, `[1, 0, 0, 1]`, `true`), or a bare word for a choice; without one it
-is zero, false or the first choice. The range is the slider's; typed values may go beyond it.
+The default is JSON (`1.5`, `[1, 0, 0, 1]`, `true`), a bare word for a choice, a name or hex
+colours for a palette (`blood`, `31aaa9 f8e0a4`); without one it is zero, false, the first
+choice or no palette (`count` 0, every colour transparent black). The range is the slider's; typed values may go beyond it.
 Examples:
 
 ```wgsl
@@ -54,6 +56,24 @@ Examples:
 // @param octaves int = 3 1..8
 // @param invert bool
 // @param mode choice(add|multiply|screen) = multiply
+// @param look palette = blood -- the faces' colours
+```
+
+A palette param is read with three functions of the prelude: `pn_palette(params.look, i)` is
+colour `i` (wrapping, so any index is safe), `pn_colormap(params.look, t)` blends along the
+colours for `t` 0..1 (a gradient), `pn_band(params.look, t)` cuts 0..1 into equal bands, one
+per colour. `params.look.count` says how many colours there are; 0 means none was given, which
+a shader can take as "use the colour params instead":
+
+```wgsl
+// @param c0 color = [1, 0.5, 0.2, 1]
+// @param look palette -- instead of c0 and the rest
+fn colour(i: i32) -> vec3f {
+    if (params.look.count > 0) {
+        return pn_palette(params.look, i).rgb;
+    }
+    return params.c0.rgb;
+}
 ```
 
 `// @group <name>` puts the params declared after it in a section of that name, folded away
@@ -90,6 +110,9 @@ fn pn_extend(t: texture_2d<f32>, uv: vec2f, mode: i32) -> vec4f
                                               // 0 hold, 1 zero, 2 repeat, 3 mirror outside 0..1
 fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f
                                               // mean over `footprint` source texels (downscaling)
+fn pn_palette(p: PnPalette, i: i32) -> vec4f  // a palette param's colour i, wrapping
+fn pn_colormap(p: PnPalette, t: f32) -> vec4f // 0..1 along its colours, blended
+fn pn_band(p: PnPalette, t: f32) -> vec4f     // 0..1 in equal bands, one per colour
 ```
 
 A shader that reads `pn_time` cooks every frame; one that does not cooks only when its inputs

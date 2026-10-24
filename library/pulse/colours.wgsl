@@ -10,9 +10,13 @@
 // @param c2 color = [0.38, 0.85, 0.08, 1]
 // @param c3 color = [0.95, 0.68, 0.05, 1]
 // @param c4 color = [0.6, 0.05, 0.45, 1]
+// @param palette palette -- a palette instead of c0 to c4 (a name, hex colours, or a number from a channel): all its colours are used, whatever count says; empty uses c0 to c4
 // @param gain float = 1.3 0..4
 
 fn colour(i: i32) -> vec3f {
+    if (params.palette.count > 0) {
+        return pn_palette(params.palette, i).rgb;
+    }
     switch i {
         case 0: { return params.c0.rgb; }
         case 1: { return params.c1.rgb; }
@@ -33,6 +37,6 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         return vec4f(0.0);
     }
     let bright = max(src.r, max(src.g, src.b));
-    let n = max(params.count, 1);
+    let n = select(max(params.count, 1), params.palette.count, params.palette.count > 0);
     return vec4f(colour((face * 3) % n) * bright * params.gain, src.a);
 }

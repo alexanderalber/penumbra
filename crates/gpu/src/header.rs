@@ -13,8 +13,9 @@
 //! ```
 //!
 //! `@param <name> <kind> [= <default>] [<min>..<max>] [-- <doc>]`. Kinds: `float`, `int`, `bool`,
-//! `vec2`, `vec3`, `vec4`, `color`, `choice(a|b|c)`. The default is JSON (`1.5`, `[1, 0, 0, 1]`,
-//! `true`) or, for a choice, a bare word; without one it is zero, false or the first choice.
+//! `vec2`, `vec3`, `vec4`, `color`, `palette`, `choice(a|b|c)`. The default is JSON (`1.5`,
+//! `[1, 0, 0, 1]`, `true`) or, for a choice, a bare word, for a palette a name or hex colours
+//! (`blood`, `31aaa9 f8e0a4`); without one it is zero, false, the first choice or no palette.
 //! A range is a soft range (slider only). `@density` is the resolution the shader needs of its
 //! inputs per unit of its output's (default 1; 2 when it magnifies by 2, 0.5 when it shrinks),
 //! for `res.analyze`. `@group <name>` puts the params declared after it in a section of the
@@ -99,6 +100,7 @@ fn param(decl: &str) -> Result<ParamSpec, Error> {
         "vec3" => ParamSpec::vec3(name, [0.0; 3]),
         "vec4" => ParamSpec::vec4(name, [0.0; 4]),
         "color" => ParamSpec::color(name, [0.0, 0.0, 0.0, 1.0]),
+        "palette" => ParamSpec::palette(name, ""),
         k => match k.strip_prefix("choice(").and_then(|c| c.strip_suffix(')')) {
             Some(list) => {
                 let choices: Vec<&str> = list.split('|').map(str::trim).collect();
@@ -106,13 +108,15 @@ fn param(decl: &str) -> Result<ParamSpec, Error> {
             }
             None => {
                 return Err(Error::new(format!(
-                    "unknown kind `{k}`; kinds: float, int, bool, vec2, vec3, vec4, color, choice(a|b)"
+                    "unknown kind `{k}`; kinds: float, int, bool, vec2, vec3, vec4, color, palette, choice(a|b)"
                 )));
             }
         },
     };
     if let Some(d) = default {
         let value = match serde_json::from_str::<Value>(d) {
+            // A palette's default is always text: `123456` is a colour, not a place in the list.
+            _ if spec.kind == penumbra_core::ParamKind::Palette => Value::Text(d.to_string()),
             Ok(v) => v,
             Err(_) => Value::Text(d.to_string()),
         };
@@ -145,6 +149,7 @@ mod tests {
              //@param octaves int 1..8\n\
              // @param invert bool\n\
              // @param mode choice(add|multiply) = multiply\n\
+             // @param look palette = 31aaa9 f8e0a4 -- the colours\n\
              // @group detail\n\
              // @param warp float\n\
              // @group\n\
@@ -155,9 +160,12 @@ mod tests {
         .unwrap();
         assert_eq!(h.density, 0.5);
         let names: Vec<&str> = h.params.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, ["scale", "tint", "octaves", "invert", "mode", "warp", "last"]);
+        assert_eq!(names, ["scale", "tint", "octaves", "invert", "mode", "look", "warp", "last"]);
         let groups: Vec<&str> = h.params.iter().map(|p| p.group.as_str()).collect();
-        assert_eq!(groups, ["", "", "", "", "", "detail", ""]);
+        assert_eq!(groups, ["", "", "", "", "", "", "detail", ""]);
+        assert_eq!(h.params[5].kind, ParamKind::Palette);
+        assert_eq!(h.params[5].default, Value::Text("31aaa9 f8e0a4".into()));
+        assert_eq!(h.params[5].doc, "the colours");
         let scale = &h.params[0];
         assert_eq!(scale.default, Value::Float(4.0));
         assert_eq!(scale.range.map(|r| (r.min, r.max, r.hard)), Some((1.0, 32.0, false)));

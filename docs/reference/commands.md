@@ -164,6 +164,14 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `output.list` | Connected displays (ids for out.projector's display), open output windows, projectors, pacing |
 
+## palette
+
+| command | |
+|---|---|
+| `palette.list` | Every palette a palette param can name, in list order (the place a bound channel picks): the built-in set, then the project's own from palettes.txt; each with kind, source and hex colours |
+| `palette.remove` | Remove one of the project's own palettes from palettes.txt: {name} |
+| `palette.set` | Define or change one of the project's own palettes: {name, colours: "31aaa9 f8e0a4 ..." or ["#31aaa9", ...]}; written to palettes.txt beside project.ron, used at once by every node naming it |
+
 ## project
 
 | command | |

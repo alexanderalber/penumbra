@@ -1913,6 +1913,7 @@ fn resolution_analysis_walks_back_from_the_projectors() {
 mod fluid;
 mod geo;
 mod layers;
+mod palettes;
 
 /// A grey camera frame of 32 x 16 pixels, luma `y` give or take `noise` codes at random. One
 /// blue-difference sample follows the seed's parity, so consecutive seeds never make identical

@@ -1984,3 +1984,40 @@ fn a_face_given_by_its_corners_alone_is_claimed_and_carries_the_objects() {
     let bad = f.fail("scan.scene", json!({"scans": ["a"], "support": "top"}));
     assert!(bad.contains("rectified"), "{bad}");
 }
+
+#[test]
+fn palettes_are_listed_set_and_removed() {
+    let f = Fixture::new("palettes");
+    let file = f.engine.session().dir().join(penumbra_core::palette::FILE);
+    let list = f.call("palette.list", json!({}));
+    let names: Vec<&str> =
+        list["palettes"].as_array().unwrap().iter().filter_map(|p| p["name"].as_str()).collect();
+    assert_eq!(&names[..3], ["sea", "blood", "candy"]);
+    assert_eq!(list["palettes"][1]["colours"], json!(["#31aaa9", "#f8e0a4", "#a82020", "#6c1a1a"]));
+
+    let r = f.call("palette.set", json!({"name": "dusk", "colours": "https://coolors.co/2c3e50-fd746c"}));
+    assert_eq!(r["created"], true);
+    let r = f.call("palette.set", json!({"name": "dawn", "colours": ["#ff0000", "00ff0080"]}));
+    assert_eq!(r["palette"]["colours"], json!(["#ff0000", "#00ff0080"]));
+    let r = f.call("palette.set", json!({"name": "Dusk", "colours": "000000"}));
+    assert_eq!(r["created"], false);
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.starts_with('#') && text.contains("Dusk: #000000\ndawn: #ff0000 #00ff0080\n"), "{text}");
+    let list = f.call("palette.list", json!({}));
+    let last = list["palettes"].as_array().unwrap().last().unwrap().clone();
+    assert_eq!(last["name"], "dawn");
+    assert_eq!(last["source"], "project");
+
+    assert!(f.fail("palette.set", json!({"name": "blood", "colours": "000000"})).contains("built-in"));
+    assert!(f.fail("palette.set", json!({"name": "9x", "colours": "000000"})).contains("no palette name"));
+    assert!(f.fail("palette.set", json!({"name": "x", "colours": "nope"})).contains("no hex colour"));
+    assert!(f.fail("palette.remove", json!({"name": "blood"})).contains("built in"));
+    f.call("palette.remove", json!({"name": "dusk"}));
+    assert!(f.fail("palette.remove", json!({"name": "dusk"})).contains("its own: dawn"));
+    // Hand-written lines that do not parse are reported, not lost.
+    std::fs::write(&file, "dawn: ff0000\nnot a palette\n").unwrap();
+    let list = f.call("palette.list", json!({}));
+    assert!(list["notes"][0].as_str().unwrap().contains("line 2"), "{list}");
+    f.call("palette.set", json!({"name": "noon", "colours": "ffffff"}));
+    assert!(std::fs::read_to_string(&file).unwrap().contains("not a palette\nnoon: #ffffff\n"));
+}

@@ -470,6 +470,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         types.register(
             FnNodeType::new(desc, move || {
                 Box::new(BuiltinOp {
+                    palettes: Default::default(),
                     node: b.clone(),
                     pass: PassCell::default(),
                     ring: TexRing::new(),
@@ -531,6 +532,7 @@ impl PassCell {
 }
 
 struct BuiltinOp {
+    palettes: crate::palette::Palettes,
     pass: PassCell,
     node: Arc<Builtin>,
     ring: TexRing,
@@ -567,7 +569,8 @@ impl Operator for BuiltinOp {
             (0.0, 0)
         };
         let mut target = self.ring.next(gpu, w, h, &b.desc.kind)?;
-        let param = |name: &str| cx.param(name).cloned();
+        let palettes = self.palettes.pass_values(cx, &b.desc.params);
+        let param = |name: &str| palettes.get(name).cloned().or_else(|| cx.param(name).cloned());
         let fold = b.fold;
         let first = if fold { inputs.get(..2).unwrap_or(&inputs) } else { &inputs };
         pass.render(gpu, &target, &PassInput { inputs: first, seconds, frame, param: &param })?;

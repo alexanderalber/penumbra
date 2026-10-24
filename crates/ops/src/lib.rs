@@ -15,6 +15,7 @@ pub mod meters;
 pub mod mouse;
 pub mod osc;
 pub mod out;
+pub mod palette;
 pub mod res;
 pub mod script;
 pub mod sequence;

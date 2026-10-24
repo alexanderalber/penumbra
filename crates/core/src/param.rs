@@ -40,6 +40,10 @@ pub enum ParamKind {
     File {
         extensions: Vec<String>,
     },
+    /// A palette or colormap ([`crate::palette`]): text naming one (or listing hex colours),
+    /// empty for none, or an int picking one by its place in the list (what a bound channel
+    /// gives).
+    Palette,
 }
 
 /// The range of a numeric parameter. A `hard` range clamps every value; a soft one is only the
@@ -272,6 +276,11 @@ impl ParamSpec {
         Self::new(name, ParamKind::Text, Value::Text(default.to_string()))
     }
 
+    /// A palette ([`ParamKind::Palette`]); `default` a name, a hex list or empty.
+    pub fn palette(name: &str, default: &str) -> Self {
+        Self::new(name, ParamKind::Palette, Value::Text(default.to_string()))
+    }
+
     pub fn file(name: &str, extensions: &[&str]) -> Self {
         Self::new(
             name,
@@ -404,6 +413,7 @@ impl ParamSpec {
             ParamKind::Text => "text".into(),
             ParamKind::File { extensions } if extensions.is_empty() => "file".into(),
             ParamKind::File { extensions } => format!("file ({})", extensions.join(", ")),
+            ParamKind::Palette => "palette".into(),
         }
     }
 
@@ -498,12 +508,13 @@ impl ParamSpec {
         spec
     }
 
-    /// Number of components a channel can drive one at a time: 1 for bool, int and float
-    /// (bound as a whole), 2 to 4 for vectors and colours (bound per component), 0 for choices,
-    /// text and files, which channels cannot drive.
+    /// Number of components a channel can drive one at a time: 1 for bool, int, float and
+    /// palette (bound as a whole; a palette by its place in the list), 2 to 4 for vectors and
+    /// colours (bound per component), 0 for choices, text and files, which channels cannot
+    /// drive.
     pub fn bind_components(&self) -> u8 {
         match self.kind {
-            ParamKind::Bool | ParamKind::Int | ParamKind::Float => 1,
+            ParamKind::Bool | ParamKind::Int | ParamKind::Float | ParamKind::Palette => 1,
             ParamKind::Vec(n) => n,
             ParamKind::Color => 4,
             ParamKind::Choice(_) | ParamKind::Text | ParamKind::File { .. } => 0,
@@ -543,7 +554,7 @@ impl ParamSpec {
         let value = match (&self.kind, component) {
             (ParamKind::Bool, _) => Value::Bool(x >= 0.5),
             // `as` saturates.
-            (ParamKind::Int, _) => Value::Int(x.round() as i64),
+            (ParamKind::Int | ParamKind::Palette, _) => Value::Int(x.round() as i64),
             (ParamKind::Float, _) => Value::Float(x),
             (_, Some(c)) => {
                 let mut v = current.clone();
@@ -726,6 +737,21 @@ impl ParamSpec {
                 }
                 Ok(Value::Text(s.clone()))
             }
+            (ParamKind::Palette, Value::Text(s)) => {
+                if s.len() > crate::palette::MAX_VALUE {
+                    return Err(Error::new(format!(
+                        "`{}` is longer than {} bytes",
+                        self.name,
+                        crate::palette::MAX_VALUE
+                    )));
+                }
+                crate::palette::wanted(value).map_err(|e| Error::new(format!("`{}`: {e}", self.name)))?;
+                Ok(Value::Text(s.clone()))
+            }
+            (ParamKind::Palette, Value::Int(i)) => Ok(Value::Int(*i)),
+            (ParamKind::Palette, Value::Float(f)) if f.fract() == 0.0 && f.abs() < 9.0e15 => {
+                Ok(Value::Int(*f as i64))
+            }
             (ParamKind::File { .. }, Value::Text(s)) => {
                 if s.len() > MAX_FILE || s.contains('\0') {
                     return Err(Error::new(format!("`{}` is not a usable file path", self.name)));
@@ -754,6 +780,7 @@ impl ParamSpec {
             ParamKind::Choice(_) => "a choice".into(),
             ParamKind::Text => "text".into(),
             ParamKind::File { .. } => "a file path".into(),
+            ParamKind::Palette => "a palette (a name, hex colours or a number)".into(),
         }
     }
 
@@ -974,5 +1001,21 @@ b"
                 .is_err()
         );
         assert!(ParamSpec::float("x", 0.0).group(&"g".repeat(MAX_GROUP + 1)).validate_spec().is_err());
+    }
+
+    #[test]
+    fn palettes_take_names_hex_and_numbers() {
+        let p = ParamSpec::palette("look", "blood");
+        p.validate_spec().unwrap();
+        assert_eq!(p.type_label(), "palette");
+        assert_eq!(p.check(&Value::Text("anything".into())), Ok(Value::Text("anything".into())));
+        assert_eq!(p.check(&Value::Text("#31aaa9 f8e0a4".into())), Ok(Value::Text("#31aaa9 f8e0a4".into())));
+        assert!(p.check(&Value::Text("#31aaa9 nope".into())).is_err());
+        assert!(p.check(&Value::Text("x".repeat(crate::palette::MAX_VALUE + 1))).is_err());
+        assert_eq!(p.check(&Value::Float(3.0)), Ok(Value::Int(3)));
+        assert!(p.check(&Value::Bool(true)).is_err());
+        assert_eq!(p.bind_components(), 1);
+        assert_eq!(p.bind_value(&p.default, None, 2.6), Ok(Value::Int(3)));
+        assert!(p.help().bindable);
     }
 }

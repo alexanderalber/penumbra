@@ -53,7 +53,7 @@ params.
 
 ## Params
 
-Params are numbers, vectors, colours, choices, text or files. Number params have a slider and a
+Params are numbers, vectors, colours, choices, text, files or [palettes](#palettes). Number params have a slider and a
 field: the slider covers the usual range, a typed value may go beyond it (the reference says
 "soft" for such a range); a hard range clamps. Colours are linear and may go above 1. File
 params are relative to the project directory and reload when the file changes.
@@ -72,6 +72,43 @@ params are relative to the project directory and reload when the file changes.
 - **A stray value** (a param the node type no longer has, from an older project file) is
   listed with a remove button and a warning on the node; it does not stop the project from
   loading.
+
+## Palettes
+
+A palette param picks a set of colours by name, so a look is tried by switching the name
+instead of editing colours one by one. `tex.ramp` and `tex.lookup` have one (a gradient, or a
+picture recoloured through a colormap, in one node), so do the library's `breathe` and `pulse`,
+and a shader declares its own (`// @param look palette = blood`, see
+[Shaders](shaders.md#params)).
+
+- **Palettes** are a handful of colours meant one by one (a colour per face): `sea`, `blood`,
+  `candy` (the Halloween film's), `pumpkin`, `ember`, `neon`, `pastel`, `forest`, `primaries`,
+  `mono`. **Colormaps** are ramps meant to be blended along: `grey`, `fire`, `ice`, `viridis`,
+  `magma`, `inferno`, `plasma`, `cividis` and `twilight` (the last five from matplotlib).
+  Either works anywhere; a node decides whether it takes the colours one by one or blends.
+- **Your own:** type hex colours straight into the param, as colorhunt or coolors give them:
+  `31aaa9 f8e0a4 a82020 6c1a1a`, `#31aaa9, #f8e0a4`, `31aaa9-f8e0a4-a82020`, a pasted
+  colorhunt or coolors URL, or the digits run together. 6 digits per colour (sRGB, as every
+  colour picker shows them), 8 with alpha, up to 32 colours. To give one a name, put it in
+  `palettes.txt` in the project directory, one per line:
+
+  ```
+  # my palettes
+  dusk: 2c3e50 fd746c ff8c52
+  moss = #1b4332 #52b788
+  ```
+
+  or use `palette.set {name, colours}` (`palette.remove {name}` takes one away). Every node
+  naming a palette picks up an edit of the file at once. A line that does not parse, a name
+  given twice or a built-in name is skipped with a warning on the nodes that read the file.
+- **In the param panel** the row shows the colours, the name or hex list as text, and a menu
+  (`...`) with every palette and its colours.
+- **From a channel:** bind the param like a number. The channel's value picks a palette by
+  its place in the list `palette.list` returns (the built-in set in the order above, then
+  the project's own), rounded and wrapping around: a counter or a MIDI knob steps through
+  them, a `chan.sequence` step can switch the look of a piece.
+- **Empty** means no palette; what that does is the node's: `tex.ramp` uses its `keys`,
+  `tex.lookup` its `lut` input, `breathe` and `pulse` their colour params.
 
 ## Bindings
 
@@ -291,6 +328,7 @@ kept across restarts. Use it for calibration results and anything expensive to m
 | `state/` | what nodes hold across restarts (feedback loops, caches, locked outputs); ignored by git through its own `.gitignore` |
 | `components/` | the project's own component files |
 | `library/` | the files of components added from a library (`library/<name>/`) |
+| `palettes.txt` | the project's own [palettes](#palettes), one per line |
 | `project.ron.bak` | the file as it was before `project.save` wrote over a file that did not load; worth a line in a project's `.gitignore` |
 | anything else | shaders, scripts, images, videos, meshes, referenced by relative path |
 

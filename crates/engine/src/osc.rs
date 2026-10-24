@@ -377,6 +377,12 @@ pub fn value_for(
         ParamKind::Text => {
             text.map(|t| Value::Text(t.to_string())).ok_or_else(|| format!("`{}` needs a string", spec.name))
         }
+        // A name or hex colours as a string, or a place in the list as a number.
+        ParamKind::Palette => match (text, numbers.first()) {
+            (Some(t), _) => spec.check(&Value::Text(t.to_string())).map_err(e),
+            (None, Some(x)) => spec.bind_value(current, None, *x).map_err(e),
+            _ => Err(format!("`{}` needs a palette name or a number", spec.name)),
+        },
         _ => Err(format!("`{}` is {}; OSC does not set it", spec.name, spec.kind_label())),
     }
 }

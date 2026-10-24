@@ -328,6 +328,12 @@ pub(super) fn builtins() -> Vec<Builtin> {
                             .range(0.0, 1.0)
                             .doc("Height in the lookup texture that is read; 0 is the top"),
                     )
+                    .param(ParamSpec::palette("palette", "").doc(
+                        "A palette or colormap to read instead of the lut (a name, hex colours, or a number from a channel); empty reads the lut",
+                    ))
+                    .param(ParamSpec::bool("steps", false).doc(
+                        "With a palette: equal bands, one per colour, instead of blending between them",
+                    ))
                     .input("in", DataKind::Tex)
                     .input("lut", DataKind::Tex)
                     .output("out", DataKind::Tex),

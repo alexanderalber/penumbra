@@ -12,6 +12,7 @@
 // @param c2 color = [1, 0.9, 0.6, 1]
 // @param c3 color = [0.4, 0.1, 0.1, 1]
 // @param edge color = [1, 0.9, 0.7, 1] -- the outlines' colour
+// @param palette palette -- a palette instead of c0 to c3 (a name, hex colours, or a number from a channel): all its colours are used, whatever count says, and its brightest draws the outlines instead of edge; empty uses c0 to c3
 // @param gain float = 0.6 0..2 -- the fields' brightness at the top of a breath
 // @param base float = 0.35 0..1 -- the fields' brightness between breaths, share of gain
 // @param period float = 7 1..30 -- seconds per breath
@@ -36,12 +37,30 @@ fn raw(c: vec4f) -> vec4f {
 }
 
 fn colour(i: i32) -> vec3f {
+    if (params.palette.count > 0) {
+        return pn_palette(params.palette, i).rgb;
+    }
     switch i {
         case 0: { return params.c0.rgb; }
         case 1: { return params.c1.rgb; }
         case 2: { return params.c2.rgb; }
         default: { return params.c3.rgb; }
     }
+}
+
+// The outlines' colour: `edge`, or the palette's brightest colour when there is a palette.
+fn edge_colour() -> vec3f {
+    if (params.palette.count <= 0) {
+        return params.edge.rgb;
+    }
+    var best = pn_palette(params.palette, 0).rgb;
+    for (var i = 1; i < params.palette.count; i++) {
+        let c = pn_palette(params.palette, i).rgb;
+        if (pn_luma(c) > pn_luma(best)) {
+            best = c;
+        }
+    }
+    return best;
 }
 
 // The wipe's band at pixel `pos`, 0..1, 0 between wipes.
@@ -104,7 +123,8 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     if (!table) {
         entry = vec4f(f32((k * 3) % 4) / 255.0, v.pos.x / pn.resolution.x, 0.0, 1.0);
     }
-    let slot = i32(round(entry.r * 255.0)) % max(params.count, 1);
+    let slots = select(max(params.count, 1), params.palette.count, params.palette.count > 0);
+    let slot = i32(round(entry.r * 255.0)) % slots;
     let t = select(pn_time.seconds, params.clock, params.clock >= 0.0);
     let up = smoothstep(0.0, max(params.fade, 0.001), t);
     // A breath: base up to full and back, each region a little later than the one to its left.
@@ -117,6 +137,6 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         edge = select(0.0, outline(p, k), b > 0.001);
     }
     let line = edge * b * params.lines;
-    c = mix(c, params.edge.rgb, clamp(line, 0.0, 1.0));
+    c = mix(c, edge_colour(), clamp(line, 0.0, 1.0));
     return vec4f(c, 1.0);
 }

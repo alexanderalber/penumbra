@@ -20,19 +20,24 @@
 //!                                               // 0 hold, 1 zero, 2 repeat, 3 mirror outside 0..1
 //! fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f
 //!                                               // mean over `footprint` source texels (downscaling)
+//! struct PnPalette { count: i32, colours: array<vec4f, 32> }   // a palette param's field
+//! fn pn_palette(p: PnPalette, i: i32) -> vec4f  // colour i, wrapping (also below 0)
+//! fn pn_colormap(p: PnPalette, t: f32) -> vec4f // 0..1 along the colours, blended
+//! fn pn_band(p: PnPalette, t: f32) -> vec4f     // 0..1 in equal bands, one per colour
 //! ```
 //!
 //! Parameter fields: `bool` is `u32` (0 or 1), `int` and `choice` are `i32` (a choice also gets
 //! a constant per entry, `const <param>_<entry>: i32`), `float` is `f32`, vectors are `vec2f` to
-//! `vec4f`, a colour is a `vec4f` (straight alpha, linear). Text and file parameters have no
-//! field. Whether the shader reads `pn_time` is detected, which is what makes a shader node
+//! `vec4f`, a colour is a `vec4f` (straight alpha, linear), a palette a `PnPalette` (its
+//! colours linear, straight alpha; `count` 0 for an empty one, whose colours are all zero).
+//! Text and file parameters have no field. Whether the shader reads `pn_time` is detected, which is what makes a shader node
 //! time-dependent or not.
 
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
 
-use penumbra_core::{Error, ParamKind, ParamSpec, Value};
+use penumbra_core::{Error, ParamKind, ParamSpec, Value, palette};
 
 use crate::{FORMAT, Gpu, Tex};
 
@@ -162,6 +167,31 @@ fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f
         }
     }
     return sum / f32(n.x * n.y);
+}
+
+// A palette param: `count` colours, linear, straight alpha. The colours sit in a `var` before
+// they are indexed: WGSL indexes arrays by a runtime value only through a reference.
+struct PnPalette { count: i32, _pn0: i32, _pn1: i32, _pn2: i32, colours: array<vec4f, 32> }
+
+fn pn_palette(p: PnPalette, i: i32) -> vec4f {
+    let n = clamp(p.count, 1, 32);
+    var c = p.colours;
+    return c[((i % n) + n) % n];
+}
+
+fn pn_colormap(p: PnPalette, t: f32) -> vec4f {
+    let n = clamp(p.count, 1, 32);
+    var c = p.colours;
+    let x = clamp(t, 0.0, 1.0) * f32(n - 1);
+    let i = clamp(i32(floor(x)), 0, n - 1);
+    let j = min(i + 1, n - 1);
+    return mix(c[i], c[j], x - f32(i));
+}
+
+fn pn_band(p: PnPalette, t: f32) -> vec4f {
+    let n = clamp(p.count, 1, 32);
+    var c = p.colours;
+    return c[clamp(i32(floor(clamp(t, 0.0, 1.0) * f32(n))), 0, n - 1)];
 }
 "#;
 
@@ -536,8 +566,23 @@ fn words(spec: &ParamSpec, value: &Value) -> Vec<[u8; 4]> {
         (ParamKind::Float | ParamKind::Vec(_) | ParamKind::Color, v) => {
             v.components().unwrap_or(&[]).iter().map(|x| (*x as f32).to_le_bytes()).collect()
         }
+        (ParamKind::Palette, v) => palette_words(v),
         _ => Vec::new(),
     }
+}
+
+/// A `PnPalette`: the count, three words of padding, then [`palette::MAX_COLOURS`] colours.
+/// Names the built-in set does not know (the project's own) resolve to nothing here: the node
+/// puts those in as hex colours before the pass reads them.
+fn palette_words(value: &Value) -> Vec<[u8; 4]> {
+    let colours = palette::resolve(value, &[]).ok().flatten().map(|p| p.colours).unwrap_or_default();
+    let count = i32::try_from(colours.len().min(palette::MAX_COLOURS)).unwrap_or(0);
+    let mut out = vec![count.to_le_bytes(), [0; 4], [0; 4], [0; 4]];
+    for i in 0..palette::MAX_COLOURS {
+        let c = colours.get(i).copied().unwrap_or([0.0; 4]);
+        out.extend(c.iter().map(|x| (*x as f32).to_le_bytes()));
+    }
+    out
 }
 
 /// The WGSL type of a parameter's field; `None` for text and files.
@@ -549,6 +594,7 @@ fn wgsl_type(spec: &ParamSpec) -> Option<&'static str> {
         ParamKind::Vec(2) => "vec2f",
         ParamKind::Vec(3) => "vec3f",
         ParamKind::Vec(_) | ParamKind::Color => "vec4f",
+        ParamKind::Palette => "PnPalette",
         ParamKind::Text | ParamKind::File { .. } => return None,
     })
 }
@@ -693,6 +739,43 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         )
         .unwrap();
         assert!(timed.uses_time() && timed.uses_input(1) && !timed.uses_input(0));
+        assert_eq!(gpu.errors().count, 0);
+    }
+
+    #[test]
+    fn palettes_reach_the_shader() {
+        let Some(gpu) = gpu() else { return };
+        let src = "@fragment fn main(v: PnVertex) -> @location(0) vec4f {
+            if (v.uv.y < 0.5) { return pn_palette(params.p, i32(v.uv.x * 4.0) + 4 * params.n); }
+            return vec4f(pn_colormap(params.p, v.uv.x).rgb, f32(params.p.count) / 8.0);
+        }";
+        let specs = [ParamSpec::int("n", 0), ParamSpec::palette("p", "")];
+        let pass = Pass::compile(&gpu, "palette", src, &specs).unwrap();
+        let target = Tex::new(&gpu, 4, 2, "t").unwrap();
+        let value = |name: &str| match name {
+            "p" => Some(Value::Text("ff0000 00ff00 0000ff ffffff".into())),
+            "n" => Some(Value::Int(-3)),
+            _ => None,
+        };
+        pass.render(&gpu, &target, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &value })
+            .unwrap();
+        let px = gpu.read(&target).unwrap();
+        // Top row: colours 0..3, shifted by -12 (wraps to the same).
+        assert_eq!(px.get(0, 0).unwrap(), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(px.get(2, 0).unwrap(), [0.0, 0.0, 1.0, 1.0]);
+        // Bottom row: x = 0.375 is 1.125 of the way, between green and blue; alpha the count / 8.
+        let [r, g, b, a] = px.get(1, 1).unwrap();
+        assert!(r.abs() < 1e-3 && (g - 0.875).abs() < 2e-3 && (b - 0.125).abs() < 2e-3, "{r} {g} {b}");
+        assert!((a - 0.5).abs() < 1e-3);
+        // A built-in name, and an empty palette (count 0).
+        let blood = |name: &str| (name == "p").then(|| Value::Text("blood".into()));
+        pass.render(&gpu, &target, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &blood })
+            .unwrap();
+        let [r, ..] = gpu.read(&target).unwrap().get(0, 0).unwrap();
+        assert!((r - palette::to_linear(f64::from(0x31) / 255.0) as f32).abs() < 1e-3);
+        let none = |_: &str| None;
+        pass.render(&gpu, &target, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &none }).unwrap();
+        assert_eq!(gpu.read(&target).unwrap().get(0, 1).unwrap()[3], 0.0);
         assert_eq!(gpu.errors().count, 0);
     }
 }

@@ -23,6 +23,7 @@ pub mod mouse;
 pub mod navigation;
 pub mod ndi;
 pub mod osc;
+pub mod palettes;
 pub mod pictures;
 pub mod projector;
 pub mod projector_stored;
@@ -72,6 +73,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     osc::register(&mut registry, engine);
     keyboard::register(&mut registry, engine);
     mouse::register(&mut registry, engine);
+    palettes::register(&mut registry, engine);
     audio::register(&mut registry, engine);
     dmx::register(&mut registry, engine);
     ndi::register(&mut registry);

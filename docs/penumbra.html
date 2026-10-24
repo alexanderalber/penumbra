@@ -118,7 +118,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -244,7 +244,7 @@ details.target { outline: 2px solid var(--accent); }
 </ul>
 <p>Every type, with every param, is in the <a href="#nodes">node reference</a>. Nodes cook only when something needs them (an output, the viewer, a visible thumbnail) and only when something they depend on changed. A node may need only some of its inputs: <a class="ref" href="#tex.switch"><code>tex.switch</code></a> with <code>inactive: skip</code> cooks only the chain it shows, and the others stand still (their state pauses, their thumbnails cook only as thumbnails) until it switches to them; <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> does the same for a show. A few cheap nodes cook in every frame whether anything shows them or not (<a class="ref" href="#chan.clock"><code>chan.clock</code></a>, <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a>; the reference says so), so they see every change of their params.</p>
 <h3 id="concepts-params">Params</h3>
-<p>Params are numbers, vectors, colours, choices, text or files. Number params have a slider and a field: the slider covers the usual range, a typed value may go beyond it (the reference says &quot;soft&quot; for such a range); a hard range clamps. Colours are linear and may go above 1. File params are relative to the project directory and reload when the file changes.</p>
+<p>Params are numbers, vectors, colours, choices, text, files or <a href="#concepts-palettes">palettes</a>. Number params have a slider and a field: the slider covers the usual range, a typed value may go beyond it (the reference says &quot;soft&quot; for such a range); a hard range clamps. Colours are linear and may go above 1. File params are relative to the project directory and reload when the file changes.</p>
 <ul>
 <li><strong>Folded sections</strong> group params that belong together (a render's <code>occlusion</code>, a mapper's <code>warp</code>); <strong>&quot;more&quot;</strong>, always the last, holds the rarely used ones. Only the main rows are shown at first; a section stays open for every node of that type once opened.
 </li>
@@ -257,6 +257,25 @@ details.target { outline: 2px solid var(--accent); }
 <li><strong>Params from a file:</strong> a shader's header and a script's <code>PARAMS</code> add their own rows, under &quot;from the shader&quot; or &quot;from the script&quot;.
 </li>
 <li><strong>A stray value</strong> (a param the node type no longer has, from an older project file) is listed with a remove button and a warning on the node; it does not stop the project from loading.
+</li>
+</ul>
+<h3 id="concepts-palettes">Palettes</h3>
+<p>A palette param picks a set of colours by name, so a look is tried by switching the name instead of editing colours one by one. <a class="ref" href="#tex.ramp"><code>tex.ramp</code></a> and <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a> have one (a gradient, or a picture recoloured through a colormap, in one node), so do the library's <code>breathe</code> and <code>pulse</code>, and a shader declares its own (<code>// @param look palette = blood</code>, see <a href="#shaders-params">Shaders</a>).</p>
+<ul>
+<li><p><strong>Palettes</strong> are a handful of colours meant one by one (a colour per face): <code>sea</code>, <code>blood</code>, <code>candy</code> (the Halloween film's), <code>pumpkin</code>, <code>ember</code>, <code>neon</code>, <code>pastel</code>, <code>forest</code>, <code>primaries</code>, <code>mono</code>. <strong>Colormaps</strong> are ramps meant to be blended along: <code>grey</code>, <code>fire</code>, <code>ice</code>, <code>viridis</code>, <code>magma</code>, <code>inferno</code>, <code>plasma</code>, <code>cividis</code> and <code>twilight</code> (the last five from matplotlib). Either works anywhere; a node decides whether it takes the colours one by one or blends.</p>
+</li>
+<li><p><strong>Your own:</strong> type hex colours straight into the param, as colorhunt or coolors give them: <code>31aaa9 f8e0a4 a82020 6c1a1a</code>, <code>#31aaa9, #f8e0a4</code>, <code>31aaa9-f8e0a4-a82020</code>, a pasted colorhunt or coolors URL, or the digits run together. 6 digits per colour (sRGB, as every colour picker shows them), 8 with alpha, up to 32 colours. To give one a name, put it in <code>palettes.txt</code> in the project directory, one per line:</p>
+<pre><code># my palettes
+dusk: 2c3e50 fd746c ff8c52
+moss = #1b4332 #52b788
+</code></pre>
+<p>or use <a class="ref" href="#palette.set"><code>palette.set {name, colours}</code></a> (<a class="ref" href="#palette.remove"><code>palette.remove {name}</code></a> takes one away). Every node naming a palette picks up an edit of the file at once. A line that does not parse, a name given twice or a built-in name is skipped with a warning on the nodes that read the file.</p>
+</li>
+<li><p><strong>In the param panel</strong> the row shows the colours, the name or hex list as text, and a menu (<code>...</code>) with every palette and its colours.</p>
+</li>
+<li><p><strong>From a channel:</strong> bind the param like a number. The channel's value picks a palette by its place in the list <a class="ref" href="#palette.list"><code>palette.list</code></a> returns (the built-in set in the order above, then the project's own), rounded and wrapping around: a counter or a MIDI knob steps through them, a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> step can switch the look of a piece.</p>
+</li>
+<li><p><strong>Empty</strong> means no palette; what that does is the node's: <a class="ref" href="#tex.ramp"><code>tex.ramp</code></a> uses its <code>keys</code>, <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a> its <code>lut</code> input, <code>breathe</code> and <code>pulse</code> their colour params.</p>
 </li>
 </ul>
 <h3 id="concepts-bindings">Bindings</h3>
@@ -338,6 +357,7 @@ water      15
 <tr><td><code>state/</code></td><td>what nodes hold across restarts (feedback loops, caches, locked outputs); ignored by git through its own <code>.gitignore</code></td></tr>
 <tr><td><code>components/</code></td><td>the project's own component files</td></tr>
 <tr><td><code>library/</code></td><td>the files of components added from a library (<code>library/&lt;name&gt;/</code>)</td></tr>
+<tr><td><code>palettes.txt</code></td><td>the project's own <a href="#concepts-palettes">palettes</a>, one per line</td></tr>
 <tr><td><code>project.ron.bak</code></td><td>the file as it was before <a class="ref" href="#project.save"><code>project.save</code></a> wrote over a file that did not load; worth a line in a project's <code>.gitignore</code></td></tr>
 <tr><td>anything else</td><td>shaders, scripts, images, videos, meshes, referenced by relative path</td></tr>
 </tbody>
@@ -1135,13 +1155,25 @@ fn main(v: PnVertex) -&gt; @location(0) vec4f {
 <tr><td><code>vec2</code>, <code>vec3</code>, <code>vec4</code></td><td><code>vec2f</code> to <code>vec4f</code></td></tr>
 <tr><td><code>color</code></td><td><code>vec4f</code>, linear, straight alpha</td></tr>
 <tr><td><code>choice(a|b|c)</code></td><td><code>i32</code>, plus a constant per entry: <code>const &lt;name&gt;_a: i32</code></td></tr>
+<tr><td><code>palette</code></td><td><code>PnPalette</code>: <code>count</code> and up to 32 <code>colours</code>, linear, straight alpha (see <a href="#concepts-palettes">Palettes</a>)</td></tr>
 </tbody>
 </table>
-<p>The default is JSON (<code>1.5</code>, <code>[1, 0, 0, 1]</code>, <code>true</code>), or a bare word for a choice; without one it is zero, false or the first choice. The range is the slider's; typed values may go beyond it. Examples:</p>
+<p>The default is JSON (<code>1.5</code>, <code>[1, 0, 0, 1]</code>, <code>true</code>), a bare word for a choice, a name or hex colours for a palette (<code>blood</code>, <code>31aaa9 f8e0a4</code>); without one it is zero, false, the first choice or no palette (<code>count</code> 0, every colour transparent black). The range is the slider's; typed values may go beyond it. Examples:</p>
 <pre><code class="lang-wgsl">// @param scale float = 4 1..32 -- cells per image height
 // @param octaves int = 3 1..8
 // @param invert bool
 // @param mode choice(add|multiply|screen) = multiply
+// @param look palette = blood -- the faces' colours
+</code></pre>
+<p>A palette param is read with three functions of the prelude: <code>pn_palette(params.look, i)</code> is colour <code>i</code> (wrapping, so any index is safe), <code>pn_colormap(params.look, t)</code> blends along the colours for <code>t</code> 0..1 (a gradient), <code>pn_band(params.look, t)</code> cuts 0..1 into equal bands, one per colour. <code>params.look.count</code> says how many colours there are; 0 means none was given, which a shader can take as &quot;use the colour params instead&quot;:</p>
+<pre><code class="lang-wgsl">// @param c0 color = [1, 0.5, 0.2, 1]
+// @param look palette -- instead of c0 and the rest
+fn colour(i: i32) -&gt; vec3f {
+    if (params.look.count &gt; 0) {
+        return pn_palette(params.look, i).rgb;
+    }
+    return params.c0.rgb;
+}
 </code></pre>
 <p><code>// @group &lt;name&gt;</code> puts the params declared after it in a section of that name, folded away until opened; <code>// @group</code> alone goes back to the main rows:</p>
 <pre><code class="lang-wgsl">// @param scale float = 4 1..32
@@ -1167,6 +1199,9 @@ fn pn_extend(t: texture_2d&lt;f32&gt;, uv: vec2f, mode: i32) -&gt; vec4f
                                               // 0 hold, 1 zero, 2 repeat, 3 mirror outside 0..1
 fn pn_area(t: texture_2d&lt;f32&gt;, s: sampler, uv: vec2f, footprint: vec2f) -&gt; vec4f
                                               // mean over `footprint` source texels (downscaling)
+fn pn_palette(p: PnPalette, i: i32) -&gt; vec4f  // a palette param's colour i, wrapping
+fn pn_colormap(p: PnPalette, t: f32) -&gt; vec4f // 0..1 along its colours, blended
+fn pn_band(p: PnPalette, t: f32) -&gt; vec4f     // 0..1 in equal bands, one per colour
 </code></pre>
 <p>A shader that reads <code>pn_time</code> cooks every frame; one that does not cooks only when its inputs or params change.</p>
 <h3 id="shaders-size">Size</h3>
@@ -1920,9 +1955,11 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <tbody>
 <tr><td><code>index</code></td><td>luminance | channels</td><td><code>&quot;luminance&quot;</code></td><td></td><td>Which input values pick the place in the lookup row (0 its left end, 1 its right)<ul><li><code>luminance</code>: the brightness picks one colour of the row (a gradient map)</li><li><code>channels</code>: red, green and blue each through the row's own channel (a curve per channel)</li></ul></td></tr>
 <tr><td><code>row</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>Height in the lookup texture that is read; 0 is the top</td></tr>
+<tr><td><code>palette</code></td><td>palette</td><td></td><td></td><td>A palette or colormap to read instead of the lut (a name, hex colours, or a number from a channel); empty reads the lut</td></tr>
+<tr><td><code>steps</code></td><td>bool</td><td><code>false</code></td><td></td><td>With a palette: equal bands, one per colour, instead of blending between them</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
 </div></details>
 <details class="entry node" id="tex.mapper"><summary><code class="name">tex.mapper</code><span class="sum">Fits a part of the content onto one projector: corner pinning, mesh warp, soft edges where projectors overlap</span></summary>
 <div class="body">
@@ -2163,12 +2200,14 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
 <tr><td><code>keys</code></td><td>text</td><td>an example script</td><td></td><td>One key per line: position (0 to 1), then r g b and optionally a (linear, straight alpha; 1 when left out)</td></tr>
+<tr><td><code>palette</code></td><td>palette</td><td></td><td></td><td>A palette or colormap instead of the keys, its colours spread evenly from 0 to 1 (a name, hex colours, or a number from a channel); empty uses the keys</td></tr>
+<tr><td><code>steps</code></td><td>bool</td><td><code>false</code></td><td></td><td>With a palette: equal bands, one per colour, instead of blending between them</td></tr>
 <tr><td><code>shape</code></td><td>horizontal | vertical | radial | circular</td><td><code>&quot;horizontal&quot;</code></td><td></td><td>How the key positions 0 to 1 lie on the picture<ul><li><code>horizontal</code>: left (0) to right (1)</li><li><code>vertical</code>: bottom (0) to top (1)</li><li><code>radial</code>: the centre (0) out to the middle of the top edge (1), in rings</li><li><code>circular</code>: once around the centre, counter-clockwise from the right (0)</li></ul></td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
 </div></details>
 <details class="entry node" id="tex.remap"><summary><code class="name">tex.remap</code><span class="sum">Rearranges a picture by a map: each pixel shows the input where the map's red and green point. Undistorts, unwraps, carries a camera's view onto a projector</span></summary>
 <div class="body">
@@ -3224,7 +3263,7 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <tr><td><code>mode</code></td><td>once | loop</td><td><code>&quot;once&quot;</code></td><td></td><td>What the show does after its last step<ul><li><code>once</code>: it ends in black and stays there</li><li><code>loop</code>: it starts over from its lead-in, round after round</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-shows">Concepts › Shows</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#concepts-shows">Concepts › Shows</a></p>
 </div></details>
 <details class="entry node" id="chan.spacemouse_in"><summary><code class="name">chan.spacemouse_in</code><span class="sum">The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show</span></summary>
 <div class="body">
@@ -4400,6 +4439,24 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <div class="body">
 <p>Connected displays (ids for out.projector's display), open output windows, projectors, pacing</p>
 <p class="mentions">Mentioned in: <a href="#helpers-outputs">The Helpers window › Outputs</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
+</div></details>
+</div>
+<div class="group" id="group-palette">
+<h3>palette</h3>
+<details class="entry command" id="palette.list"><summary><code class="name">palette.list</code><span class="sum">Every palette a palette param can name, in list order (the place a bound channel picks): the built-in set, then the project's own from palettes.txt; each with kind, source and hex colours</span></summary>
+<div class="body">
+<p>Every palette a palette param can name, in list order (the place a bound channel picks): the built-in set, then the project's own from palettes.txt; each with kind, source and hex colours</p>
+<p class="mentions">Mentioned in: <a href="#concepts-palettes">Concepts › Palettes</a></p>
+</div></details>
+<details class="entry command" id="palette.remove"><summary><code class="name">palette.remove</code><span class="sum">Remove one of the project's own palettes from palettes.txt: {name}</span></summary>
+<div class="body">
+<p>Remove one of the project's own palettes from palettes.txt: {name}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-palettes">Concepts › Palettes</a></p>
+</div></details>
+<details class="entry command" id="palette.set"><summary><code class="name">palette.set</code><span class="sum">Define or change one of the project's own palettes: {name, colours: &quot;31aaa9 f8e0a4 ...&quot; or [&quot;#31aaa9&quot;, ...]}; written to palettes.txt beside project.ron, used at once by every node naming it</span></summary>
+<div class="body">
+<p>Define or change one of the project's own palettes: {name, colours: &quot;31aaa9 f8e0a4 ...&quot; or [&quot;#31aaa9&quot;, ...]}; written to palettes.txt beside project.ron, used at once by every node naming it</p>
+<p class="mentions">Mentioned in: <a href="#concepts-palettes">Concepts › Palettes</a></p>
 </div></details>
 </div>
 <div class="group" id="group-project">
