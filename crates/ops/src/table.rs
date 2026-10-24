@@ -180,8 +180,7 @@ mod tests {
         let t = cook(&Arc::new(net), &mut cooker).unwrap();
         assert_eq!(t.rows(), [vec!["a".to_string(), "b".into()], vec!["c".into()]]);
 
-        let dir = std::env::temp_dir().join(format!("penumbra-table-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = penumbra_core::scratch::ScratchDir::new("table").unwrap();
         let file = dir.join("wall.tsv");
         std::fs::write(&file, "\u{feff}name\tmessage\nalex\thi\n").unwrap();
         let file_s = file.to_string_lossy().to_string();
@@ -232,6 +231,5 @@ mod tests {
         );
         let mut cooker = Cooker::new(types, Arc::new(JobPool::new(1).unwrap()));
         assert!(cook(&net, &mut cooker).unwrap_err().contains("nope.csv"));
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

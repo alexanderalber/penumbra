@@ -103,7 +103,6 @@ fn psd_layers_with_groups_masks_and_opacity() {
     std::fs::write(dir.join("broken.psd"), &psd()[..300]).unwrap();
     rig.edit(&[set("/panel.file", "broken.psd".into()), set("/panel.layer", "panel".into())]);
     error(&mut rig, "/panel", "broken.psd");
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -134,7 +133,6 @@ fn a_layer_directory_stacks_its_images_by_name() {
     assert_eq!(t.rows().iter().skip(1).map(|r| r[1].as_str()).collect::<Vec<_>>(), ["01_bottom", "02_top"]);
     let top = rig.pixels("/top");
     assert!((px(&top, 0, 0)[3] - 0.502).abs() < 0.01);
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A 640 x 360 poster for looking at by eye, written to `PENUMBRA_LOOK` when set: a gradient,

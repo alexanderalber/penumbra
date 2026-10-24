@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use super::*;
+use penumbra_core::scratch::ScratchDir;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
@@ -41,10 +42,9 @@ fn gif_file(dir: &std::path::Path) -> PathBuf {
     path
 }
 
-fn temp_dir(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("penumbra-video-{name}-{}", std::process::id()));
-    std::fs::create_dir_all(&d).unwrap();
-    d
+/// A scratch directory per test, removed when the returned guard drops.
+fn temp_dir(name: &str) -> ScratchDir {
+    ScratchDir::new(&format!("video-{name}")).unwrap()
 }
 
 #[test]

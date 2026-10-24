@@ -243,11 +243,8 @@ pub fn parse_version(text: &str) -> Option<(u32, u32)> {
 mod tests {
     use super::*;
 
-    fn scratch(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("penumbra-locate-{name}-{}", std::process::id()));
-        std::fs::remove_dir_all(&d).ok();
-        std::fs::create_dir_all(&d).unwrap();
-        d
+    fn scratch(name: &str) -> penumbra_core::scratch::ScratchDir {
+        penumbra_core::scratch::ScratchDir::new(&format!("locate-{name}")).unwrap()
     }
 
     fn touch(p: &Path) {
@@ -291,7 +288,7 @@ mod tests {
         assert_eq!((found.library, found.minor, found.source), (good.join("python3.dll"), 12, "PATH"));
 
         // Default places: the newest (here the embeddable layout).
-        let env = Env { defaults: vec![root.clone()], ..Env::default() };
+        let env = Env { defaults: vec![root.to_path_buf()], ..Env::default() };
         assert_eq!(find(&env).unwrap().minor, 13);
 
         // Only old ones: a clean message naming them.
@@ -315,7 +312,6 @@ mod tests {
         assert!(find(&env).is_ok());
 
         assert!(find(&Env::default()).unwrap_err().contains("no Python 3.12"));
-        std::fs::remove_dir_all(&root).ok();
     }
 
     #[cfg(not(windows))]
@@ -324,11 +320,10 @@ mod tests {
         let root = scratch("unix");
         touch(&root.join("libpython3.11.so.1.0"));
         touch(&root.join("libpython3.12.so.1.0"));
-        let env = Env { defaults: vec![root.clone()], ..Env::default() };
+        let env = Env { defaults: vec![root.to_path_buf()], ..Env::default() };
         let found = find(&env).unwrap();
         assert_eq!((found.library, found.minor), (root.join("libpython3.12.so.1.0"), 12));
         let env = Env { explicit: Some(root.join("libpython3.11.so.1.0")), ..Env::default() };
         assert!(find(&env).unwrap_err().contains("is Python 3.11"));
-        std::fs::remove_dir_all(&root).ok();
     }
 }

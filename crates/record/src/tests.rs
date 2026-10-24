@@ -1,17 +1,16 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use penumbra_core::NodeId;
+use penumbra_core::scratch::ScratchDir;
 use penumbra_video::{Limits, PixelData};
 
 use crate::writer::default_threads;
 use crate::{Bytes, Codec, Fps, Frame, H264Preset, Hub, Layout, Planes, Settings};
 
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("penumbra-record-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A scratch directory per test, removed when the returned guard drops.
+fn scratch(name: &str) -> ScratchDir {
+    ScratchDir::new(&format!("record-{name}")).unwrap()
 }
 
 /// Planes of one flat colour, given as 8-bit video-range values (scaled up for more bits).
@@ -119,7 +118,6 @@ fn every_codec_records_and_reads_back() {
         assert!((dark - 40.0).abs() < 1.5, "{codec:?} {preset:?}: dark {dark}");
         assert!((light - 200.0).abs() < 1.5, "{codec:?} {preset:?}: light {light}");
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -142,7 +140,6 @@ fn a_gap_makes_the_frame_before_last_longer() {
     assert!((s.seconds - 5.0 / 30.0).abs() < 1e-9, "{}", s.seconds);
     let d = penumbra_video::open(&path, &Limits::default()).unwrap();
     assert!((d.info().duration() - 5.0 / 30.0).abs() < 1e-3, "{:?}", d.info());
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -170,7 +167,6 @@ fn files_are_never_overwritten_and_bad_paths_are_errors() {
     // Odd and tiny sizes are refused before anything starts.
     assert!(hub.start(NodeId(3), settings(&dir.join("odd.mp4"), Codec::H264, 33, 32)).is_err());
     assert!(hub.start(NodeId(3), settings(&dir.join("tiny.mp4"), Codec::H264, 8, 8)).is_err());
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Planes that take their time, like a readback the GPU is slow to deliver: the queue fills.
@@ -215,7 +211,6 @@ fn a_full_queue_drops_frames_instead_of_waiting() {
     assert!((s.seconds - 20.0 / 30.0).abs() < 1e-9, "{s:?}");
     let d = penumbra_video::open(&dir.join("slow.mov"), &Limits::default()).unwrap();
     assert_eq!(d.info().frames, 20, "{:?}", d.info());
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -239,7 +234,6 @@ fn shutdown_finishes_files() {
     let d = penumbra_video::open(&path, &Limits::default()).unwrap();
     assert_eq!(d.info().frames, 1);
     drop(rec);
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]

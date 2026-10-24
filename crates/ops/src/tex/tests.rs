@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
+use penumbra_core::scratch::ScratchDir;
 use penumbra_core::{LatePolicy, NodeId, NodePath, ParamPath, Rate, ShowClock, Value};
 use penumbra_gpu::{AdapterChoice, Gpu, Pixels, Tex};
 use penumbra_graph::{Cooker, Density, JobPool, Network, NodeTypes, Op, Port};
@@ -52,12 +53,9 @@ fn copy_fixture(name: &str, dir: &Path) {
     std::fs::copy(manifest().join("tests/fixtures").join(name), dir.join(name)).unwrap();
 }
 
-/// A scratch directory per test.
-fn scratch(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("penumbra-tex-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
+/// A scratch directory per test, removed when the returned guard drops.
+fn scratch(name: &str) -> ScratchDir {
+    ScratchDir::new(&format!("tex-{name}")).unwrap()
 }
 
 fn create(path: &str, kind: &str, params: &[(&str, Value)]) -> Op {
@@ -497,7 +495,6 @@ lumen"
         golden(name, &px);
     }
     assert_eq!(rig.gpu.errors().count, 0, "{:?}", rig.gpu.errors());
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -655,7 +652,6 @@ fn every_builtin_cooks_without_warnings() {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -761,7 +757,6 @@ fn shader_hot_reload_keeps_the_last_good_version() {
     assert_eq!(s.warning.as_deref(), Some("the shader declares no param `bogus`"));
     let px = rig.gpu.read(&rig.tex("/s").unwrap()).unwrap();
     assert_eq!(px.get(0, 0), Some([0.0, 0.25, 0.0, 1.0]));
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 impl Rig {
@@ -813,7 +808,6 @@ fn image_reloads_and_reports_bad_files() {
         assert!(Instant::now() < deadline, "missing file not reported: {e}");
         std::thread::sleep(Duration::from_millis(20));
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -842,7 +836,7 @@ fn files_load_once_the_gpu_arrives() {
     ];
     let net = Arc::new(Network::new().apply(&types, &ops).unwrap().network);
     let mut cooker = Cooker::new(types, Arc::new(JobPool::new(2).unwrap()));
-    cooker.set_base_dir(Some(dir.clone()));
+    cooker.set_base_dir(Some(dir.to_path_buf()));
     let ids: Vec<NodeId> =
         ["/img", "/obj"].iter().map(|p| net.resolve(&p.parse().unwrap()).unwrap()).collect();
     let mut clock = ShowClock::new(Rate::FPS_60, LatePolicy::Realtime);
@@ -865,7 +859,6 @@ fn files_load_once_the_gpu_arrives() {
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -1241,7 +1234,6 @@ fn contour_smooth_calms_noise_and_ignores_transparent_parts() {
         (0..w as u32).filter(|&x| alpha(x) > 0.5 && (x == 0 || alpha(x - 1) <= 0.5)).collect();
     assert_eq!(lit.len(), 5, "levels 0.1 to 0.5, none along the transparent edge: {lit:?}");
     assert!((104..200).all(|x| alpha(x) < 0.1), "{:?}", (104..120).map(alpha).collect::<Vec<_>>());
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -1381,7 +1373,6 @@ fn thick_contour_lines_hold_together_on_a_stepped_map() {
     let lit: Vec<u32> = (0..200).filter(|&x| alpha(x) > 0.5 && (x == 0 || alpha(x - 1) <= 0.5)).collect();
     assert_eq!(lit.len(), 5, "levels 0.1 to 0.5, none along the transparent edge: {lit:?}");
     assert!((104..200).all(|x| alpha(x) < 0.1), "{:?}", (100..120).map(alpha).collect::<Vec<_>>());
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -2298,7 +2289,6 @@ fn a_picture_becomes_channels_of_its_mean_per_cell() {
     let mean = chans_of(&mut rig, "/mean");
     let lum = 0.2126 * 0.25 + 0.7152 * 0.5 + 0.0722 * 0.75;
     assert!(near(mean.value(Some("lum")).unwrap(), lum), "{mean:?}");
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -2319,7 +2309,6 @@ fn a_mean_colour_comes_back_as_a_colour_swatch() {
     let [r, g, b, a] = px.get(0, 0).unwrap();
     let near = |x: f32, y: f32| (x - y).abs() < 0.01;
     assert!(near(r, 0.25) && near(g, 0.5) && near(b, 0.75) && near(a, 1.0), "{:?}", px.get(0, 0));
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -2359,7 +2348,6 @@ fn channels_become_a_picture_and_back() {
         let want = (x as f32 + 0.5) / 8.0;
         assert!((r - want).abs() < 0.01 && r == g && g == b && a == 1.0, "pixel {x}: {r}");
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Whether the level meter's peak line (the UI's text grey) crosses the level well near 90 %
@@ -2585,7 +2573,6 @@ fn out_video_records_what_it_is_shown() {
             .fold(0.0f32, f32::max);
         assert!(worst < 0.03, "{codec}: off by up to {worst} (linear)");
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -2651,7 +2638,6 @@ fn out_video_stops_harmlessly_and_reports_bad_paths() {
     record(&mut rig, true);
     let error = rig.cooker.status(rec).unwrap().error.clone().unwrap_or_default();
     assert!(error.contains("too large"), "{error}");
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// `out.spout` to `tex.spout_in` in one process, through the same shared texture another

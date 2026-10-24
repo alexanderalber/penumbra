@@ -5,39 +5,24 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use penumbra_core::scratch::ScratchDir;
 use penumbra_graph::Op;
 use penumbra_project::{Actor, Content, Session};
 use serde_json::{Value as Json, json};
 
 use crate::{Engine, Registry};
 
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("penumbra-engine-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        Self(dir)
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 struct Fixture {
     engine: Arc<Engine>,
     registry: Registry,
-    _dir: TempDir,
+    _dir: ScratchDir,
 }
 
 impl Fixture {
     fn new(name: &str) -> Self {
-        let dir = TempDir::new(name);
+        let dir = ScratchDir::unborn(&format!("engine-{name}"));
         let types = Arc::new(penumbra_ops::builtin_types().unwrap());
-        let session = Arc::new(Session::open(&dir.0, types, &Content::default()).unwrap());
+        let session = Arc::new(Session::open(dir.path(), types, &Content::default()).unwrap());
         let engine = Engine::start(session).unwrap();
         let registry = crate::engine_registry(&engine);
         Self { engine, registry, _dir: dir }
@@ -521,10 +506,10 @@ fn resolution_analysis_and_optimisation_through_commands() {
 #[test]
 fn shipped_components_bring_their_files() {
     let f = Fixture::new("shipped");
-    let lib = TempDir::new("shipped-user");
-    f.engine.set_library(Some(lib.0.clone()));
-    let shipped = TempDir::new("shipped-lib");
-    let folder = shipped.0.join("glowy");
+    let lib = ScratchDir::unborn("engine-shipped-user");
+    f.engine.set_library(Some(lib.to_path_buf()));
+    let shipped = ScratchDir::unborn("engine-shipped-lib");
+    let folder = shipped.path().join("glowy");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         folder.join("glowy.comp.ron"),
@@ -537,7 +522,7 @@ fn shipped_components_bring_their_files() {
     .unwrap();
     std::fs::write(folder.join("look.wgsl"), "// shipped\n").unwrap();
     std::fs::write(folder.join("preview.png"), b"not copied").unwrap();
-    f.engine.set_shipped_library(Some(shipped.0.clone()));
+    f.engine.set_shipped_library(Some(shipped.to_path_buf()));
 
     let listed = f.call("comp.library", json!({}));
     assert_eq!(
@@ -561,7 +546,7 @@ fn shipped_components_bring_their_files() {
     assert!(f.fail("comp.remove", json!({"name": "glowy"})).contains("ships with penumbra"));
     assert!(folder.join("glowy.comp.ron").is_file());
     // The user's library comes first for the same name.
-    let mine = lib.0.join("glowy");
+    let mine = lib.path().join("glowy");
     std::fs::create_dir_all(&mine).unwrap();
     std::fs::copy(folder.join("glowy.comp.ron"), mine.join("glowy.comp.ron")).unwrap();
     let listed = f.call("comp.library", json!({}));
@@ -571,8 +556,8 @@ fn shipped_components_bring_their_files() {
 #[test]
 fn components_group_save_load_and_dissolve() {
     let f = Fixture::new("comps");
-    let lib = TempDir::new("comps-lib");
-    f.engine.set_library(Some(lib.0.clone()));
+    let lib = ScratchDir::unborn("engine-comps-lib");
+    f.engine.set_library(Some(lib.to_path_buf()));
     f.call(
         "node.batch",
         json!({"ops": [
@@ -610,7 +595,7 @@ fn components_group_save_load_and_dissolve() {
     // Into the library and back, twice.
     let saved = f.call("comp.save", json!({"path": "/fx"}));
     assert_eq!(saved["dropped"].as_array().map(Vec::len), Some(1), "{saved}");
-    assert!(lib.0.join("fx.comp.ron").is_file());
+    assert!(lib.path().join("fx.comp.ron").is_file());
     let listed = f.call("comp.library", json!({}));
     assert_eq!(listed["components"][0]["name"], "fx", "{listed}");
     let loaded = f.call("comp.load", json!({"file": "fx"}));
@@ -620,8 +605,8 @@ fn components_group_save_load_and_dissolve() {
     assert!(f.fail("comp.load", json!({"file": "nope"})).contains("no component file"));
     // Out of the library again: moved aside, no longer offered.
     let removed = f.call("comp.remove", json!({"name": "fx"}));
-    assert!(lib.0.join("removed").join("fx.comp.ron").is_file(), "{removed}");
-    assert!(!lib.0.join("fx.comp.ron").exists());
+    assert!(lib.path().join("removed").join("fx.comp.ron").is_file(), "{removed}");
+    assert!(!lib.path().join("fx.comp.ron").exists());
     assert_eq!(f.call("comp.library", json!({}))["components"], json!([]));
     assert!(f.fail("comp.remove", json!({"name": "fx"})).contains("no component file"));
 
@@ -777,12 +762,12 @@ fn warp() -> Option<penumbra_gpu::Gpu> {
 
 #[test]
 fn feedback_and_locked_textures_survive_a_restart() {
-    let dir = TempDir::new("state");
+    let dir = ScratchDir::unborn("engine-state");
     let Some(gpu) = warp() else { return };
-    let shots = dir.0.join("shots");
+    let shots = dir.path().join("shots");
     let (before_fb, before_hold);
     {
-        let (engine, r) = open(&dir.0);
+        let (engine, r) = open(dir.path());
         engine.attach_gpu(gpu).unwrap();
         // Operators' state is kept only where the project asks for it.
         let settings = ok(&r, "project.settings", json!({"set": {"persist_state": true}}));
@@ -826,12 +811,12 @@ fn feedback_and_locked_textures_survive_a_restart() {
         assert!(saved["bytes"].as_u64().unwrap() > 2 * 40 * 24 * 8, "{saved}");
         engine.shutdown();
         // Closing saved once more: the first file became the previous one.
-        assert!(dir.0.join("state").join("previous.pnstate").exists());
-        assert!(std::fs::read_to_string(dir.0.join("state").join(".gitignore")).unwrap().contains('*'));
+        assert!(dir.path().join("state").join("previous.pnstate").exists());
+        assert!(std::fs::read_to_string(dir.path().join("state").join(".gitignore")).unwrap().contains('*'));
     }
     let mean = |s: &Json| s["stats"]["mean"].clone();
     {
-        let (engine, r) = open(&dir.0);
+        let (engine, r) = open(dir.path());
         ok(&r, "cook.play", json!({"playing": false}));
         engine.attach_gpu(warp().unwrap()).unwrap();
         eventually("the startup restore", || engine.state().status().restore.is_some());
@@ -856,7 +841,7 @@ fn feedback_and_locked_textures_survive_a_restart() {
 
         // A damaged latest file: moved aside, the previous one is used.
         ok(&r, "cook.play", json!({"playing": false}));
-        let state = dir.0.join("state");
+        let state = dir.path().join("state");
         let latest = std::fs::read(state.join("latest.pnstate")).unwrap();
         std::fs::write(state.join("latest.pnstate"), &latest[..latest.len() / 2]).unwrap();
         let report = ok(&r, "state.restore", json!({}));
@@ -888,7 +873,7 @@ fn feedback_and_locked_textures_survive_a_restart() {
         engine.shutdown();
     }
     {
-        let (engine, r) = open(&dir.0);
+        let (engine, r) = open(dir.path());
         engine.attach_gpu(warp().unwrap()).unwrap();
         eventually("the startup restore", || engine.state().status().restore.is_some());
         let report = engine.state().status().restore.unwrap();
@@ -904,7 +889,7 @@ fn feedback_and_locked_textures_survive_a_restart() {
     }
     {
         // A fresh start (`--fresh`): the loop's state is left out, the locked node is not.
-        let (engine, _r) = open(&dir.0);
+        let (engine, _r) = open(dir.path());
         engine.state().start_fresh();
         engine.attach_gpu(warp().unwrap()).unwrap();
         eventually("the startup restore", || engine.state().status().restore.is_some());
@@ -917,10 +902,10 @@ fn feedback_and_locked_textures_survive_a_restart() {
 
 #[test]
 fn node_reset_starts_a_loop_over_and_leaves_locked_nodes_alone() {
-    let dir = TempDir::new("reset");
+    let dir = ScratchDir::unborn("engine-reset");
     let Some(gpu) = warp() else { return };
-    let shots = dir.0.join("shots");
-    let (engine, r) = open(&dir.0);
+    let shots = dir.path().join("shots");
+    let (engine, r) = open(dir.path());
     engine.attach_gpu(gpu).unwrap();
     let size = json!({"width": 40, "height": 24});
     ok(&r, "node.create", json!({"path": "/black", "kind": "tex.constant", "params": size}));
@@ -1082,20 +1067,20 @@ fn copy_and_paste_nodes() {
 #[test]
 fn another_project_opens_while_the_engine_keeps_running() {
     let f = Fixture::new("switch-a");
-    let other = TempDir::new("switch-b");
+    let other = ScratchDir::unborn("engine-switch-b");
     f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo"}));
     let first = f.engine.session().file().to_path_buf();
     let before = f.engine.view().pass;
     eventually("a few passes", || f.engine.view().pass > before + 2);
 
-    assert!(f.fail("project.open", json!({"dir": other.0})).contains("project.new"));
-    let r = f.call("project.new", json!({"dir": other.0}));
+    assert!(f.fail("project.open", json!({"dir": other.path()})).contains("project.new"));
+    let r = f.call("project.new", json!({"dir": other.path()}));
     assert_eq!(r["switched"], true);
     assert_eq!(f.engine.generation(), 1);
     // The old project's change was written on the way out, the new one is empty.
     assert!(std::fs::read_to_string(&first).unwrap().contains("/lfo"));
     assert_eq!(f.call("node.list", json!({}))["nodes"], json!([]));
-    assert!(f.fail("project.new", json!({"dir": other.0})).contains("project.open"));
+    assert!(f.fail("project.new", json!({"dir": other.path()})).contains("project.open"));
 
     // The cook thread runs for the new project, and pass numbers keep growing.
     let at_switch = f.engine.view().pass;
@@ -1113,7 +1098,7 @@ fn another_project_opens_while_the_engine_keeps_running() {
     assert_eq!(f.call("node.list", json!({}))["nodes"][0]["path"], "/lfo");
     assert_eq!(f.call("project.open", json!({"dir": dir}))["switched"], false);
     assert_eq!(f.engine.generation(), 2);
-    assert!(std::fs::read_to_string(other.0.join(penumbra_project::FILE_NAME)).unwrap().contains("/n"));
+    assert!(std::fs::read_to_string(other.path().join(penumbra_project::FILE_NAME)).unwrap().contains("/n"));
     // No recent file is set in tests, so nothing is listed.
     assert_eq!(f.call("project.recent", json!({}))["recent"], json!([]));
 }
@@ -1155,8 +1140,8 @@ fn the_ticker_rests_while_real_vsyncs_arrive() {
 #[test]
 fn save_a_copy_and_reopen_a_project_afresh() {
     let f = Fixture::new("copy-a");
-    let target = TempDir::new("copy-b");
-    let elsewhere = TempDir::new("copy-c");
+    let target = ScratchDir::unborn("engine-copy-b");
+    let elsewhere = ScratchDir::unborn("engine-copy-c");
     let dir = f.engine.session().dir().to_path_buf();
     f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo"}));
     std::fs::write(dir.join("look.wgsl"), "// a shader").unwrap();
@@ -1169,20 +1154,25 @@ fn save_a_copy_and_reopen_a_project_afresh() {
     assert!(f.fail("project.save_as", json!({"dir": dir.join("sub")})).contains("inside"));
     assert_eq!(f.engine.generation(), 0);
 
-    let r = f.call("project.save_as", json!({"dir": target.0}));
+    let r = f.call("project.save_as", json!({"dir": target.path()}));
     assert_eq!(r["switched"], true);
     assert_eq!(f.engine.generation(), 1);
-    assert!(crate::projects::same_dir(f.engine.session().dir(), &target.0));
-    assert!(std::fs::read_to_string(target.0.join(penumbra_project::FILE_NAME)).unwrap().contains("/lfo"));
-    assert!(target.0.join("look.wgsl").is_file());
-    assert_eq!(std::fs::read_to_string(target.0.join("state").join("latest.pnstate")).unwrap(), "latest");
-    assert!(!target.0.join("state").join("previous.pnstate").exists());
+    assert!(crate::projects::same_dir(f.engine.session().dir(), target.path()));
+    assert!(
+        std::fs::read_to_string(target.path().join(penumbra_project::FILE_NAME)).unwrap().contains("/lfo")
+    );
+    assert!(target.path().join("look.wgsl").is_file());
+    assert_eq!(
+        std::fs::read_to_string(target.path().join("state").join("latest.pnstate")).unwrap(),
+        "latest"
+    );
+    assert!(!target.path().join("state").join("previous.pnstate").exists());
     assert_eq!(f.call("node.list", json!({}))["nodes"][0]["path"], "/lfo");
 
     // Reopening the open project afresh: the folder is rewritten after the project closed, so
     // what was written on the way out does not come back.
     f.call("node.create", json!({"path": "/n", "kind": "chan.noise"}));
-    let opened = crate::projects::open_fresh(&f.engine, &target.0, |d| {
+    let opened = crate::projects::open_fresh(&f.engine, target.path(), |d| {
         assert!(std::fs::read_to_string(d.join(penumbra_project::FILE_NAME)).unwrap().contains("/n"));
         std::fs::write(d.join(penumbra_project::FILE_NAME), "(version: 1)")
             .map_err(|e| penumbra_core::Error::new(e.to_string()))?;
@@ -1196,9 +1186,9 @@ fn save_a_copy_and_reopen_a_project_afresh() {
     // When making the new one fails, the old project runs on.
     f.call("node.create", json!({"path": "/m", "kind": "chan.noise"}));
     let failed =
-        crate::projects::open_fresh(&f.engine, &elsewhere.0, |_| Err(penumbra_core::Error::new("no")));
+        crate::projects::open_fresh(&f.engine, elsewhere.path(), |_| Err(penumbra_core::Error::new("no")));
     assert!(failed.is_err());
-    assert!(crate::projects::same_dir(f.engine.session().dir(), &target.0));
+    assert!(crate::projects::same_dir(f.engine.session().dir(), target.path()));
     assert_eq!(f.engine.generation(), 2);
     f.call("node.watch", json!({"path": "/m"}));
     eventually("/m to cook", || {
@@ -1350,12 +1340,15 @@ fn live_traced_shapes_survive_a_rewritten_project_file_and_a_restart() {
     f.engine.shutdown();
     std::fs::write(f.engine.session().file(), script).unwrap();
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
-    let session = Arc::new(Session::open(&f._dir.0, types, &Content::default()).unwrap());
+    let session = Arc::new(Session::open(f._dir.path(), types, &Content::default()).unwrap());
     let engine = Engine::start(session).unwrap();
     let Some(second) = gpu() else { return };
     engine.attach_gpu(second).unwrap();
-    let again =
-        Fixture { registry: crate::engine_registry(&engine), engine, _dir: TempDir::new("trace_live_again") };
+    let again = Fixture {
+        registry: crate::engine_registry(&engine),
+        engine,
+        _dir: ScratchDir::unborn("engine-trace_live_again"),
+    };
     eventually("the reopened node to trace", || traced_rows(&again, "/t", "piece") == Some(3));
 }
 

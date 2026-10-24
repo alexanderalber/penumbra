@@ -541,12 +541,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use penumbra_core::scratch::ScratchDir;
 
-    fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("penumbra-projects-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn temp(name: &str) -> ScratchDir {
+        ScratchDir::new(&format!("projects-{name}")).unwrap()
     }
 
     #[test]
@@ -573,7 +571,6 @@ mod tests {
             remember(&file, &d).unwrap();
         }
         assert_eq!(read_recent(&file).len(), RECENT_MAX);
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -598,7 +595,6 @@ mod tests {
         remember(&file, &p).unwrap();
         std::fs::remove_file(p.join(FILE_NAME)).unwrap();
         assert_eq!(read_last(&file), None);
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
@@ -630,7 +626,6 @@ mod tests {
         for bad in ["c", "not-a-project", "..", "../examples/a", ""] {
             assert!(copy_example(&source, bad, &copies).is_err(), "{bad}");
         }
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     /// The shipped examples and the demo load whole: no node of theirs is kept as a
@@ -680,6 +675,5 @@ mod tests {
         std::fs::write(d.join(FILE_NAME), "(version: 1)").unwrap();
         remember(&file, &d).unwrap();
         assert_eq!(read_recent(&file).len(), 1);
-        std::fs::remove_dir_all(&root).unwrap();
     }
 }

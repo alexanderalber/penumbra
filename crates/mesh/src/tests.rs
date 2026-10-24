@@ -318,7 +318,7 @@ fn sidecars_stay_relative() {
 
 #[test]
 fn files_on_disk() {
-    let dir = std::env::temp_dir().join(format!("penumbra-mesh-{}", std::process::id()));
+    let dir = penumbra_core::scratch::ScratchDir::new("mesh").unwrap();
     std::fs::create_dir_all(dir.join("tex")).unwrap();
     std::fs::write(dir.join("m.mtl"), "newmtl a\nKd 1 1 1\nmap_Kd tex/a.png\n").unwrap();
     std::fs::write(dir.join("tex/a.png"), b"not really").unwrap();
@@ -328,7 +328,6 @@ fn files_on_disk() {
     assert_eq!(l.mesh.images.len(), 1);
     let e = load_file(&dir.join("missing.obj"), &Limits::default()).unwrap_err();
     assert!(e.0.contains("missing.obj"));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

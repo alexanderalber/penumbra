@@ -525,30 +525,14 @@ impl Session {
 mod tests {
     use super::*;
     use crate::testing::{content, test_types};
+    use penumbra_core::scratch::ScratchDir;
     use penumbra_core::{NodePath, Value};
-
-    /// A fresh directory under the system temp dir, removed again on drop.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!("penumbra-test-{name}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&dir);
-            Self(dir)
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
 
     const S: Duration = Duration::from_secs(1);
 
-    fn open(dir: &TempDir) -> Session {
+    fn open(dir: &ScratchDir) -> Session {
         let template = content(&[("/a", "test.const", &[], &[], false)]);
-        Session::open(&dir.0, Arc::new(test_types()), &template).unwrap()
+        Session::open(dir.path(), Arc::new(test_types()), &template).unwrap()
     }
 
     fn set(v: f64) -> Op {
@@ -567,7 +551,7 @@ mod tests {
 
     #[test]
     fn a_new_project_is_written_from_the_template_and_reopens() {
-        let dir = TempDir::new("template");
+        let dir = ScratchDir::unborn("test-template");
         let s = open(&dir);
         assert!(file(&s).contains(r#""/a": (kind: "test.const"),"#), "{}", file(&s));
         assert!(!s.status(Instant::now()).unsaved);
@@ -578,13 +562,13 @@ mod tests {
 
     #[test]
     fn params_that_open_at_their_default_do_so_and_the_file_keeps_them() {
-        let dir = TempDir::new("opens_at_default");
+        let dir = ScratchDir::unborn("test-opens_at_default");
         let template = content(&[("/r", "test.armed", &[("kept", 2.0)], &[], false)]);
-        let s = Session::open(&dir.0, Arc::new(test_types()), &template).unwrap();
+        let s = Session::open(dir.path(), Arc::new(test_types()), &template).unwrap();
         let text = file(&s).replace(r#"{"kept": 2.0}"#, r#"{"armed": 1.0, "kept": 2.0}"#);
         drop(s);
-        std::fs::write(dir.0.join(FILE_NAME), text).unwrap();
-        let s = Session::open(&dir.0, Arc::new(test_types()), &template).unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), text).unwrap();
+        let s = Session::open(dir.path(), Arc::new(test_types()), &template).unwrap();
         let net = s.doc().snapshot();
         let r = net.node(net.resolve(&"/r".parse::<NodePath>().unwrap()).unwrap()).unwrap().clone();
         assert_eq!(r.params.get("armed"), None, "reset on opening");
@@ -602,7 +586,7 @@ mod tests {
 
     #[test]
     fn autosave_waits_a_second_then_writes() {
-        let dir = TempDir::new("autosave");
+        let dir = ScratchDir::unborn("test-autosave");
         let s = open(&dir);
         let t0 = Instant::now();
         s.edit(Actor::User, &[set(2.0)], None, "", t0).unwrap();
@@ -621,7 +605,7 @@ mod tests {
 
     #[test]
     fn an_external_edit_is_merged_as_one_entry_and_keeps_ids() {
-        let dir = TempDir::new("merge");
+        let dir = ScratchDir::unborn("test-merge");
         let s = open(&dir);
         let id = s.doc().snapshot().resolve(&"/a".parse().unwrap());
         let t0 = Instant::now();
@@ -644,7 +628,7 @@ mod tests {
 
     #[test]
     fn a_file_edit_waits_while_the_user_edits() {
-        let dir = TempDir::new("wait");
+        let dir = ScratchDir::unborn("test-wait");
         let s = open(&dir);
         let t0 = Instant::now();
         s.edit(Actor::User, &[set(1.0)], None, "", t0).unwrap();
@@ -664,7 +648,7 @@ mod tests {
 
     #[test]
     fn a_broken_file_pauses_autosave_until_it_is_fixed() {
-        let dir = TempDir::new("broken");
+        let dir = ScratchDir::unborn("test-broken");
         let s = open(&dir);
         let t0 = Instant::now();
         let good = file(&s);
@@ -686,9 +670,10 @@ mod tests {
 
     #[test]
     fn a_project_that_does_not_load_opens_empty_and_loads_once_fixed() {
-        let dir = TempDir::new("badopen");
-        std::fs::create_dir_all(&dir.0).unwrap();
-        std::fs::write(dir.0.join(FILE_NAME), "(version: 1, nodes: {\"/a\": (kind: \"test.const\",").unwrap();
+        let dir = ScratchDir::unborn("test-badopen");
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), "(version: 1, nodes: {\"/a\": (kind: \"test.const\",")
+            .unwrap();
         let s = open(&dir);
         assert!(s.doc().snapshot().is_empty());
         assert!(s.status(Instant::now()).file_error.is_some());
@@ -703,10 +688,10 @@ mod tests {
     fn a_param_a_node_type_lost_does_not_block_the_project() {
         // A built-in that dropped a param (tex.composite's opacity) must not keep the project
         // from opening or merging; the value stays until it is removed.
-        let dir = TempDir::new("stray");
-        std::fs::create_dir_all(&dir.0).unwrap();
+        let dir = ScratchDir::unborn("test-stray");
+        std::fs::create_dir_all(dir.path()).unwrap();
         let text = "(version: 1, nodes: {\"/a\": (kind: \"test.const\", params: {\"opacity\": 0.7})})";
-        std::fs::write(dir.0.join(FILE_NAME), text).unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), text).unwrap();
         let s = open(&dir);
         assert_eq!(s.status(Instant::now()).file_error, None);
         let net = s.doc().snapshot();
@@ -724,9 +709,9 @@ mod tests {
 
     #[test]
     fn save_overwrites_a_broken_file_on_request_and_keeps_a_copy() {
-        let dir = TempDir::new("save");
+        let dir = ScratchDir::unborn("test-save");
         let s = open(&dir);
-        let bak = dir.0.join(BACKUP_NAME);
+        let bak = dir.path().join(BACKUP_NAME);
         // A save over a file that loads makes no copy.
         assert_eq!(s.save(), Ok(false));
         assert!(!bak.exists());
@@ -746,9 +731,9 @@ mod tests {
 
     #[test]
     fn positions_from_an_old_layout_file_are_taken_over_once() {
-        let dir = TempDir::new("legacy");
-        std::fs::create_dir_all(&dir.0).unwrap();
-        std::fs::write(dir.0.join(FILE_NAME), WITH_BROKEN).unwrap();
+        let dir = ScratchDir::unborn("test-legacy");
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), WITH_BROKEN).unwrap();
         let layout = r#"// penumbra editor layout: node positions, pan and zoom. Not part of the project content.
 (
     version: 1,
@@ -766,7 +751,7 @@ mod tests {
     column: Some(0.3),
 )
 "#;
-        std::fs::write(dir.0.join(crate::legacy::LAYOUT_FILE), layout).unwrap();
+        std::fs::write(dir.path().join(crate::legacy::LAYOUT_FILE), layout).unwrap();
         let s = open(&dir);
         let t0 = Instant::now();
         let pos = |s: &Session, p: &str| {
@@ -793,8 +778,11 @@ mod tests {
         assert!(!s.status(t0 + S).unsaved);
         drop(s);
         // Once the file has positions, the layout file's are not looked at again.
-        std::fs::write(dir.0.join(crate::legacy::LAYOUT_FILE), layout.replace("10.0, 20.0", "99.0, 99.0"))
-            .unwrap();
+        std::fs::write(
+            dir.path().join(crate::legacy::LAYOUT_FILE),
+            layout.replace("10.0, 20.0", "99.0, 99.0"),
+        )
+        .unwrap();
         let again = open(&dir);
         assert_eq!(pos(&again, "/a"), Some([10.0, 20.0]));
         assert!(!again.status(t0).unsaved);
@@ -813,9 +801,9 @@ mod tests {
 
     #[test]
     fn a_node_that_does_not_load_keeps_its_entry_and_the_rest_opens() {
-        let dir = TempDir::new("placeholder");
-        std::fs::create_dir_all(&dir.0).unwrap();
-        std::fs::write(dir.0.join(FILE_NAME), WITH_BROKEN).unwrap();
+        let dir = ScratchDir::unborn("test-placeholder");
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(dir.path().join(FILE_NAME), WITH_BROKEN).unwrap();
         let s = open(&dir);
         let t0 = Instant::now();
         let status = s.status(t0);
@@ -835,7 +823,7 @@ mod tests {
         );
         assert!(text.contains(r#""/s": (kind: "test.add", inputs: {"a": "x:left", "b": "a"}),"#), "{text}");
         assert!(text.contains(r#""/a": (kind: "test.const", params: {"value": 2.0}),"#), "{text}");
-        assert!(!dir.0.join(BACKUP_NAME).exists(), "autosave makes no copy");
+        assert!(!dir.path().join(BACKUP_NAME).exists(), "autosave makes no copy");
 
         // From the UI or the control channel it can be renamed and deleted, nothing else.
         let e = s
@@ -866,7 +854,7 @@ mod tests {
         assert!(file(&s).contains(r#""/y": (kind: "gone.kind""#), "{}", file(&s));
         // A save on request keeps a copy while a node did not load.
         assert_eq!(s.save(), Ok(false));
-        assert!(dir.0.join(BACKUP_NAME).exists());
+        assert!(dir.path().join(BACKUP_NAME).exists());
         s.edit(Actor::User, &[Op::Delete { path: "/y".parse().unwrap() }], None, "", t0).unwrap();
         assert!(s.status(t0).broken.is_empty());
         s.poll(t0 + 5 * S);
@@ -876,7 +864,7 @@ mod tests {
 
     #[test]
     fn a_file_edit_that_breaks_one_node_merges_the_rest() {
-        let dir = TempDir::new("merge_broken");
+        let dir = ScratchDir::unborn("test-merge_broken");
         let s = open(&dir);
         let t0 = Instant::now();
         let good = file(&s);
@@ -901,7 +889,7 @@ mod tests {
 
     #[test]
     fn a_deleted_file_is_written_again() {
-        let dir = TempDir::new("deleted");
+        let dir = ScratchDir::unborn("test-deleted");
         let s = open(&dir);
         let t0 = Instant::now();
         std::fs::remove_file(s.file()).unwrap();
@@ -912,7 +900,7 @@ mod tests {
 
     #[test]
     fn claude_edits_need_quiet_and_join_the_claim() {
-        let dir = TempDir::new("claim");
+        let dir = ScratchDir::unborn("test-claim");
         let s = open(&dir);
         let t0 = Instant::now();
         s.edit(Actor::User, &[set(1.0)], None, "", t0).unwrap();

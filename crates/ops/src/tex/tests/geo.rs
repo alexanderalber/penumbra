@@ -469,7 +469,6 @@ fn mesh_files_load_with_their_parts_and_reload() {
         assert!(std::time::Instant::now() < deadline, "no reload");
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// A wall 2 m square seen head on by two cameras sharing one texture, the near one twice as
@@ -1007,7 +1006,6 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
     rig.cook("/lonely");
     let s = rig.cooker.status(rig.id("/lonely")).unwrap();
     assert!(s.error.as_deref().is_some_and(|e| e.contains("camera")), "{s:?}");
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// See-through surfaces: drawn back to front whatever order the geometry comes in, over what is
@@ -1256,7 +1254,6 @@ fn an_environment_lights_and_reflects_by_its_picture() {
                 .unwrap();
         }
     }
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Ambient occlusion: a wall darkens beside a box standing on it, in its ambient light only;

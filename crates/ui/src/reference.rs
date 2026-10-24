@@ -257,8 +257,7 @@ fn penumbra_html(types: &NodeTypes, commands: &[(String, String)]) -> String {
 #[test]
 fn reference_docs_are_current() {
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
-    let dir = std::env::temp_dir().join(format!("penumbra-ui-reference-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let dir = penumbra_core::scratch::ScratchDir::unborn("ui-reference");
     let session = Arc::new(Session::open(&dir, Arc::clone(&types), &Content::default()).unwrap());
     let engine = Engine::start(session).unwrap();
     let mut registry = penumbra_engine::engine_registry(&engine);
@@ -274,7 +273,6 @@ fn reference_docs_are_current() {
     .flatten()
     .collect();
     engine.shutdown();
-    let _ = std::fs::remove_dir_all(&dir);
     assert!(
         stale.is_empty(),
         "out of date: {}; run `cargo xtask docs` and look at the diff",

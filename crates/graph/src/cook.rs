@@ -1604,12 +1604,11 @@ mod tests {
 
     #[test]
     fn instance_params_resources_files_and_time() {
-        let dir = std::env::temp_dir().join(format!("penumbra-cook-open-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = penumbra_core::scratch::ScratchDir::new("cook-open").unwrap();
         std::fs::write(dir.join("f.txt"), "abcd").unwrap();
         let mut f = Fixture::new(&[create("/o", "test.open")]);
         f.cooker.provide(2.0f64);
-        f.cooker.set_base_dir(Some(dir.clone()));
+        f.cooker.set_base_dir(Some(dir.to_path_buf()));
         f.set("/o.file", "f.txt".into());
         f.set("/o.gain", Value::Float(3.0));
         f.set("/o.bogus", Value::Int(1));
@@ -1646,7 +1645,6 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
             f.cook(&["/o"]);
         }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

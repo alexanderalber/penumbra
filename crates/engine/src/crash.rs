@@ -67,11 +67,11 @@ pub fn notice(marker: &Marker) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use penumbra_core::scratch::ScratchDir;
 
     #[test]
     fn a_marker_is_taken_once() {
-        let dir = std::env::temp_dir().join(format!("penumbra-crash-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
+        let dir = ScratchDir::unborn("crash");
         let file = dir.join(FILE);
         assert_eq!(take(&file), None);
         write(&file, Path::new("C:/shows/x"), "Device lost\nmore").unwrap();
@@ -81,6 +81,5 @@ mod tests {
         assert_eq!(take(&file), None, "deleted when taken");
         std::fs::write(&file, "garbage").unwrap();
         assert_eq!(take(&file).map(|m| m.reason), Some("unknown".into()));
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

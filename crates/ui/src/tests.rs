@@ -1,9 +1,9 @@
 //! The whole UI driven headless on WARP, the way Claude drives it over the control channel:
 //! add a node with the keyboard, wire it with the mouse, drag a parameter, undo, screenshot.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
+use penumbra_core::scratch::ScratchDir;
 use penumbra_engine::Engine;
 use penumbra_project::Session;
 use serde_json::{Value as Json, json};
@@ -19,14 +19,6 @@ const PROJECT: &str = r#"(
     },
 )"#;
 
-struct TempDir(PathBuf);
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 fn reply<'a>(replies: &'a [(String, Json)], method: &str, nth: usize) -> &'a Json {
     let (_, r) =
         replies.iter().filter(|(m, _)| m == method).nth(nth).unwrap_or_else(|| panic!("no {method} #{nth}"));
@@ -36,13 +28,12 @@ fn reply<'a>(replies: &'a [(String, Json)], method: &str, nth: usize) -> &'a Jso
 
 #[test]
 fn build_wire_tweak_and_undo_through_the_ui() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let content = penumbra_project::parse(PROJECT, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
-    let shot = dir.0.join("shot.png");
+    let shot = dir.path().join("shot.png");
 
     let script = [
         json!({"wait": 1.0}),
@@ -137,9 +128,9 @@ fn build_wire_tweak_and_undo_through_the_ui() {
         assert!(net.node(id).unwrap().pos.is_some(), "{path} has a place");
     }
     engine.shutdown();
-    let layout = std::fs::read_to_string(dir.0.join(crate::layout::FILE_NAME)).unwrap();
+    let layout = std::fs::read_to_string(dir.path().join(crate::layout::FILE_NAME)).unwrap();
     assert!(!layout.contains("/composite1"), "positions are not view state: {layout}");
-    let project = std::fs::read_to_string(dir.0.join(penumbra_project::FILE_NAME)).unwrap();
+    let project = std::fs::read_to_string(dir.path().join(penumbra_project::FILE_NAME)).unwrap();
     let line = |p: &str| project.lines().find(|l| l.contains(&format!("\"{p}\""))).unwrap_or("").to_string();
     assert!(line("/composite1").contains("pos: ["), "{project}");
     assert!(line("/lfo1").contains("pos: ["), "{project}");
@@ -147,8 +138,7 @@ fn build_wire_tweak_and_undo_through_the_ui() {
 
 #[test]
 fn reset_stateful_nodes_with_the_key_and_the_button() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-reset-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-reset");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let project = r#"(
         version: 1,
@@ -160,7 +150,7 @@ fn reset_stateful_nodes_with_the_key_and_the_button() {
         },
     )"#;
     let content = penumbra_project::parse(project, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"wait": 0.5}),
@@ -198,8 +188,7 @@ fn reset_stateful_nodes_with_the_key_and_the_button() {
 
 #[test]
 fn delete_a_wire_and_replace_a_node_by_right_click() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-wire-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-wire");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let project = r#"(
         version: 1,
@@ -210,7 +199,7 @@ fn delete_a_wire_and_replace_a_node_by_right_click() {
         },
     )"#;
     let content = penumbra_project::parse(project, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"wait": 0.5}),
@@ -256,11 +245,10 @@ fn delete_a_wire_and_replace_a_node_by_right_click() {
 
 #[test]
 fn bind_and_unbind_through_the_param_panel() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-bind-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-bind");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let content = penumbra_project::parse(PROJECT, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"wait": 1.0}),
@@ -293,11 +281,10 @@ fn bind_and_unbind_through_the_param_panel() {
 
 #[test]
 fn moving_nodes_is_undone_in_turn_with_edits() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-move-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-move");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let content = penumbra_project::parse(PROJECT, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"wait": 1.0}),
@@ -339,8 +326,7 @@ fn moving_nodes_is_undone_in_turn_with_edits() {
 
 #[test]
 fn map_by_dragging_handles_zoom_and_open_the_window() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-map-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-map");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let content = penumbra_project::parse(
         r#"(
@@ -354,7 +340,7 @@ fn map_by_dragging_handles_zoom_and_open_the_window() {
         &types,
     )
     .unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"method": "ui.select", "params": {"paths": ["/m"]}}),
@@ -427,8 +413,7 @@ fn map_by_dragging_handles_zoom_and_open_the_window() {
 
 #[test]
 fn draw_move_repeat_and_delete_shapes_in_the_viewer() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-shapes-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-shapes");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let content = penumbra_project::parse(
         r#"(
@@ -442,7 +427,7 @@ fn draw_move_repeat_and_delete_shapes_in_the_viewer() {
         &types,
     )
     .unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"method": "ui.select", "params": {"paths": ["/s"]}}),
@@ -468,7 +453,7 @@ fn draw_move_repeat_and_delete_shapes_in_the_viewer() {
         json!({"method": "ui.drag", "params": {"from": {"id": "viewer.spacing"}, "to": {"id": "viewer.shape.0"}, "steps": 4}}),
         json!({"wait": 0.5}),
         json!({"method": "node.info", "params": {"path": "/s"}}),
-        json!({"method": "ui.screenshot", "params": {"file": dir.0.join("shapes.png").to_string_lossy()}}),
+        json!({"method": "ui.screenshot", "params": {"file": dir.path().join("shapes.png").to_string_lossy()}}),
         // Delete the first window with the key, the pointer over the picture.
         json!({"method": "ui.click", "params": {"id": "viewer.shape.0"}}),
         json!({"method": "ui.key", "params": {"key": "Delete"}}),
@@ -510,11 +495,10 @@ fn draw_move_repeat_and_delete_shapes_in_the_viewer() {
 
 #[test]
 fn any_node_opens_in_the_viewer_window() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-window-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-window");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let content = penumbra_project::parse(PROJECT, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"method": "ui.select", "params": {"paths": ["/noise1"]}}),
@@ -545,11 +529,10 @@ fn viewer_aspect(replies: &[(String, Json)], nth: usize) -> f32 {
 
 #[test]
 fn the_viewer_follows_the_column_until_its_edge_is_dragged() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-viewer-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-viewer");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let content = penumbra_project::parse(PROJECT, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let elements = json!({"method": "ui.elements", "params": {"prefix": "viewer"}});
     let script = [
@@ -606,7 +589,7 @@ fn the_viewer_follows_the_column_until_its_edge_is_dragged() {
     let low = viewer_aspect(&replies, 3);
     assert!(low > 2.0, "in a low window the viewer is flatter, the parameters keep room: {low}");
     engine.shutdown();
-    let layout = std::fs::read_to_string(dir.0.join(crate::layout::FILE_NAME)).unwrap();
+    let layout = std::fs::read_to_string(dir.path().join(crate::layout::FILE_NAME)).unwrap();
     assert!(!layout.contains("viewer_aspect: Some"), "back to automatic: {layout}");
 }
 
@@ -634,8 +617,7 @@ fn backward_wires_go_around_nodes() {
 
 #[test]
 fn optimize_resolutions_from_the_helpers_window() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-res-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-res");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let project = r#"(
         version: 1,
@@ -646,7 +628,7 @@ fn optimize_resolutions_from_the_helpers_window() {
         },
     )"#;
     let content = penumbra_project::parse(project, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"wait": 1.0}),
@@ -683,13 +665,12 @@ fn optimize_resolutions_from_the_helpers_window() {
 
 #[test]
 fn group_enter_and_dissolve_in_the_editor() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-comp-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-comp");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let content = penumbra_project::parse(PROJECT, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
-    engine.set_library(Some(dir.0.join("library")));
+    engine.set_library(Some(dir.path().join("library")));
     let script = [
         json!({"wait": 1.0}),
         json!({"method": "ui.state", "params": {"positions": true}}),
@@ -735,11 +716,10 @@ fn group_enter_and_dissolve_in_the_editor() {
 
 #[test]
 fn copy_and_paste_with_the_keyboard() {
-    let dir = TempDir(std::env::temp_dir().join(format!("penumbra-ui-paste-{}", std::process::id())));
-    let _ = std::fs::remove_dir_all(&dir.0);
+    let dir = ScratchDir::unborn("ui-paste");
     let types = Arc::new(penumbra_ops::builtin_types().unwrap());
     let content = penumbra_project::parse(PROJECT, &types).unwrap();
-    let session = Arc::new(Session::open(&dir.0, types, &content).unwrap());
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
     let engine = Engine::start(session).unwrap();
     let script = [
         json!({"wait": 1.0}),

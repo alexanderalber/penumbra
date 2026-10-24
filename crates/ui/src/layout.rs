@@ -987,9 +987,7 @@ mod tests {
 
     #[test]
     fn view_state_survives_a_round_trip_through_the_file() {
-        let dir = std::env::temp_dir().join(format!("penumbra-layout-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = penumbra_core::scratch::ScratchDir::new("layout").unwrap();
         let now = Instant::now();
         let mut layout = Layout::load(Some(&dir));
         let options = EditorOptions {
@@ -1044,6 +1042,5 @@ mod tests {
         std::fs::write(dir.join(FILE_NAME), "garbage").unwrap();
         let broken = Layout::load(Some(&dir));
         assert_eq!(broken.options, EditorOptions::default());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

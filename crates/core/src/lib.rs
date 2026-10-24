@@ -9,6 +9,7 @@ pub mod error;
 pub mod id;
 pub mod param;
 pub mod path;
+pub mod scratch;
 pub mod sync;
 pub mod table;
 pub mod time;

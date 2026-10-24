@@ -254,7 +254,6 @@ fn nan_and_infinity_in_the_inputs_do_not_poison_the_fluid() {
     assert!(all_finite(&dye) && all_finite(&velocity));
     // The clean pixels still pour dye in.
     assert!(mass(&dye).0 > 0.0);
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -351,7 +350,6 @@ fn the_fluid_flows_around_obstacles() {
         .sum();
     assert!(sum > 10.0, "{sum}");
     assert!(beyond < sum * 0.01, "{beyond} of {sum} got through the wall");
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]

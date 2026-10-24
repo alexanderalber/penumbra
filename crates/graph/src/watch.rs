@@ -158,8 +158,7 @@ mod tests {
 
     #[test]
     fn a_change_reports_the_node_until_the_handle_is_dropped() {
-        let dir = std::env::temp_dir().join(format!("penumbra-watch-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = penumbra_core::scratch::ScratchDir::new("watch").unwrap();
         let file = dir.join("a.txt");
         std::fs::write(&file, "one").unwrap();
         let (tx, rx) = mpsc::channel();
@@ -175,6 +174,5 @@ mod tests {
         std::fs::write(&file, "three, longer still").unwrap();
         assert!(rx.recv_timeout(WATCH_INTERVAL * 3).is_err());
         drop(watcher);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

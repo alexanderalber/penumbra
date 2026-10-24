@@ -385,8 +385,7 @@ mod tests {
         assert!(f.warning().unwrap().contains("declares no param `nope`"));
 
         // Time, tables, a file with hot reload.
-        let dir = std::env::temp_dir().join(format!("penumbra-script-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = penumbra_core::scratch::ScratchDir::new("script").unwrap();
         let file = dir.join("logic.py");
         std::fs::write(&file, "def cook(cx):\n    cx.out['f'] = cx.frame\n    cx.table.append(['a', 1])\n")
             .unwrap();
@@ -436,6 +435,5 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         assert!(f.warning().unwrap().contains("running the last version"));
-        std::fs::remove_dir_all(&dir).ok();
     }
 }
