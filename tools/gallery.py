@@ -4,7 +4,13 @@
 - assets/arrange.png: the projection-room example as first placed and after one arrange;
 - assets/gallery/*.jpg: the output pictures of the showcase projects, 1280 pixels wide;
 - assets/gallery/audio-meters.gif: four seconds of the audio analysis' meters, fed by a
-  Python script node that plays a 124 BPM pattern.
+  Python script node that plays a 124 BPM pattern;
+- assets/gallery/relief.jpg: the projection-onto-objects example's camera photo of the relief
+  beside the picture penumbra lights it with;
+- assets/gallery/scan.jpg: a made-up crate landscape (scan.synthetic) as the camera sees it and
+  the regions scan.scene and scan.regions find in it;
+- assets/gallery/library.jpg: six of the content library's previews;
+- assets/gallery/palettes.png: the built-in palettes and colormaps.
 
 Run it with no arguments for every picture, or name some:
 `python tools/gallery.py window arrange curl-noise`. It needs Python 3.12 or later with Pillow
@@ -39,6 +45,10 @@ SHOWCASE = [
     ("demo", None, "/show", 45),
     ("curl-noise", EXAMPLES / "curl-noise", "/out", 45),
     ("projection-room", EXAMPLES / "projection-room", "/view", 10),
+    # 70 s: the sky's palette has turned from warm to cold by then.
+    ("synthwave", EXAMPLES / "synthwave", "/out", 70),
+    ("fluid", EXAMPLES / "fluid", "/view", 25),
+    ("feedback", EXAMPLES / "feedback", "/show", 20),
 ]
 
 # The window shot: project, window size in points, node in the viewer, node selected (its params
@@ -49,6 +59,15 @@ WINDOW = (EXAMPLES / "curl-noise", "1760x960", "/out", "/vel", 45)
 # editor places nodes that come without one, and the window size it is shot at.
 ARRANGE = (EXAMPLES / "projection-room", "1800x1500")
 ARRANGE_LABELS = ("before: as the nodes were first placed", "after: one press of L")
+
+# The relief picture: the example, the node shot, seconds of show time, and the part of the
+# camera photo that holds the relief (left, top, right, bottom in the photo's pixels).
+RELIEF = (EXAMPLES / "projection-onto-objects", "/view", 20, (500, 0, 920, 480))
+
+# The library montage: the components shown, in reading order, and the columns.
+LIBRARY = ROOT / "library"
+LIBRARY_PICKS = ["scan_labels", "breathe", "edges", "lantern", "candle", "water"]
+LIBRARY_COLUMNS = 3
 
 # The meters animation: size, frames, frames per second, seconds before the first frame (for
 # the tempo to lock on).
@@ -112,9 +131,9 @@ def call(method: str, **params) -> dict:
 
 
 def run(steps: list[dict], work: Path, name: str, project: Path | None = None, size: str | None = None,
-        keep_places: bool = True) -> None:
+        keep_places: bool = True) -> str:
     """Runs the app headless on a script; `project` is copied into `work` first, without its
-    node positions and editor layout unless `keep_places`."""
+    node positions and editor layout unless `keep_places`. Returns the run's replies."""
     script = work / f"{name}.jsonl"
     script.write_text("\n".join(json.dumps(s) for s in steps) + "\n", encoding="utf-8")
     command = [str(EXE), "--headless", str(script)]
@@ -134,6 +153,7 @@ def run(steps: list[dict], work: Path, name: str, project: Path | None = None, s
     failed = [line for line in log.stdout.splitlines() if '"ok":false' in line.replace(" ", "")]
     if failed or log.returncode != 0:
         raise RuntimeError(f"{name}: the run failed\n" + "\n".join(failed) + f"\n{log.stderr}")
+    return log.stdout
 
 
 def on_black(png: Path) -> Image.Image:
@@ -244,9 +264,109 @@ def meters(work: Path) -> None:
     print("audio-meters: assets/gallery/audio-meters.gif")
 
 
+def label_font(size: int) -> ImageFont.FreeTypeFont:
+    try:
+        return ImageFont.truetype("segoeui.ttf", size)
+    except OSError:
+        return ImageFont.load_default(size)
+
+
+def labelled_row(images: list[Image.Image], labels: list[str], height: int) -> Image.Image:
+    """Pictures side by side at one height, each with a label above, on the editor's grey."""
+    font = label_font(26)
+    scaled = [image.resize((round(image.width * height / image.height), height), Image.Resampling.LANCZOS)
+              for image in images]
+    label, gap = 48, 24
+    sheet = Image.new("RGB", (sum(s.width for s in scaled) + gap * (len(scaled) + 1), height + label + gap),
+                      (27, 27, 27))
+    draw = ImageDraw.Draw(sheet)
+    x = gap
+    for image, text in zip(scaled, labels):
+        draw.text((x, 8), text, fill=(200, 200, 200), font=font)
+        sheet.paste(image, (x, label))
+        x += image.width + gap
+    return sheet
+
+
+def save_jpg(image: Image.Image, jpg: Path) -> None:
+    height = round(image.height * WIDTH / image.width)
+    image.resize((WIDTH, height), Image.Resampling.LANCZOS).save(jpg, quality=JPG_QUALITY)
+
+
+def relief(work: Path) -> None:
+    project, node, wait, box = RELIEF
+    picture = work / "relief.png"
+    run([call("ui.view", path=node), {"wait": wait}, call("node.snapshot", path=node, file=picture.as_posix())],
+        work, "relief", project)
+    lit = on_black(picture)
+    lit = lit.crop(lit.getbbox() or (0, 0, lit.width, lit.height))
+    photo = Image.open(project / "camera" / "photo_0.jpg").convert("RGB").crop(box)
+    sheet = labelled_row([photo, lit], ["the relief, as the camera saw it", "what penumbra lights it with"], 720)
+    save_jpg(sheet, OUT / "relief.jpg")
+    print("relief: assets/gallery/relief.jpg")
+
+
+def scan(work: Path) -> None:
+    synthetic, scene = work / "synthetic", work / "scene"
+    run([
+        call("project.new", dir=(work / "project").as_posix()),
+        call("scan.synthetic", out=synthetic.as_posix()),
+        call("scan.scene", scans=[(synthetic / "a").as_posix(), (synthetic / "b").as_posix()], out=scene.as_posix()),
+        call("scan.regions", scene=scene.as_posix()),
+    ], work, "scan")
+    images = [Image.open(synthetic / "a" / "photo.png").convert("RGB"),
+              Image.open(scene / "regions_view.png").convert("RGB")]
+    sheet = labelled_row(images, ["the camera's picture", "the regions found, the floor switched off"], 540)
+    save_jpg(sheet, OUT / "scan.jpg")
+    print("scan: assets/gallery/scan.jpg")
+
+
+def library(work: Path) -> None:
+    font = label_font(26)
+    images = [Image.open(LIBRARY / name / "preview.png").convert("RGB") for name in LIBRARY_PICKS]
+    width, height = images[0].size
+    label, gap = 44, 16
+    rows = -(-len(images) // LIBRARY_COLUMNS)
+    sheet = Image.new("RGB", (LIBRARY_COLUMNS * (width + gap) + gap, rows * (height + label + gap) + gap),
+                      (27, 27, 27))
+    draw = ImageDraw.Draw(sheet)
+    for i, (image, name) in enumerate(zip(images, LIBRARY_PICKS)):
+        x = gap + (i % LIBRARY_COLUMNS) * (width + gap)
+        y = gap + (i // LIBRARY_COLUMNS) * (height + label + gap)
+        draw.text((x, y + 4), name, fill=(200, 200, 200), font=font)
+        sheet.paste(image.resize((width, height)), (x, y + label))
+    save_jpg(sheet, OUT / "library.jpg")
+    print("library: assets/gallery/library.jpg")
+
+
+def palettes(work: Path) -> None:
+    replies = run([call("palette.list")], work, "palettes")
+    line = next(line for line in replies.splitlines() if line.startswith("palette.list:"))
+    entries = json.loads(line.split(":", 1)[1])["result"]["palettes"]
+    font = label_font(22)
+    name_width, band, row, gap, columns = 130, 560, 30, 6, 2
+    rows = -(-len(entries) // columns)
+    sheet = Image.new("RGB", (columns * (name_width + band + 2 * gap) + gap, rows * (row + gap) + gap),
+                      (27, 27, 27))
+    draw = ImageDraw.Draw(sheet)
+    for i, entry in enumerate(entries):
+        x = gap + (i // rows) * (name_width + band + 2 * gap)
+        y = gap + (i % rows) * (row + gap)
+        draw.text((x, y + 2), entry["name"], fill=(200, 200, 200), font=font)
+        colours = [tuple(int(h.lstrip("#")[k:k + 2], 16) for k in (0, 2, 4)) for h in entry["colours"]]
+        strip = Image.new("RGB", (len(colours), 1))
+        strip.putdata(colours)
+        # Palettes as bands, colormaps blended.
+        method = Image.Resampling.NEAREST if entry["kind"] == "palette" else Image.Resampling.BILINEAR
+        sheet.paste(strip.resize((band, row), method), (x + name_width, y))
+    sheet.save(OUT / "palettes.png", optimize=True)
+    print("palettes: assets/gallery/palettes.png")
+
+
 def main() -> int:
     jobs = {entry[0]: (lambda work, entry=entry: showcase(*entry, work)) for entry in SHOWCASE}
-    jobs.update({"window": window, "arrange": arrange, "audio-meters": meters})
+    jobs.update({"window": window, "arrange": arrange, "audio-meters": meters, "relief": relief, "scan": scan,
+                 "library": library, "palettes": palettes})
     wanted = sys.argv[1:] or list(jobs)
     unknown = [name for name in wanted if name not in jobs]
     if unknown:

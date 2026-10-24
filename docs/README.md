@@ -1,7 +1,8 @@
 # penumbra documentation
 
 A short user guide. The UI stays sparse on purpose; what it does not explain on screen is
-explained here.
+explained here. All of it, with every node and command, is also one page to search and read
+offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
 
 - [Getting started](getting-started.md): running the app, the window, building a first network.
 - [Concepts](concepts.md): data kinds and node families, params and bindings, components,

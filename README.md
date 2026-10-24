@@ -5,17 +5,27 @@ by sound, DMX or OSC. It is written in Rust on egui and wgpu. It covers part of 
 TouchDesigner is used for. It is not compatible with TouchDesigner: no `.toe`/`.tox` files, no
 TouchDesigner Python API, its own node names.
 
-Every action in the app is also a command on a local JSON control channel. A script, or Claude
-Code, can build, change, run and photograph a network without anyone clicking.
+- **Projection onto real objects from one camera scan.** Each projector shows a sequence of
+  stripe patterns to a camera. From those, penumbra finds the faces and objects in front of it,
+  lines the projectors up and blends them, and puts content on each surface
+  ([below](#projection-onto-objects)).
+- **Live.** Pictures, 3D, sound, camera, DMX and OSC in one network that keeps running while
+  it is edited. Beat tracking from the sound alone, blob tracking from a camera.
+- **Everything is a command.** Every action in the app is also a command on a local JSON
+  control channel. A script, or Claude Code, can build, change, run and photograph a network
+  without anyone clicking.
+- **Plain files.** A project is a folder of text files that can be diffed and edited by hand.
+- **Free and open source** (MIT or Apache-2.0).
 
 ![The penumbra window: the curl-noise example's network on the left, the selected shader's parameters and the rendered output on the right](assets/screenshot.png)
 
-**Status:** personal project, work in progress, version 0.2. Windows 10 and 11 only so far;
-Linux is planned but untested, macOS is not planned.
+**Status:** work in progress, used for its author's installations. The current version is on
+the [releases page](https://github.com/alexanderalber/penumbra/releases/latest). Windows 10
+and 11 only so far; Linux is planned but untested, macOS is not planned.
 
 ## Features
 
-About 100 node types in seven data kinds: `tex` pictures, `chan` channels of numbers, `table`
+About 110 node types in seven data kinds: `tex` pictures, `chan` channels of numbers, `table`
 text tables, `geo`, `mat`, `light` and `view` for 3D. The [node reference](docs/reference/nodes.md)
 lists every one.
 
@@ -24,38 +34,52 @@ lists every one.
   Also feedback loops, a per-pixel time machine, a frame cache, a 2D fluid pushed by motion or
   blobs, and a shader node in WGSL. The shader node reads its params from the shader file and
   reloads on save.
+- **Palettes and colormaps** as a kind of param: pick a set of colours by name, paste hex
+  colours or a coolors or colorhunt link, or let a channel switch between them
+  ([below](#palettes)).
 - **3D:** meshes from OBJ, STL and glTF, primitives, instancing from a table or from a texture
   (tens of thousands of instances on the GPU). Phong, PBR, wireframe and occluder materials.
   Ambient, directional, point, spot and environment lights, shadows, transparency, ambient
-  occlusion. Perspective, orthographic and calibrated cameras.
-- **Projection mapping:** one output per display or per part of a display (for 4K splitters),
-  corner pin, mesh warp, soft-edge blending between projectors, a test pattern per projector,
-  drawn masks. Content per drawn shape: pulses, chases along outlines, ripples, each shape with
+  occlusion. Perspective, orthographic and calibrated cameras. A projector light throws a
+  picture onto a 3D model of the room, to try a mapping before going on site.
+- **Projectors:** one output per display or per part of a display (for 4K splitters), found
+  again after a replug by model and serial number (or connector). Corner pin, mesh warp,
+  soft-edge blending, drawn masks. Test patterns on every projector at once: alignment, focus,
+  motion (frame drops and stutter) and full fields (dead pixels). Projectors of different
+  models matched in colour and brightness from camera measurements, and evened out across each
+  picture (`projector.match`, `projector.flatfield`).
+- **Scanned objects:** structured light ([scanning](docs/scanning.md)). `scan.capture` scans
+  the projectors with a live camera, `scan.align` lines them up side by side or stacked,
+  `scan.blend` blends them. `scan.relief` turns a relief panel into height maps. `scan.scene`
+  finds the flat faces and the objects of a scene (crates, a floor, a pumpkin) and
+  `scan.regions` groups the faces into one region per crate front, side or lid, editable by
+  clicking in the viewer. A [content library](library/README.md) of 15 effects fits any scanned
+  scene. Projector and camera calibration (DLT, Levenberg-Marquardt) exists as commands; the
+  interactive calibration UI does not exist yet.
+- **Shapes:** content per drawn shape: pulses, chases along outlines, ripples, each shape with
   its own colour and phase. Shapes can be traced from any mask or label picture (a
-  background-removed photo, a threshold), then simplified and edited by hand. Structured light
-  ([scanning](docs/scanning.md)): `scan.capture` scans the projectors with a live camera (or
-  `scan.decode` from photos of `tex.scan_pattern`'s Gray-code stripes) into maps for
-  `tex.remap`, plus a picture of the scene as the projector sees it, for drawing masks in
-  projector pixels. `scan.align` lines projectors up side by side or stacked. A projector light throws a
-  picture onto a 3D model of the room, to try a mapping before going on site. Projector and
-  camera calibration (DLT, Levenberg-Marquardt) exists as commands; the interactive calibration
-  UI does not exist yet.
+  background-removed photo, a threshold, a scan's regions), then simplified and edited by hand.
 - **Camera:** live input from webcams and capture cards, denoising, optical flow, blob tracking
   with ids that stay with a blob.
 - **Sound:** input from any audio device, levels, bands, onsets, a spectrum and a beat tracker
   (see [below](#beat-tracking)).
-- **Channels:** LFO, noise, math, filter, speed, trail, merge, select. Any parameter can be
-  bound to a channel by dragging a wire onto it. OSC addresses can be learned.
+- **Channels:** LFO, noise, math, filter, speed, trail, merge, select. Mouse, keyboard and 3D
+  mouse as inputs. Any parameter can be bound to a channel by dragging a wire onto it. OSC
+  addresses can be learned.
+- **Shows:** a show as a list of steps (`chan.sequence`): which piece, how long, which
+  transition. `tex.sequence` blends between the pieces and cooks only what is shown; a
+  `chan.clock` per piece starts it from its beginning.
 - **Python:** a script node (CPython 3.12 or later). It turns channels and tables into channels
   and a table, and keeps its state between frames.
 - **Components:** networks inside a node, with chosen params exposed, kept in a library.
 - **Editor:** automatic layout ([below](#arranging-a-network)), undo with a change log, copy
-  and paste, replacing a node by another kind with its wires kept.
+  and paste, replacing a node by another kind with its wires kept. A `?` on every node opens
+  its help in a [single-page manual](docs/penumbra.html).
 - **For running a show:** a failing node shows an error and the rest keeps running (no panics
-  by design). Feedback loops and caches survive a restart. The app checks for Windows settings
-  that interfere with a show (Game Bar, notification banners), fixes them and restores them
-  afterwards. A cook-time meter shows GPU load, memory and temperature. The app recovers after
-  the GPU device is lost.
+  by design). Feedback loops and caches survive a restart. Nodes that sit idle give their video
+  memory back. The app checks for Windows settings that interfere with a show (Game Bar,
+  notification banners), fixes them and restores them afterwards. A cook-time meter shows GPU
+  load, memory and temperature. The app recovers after the GPU device is lost.
 - **Automation:** headless runs execute a script of commands and save pictures of any node or
   of the whole window. Every picture in this README was made that way
   (`python tools/gallery.py`).
@@ -78,7 +102,8 @@ lists every one.
 | sACN (E1.31) | yes | yes | `chan.dmx_in`, `out.dmx` | |
 | DDP | | yes | `out.dmx` | pixel controllers such as WLED |
 | OSC | yes | yes | `chan.osc_in`, `chan.osc_out` | UDP; learn binds a param to the next address that arrives |
-| 3D mouse | yes | | | 3Dconnexion SpaceNavigator for the 3D viewer, without the vendor driver |
+| Mouse, keyboard | yes | | `chan.mouse_in`, `chan.keyboard_in` | the pointer anywhere on the desktop; keys while a penumbra window has the focus |
+| 3D mouse | yes | | `chan.spacemouse_in` | 3Dconnexion SpaceNavigator, also steers the 3D viewer; without the vendor driver |
 | Control channel | yes | yes | | JSON lines over TCP on localhost, every command of the app |
 | MIDI | | | | not built |
 | Depth cameras | | | | not built (no Kinect, RealSense, ZED) |
@@ -95,7 +120,8 @@ Not in penumbra, as of now:
 - Depth cameras and other tracking hardware (Kinect, RealSense, ZED, Leap Motion).
 - Python expressions on parameters. Parameters are driven by binding them to channels. Python
   runs only in script nodes.
-- Custom control panels (TouchDesigner's Panel COMPs), a timeline and keyframe animation.
+- Custom control panels (TouchDesigner's Panel COMPs), keyframe animation and a timeline. A
+  show runs as a list of steps instead (`chan.sequence`).
 - Geometry modelling beyond primitives, transforms, merging and instancing. Particle systems
   and physics have no dedicated nodes; both can be done in shaders, as in the curl-noise
   example.
@@ -109,26 +135,73 @@ Different by design:
   the app reloads it when it changes on disk.
 - Everything is reachable over the control channel, including clicks, screenshots and the
   layout of the editor.
+- Projection onto objects from a camera scan is built in, down to the content.
 - Free and open source (MIT or Apache-2.0), no licence tiers or resolution limits.
+
+## Projection onto objects
+
+A camera films each projector's stripe patterns. From those pictures penumbra learns which
+camera pixel each projector pixel lands on. Content is then drawn once, in the camera's
+picture, and every projector takes its share of it. During the show that costs one lookup and
+one multiply per projector.
+
+A relief panel needs one scan per projector. `scan.relief` turns it into a height map and a
+blend weight for each projector. The [projection-onto-objects](examples/projection-onto-objects/README.md)
+example lights a 3D-printed mountain range this way, from a real scan that ships with it:
+
+![Left: a grey relief of a mountain range as the camera saw it. Right: the same relief in land colours by height, with contour lines, a lake and snow](assets/gallery/relief.jpg)
+
+A scene of boxes and things on them works the same way. `scan.scene` finds every flat face and
+every object, with straight borders where the faces have them. `scan.regions` groups the faces
+into regions, one per crate front, side or lid, and switches the floor off. Here on a made-up
+scene that `scan.synthetic` ray casts, for trying the chain without projectors:
+
+![Left: crates and a pumpkin as the camera sees them. Right: the same scene, each crate face a coloured region, the pumpkin an object, the floor striped grey](assets/gallery/scan.jpg)
+
+The [content library](library/README.md) has effects that fit any scanned scene: colours per
+region, outlines, light from inside an object, a carved face, water. Its previews show a real
+scan of a few crates with a pumpkin:
+
+![Six effects on the same scanned crates: colours per face, palette colours, glowing outlines, a carved pumpkin face, candle light around the pumpkin, water in a crate](assets/gallery/library.jpg)
+
+The whole chain is in [Scanning](docs/scanning.md). The repository also holds a
+[Claude Code skill](.claude/skills/projection-mapping/SKILL.md) that walks a session through
+it: check the hardware, scan, find the faces, blend, put content on and look at the result.
 
 ## Gallery
 
 Each picture comes from a project that ships with penumbra.
 
 The curl-noise example: 65 536 sticks moved through a curl-noise flow field, simulated in
-shaders and drawn instanced ([example](examples/curl-noise/README.md)). Its network is the one
-in the window above.
+shaders and drawn instanced, coloured through the `magma` colormap
+([example](examples/curl-noise/README.md)). Its network is the one in the window above.
 
-![The curl-noise example: red sticks swirling in a flow field](assets/gallery/curl-noise.jpg)
+![The curl-noise example: sticks in purple, pink and pale yellow swirling in a flow field](assets/gallery/curl-noise.jpg)
 
-The demo the app opens on its first start: a reaction-diffusion growing around a title.
+The [synthwave](examples/synthwave/README.md) example: a flight over a wireframe city between
+two grids, through a nebula. Everything is made in the network: no pictures, no meshes from
+files.
 
-![The demo: reaction-diffusion stripes and spots around the title](assets/gallery/demo.jpg)
+![The synthwave example: white wireframe blocks and grids in front of a purple and blue nebula](assets/gallery/synthwave.jpg)
 
 The [projection-room](examples/projection-room/README.md) example: a 3D room lit by a projector,
 two spot lights and an environment light, with a stained-glass panel, a cube and a chrome ball.
 
-![The projection-room example: a room with a stained-glass panel, a cube and a chrome ball](assets/gallery/projection-room.jpg)
+![The projection-room example: a room with the projected title on the back wall, a stained-glass panel, a cube and a chrome ball](assets/gallery/projection-room.jpg)
+
+The [fluid](examples/fluid/README.md) example: a 2D fluid pushed by optical flow and tracked
+blobs, here from wandering spots that stand in for a camera.
+
+![The fluid example: pink, yellow and cyan dye swirling over black](assets/gallery/fluid.jpg)
+
+The [feedback](examples/feedback/README.md) example: each frame fed back into the next, zoomed,
+turned, dimmed and shifted in hue.
+
+![The feedback example: a rainbow ribbon trailing behind the word penumbra](assets/gallery/feedback.jpg)
+
+The demo the app opens on its first start: a reaction-diffusion growing around a title.
+
+![The demo: reaction-diffusion stripes and spots around the title](assets/gallery/demo.jpg)
 
 ## Beat tracking
 
@@ -147,6 +220,15 @@ projected or laid over the show:
 
 Here a Python script node plays a 124 BPM pattern into the analysis. The method is described
 in [Audio](docs/audio.md).
+
+## Palettes
+
+A palette param names a set of colours. `tex.ramp`, `tex.lookup`, shaders and several library
+effects take one, so a look is tried by switching a name. These are built in; a project adds
+its own in `palettes.txt`, as hex colours or a coolors or colorhunt link. Bound to a channel,
+the param picks a palette by its place in the list. See [Concepts](docs/concepts.md#palettes).
+
+![The built-in palettes as colour bands (sea, blood, candy, pumpkin, ember, neon, pastel, forest, primaries, mono) and the colormaps as gradients (grey, fire, ice, viridis, magma, inferno, plasma, cividis, twilight)](assets/gallery/palettes.png)
 
 ## Arranging a network
 
@@ -167,7 +249,8 @@ You need Windows 10 or 11 (64-bit) and a graphics card with DirectX 12 or Vulkan
    later starts open the project you had open last.
 
 The program is not signed. Windows may show "Windows protected your PC": click "More info",
-then "Run anyway". The zip also holds the [examples](examples/README.md) and the documentation.
+then "Run anyway". The zip also holds the [examples](examples/README.md), the content library
+and the documentation.
 
 ## Building from source
 
@@ -182,6 +265,8 @@ project.
 
 The [documentation](docs/README.md) starts with [getting started](docs/getting-started.md) and
 has a reference of every [node](docs/reference/nodes.md) and [command](docs/reference/commands.md).
+All of it is also one page, [docs/penumbra.html](docs/penumbra.html), which the `?` on every node
+opens.
 
 ## Acknowledgements
 
