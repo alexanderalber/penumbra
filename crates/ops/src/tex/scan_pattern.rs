@@ -5,14 +5,19 @@
 use penumbra_core::ParamSpec;
 use penumbra_graph::NodeDesc;
 
-use super::{Builtin, Size, same, sized};
+use super::{Builtin, Size, same, sized_keeping};
 
 pub(super) fn builtin() -> Builtin {
     Builtin {
-        desc: sized(NodeDesc::new(
-            "tex.scan_pattern",
-            "The striped pictures of a structured light scan (Gray code), one per `pattern`: for scanning with another camera by hand",
-        ))
+        // keep_size on: the stripes must match the projector pixel for pixel, so res.optimize
+        // must not resize them.
+        desc: sized_keeping(
+            NodeDesc::new(
+                "tex.scan_pattern",
+                "The striped pictures of a structured light scan (Gray code), one per `pattern`: for scanning with another camera by hand",
+            ),
+            true,
+        )
         .param(
             ParamSpec::int("pattern", 0)
                 .clamp(0.0, 1000.0)
@@ -30,5 +35,19 @@ pub(super) fn builtin() -> Builtin {
         animated: None,
         density: same,
         fold: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use penumbra_core::Value;
+
+    #[test]
+    fn a_scan_pattern_keeps_its_size() {
+        let b = super::builtin();
+        let keep = b.desc.param_spec(super::super::KEEP_SIZE).map(|p| p.default.clone());
+        assert_eq!(keep, Some(Value::Bool(true)));
+        let width = b.desc.param_spec("width").map(|p| p.default.clone());
+        assert!(width.is_some());
     }
 }

@@ -755,6 +755,7 @@ fn projector_report(
         }
     }
     o.insert("path".into(), json!(path));
+    o.insert("notes".into(), json!(decoded.notes));
     o.insert("folder".into(), json!(folder.display().to_string()));
     o.insert(
         "latency_ms".into(),

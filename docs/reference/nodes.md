@@ -755,7 +755,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
+| `keep_size` *(more)* | bool | `true` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
 | `pattern` | int | `0` | 0 to 45 (soft) | Which picture: 0 white, 1 black, then each column bit (coarsest first) followed by its inverse, then the row bits the same way. Past the last: black. scan.patterns lists them |
 | `level` *(more)* | float | `1` | 0 to 1 (soft) | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
 

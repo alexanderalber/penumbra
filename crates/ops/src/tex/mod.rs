@@ -421,7 +421,16 @@ fn transform_density(def: &NodeDef, desc: &NodeDesc, _: usize, sizes: Option<Siz
 
 /// Adds `width`, `height` and [`keep_size`].
 fn sized(desc: NodeDesc) -> NodeDesc {
-    desc.param(width_param()).param(height_param()).param(keep_size()).output("out", DataKind::Tex)
+    sized_keeping(desc, false)
+}
+
+/// [`sized`] with `keep_size` on or off by default: on for a picture whose size must stay the
+/// one set, such as a scan pattern that has to match its projector pixel for pixel.
+fn sized_keeping(desc: NodeDesc, keep: bool) -> NodeDesc {
+    desc.param(width_param())
+        .param(height_param())
+        .param(keep_size_default(keep))
+        .output("out", DataKind::Tex)
 }
 
 /// The `width` of a node that makes a picture of its own size.
@@ -443,7 +452,11 @@ fn height_param() -> ParamSpec {
 pub const KEEP_SIZE: &str = "keep_size";
 
 fn keep_size() -> ParamSpec {
-    ParamSpec::bool(KEEP_SIZE, false).more().doc(
+    keep_size_default(false)
+}
+
+fn keep_size_default(on: bool) -> ParamSpec {
+    ParamSpec::bool(KEEP_SIZE, on).more().doc(
         "res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look",
     )
 }

@@ -97,8 +97,10 @@ The results go into `out` (default `scan/`), one folder per projector named by i
 
 The reply has per projector the camera pixels decoded, the projector pixels measured, the bits
 the camera resolves (`resolved_bits` of `bits`), the median margin of every bit's pattern
-against its inverse, the latency, the frames that had to be taken again, the times and the
-warnings. `level` (1) lowers the lit stripes if the camera clips even with its exposure down;
+against its inverse, the latency, the frames that had to be taken again, the times, the
+warnings and the notes. A camera that misses only the finest one or two bits gets a note, not a
+warning: the map is then a projector pixel or a few coarse, usual when the camera sees the scene
+coarser than the projector; more bits missing is a warning. `level` (1) lowers the lit stripes if the camera clips even with its exposure down;
 `fill` and `options` are those of `scan.decode`.
 
 Which bits a camera pixel resolves is judged around it (`options.window`, 7: a square of 15

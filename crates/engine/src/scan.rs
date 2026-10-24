@@ -182,6 +182,7 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
     let mut reply = decoded.fields.clone();
     reply.insert("message".into(), json!(decoded.message()));
     reply.insert("warnings".into(), json!(decoded.warnings));
+    reply.insert("notes".into(), json!(decoded.notes));
     reply.insert(
         "next".into(),
         json!(format!(
@@ -244,6 +245,8 @@ pub(crate) struct Decoded {
     pub measured: usize,
     pub filled: usize,
     pub warnings: Vec<String>,
+    /// What is worth knowing but not wrong (the finest bits missing).
+    pub notes: Vec<String>,
     /// How long decoding and writing took.
     pub decode: Duration,
     pub write: Duration,
@@ -258,8 +261,13 @@ impl Decoded {
     }
 }
 
-/// What a decode's counts warn of: few camera pixels decoded (`valid` of `total`), bits the
-/// camera does not resolve, much of the picture clipped.
+/// How many of the finest bits per axis a camera may miss before a decode warns: losing one or
+/// two only makes the map a projector pixel or three coarse, which is normal for a camera whose
+/// pixels are larger than the projector's on the scene.
+const BITS_MISSING_NOTED: u32 = 2;
+
+/// What a decode's counts warn of: few camera pixels decoded (`valid` of `total`), more than
+/// [`BITS_MISSING_NOTED`] bits the camera does not resolve, much of the picture clipped.
 fn decode_warnings(
     valid: usize,
     total: usize,
@@ -273,9 +281,9 @@ fn decode_warnings(
             "only {valid} of {total} camera pixels decoded: is the projector in view, the room dark and the order right?"
         ));
     }
-    if resolved != bits {
+    if bits_missing(bits, resolved) > BITS_MISSING_NOTED {
         warnings.push(format!(
-            "the camera resolves {} of {} column and {} of {} row bits: the map is a few projector pixels coarse",
+            "the camera resolves {} of {} column and {} of {} row bits: the map is several projector pixels coarse; move the camera closer or use a longer lens",
             resolved[0], bits[0], resolved[1], bits[1]
         ));
     }
@@ -284,6 +292,23 @@ fn decode_warnings(
             .push("more than 1 % of the camera picture clipped in white: lower the camera's exposure".into());
     }
     warnings
+}
+
+/// The most bits missing on either axis.
+fn bits_missing(bits: [u32; 2], resolved: [u32; 2]) -> u32 {
+    bits.iter().zip(resolved).map(|(b, r)| b.saturating_sub(r)).max().unwrap_or(0)
+}
+
+/// What a decode notes without warning: the camera misses only the finest one or two bits.
+fn decode_notes(bits: [u32; 2], resolved: [u32; 2]) -> Vec<String> {
+    let missing = bits_missing(bits, resolved);
+    if missing == 0 || missing > BITS_MISSING_NOTED {
+        return Vec::new();
+    }
+    vec![format!(
+        "the camera resolves {} of {} column and {} of {} row bits: the map is a projector pixel or a few coarse, usual when the camera sees the scene coarser than the projector",
+        resolved[0], bits[0], resolved[1], bits[1]
+    )]
 }
 
 /// Decodes what `decoders` collected (scans of one projector at different levels of light,
@@ -336,6 +361,7 @@ pub(crate) fn write_decoded(
     let total = result.status.len().max(1);
     let valid = stats.count(Status::Valid);
     let warnings = decode_warnings(valid, total, stats.count(Status::Clipped), stats.bits, stats.resolved);
+    let notes = decode_notes(stats.bits, stats.resolved);
     let counts: serde_json::Map<String, Json> =
         Status::ALL.iter().map(|s| (s.name().to_string(), json!(stats.count(*s)))).collect();
     let [measured, filled, empty] = inverse.counts();
@@ -356,7 +382,7 @@ pub(crate) fn write_decoded(
         fields.insert("levels".into(), levels);
         fields.insert("apart_px".into(), json!(apart.map(|[m, p]| json!({"median": m, "p90": p}))));
     }
-    Ok(Decoded { fields, valid, total, measured, filled, warnings, decode: decoded, write: written })
+    Ok(Decoded { fields, valid, total, measured, filled, warnings, notes, decode: decoded, write: written })
 }
 
 /// Where `scan.objects` and `scan.blend` write unless told otherwise (relative to the project).
@@ -938,11 +964,21 @@ mod tests {
     #[test]
     fn decode_warnings_say_what_went_wrong() {
         assert!(decode_warnings(50, 100, 1, [3, 2], [3, 2]).is_empty());
-        let w = decode_warnings(5, 100, 2, [3, 2], [2, 2]);
+        let w = decode_warnings(5, 100, 2, [11, 10], [8, 10]);
         assert_eq!(w.len(), 3, "{w:?}");
         assert!(w[0].starts_with("only 5 of 100 camera pixels decoded"));
-        assert!(w[1].starts_with("the camera resolves 2 of 3 column and 2 of 2 row bits"));
+        assert!(w[1].starts_with("the camera resolves 8 of 11 column and 10 of 10 row bits"));
         assert!(w[2].starts_with("more than 1 % of the camera picture clipped"));
+        assert!(decode_notes([11, 10], [8, 10]).is_empty());
+    }
+
+    #[test]
+    fn one_or_two_missing_bits_are_a_note() {
+        assert!(decode_warnings(50, 100, 1, [11, 10], [9, 9]).is_empty());
+        let n = decode_notes([11, 10], [9, 9]);
+        assert_eq!(n.len(), 1, "{n:?}");
+        assert!(n[0].starts_with("the camera resolves 9 of 11 column and 9 of 10 row bits"));
+        assert!(decode_notes([11, 10], [11, 10]).is_empty());
     }
 
     #[test]
