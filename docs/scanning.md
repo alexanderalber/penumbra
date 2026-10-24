@@ -314,12 +314,16 @@ of 0.6.
 A patch of a curved surface can be flat within the tolerance. Such a patch is dropped when a
 smooth bowl explains its error better than the decode's noise does (`bend` in the reply: the
 bowl's share of the error, its RMS and its `bow_px`, how far it bends over 100 projector
-pixels): when the bowl's RMS is above 0.3 camera pixels and either its share is above 0.5 or
-it bows more than 5 pixels over 100, or when the bowl's RMS alone is above 0.3 times the
-pass's tolerance. A patch is also dropped when the surface round it goes on bending the way
-its bowl does: a flat face ends at a crease, a step or a rim, the pot or the pumpkin it was cut
-from carries on. Narrow strips of cylinders and cones can still pass for faces. Where two
-faces meet, each pixel goes to the one that fits it better.
+pixels along the patch's longest extent): when the bowl's RMS is above 0.3 camera pixels and
+either its share is above 0.5 or it bows more than 5 pixels over 100, or when the bowl's RMS
+alone is above 0.3 times the pass's tolerance. The bow counts only along the patch: across a
+strip a few pixels wide the bowl follows the decode's noise, so a crate's lid seen at a grazing
+angle (which falls apart into long strips and may sag a few pixels under what stands on it),
+the posts and the rims of a crate stay faces, while a patch of a pumpkin is about as long as it
+is wide. A patch is also dropped when the surface round it goes on bending the way its bowl
+does: a flat face ends at a crease, a step or a rim, the pot or the pumpkin it was cut from
+carries on. Narrow strips of cylinders and cones can still pass for faces. Where two faces
+meet, each pixel goes to the one that fits it better.
 
 What fits no face is an object, except surface detail: measured pixels near a face that lie
 within 6 tolerances of its plane are the face's rims, ribs or noise (a Euro crate's walls are

@@ -560,3 +560,39 @@ fn a_top_one_projector_merges_with_the_pumpkin_is_carved_out_by_the_other() {
     assert!(carved[0] > 0);
     assert_eq!(scenes[0].object_labels.iter().copied().max(), Some(scenes[0].objects as u16));
 }
+
+#[test]
+fn a_long_strip_bent_across_by_noise_stays_a_face() {
+    // A crate's lid seen at a grazing angle: in the projector a strip 600 pixels long and 30
+    // high, its decode noisy (0.8 camera pixels per axis) and bent across by 1.5 pixels, as the
+    // stripes' noise bends it. A bowl fitted across 30 pixels bows far more than a pumpkin's.
+    let (w, h) = (640usize, 360usize);
+    let mut state = 0x9e37_79b9_u64;
+    let mut uniform = || {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5
+    };
+    let mut rgba = vec![[-1.0f32, -1.0, 0.0, 1.0]; w * h];
+    for y in 100..130 {
+        let across = (y as f64 + 0.5 - 115.0) / 15.0;
+        for x in 20..620 {
+            let mut g = || (0..12).map(|_| uniform()).sum::<f64>() * 0.8;
+            let (cx, cy) = (
+                0.9 * (x as f64 + 0.5) + 20.0 + g(),
+                0.9 * (y as f64 + 0.5) + 10.0 + 1.5 * across * across + g(),
+            );
+            rgba[y * w + x] = [(cx / w as f64) as f32, (cy / h as f64) as f32, 1.0, 1.0];
+        }
+    }
+    let map = crate::objects::Map::new(w, h, rgba).unwrap();
+    let s = analyse(&map, (w, h), &options()).unwrap();
+    let on_face = s.plane_labels.iter().filter(|l| **l > 0).count();
+    eprintln!(
+        "{} planes, bend {:?}, {} objects, {on_face} px on faces",
+        s.planes.len(),
+        s.planes.first().map(|p| p.bend),
+        s.objects
+    );
+    assert_eq!(s.objects, 0);
+    assert!(on_face > 600 * 30 * 9 / 10, "{on_face}");
+}

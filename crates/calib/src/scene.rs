@@ -75,14 +75,20 @@ const ROUGH: f64 = 2.5;
 const BEND_SHARE: f64 = 0.5;
 const BEND_PX: f64 = 0.3;
 /// Or when the bowl's RMS is above [`BEND_PX`] and it bows more than this over [`BOW_SPAN`]
-/// projector pixels, camera pixels. Measured with a real decode's noise: faces of a real scan
-/// up to 3.5 (the small ones, whose bow is noisy), its wall 0.03, patches of a flower pot 6 to
-/// 16, of a ray-cast pumpkin 7 to 13.
+/// projector pixels along the patch's longest extent, camera pixels. Across a narrow strip the
+/// bow is mostly the decode's noise (which runs along the stripes): a crate's lid seen at a
+/// grazing angle, a few pixels off any plane, falls apart into strips 3 to 10 times as long as
+/// wide that bow 6 to 33 measured every way and 0 to 1.2 along, and the posts and rims of a
+/// crate's walls 7 to 360 every way and 0 to 1.1 along. A patch of a ball or a pumpkin is about
+/// as long as it is wide and bows along its length too: ray-cast pumpkin patches 4 to 20 (two
+/// at 2.3 and 4.1 are left to [`continues`]); real pumpkin patches 0.8 to 9.6, but their share
+/// and RMS are above [`BEND_SHARE`] and [`BEND_TOLERANCE`].
 const BEND_BOW: f64 = 5.0;
 const BOW_SPAN: f64 = 100.0;
-/// Or when the bowl's RMS alone is above this share of the pass's tolerance. Measured on a real
-/// scan of crates: faces up to 0.2 of it (0.39 px at 2 px), patches of a pumpkin 0.37 (0.74 px)
-/// and in the rough pass 0.4 (2 px at 5 px).
+/// Or when the bowl's RMS alone is above this share of the pass's tolerance. Measured on real
+/// scans of crates: faces up to 0.2 of it (0.39 px at 2 px), the strips of a sagging lid in the
+/// rough pass up to 0.25, patches of a pumpkin 0.36 to 0.58 (0.82 px at 2 px, 1.8 to 2.9 px at
+/// 5 px).
 const BEND_TOLERANCE: f64 = 0.3;
 /// The ring past a face's edge (projector pixels) [`continues`] looks at, and when the surface
 /// is taken to bend on past the edge: this many measured pixels in the ring, this share of them
@@ -177,7 +183,7 @@ pub struct Plane {
     /// Faces of one group came from one fit: coplanar, e.g. the tops of boxes side by side.
     pub group: usize,
     /// How much of its pixels' error a smooth bowl explains: the share, its RMS and its bow
-    /// over 100 projector pixels, camera pixels ([`bend`]).
+    /// along the face's longest extent over 100 projector pixels, camera pixels ([`bend`]).
     pub bend: [f64; 3],
 }
 
@@ -1368,11 +1374,13 @@ impl Bowl {
 /// How curved a face is: its pairs' errors under its homography `h`, fitted per axis by a
 /// quadratic in the projector position; the share of the errors' variance the quadratic
 /// explains, its RMS (camera pixels), and its bow: how far it bends over [`BOW_SPAN`]
-/// projector pixels (camera pixels, the larger axis). On a plane the errors are the decode's
-/// noise and the quadratic explains little; on a patch of a curved surface flat within the
-/// tolerance they are a bowl, and it explains most when the noise is low. With a real decode's
-/// noise the share stays low on small patches, but their bow stands out: a lens's distortion
-/// bows a wall over its whole size, a pumpkin over a hand's breadth.
+/// projector pixels along the patch's longest extent (camera pixels, the larger axis). On a
+/// plane the errors are the decode's noise and the quadratic explains little; on a patch of a
+/// curved surface flat within the tolerance they are a bowl, and it explains most when the
+/// noise is low. With a real decode's noise the share stays low on small patches, but their bow
+/// stands out: a lens's distortion bows a wall over its whole size, a pumpkin over a hand's
+/// breadth. Only along the patch: across a strip a few pixels wide the quadratic follows the
+/// noise, and a strip of a flat face would look as bent as a patch of a pumpkin.
 /// Also the bowl itself, `None` when too few pairs or a degenerate fit.
 fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> ([f64; 3], Option<Bowl>) {
     use nalgebra::{SMatrix, SVector};
@@ -1417,9 +1425,19 @@ fn bend(pairs: &Pairs, h: &Homography, inliers: &[usize]) -> ([f64; 3], Option<B
         return ([0.0; 3], Some(fitted));
     }
     let share = (1.0 - left / total).clamp(0.0, 1.0);
-    // The bowl's second-order terms back in projector pixels: its bow over BOW_SPAN.
+    // The patch's longest extent: the main axis of its pixels' spread.
+    let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+    for (p, _) in &pts {
+        let (x, y) = (p[0] - mx, p[1] - my);
+        sxx += x * x;
+        sxy += x * y;
+        syy += y * y;
+    }
+    let angle = 0.5 * (2.0 * sxy).atan2(sxx - syy);
+    let (ax, ay) = (angle.cos(), angle.sin());
+    // The bowl's second-order terms along it, back in projector pixels: its bow over BOW_SPAN.
     let bow =
-        coef.iter().map(|k| (k[3].powi(2) + 0.5 * k[4].powi(2) + k[5].powi(2)).sqrt()).fold(0.0f64, f64::max)
+        coef.iter().map(|k| (k[3] * ax * ax + k[4] * ax * ay + k[5] * ay * ay).abs()).fold(0.0f64, f64::max)
             * (BOW_SPAN / s).powi(2);
     ([share, ((total - left).max(0.0) / m).sqrt(), bow], Some(fitted))
 }
