@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+use penumbra_calib::Homography;
+use penumbra_calib::borders::BorderOptions;
 use penumbra_calib::objects::{self, Map};
 use penumbra_calib::regions::{self, FaceFit, Kind, MAX_REGIONS, ShapeOptions};
 use serde::{Deserialize, Serialize};
@@ -20,9 +22,14 @@ use crate::scan::{
     CAMERA_MAP, OBJECTS_CAMERA, PROJECTOR_MAP, colour, labels_file, ms, read_labels, read_map, write_file,
 };
 use crate::scan_relief::round;
-use crate::scan_scene::{DEFAULT_SCENE_OUT, PLANES_CAMERA, SCENE_JSON};
+use crate::scan_scene::{
+    DEFAULT_SCENE_OUT, PLANES_CAMERA, PLANES_CAMERA_MEASURED, SCENE_JSON, borders_json, straighten_faces,
+};
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
+/// A region's plane in one projector: projector to camera, and the median error of each of
+/// its faces against it.
+type UnionPlane = (Homography, Vec<f64>);
 
 /// The grouping, in the scene folder unless told otherwise.
 pub const REGIONS_FILE: &str = "regions.json";
@@ -47,7 +54,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "The faces scan.scene found grouped into regions, one per part of the scene content treats as one \
          (a crate's front with its rib strips and rims, a lid, a side), cleaned up (seams between a region's \
          faces closed, holes filled, the ragged edge smoothed, four straight edges where the region is a \
-         quadrilateral) and the floor switched off. The grouping is a list of regions, each a set of seed \
+         quadrilateral, else straight borders where a line fits, as in scan.scene) and the floor switched \
+         off. The grouping is a list of regions, each a set of seed \
          pixels in the camera picture (the face under each seed, or the nearest one within reach, belongs \
          to it), an optional name and an optional enabled flag; faces under no seed are regions of their \
          own; a region is enabled unless it says otherwise or lies mostly on the floor (found from the \
@@ -287,6 +295,10 @@ pub fn run(dir: &Path, a: &RegionsArgs) -> CmdResult<Json> {
         .and_then(Json::as_u64)
         .and_then(|s| u16::try_from(s).ok());
     let planes = read_labels(&scene_dir.join(PLANES_CAMERA), camera)?;
+    // The faces' planes are fitted to their pixels as measured, before scan.scene straightened
+    // their borders (a scene written before that has only the one picture).
+    let measured_file = scene_dir.join(PLANES_CAMERA_MEASURED);
+    let measured = if measured_file.exists() { read_labels(&measured_file, camera)? } else { planes.clone() };
     let objects_camera = read_labels(&scene_dir.join(OBJECTS_CAMERA), camera)?;
     let scans: Vec<PathBuf> = scene
         .get("projectors")
@@ -354,10 +366,10 @@ pub fn run(dir: &Path, a: &RegionsArgs) -> CmdResult<Json> {
     // The faces' planes and classes, and a pixel inside each to address it by.
     let maps: Vec<&Map> = from_camera.iter().collect();
     let sizes: Vec<(usize, usize)> = to_camera.iter().map(|m| (m.width, m.height)).collect();
-    let fits = regions::fit_faces(camera, &planes, face_count, &maps, &sizes);
+    let fits = regions::fit_faces(camera, &measured, face_count, &maps, &sizes);
     let mut face_pixels = vec![0usize; face_count];
     let mut face_y = vec![0f64; face_count];
-    for (i, l) in planes.iter().enumerate() {
+    for (i, l) in measured.iter().enumerate() {
         if let Some(k) = usize::from(*l).checked_sub(1)
             && let (Some(n), Some(y)) = (face_pixels.get_mut(k), face_y.get_mut(k))
         {
@@ -376,7 +388,7 @@ pub fn run(dir: &Path, a: &RegionsArgs) -> CmdResult<Json> {
     }
     let centres = regions::face_centres(cw, ch, &planes, face_count);
     let object_mask: Vec<bool> = objects_camera.iter().map(|o| *o > 0).collect();
-    let suggested = regions::suggestions(cw, ch, &planes, &object_mask, &fits, &kinds);
+    let suggested = regions::suggestions(cw, ch, &measured, &object_mask, &fits, &kinds);
 
     // The regions: the grouping's, then every face left over on its own.
     let mut owner: Vec<Option<usize>> = vec![None; face_count];
@@ -494,10 +506,36 @@ pub fn run(dir: &Path, a: &RegionsArgs) -> CmdResult<Json> {
         planes.iter().map(|l| number_of_face.get(usize::from(*l)).copied().unwrap_or(0)).collect();
     let free: Vec<bool> = planes.iter().zip(&object_mask).map(|(l, o)| *l == 0 && !o).collect();
     let shaped = regions::shape(cw, ch, &base, &free, &object_mask, order.len(), &shape_options);
+    // Per region and projector the plane through its faces.
+    let unions: Vec<Vec<Option<UnionPlane>>> = order
+        .iter()
+        .map(|k| {
+            (0..to_camera.len())
+                .map(|p| {
+                    let r = found.get(*k)?;
+                    let member: Vec<&FaceFit> = r
+                        .faces
+                        .iter()
+                        .filter_map(|f| fits.get(usize::from(*f) - 1)?.get(p)?.as_ref())
+                        .collect();
+                    regions::fit_union(&member)
+                })
+                .collect()
+        })
+        .collect();
+    // Straight borders, between two regions on the line their planes meet in where it fits.
+    let straightened = shape_options.straight.then(|| {
+        let views: Vec<Vec<Option<Homography>>> = unions
+            .iter()
+            .map(|v| v.iter().map(|u| u.as_ref().and_then(|(h, _)| h.inverse())).collect())
+            .collect();
+        straighten_faces(cw, ch, &shaped.labels, &objects_camera, &views, &BorderOptions::default())
+    });
+    let labels = straightened.as_ref().map_or_else(|| shaped.labels.clone(), |s| s.labels.clone());
     let per_projector: Vec<Vec<u16>> = to_camera
         .iter()
         .zip(&proj_objects)
-        .map(|(t, o)| regions::projector_regions(camera, &shaped.labels, t, o))
+        .map(|(t, o)| regions::projector_regions(camera, &labels, t, o))
         .collect();
     let work = t.elapsed();
 
@@ -511,10 +549,8 @@ pub fn run(dir: &Path, a: &RegionsArgs) -> CmdResult<Json> {
     let write = |name: &str, bytes: Vec<u8>| write_file(&out.join(name), bytes);
     let bytes =
         |labels: &[u16]| -> Vec<u8> { labels.iter().map(|l| u8::try_from(*l).unwrap_or(0)).collect() };
-    let camera_file = write(
-        REGIONS_CAMERA,
-        penumbra_gpu::image::encode_png_gray8(cw as u32, ch as u32, bytes(&shaped.labels))?,
-    )?;
+    let camera_file =
+        write(REGIONS_CAMERA, penumbra_gpu::image::encode_png_gray8(cw as u32, ch as u32, bytes(&labels))?)?;
     let mut projector_files = Vec::new();
     for (n, (labels, m)) in per_projector.iter().zip(&to_camera).enumerate() {
         projector_files.push(write(
@@ -526,27 +562,23 @@ pub fn run(dir: &Path, a: &RegionsArgs) -> CmdResult<Json> {
         planes.iter().map(|l| *l > 0 && number_of_face.get(usize::from(*l)) == Some(&0)).collect();
     let seeds: Vec<[f64; 2]> =
         found.iter().filter(|r| r.given).flat_map(|r| r.seeds.iter().copied()).collect();
-    let picture = view(cw, ch, &shaped.labels, &disabled_faces, &object_mask, &seeds);
+    let picture = view(cw, ch, &labels, &disabled_faces, &object_mask, &seeds);
     let view_file = write(REGIONS_VIEW, penumbra_gpu::encode_png_rgba8(cw as u32, ch as u32, picture)?)?;
 
     let point = |p: &[f64; 2]| json!([round(p[0]), round(p[1])]);
     let mut region_list: Vec<Json> = Vec::new();
-    for k in &order {
+    for (n, k) in order.iter().enumerate() {
         let Some(r) = found.get(*k) else { continue };
-        let camera_pixels = shaped.labels.iter().filter(|l| **l == r.number).count();
+        let camera_pixels = labels.iter().filter(|l| **l == r.number).count();
         let pixels: Vec<usize> =
             per_projector.iter().map(|l| l.iter().filter(|x| **x == r.number).count()).collect();
         let plane: Vec<Json> = (0..to_camera.len())
-            .map(|p| {
-                let member: Vec<&FaceFit> =
-                    r.faces.iter().filter_map(|f| fits.get(usize::from(*f) - 1)?.get(p)?.as_ref()).collect();
-                match regions::fit_union(&member) {
-                    Some((h, errors)) => json!({
-                        "projector_to_camera": h.rows().map(|row| row.map(|v| (v * 1e9).round() / 1e9)),
-                        "error_px": round(errors.iter().copied().fold(0.0, f64::max)),
-                    }),
-                    None => Json::Null,
-                }
+            .map(|p| match unions.get(n).and_then(|u| u.get(p)?.as_ref()) {
+                Some((h, errors)) => json!({
+                    "projector_to_camera": h.rows().map(|row| row.map(|v| (v * 1e9).round() / 1e9)),
+                    "error_px": round(errors.iter().copied().fold(0.0, f64::max)),
+                }),
+                None => Json::Null,
             })
             .collect();
         region_list.push(json!({
@@ -630,6 +662,7 @@ pub fn run(dir: &Path, a: &RegionsArgs) -> CmdResult<Json> {
         "suggestions": suggestion_list,
         "grouping": {"file": file.display().to_string(), "saved": changed, "regions": grouping.regions},
         "files": {"camera": camera_file, "projectors": projector_files, "view": view_file},
+        "borders": straightened.as_ref().map(borders_json),
         "options": {"seam": shape_options.seam, "smooth": shape_options.smooth, "straight": shape_options.straight, "reach": reach},
         "ms": {"read": ms(read), "work": ms(work), "write": ms(written), "total": ms(started.elapsed())},
         "warnings": warnings,

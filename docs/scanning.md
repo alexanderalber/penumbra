@@ -390,6 +390,26 @@ projector sees at a grazing angle, or the seams between faces, would otherwise j
 `carved_px` in the reply counts the pixels taken out. A sagging lid that every projector sees
 as part of the object still needs its corners.
 
+**Straight borders.** The faces' borders as measured are as ragged as the decode along them.
+Where a border is a line, `planes_camera.png` and `planes_N.png` get the line instead: each
+border between two labels (cut where three meet) is fitted once for both sides, split into
+straight runs with corners where it bends. Between two faces that meet at a crease, also across
+a narrow seam the decode left dark, the line is where their planes cross, as every projector
+seeing both faces sends them, when the measured border lies on it; on the scans of crates at
+hand this holds rarely (the planes, fitted to thousands of pixels, still place their common edge
+a few pixels off the measured one, and the goodness test then takes the fitted line). A run is
+straight when it is at least `straight_length` long (pixels, 16), nine tenths of the measured
+border lie within `straight_tolerance` of its line (pixels, 2) and it does not bow away from the
+line by half that: a curve (a pumpkin, a pot, a patch of a relief) keeps its measured raster, so
+do borders along objects (`objects_camera.png` and `labels_N.png` are never changed) and along
+the picture's frame. On the crate scans about half of the faces' border length came out
+straight. `planes_camera_measured.png` keeps the faces as measured; `"straight": false` writes
+the measured ones into `planes_camera.png` too. The reply's `borders` (and per projector) says
+how many borders there were, the share of their length that became straight (`straight_share`)
+and on planes' meeting lines (`planes_share`), the straight runs' goodness (the 90th percentile
+distance of the measured border from its line and the bow, `p90_px` and `bow_px`) and the pixels
+that changed; `scene_view.png` draws the straight runs (fitted cyan, meeting lines yellow).
+
 Everything the reply holds is also written to `scene.json`.
 
 **Trying it without a scan.** `scan.synthetic` writes the scans of a made-up room, ray cast,
@@ -465,7 +485,8 @@ front the border is left out, notches such as a crate's handle recess are closed
 the quadrilateral fits (at most 4 % of the region outside it, at most 4 % of it on other faces,
 three quarters of it filled), it replaces the region, and the reply lists its corners. Regions
 that are no quadrilateral (a front half hidden behind another crate, one cut by the picture's
-frame) keep their cleaned raster. Objects always stay out, and where two regions claim a pixel
+frame) get straight borders where a line fits them, as `scan.scene` does for faces (between two
+regions on the line their planes meet in where it fits), and keep their cleaned raster elsewhere. Objects always stay out, and where two regions claim a pixel
 the one whose own face lies nearest gets it. Each projector's regions are the camera regions it
 lights: per projector pixel the region of the camera pixel it lands on (pixels the decode only
 filled in count where they continue the region of the nearest measured pixel), gaps of a few
@@ -483,7 +504,7 @@ Written into `out` (default: the scene folder):
 | `regions_camera.png` | 8-bit, camera size: 0 none or off, enabled regions numbered top of the picture first. In place of `planes_camera.png` |
 | `regions_N.png` | the same per projector, projector size. In place of `planes_N.png` |
 | `regions_view.png` | to look at: regions in colour with dark borders, faces that are off striped grey, objects white, the grouping's seeds as dots |
-| `regions_reply.json` | the reply: per region its number, name, faces, seeds, kind, size, straight corners and per projector the plane through its faces (`projector_to_camera`, a homography, and the worst median error of a face against it); the regions that are off and why; every face with its region, kind, height (support 1, floor 0) and a pixel inside it; the suggestions; the grouping as used |
+| `regions_reply.json` | the reply (with `borders` as in `scan.scene`): per region its number, name, faces, seeds, kind, size, straight corners and per projector the plane through its faces (`projector_to_camera`, a homography, and the worst median error of a face against it); the regions that are off and why; every face with its region, kind, height (support 1, floor 0) and a pixel inside it; the suggestions; the grouping as used |
 | `regions.json` | the grouping (in the scene folder or `file`), written when `regions` or `edit` changed it |
 
 Content made for `planes_camera.png` takes `regions_camera.png` as it is: the same 8-bit

@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use penumbra_calib::Homography;
+use penumbra_calib::borders::{self, BorderOptions, How, Straightened};
 use penumbra_calib::objects::{self, Map, Parts};
 use penumbra_calib::relief::{self, Relief, View};
 use penumbra_calib::scene::{self, FaceMap, Outline, SceneOptions, SceneParts};
@@ -29,6 +30,8 @@ type FaceToRectify = (u16, [f64; 2], Option<[[f64; 2]; 4]>);
 /// Where `scan.scene` writes unless told otherwise (relative to the project).
 pub const DEFAULT_SCENE_OUT: &str = "scene";
 pub const PLANES_CAMERA: &str = "planes_camera.png";
+/// The faces in the camera picture as measured, before their borders were straightened.
+pub const PLANES_CAMERA_MEASURED: &str = "planes_camera_measured.png";
 pub const SCENE_VIEW: &str = "scene_view.png";
 pub const SCENE_JSON: &str = "scene.json";
 /// A Euro crate's top, the default for the support: width (along the outline's first edge)
@@ -45,6 +48,9 @@ const CAMERA_GAP: u32 = 3;
 const BACK_PX: f32 = 4.0;
 /// Light on a rectified face this far outside its outline (in units of the top's size) still counts.
 const UV_MARGIN: f64 = 0.01;
+/// Objects' labels in the picture the borders are straightened in: from here on (faces are 1 to
+/// 255), so their pixels and borders stay as measured.
+pub const OBJECT_LABELS: u16 = 256;
 
 pub fn planes_file(n: usize) -> String {
     format!("planes_{n}.png")
@@ -71,7 +77,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          side) split into faces of their own, patches of curved surfaces dropped. What fits no face is an \
          object; the face right below the objects is the support. Any face that is a rectangle of known \
          aspect can be rectified: its four edges in the camera picture, completed where hidden, give the \
-         homography to its u and v. Writes per projector planes_N.png and labels_N.png (8-bit, 0 none, k \
+         homography to its u and v. Borders between faces are straight where the measured one is a line (two \
+         faces meeting at a crease on the line their planes cross in, where every projector agrees and the \
+         measured border lies on it; else a fitted line with corners); where no line fits (curved or ragged \
+         borders) and along objects they stay as measured. Writes per projector planes_N.png and labels_N.png (8-bit, 0 none, k \
          the face or object, numbered alike in every projector; labels_N.png as scan.objects writes it), \
          scene_N.png (faces in colour, objects white), uv_K_N.exr per rectified face K (red and green its \
          u along the outline's first edge and v along its last, 0 to 1; blue 1 on the face, also where \
@@ -87,7 +96,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          objects), sign?, scale? (as scan.relief), \
          tolerance? (camera px a pixel may lie off its face, 2), min_plane? (share of the measured \
          pixels, 0.002), max_planes? (most faces kept, 255), min_object? (projector px, 1/256 of the \
-         projector), erode? (projector px the light mask shrinks, 2)}",
+         projector), erode? (projector px the light mask shrinks, 2), straight? (straight borders in \
+         planes_camera.png and planes_N.png, true; planes_camera_measured.png keeps the measured ones), \
+         straight_tolerance? (camera px nine tenths of a measured border may lie off its line, 2), \
+         straight_length? (shortest straight border, px, 16)}",
         move |p| {
             let a: SceneArgs = args(p)?;
             run(e.session().dir(), &a)
@@ -109,6 +121,9 @@ pub struct SceneArgs {
     pub max_planes: Option<usize>,
     pub min_object: Option<u32>,
     pub erode: Option<u32>,
+    pub straight: Option<bool>,
+    pub straight_tolerance: Option<f64>,
+    pub straight_length: Option<f64>,
 }
 
 /// The support: a plane number, or `"rectified"` for the first face in `rectify`.
@@ -257,6 +272,13 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
     };
     base.check().map_err(CommandError)?;
     let erode = a.erode.unwrap_or(2);
+    let straight = a.straight.unwrap_or(true);
+    let border_defaults = BorderOptions::default();
+    let border_options = BorderOptions {
+        tolerance: a.straight_tolerance.unwrap_or(border_defaults.tolerance),
+        min_length: a.straight_length.unwrap_or(border_defaults.min_length),
+    };
+    border_options.check().map_err(CommandError)?;
     if erode > 64 {
         return Err("`erode` is 0 to 64 projector pixels".into());
     }
@@ -407,13 +429,6 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             }
         }
     }
-    let planes_camera =
-        scene::fill_gaps(cw, ch, &camera_view_of(&to_camera, &from_camera, &plane_parts, camera), CAMERA_GAP);
-    let objects_camera = objects::camera_labels(&object_parts, &scans, camera, NUMBER_ERODE)?;
-    if objects_found.count == 0 {
-        warnings.push("no objects found: every measured pixel lies on a plane".into());
-    }
-
     // Per projector and plane number the projector's own plane (its largest one if two merged).
     let own_plane = |p: usize, number: u16| -> Option<usize> {
         let s = found.get(p)?;
@@ -422,6 +437,42 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             .filter(|k| map.get(k + 1) == Some(&number))
             .max_by_key(|k| s.planes.get(*k).map_or(0, |pl| pl.pixels))
     };
+    let homography = |p: usize, number: u16| -> Option<Homography> {
+        let k = own_plane(p, number)?;
+        Some(found.get(p)?.planes.get(k)?.homography)
+    };
+
+    let planes_measured =
+        scene::fill_gaps(cw, ch, &camera_view_of(&to_camera, &from_camera, &plane_parts, camera), CAMERA_GAP);
+    let objects_camera = objects::camera_labels(&object_parts, &scans, camera, NUMBER_ERODE)?;
+    if objects_found.count == 0 {
+        warnings.push("no objects found: every measured pixel lies on a plane".into());
+    }
+    // Straight borders: in the camera picture, where two faces meet on the line their planes
+    // cross in (as every projector seeing both sends them), else on a line fitted to the
+    // measured border; per projector the same in its own pixels. Objects keep theirs.
+    let faces = 1..=u16::try_from(planes_found.count).unwrap_or(u16::MAX);
+    let (planes_camera, straight_camera) = if straight {
+        let views: Vec<Vec<Option<Homography>>> = faces
+            .clone()
+            .map(|k| (0..found.len()).map(|p| homography(p, k).and_then(|h| h.inverse())).collect())
+            .collect();
+        let s = straighten_faces(cw, ch, &planes_measured, &objects_camera, &views, &border_options);
+        (s.labels.clone(), Some(s))
+    } else {
+        (planes_measured.clone(), None)
+    };
+    let mut straight_projectors: Vec<Option<Straightened>> = Vec::new();
+    for (p, (pp, op)) in plane_parts.iter_mut().zip(&object_parts).enumerate() {
+        if !straight {
+            straight_projectors.push(None);
+            continue;
+        }
+        let views: Vec<Vec<Option<Homography>>> = faces.clone().map(|k| vec![homography(p, k)]).collect();
+        let s = straighten_faces(pp.width, pp.height, &pp.labels, &op.labels, &views, &border_options);
+        pp.labels.clone_from(&s.labels);
+        straight_projectors.push(Some(s));
+    }
 
     // The support: asked for, or the plane below the objects.
     let scores = scene::support_scores(cw, ch, &planes_camera, &objects_camera, planes_found.count);
@@ -655,6 +706,7 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             "unexplained": s.unexplained,
             "files": {"planes": planes, "labels": labels, "picture": picture, "uv": uv},
             "heights": heights,
+            "borders": straight_projectors.get(p).and_then(|s| s.as_ref()).map(borders_json),
         }));
     }
     let (cwu, chu) = (cw as u32, ch as u32);
@@ -662,7 +714,14 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
         write(PLANES_CAMERA, penumbra_gpu::image::encode_png_gray8(cwu, chu, bytes(&planes_camera))?)?;
     let objects_file_cam =
         write(OBJECTS_CAMERA, penumbra_gpu::image::encode_png_gray8(cwu, chu, bytes(&objects_camera))?)?;
+    let measured_file = write(
+        PLANES_CAMERA_MEASURED,
+        penumbra_gpu::image::encode_png_gray8(cwu, chu, bytes(&planes_measured))?,
+    )?;
     let mut picture = view(&planes_camera, &objects_camera);
+    if let Some(s) = &straight_camera {
+        draw_runs(&mut picture, cw, ch, &s.runs);
+    }
     for r in &rectified {
         draw_outline(&mut picture, cw, ch, &r.corners, r.aspect);
     }
@@ -792,8 +851,9 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
         "rectified": faces_json,
         "range": range.map(|[lo, hi]| json!({"low": round(f64::from(lo)), "high": round(f64::from(hi)), "units": "camera px of parallax over the support, the first projector with heights", "quantiles": RANGE})),
         "projectors": per_projector,
-        "files": {"planes_camera": planes_file_cam, "objects_camera": objects_file_cam, "view": view_file, "height_camera": height_camera},
-        "options": {"tolerance": base.tolerance, "min_plane": base.min_plane, "max_planes": base.max_planes, "erode": erode, "sign": asked.map_or(json!("auto"), |s| json!(s)), "scale": kind.name()},
+        "borders": straight_camera.as_ref().map(borders_json),
+        "files": {"planes_camera": planes_file_cam, "planes_camera_measured": measured_file, "objects_camera": objects_file_cam, "view": view_file, "height_camera": height_camera},
+        "options": {"straight": straight, "straight_tolerance": border_options.tolerance, "straight_length": border_options.min_length, "tolerance": base.tolerance, "min_plane": base.min_plane, "max_planes": base.max_planes, "erode": erode, "sign": asked.map_or(json!("auto"), |s| json!(s)), "scale": kind.name()},
         "ms": {"read": ms(read), "work": ms(work), "write": ms(written), "total": ms(started.elapsed())},
         "warnings": warnings,
         "next": "a rectified face: tex.image of uv_K_N.exr into a tex.shader (red, green its u and v, blue 1 on \
@@ -890,6 +950,91 @@ fn draw_outline(rgba: &mut [u8], w: usize, h: usize, corners: &[[f64; 2]; 4], as
     for dy in -3..=3 {
         for dx in -3..=3 {
             dot(Some([c[0] + f64::from(dx), c[1] + f64::from(dy)]), [255, 40, 40]);
+        }
+    }
+}
+
+/// Face labels (`planes`, 1 to 255) with straight borders, the objects (`objects`, any label
+/// above 0 there) kept as they are. `views` per face: its homography from this picture into each
+/// view.
+pub fn straighten_faces(
+    w: usize,
+    h: usize,
+    planes: &[u16],
+    objects: &[u16],
+    views: &[Vec<Option<Homography>>],
+    o: &BorderOptions,
+) -> Straightened {
+    let combined: Vec<u16> = planes
+        .iter()
+        .zip(objects)
+        .map(|(p, ob)| if *ob > 0 { OBJECT_LABELS.saturating_add(*ob) } else { *p })
+        .collect();
+    let mut s = borders::straighten(w, h, &combined, OBJECT_LABELS, views, o);
+    for ((l, p), ob) in s.labels.iter_mut().zip(planes).zip(objects) {
+        if *ob > 0 || *l >= OBJECT_LABELS {
+            *l = *p;
+        }
+    }
+    s
+}
+
+/// What the straightening did, for the reply: the borders it could change, how much of their
+/// length became straight (fitted, or on two planes' meeting line) and the goodness of the
+/// straight runs (the 90th percentile distance of the measured border from its line, the bow).
+pub fn borders_json(s: &Straightened) -> Json {
+    let st = &s.stats;
+    let quantiles = |how: How| -> Json {
+        let mut p90: Vec<f64> = s.runs.iter().filter(|r| r.how == how).map(|r| r.p90).collect();
+        let mut bow: Vec<f64> = s.runs.iter().filter(|r| r.how == how).map(|r| r.bow).collect();
+        p90.sort_by(f64::total_cmp);
+        bow.sort_by(f64::total_cmp);
+        let q = |v: &[f64], f: f64| {
+            v.get(((v.len().saturating_sub(1)) as f64 * f).round() as usize).copied().map(round)
+        };
+        json!({
+            "runs": p90.len(),
+            "p90_px": {"median": q(&p90, 0.5), "max": q(&p90, 1.0)},
+            "bow_px": {"median": q(&bow, 0.5), "max": q(&bow, 1.0)},
+        })
+    };
+    let share = |x: f64| if st.length > 0.0 { round(x / st.length) } else { 0.0 };
+    json!({
+        "borders": st.chains,
+        "straight_borders": st.straight_chains,
+        "length_px": st.length.round(),
+        "straight_share": share(st.straight_length),
+        "planes_share": share(st.meeting_length),
+        "planes_tried": st.meeting_tried,
+        "planes_held": st.meeting_held,
+        "planes_no_line": st.meeting_none,
+        "planes_disagree": st.meeting_disagree,
+        "seams": {"tried": st.seams_tried, "closed": st.seams_held, "px": st.seam_px},
+        "fitted": quantiles(How::Fitted),
+        "planes": quantiles(How::Meeting),
+        "changed_px": st.changed,
+    })
+}
+
+/// The straight runs into an RGBA picture: on two planes' meeting line yellow, fitted cyan.
+fn draw_runs(rgba: &mut [u8], w: usize, h: usize, runs: &[borders::Run]) {
+    for r in runs {
+        let c = match r.how {
+            How::Meeting => [255, 220, 0],
+            How::Fitted => [0, 220, 255],
+        };
+        let len = (r.to[0] - r.from[0]).hypot(r.to[1] - r.from[1]);
+        let steps = (len * 2.0).ceil().clamp(1.0, 1e5) as usize;
+        for k in 0..=steps {
+            let t = k as f64 / steps as f64;
+            let (x, y) = (r.from[0] + t * (r.to[0] - r.from[0]), r.from[1] + t * (r.to[1] - r.from[1]));
+            if x < 0.0 || y < 0.0 || x as usize >= w || y as usize >= h {
+                continue;
+            }
+            let i = ((y as usize) * w + x as usize) * 4;
+            if let Some(px) = rgba.get_mut(i..i + 3) {
+                px.copy_from_slice(&c);
+            }
         }
     }
 }

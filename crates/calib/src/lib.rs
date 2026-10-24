@@ -12,12 +12,15 @@
 //!   [`relief`]: height maps of a mostly flat object from one scan, without a reference;
 //!   [`scene`]: the planes of a scene and the objects on them from one scan ([`synthetic`]: a
 //!   ray-cast room to test it on); [`regions`]: those faces grouped into the parts content
-//!   treats as one, cleaned, the floor told apart; [`epipolar`]: the geometry every right pair
+//!   treats as one, cleaned, the floor told apart; [`borders`]: straight borders in such label
+//!   pictures where the measured border is a line (or two planes meet), the raster where not;
+//!   [`epipolar`]: the geometry every right pair
 //!   of camera and projector pixel obeys, which drops wrong decodes.
 //! - Colour ([`colour`]): matching projectors to each other from a camera's pictures of their
 //!   red, green and blue ramps; [`flatfield`]: brightness and colour that vary across one
 //!   projector's picture, and the black level where projectors overlap.
 
+pub mod borders;
 mod camera;
 pub mod colour;
 pub mod epipolar;
@@ -36,6 +39,8 @@ pub use camera::{Camera, Intrinsics, MAX_COORDINATE, Pose, unproject_clip};
 pub use homography::{Homography, MAX_PAIRS, ROBUST_SAMPLE, RobustFit};
 pub use solve::{MAX_ITERATIONS, Options, Solution, Spread, Start, calibrate};
 
+#[cfg(test)]
+mod borders_tests;
 #[cfg(test)]
 mod flatfield_tests;
 #[cfg(test)]
