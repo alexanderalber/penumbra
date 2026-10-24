@@ -8,7 +8,8 @@ the tooltips), so Claude can do the same.
 
 Which displays are connected (size, refresh rate), which one shows the editor, and the output
 window open on each: frames per second, missed frames, the longest frame. Below that, every
-active `out.projector` with the display it is on, and its colour in the test pattern.
+active `out.projector` with the display it is on, and its colour in the test pattern, and a row
+of buttons that switch the test pattern of every projector (see [Test patterns](#test-patterns)).
 
 The show clock follows the vsync of one output window (marked with a dot), or a timer when no
 window runs at the show rate. The status bar repeats this in short ("no outputs · timer").
@@ -43,13 +44,33 @@ displays were added, so they no longer decide: such an id still works when only 
 that monitor name (with a warning), and otherwise shows nothing until the display is chosen
 again. The error says which display the old number points at today; check it with `test`.
 
-The `test` param of a projector shows a test pattern in the projector's own pixels, in its
-colour, so overlapping projectors can be told apart.
-
 While at least one output window is open, penumbra tells the operating system that the displays
 are in use, so Windows does not turn them (and the projectors) off after its idle timeout. The
 Outputs section shows this as one line; `output.list` reports it as `keeps_display_awake`. The
 request ends when the last output window closes or penumbra exits.
+
+### Test patterns
+
+The `test` param of a projector shows a test pattern in the projector's own pixels instead of
+its input, uncorrected and without soft edges. `test_pattern` picks which:
+
+- **align**: square cells, a centre cross and a circle, the image's edge. For keystone,
+  overscan, whether squares are square, and lining projectors up.
+- **focus**: patches at the four corners and the centre (where defocus shows first), each with a
+  one-pixel checker, a two-pixel checker, one-pixel rows and one-pixel columns, over a one-pixel
+  grid. Turn the focus ring until all four quarters of the patches stay crisp; when the corners
+  and the centre cannot all be sharp, the lens or the throw is the limit, not the focus.
+
+The row **Test pattern on every projector: Off, Align, Focus** under the projector list switches
+every `out.projector` at once, as one undo step (`projector.test {on, pattern?, projectors?}` on
+the control channel). The lit button is what all of them show.
+
+Each projector draws its whole pattern in its own colour (the square beside it in the list: red,
+green, blue, then yellow, cyan, magenta), so where projectors overlap each keeps a channel of its
+own: lines of two projectors that meet show their mix (red and green give yellow), lines that
+miss show both colours side by side, and a blurred projector shows as a smeared colour while the
+others stay crisp. The focus patches sit lower for the second projector and lower again for the
+third, so projectors stacked on the same area show theirs side by side.
 
 ## Matching projectors
 

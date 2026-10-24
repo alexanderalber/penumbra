@@ -58,9 +58,9 @@ pub struct Look {
     pub gamma: f32,
     /// The alignment grid in `tint` instead of the input.
     pub pattern: bool,
-    /// The projector's test pattern (in its own pixels, edge and circle in `tint`) instead of
-    /// anything else.
-    pub test: bool,
+    /// The projector's test pattern (in its own pixels, drawn in `tint`) instead of anything
+    /// else.
+    pub test: Option<Test>,
     pub tint: [f32; 3],
     /// Colours the picture by how fine the surface is per projector pixel (`res.overlay`).
     pub overlay: Option<Overlay>,
@@ -76,6 +76,26 @@ pub struct Look {
     /// A structured light pattern instead of anything but `flat`, uncorrected: what a scan
     /// shows.
     pub stripes: Option<Stripes>,
+}
+
+/// Which test pattern a projector shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TestPattern {
+    /// Square cells, centre cross and circle, the image's edge: keystone, overscan, alignment.
+    #[default]
+    Align,
+    /// One-pixel checkers and lines in patches at the corners and the centre, where defocus
+    /// shows first, over a sparse one-pixel grid.
+    Focus,
+}
+
+/// A projector's test pattern and its rank among the projectors. Everything is drawn in the
+/// projector's colour, so where projectors overlap each one's marks stay apart (by colour), and
+/// the focus patches move by rank, so stacked projectors put them side by side.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Test {
+    pub pattern: TestPattern,
+    pub rank: u32,
 }
 
 /// One picture of a structured light scan in a projector's own pixels, in the order and with the
@@ -377,25 +397,27 @@ fn uniform_bytes(
     for v in look.tint {
         f(v);
     }
-    f(1.0);
+    // The test pattern's rank, where the shader's `tint.w` has room for it.
+    f(look.test.map_or(0, |t| t.rank.min(1 << 20)) as f32);
     f(tex.0 as f32);
     f(tex.1 as f32);
     f(if look.gamma.is_finite() && look.gamma > 0.0 { look.gamma } else { 1.0 });
     let flags = u32::from(encode)
         | (u32::from(look.blend) << 1)
         | (u32::from(look.pattern) << 2)
-        | (u32::from(look.test) << 3)
+        | (u32::from(look.test.is_some()) << 3)
         | (u32::from(look.overlay.is_some()) << 4)
         | (u32::from(look.flat.is_some()) << 5)
         | (u32::from(
             (look.correction.is_some() || gain || black)
                 && look.flat.is_none()
                 && look.stripes.is_none()
-                && !look.test,
+                && look.test.is_none(),
         ) << 6)
         | (u32::from(look.stripes.is_some() && look.flat.is_none()) << 7)
         | (u32::from(gain) << 8)
-        | (u32::from(black) << 9);
+        | (u32::from(black) << 9)
+        | (u32::from(look.test.is_some_and(|t| t.pattern == TestPattern::Focus)) << 10);
     let peers: Vec<[f32; 4]> = look.peers.iter().take(MAX_PEERS).copied().collect();
     let finite = |v: f32| if v.is_finite() { v } else { 1.0 };
     let overlay =
@@ -495,7 +517,7 @@ mod tests {
             blend: true,
             gamma: 2.5,
             pattern: false,
-            test: false,
+            test: None,
             tint: [0.375, 0.0, 0.0],
             overlay: Some(Overlay { factor: 3.0, scale: [5.0, 6.0], cap: 7.0 }),
             correction: Some(Arc::new(Correction {
@@ -572,7 +594,7 @@ mod tests {
                     blend: true,
                     gamma: 1.0,
                     pattern: false,
-                    test: false,
+                    test: None,
                     overlay: None,
                     tint: [1.0; 3],
                     correction: None,
@@ -616,7 +638,7 @@ mod tests {
             blend: false,
             gamma: 1.0,
             pattern: false,
-            test: true,
+            test: Some(Test::default()),
             overlay: None,
             tint: [1.0, 0.0, 0.0],
             correction: None,
@@ -640,9 +662,59 @@ mod tests {
         let px = gpu.read(&target).unwrap();
         assert_eq!(px.get(50, 45).unwrap()[0], 0.0, "outside the viewport");
         assert_eq!(px.get(101, 45).unwrap()[..3], [1.0, 0.0, 0.0], "its left edge in its colour");
-        assert_eq!(px.get(150, 45).unwrap()[..3], [1.0; 3], "the centre cross");
+        assert_eq!(px.get(150, 45).unwrap()[..3], [1.0, 0.0, 0.0], "the centre cross, in its colour too");
         // Cells are 11.25 px square around the centre (150, 45): a grid line 11.25 px left of it.
-        assert!((px.get(138, 30).unwrap()[0] - 0.35).abs() < 1e-3);
+        assert!((px.get(138, 30).unwrap()[0] - 0.45).abs() < 1e-3);
+        assert_eq!(px.get(138, 30).unwrap()[1], 0.0);
+    }
+
+    #[test]
+    fn focus_pattern_in_one_pixel_steps_moved_by_rank() {
+        let Some(gpu) = gpu() else { return };
+        let src = white(&gpu);
+        let (vertices, indices) = quad([0.0, 0.0, 1.0, 1.0]);
+        let shot = |rank: u32| {
+            let target = Tex::new(&gpu, 200, 90, "projector").unwrap();
+            let look = Look {
+                region: [0.0, 0.0, 1.0, 1.0],
+                peers: vec![],
+                blend: false,
+                gamma: 1.0,
+                pattern: false,
+                test: Some(Test { pattern: TestPattern::Focus, rank }),
+                overlay: None,
+                tint: [0.0, 1.0, 0.0],
+                correction: None,
+                flatten: 1.0,
+                lift: 1.0,
+                flat: None,
+                stripes: None,
+            };
+            let item = Item {
+                key: 4,
+                tex: &src,
+                vertices: &vertices,
+                indices: &indices,
+                viewport: [100.0, 0.0, 100.0, 90.0],
+                look,
+                gain: None,
+                black: None,
+            };
+            Projection::new(&gpu).render(&gpu, &target, &[item]).unwrap();
+            gpu.read(&target).unwrap()
+        };
+        let g = |px: &crate::Pixels, x: u32, y: u32| px.get(x, y).unwrap()[1];
+        let a = shot(0);
+        // 100 x 90: patches 10 px square, 6 px in from the corners; the top left one starts with
+        // its one-pixel checker at (106, 6), framed two pixels out.
+        assert_eq!([g(&a, 106, 6), g(&a, 107, 6), g(&a, 107, 7)], [1.0, 0.0, 1.0], "one-pixel checker");
+        assert_eq!([g(&a, 104, 6), g(&a, 105, 6)], [1.0, 0.0], "the frame and its gap");
+        assert_eq!([g(&a, 100, 40), g(&a, 101, 40), g(&a, 102, 40)], [1.0, 0.0, 1.0], "the edge's two lines");
+        assert_eq!(a.get(106, 6).unwrap()[0], 0.0, "in its colour only");
+        // The second projector's patches sit 12 px lower.
+        let b = shot(1);
+        assert_eq!([g(&b, 106, 18), g(&b, 107, 18), g(&b, 107, 19)], [1.0, 0.0, 1.0]);
+        assert_eq!(g(&b, 107, 7), 0.0);
     }
 
     #[test]
@@ -658,7 +730,7 @@ mod tests {
             blend: true,
             gamma: 1.0,
             pattern: false,
-            test: false,
+            test: None,
             overlay: None,
             tint: [1.0; 3],
             correction: None,
@@ -691,7 +763,7 @@ mod tests {
                 blend: true,
                 gamma: 1.0,
                 pattern: true,
-                test: false,
+                test: None,
                 overlay: None,
                 tint: [1.0; 3],
                 correction: None,
@@ -723,7 +795,7 @@ mod tests {
                 blend: false,
                 gamma: 1.0,
                 pattern: false,
-                test: false,
+                test: None,
                 overlay: None,
                 tint: [1.0; 3],
                 correction: correction.map(Arc::new),
@@ -806,7 +878,7 @@ mod tests {
                 blend: false,
                 gamma: 1.0,
                 pattern: false,
-                test: false,
+                test: None,
                 overlay: None,
                 tint: [1.0; 3],
                 correction: None,
@@ -865,7 +937,7 @@ mod tests {
                 blend: false,
                 gamma: 1.0,
                 pattern: false,
-                test: false,
+                test: None,
                 overlay: None,
                 tint: [1.0; 3],
                 // Halves everything it applies to: the stripes must not go through it.

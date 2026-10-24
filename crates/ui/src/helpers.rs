@@ -1,8 +1,9 @@
-//! The "Helpers" window: the outputs (displays, windows, projectors, what paces the show clock),
+//! The "Helpers" window: the outputs (displays, windows, projectors, what paces the show clock,
+//! the test pattern of every projector),
 //! the resolution analysis with its overlay and optimise button, and the show-machine checks with a
 //! fix and a restore button each, the persistent state (when it was last saved, save now, restore)
 //! and OSC (listeners, senders, what arrived, learn). Opened from the status bar; the same things
-//! are `output.list`, `res.analyze`, `res.overlay`, `res.optimize`, `system.check`, `system.fix`,
+//! are `output.list`, `projector.test`, `res.analyze`, `res.overlay`, `res.optimize`, `system.check`, `system.fix`,
 //! `system.restore`, `state.info`, `state.save`, `state.restore`, `state.discard`, `state.config`,
 //! `project.settings`, `osc.status`, `osc.config` and `osc.learn` on the control channel.
 
@@ -125,6 +126,7 @@ impl Helpers {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().max_height(tallest).show(ui, |ui| {
                     self.outputs(ui, input.board, input.net, input.view.pace);
+                    test_buttons(ui, input, auto, actions);
                     ui.separator();
                     resolution(ui, input, auto, actions);
                     ui.separator();
@@ -617,6 +619,63 @@ impl Helpers {
             self.checks = None;
         }
     }
+}
+
+/// One row of buttons that switch the test pattern of every projector (`projector.test`): off,
+/// the alignment pattern, the focus pattern. The one lit is what all projectors show; none is
+/// lit while they differ.
+fn test_buttons(
+    ui: &mut Ui,
+    input: &HelpersInput<'_>,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    use penumbra_ops::out::PROJECTOR;
+    let Some(desc) = input.engine.types().desc(PROJECTOR) else { return };
+    let shown: Vec<Option<String>> = input
+        .net
+        .nodes()
+        .filter(|n| n.kind == PROJECTOR)
+        .map(|n| {
+            matches!(n.param(desc, "test"), Some(Value::Bool(true)))
+                .then(|| n.param(desc, "test_pattern").and_then(Value::as_str).unwrap_or("align").to_string())
+        })
+        .collect();
+    if shown.is_empty() {
+        return;
+    }
+    let all = |want: Option<&str>| shown.iter().all(|s| s.as_deref() == want);
+    ui.horizontal(|ui| {
+        ui.label("Test pattern on every projector:").on_hover_text(
+            "Each projector shows the pattern in its own pixels and its own colour (the square beside it              above), so overlapping projectors stay apart. Also projector.test",
+        );
+        for (id, label, want, hover) in [
+            ("helpers.test.off", "Off", None, "Every projector shows its input again"),
+            (
+                "helpers.test.align",
+                "Align",
+                Some("align"),
+                "Square cells, centre cross and circle, the image's edge: keystone, overscan, alignment",
+            ),
+            (
+                "helpers.test.focus",
+                "Focus",
+                Some("focus"),
+                "One-pixel checkers and lines at the corners and the centre, where defocus shows first",
+            ),
+        ] {
+            let r = ui
+                .add_enabled(input.can_edit, egui::Button::selectable(all(want), label))
+                .on_hover_text(hover);
+            auto.add(id, r.rect, label);
+            if r.clicked() {
+                match penumbra_engine::projector::test_ops(input.net, None, want.is_some(), want) {
+                    Ok((ops, _)) => actions.push(Action::Edit { ops, label: "projector.test".into(), group: None }),
+                    Err(e) => actions.push(Action::Message(e.to_string())),
+                }
+            }
+        }
+    });
 }
 
 /// The resolution analysis: every node a projector shows, its size against what the projectors

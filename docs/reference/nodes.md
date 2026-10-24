@@ -1984,7 +1984,8 @@ Outputs: none.
 | `active` | bool | `true` |  | Open the output window on its display. Off closes the window and the node does nothing |
 | `fit` | fit \| fill \| stretch | `"fit"` |  | How the picture sits in the viewport when their aspects differ; fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted |
 | `viewport` *(more)* | vec4 | `[0, 0, 1, 1]` | 0 to 1 | x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5) |
-| `test` | bool | `false` |  | A test pattern in the projector's own pixels instead of the input: square cells, centre, circle, and the image's edge in this projector's colour |
+| `test` | bool | `false` |  | A test pattern in the projector's own pixels instead of the input, all in this projector's colour (so overlapping projectors stay apart): see `test_pattern`. projector.test switches every projector at once |
+| `test_pattern` | align \| focus | `"align"` |  | Which test pattern `test` shows; align: square cells, centre cross and circle, the image's edge: keystone, overscan, alignment; focus: one-pixel checkers and lines in patches at the corners and the centre, where defocus shows first, over a one-pixel grid; the patches sit lower for the second projector and lower again for the third, so stacked projectors show them side by side |
 | `correct` *(colour)* | bool | `true` |  | Apply the colour correction below. Off shows the plain picture, to compare. The test pattern is never corrected |
 | `strength` *(colour)* | float | `1` | 0 to 1 | How much of the correction applies, matrix and curves alike: 1 all of it, 0 the projector uncorrected. A lower value keeps more of a brighter projector's brightness, but leaves more of the difference in colour and brightness between projectors |
 | `gain` *(colour)* | float | `1` | 0 to 1 | Brightness by hand, in linear light, on top of the matrix (0.8: a fifth less light) |

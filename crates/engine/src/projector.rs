@@ -98,6 +98,92 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
             }
         },
     ));
+    let e = Arc::clone(engine);
+    registry.register(FnCommand::new(
+        "projector.test",
+        "Switch the test pattern of every out.projector at once (its `test` and `test_pattern` params,          one undo step): {on (true: the pattern instead of the input, false: the input again), pattern?          (align: cells, centre cross, circle and edge, for keystone and alignment | focus: one-pixel          checkers and lines at the corners and the centre; unchanged when left out), projectors? (paths,          default all)}. Each projector draws in its own colour, so overlapping ones stay apart",
+        move |p| {
+            let a: TestArgs = args(p)?;
+            let session = e.session();
+            let net = session.doc().snapshot();
+            let (ops, paths) = test_ops(&net, a.projectors.as_deref(), a.on, a.pattern.as_deref())?;
+            let history = outcome(&edit_in(&session, &ops, "projector.test")?);
+            Ok(json!({
+                "message": format!(
+                    "test pattern {} on {} projector(s)",
+                    if a.on { a.pattern.as_deref().unwrap_or("on") } else { "off" },
+                    paths.len()
+                ),
+                "projectors": paths,
+                "history": history,
+            }))
+        },
+    ));
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TestArgs {
+    on: bool,
+    pattern: Option<String>,
+    projectors: Option<Vec<NodePath>>,
+}
+
+/// The test patterns `projector.test` can choose (the choices of `out.projector`'s
+/// `test_pattern`).
+pub const TEST_PATTERNS: [&str; 2] = ["align", "focus"];
+
+/// The edits that switch the test pattern of the `out.projector`s at `paths` (default: all of
+/// them) on or off, and to `pattern` when given; with the projectors' paths. The Helpers
+/// window's buttons make the same edits.
+pub fn test_ops(
+    net: &Network,
+    paths: Option<&[NodePath]>,
+    on: bool,
+    pattern: Option<&str>,
+) -> CmdResult<(Vec<Op>, Vec<String>)> {
+    if let Some(p) = pattern
+        && !TEST_PATTERNS.contains(&p)
+    {
+        return Err(format!("`pattern` is {}", TEST_PATTERNS.join(" or ")).into());
+    }
+    let projectors: Vec<String> = match paths {
+        Some(paths) => {
+            let mut out = Vec::new();
+            for path in paths {
+                let id = require(net, path)?;
+                if net.node(id).is_none_or(|n| n.kind != PROJECTOR) {
+                    return Err(format!("{path} is not an {PROJECTOR}").into());
+                }
+                let path = path.to_string();
+                if !out.contains(&path) {
+                    out.push(path);
+                }
+            }
+            out
+        }
+        None => net
+            .nodes()
+            .filter(|n| n.kind == PROJECTOR)
+            .filter_map(|n| net.path_of(n.id).map(|p| p.to_string()))
+            .collect(),
+    };
+    if projectors.is_empty() {
+        return Err(format!("no {PROJECTOR} in the project").into());
+    }
+    let mut ops = Vec::new();
+    for path in &projectors {
+        let node = NodePath::parse(path)?;
+        ops.push(Op::Set {
+            param: ParamPath::new(node.clone(), Name::new("test")?)?,
+            value: Value::Bool(on),
+        });
+        if let Some(p) = pattern {
+            let param = ParamPath::new(node, Name::new("test_pattern")?)?;
+            ops.push(Op::Set { param, value: Value::Text(p.to_string()) });
+        }
+    }
+    Ok((ops, projectors))
 }
 
 #[derive(Deserialize)]

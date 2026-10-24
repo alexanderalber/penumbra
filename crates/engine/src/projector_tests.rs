@@ -416,3 +416,41 @@ fn projector_match_saves_measurements_and_matches_from_them() {
     let warnings = r["warnings"].to_string();
     assert!(warnings.contains("different runs") && warnings.contains("without greys"), "{r}");
 }
+
+#[test]
+fn projector_test_switches_every_projector() {
+    let f = Fixture::new("projector-test");
+    assert!(f.fail("projector.test", json!({"on": true})).contains("no out.projector"));
+    f.call("node.create", json!({"path": "/proj_a", "kind": "out.projector"}));
+    f.call("node.create", json!({"path": "/proj_b", "kind": "out.projector", "params": {"active": false}}));
+    f.call("node.create", json!({"path": "/noise", "kind": "tex.noise"}));
+    let read = |path: &str| {
+        let net = f.engine.session().doc().snapshot();
+        let desc = f.engine.types().desc(penumbra_ops::out::PROJECTOR).unwrap();
+        let n = net.node(net.resolve(&path.parse().unwrap()).unwrap()).unwrap().clone();
+        let test = n.param(desc, "test").and_then(|v| v.as_bool()).unwrap();
+        let pattern = n.param(desc, "test_pattern").and_then(|v| v.as_str()).unwrap().to_string();
+        (test, pattern)
+    };
+    assert_eq!(read("/proj_a"), (false, "align".to_string()));
+
+    let r = f.call("projector.test", json!({"on": true, "pattern": "focus"}));
+    assert_eq!(r["projectors"], json!(["/proj_a", "/proj_b"]), "{r}");
+    assert_eq!(r["history"]["history"], "new", "one undo step: {r}");
+    assert_eq!(read("/proj_a"), (true, "focus".to_string()));
+    assert_eq!(read("/proj_b"), (true, "focus".to_string()));
+
+    // Off keeps the pattern chosen; a list switches only those.
+    f.call("projector.test", json!({"on": false}));
+    assert_eq!(read("/proj_b"), (false, "focus".to_string()));
+    f.call("projector.test", json!({"on": true, "pattern": "align", "projectors": ["/proj_b"]}));
+    assert_eq!(read("/proj_a"), (false, "focus".to_string()));
+    assert_eq!(read("/proj_b"), (true, "align".to_string()));
+
+    assert!(f.fail("projector.test", json!({"on": true, "pattern": "grid"})).contains("align or focus"));
+    assert!(
+        f.fail("projector.test", json!({"on": true, "projectors": ["/noise"]}))
+            .contains("not an out.projector")
+    );
+    assert!(f.fail("projector.test", json!({"pattern": "focus"})).contains("on"));
+}

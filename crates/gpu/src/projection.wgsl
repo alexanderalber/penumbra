@@ -7,13 +7,15 @@
 
 struct Look {
     region: vec4f,
+    // The colour of the projector's marks; w its rank (test patterns only).
     tint: vec4f,
     tex_size: vec2f,
     gamma: f32,
     // 1: encode to sRGB, 2: blend, 4: pattern instead of the input, 8: the projector's test
     // pattern instead of anything, 16: the resolution overlay over the input, 32: the flat
     // signal instead of anything, 64: colour correction, 128: structured light stripes instead of
-    // anything but the flat signal, 256: the gain map, 512: the black lift (both with 64).
+    // anything but the flat signal, 256: the gain map, 512: the black lift (both with 64), 1024:
+    // the focus pattern as the test pattern (with 8).
     flags: u32,
     peer_count: u32,
     overlay_factor: f32,
@@ -109,33 +111,103 @@ fn grid(s: vec2f) -> f32 {
     return max(g, max(outline.x, outline.y));
 }
 
-// The projector's own test pattern, in its pixels `q` of a `size` image: square cells (eight
-// down, so whole cells meet the top and bottom edges) around the centre, every other one a little lighter, a cross and a circle at the centre,
-// the image's edge in the projector's colour. Shows focus, keystone, overscan, whether squares
-// are square, and which projector is which.
+// The projector's own test pattern, in its pixels `q` of a `size` image, all in its colour (so
+// where projectors overlap each one's marks keep their own channel): square cells (eight down,
+// so whole cells meet the top and bottom edges) around the centre, every other one a little
+// lighter, a cross and a circle at the centre, the image's edge. Shows keystone, overscan,
+// whether squares are square, alignment (lines of two projectors that meet show their mix),
+// and which projector is which.
 fn test_pattern(q: vec2f, size: vec2f) -> vec3f {
+    let tint = u.tint.rgb;
     let cell = size.y / 8.0;
     let g = (q - size * 0.5) / cell;
     var rgb = vec3f(0.0);
     let checker = (i32(floor(g.x)) + i32(floor(g.y))) & 1;
     if checker == 1 {
-        rgb = vec3f(0.06);
+        rgb = tint * 0.03;
     }
     let line = abs(fract(g + 0.5) - 0.5) * cell;
     if min(line.x, line.y) < 0.75 {
-        rgb = vec3f(0.35);
+        rgb = tint * 0.45;
     }
     let c = abs(q - size * 0.5);
     let r = length(q - size * 0.5);
     if abs(r - size.y * 0.45) < 1.5 {
-        rgb = u.tint.rgb;
+        rgb = tint;
     }
     if (min(c.x, c.y) < 1.5 && max(c.x, c.y) < cell * 0.75) {
-        rgb = vec3f(1.0);
+        rgb = tint;
     }
     let edge = min(q, size - q);
     if min(edge.x, edge.y) < 3.0 {
-        rgb = u.tint.rgb;
+        rgb = tint;
+    }
+    return rgb;
+}
+
+// Inside a focus patch, at `l` pixels from its corner, `side` pixels square (even): one-pixel
+// checker top left, two-pixel checker top right, one-pixel rows bottom left, one-pixel columns
+// bottom right. Whether the pixel is lit.
+fn focus_patch(l: vec2i, side: i32) -> bool {
+    let h = side / 2;
+    let right = l.x >= h;
+    let low = l.y >= h;
+    if !right && !low {
+        return ((l.x + l.y) & 1) == 0;
+    }
+    if right && !low {
+        return (((l.x >> 1u) + (l.y >> 1u)) & 1) == 0;
+    }
+    if !right {
+        return (l.y & 1) == 0;
+    }
+    return (l.x & 1) == 0;
+}
+
+// The projector's focus pattern, in its pixels `q` of a `size` image, all in its colour:
+// patches of one-pixel checkers and lines at the four corners and the centre, where defocus
+// shows first, each framed by a one-pixel line a pixel away; between them a one-pixel grid
+// (eight cells down, through the centre) at half strength; the image's edge as two one-pixel
+// lines. The patches move towards the centre by the projector's rank (`tint.w`, modulo three),
+// so projectors stacked on the same area show theirs side by side.
+fn focus_pattern(q: vec2f, size: vec2f) -> vec3f {
+    let tint = u.tint.rgb;
+    let n = vec2i(max(floor(size), vec2f(1.0)));
+    let p = clamp(vec2i(floor(q)), vec2i(0), n - 1);
+    let mid = n / 2;
+    let cell = max(i32(round(size.y / 8.0)), 4);
+    var rgb = vec3f(0.0);
+    let d = abs(p - mid) % vec2i(cell);
+    if d.x == 0 || d.y == 0 {
+        rgb = tint * 0.5;
+    }
+    let side = max((i32(round(size.y / 9.0)) / 2) * 2, 8);
+    let margin = max(side / 4, 6);
+    let shift = (i32(u.tint.w + 0.5) % 3) * (side + side / 4);
+    let far = n - margin - side;
+    var origins = array<vec2i, 5>(
+        vec2i(margin, margin + shift),
+        vec2i(far.x, margin + shift),
+        vec2i(margin, far.y - shift),
+        vec2i(far.x, far.y - shift),
+        mid - vec2i(side / 2) + vec2i(0, shift),
+    );
+    for (var i = 0; i < 5; i++) {
+        let l = p - origins[i];
+        // The frame two pixels out, with a black gap of one pixel inside it.
+        if all(l >= vec2i(-2)) && all(l < vec2i(side + 2)) {
+            let inside = all(l >= vec2i(0)) && all(l < vec2i(side));
+            let frame = any(l == vec2i(-2)) || any(l == vec2i(side + 1));
+            rgb = vec3f(0.0);
+            if frame || (inside && focus_patch(l, side)) {
+                rgb = tint;
+            }
+        }
+    }
+    let edge = min(p, n - 1 - p);
+    let e = min(edge.x, edge.y);
+    if e == 0 || e == 2 {
+        rgb = tint;
     }
     return rgb;
 }
@@ -228,6 +300,8 @@ fn fs(v: V) -> @location(0) vec4f {
         let lit = stripe_lit(p, vec2u(size), u32(u.stripes.w + 0.5));
         rgb = vec3f(select(0.0, clamp(u.stripes.z, 0.0, 1.0), lit));
         signal = true;
+    } else if (u.flags & 1032u) == 1032u {
+        rgb = focus_pattern(v.pos.xy - u.viewport.xy, u.viewport.zw);
     } else if (u.flags & 8u) != 0u {
         rgb = test_pattern(v.pos.xy - u.viewport.xy, u.viewport.zw);
     } else if (u.flags & 4u) != 0u {

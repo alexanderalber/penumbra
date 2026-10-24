@@ -40,7 +40,7 @@ use std::sync::{Arc, Mutex};
 
 use penumbra_core::{Error, NodeId, ParamSpec, Value, lock};
 use penumbra_gpu::Tex;
-use penumbra_gpu::projection::{Correction, Stripes};
+use penumbra_gpu::projection::{Correction, Stripes, Test, TestPattern};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Cooker, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes,
     Operator,
@@ -94,8 +94,10 @@ pub struct ProjectorFrame {
     pub source: Option<Data>,
     /// Its input placed by `fit`; `None` without an input. With `test` on, the whole viewport.
     pub mapping: Option<Arc<Mapping>>,
-    /// Shows its test pattern instead of the input.
-    pub test: bool,
+    /// Shows this test pattern instead of the input.
+    pub test: Option<TestPattern>,
+    /// Its rank among the projector nodes (in node order), which picks its colour.
+    pub rank: usize,
     /// Its colour in the test pattern (by its rank among the projectors).
     pub tint: [f32; 3],
     /// Its colour correction; `None` when off or the identity.
@@ -234,9 +236,21 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5)"),
         )
         .param(ParamSpec::bool("test", false).doc(
-            "A test pattern in the projector's own pixels instead of the input: square cells, centre, \
-             circle, and the image's edge in this projector's colour",
+            "A test pattern in the projector's own pixels instead of the input, all in this projector's \
+             colour (so overlapping projectors stay apart): see `test_pattern`. projector.test switches \
+             every projector at once",
         ))
+        .param(
+            ParamSpec::choice("test_pattern", &["align", "focus"])
+                .doc("Which test pattern `test` shows")
+                .choice_doc("align", "square cells, centre cross and circle, the image's edge: keystone, overscan, alignment")
+                .choice_doc(
+                    "focus",
+                    "one-pixel checkers and lines in patches at the corners and the centre, where defocus shows \
+                     first, over a one-pixel grid; the patches sit lower for the second projector and lower \
+                     again for the third, so stacked projectors show them side by side",
+                ),
+        )
         .param(ParamSpec::bool("correct", true).group(COLOUR).doc(
             "Apply the colour correction below. Off shows the plain picture, to compare. The test pattern is never corrected",
         ))
@@ -360,11 +374,12 @@ pub fn collect(
         };
         let viewport = viewport_of(param("viewport"));
         let fit = Fit::parse(&text("fit"));
-        let test = matches!(param("test"), Some(Value::Bool(true)));
+        let test = matches!(param("test"), Some(Value::Bool(true)))
+            .then(|| if text("test_pattern") == "focus" { TestPattern::Focus } else { TestPattern::Align });
         let source = node.inputs.first().copied().flatten().and_then(|port| cooker.output(port).cloned());
         let size = source.as_ref().and_then(|d| d.get::<Tex>()).map(Tex::size);
         // The test pattern covers the whole viewport: a stretched placeholder.
-        let whole = test
+        let whole = test.is_some()
             || board
                 .as_ref()
                 .is_some_and(|b| b.flat.contains_key(&node.id) || b.stripes.contains_key(&node.id));
@@ -414,6 +429,7 @@ pub fn collect(
             source,
             mapping,
             test,
+            rank,
             tint: tint(rank),
             correction,
             gain: input(1),
@@ -430,11 +446,21 @@ pub fn collect(
     out
 }
 
+/// Test pattern colours by rank: red, green and blue first, so where up to three projectors
+/// overlap each one's marks keep a channel of their own (and lines that meet show the mix).
+const TINTS: [[f32; 3]; 6] = [
+    [1.0, 0.12, 0.12],
+    [0.12, 1.0, 0.12],
+    [0.3, 0.3, 1.0],
+    [1.0, 1.0, 0.12],
+    [0.12, 1.0, 1.0],
+    [1.0, 0.12, 1.0],
+];
+
 /// The colour of the projector of `rank` among the projector nodes (in node order) in its test
 /// pattern; the Helpers window shows it next to the projector.
 pub fn tint(rank: usize) -> [f32; 3] {
-    let tints = crate::tex::mapper::TINTS;
-    tints.get(rank % tints.len()).copied().unwrap_or([1.0; 3])
+    TINTS.get(rank % TINTS.len()).copied().unwrap_or([1.0; 3])
 }
 
 /// The rank of projector `id` among the projector nodes of `net`.
@@ -464,7 +490,7 @@ pub fn item_for<'a>(
             blend: mapping.blend,
             gamma: mapping.blend_gamma as f32,
             pattern: mapping.pattern,
-            test: false,
+            test: None,
             overlay: None,
             tint,
             correction: None,
@@ -497,9 +523,9 @@ pub fn item<'a>(
         item.look.stripes = Some(stripes);
         return Some(item);
     }
-    if frame.test {
+    if let Some(pattern) = frame.test {
         let mut item = item_for(blank, mapping, &[], frame.tint, viewport);
-        item.look.test = true;
+        item.look.test = Some(Test { pattern, rank: u32::try_from(frame.rank).unwrap_or(u32::MAX) });
         return Some(item);
     }
     let tex = frame.source.as_ref()?.get::<Tex>()?;
