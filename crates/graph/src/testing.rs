@@ -213,7 +213,27 @@ pub fn test_types() -> NodeTypes {
         || Box::new(Counter(0)) as Box<dyn Operator>,
     ))
     .unwrap();
+    t.register(FnNodeType::new(
+        NodeDesc::new("test.trims", "Puts out how often it was trimmed before this cook")
+            .param(ParamSpec::float("value", 0.0))
+            .output("out", DataKind::Chan),
+        || Box::new(Trims(0)) as Box<dyn Operator>,
+    ))
+    .unwrap();
     t
+}
+
+/// Counts [`Operator::trim`] calls and puts the count out.
+struct Trims(u64);
+
+impl Operator for Trims {
+    fn cook(&mut self, _cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        chan(self.0 as f64)
+    }
+
+    fn trim(&mut self) {
+        self.0 += 1;
+    }
 }
 
 /// Counts cooks; the count is its state, saved as text.

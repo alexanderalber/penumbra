@@ -404,6 +404,11 @@ pub fn viewpoint(cx: &CookContext<'_>) -> Result<Viewpoint, CookError> {
 }
 
 impl Operator for Render {
+    fn trim(&mut self) {
+        self.ring.trim();
+        self.data_ring.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = super::gpu(cx)?;
         let (w, h) = (super::side(cx, "width")?, super::side(cx, "height")?);

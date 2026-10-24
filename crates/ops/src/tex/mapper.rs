@@ -223,6 +223,10 @@ struct Mapper {
 }
 
 impl Operator for Mapper {
+    fn trim(&mut self) {
+        self.ring.trim();
+    }
+
     fn density(&self, _def: &NodeDef, _desc: &NodeDesc, _input: usize) -> Density {
         Density::Varying
     }

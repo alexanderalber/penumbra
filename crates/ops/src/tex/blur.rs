@@ -69,6 +69,11 @@ struct Blur {
 }
 
 impl Operator for Blur {
+    fn trim(&mut self) {
+        self.middle.trim();
+        self.out.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let pass = self.pass.get(gpu, pass)?;

@@ -150,6 +150,10 @@ struct Text {
 }
 
 impl Operator for Text {
+    fn trim(&mut self) {
+        self.ring.trim();
+    }
+
     fn sets_size(&self, _def: &NodeDef, _desc: &NodeDesc) -> bool {
         true
     }

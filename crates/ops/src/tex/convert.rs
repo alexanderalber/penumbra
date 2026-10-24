@@ -121,6 +121,10 @@ struct FromChan {
 }
 
 impl Operator for FromChan {
+    fn trim(&mut self) {
+        self.ring.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let chans = cx.input_as::<Chans>(0).ok_or_else(|| waiting(cx))?;

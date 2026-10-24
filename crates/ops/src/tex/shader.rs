@@ -70,6 +70,10 @@ struct Shader {
 }
 
 impl Operator for Shader {
+    fn trim(&mut self) {
+        self.ring.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         if self.slot.poll() {
             self.current = self.slot.latest().cloned();

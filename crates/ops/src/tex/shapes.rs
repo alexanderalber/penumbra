@@ -374,6 +374,12 @@ fn outline(instance: &Instance, size: (u32, u32)) -> Vec<[f32; 2]> {
 }
 
 impl Operator for ShapesOp {
+    fn trim(&mut self) {
+        for ring in &mut self.rings {
+            ring.trim();
+        }
+    }
+
     fn sets_size(&self, _def: &NodeDef, _desc: &NodeDesc) -> bool {
         true
     }

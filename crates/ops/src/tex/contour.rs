@@ -125,6 +125,12 @@ impl Contour {
 }
 
 impl Operator for Contour {
+    fn trim(&mut self) {
+        self.across.trim();
+        self.field.trim();
+        self.out.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let pass = self.pass.get(gpu, pass)?;

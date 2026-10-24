@@ -52,6 +52,12 @@ use crate::node::{
 };
 use crate::watch::{FileWatch, Watcher};
 
+/// Passes without a cook after which a node's operator is trimmed ([`Operator::trim`]): two
+/// seconds at 60 fps, long enough that a node cooking now and then keeps its spares.
+pub const TRIM_AFTER_PASSES: u64 = 120;
+/// How often the cooker looks for nodes to trim, in passes.
+const TRIM_CHECK_EVERY: u64 = 30;
+
 /// What an operator sees while cooking.
 pub struct CookContext<'a> {
     node: NodeId,
@@ -458,6 +464,10 @@ struct Runtime {
     params_changed: bool,
     notified: bool,
     evaluated_pass: u64,
+    /// The pass of the last call to the operator's cook, and whether the operator was trimmed
+    /// since ([`Operator::trim`]).
+    cooked_pass: u64,
+    trimmed: bool,
     last_thumb_pass: Option<u64>,
     error: Option<String>,
     warning: Option<String>,
@@ -514,6 +524,8 @@ impl Runtime {
             params_changed: false,
             notified: false,
             evaluated_pass: 0,
+            cooked_pass: 0,
+            trimmed: false,
             last_thumb_pass: None,
             error: None,
             warning: None,
@@ -637,8 +649,30 @@ impl Cooker {
             self.evaluate(id, time, &mut report);
         }
         self.cook_thumbnails(thumbnails, time, &mut report);
+        if self.pass.is_multiple_of(TRIM_CHECK_EVERY) {
+            self.trim_idle();
+        }
         report.elapsed = start.elapsed();
         report
+    }
+
+    /// Trims the operators of nodes that have not cooked for [`TRIM_AFTER_PASSES`]
+    /// ([`Operator::trim`]), each once until it cooks again.
+    fn trim_idle(&mut self) {
+        let pass = self.pass;
+        for (id, rt) in &mut self.runtimes {
+            if rt.trimmed || pass.saturating_sub(rt.cooked_pass) < TRIM_AFTER_PASSES {
+                continue;
+            }
+            rt.trimmed = true;
+            if let Some(op) = rt.op.as_mut()
+                && let Err(p) = catch_unwind(AssertUnwindSafe(|| op.trim()))
+            {
+                log::error!("node {id}: trim panicked: {}", panic_message(p.as_ref()));
+                rt.op = None;
+                rt.notified = true;
+            }
+        }
     }
 
     fn cook_thumbnails(&mut self, thumbnails: &[NodeId], time: FrameTime, report: &mut CookReport) {
@@ -957,6 +991,8 @@ impl Cooker {
             services: &self.services,
             warning: RefCell::new(None),
         };
+        rt.cooked_pass = self.pass;
+        rt.trimmed = false;
         let started = Instant::now();
         let result = catch_unwind(AssertUnwindSafe(|| op.cook(&cx)));
         let elapsed = started.elapsed();
@@ -1658,6 +1694,26 @@ mod tests {
         assert_eq!(f.value("/sum"), Some(1.0));
         // Same time again: clean.
         assert!(f.cook(&["/sum"]).is_empty());
+    }
+
+    #[test]
+    fn idle_nodes_are_trimmed_once() {
+        let mut f = Fixture::new(&[create("/x", "test.trims"), create("/k", "test.const")]);
+        f.cook(&["/x"]);
+        assert_eq!(f.value("/x"), Some(0.0));
+        // Asked for but clean, then not asked for at all: both count as not cooking.
+        for i in 0..TRIM_AFTER_PASSES * 3 {
+            f.cook(if i % 2 == 0 { &["/x"] } else { &["/k"] });
+        }
+        f.set("/x.value", Value::Float(1.0));
+        assert_eq!(f.cook(&["/x"]), ["/x"]);
+        assert_eq!(f.value("/x"), Some(1.0), "trimmed once, not again while idle");
+        // Cooking every pass keeps it from being trimmed.
+        for i in 0..TRIM_AFTER_PASSES * 2 {
+            f.set("/x.value", Value::Float(i as f64 + 2.0));
+            f.cook(&["/x"]);
+        }
+        assert_eq!(f.value("/x"), Some(1.0));
     }
 
     #[test]

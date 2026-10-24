@@ -115,6 +115,22 @@ impl TexRing {
         self.textures.push(t.clone());
         Ok(t)
     }
+
+    /// Forgets the textures nobody else holds, keeping the ones still read (usually the node's
+    /// current output), so an idle node holds no spares; [`TexRing::next`] makes new ones when
+    /// the node cooks again.
+    pub fn trim(&mut self) {
+        self.textures.retain(Tex::shared);
+    }
+
+    /// Textures the ring keeps now.
+    pub fn len(&self) -> usize {
+        self.textures.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.textures.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +154,23 @@ mod tests {
         let other = ring.next(&gpu, 4, 4, "resized").unwrap();
         assert_eq!(other.size(), (4, 4));
         assert_eq!(ring.textures.len(), 1);
+    }
+
+    #[test]
+    fn trim_keeps_only_what_is_held() {
+        let Some(gpu) = gpu() else { return };
+        let mut ring = TexRing::new();
+        let a = ring.next(&gpu, 8, 4, "a").unwrap();
+        let b = ring.next(&gpu, 8, 4, "b").unwrap();
+        drop(a);
+        assert_eq!(ring.len(), 2);
+        ring.trim();
+        assert_eq!(ring.len(), 1, "the spare goes, the held one stays");
+        let c = ring.next(&gpu, 8, 4, "c").unwrap();
+        assert!(!c.same(&b));
+        drop((b, c));
+        ring.trim();
+        assert!(ring.is_empty());
     }
 
     #[test]

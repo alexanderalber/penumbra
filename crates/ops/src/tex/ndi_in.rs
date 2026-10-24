@@ -68,6 +68,10 @@ struct NdiIn {
 }
 
 impl Operator for NdiIn {
+    fn trim(&mut self) {
+        self.ring.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let result = self.cook_inner(cx);
         self.failed = match &result {

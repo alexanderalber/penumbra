@@ -467,6 +467,13 @@ pub trait Operator: Send {
         let _ = items;
         Err("this node keeps no state".into())
     }
+
+    /// Lets go of what the operator only needs while it cooks often: spare textures it would
+    /// render the next result into, intermediate pictures. Its outputs and its state stay as
+    /// they are, and the next cook makes what it needs anew. Called on the cook thread once
+    /// the node has not cooked for a while (a piece not shown, a still that was made once),
+    /// so the video memory of what is not on show goes back.
+    fn trim(&mut self) {}
 }
 
 /// How the pixels of a node's input relate to the pixels of its output, for `res.analyze`.

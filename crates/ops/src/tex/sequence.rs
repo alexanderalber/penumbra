@@ -171,6 +171,10 @@ fn tex_out(target: Tex) -> Cooked {
 }
 
 impl Operator for SequencePicture {
+    fn trim(&mut self) {
+        self.ring.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         if cx.def().inputs.get(SEQ).is_none_or(Option::is_none) {
             return Err(CookError::failed("connect a chan.sequence to `sequence`"));

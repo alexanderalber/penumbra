@@ -140,6 +140,10 @@ fn switch_inputs(cx: &InputChoice<'_>) -> Option<Vec<usize>> {
 }
 
 impl Operator for Switch {
+    fn trim(&mut self) {
+        self.ring.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         // Skipping, the inputs not shown read as nothing, so they count by their wires.
         let connected: Vec<Option<&Data>> = if cx.text("inactive")? == "skip" {

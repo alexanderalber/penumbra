@@ -143,6 +143,10 @@ struct Ramp {
 }
 
 impl Operator for Ramp {
+    fn trim(&mut self) {
+        self.out.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let text = cx.text("keys")?;

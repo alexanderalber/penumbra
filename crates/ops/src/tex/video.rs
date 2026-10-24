@@ -88,6 +88,10 @@ struct Video {
 }
 
 impl Operator for Video {
+    fn trim(&mut self) {
+        self.ring.trim();
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = super::gpu(cx)?;
         let path = cx.resolve_path(cx.text("file")?)?;
