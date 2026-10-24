@@ -386,9 +386,9 @@ front does not win), grown with its bend, takes every pixel inside that fits it,
 and objects they were given to; the other projectors search where the first found it. Where the
 lid sinks further right round the object's foot than its bend follows, those pixels miss the
 plane on the side away from the object (the object stands on the near side, nothing in front of
-the face can lie beyond it), so up to 15 tolerances beyond the face they join it too, from the
-object or from rough patches lying within the corners; the object then ends at its own outline
-instead of a band of lid below it. It gets a number of its own like any face, and
+the face can lie beyond it), so the object's pixels that lie up to 15 tolerances beyond the
+face join it too (only the object's: the rim along the lid's edge lies beyond it as well); the
+object then ends at its own outline instead of a band of lid below it. It gets a number of its own like any face, and
 `"support": "rectified"` makes it the support.
 
 **Objects where projectors disagree.** An object pixel of one projector is taken out of the

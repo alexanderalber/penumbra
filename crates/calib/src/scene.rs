@@ -1830,10 +1830,9 @@ pub fn claim_face(
         keep_large(w, h, &mask, WARP_MIN)
     };
     let on_plane = |k: usize| member.get(k) == Some(&true);
-    let mut mask = region(&on_plane);
-    if beyond.iter().any(|b| *b) {
+    let core = region(&on_plane);
+    let mask = if beyond.iter().any(|b| *b) {
         // The pixels beyond the face join it only where they hang on to what lies on its plane.
-        let core = mask;
         let with = region(&|k| on_plane(k) || beyond.get(k) == Some(&true));
         let (comp, sizes) = raster::components(w, h, &with);
         let mut keep = vec![false; sizes.len() + 1];
@@ -1842,12 +1841,10 @@ pub fn claim_face(
                 *x = true;
             }
         }
-        mask = comp
-            .iter()
-            .zip(&with)
-            .map(|(c, m)| *m && *c > 0 && keep.get(*c as usize) == Some(&true))
-            .collect();
-    }
+        comp.iter().zip(&with).map(|(c, m)| *m && *c > 0 && keep.get(*c as usize) == Some(&true)).collect()
+    } else {
+        core.clone()
+    };
     let label = u16::try_from(parts.planes.len() + 1).ok()?;
     let mut errors = Vec::new();
     let mut seen = vec![false; camera.0 * camera.1];
@@ -1861,8 +1858,11 @@ pub fn claim_face(
         if let Some(o) = parts.object_labels.get_mut(i) {
             *o = 0;
         }
+        // The error and the camera pixels (where the other projectors search) are the plane's:
+        // without the pixels beyond it.
         if let Some(&k) = point_at.get(i)
             && k != u32::MAX
+            && core.get(i) == Some(&true)
         {
             errors.push(error(k as usize));
             if let Some(c) = pairs.to.get(k as usize).and_then(cam_index)
@@ -1895,8 +1895,6 @@ const BEYOND: f64 = 15.0;
 /// How alike the directions of those object pixels must be (the length of their mean unit
 /// vector) for a side to count.
 const SIDE_AGREES: f64 = 0.8;
-/// Share of a face's pixels within a claimed face's corners for it to count as a patch of it.
-const ENCLOSED: f64 = 0.9;
 
 /// Per pair of `pairs`: whether it lies beyond the claimed face rather than on it. A face given
 /// by its corners usually carries an object (the lid under the pumpkin), and a lid sags most
@@ -1905,7 +1903,7 @@ const ENCLOSED: f64 = 0.9;
 /// whatever stands on the face lies on one side of it, so its pixels miss the face's map in one
 /// direction along the epipolar line, by its height; a pixel of the face itself sagging away
 /// misses it the other way, and nothing in front of the face can. So a pixel inside the corners
-/// (no margin), on no face that runs out past them, whose miss points against the object's by at most [`BEYOND`]
+/// (no margin), taken for the object, whose miss points against the object's by at most [`BEYOND`]
 /// tolerances and sideways by under the rough tolerance, is the face. Without an object inside
 /// the corners (or one whose pixels miss in no common direction) there is no side, and nothing.
 fn beyond_face(
@@ -1955,22 +1953,10 @@ fn beyond_face(
             .and_then(|q| to_face.apply(*q))
             .is_some_and(|[u, v]| (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v))
     };
-    // Faces lying within the corners are patches of the claimed face (a sagging lid's rough
-    // fits) and may join it too; a face running out past them (the crate's front below the
-    // lid's edge) never does.
-    let mut faces = vec![[0usize; 2]; parts.planes.len() + 1];
-    for k in 0..pairs.idx.len() {
-        if let Some(f) = faces.get_mut(usize::from(label(k, &parts.plane_labels))) {
-            f[0] += 1;
-            f[1] += usize::from(within(k));
-        }
-    }
-    let enclosed = |l: u16| {
-        l == 0
-            || faces.get(usize::from(l)).is_some_and(|[all, inner]| *inner as f64 >= ENCLOSED * *all as f64)
-    };
     for k in inside {
-        if member.get(*k) == Some(&true) || !enclosed(label(*k, &parts.plane_labels)) {
+        // Only the object's own pixels: the rim along the lid's edge lies within the corners and
+        // beyond the lid too, and is a face of its own or decodes as nothing.
+        if member.get(*k) == Some(&true) || label(*k, &parts.object_labels) == 0 {
             continue;
         }
         let Some(d) = miss(*k).filter(|_| within(*k)) else { continue };
@@ -1988,7 +1974,7 @@ fn beyond_face(
 }
 
 /// What [`claim_face`] claimed: the face's index in the projector's planes, and per camera pixel
-/// whether a measured pixel of it lands there.
+/// whether a measured pixel on its plane lands there (not those that joined from beyond it).
 #[derive(Clone, Debug)]
 pub struct Claim {
     pub plane: usize,

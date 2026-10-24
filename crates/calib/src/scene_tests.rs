@@ -602,18 +602,17 @@ fn a_lid_sinking_round_the_pumpkins_foot_is_claimed_not_the_pumpkin() {
     let room = Room::pumpkin(2.0);
     let (mut map, truth) = room.to_camera(0);
     // The pumpkin's crate top sinks round the pumpkin's foot (a lid giving under the load, 4 cm
-    // right at its foot, nothing 6 cm out) and decodes noisily there (2 camera pixels per
+    // right at its foot, nothing 3 cm out) and decodes noisily there (2 camera pixels per
     // axis): seen at a grazing angle, those pixels miss the top's plane by far more than the
-    // rough tolerance (and the claim's bend), away from the side the pumpkin stands on. Here
-    // they make a rough face of their own; on a real lid they joined the pumpkin's object.
-    // Without the side rule the claim took 3 % of them.
+    // rough tolerance (and the claim's bend), away from the side the pumpkin stands on, and join
+    // the pumpkin's object. Without the side rule the claim took a few per cent of them.
     let pumpkin = room.pumpkin.unwrap();
     let projector = room.projector_at(0);
     let (cw, ch) = (room.camera.0 as f64, room.camera.1 as f64);
-    let reach = pumpkin.radius + 0.6;
+    let reach = pumpkin.radius + 0.3;
     let dip_at = |at: [f64; 3]| {
         let r = (at[0] - pumpkin.centre[0]).hypot(at[2] - pumpkin.centre[2]);
-        0.4 * ((reach - r) / 0.6).clamp(0.0, 1.0)
+        0.4 * ((reach - r) / 0.3).clamp(0.0, 1.0)
     };
     let mut state = 0x2545_f491_u64;
     let mut noise = || {
@@ -681,6 +680,7 @@ fn a_lid_sinking_round_the_pumpkins_foot_is_claimed_not_the_pumpkin() {
         "{ring_px} px sunk past the rough tolerance: {before:.2} in the object before the claim, {after:.2} after; {on:.2} claimed, {pumpkin_on:.3} of the pumpkin"
     );
     assert!(ring_px > 300, "{ring_px}");
+    assert!(before > 0.5, "the sunk ring starts as part of the object: {before}");
     assert!(on > 0.8, "{on}");
     assert!(after < 0.1, "{after}");
     assert!(pumpkin_on < 0.02, "{pumpkin_on}");
