@@ -36,6 +36,7 @@ use serde_json::{Value as Json, json};
 use crate::command::{CommandError, FnCommand, Registry, args};
 use crate::commands::{edit_in, outcome, require};
 use crate::engine::Engine;
+use crate::projector_stored::{self as stored_files, CameraOf, RunInfo, Source};
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -82,11 +83,19 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          reference projector, the reference keeps straight curves, works through any camera | srgb: \
          every projector follows the sRGB curve, only with a camera known to be linear), refine? (rounds \
          of closed-loop correction against the reference, the matrix on white, then the curves on greys; \
-         5; 0 off), grey_levels? (greys the curves are refined on, evenly spaced; 3), apply? (true: \
-         write the params as one undo step)}",
+         5; 0 off), grey_levels? (greys the curves are refined on, evenly spaced; 3), save? (folder, \
+         relative to the project: also measures a grey ramp and writes each projector's measurement as \
+         NAME.json with NAME the node name, to match from later), note? (text saved with them: settings, lamp hours), \
+         apply? (true: write the params as one undo step)}. Without the camera: {from (folder of \
+         NAME.json, or {projector path: file}), projectors?, samples?, apply?} matches from stored \
+         measurements; each camera channel follows the projector dimmest there, so the common white lies \
+         between the white points when no projector is the dimmest in every channel",
         move |p| {
             let a: MatchArgs = args(p)?;
-            run(&e, &a)
+            match &a.from {
+                Some(from) => stored_files::run(&e, &a, from),
+                None => run(&e, &a),
+            }
         },
     ));
 }
@@ -94,7 +103,13 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MatchArgs {
-    pub camera: NodePath,
+    pub camera: Option<NodePath>,
+    /// Stored measurements to match from instead of the camera.
+    pub from: Option<Source>,
+    /// A folder (relative to the project) to save each projector's measurement in.
+    pub save: Option<String>,
+    /// Free text saved with the measurements.
+    pub note: Option<String>,
     pub projectors: Option<Vec<NodePath>>,
     pub levels: Option<u32>,
     pub settle: Option<f64>,
@@ -582,6 +597,8 @@ fn level_values(levels: u32) -> Vec<f64> {
 /// and the black.
 struct Ramps {
     measured: Vec<Measured>,
+    /// Per projector its grey at each level, when asked for.
+    greys: Vec<Option<Vec<[f64; 3]>>>,
     whites: Vec<Option<[f64; 3]>>,
     blacks: Vec<[f64; 3]>,
 }
@@ -593,12 +610,14 @@ fn measure_ramps(
     lit: &Lit,
     spots: &colour::Spots,
     levels: u32,
+    with_greys: bool,
     warnings: &mut Vec<String>,
 ) -> CmdResult<Ramps> {
     let level_values = level_values(levels);
     let mut measured = Vec::with_capacity(projectors.len());
     let mut whites = Vec::with_capacity(projectors.len());
     let mut blacks = Vec::with_capacity(projectors.len());
+    let mut greys = Vec::with_capacity(projectors.len());
     for (k, (_, path)) in projectors.iter().enumerate() {
         let spot = spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[]);
         let mean = |p: &Picture| {
@@ -621,11 +640,20 @@ fn measure_ramps(
                 ramp.push(sub(mean(&pic)?));
             }
         }
+        let mut grey = None;
+        if with_greys {
+            let mut g = Vec::with_capacity(level_values.len());
+            for l in &level_values {
+                g.push(sub(mean(&shoot.alone(k, [*l as f32; 3])?)?));
+            }
+            grey = Some(g);
+        }
+        greys.push(grey);
         blacks.push(b);
         whites.push(Some(sub(w)));
         measured.push(Measured { levels: level_values.clone(), ramps });
     }
-    Ok(Ramps { measured, whites, blacks })
+    Ok(Ramps { measured, greys, whites, blacks })
 }
 
 /// A note of the colour match, its projector named by path.
@@ -905,13 +933,37 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     let started = Instant::now();
     let Settings { levels, settle, timeout, samples, refine, greys } = settings(a)?;
 
+    let Some(camera_path) = &a.camera else {
+        return Err(
+            "give `camera` (a tex.video_in) to measure, or `from` to match stored measurements".into()
+        );
+    };
     let session = e.session();
     let net = session.doc().snapshot();
     let projectors = projector_list(e, &net, a.projectors.as_deref())?;
     if projectors.is_empty() {
         return Err(format!("no active {PROJECTOR} to measure").into());
     }
-    let camera = CameraStream::open(e, &net, &a.camera)?;
+    if let Some(dir) = &a.save {
+        if dir.trim().is_empty() {
+            return Err("`save` is a folder, relative to the project".into());
+        }
+        // Names checked before anything is shown.
+        let mut names = Vec::new();
+        for (_, path) in &projectors {
+            let name = stored_files::file_name(path)?;
+            if names.contains(&name) {
+                return Err(format!("two projectors would both be saved as {name}").into());
+            }
+            names.push(name);
+        }
+    }
+    let camera = CameraStream::open(e, &net, camera_path)?;
+    let camera_of = CameraOf {
+        node: camera_path.to_string(),
+        device: camera.key.device.clone(),
+        mode: camera.key.mode.clone(),
+    };
     let claim = Claim::new(e, projectors.iter().map(|(id, _)| *id).collect())?;
     let mut rig = Rig {
         engine: e,
@@ -936,10 +988,22 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     }
 
     // The ramps, and the correction they give.
-    let ramps = measure_ramps(&mut rig, &projectors, &lit, &spots, levels, &mut warnings)?;
+    let ramps = measure_ramps(&mut rig, &projectors, &lit, &spots, levels, a.save.is_some(), &mut warnings)?;
     let matched = colour::match_projectors(&ramps.measured, &ramps.whites, samples, a.target)
         .map_err(|note| named(&note, &projectors))?;
     warnings.extend(matched.warnings.iter().map(|w| named(w, &projectors)));
+    let whites: Vec<[f64; 3]> = ramps.whites.iter().flatten().copied().collect();
+    if let Some(reference_white) = ramps.whites.get(matched.reference).copied().flatten() {
+        let gain = colour::stored::between_gain(&whites, reference_white, matched.alpha);
+        if gain > 1.02 {
+            warnings.push(format!(
+                "no projector is the dimmest in every channel: a white between the white points would keep \
+                 about {:.0} % more brightness (the camera's estimate); run with save, then match from the \
+                 saved measurements",
+                (gain - 1.0) * 100.0
+            ));
+        }
+    }
 
     // Closed loop: each other projector's matrix rows scaled until the camera reads its white,
     // channel by channel, as it reads the reference's. White and not the primaries one by one:
@@ -983,6 +1047,46 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
     }
     drop(claim);
 
+    let mut saved = Json::Null;
+    if let Some(dir) = &a.save {
+        let (run_id, unix_time) = stored_files::run_id();
+        let info = RunInfo {
+            run: &run_id,
+            unix_time,
+            camera: camera_of,
+            shared_spot: spots.shared,
+            note: a.note.as_deref().unwrap_or(""),
+        };
+        let mut files = Vec::with_capacity(projectors.len());
+        let mut stored_list = Vec::with_capacity(projectors.len());
+        for (k, (id, path)) in projectors.iter().enumerate() {
+            let m = ramps.measured.get(k).ok_or("lost a measurement")?;
+            let greys = ramps.greys.get(k).cloned().flatten();
+            stored_list.push(colour::stored::Stored { measured: m.clone(), greys: greys.clone() });
+            let file = stored_files::MeasurementFile {
+                format: stored_files::FORMAT.into(),
+                version: stored_files::VERSION,
+                projector: path.clone(),
+                display: text_param(&net, e, *id, PROJECTOR, "display"),
+                note: info.note.into(),
+                run: info.run.into(),
+                unix_time: info.unix_time,
+                camera: info.camera.clone(),
+                spot_pixels: spots.masks.get(k).map_or(0, |m| colour::count(m)),
+                shared_spot: info.shared_spot,
+                levels: m.levels.clone(),
+                black: ramps.blacks.get(k).copied().unwrap_or([0.0; 3]),
+                white: ramps.whites.get(k).copied().flatten(),
+                ramps: m.ramps.clone(),
+                greys,
+            };
+            files.push((path.clone(), file));
+        }
+        let written = stored_files::save(&session.dir().join(dir), &files)?;
+        let check = stored_files::check_against(&stored_list, &projectors, &matrices, &curve_sets, samples);
+        saved = json!({"files": written, "run": run_id, "stored_match_against_this": check});
+    }
+
     let (ops, report) = results(&projectors, &matched, &ramps, &matrices, &curve_sets, &refined)?;
     let apply = a.apply.unwrap_or(true);
     let history = if apply { Some(outcome(&edit_in(&session, &ops, "projector.match")?)) } else { None };
@@ -1004,6 +1108,7 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         "projectors": report,
         "applied": apply,
         "history": history,
+        "saved": saved,
         "warnings": warnings,
         "seconds": started.elapsed().as_secs_f64(),
     }))
@@ -1147,7 +1252,7 @@ mod tests {
         let spots = colour::spots(&lit.masks, lit.black.width, lit.black.height);
         assert!(spots.shared);
         let mut warnings = Vec::new();
-        let ramps = measure_ramps(&mut cam, &projectors, &lit, &spots, 4, &mut warnings).unwrap();
+        let ramps = measure_ramps(&mut cam, &projectors, &lit, &spots, 4, false, &mut warnings).unwrap();
         // Projector 1's white reads 1.01 in red: clipped.
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].starts_with("/b: the camera clips"), "{warnings:?}");

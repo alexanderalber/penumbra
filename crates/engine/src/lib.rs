@@ -25,6 +25,7 @@ pub mod ndi;
 pub mod osc;
 pub mod pictures;
 pub mod projector;
+pub mod projector_stored;
 pub mod projects;
 pub mod scan;
 pub mod scan_align;

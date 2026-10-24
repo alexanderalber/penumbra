@@ -310,3 +310,109 @@ fn projector_match_refines_through_a_nonlinear_camera() {
     assert!(f.engine.board().state().flat.is_empty());
     assert!(f.fail("projector.match", json!({"camera": "/cam", "refine": 11})).contains("refine"));
 }
+
+#[test]
+fn projector_match_saves_measurements_and_matches_from_them() {
+    let f = Fixture::new("projector-stored");
+    let key = Key::new("sim", "");
+    f.engine.camera().feed(&key, frame(&vec![[0.0; 3]; W * H], 0, Instant::now()));
+    f.call("node.create", json!({"path": "/cam", "kind": "tex.video_in", "params": {"device": "sim"}}));
+    f.call("node.create", json!({"path": "/proj_a", "kind": "out.projector"}));
+    f.call("node.create", json!({"path": "/proj_b", "kind": "out.projector"}));
+    f.call("cook.play", json!({"playing": true}));
+    let net = f.engine.session().doc().snapshot();
+    let id = |p: &str| net.resolve(&p.parse().unwrap()).unwrap();
+    let (a, b) = (id("/proj_a"), id("/proj_b"));
+    let curve = [1.5, 2.0, 2.5];
+    let _camera = Camera::start(f.engine.clone(), key, vec![a, b], curve);
+
+    let r = f.call(
+        "projector.match",
+        json!({"camera": "/cam", "levels": 6, "settle": 0.0, "save": "measured", "note": "Cinema, Eco"}),
+    );
+    let files = r["saved"]["files"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(files.len(), 2, "{r}");
+    let dir = f.engine.session().dir().join("measured");
+    let stored = crate::projector_stored::read(&dir.join("proj_a.json")).unwrap();
+    assert_eq!(stored.projector, "/proj_a");
+    assert_eq!(stored.note, "Cinema, Eco");
+    assert_eq!(stored.camera.device, "sim");
+    assert_eq!(stored.greys.as_ref().map(Vec::len), Some(6));
+    assert!(stored.shared_spot);
+    let check = r["saved"]["stored_match_against_this"].as_array().unwrap_or_else(|| panic!("{r}"));
+    assert_eq!(check.len(), 2, "{r}");
+
+    // Without the camera: the files alone.
+    f.call("node.create", json!({"path": "/later", "kind": "comp.base"}));
+    f.call("node.create", json!({"path": "/later/proj_a", "kind": "out.projector"}));
+    let r = f.call(
+        "projector.match",
+        json!({"from": {"/proj_a": "measured/proj_a.json", "/proj_b": "measured/proj_b.json"}}),
+    );
+    assert_eq!(r["applied"], true, "{r}");
+    assert_eq!(r["from"], "stored");
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    // Through the simulated camera both read the same greys.
+    let net = f.engine.session().doc().snapshot();
+    let desc = f.engine.types().desc(penumbra_ops::out::PROJECTOR).unwrap();
+    let synths = synths();
+    let read = |node: NodeId, synth: &Synth, content: [f64; 3]| {
+        let n = net.node(node).unwrap();
+        let text = |p: &str| n.param(desc, p).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let m = penumbra_ops::out::correct::parse_matrix(&text("matrix")).unwrap();
+        let curves = penumbra_ops::out::correct::parse_curves(&text("curves"))
+            .unwrap()
+            .unwrap_or_else(|| [vec![0.0, 1.0], vec![0.0, 1.0], vec![0.0, 1.0]]);
+        let s = colour::signal(&m, &curves, content).map(|v| v as f32);
+        let light = synth.light(s);
+        [0, 1, 2].map(|c| (0.02 + light[c]).powf(curve[c]) - 0.02_f64.powf(curve[c]))
+    };
+    for g in [0.25, 0.5, 1.0] {
+        let (ga, gb) = (read(a, &synths[0], [g; 3]), read(b, &synths[1], [g; 3]));
+        let white = read(b, &synths[1], [1.0; 3]);
+        for c in 0..3 {
+            // Within 8 %, or a per cent of white where the camera sees hardly anything.
+            let off = (ga[c] - gb[c]).abs();
+            assert!(
+                off < 0.08 * gb[c] || off < 0.01 * white[c],
+                "grey {g}, channel {c}: {ga:?} vs {gb:?}: {r}"
+            );
+        }
+    }
+
+    // A folder: `<node name>.json` per projector, here for a node elsewhere in the network.
+    let r = f.call(
+        "projector.match",
+        json!({"from": "measured", "projectors": ["/later/proj_a", "/proj_b"], "apply": false}),
+    );
+    assert_eq!(r["applied"], false, "{r}");
+
+    // Refused: both sources, camera-only settings, missing and broken files.
+    assert!(f.fail("projector.match", json!({})).contains("`camera`"));
+    assert!(f.fail("projector.match", json!({"camera": "/cam", "from": "measured"})).contains("not both"));
+    assert!(f.fail("projector.match", json!({"from": "measured", "levels": 4})).contains("`levels`"));
+    assert!(f.fail("projector.match", json!({"from": {"/proj_a": "nowhere.json"}})).contains("cannot read"));
+    assert!(
+        f.fail(
+            "projector.match",
+            json!({"from": {"/proj_a": "measured/proj_a.json"}, "projectors": ["/proj_b"]})
+        )
+        .contains("names no file for /proj_b")
+    );
+    std::fs::write(dir.join("broken.json"), "{\"format\": \"something else\"}").unwrap();
+    assert!(
+        f.fail("projector.match", json!({"from": {"/proj_a": "measured/broken.json"}}))
+            .contains("not a projector measurement")
+    );
+    // Files of different runs, one without greys: combined, with warnings.
+    let mut old = stored.clone();
+    old.run = "older".into();
+    old.greys = None;
+    std::fs::write(dir.join("old.json"), serde_json::to_string(&old).unwrap()).unwrap();
+    let r = f.call(
+        "projector.match",
+        json!({"from": {"/proj_a": "measured/old.json", "/proj_b": "measured/proj_b.json"}, "apply": false}),
+    );
+    let warnings = r["warnings"].to_string();
+    assert!(warnings.contains("different runs") && warnings.contains("without greys"), "{r}");
+}

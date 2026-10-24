@@ -26,6 +26,9 @@
 
 use serde::Serialize;
 
+#[path = "colour_stored.rs"]
+pub mod stored;
+
 /// A 3x3 matrix, row by row.
 pub type Mat3 = [[f64; 3]; 3];
 

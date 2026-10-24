@@ -90,6 +90,41 @@ curve into every projector and tints the whole picture.
 
 Saturated colours match only approximately.
 
+#### Matching from stored measurements
+
+A measurement belongs to the projector, so it can be kept and combined with others later
+without the camera. `save` (a folder, relative to the project) also measures a grey ramp per
+projector (a few seconds more) and writes one file per projector, named after its node:
+
+    penumbra-cli ctl projector.match '{"camera": "/cam", "save": "measured", "note": "Cinema, Eco"}'
+
+`note` is kept in the files (picture mode, lamp hours, where the projectors stood). The reply's
+`saved` lists the files and, under `stored_match_against_this`, how far a match from these files
+would land from what the camera run settled on (the largest signal difference per channel over
+a few greys): small numbers say the files are good enough to match from.
+
+Later, without a camera, any combination:
+
+    penumbra-cli ctl projector.match '{"from": {"/proj_a": "measured/proj_a.json", "/proj_c": "other/proj_c.json"}}'
+
+or `"from": "measured"` for a folder with a `<node name>.json` per projector (every active
+projector, or those in `projectors`). Only `projectors`, `samples` and `apply` go with `from`.
+It writes `matrix` and `curves` as a camera run does.
+
+How it matches: per camera channel, the reading of a projector's grey as a function of its
+signal; two projectors give the same light where the camera reads the same. Each channel
+follows the projector whose white is the dimmest in that channel, so when no projector is the
+dimmest in every channel (one warmer, one cooler), the common white lies between their white
+points and keeps more brightness than matching to either one. When one projector is the
+dimmest everywhere, it keeps its picture and the others follow it, as in a camera run.
+
+Limits: there is no closed loop, so trust it less than a camera run. Readings only compare
+when they were taken with the same camera, exposure, white balance and patch of wall; files
+from different runs are combined with a warning. Files without a grey ramp (from an older
+format) are matched from each primary alone, which through a camera that does not add up can
+leave white off by several per cent per channel. A camera run warns when its projectors would
+gain from a white between the white points.
+
 ### Even light across a projector, and black in overlaps
 
 Within one projector's picture brightness and colour vary too: brighter in the middle (a hot
