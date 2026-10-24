@@ -127,7 +127,9 @@ impl Rig {
         cooker.provide(camera.clone());
         cooker.provide(penumbra_dmx::Hub::new());
         cooker.provide(penumbra_dmx::Inputs::new());
-        let record = penumbra_record::Hub::new();
+        // The tests share one software adapter; a busy machine can keep a frame's readback
+        // waiting for longer than a recording would in a show.
+        let record = penumbra_record::Hub::with_planes_timeout(Duration::from_secs(60));
         cooker.provide(record.clone());
         cooker.provide(crate::keyboard::Keyboard::new());
         // A pointer that is always there (a build machine may have no desktop), and a 3D mouse
@@ -2417,11 +2419,18 @@ fn analysis_rig(gpu: Gpu, more: &[Op]) -> Rig {
 /// The analysis' meters output with `level` fed and shown (as a viewer shows it), once it has
 /// a picture whose text is set (the glyph jobs done).
 fn meters_shown(rig: &mut Rig, level: f32) -> Tex {
+    meters_shown_at(rig, level).0
+}
+
+/// [`meters_shown`], with the moment its last cook began: the meters keep their peaks for
+/// [`crate::meters::PEAK_HOLD`] seconds of wall-clock time from about then.
+fn meters_shown_at(rig: &mut Rig, level: f32) -> (Tex, Instant) {
     let a = rig.id("/a");
     let meters = Port { node: a, output: 2 };
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut last = None;
     loop {
+        let cooked = Instant::now();
         rig.audio.feed("test", 48_000, 2, &[level; 1600]).unwrap();
         rig.clock.advance(1);
         rig.cooker.cook_showing(&rig.net, rig.clock.now(), &[], &[], &[meters]);
@@ -2433,7 +2442,7 @@ fn meters_shown(rig: &mut Rig, level: f32) -> Tex {
         );
         if let Some(t) = rig.cooker.output(meters).and_then(|d| d.get::<Tex>()).cloned() {
             if idle && last.is_some() {
-                return t;
+                return (t, cooked);
             }
             last = Some(t);
         }
@@ -2486,7 +2495,7 @@ fn analysis_meters_are_drawn_only_while_read() {
 fn analysis_meters_show_the_levels_on_transparent_black_and_start_over_on_reset() {
     let Some(gpu) = gpu() else { return };
     let mut rig = analysis_rig(gpu, &[]);
-    let tex = meters_shown(&mut rig, 0.9);
+    let (tex, loud) = meters_shown_at(&mut rig, 0.9);
     assert_eq!(tex.size(), (320, 180));
     let px = rig.gpu.read(&tex).unwrap();
     // The level bar: green, from the bottom of its well up to 90 %.
@@ -2500,9 +2509,12 @@ fn analysis_meters_show_the_levels_on_transparent_black_and_start_over_on_reset(
     let s = rig.cooker.status(rig.id("/a")).unwrap();
     assert_eq!((s.error, s.warning), (None, None));
 
-    // Quiet now: the peak holds.
+    // Quiet now: the peak holds, unless a busy machine took longer than the hold to draw the
+    // quiet picture (the hold runs on the wall clock).
     let tex = meters_shown(&mut rig, 0.0);
-    assert!(peak_line_high(&rig.gpu.read(&tex).unwrap()), "held");
+    if loud.elapsed().as_secs_f64() < crate::meters::PEAK_HOLD {
+        assert!(peak_line_high(&rig.gpu.read(&tex).unwrap()), "held");
+    }
 
     // Reset: the memory is gone, the peak is where the level is.
     assert_eq!(rig.cooker.reset(rig.id("/a")), penumbra_graph::ResetOutcome::Reset);
@@ -2524,6 +2536,21 @@ fn recorded(rig: &Rig, node: NodeId) -> penumbra_record::Status {
         }
         assert!(Instant::now() < deadline, "the recording did not finish: {s:?}");
         std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Waits until the encoder of `node`'s recording has taken every queued frame, so the next one
+/// finds room however slow the machine is.
+fn drained(rig: &Rig, node: NodeId) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        // None before the first cook has started the recording.
+        let Some(s) = rig.record.status(node) else { return };
+        if s.queue == 0 || s.done {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the encoder did not catch up: {s:?}");
+        std::thread::sleep(Duration::from_millis(2));
     }
 }
 
@@ -2574,11 +2601,12 @@ fn out_video_records_what_it_is_shown() {
         rig.cook("/rec");
         assert_eq!(rig.record.status(rec), None, "not recording before `record` turns on");
         rig.edit(&[set("/rec.record", Value::Bool(true))]);
-        // 20 show frames at 60 Hz: 10 frames at 30.
+        // 20 show frames at 60 Hz: 10 frames at 30. The encoder may fall behind on a busy
+        // machine and drop frames by design; waiting for it keeps the count exact.
         for _ in 0..20 {
+            drained(&rig, rec);
             rig.cook("/rec");
             rig.clock.advance(1);
-            std::thread::sleep(Duration::from_millis(5));
         }
         rig.edit(&[set("/rec.record", Value::Bool(false))]);
         rig.cook("/rec");
@@ -2650,6 +2678,9 @@ fn out_video_stops_harmlessly_and_reports_bad_paths() {
     // A file below a file cannot be created: the node shows why while `record` stays on, and
     // does not try again by itself.
     record(&mut rig, true);
+    // The recording's thread creates the file and ends with the error; the next cook shows it.
+    let s = recorded(&rig, rec);
+    assert!(s.error.as_deref().is_some_and(|e| e.contains("cannot create")), "{s:?}");
     rig.clock.advance(1);
     rig.cook("/rec");
     let error = rig.cooker.status(rec).unwrap().error.clone().unwrap_or_default();

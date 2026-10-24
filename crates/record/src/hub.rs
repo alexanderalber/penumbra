@@ -74,6 +74,8 @@ struct Inner {
     threads: Vec<JoinHandle<()>>,
     /// Shut down: no new recordings.
     closed: bool,
+    /// How long a recording waits for a frame's planes; [`writer::PLANES_TIMEOUT`] when `None`.
+    planes_timeout: Option<Duration>,
 }
 
 /// Cheap to clone; every clone is the same hub.
@@ -85,6 +87,15 @@ pub struct Hub {
 impl Hub {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A hub whose recordings wait up to `timeout` for a frame's planes instead of
+    /// [`writer::PLANES_TIMEOUT`]: for tests that share one software adapter, which a busy
+    /// machine can keep at the others' work for longer.
+    pub fn with_planes_timeout(timeout: Duration) -> Self {
+        let hub = Self::default();
+        lock(&hub.inner).planes_timeout = Some(timeout);
+        hub
     }
 
     /// Registers `node` under `label` (its name; the engine shows paths). Called on every cook;
@@ -131,7 +142,8 @@ impl Hub {
             }
         }
         let path = inner.nodes.get(&node).map(|e| e.path.clone()).unwrap_or_default();
-        let (recording, shared, handle) = writer::start(&path, settings)?;
+        let timeout = inner.planes_timeout.unwrap_or(writer::PLANES_TIMEOUT);
+        let (recording, shared, handle) = writer::start(&path, settings, timeout)?;
         inner.threads.push(handle);
         inner.nodes.entry(node).or_default().current = Some(shared);
         Ok(recording)

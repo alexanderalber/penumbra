@@ -27,7 +27,8 @@ use penumbra_core::lock;
 use crate::hub::Status;
 use crate::{Codec, Fps, Frame, H264Preset, Layout};
 
-/// How long the thread waits for one frame's planes (a GPU readback) before giving up on it.
+/// How long the thread waits for one frame's planes (a GPU readback) before giving up on it,
+/// unless its [`crate::Hub`] says otherwise.
 pub const PLANES_TIMEOUT: Duration = Duration::from_secs(5);
 /// Write buffer in front of the file.
 const WRITE_BUFFER: usize = 8 << 20;
@@ -186,7 +187,12 @@ impl Drop for Recording {
 
 /// Starts a recording: checks the settings and spawns its thread, which creates the file. A
 /// file that cannot be created ends the recording at once with the error in its status.
-pub(crate) fn start(node: &str, s: Settings) -> Result<(Recording, Arc<Shared>, JoinHandle<()>), String> {
+/// `planes_timeout` is how long it waits for one frame's planes.
+pub(crate) fn start(
+    node: &str,
+    s: Settings,
+    planes_timeout: Duration,
+) -> Result<(Recording, Arc<Shared>, JoinHandle<()>), String> {
     let layout = s.layout();
     layout.check()?;
     if s.fps.num == 0 || s.fps.den == 0 {
@@ -209,13 +215,13 @@ pub(crate) fn start(node: &str, s: Settings) -> Result<(Recording, Arc<Shared>, 
     let thread_shared = shared.clone();
     let handle = std::thread::Builder::new()
         .name("record".into())
-        .spawn(move || run(&s, &rx, &thread_shared))
+        .spawn(move || run(&s, &rx, &thread_shared, planes_timeout))
         .map_err(|e| format!("cannot start the recording thread: {e}"))?;
     Ok((Recording { tx: Some(tx), shared: shared.clone(), layout, fps }, shared, handle))
 }
 
-fn run(s: &Settings, rx: &Receiver<Frame>, shared: &Shared) {
-    let outcome = catch_unwind(AssertUnwindSafe(|| record(s, rx, shared)));
+fn run(s: &Settings, rx: &Receiver<Frame>, shared: &Shared, planes_timeout: Duration) {
+    let outcome = catch_unwind(AssertUnwindSafe(|| record(s, rx, shared, planes_timeout)));
     let error = match outcome {
         Ok(Ok(())) => None,
         Ok(Err(e)) => Some(e),
@@ -244,7 +250,12 @@ struct Packet {
     sync: bool,
 }
 
-fn record(s: &Settings, rx: &Receiver<Frame>, shared: &Shared) -> Result<(), String> {
+fn record(
+    s: &Settings,
+    rx: &Receiver<Frame>,
+    shared: &Shared,
+    planes_timeout: Duration,
+) -> Result<(), String> {
     let layout = s.layout();
     let path = s.path.as_path();
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
@@ -284,7 +295,7 @@ fn record(s: &Settings, rx: &Receiver<Frame>, shared: &Shared) -> Result<(), Str
             continue;
         }
         last_index = frame.index;
-        let (packets, took) = match encoder.encode(&layout, &mut frame) {
+        let (packets, took) = match encoder.encode(&layout, &mut frame, planes_timeout) {
             Ok(p) => p,
             Err(e) => {
                 failure = Some(e);
@@ -502,9 +513,14 @@ impl Encoder {
         Ok(iso::TrackConfig::new(entry, fps.num))
     }
 
-    /// Encodes `frame`; also says how long the work took in seconds, from when the planes were
-    /// there (not counting the wait for them).
-    fn encode(&mut self, layout: &Layout, frame: &mut Frame) -> Result<(Vec<Packet>, f64), String> {
+    /// Encodes `frame`, waiting up to `timeout` for its planes; also says how long the work took
+    /// in seconds, from when the planes were there (not counting the wait for them).
+    fn encode(
+        &mut self,
+        layout: &Layout,
+        frame: &mut Frame,
+        timeout: Duration,
+    ) -> Result<(Vec<Packet>, f64), String> {
         let index = frame.index;
         let [oy, ou, ov, oa] = layout.offsets();
         let mut out = Vec::new();
@@ -513,7 +529,7 @@ impl Encoder {
             Encoder::H264(enc) => {
                 let luma = layout.luma_stride() as usize;
                 let chroma = layout.chroma_stride() as usize;
-                frame.planes.read(PLANES_TIMEOUT, &mut |b| {
+                frame.planes.read(timeout, &mut |b| {
                     started = Some(Instant::now());
                     let plane = |from: usize, to: usize| b.get(from..to).ok_or("the frame is too short");
                     let yuv = filmcraft_h264enc::YuvFrame {
@@ -538,7 +554,7 @@ impl Encoder {
                 let (cw, ch) = (cw as usize, ch as usize);
                 let luma = layout.luma_stride() as usize * 2;
                 let chroma = layout.chroma_stride() as usize * 2;
-                frame.planes.read(PLANES_TIMEOUT, &mut |b| {
+                frame.planes.read(timeout, &mut |b| {
                     started = Some(Instant::now());
                     unpack(b, oy, luma, w, h, &mut pf.y)?;
                     unpack(b, ou, chroma, cw, ch, &mut pf.cb)?;

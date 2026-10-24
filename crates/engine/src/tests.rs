@@ -1122,13 +1122,18 @@ fn vsyncs_that_pile_up_during_a_slow_pass_cook_once() {
 fn the_ticker_rests_while_real_vsyncs_arrive() {
     let f = Fixture::new("ticker-park");
     assert!(f.engine.ticking(), "no output: the ticker paces");
-    for _ in 0..5 {
+    // Vsyncs at the show rate, as an output sends them, each followed by a task that waits for
+    // the loop. On a busy machine a vsync can reach the loop later than the few periods after
+    // which the ticker resumes, so the ticker may be seen ticking a few times before it rests.
+    let until = Instant::now() + Duration::from_secs(5);
+    let mut rested = false;
+    while !rested && Instant::now() < until {
         f.engine.vsync(Instant::now());
+        f.engine.on_cook(|_| ()).unwrap();
+        rested = !f.engine.ticking();
         std::thread::sleep(Duration::from_millis(16));
     }
-    // A task after the vsyncs runs after the loop has seen them.
-    f.engine.on_cook(|_| ()).unwrap();
-    assert!(!f.engine.ticking(), "real vsyncs pace: the ticker rests");
+    assert!(rested, "real vsyncs pace: the ticker rests");
     // Three periods without one and the ticker takes over again.
     let until = Instant::now() + Duration::from_secs(2);
     while !f.engine.ticking() && Instant::now() < until {

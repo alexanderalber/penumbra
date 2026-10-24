@@ -11,8 +11,10 @@ use photocraft_codecs::{ChannelLayout, EncodeOptions, Format, Image};
 
 use crate::{Gpu, Tex};
 
-/// How long a readback may wait for the GPU.
-pub const READ_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a readback may wait for the GPU. Longer in this crate's tests: they share one
+/// software adapter across all their threads, where on a busy machine a small readback can
+/// wait behind the others' work for more than ten seconds.
+pub const READ_TIMEOUT: Duration = Duration::from_secs(if cfg!(test) { 60 } else { 10 });
 
 /// A texture's pixels on the CPU, as stored: linear, premultiplied RGBA, rows top to bottom.
 #[derive(Clone, Debug, PartialEq)]

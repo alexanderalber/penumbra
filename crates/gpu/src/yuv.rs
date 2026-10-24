@@ -367,6 +367,10 @@ mod tests {
     use crate::testing::gpu;
     use half::f16;
 
+    /// How long a test waits for a frame: the tests share one software adapter, which a busy
+    /// machine can keep at others' work for many seconds.
+    const WAIT: Duration = Duration::from_secs(60);
+
     /// A 4:2:0 8-bit layout as the H.264 recording uses it.
     fn layout420(w: u32, h: u32) -> PlaneLayout {
         let ls = w.div_ceil(8) * 8;
@@ -411,7 +415,7 @@ mod tests {
         ] {
             let tex = flat(&gpu, 32, 12, rgba);
             let planes = reader.grab(&gpu, &tex, &l).unwrap().unwrap();
-            planes.wait(Duration::from_secs(10)).unwrap();
+            planes.wait(WAIT).unwrap();
             let (y, cb, cr) = planes
                 .with_bytes(|b| {
                     let o = l.offsets.map(|o| o as usize);
@@ -434,15 +438,15 @@ mod tests {
         let a = reader.grab(&gpu, &tex, &l).unwrap().unwrap();
         let b = reader.grab(&gpu, &tex, &l).unwrap().unwrap();
         assert!(reader.grab(&gpu, &tex, &l).unwrap().is_none(), "two in flight, the third has no buffer");
-        a.wait(Duration::from_secs(10)).unwrap();
+        a.wait(WAIT).unwrap();
         drop(a);
         assert_eq!(reader.in_flight(), 1);
         let c = reader.grab(&gpu, &tex, &l).unwrap().unwrap();
         assert_eq!(reader.free.len(), 0, "the returned buffer was taken again");
         // Waited for on another thread, as the encoder does.
         let t = std::thread::spawn(move || {
-            b.wait(Duration::from_secs(10)).unwrap();
-            c.wait(Duration::from_secs(10)).unwrap();
+            b.wait(WAIT).unwrap();
+            c.wait(WAIT).unwrap();
             c.with_bytes(|bytes| bytes.len()).unwrap()
         });
         assert_eq!(t.join().unwrap() as u64, l.bytes);

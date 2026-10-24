@@ -16,7 +16,7 @@ use std::collections::VecDeque;
 use penumbra_core::Chans;
 
 /// Seconds a peak stays before it falls.
-const PEAK_HOLD: f64 = 1.0;
+pub(crate) const PEAK_HOLD: f64 = 1.0;
 /// How fast a held peak falls, in full scale per second.
 const PEAK_FALL: f64 = 0.8;
 /// Seconds of hits the strip shows.
