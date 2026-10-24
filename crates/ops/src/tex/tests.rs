@@ -356,7 +356,7 @@ lumen"
         create(
             "/chroma_key",
             "tex.chroma_key",
-            &[("key", Value::Vec4([0.2, 0.8, 0.2, 1.0])), ("tolerance", Value::Float(0.12))],
+            &[("key", Value::Vec4([0.2, 0.8, 0.2, 1.0])), ("hue", Value::Float(30.0))],
         ),
         create("/cross", "tex.cross", &[("cross", Value::Float(0.3))]),
         create("/displace", "tex.displace", &[("weight", Value::Vec2([0.2, 0.2]))]),
@@ -1066,6 +1066,43 @@ fn color_and_luminosity_trade_hue_and_brightness() {
     let l = pixel("/luminosity");
     let orange = 0.3 * 0.8 + 0.59 * 0.4 + 0.11 * 0.1;
     assert!(l.iter().take(3).all(|v| (v - orange).abs() < 0.01), "grey at the orange's brightness: {l:?}");
+}
+
+#[test]
+fn chroma_key_takes_shadows_on_the_screen_but_not_neighbouring_hues() {
+    let Some(gpu) = gpu() else { return };
+    // The key is picked from the lit screen; the shadow is a fifth as bright.
+    let colours: [(&str, [f64; 3], bool); 6] = [
+        ("/screen", [0.05, 0.8, 0.1], true),
+        ("/shadow", [0.01, 0.15, 0.02], true),
+        ("/yellow_green", [0.6, 1.0, 0.0], false),
+        ("/teal", [0.0, 0.6, 0.6], false),
+        ("/grey", [0.4, 0.4, 0.4], false),
+        ("/skin", [0.8, 0.45, 0.3], false),
+    ];
+    let mut ops = Vec::new();
+    for (name, [r, g, b], _) in colours {
+        let src = format!("{name}_src");
+        ops.push(create(
+            &src,
+            "tex.constant",
+            &[("width", Value::Int(8)), ("height", Value::Int(4)), ("color", Value::Vec4([r, g, b, 1.0]))],
+        ));
+        ops.push(create(
+            name,
+            "tex.chroma_key",
+            &[("key", Value::Vec4([0.05, 0.8, 0.1, 1.0])), ("output", "matte".into())],
+        ));
+        ops.push(connect(&src, name, 0));
+    }
+    let mut rig = Rig::new(gpu, None, &ops);
+    for (name, _, keyed) in colours {
+        let a = red(&mut rig, name);
+        assert!(if keyed { a < 0.02 } else { a > 0.98 }, "{name}: alpha {a}");
+    }
+    // Brightness range: the shadow (luma 0.34) lies below it and stays.
+    rig.edit(&[set("/shadow.brightness", Value::Vec2([0.45, 1.0]))]);
+    assert!(red(&mut rig, "/shadow") > 0.98);
 }
 
 #[test]

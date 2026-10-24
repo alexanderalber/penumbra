@@ -142,17 +142,47 @@ pub(super) fn builtins() -> Vec<Builtin> {
             filter("tex.chroma_key", "Cuts out a green or blue screen: pixels near a key colour become transparent")
                 .param(
                     ParamSpec::color("key", [0.0, 1.0, 0.0, 1.0])
-                        .doc("The screen's colour; only its hue and saturation count, so shadows on the screen key too"),
+                        .doc("The screen's colour; its hue is matched, its saturation is what saturation is measured against"),
                 )
                 .param(
-                    ParamSpec::float("tolerance", 0.1)
-                        .range(0.0, 0.5)
-                        .doc("Chroma distance from the key that is fully transparent"),
+                    ParamSpec::float("hue", 25.0)
+                        .range(0.0, 90.0)
+                        .unit(Unit::Degrees)
+                        .group("hue")
+                        .doc("How far a hue may lie from the key's, either way round the colour wheel, and still be fully transparent"),
                 )
                 .param(
-                    ParamSpec::float("softness", 0.08)
+                    ParamSpec::float("hue_softness", 15.0)
+                        .range(0.0, 90.0)
+                        .unit(Unit::Degrees)
+                        .group("hue")
+                        .doc("Width of the partly transparent edge beyond hue"),
+                )
+                .param(
+                    ParamSpec::float("saturation", 0.35)
+                        .range(0.0, 1.0)
+                        .group("saturation")
+                        .doc("Least saturation, as a fraction of the key's, that is fully transparent. Lower keys darker shadows on the screen, higher spares greyish colours of the key's hue"),
+                )
+                .param(
+                    ParamSpec::float("saturation_softness", 0.15)
+                        .range(0.0, 1.0)
+                        .group("saturation")
+                        .doc("Width of the partly transparent edge below saturation"),
+                )
+                .param(
+                    ParamSpec::vec2("brightness", [0.0, 1.0])
+                        .range(0.0, 1.0)
+                        .group("brightness")
+                        .more()
+                        .doc("Brightness range (gamma-encoded luma) that can be keyed; outside it everything stays, e.g. highlights or near black"),
+                )
+                .param(
+                    ParamSpec::float("brightness_softness", 0.05)
                         .range(0.0, 0.5)
-                        .doc("Width of the partly transparent edge beyond tolerance, in the same chroma distance"),
+                        .group("brightness")
+                        .more()
+                        .doc("Width of the partly transparent edges outside the brightness range"),
                 )
                 .param(
                     ParamSpec::float("spill", 0.5)

@@ -1448,12 +1448,19 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>key</code></td><td>colour</td><td><code>[0, 1, 0, 1]</code></td><td></td><td>The screen's colour; only its hue and saturation count, so shadows on the screen key too</td></tr>
-<tr><td><code>tolerance</code></td><td>float</td><td><code>0.1</code></td><td>0 to 0.5 (soft)</td><td>Chroma distance from the key that is fully transparent</td></tr>
-<tr><td><code>softness</code></td><td>float</td><td><code>0.08</code></td><td>0 to 0.5 (soft)</td><td>Width of the partly transparent edge beyond tolerance, in the same chroma distance</td></tr>
+<tr><td><code>key</code></td><td>colour</td><td><code>[0, 1, 0, 1]</code></td><td></td><td>The screen's colour; its hue is matched, its saturation is what saturation is measured against</td></tr>
 <tr><td><code>spill</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>How much of the key's tint is removed from what stays</td></tr>
 <tr><td><code>invert</code></td><td>bool</td><td><code>false</code></td><td></td><td>Keep the key colour, drop the rest</td></tr>
 <tr><td><code>output</code></td><td>keyed | matte</td><td><code>&quot;keyed&quot;</code></td><td></td><td>What the node puts out<ul><li><code>keyed</code>: the input with the key colour transparent and its spill removed</li><li><code>matte</code>: the alpha it would get, as white (kept) on black (keyed out)</li></ul></td></tr>
+<tr class="section"><th colspan="5">hue</th></tr>
+<tr><td><code>hue</code></td><td>float</td><td><code>25</code></td><td>0 to 90° (soft)</td><td>How far a hue may lie from the key's, either way round the colour wheel, and still be fully transparent</td></tr>
+<tr><td><code>hue_softness</code></td><td>float</td><td><code>15</code></td><td>0 to 90° (soft)</td><td>Width of the partly transparent edge beyond hue</td></tr>
+<tr class="section"><th colspan="5">saturation</th></tr>
+<tr><td><code>saturation</code></td><td>float</td><td><code>0.35</code></td><td>0 to 1 (soft)</td><td>Least saturation, as a fraction of the key's, that is fully transparent. Lower keys darker shadows on the screen, higher spares greyish colours of the key's hue</td></tr>
+<tr><td><code>saturation_softness</code></td><td>float</td><td><code>0.15</code></td><td>0 to 1 (soft)</td><td>Width of the partly transparent edge below saturation</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>brightness</code></td><td>vec2</td><td><code>[0, 1]</code></td><td>0 to 1 (soft)</td><td>Brightness range (gamma-encoded luma) that can be keyed; outside it everything stays, e.g. highlights or near black</td></tr>
+<tr><td><code>brightness_softness</code></td><td>float</td><td><code>0.05</code></td><td>0 to 0.5 (soft)</td><td>Width of the partly transparent edges outside the brightness range</td></tr>
 </tbody>
 </table>
 </div></details>

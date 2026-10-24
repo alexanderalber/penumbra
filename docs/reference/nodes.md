@@ -108,9 +108,13 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `key` | colour | `[0, 1, 0, 1]` |  | The screen's colour; only its hue and saturation count, so shadows on the screen key too |
-| `tolerance` | float | `0.1` | 0 to 0.5 (soft) | Chroma distance from the key that is fully transparent |
-| `softness` | float | `0.08` | 0 to 0.5 (soft) | Width of the partly transparent edge beyond tolerance, in the same chroma distance |
+| `key` | colour | `[0, 1, 0, 1]` |  | The screen's colour; its hue is matched, its saturation is what saturation is measured against |
+| `hue` *(hue)* | float | `25` | 0 to 90° (soft) | How far a hue may lie from the key's, either way round the colour wheel, and still be fully transparent |
+| `hue_softness` *(hue)* | float | `15` | 0 to 90° (soft) | Width of the partly transparent edge beyond hue |
+| `saturation` *(saturation)* | float | `0.35` | 0 to 1 (soft) | Least saturation, as a fraction of the key's, that is fully transparent. Lower keys darker shadows on the screen, higher spares greyish colours of the key's hue |
+| `saturation_softness` *(saturation)* | float | `0.15` | 0 to 1 (soft) | Width of the partly transparent edge below saturation |
+| `brightness` *(more)* | vec2 | `[0, 1]` | 0 to 1 (soft) | Brightness range (gamma-encoded luma) that can be keyed; outside it everything stays, e.g. highlights or near black |
+| `brightness_softness` *(more)* | float | `0.05` | 0 to 0.5 (soft) | Width of the partly transparent edges outside the brightness range |
 | `spill` | float | `0.5` | 0 to 1 (soft) | How much of the key's tint is removed from what stays |
 | `invert` | bool | `false` |  | Keep the key colour, drop the rest |
 | `output` | keyed \| matte | `"keyed"` |  | What the node puts out; keyed: the input with the key colour transparent and its spill removed; matte: the alpha it would get, as white (kept) on black (keyed out) |
