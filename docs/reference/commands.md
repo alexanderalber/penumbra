@@ -72,7 +72,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `edit.begin` | Claim editing for Claude (needs 3 s without user edits); {label?} |
+| `edit.begin` | Claim editing for Claude (needs 3 s without user edits); {label?}, which names the history entry |
 | `edit.end` | Give editing back to the user |
 | `edit.status` | Who is editing |
 

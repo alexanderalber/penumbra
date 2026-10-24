@@ -210,6 +210,52 @@ pub fn encode_exr_rgba32f(width: u32, height: u32, rgba: &[[f32; 4]]) -> Result<
     .map_err(|e| Error::new(format!("cannot encode the EXR: {e}")))
 }
 
+/// `png` made at most `max_side` pixels on its longer side, as an 8-bit RGBA PNG: pictures sent
+/// where size costs, such as a screenshot of a 4K window to a language model. Each new pixel
+/// averages the pixels it covers, weighted by alpha. Returns the bytes unchanged when the
+/// picture already fits or `max_side` is 0.
+pub fn shrink_png(png: &[u8], max_side: u32) -> Result<Vec<u8>, Error> {
+    let opts = DecodeOptions { limits: limits(16_384), keep_orientation: false };
+    let image = photocraft_codecs::decode_with(png, &opts).map_err(|e| Error::new(e.to_string()))?;
+    let (w, h) = image.dimensions();
+    if max_side == 0 || w.max(h) <= max_side {
+        return Ok(png.to_vec());
+    }
+    let scale = f64::from(max_side) / f64::from(w.max(h));
+    let nw = ((f64::from(w) * scale).round() as u32).max(1);
+    let nh = ((f64::from(h) * scale).round() as u32).max(1);
+    let src = image.to_rgba8();
+    let mut out = Vec::with_capacity(nw as usize * nh as usize * 4);
+    let span = |i: u32, n: u32, total: u32| {
+        let a = (u64::from(i) * u64::from(total) / u64::from(n)) as usize;
+        let b = (u64::from(i + 1) * u64::from(total) / u64::from(n)) as usize;
+        (a, b.max(a + 1))
+    };
+    for y in 0..nh {
+        let (y0, y1) = span(y, nh, h);
+        for x in 0..nw {
+            let (x0, x1) = span(x, nw, w);
+            let (mut rgb, mut alpha) = ([0.0f64; 3], 0.0f64);
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let i = (sy * w as usize + sx) * 4;
+                    let Some(&[r, g, b, a]) = src.get(i..i + 4) else { continue };
+                    let a = f64::from(a);
+                    for (sum, c) in rgb.iter_mut().zip([r, g, b]) {
+                        *sum += f64::from(c) * a;
+                    }
+                    alpha += a;
+                }
+            }
+            for sum in rgb {
+                out.push(if alpha > 0.0 { (sum / alpha).round() as u8 } else { 0 });
+            }
+            out.push((alpha / ((y1 - y0) * (x1 - x0)) as f64).round() as u8);
+        }
+    }
+    crate::encode_png_rgba8(nw, nh, out)
+}
+
 impl Gpu {
     /// A texture holding `image`. Safe to call off the cook thread.
     pub fn upload(&self, image: &Decoded, label: &str) -> Result<Tex, Error> {
@@ -283,6 +329,23 @@ mod tests {
         assert!(decode(b"not an image", 8192).is_err());
         // Larger than the texture limit.
         assert!(decode(&png16(4, 1, &[0; 16]), 2).is_err());
+    }
+
+    #[test]
+    fn shrinking_keeps_the_shape_and_averages_by_alpha() {
+        // 4 x 2: left half opaque red over transparent green, right half opaque blue.
+        let mut rgba = Vec::new();
+        for _row in 0..2 {
+            rgba.extend_from_slice(&[255, 0, 0, 255, 0, 255, 0, 0, 0, 0, 255, 255, 0, 0, 255, 255]);
+        }
+        let png = crate::encode_png_rgba8(4, 2, rgba).unwrap();
+        assert_eq!(shrink_png(&png, 4).unwrap(), png, "fits already");
+        assert_eq!(shrink_png(&png, 0).unwrap(), png, "0 means no limit");
+        let small = photocraft_codecs::decode(&shrink_png(&png, 2).unwrap()).unwrap();
+        assert_eq!(small.dimensions(), (2, 1));
+        // The transparent green does not tint the red; alpha is the plain average.
+        assert_eq!(small.to_rgba8(), [255, 0, 0, 128, 0, 0, 255, 255]);
+        assert!(shrink_png(b"not a picture", 2).is_err());
     }
 
     #[test]

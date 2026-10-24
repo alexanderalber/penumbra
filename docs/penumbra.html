@@ -100,7 +100,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><a href="#scripts">Scripts</a>: writing a <a class="ref" href="#script.python"><code>script.python</code></a> node.
 </li>
-<li><a href="#control">Control</a>: the control channel, <code>penumbra-cli ctl</code>, headless runs, environment variables.
+<li><a href="#control">Control</a>: the control channel, <code>penumbra-cli ctl</code>, the MCP server, headless runs, environment variables.
 </li>
 </ul>
 <p><a href="../examples/README.md">Examples</a>: small projects, each showing one side of penumbra.</p>
@@ -1277,6 +1277,25 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 </code></pre>
 <p>Params are one JSON object, or <code>key=value</code> pairs where each value is read as JSON when it parses and as a string otherwise. <code>penumbra-cli</code> with no arguments pings the app. The exit code is 0 when the reply says <code>&quot;ok&quot;: true</code>. <code>--port N</code> before <code>ctl</code> picks another port.</p>
 <p><code>penumbra-cli soak</code> runs the engine headless for a while and reports leaks and stalls (<code>penumbra-cli soak --help</code>).</p>
+<h3 id="control-mcp-server">MCP server</h3>
+<p><code>penumbra-cli mcp</code> serves the <a href="https://modelcontextprotocol.io">Model Context Protocol</a> on stdin and stdout, so Claude Code, Claude Desktop and other MCP clients can drive a running penumbra without a shell call per command and get pictures back inline. It is a client of the control channel like <code>ctl</code>, so it reaches the app on 9880 (<code>--port N</code> before <code>mcp</code>, or <code>PENUMBRA_PORT</code>). For Claude Code:</p>
+<pre><code>claude mcp add penumbra -- penumbra-cli mcp
+claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
+</code></pre>
+<table>
+<thead><tr><th>Tool</th><th></th></tr></thead>
+<tbody>
+<tr><td><code>command_list</code></td><td>every command with its summary; <code>filter</code></td></tr>
+<tr><td><code>command_run</code></td><td>one command: <code>{id, params?}</code></td></tr>
+<tr><td><code>command_batch</code></td><td>several commands in order: <code>{steps: [{id, params?}], stop_on_error?, label?}</code>, as one change log entry named <code>label</code> (see <a href="#control-taking-turns">Taking turns</a>); steps before a failure stay applied</td></tr>
+<tr><td><code>doc_inspect</code></td><td>the project (<a class="ref" href="#project.info"><code>project.info</code></a>) and every node (<a class="ref" href="#node.list"><code>node.list</code></a>)</td></tr>
+<tr><td><code>render_preview</code></td><td>a node's picture as PNG (<a class="ref" href="#node.snapshot"><code>node.snapshot</code></a>): <code>{path, output?, max_side?}</code></td></tr>
+<tr><td><code>ui_inspect</code>, <code>ui_elements</code>, <code>ui_click</code>, <code>ui_drag</code>, <code>ui_key</code>, <code>ui_type</code></td><td>the <code>ui.*</code> commands of the same name</td></tr>
+<tr><td><code>ui_screenshot</code></td><td>the window as PNG: <code>{max_side?}</code></td></tr>
+<tr><td><code>ui_control</code></td><td>any other <code>ui.*</code> command: <code>{method, params?}</code></td></tr>
+</tbody>
+</table>
+<p>Pictures are shrunk to <code>max_side</code> pixels on their longer side (960 for nodes, 1568 for the window; 0 keeps the full size). The tools that only look are marked read-only, so a client can run them without asking. An unknown or mistyped argument is refused with the names the tool accepts; a failing command comes back as an error result with the app's message. The resources <code>penumbra://document</code> and <code>penumbra://commands</code> hold what <code>doc_inspect</code> and <code>command_list</code> return. Requests are answered one at a time, so a command that measures for a minute holds the next one.</p>
 <h3 id="control-the-channel">The channel</h3>
 <p>JSON lines over TCP on <code>127.0.0.1</code>, port 9880 (<code>--port</code>, or <code>PENUMBRA_PORT</code> for the app and <code>penumbra-cli</code> alike). One request per line, one reply per line:</p>
 <pre><code>{&quot;id&quot;: 1, &quot;method&quot;: &quot;node.info&quot;, &quot;params&quot;: {&quot;path&quot;: &quot;/noise1&quot;}}
@@ -1286,7 +1305,7 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <h3 id="control-taking-turns">Taking turns</h3>
 <p>Edits from the channel pass the same gate as the user's (see <a href="#concepts-who-is-editing">who is editing</a>):</p>
 <ul>
-<li><a class="ref" href="#edit.begin"><code>edit.begin {label?}</code></a> claims the turn, once the user has not edited for 3 seconds. Until <a class="ref" href="#edit.end"><code>edit.end</code></a>, all edits form one entry in the change log, and the UI is blue and read-only for the user. The claim lapses after 2 minutes without a command, and the user can take over at any time.
+<li><a class="ref" href="#edit.begin"><code>edit.begin {label?}</code></a> claims the turn, once the user has not edited for 3 seconds. Until <a class="ref" href="#edit.end"><code>edit.end</code></a>, all edits form one entry in the change log (named by <code>label</code> when there is one), and the UI is blue and read-only for the user. The claim lapses after 2 minutes without a command, and the user can take over at any time.
 </li>
 <li>Without a claim, each editing command waits for the same 3 seconds of quiet and becomes an entry of its own: convenient for one-off <code>penumbra-cli ctl</code> calls.
 </li>
@@ -4242,7 +4261,7 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <h3>edit</h3>
 <details class="entry command" id="edit.begin"><summary><code class="name">edit.begin</code><span class="sum">Claim editing for Claude (needs 3 s without user edits)</span></summary>
 <div class="body">
-<p>Claim editing for Claude (needs 3 s without user edits); {label?}</p>
+<p>Claim editing for Claude (needs 3 s without user edits); {label?}, which names the history entry</p>
 <p class="mentions">Mentioned in: <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 <details class="entry command" id="edit.end"><summary><code class="name">edit.end</code><span class="sum">Give editing back to the user</span></summary>
@@ -4381,6 +4400,7 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <details class="entry command" id="node.list"><summary><code class="name">node.list</code><span class="sum">Nodes under a path</span></summary>
 <div class="body">
 <p>Nodes under a path; {path?, recursive?}</p>
+<p class="mentions">Mentioned in: <a href="#control-mcp-server">Control › MCP server</a></p>
 </div></details>
 <details class="entry command" id="node.lock"><summary><code class="name">node.lock</code><span class="sum">Lock (hold outputs) or unlock a node</span></summary>
 <div class="body">
@@ -4414,7 +4434,7 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <details class="entry command" id="node.snapshot"><summary><code class="name">node.snapshot</code><span class="sum">Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB)</span></summary>
 <div class="body">
 <p>Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file?}</p>
-<p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
+<p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#control-mcp-server">Control › MCP server</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 <details class="entry command" id="node.unbind"><summary><code class="name">node.unbind</code><span class="sum">Back to the param's stored value</span></summary>
 <div class="body">
@@ -4490,7 +4510,7 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <details class="entry command" id="project.info"><summary><code class="name">project.info</code><span class="sum">Project directory, unsaved changes, file errors, nodes that did not load (broken), who is editing</span></summary>
 <div class="body">
 <p>Project directory, unsaved changes, file errors, nodes that did not load (broken), who is editing</p>
-<p class="mentions">Mentioned in: <a href="#concepts-the-project-directory">Concepts › The project directory</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-the-project-directory">Concepts › The project directory</a>, <a href="#control-mcp-server">Control › MCP server</a></p>
 </div></details>
 <details class="entry command" id="project.new"><summary><code class="name">project.new</code><span class="sum">Make an empty project in dir (created if missing, must hold no project.ron) and open it</span></summary>
 <div class="body">

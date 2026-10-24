@@ -282,6 +282,11 @@ impl Session {
             }
             Actor::Claude => (Source::ControlChannel, state.gate.claude_edit(now)?),
         };
+        // A labelled claim names its history entry, not the first command in it.
+        let label = match (actor, state.gate.claim_label()) {
+            (Actor::Claude, Some(claim)) => claim,
+            _ => label,
+        };
         let group = group.unwrap_or_else(|| self.doc.new_group());
         self.doc.edit(ops, source, group, label)
     }
@@ -910,7 +915,10 @@ mod tests {
         assert!(s.edit(Actor::User, &[set(9.0)], None, "", t0 + 4 * S).is_err());
         s.edit(Actor::Claude, &[set(2.0)], None, "", t0 + 5 * S).unwrap();
         s.edit(Actor::Claude, &[set(3.0)], None, "", t0 + 6 * S).unwrap();
-        s.doc().with_history(|h| assert_eq!(h.entries().len(), 2, "the user's edit and Claude's claim"));
+        s.doc().with_history(|h| {
+            assert_eq!(h.entries().len(), 2, "the user's edit and Claude's claim");
+            assert_eq!(h.entries().last().map(|e| e.label.as_str()), Some("tuning"), "named by the claim");
+        });
         assert!(s.end(t0 + 7 * S));
         s.edit(Actor::User, &[set(4.0)], None, "", t0 + 7 * S).unwrap();
     }

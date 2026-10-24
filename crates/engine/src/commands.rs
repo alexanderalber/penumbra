@@ -58,7 +58,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Project settings with their values and what they do; {set?: {name: value}}, null resets (one undo step)",
         project_settings,
     );
-    add("edit.begin", "Claim editing for Claude (needs 3 s without user edits); {label?}", edit_begin);
+    add(
+        "edit.begin",
+        "Claim editing for Claude (needs 3 s without user edits); {label?}, which names the history entry",
+        edit_begin,
+    );
     add("edit.end", "Give editing back to the user", edit_end);
     add("edit.status", "Who is editing", edit_status);
     add("history.list", "Recent history entries; {limit?}", history_list);

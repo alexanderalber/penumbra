@@ -22,7 +22,7 @@ offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
 - [Looking around in 3D](navigation.md): the viewer's free view, steering a camera, the 3D mouse.
 - [Shaders](shaders.md): writing a `tex.shader` in WGSL.
 - [Scripts](scripts.md): writing a `script.python` node.
-- [Control](control.md): the control channel, `penumbra-cli ctl`, headless runs, environment variables.
+- [Control](control.md): the control channel, `penumbra-cli ctl`, the MCP server, headless runs, environment variables.
 
 [Examples](../examples/README.md): small projects, each showing one side of penumbra.
 

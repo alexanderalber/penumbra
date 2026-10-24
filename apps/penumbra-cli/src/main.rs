@@ -5,6 +5,8 @@
 //! penumbra-cli [--port N] ...          control channel port (default: PENUMBRA_PORT or 9880)
 //! penumbra-cli [--timeout S] ...       longest wait for a reply in seconds (default 300; some
 //!                                      commands, like projector.match, take a minute)
+//! penumbra-cli [--port N] mcp          serve MCP on stdin/stdout for a running app (Claude Code:
+//!                                      `claude mcp add penumbra -- penumbra-cli mcp`)
 //! penumbra-cli soak [options]          run the engine headless for a while, report leaks and stalls
 //! ```
 //!
@@ -17,6 +19,7 @@
 //! Exit code: 0 when the reply has `"ok": true`, 1 otherwise.
 
 mod heap;
+mod mcp;
 mod soak;
 
 /// Counts the Rust heap for the soak test (`heap.rs`).
@@ -30,6 +33,7 @@ use penumbra_engine::control;
 use serde_json::{Map, Value};
 
 const USAGE: &str = "usage: penumbra-cli [--port N] [--timeout S] ctl <method> [{json} | key=value ...]
+       penumbra-cli [--port N] [--timeout S] mcp
        penumbra-cli soak --help";
 /// How long a reply may take unless `--timeout` says otherwise: commands that measure (a camera
 /// looking at every projector) legitimately run for a minute or more.
@@ -92,6 +96,7 @@ fn run(args: Vec<String>) -> Result<ExitCode, String> {
             ctl(port, "ping", &[], timeout)
         }
         [cmd, method, params @ ..] if cmd == "ctl" => ctl(port, method, params, timeout),
+        [cmd] if cmd == "mcp" => mcp::run(port, timeout),
         _ => Err(USAGE.into()),
     }
 }

@@ -6,8 +6,8 @@ running app over its control channel. The documentation of exactly this version 
 
 ## Read first
 
-1. `docs/control.md`: the control channel, `penumbra-cli ctl`, taking turns with the user,
-   looking at results, headless runs.
+1. `docs/control.md`: the control channel, `penumbra-cli ctl`, the MCP server, taking turns
+   with the user, looking at results, headless runs.
 2. `docs/concepts.md`: data kinds, node families, params and bindings, components.
 3. As needed: `docs/reference/commands.md` (every command) and `docs/reference/nodes.md`
    (every node type), plus the topic pages listed in `docs/README.md`.
@@ -36,6 +36,12 @@ penumbra-cli ctl node.snapshot path=/noise2 file=C:/temp/noise2.png
 
 `commands` and `node.kinds` describe the running app itself, so they are always right for this
 version.
+
+The same commands are also offered as MCP tools, with pictures returned inline and no shell
+quoting: `claude mcp add penumbra -- "<absolute path to this folder>\penumbra-cli.exe" mcp`
+(tools `command_list`, `command_run`, `command_batch`, `doc_inspect`, `render_preview`,
+`ui_screenshot`, ...; see `docs/control.md#mcp-server`). Ask the user before adding it, since
+it changes their Claude Code configuration.
 
 ## Pitfalls
 

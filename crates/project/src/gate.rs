@@ -128,6 +128,15 @@ impl Gate {
         Ok(None)
     }
 
+    /// The label of the claim Claude holds, when it has one: the name of the claim's history
+    /// entry. Call after [`Gate::claude_edit`], which lets a lapsed claim go.
+    pub fn claim_label(&self) -> Option<&str> {
+        match &self.mode {
+            Mode::Claude { label, .. } if !label.is_empty() => Some(label),
+            _ => None,
+        }
+    }
+
     /// Before an edit from the UI. Refused while Claude holds the claim.
     pub fn user_edit(&mut self, now: Instant) -> Result<(), Error> {
         self.expire(now);

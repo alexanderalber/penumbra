@@ -13,7 +13,7 @@ TouchDesigner Python API, its own node names.
   it is edited. Beat tracking from the sound alone, blob tracking from a camera.
 - **Everything is a command.** Every action in the app is also a command on a local JSON
   control channel. A script, or Claude Code, can build, change, run and photograph a network
-  without anyone clicking.
+  without anyone clicking; `penumbra-cli mcp` serves it to MCP clients.
 - **Plain files.** A project is a folder of text files that can be diffed and edited by hand.
 - **Free and open source** (MIT or Apache-2.0).
 
