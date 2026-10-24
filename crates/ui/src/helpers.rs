@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use egui::{RichText, Ui};
-use penumbra_core::{Name, Value};
+use penumbra_core::{Name, NodeId, Value};
 use penumbra_core::{PaceSource, lock};
 use penumbra_engine::{Engine, ViewFrame};
 use penumbra_graph::{Network, Op, PERSIST_STATE};
@@ -125,7 +125,13 @@ impl Helpers {
             .resizable(true)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().max_height(tallest).show(ui, |ui| {
-                    self.outputs(ui, input.board, input.net, input.view.pace);
+                    let tints = input
+                        .engine
+                        .types()
+                        .desc(penumbra_ops::out::PROJECTOR)
+                        .map(|d| penumbra_ops::out::tints(input.net, d))
+                        .unwrap_or_default();
+                    self.outputs(ui, input.board, input.net, input.view.pace, &tints);
                     test_buttons(ui, input, auto, actions);
                     ui.separator();
                     resolution(ui, input, auto, actions);
@@ -145,7 +151,15 @@ impl Helpers {
         self.open = open;
     }
 
-    fn outputs(&mut self, ui: &mut Ui, board: &BoardState, net: &Network, pace: Option<PaceSource>) {
+    /// `tints`: each projector's test pattern colour, shown beside it.
+    fn outputs(
+        &mut self,
+        ui: &mut Ui,
+        board: &BoardState,
+        net: &Network,
+        pace: Option<PaceSource>,
+        tints: &[(NodeId, [f32; 3])],
+    ) {
         ui.heading("Outputs");
         ui.label(
             RichText::new(match pace {
@@ -215,7 +229,7 @@ impl Helpers {
             let path = net.path_of(*id).map(|p| p.to_string()).unwrap_or_else(|| "?".into());
             ui.horizontal_wrapped(|ui| {
                 // Its colour in the test pattern (`test` on the node), to tell them apart.
-                let [r, g, b] = penumbra_ops::out::tint(penumbra_ops::out::rank(net, *id).unwrap_or(0));
+                let [r, g, b] = tints.iter().find(|(n, _)| n == id).map_or([1.0; 3], |(_, t)| *t);
                 let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 let c = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u8;
                 ui.painter().rect_filled(
@@ -622,8 +636,8 @@ impl Helpers {
 }
 
 /// One row of buttons that switch the test pattern of every projector (`projector.test`): off,
-/// the alignment pattern, the focus pattern. The one lit is what all projectors show; none is
-/// lit while they differ.
+/// the alignment, focus, motion and full field patterns. The one lit is what all projectors
+/// show; none is lit while they differ.
 fn test_buttons(
     ui: &mut Ui,
     input: &HelpersInput<'_>,
@@ -647,7 +661,9 @@ fn test_buttons(
     let all = |want: Option<&str>| shown.iter().all(|s| s.as_deref() == want);
     ui.horizontal(|ui| {
         ui.label("Test pattern on every projector:").on_hover_text(
-            "Each projector shows the pattern in its own pixels and its own colour (the square beside it              above), so overlapping projectors stay apart. Also projector.test",
+            "Each projector shows the pattern in its own pixels, white when it is the only one, else in \
+             its own colour (the square beside it above), so overlapping projectors stay apart. Also \
+             projector.test",
         );
         for (id, label, want, hover) in [
             ("helpers.test.off", "Off", None, "Every projector shows its input again"),
@@ -663,6 +679,21 @@ fn test_buttons(
                 Some("focus"),
                 "One-pixel checkers and lines at the corners and the centre, where defocus shows first",
             ),
+            (
+                "helpers.test.motion",
+                "Motion",
+                Some("motion"),
+                "Bars and a strip of cells moving on with every frame the output presents, with the frame \
+                 count and how many frames came late: stutter while late stays 0 comes from after the GPU \
+                 (cable, extender, projector); film it in slow motion to see dropped or repeated frames",
+            ),
+            (
+                "helpers.test.fields",
+                "Fields",
+                Some("fields"),
+                "Full white, red, green, blue and black, 3 seconds each, for dead and stuck pixels; \
+                 several projectors take turns",
+            ),
         ] {
             let r = ui
                 .add_enabled(input.can_edit, egui::Button::selectable(all(want), label))
@@ -670,7 +701,9 @@ fn test_buttons(
             auto.add(id, r.rect, label);
             if r.clicked() {
                 match penumbra_engine::projector::test_ops(input.net, None, want.is_some(), want) {
-                    Ok((ops, _)) => actions.push(Action::Edit { ops, label: "projector.test".into(), group: None }),
+                    Ok((ops, _)) => {
+                        actions.push(Action::Edit { ops, label: "projector.test".into(), group: None })
+                    }
                     Err(e) => actions.push(Action::Message(e.to_string())),
                 }
             }

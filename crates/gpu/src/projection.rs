@@ -87,16 +87,28 @@ pub enum TestPattern {
     /// One-pixel checkers and lines in patches at the corners and the centre, where defocus
     /// shows first, over a sparse one-pixel grid.
     Focus,
+    /// Moves by whole pixels per presented frame: two bars (fast and one pixel per frame), a
+    /// strip of cells lit one after another, one per frame, and the frame and late counts as
+    /// digits. Shows stutter, dropped and repeated frames after the GPU (cables, extenders).
+    Motion,
 }
 
-/// A projector's test pattern and its rank among the projectors. Everything is drawn in the
-/// projector's colour, so where projectors overlap each one's marks stay apart (by colour), and
-/// the focus patches move by rank, so stacked projectors put them side by side.
+/// A projector's test pattern, its rank among the projectors showing one, and for
+/// [`TestPattern::Motion`] the frames its window presented since the pattern began and how many
+/// of them came late. Everything is drawn in the projector's colour, so where projectors overlap
+/// each one's marks stay apart (by colour), and the focus patches and the motion counts move by
+/// rank, so stacked projectors put them side by side.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Test {
     pub pattern: TestPattern,
     pub rank: u32,
+    pub frame: u32,
+    pub late: u32,
 }
+
+/// The motion pattern's frame count wraps here (a multiple of its strip's 30 cells), below where
+/// the shader's float stops counting in ones.
+pub const MOTION_WRAP: u32 = 900_000;
 
 /// One picture of a structured light scan in a projector's own pixels, in the order and with the
 /// stripes of `penumbra_calib::scan::Patterns` (and `tex.scan_pattern`): 0 white, 1 black, then
@@ -417,7 +429,8 @@ fn uniform_bytes(
         | (u32::from(look.stripes.is_some() && look.flat.is_none()) << 7)
         | (u32::from(gain) << 8)
         | (u32::from(black) << 9)
-        | (u32::from(look.test.is_some_and(|t| t.pattern == TestPattern::Focus)) << 10);
+        | (u32::from(look.test.is_some_and(|t| t.pattern == TestPattern::Focus)) << 10)
+        | (u32::from(look.test.is_some_and(|t| t.pattern == TestPattern::Motion)) << 11);
     let peers: Vec<[f32; 4]> = look.peers.iter().take(MAX_PEERS).copied().collect();
     let finite = |v: f32| if v.is_finite() { v } else { 1.0 };
     let overlay =
@@ -487,8 +500,10 @@ fn uniform_bytes(
     ] {
         b.extend_from_slice(&v.to_le_bytes());
     }
-    // Then how much of the gain map and of the black lift apply.
-    for v in [amount(look.flatten).min(1.0), amount(look.lift), 0.0, 0.0] {
+    // Then how much of the gain map and of the black lift apply, and the motion pattern's frame
+    // and late counts.
+    let (frame, late) = look.test.map_or((0, 0), |t| (t.frame % MOTION_WRAP, t.late.min(99_999)));
+    for v in [amount(look.flatten).min(1.0), amount(look.lift), frame as f32, late as f32] {
         b.extend_from_slice(&v.to_le_bytes());
     }
     b.resize(UNIFORM_SIZE as usize, 0);
@@ -551,6 +566,13 @@ mod tests {
         assert_eq!(f32_at(&b, member(&m, "curve").offset + 16), 0.5);
         assert_eq!(f("stripes"), 11.0);
         assert_eq!(f("field"), 0.875);
+        // The motion pattern's frame and late counts after the gain and lift amounts.
+        let test = Some(Test { pattern: TestPattern::Motion, rank: 2, frame: MOTION_WRAP + 7, late: 3 });
+        let b = uniform_bytes(&Look { test, ..look }, (13, 14), [15.0; 4], false, false, false);
+        let field = member(&m, "field").offset;
+        assert_eq!([f32_at(&b, field + 8), f32_at(&b, field + 12)], [7.0, 3.0]);
+        assert_eq!(u32_at(&b, member(&m, "flags").offset) & 2056, 2056);
+        assert_eq!(f32_at(&b, member(&m, "tint").offset + 12), 2.0, "the rank");
     }
 
     /// A full-screen quad: the unit square onto the whole target, the surface's `region`.
@@ -669,6 +691,67 @@ mod tests {
     }
 
     #[test]
+    fn motion_pattern_moves_by_whole_pixels_per_frame() {
+        let Some(gpu) = gpu() else { return };
+        let src = white(&gpu);
+        let (vertices, indices) = quad([0.0, 0.0, 1.0, 1.0]);
+        let tint = [1.0, 0.5, 0.0];
+        let shot = |frame: u32, late: u32| {
+            let target = Tex::new(&gpu, 480, 270, "projector").unwrap();
+            let look = Look {
+                region: [0.0, 0.0, 1.0, 1.0],
+                peers: vec![],
+                blend: false,
+                gamma: 1.0,
+                pattern: false,
+                test: Some(Test { pattern: TestPattern::Motion, rank: 0, frame, late }),
+                overlay: None,
+                tint,
+                correction: None,
+                flatten: 1.0,
+                lift: 1.0,
+                flat: None,
+                stripes: None,
+            };
+            let item = Item {
+                key: 5,
+                tex: &src,
+                vertices: &vertices,
+                indices: &indices,
+                viewport: [0.0, 0.0, 480.0, 270.0],
+                look,
+                gain: None,
+                black: None,
+            };
+            Projection::new(&gpu).render(&gpu, &target, &[item]).unwrap();
+            gpu.read(&target).unwrap()
+        };
+        let lit = |px: &crate::Pixels, x: u32, y: u32| px.get(x, y).unwrap()[..3] == tint;
+        let a = shot(5, 3);
+        // 480 x 270: the fast bar 2 px per frame and 8 wide in rows 10 to 96, the slow one 1 px
+        // per frame and 4 wide in rows 108 to 134.
+        assert_eq!(
+            [lit(&a, 9, 50), lit(&a, 10, 50), lit(&a, 17, 50), lit(&a, 18, 50)],
+            [false, true, true, false]
+        );
+        assert_eq!(
+            [lit(&a, 4, 120), lit(&a, 5, 120), lit(&a, 8, 120), lit(&a, 9, 120)],
+            [false, true, true, false]
+        );
+        // The strip: 30 cells 15 px wide from x 12, rows 151 to 182; cell 5 lit.
+        assert!(lit(&a, 12 + 5 * 15 + 7, 165));
+        assert!(!lit(&a, 12 + 6 * 15 + 7, 165));
+        // Text from (12, 199), 3 px per font pixel, 12 px per character: F of FRAME, and the late
+        // count 3 at character 20 (top row lit, second row only on the right).
+        assert!(lit(&a, 13, 200));
+        assert_eq!([lit(&a, 253, 200), lit(&a, 253, 203), lit(&a, 259, 203)], [true, false, true]);
+        let b = shot(35, 0);
+        assert!(lit(&b, 70, 50) && !lit(&b, 10, 50), "the fast bar moved on 60 px");
+        assert!(lit(&b, 12 + 5 * 15 + 7, 165), "the strip came round");
+        assert_eq!(b.get(70, 50).unwrap()[..3], tint, "in its colour");
+    }
+
+    #[test]
     fn focus_pattern_in_one_pixel_steps_moved_by_rank() {
         let Some(gpu) = gpu() else { return };
         let src = white(&gpu);
@@ -681,7 +764,7 @@ mod tests {
                 blend: false,
                 gamma: 1.0,
                 pattern: false,
-                test: Some(Test { pattern: TestPattern::Focus, rank }),
+                test: Some(Test { pattern: TestPattern::Focus, rank, ..Test::default() }),
                 overlay: None,
                 tint: [0.0, 1.0, 0.0],
                 correction: None,

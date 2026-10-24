@@ -101,7 +101,14 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "projector.test",
-        "Switch the test pattern of every out.projector at once (its `test` and `test_pattern` params,          one undo step): {on (true: the pattern instead of the input, false: the input again), pattern?          (align: cells, centre cross, circle and edge, for keystone and alignment | focus: one-pixel          checkers and lines at the corners and the centre; unchanged when left out), projectors? (paths,          default all)}. Each projector draws in its own colour, so overlapping ones stay apart",
+        "Switch the test pattern of every out.projector at once (its `test` and `test_pattern` params, \
+         one undo step): {on (true: the pattern instead of the input, false: the input again), pattern? \
+         (align: cells, centre cross, circle and edge, for keystone and alignment | focus: one-pixel \
+         checkers and lines at the corners and the centre | motion: bars and a frame strip moving on \
+         each presented frame, with the frame and late counts, for stutter and dropped frames after the \
+         GPU | fields: full white, red, green, blue, black, projectors in turn, for dead pixels; \
+         unchanged when left out), projectors? (paths, default all)}. One projector showing a pattern \
+         draws it white; several draw in colours that keep overlapping ones apart",
         move |p| {
             let a: TestArgs = args(p)?;
             let session = e.session();
@@ -131,7 +138,7 @@ struct TestArgs {
 
 /// The test patterns `projector.test` can choose (the choices of `out.projector`'s
 /// `test_pattern`).
-pub const TEST_PATTERNS: [&str; 2] = ["align", "focus"];
+pub use penumbra_ops::out::TEST_PATTERNS;
 
 /// The edits that switch the test pattern of the `out.projector`s at `paths` (default: all of
 /// them) on or off, and to `pattern` when given; with the projectors' paths. The Helpers
@@ -145,7 +152,7 @@ pub fn test_ops(
     if let Some(p) = pattern
         && !TEST_PATTERNS.contains(&p)
     {
-        return Err(format!("`pattern` is {}", TEST_PATTERNS.join(" or ")).into());
+        return Err(format!("`pattern` is one of {}", TEST_PATTERNS.join(", ")).into());
     }
     let projectors: Vec<String> = match paths {
         Some(paths) => {

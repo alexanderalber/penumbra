@@ -446,8 +446,15 @@ fn projector_test_switches_every_projector() {
     f.call("projector.test", json!({"on": true, "pattern": "align", "projectors": ["/proj_b"]}));
     assert_eq!(read("/proj_a"), (false, "focus".to_string()));
     assert_eq!(read("/proj_b"), (true, "align".to_string()));
+    for pattern in ["motion", "fields"] {
+        f.call("projector.test", json!({"on": true, "pattern": pattern}));
+        assert_eq!(read("/proj_a"), (true, pattern.to_string()));
+    }
 
-    assert!(f.fail("projector.test", json!({"on": true, "pattern": "grid"})).contains("align or focus"));
+    assert!(
+        f.fail("projector.test", json!({"on": true, "pattern": "grid"}))
+            .contains("align, focus, motion, fields")
+    );
     assert!(
         f.fail("projector.test", json!({"on": true, "projectors": ["/noise"]}))
             .contains("not an out.projector")

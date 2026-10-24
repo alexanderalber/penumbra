@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use penumbra_core::{NodeId, lock};
 use penumbra_engine::Engine;
 use penumbra_gpu::{Gpu, Projection};
-use penumbra_ops::out::{WindowInfo, item};
+use penumbra_ops::out::{Shows, TestClock, WindowInfo, item};
 use winit::window::Window;
 
 /// Frame statistics, reset every [`REPORT`].
@@ -215,6 +215,10 @@ fn present_loop(
     let blank = penumbra_gpu::Tex::new(gpu, 1, 1, "blank").map_err(|e| e.to_string())?;
     log::info!("output: {}x{} {format:?}, Fifo", config.width, config.height);
     let mut last_pass = 0;
+    // Frames presented, and since when (frames, late ones) a projector here shows the motion
+    // pattern, which moves on by presented frames.
+    let mut presented: u64 = 0;
+    let mut motion: Option<(u64, u64)> = None;
     // Reconfigures in a row without a frame in between.
     let mut retries: u32 = 0;
     while !shared.stop.load(Ordering::Relaxed) {
@@ -260,7 +264,11 @@ fn present_loop(
             }
         };
         let now = Instant::now();
-        lock(&shared.stats).frame(now, refresh);
+        let missed = {
+            let mut stats = lock(&shared.stats);
+            stats.frame(now, refresh);
+            stats.missed
+        };
         let out = if shared.paces.load(Ordering::Relaxed) {
             engine.vsync(now);
             engine.wait_output(last_pass, refresh.mul_f64(0.75))
@@ -269,14 +277,23 @@ fn present_loop(
         };
         last_pass = out.pass;
         let nodes = lock(&shared.nodes).clone();
+        let shown = |p: &&penumbra_ops::out::ProjectorFrame| p.active && nodes.contains(&p.node);
+        motion = if out.projectors.iter().filter(shown).any(|p| p.test == Some(Shows::Motion)) {
+            Some(motion.unwrap_or((presented, missed)))
+        } else {
+            None
+        };
+        let (frames, late) =
+            motion.map_or((0, 0), |(f, l)| (presented.saturating_sub(f), missed.saturating_sub(l)));
+        let clock = TestClock { frame: frames, late, now };
         let (fw, fh) = (config.width as f32, config.height as f32);
         let items: Vec<_> = out
             .projectors
             .iter()
-            .filter(|p| p.active && nodes.contains(&p.node))
+            .filter(shown)
             .filter_map(|p| {
                 let [x, y, w, h] = p.viewport.map(|v| v.clamp(0.0, 1.0) as f32);
-                item(p, &blank, [x * fw, y * fh, w * fw, h * fh])
+                item(p, &blank, [x * fw, y * fh, w * fw, h * fh], &clock)
             })
             .collect();
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -286,6 +303,7 @@ fn present_loop(
         }
         drop(view);
         gpu.present(frame);
+        presented += 1;
         // Which pass each projector shows, for measurements that wait for their change.
         engine.board().update(|b| {
             for p in out.projectors.iter().filter(|p| p.active && nodes.contains(&p.node)) {

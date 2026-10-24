@@ -15,7 +15,7 @@ struct Look {
     // pattern instead of anything, 16: the resolution overlay over the input, 32: the flat
     // signal instead of anything, 64: colour correction, 128: structured light stripes instead of
     // anything but the flat signal, 256: the gain map, 512: the black lift (both with 64), 1024:
-    // the focus pattern as the test pattern (with 8).
+    // the focus pattern as the test pattern (with 8), 2048: the motion pattern (with 8).
     flags: u32,
     peer_count: u32,
     overlay_factor: f32,
@@ -37,7 +37,8 @@ struct Look {
     // Structured light: the projector's width and height in pixels, the lit stripes' signal,
     // the pattern's index.
     stripes: vec4f,
-    // How much of the gain map and of the black lift apply.
+    // How much of the gain map and of the black lift apply; the motion pattern's frame and late
+    // counts.
     field: vec4f,
 }
 
@@ -140,6 +141,119 @@ fn test_pattern(q: vec2f, size: vec2f) -> vec3f {
     }
     let edge = min(q, size - q);
     if min(edge.x, edge.y) < 3.0 {
+        rgb = tint;
+    }
+    return rgb;
+}
+
+// The motion pattern's digits and the letters of FRAME and LATE, 3 x 5 pixels, three bits a row
+// from the top (the leftmost pixel highest): 0 to 9, then F R A M E L T.
+fn glyph(code: u32) -> u32 {
+    var g = array<u32, 17>(
+        0x7B6Fu, 0x2C97u, 0x73E7u, 0x73CFu, 0x5BC9u, 0x79CFu, 0x79EFu, 0x7249u, 0x7BEFu, 0x7BCFu,
+        0x79A4u, 0x6BADu, 0x2BEDu, 0x5FEDu, 0x79A7u, 0x4927u, 0x7492u,
+    );
+    return g[min(code, 16u)];
+}
+
+fn pow10(n: u32) -> u32 {
+    var v = 1u;
+    for (var i = 0u; i < n; i++) {
+        v *= 10u;
+    }
+    return v;
+}
+
+// Character `i` of the line `FRAME nnnnnn   LATE n` as a glyph code, 99 for a space.
+fn motion_char(i: u32, frame: u32, late: u32) -> u32 {
+    if i < 5u {
+        return 10u + i;
+    }
+    if i >= 6u && i < 12u {
+        return (frame / pow10(11u - i)) % 10u;
+    }
+    if i >= 15u && i < 19u {
+        var label = array<u32, 4>(15u, 12u, 16u, 14u);
+        return label[i - 15u];
+    }
+    var digits = 1u;
+    while digits < 5u && late >= pow10(digits) {
+        digits += 1u;
+    }
+    if i >= 20u && i < 20u + digits {
+        return (late / pow10(digits - 1u - (i - 20u))) % 10u;
+    }
+    return 99u;
+}
+
+// The projector's motion pattern, in its pixels `q` of a `size` image, all in its colour, moved
+// on by whole pixels per frame its window presented (`field.z`): a bar a 240th of the width per
+// frame and a bar one pixel per frame, each in a lane, so judder shows as uneven steps and
+// tearing as a break in the bars; a strip of 30 cells, the next one lit each frame, so a
+// slow-motion video shows a dropped frame as a skipped cell and a repeated one as a cell lit
+// twice as long; the frame count and how many frames penumbra presented late (`field.w`) as
+// digits, lower by rank so stacked projectors show theirs one under the other; the image's edge.
+fn motion_pattern(q: vec2f, size: vec2f) -> vec3f {
+    let tint = u.tint.rgb;
+    let n = vec2i(max(floor(size), vec2f(1.0)));
+    let p = clamp(vec2i(floor(q)), vec2i(0), n - 1);
+    let frame = u32(max(u.field.z, 0.0) + 0.5);
+    let late = u32(max(u.field.w, 0.0) + 0.5);
+    let rank = i32(u.tint.w + 0.5) % 3;
+    let w = n.x;
+    let h = n.y;
+    var rgb = vec3f(0.0);
+    let speed = max((w + 120) / 240, 1);
+    var lanes = array<vec4i, 2>(
+        // top, bottom, speed, bar width
+        vec4i(h * 4 / 100, h * 36 / 100, speed, speed * 4),
+        vec4i(h * 40 / 100, h * 50 / 100, 1, max(h / 60, 4)),
+    );
+    for (var i = 0; i < 2; i++) {
+        let lane = lanes[i];
+        if p.y == lane.x - 2 || p.y == lane.y + 1 {
+            rgb = tint * 0.3;
+        }
+        if p.y >= lane.x && p.y < lane.y {
+            let x0 = i32((frame * u32(lane.z)) % u32(w));
+            if (p.x - x0 + w) % w < lane.w {
+                rgb = tint;
+            }
+        }
+    }
+    let margin = max(w / 40, 2);
+    let cells = 30;
+    let cw = max((w - 2 * margin) / cells, 4);
+    let top = h * 56 / 100;
+    let sh = max(h * 12 / 100, 4);
+    let sx = p.x - margin;
+    let sy = p.y - top;
+    if sx >= 0 && sx < cw * cells && sy >= 0 && sy < sh {
+        let c = sx / cw;
+        let l = vec2i(sx - c * cw, sy);
+        if u32(c) == frame % u32(cells) {
+            if l.x >= 2 && l.x < cw - 2 && l.y >= 2 && l.y < sh - 2 {
+                rgb = tint;
+            }
+        } else if l.x == 0 || l.x == cw - 1 || l.y == 0 || l.y == sh - 1 {
+            rgb = tint * select(0.25, 0.6, c % 5 == 0);
+        }
+    }
+    let s = max((h + 54) / 108, 1);
+    let t = p - vec2i(margin, h * 74 / 100 + rank * 7 * s);
+    if t.x >= 0 && t.y >= 0 && t.y < 5 * s {
+        let ci = t.x / (4 * s);
+        let gx = (t.x % (4 * s)) / s;
+        let gy = t.y / s;
+        if ci < 25 && gx < 3 {
+            let code = motion_char(u32(ci), frame, late);
+            if code < 17u && ((glyph(code) >> u32((4 - gy) * 3 + (2 - gx))) & 1u) == 1u {
+                rgb = tint;
+            }
+        }
+    }
+    let edge = min(p, n - 1 - p);
+    if min(edge.x, edge.y) == 0 {
         rgb = tint;
     }
     return rgb;
@@ -300,6 +414,8 @@ fn fs(v: V) -> @location(0) vec4f {
         let lit = stripe_lit(p, vec2u(size), u32(u.stripes.w + 0.5));
         rgb = vec3f(select(0.0, clamp(u.stripes.z, 0.0, 1.0), lit));
         signal = true;
+    } else if (u.flags & 2056u) == 2056u {
+        rgb = motion_pattern(v.pos.xy - u.viewport.xy, u.viewport.zw);
     } else if (u.flags & 1032u) == 1032u {
         rgb = focus_pattern(v.pos.xy - u.viewport.xy, u.viewport.zw);
     } else if (u.flags & 8u) != 0u {

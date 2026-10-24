@@ -60,17 +60,35 @@ its input, uncorrected and without soft edges. `test_pattern` picks which:
   one-pixel checker, a two-pixel checker, one-pixel rows and one-pixel columns, over a one-pixel
   grid. Turn the focus ring until all four quarters of the patches stay crisp; when the corners
   and the centre cannot all be sharp, the lens or the throw is the limit, not the focus.
+- **motion**: moves on by whole pixels with every frame the output window presents (not by the
+  clock), for stutter that comes from the line (HDMI over Ethernet, extenders, the projector's
+  processing). In the top lane a bar moves a 240th of the width per frame, in the lane below one
+  a single pixel per frame: both should glide evenly; uneven steps are judder, a horizontal break
+  in a bar is tearing. Below them a strip of 30 cells, the next one lit each frame (every fifth
+  outlined brighter): filmed with a phone in slow motion, a dropped frame shows as a skipped
+  cell, a repeated one as a cell lit twice as long. The line `FRAME 001234   LATE 0` counts the
+  frames presented since the pattern came on and how many of them penumbra presented late (more
+  than one and a half refresh periods after the one before, as `missed` in `output.list`). Stutter
+  while `LATE` stays 0 happens after the graphics card.
+- **fields**: full white, red, green, blue and black, three seconds each, uncorrected, to find
+  dead or stuck pixels. When several projectors show it they take turns (the others black
+  meanwhile), so a dead pixel in an overlap is not hidden by another projector's light.
 
-The row **Test pattern on every projector: Off, Align, Focus** under the projector list switches
-every `out.projector` at once, as one undo step (`projector.test {on, pattern?, projectors?}` on
-the control channel). The lit button is what all of them show.
+The row **Test pattern on every projector: Off, Align, Focus, Motion, Fields** under the
+projector list switches every `out.projector` at once, as one undo step
+(`projector.test {on, pattern?, projectors?}` on the control channel). The lit button is what all
+of them show.
 
-Each projector draws its whole pattern in its own colour (the square beside it in the list: red,
-green, blue, then yellow, cyan, magenta), so where projectors overlap each keeps a channel of its
-own: lines of two projectors that meet show their mix (red and green give yellow), lines that
-miss show both colours side by side, and a blurred projector shows as a smeared colour while the
-others stay crisp. The focus patches sit lower for the second projector and lower again for the
-third, so projectors stacked on the same area show theirs side by side.
+The colour depends on how many projectors show a test pattern (those with `test` on, not all in
+the project): one alone draws in white, the brightest and easiest to read. Two draw in orange and
+azure: red comes only from the first, blue only from the second, so lines of the two that meet
+add up to white, and lines that miss show both colours side by side. Three draw in red, green
+and blue, so each keeps a channel of its own (lines that meet show the mix, all three white);
+more go on with yellow, cyan and magenta. A blurred projector shows as a smeared colour while
+the others stay crisp. The square beside each projector in the list shows its colour. The focus
+patches and the motion pattern's counts sit lower for the second projector and lower again for
+the third, so projectors stacked on the same area show theirs side by side. The full fields are
+always in their own colours.
 
 ## Matching projectors
 

@@ -37,6 +37,7 @@ pub mod video;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use penumbra_core::{Error, NodeId, ParamSpec, Value, lock};
 use penumbra_gpu::Tex;
@@ -95,11 +96,18 @@ pub struct ProjectorFrame {
     /// Its input placed by `fit`; `None` without an input. With `test` on, the whole viewport.
     pub mapping: Option<Arc<Mapping>>,
     /// Shows this test pattern instead of the input.
-    pub test: Option<TestPattern>,
-    /// Its rank among the projector nodes (in node order), which picks its colour.
+    pub test: Option<Shows>,
+    /// Its rank among the projectors showing a test pattern (in node order), which picks its
+    /// colour and where its focus patches and motion counts sit.
     pub rank: usize,
-    /// Its colour in the test pattern (by its rank among the projectors).
+    /// Its colour in the test pattern (by its rank and how many show one, [`tint`]).
     pub tint: [f32; 3],
+    /// Its turn among the projectors showing the full fields, and how many do (they take turns,
+    /// the others black meanwhile).
+    pub turn: (usize, usize),
+    /// Since when the projectors showing its test pattern show it (from the first of them):
+    /// the full fields' clock.
+    pub since: Option<Instant>,
     /// Its colour correction; `None` when off or the identity.
     pub correction: Option<Arc<Correction>>,
     /// What its `gain` and `black` inputs carry (per projector pixel: a factor on the drive, a
@@ -236,12 +244,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5)"),
         )
         .param(ParamSpec::bool("test", false).doc(
-            "A test pattern in the projector's own pixels instead of the input, all in this projector's \
-             colour (so overlapping projectors stay apart): see `test_pattern`. projector.test switches \
-             every projector at once",
+            "A test pattern in the projector's own pixels instead of the input, in this projector's \
+             colour (white when it is the only one showing a test pattern, else one that keeps \
+             overlapping projectors apart): see `test_pattern`. projector.test switches every \
+             projector at once",
         ))
         .param(
-            ParamSpec::choice("test_pattern", &["align", "focus"])
+            ParamSpec::choice("test_pattern", &TEST_PATTERNS)
                 .doc("Which test pattern `test` shows")
                 .choice_doc("align", "square cells, centre cross and circle, the image's edge: keystone, overscan, alignment")
                 .choice_doc(
@@ -249,6 +258,17 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     "one-pixel checkers and lines in patches at the corners and the centre, where defocus shows \
                      first, over a one-pixel grid; the patches sit lower for the second projector and lower \
                      again for the third, so stacked projectors show them side by side",
+                )
+                .choice_doc(
+                    "motion",
+                    "moves on by whole pixels each frame the output presents: two bars, a strip of 30 cells lit \
+                     one after another, the frame count and how many frames penumbra presented late; stutter \
+                     with 0 late comes from after the GPU (cable, extender, projector)",
+                )
+                .choice_doc(
+                    "fields",
+                    "full white, red, green, blue and black, 3 seconds each, uncorrected, for dead and stuck \
+                     pixels; projectors showing it take turns, the others black meanwhile",
                 ),
         )
         .param(ParamSpec::bool("correct", true).group(COLOUR).doc(
@@ -349,7 +369,63 @@ pub struct Mappings(
     HashMap<NodeId, (PlainKey, Arc<Mapping>)>,
     /// The last good colour correction of each projector, with the params it came from.
     HashMap<NodeId, (Vec<Option<Value>>, CorrectionRef)>,
+    /// Since when each test pattern shown is shown (by the first projector that showed it).
+    HashMap<Shows, Instant>,
 );
+
+/// The choices of `out.projector`'s `test_pattern` (and `projector.test`'s `pattern`).
+pub const TEST_PATTERNS: [&str; 4] = ["align", "focus", "motion", "fields"];
+
+/// Which test pattern a projector shows (`test_pattern`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Shows {
+    Align,
+    Focus,
+    Motion,
+    /// Full fields, drawn as flat signals by [`item`].
+    Fields,
+}
+
+impl Shows {
+    fn parse(name: &str) -> Shows {
+        match name {
+            "focus" => Shows::Focus,
+            "motion" => Shows::Motion,
+            "fields" => Shows::Fields,
+            _ => Shows::Align,
+        }
+    }
+}
+
+/// What the projector node `node` shows as its test pattern: `None` while `test` is off or the
+/// node is not active (then it shows nothing).
+fn shows(node: &penumbra_graph::NodeDef, desc: &NodeDesc) -> Option<Shows> {
+    let on = matches!(node.param(desc, "test"), Some(Value::Bool(true)))
+        && !matches!(node.param(desc, "active"), Some(Value::Bool(false)));
+    on.then(|| Shows::parse(node.param(desc, "test_pattern").and_then(Value::as_str).unwrap_or("align")))
+}
+
+/// The test pattern colour of every projector node of `net`, in node order: of those showing a
+/// test pattern by their rank among them and how many they are ([`tint`]); of the others the
+/// colour they get when every active projector shows one. The Helpers window shows it beside
+/// each projector.
+pub fn tints(net: &Network, desc: &NodeDesc) -> Vec<(NodeId, [f32; 3])> {
+    let nodes: Vec<&Arc<penumbra_graph::NodeDef>> = net.nodes().filter(|n| n.kind == PROJECTOR).collect();
+    let showing: Vec<NodeId> = nodes.iter().filter(|n| shows(n, desc).is_some()).map(|n| n.id).collect();
+    let active: Vec<NodeId> = nodes
+        .iter()
+        .filter(|n| !matches!(n.param(desc, "active"), Some(Value::Bool(false))))
+        .map(|n| n.id)
+        .collect();
+    let rank_in = |list: &[NodeId], id: NodeId| list.iter().position(|i| *i == id).map(|r| (r, list.len()));
+    nodes
+        .iter()
+        .map(|n| {
+            let (rank, count) = rank_in(&showing, n.id).or_else(|| rank_in(&active, n.id)).unwrap_or((0, 1));
+            (n.id, tint(rank, count))
+        })
+        .collect()
+}
 
 type CorrectionRef = Option<Arc<Correction>>;
 
@@ -366,7 +442,19 @@ pub fn collect(
     let Some(desc) = types.desc(PROJECTOR) else { return Vec::new() };
     let board = cooker.resource::<OutputBoard>().map(OutputBoard::state);
     let mut out = Vec::new();
-    for (rank, node) in net.nodes().filter(|n| n.kind == PROJECTOR).enumerate() {
+    // Who shows which test pattern: the colours depend on how many show one, the full fields'
+    // turns on how many show those.
+    let showing: Vec<(NodeId, Shows)> = net
+        .nodes()
+        .filter(|n| n.kind == PROJECTOR)
+        .filter_map(|n| shows(n, desc).map(|s| (n.id, s)))
+        .collect();
+    let now = Instant::now();
+    cache.2.retain(|p, _| showing.iter().any(|(_, s)| s == p));
+    for (_, s) in &showing {
+        cache.2.entry(*s).or_insert(now);
+    }
+    for node in net.nodes().filter(|n| n.kind == PROJECTOR) {
         let param = |name: &str| node.param(desc, name);
         let text = |name: &str| match param(name) {
             Some(Value::Text(t)) => t.clone(),
@@ -374,8 +462,11 @@ pub fn collect(
         };
         let viewport = viewport_of(param("viewport"));
         let fit = Fit::parse(&text("fit"));
-        let test = matches!(param("test"), Some(Value::Bool(true)))
-            .then(|| if text("test_pattern") == "focus" { TestPattern::Focus } else { TestPattern::Align });
+        let test = shows(node, desc);
+        let rank = showing.iter().position(|(id, _)| *id == node.id).unwrap_or(0);
+        let alike: Vec<NodeId> =
+            showing.iter().filter(|(_, s)| Some(*s) == test).map(|(id, _)| *id).collect();
+        let turn = (alike.iter().position(|id| *id == node.id).unwrap_or(0), alike.len().max(1));
         let source = node.inputs.first().copied().flatten().and_then(|port| cooker.output(port).cloned());
         let size = source.as_ref().and_then(|d| d.get::<Tex>()).map(Tex::size);
         // The test pattern covers the whole viewport: a stretched placeholder.
@@ -430,7 +521,9 @@ pub fn collect(
             mapping,
             test,
             rank,
-            tint: tint(rank),
+            tint: tint(rank, showing.len()),
+            turn,
+            since: test.and_then(|s| cache.2.get(&s).copied()),
             correction,
             gain: input(1),
             black: input(2),
@@ -446,8 +539,9 @@ pub fn collect(
     out
 }
 
-/// Test pattern colours by rank: red, green and blue first, so where up to three projectors
-/// overlap each one's marks keep a channel of their own (and lines that meet show the mix).
+/// Test pattern colours by rank from three projectors on: red, green and blue first, so where up
+/// to three projectors overlap each one's marks keep a channel of their own (and lines that meet
+/// show the mix).
 const TINTS: [[f32; 3]; 6] = [
     [1.0, 0.12, 0.12],
     [0.12, 1.0, 0.12],
@@ -457,15 +551,60 @@ const TINTS: [[f32; 3]; 6] = [
     [1.0, 0.12, 1.0],
 ];
 
-/// The colour of the projector of `rank` among the projector nodes (in node order) in its test
-/// pattern; the Helpers window shows it next to the projector.
-pub fn tint(rank: usize) -> [f32; 3] {
-    TINTS.get(rank % TINTS.len()).copied().unwrap_or([1.0; 3])
+/// The test pattern colour of the projector of `rank` among the `count` projectors showing one
+/// (in node order). One alone: white, the brightest and easiest to read. Two: orange and azure,
+/// red only from the first, blue only from the second, so lines that meet add up to white. More:
+/// [`TINTS`].
+pub fn tint(rank: usize, count: usize) -> [f32; 3] {
+    match count {
+        0 | 1 => [1.0; 3],
+        2 => {
+            if rank.is_multiple_of(2) {
+                [1.0, 0.5, 0.0]
+            } else {
+                [0.0, 0.5, 1.0]
+            }
+        }
+        _ => TINTS.get(rank % TINTS.len()).copied().unwrap_or([1.0; 3]),
+    }
 }
 
-/// The rank of projector `id` among the projector nodes of `net`.
-pub fn rank(net: &Network, id: NodeId) -> Option<usize> {
-    net.nodes().filter(|n| n.kind == PROJECTOR).position(|n| n.id == id)
+/// How long each full field shows.
+pub const FIELD_SECONDS: f64 = 3.0;
+
+/// The full fields in order, as signals: white, red, green, blue, black.
+const FIELDS: [[f32; 3]; 5] =
+    [[1.0, 1.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.0, 0.0, 0.0]];
+
+/// The full field a projector shows `seconds` after the fields began, on its `turn` of
+/// `turns`: its fields one after another during its turn, black during the others'.
+pub fn field(seconds: f64, turn: (usize, usize)) -> [f32; 3] {
+    let n = FIELDS.len() as f64;
+    let turns = turn.1.max(1) as f64;
+    let seconds = if seconds.is_finite() { seconds.max(0.0) } else { 0.0 };
+    let step = (seconds / FIELD_SECONDS).floor() % (n * turns);
+    let (whose, which) = ((step / n).floor() as usize, (step % n) as usize);
+    if whose != turn.0 % turn.1.max(1) {
+        return [0.0; 3];
+    }
+    FIELDS.get(which).copied().unwrap_or([0.0; 3])
+}
+
+/// What moves the animated test patterns, from the window that presents them.
+#[derive(Clone, Copy, Debug)]
+pub struct TestClock {
+    /// Frames the window presented since it began to show the motion pattern.
+    pub frame: u64,
+    /// Of those, how many it presented late (more than one and a half refresh periods after
+    /// the one before).
+    pub late: u64,
+    pub now: Instant,
+}
+
+impl Default for TestClock {
+    fn default() -> Self {
+        Self { frame: 0, late: 0, now: Instant::now() }
+    }
 }
 
 /// How `tex` drawn through `mapping` looks: geometry, viewport in target pixels, soft edges
@@ -505,12 +644,14 @@ pub fn item_for<'a>(
 }
 
 /// How a projector draws: its input placed by `fit` into `viewport` (target pixels) and colour
-/// corrected, or its test pattern, or a flat signal or structured light stripes (`blank` stands
-/// in for the texture, which none of those reads). `None` without an input.
+/// corrected, or its test pattern (animated by `clock`), or a flat signal or structured light
+/// stripes (`blank` stands in for the texture, which none of those reads). `None` without an
+/// input.
 pub fn item<'a>(
     frame: &'a ProjectorFrame,
     blank: &'a Tex,
     viewport: [f32; 4],
+    clock: &TestClock,
 ) -> Option<penumbra_gpu::projection::Item<'a>> {
     let mapping = frame.mapping.as_deref()?;
     if let Some(flat) = frame.flat {
@@ -523,9 +664,27 @@ pub fn item<'a>(
         item.look.stripes = Some(stripes);
         return Some(item);
     }
-    if let Some(pattern) = frame.test {
+    if let Some(shows) = frame.test {
+        let pattern = match shows {
+            Shows::Align => TestPattern::Align,
+            Shows::Focus => TestPattern::Focus,
+            Shows::Motion => TestPattern::Motion,
+            Shows::Fields => {
+                let mut item = item_for(blank, mapping, &[], [1.0; 3], viewport);
+                let seconds =
+                    frame.since.map_or(0.0, |s| clock.now.saturating_duration_since(s).as_secs_f64());
+                item.look.flat = Some(field(seconds, frame.turn));
+                return Some(item);
+            }
+        };
         let mut item = item_for(blank, mapping, &[], frame.tint, viewport);
-        item.look.test = Some(Test { pattern, rank: u32::try_from(frame.rank).unwrap_or(u32::MAX) });
+        let count = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
+        item.look.test = Some(Test {
+            pattern,
+            rank: u32::try_from(frame.rank).unwrap_or(u32::MAX),
+            frame: count(clock.frame % u64::from(penumbra_gpu::projection::MOTION_WRAP)),
+            late: count(clock.late),
+        });
         return Some(item);
     }
     let tex = frame.source.as_ref()?.get::<Tex>()?;
@@ -596,5 +755,70 @@ mod tests {
         assert_eq!(frames[0].fit, Fit::Fill);
         assert_eq!(frames[0].viewport, [0.0, 0.0, 1.0, 1.0]);
         assert!(frames[0].active && frames[0].source.is_none());
+    }
+
+    #[test]
+    fn test_colours_follow_how_many_show_one() {
+        assert_eq!(tint(0, 1), [1.0; 3], "one alone is white");
+        let (a, b) = (tint(0, 2), tint(1, 2));
+        assert_eq!((a, b), ([1.0, 0.5, 0.0], [0.0, 0.5, 1.0]));
+        assert_eq!([a[0] + b[0], a[1] + b[1], a[2] + b[2]], [1.0; 3], "two add up to white");
+        assert_eq!([tint(0, 3), tint(1, 3), tint(2, 3)], [TINTS[0], TINTS[1], TINTS[2]]);
+        assert_eq!(tint(4, 5), TINTS[4]);
+    }
+
+    #[test]
+    fn full_fields_take_turns() {
+        let one = |t: f64| field(t, (0, 1));
+        assert_eq!(
+            [one(0.0), one(3.5), one(6.5), one(9.5), one(12.5), one(15.5)],
+            [FIELDS[0], FIELDS[1], FIELDS[2], FIELDS[3], FIELDS[4], FIELDS[0]]
+        );
+        // Two: the second waits through the first's five fields.
+        assert_eq!(field(1.0, (1, 2)), [0.0; 3]);
+        assert_eq!(field(16.0, (1, 2)), [1.0; 3]);
+        assert_eq!(field(16.0, (0, 2)), [0.0; 3]);
+        assert_eq!(field(31.0, (0, 2)), [1.0; 3]);
+        assert_eq!(field(f64::NAN, (0, 1)), [1.0; 3]);
+    }
+
+    #[test]
+    fn test_ranks_and_colours_count_only_the_projectors_showing_one() {
+        let types = Arc::new(builtin_types().unwrap());
+        let set = |p: &str, v: Value| Op::Set { param: ParamPath::parse(p).unwrap(), value: v };
+        let create = |p: &str| Op::Create {
+            path: NodePath::parse(p).unwrap(),
+            kind: PROJECTOR.into(),
+            params: Default::default(),
+        };
+        let ops = [
+            create("/a"),
+            create("/b"),
+            create("/c"),
+            set("/b.test", Value::Bool(true)),
+            set("/c.test", Value::Bool(true)),
+            set("/c.test_pattern", Value::Text("fields".into())),
+        ];
+        let net = Arc::new(Network::new().apply(&types, &ops).unwrap().network);
+        let cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
+        let frames = collect(&net, &types, &cooker, &mut Mappings::default());
+        let by = |path: &str| frames.iter().find(|f| f.path == path).unwrap();
+        assert_eq!(by("/a").test, None);
+        assert_eq!((by("/b").test, by("/b").rank, by("/b").tint), (Some(Shows::Align), 0, [1.0, 0.5, 0.0]));
+        assert_eq!((by("/c").test, by("/c").rank, by("/c").tint), (Some(Shows::Fields), 1, [0.0, 0.5, 1.0]));
+        assert_eq!(by("/c").turn, (0, 1), "alone among those showing the fields");
+        assert!(by("/c").since.is_some() && by("/a").since.is_none());
+        let desc = types.desc(PROJECTOR).unwrap();
+        let tints = tints(&net, desc);
+        let of = |path: &str| {
+            let id = net.resolve(&path.parse().unwrap()).unwrap();
+            tints.iter().find(|(n, _)| *n == id).unwrap().1
+        };
+        assert_eq!([of("/b"), of("/c")], [[1.0, 0.5, 0.0], [0.0, 0.5, 1.0]]);
+        assert_eq!(of("/a"), TINTS[0], "what it shows once all three do");
+        // One alone shows white.
+        let net = Arc::new(net.apply(&types, &[set("/c.test", Value::Bool(false))]).unwrap().network);
+        let frames = collect(&net, &types, &cooker, &mut Mappings::default());
+        assert_eq!(frames.iter().find(|f| f.path == "/b").unwrap().tint, [1.0; 3]);
     }
 }
