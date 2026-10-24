@@ -8,7 +8,24 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file), [tex.video_in](#texvideo_in)
+[tex.blend_weight](#texblend_weight), [tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file), [tex.video_in](#texvideo_in)
+
+### tex.blend_weight
+
+A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only
+
+Inputs:
+
+- `in` (tex): The picture, in the projector's pixels
+- `weight` (tex): The projector's blend weight (scan.blend's weight_N.png)
+- `detail` (tex): The projector's detail weight (scan.blend's detail_N.png); detail mode only
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `mode` | smooth \| detail | `"smooth"` |  | How the picture is weighted; smooth: all of it by the blend weight (as a tex.composite multiply); detail: large features by the blend weight, features smaller than size by the detail weight, so they come from one projector only |
+| `size` | float | `8` | 1 to 32 px (soft) | In detail mode, where small features end: the blur radius that separates them, in projector pixels; a little more than the projectors disagree by |
 
 ### tex.blob_track
 

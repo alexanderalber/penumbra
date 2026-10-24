@@ -6,6 +6,7 @@
 //! premultiplied alpha, origin top left. Without a GPU (headless tools, tests of other crates)
 //! these nodes fail with a clear error instead of producing anything.
 
+mod blend_weight;
 pub mod blob_track;
 mod blur;
 mod cache;
@@ -484,6 +485,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )?;
     }
     blob_track::register(types)?;
+    blend_weight::register(types)?;
     blur::register(types)?;
     cache::register(types)?;
     contour::register(types)?;

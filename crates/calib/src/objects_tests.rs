@@ -38,11 +38,16 @@ fn seen_from(ox: f32, p: [f32; 3], boxes: bool) -> bool {
 
 /// The projector's `proj_to_cam` map.
 fn to_camera(ox: f32, boxes: bool) -> Map {
+    to_camera_with(ox, boxes, FOCAL)
+}
+
+/// [`to_camera`] for a projector of focal length `focal` (pixels).
+fn to_camera_with(ox: f32, boxes: bool, focal: f32) -> Map {
     let (pw, ph) = PROJECTOR;
     let mut rgba = Vec::with_capacity(pw * ph);
     for v in 0..ph {
         for u in 0..pw {
-            let d = [(u as f32 + 0.5 - pw as f32 / 2.0) / FOCAL, (v as f32 + 0.5 - ph as f32 / 2.0) / FOCAL];
+            let d = [(u as f32 + 0.5 - pw as f32 / 2.0) / focal, (v as f32 + 0.5 - ph as f32 / 2.0) / focal];
             let p = hit(ox, d, boxes);
             let cx = FOCAL * p[0] / p[2] + CAMERA.0 as f32 / 2.0;
             let cy = FOCAL * p[1] / p[2] + CAMERA.1 as f32 / 2.0;
@@ -59,14 +64,19 @@ fn to_camera(ox: f32, boxes: bool) -> Map {
 
 /// The projector's `cam_to_proj` map.
 fn from_camera(ox: f32) -> Map {
+    from_camera_with(ox, FOCAL)
+}
+
+/// [`from_camera`] for a projector of focal length `focal` (pixels).
+fn from_camera_with(ox: f32, focal: f32) -> Map {
     let (cw, ch) = CAMERA;
     let mut rgba = Vec::with_capacity(cw * ch);
     for y in 0..ch {
         for x in 0..cw {
             let d = [(x as f32 + 0.5 - cw as f32 / 2.0) / FOCAL, (y as f32 + 0.5 - ch as f32 / 2.0) / FOCAL];
             let p = hit(0.0, d, true);
-            let u = FOCAL * (p[0] - ox) / p[2] + PROJECTOR.0 as f32 / 2.0;
-            let v = FOCAL * p[1] / p[2] + PROJECTOR.1 as f32 / 2.0;
+            let u = focal * (p[0] - ox) / p[2] + PROJECTOR.0 as f32 / 2.0;
+            let v = focal * p[1] / p[2] + PROJECTOR.1 as f32 / 2.0;
             let inside = (0.0..PROJECTOR.0 as f32).contains(&u) && (0.0..PROJECTOR.1 as f32).contains(&v);
             rgba.push(if seen_from(ox, p, true) && inside {
                 [u / PROJECTOR.0 as f32, v / PROJECTOR.1 as f32, 1.0, 1.0]
@@ -332,4 +342,73 @@ fn morphology_holes_and_parts() {
     assert_eq!(eroded.iter().filter(|v| **v).count(), 9);
     let med = raster::median(3, 3, &[0., 0., 0., 0., 9., 0., 0., 0., 0.], 3);
     assert_eq!(med[4], 0.0);
+}
+
+/// The detail weights of the camera pixels both projectors light: per pixel the sum and
+/// projector 1's share.
+fn details_seen(c2p: &[Map], detail: &[Vec<f32>]) -> Vec<(f32, f32)> {
+    details_seen_at(c2p, detail).into_iter().map(|(_, s, d)| (s, d)).collect()
+}
+
+/// [`details_seen`] with the camera pixel first.
+fn details_seen_at(c2p: &[Map], detail: &[Vec<f32>]) -> Vec<(usize, f32, f32)> {
+    let mut out = Vec::new();
+    for c in 0..CAMERA.0 * CAMERA.1 {
+        let at: Vec<Option<usize>> = c2p.iter().map(|m| m.pixel_in(c, PROJECTOR.0, PROJECTOR.1)).collect();
+        if let [Some(a), Some(b)] = at[..] {
+            let (da, db) = (detail[0][a], detail[1][b]);
+            out.push((c, da + db, db));
+        }
+    }
+    out
+}
+
+#[test]
+fn detail_comes_from_one_projector_and_adds_up_to_one() {
+    let p2c: Vec<Map> = OFFSETS.iter().map(|ox| to_camera(*ox, true)).collect();
+    let c2p: Vec<Map> = OFFSETS.iter().map(|ox| from_camera(*ox)).collect();
+    let inputs: Vec<BlendInput<'_>> =
+        p2c.iter().zip(&c2p).map(|(t, f)| BlendInput { to_camera: t, from_camera: f, mask: None }).collect();
+    let b = blend(&inputs, &BlendOptions { ramp: 40.0, reach: 2.0, blur: 0.0 }).unwrap();
+    let seen = details_seen(&c2p, &b.detail);
+    assert!(seen.len() > 2000, "{} camera pixels lit by both", seen.len());
+    let off = seen.iter().filter(|(sum, _)| (sum - 1.0).abs() > 0.1).count();
+    assert!(off * 50 < seen.len(), "{off} of {} sum away from 1", seen.len());
+    // Hard almost everywhere: the hand-over is a narrow soft step, not a cross-fade.
+    let soft = seen.iter().filter(|(_, d)| *d > 0.05 && *d < 0.95).count();
+    assert!(soft * 10 < seen.len(), "{soft} of {} between", seen.len());
+    // Alike projectors: the first one draws the detail away from its frame edge.
+    let first = seen.iter().filter(|(_, d)| *d < 0.05).count();
+    assert!(first * 2 > seen.len(), "projector 0 draws {first} of {}", seen.len());
+}
+
+#[test]
+fn detail_comes_from_the_sharper_projector() {
+    for sharp in [0usize, 1] {
+        // The sharper projector has the longer lens: its pixels cover less of the wall.
+        let focal = |k: usize| if k == sharp { 150.0 } else { 100.0 };
+        let p2c: Vec<Map> =
+            OFFSETS.iter().enumerate().map(|(k, ox)| to_camera_with(*ox, false, focal(k))).collect();
+        let c2p: Vec<Map> =
+            OFFSETS.iter().enumerate().map(|(k, ox)| from_camera_with(*ox, focal(k))).collect();
+        let inputs: Vec<BlendInput<'_>> = p2c
+            .iter()
+            .zip(&c2p)
+            .map(|(t, f)| BlendInput { to_camera: t, from_camera: f, mask: None })
+            .collect();
+        let b = blend(&inputs, &BlendOptions { ramp: 40.0, reach: 2.0, blur: 0.0 }).unwrap();
+        let seen = details_seen_at(&c2p, &b.detail);
+        // Away from the sharp projector's frame edge, where the other one takes over.
+        let inner = |c: usize| {
+            c2p[sharp].pixel_in(c, PROJECTOR.0, PROJECTOR.1).is_some_and(|p| {
+                let (x, y) = (p % PROJECTOR.0, p / PROJECTOR.0);
+                x.min(PROJECTOR.0 - 1 - x).min(y).min(PROJECTOR.1 - 1 - y) >= 20
+            })
+        };
+        let seen: Vec<(f32, f32)> =
+            seen.into_iter().filter(|(c, _, _)| inner(*c)).map(|(_, s, d)| (s, d)).collect();
+        assert!(seen.len() > 1000, "{} camera pixels inside", seen.len());
+        let by_sharp = seen.iter().filter(|(_, d1)| if sharp == 1 { *d1 > 0.95 } else { *d1 < 0.05 }).count();
+        assert!(by_sharp * 100 > seen.len() * 95, "sharp {sharp}: {by_sharp} of {}", seen.len());
+    }
 }

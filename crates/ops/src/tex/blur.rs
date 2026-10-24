@@ -42,7 +42,7 @@ fn desc() -> NodeDesc {
 }
 
 /// The pass's params: the node's plus the axis the node sets per pass.
-fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
+pub(super) fn pass(gpu: &Gpu) -> Result<Arc<Pass>, Error> {
     let mut params = desc().params;
     params.push(ParamSpec::vec2("axis", [1.0, 0.0]));
     gpu.cached_pass(KIND, SOURCE, &params)

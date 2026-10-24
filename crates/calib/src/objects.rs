@@ -673,10 +673,84 @@ pub struct BlendInput<'a> {
     pub mask: Option<&'a [u16]>,
 }
 
-/// Per projector its weights (projector pixels, 0 to 1) and the pixels it shares with another.
+/// Per projector its weights (projector pixels, 0 to 1), its detail weights and the pixels it
+/// shares with another.
 pub struct Blend {
     pub weights: Vec<Vec<f32>>,
+    /// 1 where this projector draws the small features, 0 where another does (softened by the
+    /// weights' blur): of the projectors lighting a camera pixel, the one whose pixel covers the
+    /// least of the camera's picture there, so the sharpest; one near its frame edge only when
+    /// all are.
+    pub detail: Vec<Vec<f32>>,
     pub shared: Vec<usize>,
+}
+
+/// Projector pixels from the frame edge within which a projector draws the small features only
+/// where every other projector there is as close to its own edge.
+const DETAIL_EDGE: f32 = 16.0;
+/// Standard deviation of the smoothing of a projector pixel's footprint, projector pixels: the
+/// decoded positions are noisy pixel to pixel, the footprint of a projector changes slowly.
+const FOOTPRINT_SIGMA: f32 = 16.0;
+/// Footprints closer than this ratio count as equal (the lower projector number wins then).
+const FOOTPRINT_TIE: f32 = 0.08;
+
+/// Per projector pixel the camera pixels it covers (the area of its footprint in the camera's
+/// picture), smoothed, so also where it has no position but its neighbours have; `NaN` where
+/// none around it has one.
+fn footprints(map: &Map, cw: usize, ch: usize) -> Vec<f32> {
+    const K: usize = 2;
+    let (w, h) = (map.width, map.height);
+    let at = |x: usize, y: usize| map.uv(y * w + x).map(|[u, v]| [u * cw as f32, v * ch as f32]);
+    let mut value = vec![0f32; w * h];
+    let mut known = vec![0f32; w * h];
+    for y in K..h.saturating_sub(K) {
+        for x in K..w.saturating_sub(K) {
+            let (Some(m), Some(l), Some(r), Some(t), Some(b)) =
+                (at(x, y), at(x - K, y), at(x + K, y), at(x, y - K), at(x, y + K))
+            else {
+                continue;
+            };
+            // A stencil across an edge in depth (the two halves step differently) measures the
+            // jump, not the footprint.
+            let bent = |a: [f32; 2], c: [f32; 2]| {
+                let (h1, h2) = ([m[0] - a[0], m[1] - a[1]], [c[0] - m[0], c[1] - m[1]]);
+                let len = |v: [f32; 2]| v[0].hypot(v[1]);
+                len([h2[0] - h1[0], h2[1] - h1[1]]) > 0.25 * (len(h1) + len(h2)) + 0.5
+            };
+            if bent(l, r) || bent(t, b) {
+                continue;
+            }
+            let s = 1.0 / (2 * K) as f32;
+            let (ax, ay) = ((r[0] - l[0]) * s, (r[1] - l[1]) * s);
+            let (bx, by) = ((b[0] - t[0]) * s, (b[1] - t[1]) * s);
+            let area = (ax * by - ay * bx).abs();
+            if area.is_finite()
+                && let (Some(v), Some(k)) = (value.get_mut(y * w + x), known.get_mut(y * w + x))
+            {
+                *v = area;
+                *k = 1.0;
+            }
+        }
+    }
+    let value = raster::gaussian(w, h, &value, FOOTPRINT_SIGMA);
+    let known_blurred = raster::gaussian(w, h, &known, FOOTPRINT_SIGMA);
+    value.iter().zip(&known_blurred).map(|(v, k)| if *k > 1e-3 { v / k } else { f32::NAN }).collect()
+}
+
+/// Whether projector `s` (footprint `fs`, `es` from its frame edge) draws the small features
+/// rather than projector `t` (`ft`, `et`) at a camera pixel both light.
+fn sharper(s: usize, fs: f32, es: f32, t: usize, ft: f32, et: f32) -> bool {
+    let (near_s, near_t) = (es < DETAIL_EDGE, et < DETAIL_EDGE);
+    if near_s != near_t {
+        return near_t;
+    }
+    if fs.is_finite() && ft.is_finite() && (fs - ft).abs() > FOOTPRINT_TIE * fs.max(ft) {
+        return fs < ft;
+    }
+    if !(fs.is_finite() && ft.is_finite()) && es != et {
+        return es > et;
+    }
+    s < t
 }
 
 /// The blend weights of projectors that light the same camera pixels.
@@ -718,19 +792,25 @@ pub fn blend(inputs: &[BlendInput<'_>], o: &BlendOptions) -> Result<Blend, Strin
         let d = x.min(w.saturating_sub(1 + x)).min(y).min(h.saturating_sub(1 + y));
         (d as f32).min(o.ramp)
     };
+    let feet: Vec<Vec<f32>> = inputs.iter().map(|input| footprints(input.to_camera, cw, ch)).collect();
+    let foot = |p: usize, i: usize| feet.get(p).and_then(|f| f.get(i)).copied().unwrap_or(f32::NAN);
     let mut weights = Vec::with_capacity(inputs.len());
+    let mut details = Vec::with_capacity(inputs.len());
     let mut shared = Vec::with_capacity(inputs.len());
     for (s, input) in inputs.iter().enumerate() {
         let (pw, ph) = (input.to_camera.width, input.to_camera.height);
         let inside = |i: usize| input.mask.is_none_or(|m| m.get(i).is_some_and(|v| *v > 0));
         let mut w = vec![1f32; input.to_camera.len()];
+        let mut d = vec![1f32; input.to_camera.len()];
         let mut count = 0usize;
-        for (i, wi) in w.iter_mut().enumerate() {
+        for (i, (wi, di)) in w.iter_mut().zip(d.iter_mut()).enumerate() {
             if !inside(i) {
                 continue;
             }
             let Some(c) = input.to_camera.pixel_in(i, cw, ch) else { continue };
             let own = edge(i, pw, ph);
+            let fs = foot(s, i);
+            let mut sharpest = true;
             let (mut sum, mut others) = (own, 0usize);
             for (t, other) in inputs.iter().enumerate() {
                 if t == s {
@@ -744,26 +824,32 @@ pub fn blend(inputs: &[BlendInput<'_>], o: &BlendOptions) -> Result<Blend, Strin
                 if other.mask.is_some_and(|m| m.get(q).is_none_or(|v| *v == 0)) {
                     continue;
                 }
-                sum += edge(q, other.to_camera.width, other.to_camera.height);
+                let et = edge(q, other.to_camera.width, other.to_camera.height);
+                sum += et;
                 others += 1;
+                sharpest &= sharper(s, fs, own, t, foot(t, q), et);
             }
             if others > 0 {
                 count += 1;
                 *wi = if sum > 0.0 { own / sum } else { 1.0 / (others + 1) as f32 };
+                *di = if sharpest { 1.0 } else { 0.0 };
             }
         }
         let mut w = raster::gaussian(pw, ph, &w, o.blur);
+        let mut d = raster::gaussian(pw, ph, &d, o.blur);
         if input.mask.is_some() {
-            for (i, wi) in w.iter_mut().enumerate() {
+            for (i, (wi, di)) in w.iter_mut().zip(d.iter_mut()).enumerate() {
                 if !inside(i) {
                     *wi = 0.0;
+                    *di = 0.0;
                 }
             }
         }
         weights.push(w);
+        details.push(d);
         shared.push(count);
     }
-    Ok(Blend { weights, shared })
+    Ok(Blend { weights, detail: details, shared })
 }
 
 /// Largest Gaussian for [`smooth`], projector pixels.

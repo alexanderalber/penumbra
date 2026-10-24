@@ -2966,3 +2966,60 @@ fn a_sequence_takes_wired_black_and_white() {
     rig.clock.advance(105);
     assert!((red(&mut rig, "/pic") - 0.7).abs() < 0.01, "the flash at 2 s");
 }
+
+/// `tex.blend_weight`: smooth mode is a multiply by the weight; in detail mode the large
+/// features follow the weight and the small ones the detail weight, so two projectors with
+/// detail 1 and 0 add up to the picture, and the one with detail 0 gets only a blurred share.
+#[test]
+fn blend_weight_splits_small_features_off() {
+    let Some(gpu) = gpu() else { return };
+    let grey = |v: f64| Value::Vec4([v, v, v, 1.0]);
+    let mut ops = vec![
+        create(
+            "/pic",
+            "tex.noise",
+            &[size()[0].clone(), size()[1].clone(), ("frequency", Value::Float(16.0))],
+        ),
+        create("/half", "tex.constant", &[size()[0].clone(), size()[1].clone(), ("color", grey(0.5))]),
+        create("/one", "tex.constant", &[size()[0].clone(), size()[1].clone(), ("color", grey(1.0))]),
+        create("/zero", "tex.constant", &[size()[0].clone(), size()[1].clone(), ("color", grey(0.0))]),
+        create("/smooth", "tex.blend_weight", &[]),
+        create("/sharp", "tex.blend_weight", &[("mode", "detail".into()), ("size", Value::Float(6.0))]),
+        create("/soft", "tex.blend_weight", &[("mode", "detail".into()), ("size", Value::Float(6.0))]),
+        create("/alone", "tex.blend_weight", &[("mode", "detail".into())]),
+    ];
+    for (node, detail) in [("/smooth", "/one"), ("/sharp", "/one"), ("/soft", "/zero")] {
+        ops.extend([connect("/pic", node, 0), connect("/half", node, 1), connect(detail, node, 2)]);
+    }
+    ops.extend([connect("/pic", "/alone", 0), connect("/half", "/alone", 1)]);
+    let mut rig = Rig::new(gpu, None, &ops);
+    let pic = rig.pixels("/pic");
+    let smooth = rig.pixels("/smooth");
+    let sharp = rig.pixels("/sharp");
+    let soft = rig.pixels("/soft");
+    let alone = rig.pixels("/alone");
+    let (mut sum_err, mut counted, mut swing_pic, mut swing_soft) = (0f32, 0usize, 0f32, 0f32);
+    for (i, p) in pic.data.iter().enumerate() {
+        assert!((smooth.data[i][0] - 0.5 * p[0]).abs() < 2e-3, "smooth at {i}");
+        assert!((alone.data[i][0] - 0.5 * p[0]).abs() < 2e-3, "detail without a detail weight at {i}");
+        assert!(sharp.data[i][0] >= 0.0 && soft.data[i][0] >= 0.0);
+        // Where nothing was clamped, the two projectors add up to the picture.
+        if sharp.data[i][0] > 1e-3 {
+            sum_err += (sharp.data[i][0] + soft.data[i][0] - p[0]).abs();
+            counted += 1;
+        }
+        let x = i % W as usize;
+        if x > 0 {
+            swing_pic += (p[0] - pic.data[i - 1][0]).abs();
+            swing_soft += (soft.data[i][0] - soft.data[i - 1][0]).abs();
+        }
+    }
+    assert!(counted * 10 > pic.data.len() * 7, "{counted} unclamped");
+    assert!(sum_err / (counted as f32) < 3e-3, "mean error {}", sum_err / counted as f32);
+    // The projector without the detail carries much less of the pixel-to-pixel change than its
+    // half of the picture would.
+    assert!(swing_soft < 0.5 * swing_pic * 0.5, "soft {swing_soft}, picture {swing_pic}");
+    let id = rig.id("/alone");
+    let warning = rig.cooker.status(id).and_then(|s| s.warning.clone()).unwrap_or_default();
+    assert!(warning.contains("detail weight"), "{warning}");
+}

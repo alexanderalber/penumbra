@@ -118,10 +118,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "scan.blend",
         "Blend weights for projectors lighting the same surface, from their scans (folders scan.decode \
          wrote). Writes weight_N.png (16-bit, sRGB-encoded so tex.image_file gives the weight; multiply the \
-         projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed, for tex.remap); \
-         {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? \
+         projector's picture by it), detail_N.png (1 where this projector is the sharpest of those lighting \
+         a spot, for tex.blend_weight's detail mode) and proj_to_cam_smooth_N.exr (the map smoothed, for \
+         tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? \
          (folder, objects), ramp? (projector px, 200), blur? (projector px, 3), reach? (camera px, 6), \
-         sigma? (projector px, 6), into_scans? (write weight.png and proj_to_cam_smooth.exr into each \
+         sigma? (projector px, 6), into_scans? (write weight.png, detail.png and proj_to_cam_smooth.exr into each \
          scan's folder, where tex.scan reads them, false)}",
         move |p| {
             let a: BlendArgs = args(p)?;
@@ -403,6 +404,11 @@ pub fn weight_file(n: usize) -> String {
 pub fn smooth_file(n: usize) -> String {
     format!("proj_to_cam_smooth_{n}.exr")
 }
+pub fn detail_file(n: usize) -> String {
+    format!("detail_{n}.png")
+}
+/// The detail weight `scan.blend` writes into a scan's folder with `into_scans`.
+pub const DETAIL: &str = "detail.png";
 /// Default standard deviation of the map smoothing, projector pixels.
 pub const DEFAULT_SIGMA: f32 = 6.0;
 
@@ -809,28 +815,33 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
     if !into_scans {
         std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     }
-    let files = |n: usize| -> (PathBuf, PathBuf) {
+    let files = |n: usize| -> (PathBuf, PathBuf, PathBuf) {
         match a.scans.get(n).filter(|_| into_scans) {
             Some(scan) => {
                 let folder = dir.join(scan);
                 (
                     folder.join(penumbra_ops::tex::scan::WEIGHT),
                     folder.join(penumbra_ops::tex::scan::SMOOTH_MAP),
+                    folder.join(DETAIL),
                 )
             }
-            None => (out.join(weight_file(n)), out.join(smooth_file(n))),
+            None => (out.join(weight_file(n)), out.join(smooth_file(n)), out.join(detail_file(n))),
         }
     };
     let mut per_projector = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
-    for (n, ((map, w), smooth)) in to_camera.iter().zip(&b.weights).zip(&smoothed).enumerate() {
+    for (n, (((map, w), d), smooth)) in
+        to_camera.iter().zip(&b.weights).zip(&b.detail).zip(&smoothed).enumerate()
+    {
         let (pw, ph) = (map.width as u32, map.height as u32);
         // sRGB-encoded: tex.image_file decodes 16-bit files as sRGB, so it gives back the weight.
         let encode =
             |v: f32| (penumbra_gpu::readback::linear_to_srgb(v) * 65535.0).round().clamp(0.0, 65535.0) as u16;
         let values: Vec<u16> = w.iter().map(|v| encode(*v)).collect();
-        let (weight_path, map_path) = files(n);
+        let (weight_path, map_path, detail_path) = files(n);
         let weight = write_file(&weight_path, penumbra_gpu::image::encode_png_gray16(pw, ph, &values)?)?;
+        let values: Vec<u16> = d.iter().map(|v| encode(*v)).collect();
+        let detail = write_file(&detail_path, penumbra_gpu::image::encode_png_gray16(pw, ph, &values)?)?;
         let map_file = write_file(&map_path, penumbra_gpu::image::encode_exr_rgba32f(pw, ph, smooth)?)?;
         let shared = b.shared.get(n).copied().unwrap_or(0);
         if shared == 0 && a.scans.len() > 1 {
@@ -843,6 +854,7 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
             "size": [pw, ph],
             "shared": shared,
             "weight": weight,
+            "detail": detail,
             "map": map_file,
         }));
     }
@@ -862,8 +874,9 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
         },
         "warnings": warnings,
         "next": "per projector: tex.remap of the camera-space content through tex.image_file of \
-                 proj_to_cam_smooth_N.exr (extend zero), tex.composite multiply with tex.image_file of \
-                 weight_N.png, into out.projector",
+                 proj_to_cam_smooth_N.exr (extend zero), tex.blend_weight with tex.image_file of \
+                 weight_N.png as weight (mode detail with detail_N.png as detail: lines and edges come \
+                 from one projector only), into out.projector",
     }))
 }
 

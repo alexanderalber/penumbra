@@ -107,7 +107,10 @@ is on screen (`timeout` optional, 30 s by default), or `{"resize": [width, heigh
 the window's size as a maximize would. `wait` is wall-clock time, so on a busy machine less
 has happened by its end; `wait_for` an element that appears only once something cooked (the
 viewer's handles, a helper's list) before clicking it. Empty lines and lines starting with
-`//` are skipped. Each reply is printed.
+`//` are skipped. `$HERE` in any string of a line is the project's folder (with forward
+slashes), so a script kept beside `project.ron` names its files wherever the project lies:
+`{"method": "node.snapshot", "params": {"path": "/out", "file": "$HERE/snap/out.png"}}`.
+Each reply is printed.
 Without `--project` it works on a fresh copy of the demo in the temp directory, so no project
 is touched. `--software` renders on a software adapter (WARP on Windows): slow but the same on
 every machine. `--size` is the window size in points.

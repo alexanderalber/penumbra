@@ -7,7 +7,10 @@
 //! 10 Hz, a shader compiles in a job), `{"wait_for": id, "timeout"?: seconds}` to let it run
 //! until the element `id` is on screen (at most `timeout`, 30 s unless given), or
 //! `{"resize": [width, height]}` to change the window's size in points, as a maximize would.
-//! Empty lines and lines starting with `//` are skipped.
+//! Empty lines and lines starting with `//` are skipped. `$HERE` in any string of a line
+//! stands for the project's folder (forward slashes), so a script kept in a project can name
+//! files in it wherever the project lies: `{"method": "node.snapshot", "params": {"path":
+//! "/out", "file": "$HERE/snap/out.png"}}`.
 //!
 //! `wait` takes wall-clock time, so how far the show got in it depends on the machine's load;
 //! before acting on an element that appears only once something cooked (the viewer's handles,
@@ -70,11 +73,18 @@ fn setup(software: bool) -> egui_wgpu::WgpuSetup {
 /// Runs `script` against `engine` in a headless app. Returns the method and the reply envelope
 /// (`{"ok", "result" | "error"}`) of every request; a failing request does not stop the script.
 pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(String, Json)>, String> {
+    let here = engine.session().dir().display().to_string().replace('\\', "/");
     let lines: Vec<Json> = script
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with("//"))
         .map(|l| serde_json::from_str(l).map_err(|e| format!("script line `{l}`: {e}")))
+        .map(|line| {
+            line.map(|mut v| {
+                fill_here(&mut v, &here);
+                v
+            })
+        })
         .collect::<Result<_, _>>()?;
     let (bridge, requests) = Bridge::new();
     let mut registry: Registry = penumbra_engine::engine_registry(&engine);
@@ -177,6 +187,16 @@ pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(
     Ok(out)
 }
 
+/// Replaces `$HERE` in every string of `v` (keys stay) by `here`.
+pub fn fill_here(v: &mut Json, here: &str) {
+    match v {
+        Json::String(s) if s.contains("$HERE") => *s = s.replace("$HERE", here),
+        Json::Array(items) => items.iter_mut().for_each(|i| fill_here(i, here)),
+        Json::Object(map) => map.values_mut().for_each(|i| fill_here(i, here)),
+        _ => {}
+    }
+}
+
 fn step(harness: &mut egui_kittest::Harness<'_, PenumbraApp>) {
     if let Some(e) = harness.state_mut().take_synthetic() {
         harness.event(e);
@@ -189,5 +209,22 @@ fn step_for(harness: &mut egui_kittest::Harness<'_, PenumbraApp>, d: Duration) {
     while Instant::now() < end {
         step(harness);
         std::thread::sleep(Duration::from_millis(8));
+    }
+}
+
+#[cfg(test)]
+mod here_tests {
+    use serde_json::json;
+
+    #[test]
+    fn here_is_filled_in_every_string_but_not_in_keys() {
+        let mut line = json!({"method": "node.snapshot", "params": {"file": "$HERE/snap/a.png",
+            "list": ["x", "$HERE"], "$HERE": 3, "n": 1}});
+        super::fill_here(&mut line, "E:/p");
+        assert_eq!(
+            line,
+            json!({"method": "node.snapshot", "params": {"file": "E:/p/snap/a.png",
+                "list": ["x", "E:/p"], "$HERE": 3, "n": 1}})
+        );
     }
 }

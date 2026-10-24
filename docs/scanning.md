@@ -557,7 +557,7 @@ of all projectors at one camera pixel add up to 1; the reply says how closely.
         "masks": ["objects/labels_0.png", "objects/labels_1.png"]}'
 
 `masks` is optional (one file or `null` per scan); without it the whole frame counts.
-`"into_scans": true` writes `weight.png` and `proj_to_cam_smooth.exr` into each scan's own
+`"into_scans": true` writes `weight.png`, `detail.png` and `proj_to_cam_smooth.exr` into each scan's own
 folder instead (where a `tex.scan` reads them). Also
 written per projector is `proj_to_cam_smooth_N.exr`: the camera is usually coarser than the
 projector, so only some projector pixels have a measured camera position and content remapped
@@ -569,7 +569,27 @@ Written into `out` (default `objects/`):
 | file | what |
 |---|---|
 | `weight_N.png` | 16-bit, projector size; stored sRGB-encoded so that `tex.image_file` gives back the weight itself |
+| `detail_N.png` | the same format: the detail weight, 1 where this projector draws the small features, 0 where another does (see below) |
 | `proj_to_cam_smooth_N.exr` | the projector's `proj_to_cam` map, smoothed |
+
+### Small features from one projector
+
+Two projectors never agree to the pixel: the scan is off by a pixel or two here and there, a
+projector's lens creeps. A cross-fade hides that for large areas, but a thin line, an outline
+or text shows up twice in the overlap, slightly apart. `detail_N.png` says, per projector
+pixel, which projector draws the small features: of the projectors that light that camera
+pixel, the one whose pixel covers the least of the camera's picture there (the sharpest, from
+the nearer or longer-throw projector, or the one looking straighter at the surface); a
+projector within 16 pixels of its frame edge only where every other one is too; when the
+projectors are alike, the lower number. The detail weights at a camera pixel add up to 1 like
+the weights, but switch rather than fade, softened by `blur`.
+
+`tex.blend_weight` in `detail` mode uses it: the picture is split at `size` pixels (8 by
+default), the blurred picture is weighted by `weight_N.png`, the rest (picture minus blur) by
+`detail_N.png`. Brightness still crosses over smoothly; lines and edges come from one
+projector only. Light cannot be negative, so where a thin dark gap lies right beside something
+bright, the other projectors' blurred share fills a faint halo into it. Pick `size` a little
+above how far the projectors disagree; much larger only widens that halo.
 
 ## 7. The network
 
@@ -591,8 +611,11 @@ Content is made once, in the camera's picture, and each projector takes its shar
    picture too.
 3. Per projector: `tex.remap` with the content as `in` and a `tex.image_file` of
    `objects/proj_to_cam_smooth_N.exr` as `map`, `extend` zero.
-4. `tex.composite` with `op` multiply: the remap as layer1, a `tex.image_file` of
-   `objects/weight_N.png` as layer2.
+4. `tex.blend_weight`: the remap as `in`, a `tex.image_file` of `objects/weight_N.png` as
+   `weight`. For content with thin lines, outlines or text, `mode` detail and a
+   `tex.image_file` of `objects/detail_N.png` as `detail` (see "Small features from one
+   projector" above). A `tex.composite` multiply with the weight as layer2 does the same as
+   `smooth` mode.
 5. Into that projector's `out.projector`.
 
 Then, optionally, even out each projector's light and the black around overlaps with
