@@ -9,6 +9,6 @@
         "/water/regions": (kind: "tex.in"),
         "/water/sdf": (kind: "tex.in"),
         "/water/tank": (kind: "tex.shader", params: {"file": "library/water/water.wgsl"}, inputs: {"in0": "regions", "in1": "labels", "in2": "texture", "in3": "sdf"}),
-        "/water/texture": (kind: "tex.image", params: {"file": "library/water/water.png"}),
+        "/water/texture": (kind: "tex.image_file", params: {"file": "library/water/water.png"}),
     },
 )

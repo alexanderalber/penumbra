@@ -6,7 +6,7 @@
 //!
 //! The decode is a one-off job on the caller's thread (the control channel's connection), never
 //! on the cook thread; nothing of it runs per frame. Its results are plain files in the project,
-//! read by `tex.image`: the projector-space map goes into `tex.remap`'s `map` with the camera as
+//! read by `tex.image_file`: the projector-space map goes into `tex.remap`'s `map` with the camera as
 //! `in`, so the camera's view lands in projector pixels.
 
 use std::cmp::Ordering;
@@ -117,7 +117,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     registry.register(FnCommand::new(
         "scan.blend",
         "Blend weights for projectors lighting the same surface, from their scans (folders scan.decode \
-         wrote). Writes weight_N.png (16-bit, sRGB-encoded so tex.image gives the weight; multiply the \
+         wrote). Writes weight_N.png (16-bit, sRGB-encoded so tex.image_file gives the weight; multiply the \
          projector's picture by it) and proj_to_cam_smooth_N.exr (the map smoothed, for tex.remap); \
          {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? \
          (folder, objects), ramp? (projector px, 200), blur? (projector px, 3), reach? (camera px, 6), \
@@ -186,7 +186,7 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
     reply.insert(
         "next".into(),
         json!(format!(
-            "tex.image of {PROJECTOR_MAP} into tex.remap's map, the camera into its in: the camera's view in projector pixels"
+            "tex.image_file of {PROJECTOR_MAP} into tex.remap's map, the camera into its in: the camera's view in projector pixels"
         )),
     );
     reply.insert(
@@ -723,7 +723,7 @@ pub fn objects(dir: &Path, a: &ObjectsArgs) -> CmdResult<Json> {
         "ms": {"read": ms(read), "work": ms(work), "write": ms(written), "total": ms(started.elapsed())},
         "warnings": warnings,
         "next": format!(
-            "tex.image of {OBJECTS_CAMERA} and shapes.trace with labels: one shape per object in camera space; \
+            "tex.image_file of {OBJECTS_CAMERA} and shapes.trace with labels: one shape per object in camera space; \
              scan.blend with the labels_N.png as masks"
         ),
     }))
@@ -825,7 +825,7 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
     let mut warnings: Vec<String> = Vec::new();
     for (n, ((map, w), smooth)) in to_camera.iter().zip(&b.weights).zip(&smoothed).enumerate() {
         let (pw, ph) = (map.width as u32, map.height as u32);
-        // sRGB-encoded: tex.image decodes 16-bit files as sRGB, so it gives back the weight.
+        // sRGB-encoded: tex.image_file decodes 16-bit files as sRGB, so it gives back the weight.
         let encode =
             |v: f32| (penumbra_gpu::readback::linear_to_srgb(v) * 65535.0).round().clamp(0.0, 65535.0) as u16;
         let values: Vec<u16> = w.iter().map(|v| encode(*v)).collect();
@@ -861,8 +861,8 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
             "total": ms(started.elapsed()),
         },
         "warnings": warnings,
-        "next": "per projector: tex.remap of the camera-space content through tex.image of \
-                 proj_to_cam_smooth_N.exr (extend zero), tex.composite multiply with tex.image of \
+        "next": "per projector: tex.remap of the camera-space content through tex.image_file of \
+                 proj_to_cam_smooth_N.exr (extend zero), tex.composite multiply with tex.image_file of \
                  weight_N.png, into out.projector",
     }))
 }

@@ -34,10 +34,10 @@ scan's regions.
 |---|---|---|
 | `labels` | faces and objects in one picture: red the face k / 255, green the object k / 255, as plain numbers | `scan_labels`' `labels` |
 | `sdf` | signed distance from the objects' silhouette (red, in widths of the picture, negative inside) | `scan_labels`' `sdf` |
-| `regions` | region labels, 8 bit | `tex.image` of `regions_camera.png` (`scan.regions`) |
-| `objects` | object labels, 8 bit | `tex.image` of `objects_camera.png` (`scan.scene`) |
-| `height` | height over the support | `tex.image` of `height_camera.exr` (`scan.scene`) |
-| `uv` | a rectified face's u, v (red, green) and where it is (blue) | `tex.image` of `uv_K_camera.exr` (`scan.scene` with `rectify`) |
+| `regions` | region labels, 8 bit | `tex.image_file` of `regions_camera.png` (`scan.regions`) |
+| `objects` | object labels, 8 bit | `tex.image_file` of `objects_camera.png` (`scan.scene`) |
+| `height` | height over the support | `tex.image_file` of `height_camera.exr` (`scan.scene`) |
+| `uv` | a rectified face's u, v (red, green) and where it is (blue) | `tex.image_file` of `uv_K_camera.exr` (`scan.scene` with `rectify`) |
 | `fine`, `wide` | a camera still on the objects, softened lightly and blurred wide | `photo_detail` |
 | `photo` | a camera still of the scene lit white by the projectors | the scan's `photo_*.png` (or the sum of them) |
 

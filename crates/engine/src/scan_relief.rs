@@ -44,7 +44,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          the residual along its main direction as the height, the panel cut out at jumps, holes filled. \
          Every projector is brought to the first one's units over the camera pixels both light \
          (symmetric fit). Writes height_N.exr (0 to 1 over the heights' 1st to 99.5th percentile, for \
-         tex.lookup), mask_N.png (the light mask, for tex.image or scan.blend's masks), \
+         tex.lookup), mask_N.png (the light mask, for tex.image_file or scan.blend's masks), \
          height_camera.exr and relief_view.png (the same in camera space, to look at); {scans: \
          [folder, ...], out? (folder, relief), sign? (\"auto\" | 1 | -1: the first projector's sign, the \
          others follow it by the overlap; auto is a heuristic, the wall around the panel taken as \
@@ -272,8 +272,8 @@ pub fn run(dir: &Path, a: &ReliefArgs) -> CmdResult<Json> {
         "options": {"jump": o.jump, "erode": o.erode, "reach": o.reach, "sign": asked.map_or(json!("auto"), |s| json!(s)), "scale": kind.name()},
         "ms": {"read": ms(read), "work": ms(work), "write": ms(written), "total": ms(started.elapsed())},
         "warnings": warnings,
-        "next": "per projector: tex.image of height_N.exr into tex.lookup's in, a tex.ramp as its lut (the colours by \
-                 height); tex.composite multiply with tex.image of mask_N.png (or scan.blend with the masks, and its \
+        "next": "per projector: tex.image_file of height_N.exr into tex.lookup's in, a tex.ramp as its lut (the colours by \
+                 height); tex.composite multiply with tex.image_file of mask_N.png (or scan.blend with the masks, and its \
                  weight_N.png); into out.projector",
     }))
 }

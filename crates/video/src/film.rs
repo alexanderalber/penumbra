@@ -28,7 +28,7 @@ impl FilmDecoder {
         .map_err(|e| format!("{name}: {e}"))?;
         let media = source.info();
         if !matches!(media.kind, MediaKind::Movie) {
-            return Err(format!("{name} is not a video (use tex.image for stills)"));
+            return Err(format!("{name} is not a video (use tex.image_file for stills)"));
         }
         let video = media.video.as_ref().ok_or_else(|| format!("{name} has no video stream"))?;
         let (num, den) = (video.frame_rate.num, video.frame_rate.den);

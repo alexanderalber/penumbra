@@ -8,7 +8,7 @@ Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image](#teximage), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video](#texvideo), [tex.video_in](#texvideo_in)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file), [tex.video_in](#texvideo_in)
 
 ### tex.blob_track
 
@@ -364,7 +364,7 @@ Outputs: `out` (tex).
 | `saturation` | float | `1` | 0 to 2 (soft) | Multiplies the saturation: 0 is grey, 1 unchanged, 2 more vivid (clipped at full) |
 | `value` | float | `1` | 0 to 2 (soft) | Multiplies the value (the brightest channel): 0 is black, 2 twice as bright |
 
-### tex.image
+### tex.image_file
 
 A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it
 
@@ -873,7 +873,7 @@ Shapes drawn on the surface (rectangles, ellipses, polygons) with tags: masks an
 Inputs:
 
 - `table` (table): Shapes from a table (as the `table` output has them) instead of the node's own
-- `trace` (tex): A mask or label picture whose regions become shapes tagged `trace_tag`, besides the node's own: traced again whenever the picture or a `trace_*` param changes, never stored. Meant for a picture that holds still (a tex.image, a shader on images); it is stretched to the surface
+- `trace` (tex): A mask or label picture whose regions become shapes tagged `trace_tag`, besides the node's own: traced again whenever the picture or a `trace_*` param changes, never stored. Meant for a picture that holds still (a tex.image_file, a shader on images); it is stretched to the surface
 
 Outputs:
 
@@ -1050,7 +1050,7 @@ Outputs: `out` (tex).
 | `pivot` *(more)* | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | The point rotate and scale turn and grow around, in image sizes: 0, 0 is the top left, 0.5, 0.5 the centre |
 | `extend` | hold \| zero \| repeat \| mirror | `"hold"` |  | What shows where the picture is fetched from beyond the input's edges; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
-### tex.video
+### tex.video_file
 
 Plays a video file or animated GIF, looping without a gap
 

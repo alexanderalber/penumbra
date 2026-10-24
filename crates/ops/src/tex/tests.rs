@@ -314,16 +314,20 @@ fn golden_images() {
         ),
         create("/over", "tex.composite", &[]),
         create("/swapped", "tex.composite", &[("op", "subtract".into()), ("swap", Value::Bool(true))]),
-        create("/image", "tex.image", &[("file", "ramp.png".into())]),
+        create("/image", "tex.image_file", &[("file", "ramp.png".into())]),
         create("/image_moved", "tex.transform", &[("rotate", Value::Float(90.0)), ("extend", "zero".into())]),
         create("/shader", "tex.shader", &[("file", "rings.wgsl".into()), ("rings", Value::Float(4.0))]),
-        create("/video", "tex.video", &[("file", "bars.mp4".into()), ("play", Value::Bool(false))]),
+        create("/video", "tex.video_file", &[("file", "bars.mp4".into()), ("play", Value::Bool(false))]),
         create(
             "/hap_alpha",
-            "tex.video",
+            "tex.video_file",
             &[("file", "bars_hap_alpha.mov".into()), ("play", Value::Bool(false))],
         ),
-        create("/hap_q", "tex.video", &[("file", "bars_hap_q.mov".into()), ("play", Value::Bool(false))]),
+        create(
+            "/hap_q",
+            "tex.video_file",
+            &[("file", "bars_hap_q.mov".into()), ("play", Value::Bool(false))],
+        ),
         create(
             "/text",
             "tex.text",
@@ -552,9 +556,9 @@ fn every_builtin_cooks_without_warnings() {
             params.extend(size());
         }
         match kind.as_str() {
-            "tex.image" => params.push(("file", "ramp.png".into())),
+            "tex.image_file" => params.push(("file", "ramp.png".into())),
             "tex.shader" => params.push(("file", "rings.wgsl".into())),
-            "tex.video" => params.push(("file", "bars.mp4".into())),
+            "tex.video_file" => params.push(("file", "bars.mp4".into())),
             "tex.noise" => params.push(("speed", Value::Float(0.5))),
             "tex.select" => params.push(("node", "/feed".into())),
             "out.projector" => params.push(("display", "test".into())),
@@ -781,7 +785,7 @@ fn image_reloads_and_reports_bad_files() {
     let Some(gpu) = gpu() else { return };
     let dir = scratch("image");
     write_png16(&dir.join("a.png"));
-    let mut rig = Rig::new(gpu, Some(&dir), &[create("/i", "tex.image", &[("file", "a.png".into())])]);
+    let mut rig = Rig::new(gpu, Some(&dir), &[create("/i", "tex.image_file", &[("file", "a.png".into())])]);
     assert_eq!(rig.pixels("/i").width, 48);
     let id = rig.id("/i");
     std::fs::write(dir.join("a.png"), b"not a png any more").unwrap();
@@ -831,7 +835,7 @@ fn files_load_once_the_gpu_arrives() {
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
     let types = Arc::new(builtin_types().unwrap());
     let ops = [
-        create("/img", "tex.image", &[("file", "ramp.png".into())]),
+        create("/img", "tex.image_file", &[("file", "ramp.png".into())]),
         create("/obj", "geo.file", &[("file", "box.obj".into())]),
     ];
     let net = Arc::new(Network::new().apply(&types, &ops).unwrap().network);
@@ -1184,7 +1188,7 @@ fn contour_smooth_calms_noise_and_ignores_transparent_parts() {
     let dir = scratch("contour_smooth");
     write_noisy_rise(&dir.join("noisy.png"), w as u32, h as u32);
     let ops = [
-        create("/noisy", "tex.image", &[("file", "noisy.png".into())]),
+        create("/noisy", "tex.image_file", &[("file", "noisy.png".into())]),
         create("/raw", "tex.contour", &[("interval", Value::Float(0.1))]),
         create("/calm", "tex.contour", &[("interval", Value::Float(0.1)), ("smooth", Value::Float(8.0))]),
         connect("/noisy", "/raw", 0),
@@ -1318,7 +1322,7 @@ fn thick_contour_lines_hold_together_on_a_stepped_map() {
     let dir = scratch("contour_stepped");
     write_stepped_rise(&dir.join("stepped.png"), w, h);
     let ops = [
-        create("/stepped", "tex.image", &[("file", "stepped.png".into())]),
+        create("/stepped", "tex.image_file", &[("file", "stepped.png".into())]),
         create(
             "/thick",
             "tex.contour",
@@ -2558,11 +2562,15 @@ fn out_video_records_what_it_is_shown() {
             (left - 101.0).abs() < 8.0 && (right - 222.0).abs() < 5.0,
             "{codec}: left {left}, right {right}"
         );
-        // Read back through tex.video, the recording is the ramp again.
+        // Read back through tex.video_file, the recording is the ramp again.
         let mut rig2 = Rig::new(
             gpu.clone(),
             Some(&dir),
-            &[create("/play", "tex.video", &[("file", s.file.clone().into()), ("play", Value::Bool(false))])],
+            &[create(
+                "/play",
+                "tex.video_file",
+                &[("file", s.file.clone().into()), ("play", Value::Bool(false))],
+            )],
         );
         let back = rig2.pixels("/play");
         let want = rig.pixels("/ramp");

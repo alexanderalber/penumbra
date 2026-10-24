@@ -1,8 +1,8 @@
 // Glazed tiles with grout and a wooden rim on one rectified face. in0: the face's
-// uv_K_camera.exr (or uv_K_N.exr for a projector's own pixels) through tex.image (red and green
+// uv_K_camera.exr (or uv_K_N.exr for a projector's own pixels) through tex.image_file (red and green
 // its u and v, 0 to 1; blue 1 on the face, less where something else hides it), in1: a tile
 // atlas, the decorated tile in its left half and a plain one in its right; in2: the objects in the
-// same pixels as in0 (objects_camera.png or labels_N.png through tex.image, 8-bit labels), of
+// same pixels as in0 (objects_camera.png or labels_N.png through tex.image_file, 8-bit labels), of
 // which `object` is the one the tiles leave out. Blue 1 (the face, also where the scan measured
 // nothing) and 0.5 (an object other than the one left out: on a glossy top a scan leaves bits
 // that fit no face) get tiles, 0.25 (another face seen inside the outline) does not.
@@ -23,7 +23,7 @@ fn hash(c: vec2f) -> f32 {
     return f32(h.x & 0xffffu) / 65535.0;
 }
 
-// An 8-bit label from a picture tex.image decoded as sRGB.
+// An 8-bit label from a picture tex.image_file decoded as sRGB.
 fn label(t: texture_2d<f32>, p: vec2i) -> i32 {
     let c = textureLoad(t, p, 0).r;
     let s = select(1.055 * pow(max(c, 0.0), 1.0 / 2.4) - 0.055, c * 12.92, c <= 0.0031308);

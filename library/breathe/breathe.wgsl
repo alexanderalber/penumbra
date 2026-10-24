@@ -1,9 +1,9 @@
 // Regions (box fronts, tops, walls) each in one colour of a palette, breathing slowly one after
 // another from left to right, and now and then a wipe that crosses the picture and lights the
 // regions' outlines as it passes.
-// in0: the regions, an 8-bit label picture through tex.image (scan.regions' regions_camera.png,
+// in0: the regions, an 8-bit label picture through tex.image_file (scan.regions' regions_camera.png,
 // or a cleaned version of it), 0 off. in1, optional: a 256 x 1 table, per label at x = k red
-// the colour slot k / 255 and green the region's phase 0..1 (8-bit through tex.image);
+// the colour slot k / 255 and green the region's phase 0..1 (8-bit through tex.image_file);
 // unconnected, slot k * 3 mod count and the phase from the pixel's place left to right.
 // in2, optional: the outlines, white; unconnected, they are found from in0 (`line` wide).
 // @param count int = 4 1..4 -- how many of the colours are used
@@ -29,7 +29,7 @@
 // @param clock float = -1 -1..100000 -- seconds since the effect started (bind a chan.clock); below 0: the show time
 // @param line float = 6 1..30 -- the outlines' width when in2 is not connected, pixels
 
-// tex.image decodes its PNGs as sRGB; this undoes that, giving the 8-bit value / 255 back.
+// tex.image_file decodes its PNGs as sRGB; this undoes that, giving the 8-bit value / 255 back.
 fn raw(c: vec4f) -> vec4f {
     let v = max(c.rgb, vec3f(0.0));
     let e = select(1.055 * pow(v, vec3f(1.0 / 2.4)) - 0.055, v * 12.92, v <= vec3f(0.0031308));

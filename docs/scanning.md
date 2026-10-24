@@ -12,7 +12,7 @@ every object in one scan per projector, and rectifies any face of known aspect; 
 groups its faces into one region per crate front, side or lid and switches the floor off.
 
 Everything here is a command (see [Control](control.md)); the results are plain files in the
-project, read by `tex.image`. Nothing of it runs per frame: during the show what remains is a
+project, read by `tex.image_file`. Nothing of it runs per frame: during the show what remains is a
 `tex.remap` lookup and a multiply per projector.
 
 Paths in the commands are relative to the project directory. The last section walks through
@@ -55,7 +55,7 @@ returns the report when done), `scan.status` and `scan.cancel`:
     penumbra-cli ctl scan.run '{"nodes": ["/scan_a", "/scan_b"], "wait": true}'
 
 The steps after the scan (relief, objects) stay commands: their results (heights, masks) are
-files for `tex.image`, written by the sections below from the same scan folders.
+files for `tex.image_file`, written by the sections below from the same scan folders.
 
 ## 1. Scan: `scan.capture`
 
@@ -141,7 +141,7 @@ folder: a `tex.scan_pattern` into the projector, stepped through its `pattern` 0
 
 writes them into `scan/a/decoded/`. That folder is a scan like the ones `scan.capture` writes.
 
-`proj_to_cam.exr` through `tex.image` into `tex.remap`'s `map`, with the camera's picture as
+`proj_to_cam.exr` through `tex.image_file` into `tex.remap`'s `map`, with the camera's picture as
 `in`: the camera's view in the projector's pixels.
 
 ## 2. Line projectors up: `scan.align`
@@ -274,7 +274,7 @@ warnings.
 
 **Content on the relief** stays in the network, per projector:
 
-1. `tex.image` of `relief/height_N.exr`.
+1. `tex.image_file` of `relief/height_N.exr`.
 2. Colours by height: `tex.lookup` with the height as `in` and a `tex.ramp` (horizontal, the
    colours as `keys`, e.g. blue, greens, browns, white for hypsometric tints) as `lut`.
 3. Contour lines: `tex.contour` of the same height map, `interval` 0.05 (twenty steps over the
@@ -285,7 +285,7 @@ warnings.
    the colours stay sharp. The example uses 4 on its 960 x 540 map; a full-resolution scan
    wants about 10, and thick lines need it most: without smoothing their edges follow the
    noise and plateau pixels punch holes into them.
-4. `tex.composite` multiply with `tex.image` of `relief/mask_N.png` (or run `scan.blend` with
+4. `tex.composite` multiply with `tex.image_file` of `relief/mask_N.png` (or run `scan.blend` with
    `"masks": ["relief/mask_0.png", ...]` and multiply by its `weight_N.png` instead, where the
    projectors overlap).
 5. Into the projector's `out.projector`.
@@ -470,7 +470,7 @@ An editor that lets someone click faces needs nothing but this command: a click 
 pixel, the reply lists every region with its faces, seeds, size and kind, and every face with
 `at`, a pixel well inside it.
 
-**In the viewer.** Load `regions_camera.png` from the scene folder into a `tex.image` (it can
+**In the viewer.** Load `regions_camera.png` from the scene folder into a `tex.image_file` (it can
 be named before it exists) and select it: the viewer shows the camera picture of the scan with
 every face in the colour of its region (neighbouring regions never share one), dark lines
 between regions, faint ones between a region's faces, regions that are off striped grey with
@@ -494,7 +494,7 @@ once.
 The header has the same as buttons, and a name field for the one region the selection is in
 (Enter names it). Every change is one `scan.regions` call with the clicked faces' pixels (a
 second or two; the status line says `working...`, changes made meanwhile follow in one call),
-so `regions.json`, the label pictures and the reply are rewritten and every `tex.image` showing
+so `regions.json`, the label pictures and the reply are rewritten and every `tex.image_file` showing
 them reloads. The options the command ran with last (`seam`, `smooth`, ...) are kept. Undo and
 redo send the grouping as it was (`regions`); they work while the pointer is over the picture
 and only for the changes made since the editor opened, since the grouping is a file beside the
@@ -568,14 +568,14 @@ Written into `out` (default `objects/`):
 
 | file | what |
 |---|---|
-| `weight_N.png` | 16-bit, projector size; stored sRGB-encoded so that `tex.image` gives back the weight itself |
+| `weight_N.png` | 16-bit, projector size; stored sRGB-encoded so that `tex.image_file` gives back the weight itself |
 | `proj_to_cam_smooth_N.exr` | the projector's `proj_to_cam` map, smoothed |
 
 ## 7. The network
 
 Content is made once, in the camera's picture, and each projector takes its share:
 
-1. `tex.shapes` with the camera's size as `width` and `height`; a `tex.image` of
+1. `tex.shapes` with the camera's size as `width` and `height`; a `tex.image_file` of
    `objects/objects_camera.png` beside it, then
    `shapes.trace {"path": "/shapes", "from": "/objects_image", "labels": true, "live": true}`: one
    shape per object, in camera space. `live` connects the picture to the shapes' `trace` input
@@ -589,9 +589,9 @@ Content is made once, in the camera's picture, and each projector takes its shar
    Or any effect of the [content library](../library/README.md) (edges, water, a lamp going
    round an object, tiles, ...): they take the scan's pictures and draw in the camera's
    picture too.
-3. Per projector: `tex.remap` with the content as `in` and a `tex.image` of
+3. Per projector: `tex.remap` with the content as `in` and a `tex.image_file` of
    `objects/proj_to_cam_smooth_N.exr` as `map`, `extend` zero.
-4. `tex.composite` with `op` multiply: the remap as layer1, a `tex.image` of
+4. `tex.composite` with `op` multiply: the remap as layer1, a `tex.image_file` of
    `objects/weight_N.png` as layer2.
 5. Into that projector's `out.projector`.
 
@@ -652,7 +652,7 @@ the view: valleys dark, peaks bright. If it is the wrong way round, run it again
     penumbra-cli ctl scan.blend '{"scans": ["scan/proj_a", "scan/proj_b"], "masks": ["relief/mask_0.png", "relief/mask_1.png"], "out": "relief"}'
 
 writes `relief/weight_0.png` and `weight_1.png`. In the example these replace the shipped
-weights, and the `tex.image` nodes reload them. Point the height nodes at the new heights:
+weights, and the `tex.image_file` nodes reload them. Point the height nodes at the new heights:
 
     penumbra-cli ctl node.set '{"path": "/height_a", "params": {"file": "relief/height_0.exr"}}'
     penumbra-cli ctl node.set '{"path": "/height_b", "params": {"file": "relief/height_1.exr"}}'
@@ -672,8 +672,8 @@ displays are set. In an empty project the base, for projector A (B the same with
     penumbra-cli ctl node.batch '{"ops": [
       {"op": "create", "path": "/land_keys", "kind": "tex.ramp", "params": {"width": 256, "height": 1, "keep_size": true,
         "keys": "0 0.02 0.16 0.03\n0.3 0.188 0.402 0.061\n0.55 0.578 0.456 0.102\n0.75 0.305 0.127 0.045\n0.9 0.42 0.4 0.38\n1 0.6 0.6 0.6"}},
-      {"op": "create", "path": "/height_a", "kind": "tex.image", "params": {"file": "relief/height_0.exr"}},
-      {"op": "create", "path": "/weight_a", "kind": "tex.image", "params": {"file": "relief/weight_0.png"}},
+      {"op": "create", "path": "/height_a", "kind": "tex.image_file", "params": {"file": "relief/height_0.exr"}},
+      {"op": "create", "path": "/weight_a", "kind": "tex.image_file", "params": {"file": "relief/weight_0.png"}},
       {"op": "create", "path": "/land_a", "kind": "tex.lookup"},
       {"op": "create", "path": "/contour_a", "kind": "tex.contour", "params": {"mode": "alpha", "color": [0, 0, 0, 0.6]}},
       {"op": "create", "path": "/map_a", "kind": "tex.composite"},

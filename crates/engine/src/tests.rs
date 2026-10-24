@@ -1386,7 +1386,7 @@ fn decode_a_scan_from_pictures_in_a_folder() {
     assert_eq!(r["camera_pixels"]["dark"], 96 * 64 - 80 * 48, "{r}");
     assert_eq!(r["projector_pixels"]["measured"], pw * ph, "{r}");
     assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
-    // The maps read back as tex.image would: camera pixel (6, 4) sees projector pixel 0, 0.
+    // The maps read back as tex.image_file would: camera pixel (6, 4) sees projector pixel 0, 0.
     let map = penumbra_gpu::image::decode_file(&frames.join("decoded/cam_to_proj.exr"), 8192).unwrap();
     let at = |x: usize, y: usize, c: usize| map.rgba[(y * 96 + x) * 4 + c].to_f32();
     assert!((at(6, 4, 0) - 0.5 / pw as f32).abs() < 1e-3 && (at(6, 4, 1) - 0.5 / ph as f32).abs() < 1e-3);
@@ -1464,7 +1464,7 @@ fn objects_and_blend_from_decoded_scans() {
 
     let r = f.call("scan.blend", json!({"scans": ["with"], "masks": ["obj/labels_0.png"], "out": "obj"}));
     assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
-    // Read as tex.image reads it: the weight itself, 1 on the box, 0 outside.
+    // Read as tex.image_file reads it: the weight itself, 1 on the box, 0 outside.
     let w = penumbra_gpu::image::decode_file(&dir.join("obj/weight_0.png"), 8192).unwrap();
     assert!((w.rgba[(20 * pw + 32) * 4].to_f32() - 1.0).abs() < 1e-3);
     assert_eq!(w.rgba[(5 * pw + 5) * 4].to_f32(), 0.0);

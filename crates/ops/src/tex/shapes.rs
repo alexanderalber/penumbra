@@ -147,7 +147,7 @@ fn desc() -> NodeDesc {
         "trace",
         "A mask or label picture whose regions become shapes tagged `trace_tag`, besides the node's \
          own: traced again whenever the picture or a `trace_*` param changes, never stored. Meant for a \
-         picture that holds still (a tex.image, a shader on images); it is stretched to the surface",
+         picture that holds still (a tex.image_file, a shader on images); it is stretched to the surface",
     )
 }
 

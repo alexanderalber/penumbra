@@ -1,4 +1,4 @@
-//! `tex.image`: an image file, decoded and uploaded off the cook thread, reloaded when the file
+//! `tex.image_file`: an image file, decoded and uploaded off the cook thread, reloaded when the file
 //! changes on disk.
 
 use penumbra_core::{Error, ParamSpec};
@@ -17,7 +17,7 @@ const EXTENSIONS: &[&str] = &[
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
-            "tex.image",
+            "tex.image_file",
             "A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it",
         )
         .param(

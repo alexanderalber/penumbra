@@ -10,7 +10,7 @@
 // for every projector, blended), 1 the face alone (meant for one projector, unweighted, so a
 // blend seam does not cut through it), 2 both (the camera picture).
 // in0: a labels picture (scan_labels' `labels`: red the face, green the object, k / 255), in1:
-// the regions (8-bit labels through tex.image), in2, optional: the camera's still of the scene
+// the regions (8-bit labels through tex.image_file), in2, optional: the camera's still of the scene
 // lit white by the projector the face comes from, to even out its light across the face (`even`).
 // @param clock float = -1 -1..600 -- seconds since the effect started (bind a chan.clock); below 0: the show time
 // @param seek float = 0 0..60 -- seconds added to the clock, to jump into the loop
@@ -53,7 +53,7 @@ fn label(t: texture_2d<f32>, p: vec2i, channel: i32) -> i32 {
     return i32(round(select(c.r, c.g, channel == 1) * 255.0));
 }
 
-// An 8-bit label from a tex.image (the image is read as sRGB, so undo that first).
+// An 8-bit label from a tex.image_file (the image is read as sRGB, so undo that first).
 fn image_label(t: texture_2d<f32>, p: vec2i) -> i32 {
     let size = vec2i(textureDimensions(t));
     let c = textureLoad(t, clamp(p, vec2i(0), size - 1), 0).r;

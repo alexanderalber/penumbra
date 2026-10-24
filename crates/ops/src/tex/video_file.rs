@@ -1,4 +1,4 @@
-//! `tex.video`: a video file or animated GIF, decoded on threads of its own
+//! `tex.video_file`: a video file or animated GIF, decoded on threads of its own
 //! (`penumbra_video::Player`), its planes (or a HAP frame's compressed blocks) converted to a
 //! texture on the GPU. Loops are
 //! seamless: the start of the next pass is decoded before the end of this one is shown.
@@ -26,7 +26,7 @@ use penumbra_video::{
 use crate::on_gpu;
 
 /// The node kind.
-pub const VIDEO: &str = "tex.video";
+pub const VIDEO_FILE: &str = "tex.video_file";
 
 /// A pause in cooking longer than this is not played through (see the module docs).
 const GAP_SECONDS: f64 = 0.5;
@@ -36,7 +36,7 @@ const LATE_WARNING_SECONDS: f64 = 2.0;
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(
         FnNodeType::new(
-            NodeDesc::new(VIDEO, "Plays a video file or animated GIF, looping without a gap")
+            NodeDesc::new(VIDEO_FILE, "Plays a video file or animated GIF, looping without a gap")
                 .param(
                     ParamSpec::file("file", penumbra_video::EXTENSIONS).doc(
                         "MP4, MOV, MKV, WebM, MXF, MPEG (H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP) or GIF",
@@ -142,7 +142,7 @@ impl Operator for Video {
                 Err(CookError::failed(e))
             }
             Ok(Shown::New(frame)) => {
-                let target = self.ring.next(gpu, frame.width(), frame.height(), VIDEO)?;
+                let target = self.ring.next(gpu, frame.width(), frame.height(), VIDEO_FILE)?;
                 match &frame {
                     Frame::Pixels(f) => convert(gpu, &mut self.converter, f, &target)?,
                     Frame::Hap(f) => convert_hap(gpu, &mut self.bc, f, &target)?,

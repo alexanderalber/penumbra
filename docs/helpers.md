@@ -192,7 +192,7 @@ light, after the colour matrix and before the tone curves: the hot spot and the 
 the projector's light, which its drive scales, and the curves only bend the drive into the
 projector's response. The black lift (`flatfield/black_NAME.png`) raises the drive where some
 projector does not reach, by that projector's black, shared among those that do:
-`drive = lift + (1 - lift) drive`. The command connects both through `tex.image` nodes (one undo
+`drive = lift + (1 - lift) drive`. The command connects both through `tex.image_file` nodes (one undo
 step; `apply: false` only writes the files). The params `flatten` (0 to 1, how much of the gain
 applies) and `lift` (a factor on the black lift) are in the projector's *colour* group; `correct`
 off turns them off with the rest.

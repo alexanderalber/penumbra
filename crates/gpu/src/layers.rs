@@ -20,7 +20,7 @@ use photocraft_psd::tree::LayerNode;
 use crate::image::{Decoded, MAX_FILE_BYTES, MAX_PIXELS};
 use crate::readback::srgb_to_linear;
 
-/// Image files a layer directory reads (as `tex.image`).
+/// Image files a layer directory reads (as `tex.image_file`).
 pub const IMAGE_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "tif", "tiff", "exr", "hdr", "webp", "bmp", "tga", "gif", "qoi", "pfm", "ppm",
     "pgm",

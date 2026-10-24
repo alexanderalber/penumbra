@@ -856,7 +856,7 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
         "options": {"straight": straight, "straight_tolerance": border_options.tolerance, "straight_length": border_options.min_length, "tolerance": base.tolerance, "min_plane": base.min_plane, "max_planes": base.max_planes, "erode": erode, "sign": asked.map_or(json!("auto"), |s| json!(s)), "scale": kind.name()},
         "ms": {"read": ms(read), "work": ms(work), "write": ms(written), "total": ms(started.elapsed())},
         "warnings": warnings,
-        "next": "a rectified face: tex.image of uv_K_N.exr into a tex.shader (red, green its u and v, blue 1 on \
+        "next": "a rectified face: tex.image_file of uv_K_N.exr into a tex.shader (red, green its u and v, blue 1 on \
                  it; u times aspect[0] and v times aspect[1] for square tiles); the faces: planes_N.png or \
                  planes_camera.png into shapes.trace (labels) for masks per face; the objects: height_N.exr and \
                  mask_N.png as from scan.relief, labels_N.png and objects_camera.png as from scan.objects \

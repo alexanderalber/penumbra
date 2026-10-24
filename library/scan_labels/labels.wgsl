@@ -1,6 +1,6 @@
 // A scan's faces and objects in one picture, their ragged borders smoothed: each pixel takes the
 // label most common around it. in0: the faces (scan.scene's planes_camera.png or scan.regions'
-// regions_camera.png through tex.image, 8-bit labels), in1: the objects (objects_camera.png).
+// regions_camera.png through tex.image_file, 8-bit labels), in1: the objects (objects_camera.png).
 // Out: red the face (k / 255), green the object (k / 255), as plain numbers, so the shaders after
 // it read them with round(value * 255).
 // @param radius int = 2 0..4 -- how far the vote reaches, pixels

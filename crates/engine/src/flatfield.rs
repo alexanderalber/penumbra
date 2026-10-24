@@ -46,7 +46,7 @@ const EDGE: usize = 2;
 /// Above this distance of the kept samples from the fit (in logs) the surface is not even.
 const UNEVEN: f64 = 0.05;
 /// The image node kind the maps are read by.
-const IMAGE: &str = "tex.image";
+const IMAGE: &str = "tex.image_file";
 
 /// Files per projector, by the projector node's name.
 pub fn gain_file(name: &str) -> String {
@@ -137,7 +137,7 @@ fn projector_uv(map: &Map, i: usize, w: usize, h: usize) -> Option<[f32; 2]> {
     map.uv(my.min(map.height.saturating_sub(1)) * map.width + mx.min(map.width.saturating_sub(1)))
 }
 
-/// Values 0..1 as a 16-bit RGB PNG, sRGB-encoded as `tex.image` decodes such files.
+/// Values 0..1 as a 16-bit RGB PNG, sRGB-encoded as `tex.image_file` decodes such files.
 fn png16(w: usize, h: usize, values: &[[f32; 3]]) -> CmdResult<Vec<u8>> {
     let encode = |v: f32| {
         (penumbra_gpu::readback::linear_to_srgb(v.clamp(0.0, 1.0)) * 65535.0).round().clamp(0.0, 65535.0)
@@ -687,7 +687,7 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
     }))
 }
 
-/// For each projector (path, node name): a `tex.image` of its gain map into its `gain` input and
+/// For each projector (path, node name): a `tex.image_file` of its gain map into its `gain` input and
 /// one of its black lift into `black`; image nodes already connected there get the file instead.
 fn connect_ops(e: &Engine, net: &Network, files: &[(String, String)], out: &Path) -> CmdResult<Vec<Op>> {
     let mut ops = Vec::new();

@@ -1,4 +1,4 @@
-//! Video files for `tex.video`.
+//! Video files for `tex.video_file`.
 //!
 //! - [`open`] reads a clip: FilmCraft's pure-Rust decoders for movies (H.264, HEVC, ProRes,
 //!   DNxHR, VP9, AV1, MPEG-2 in MP4, MOV, MKV, MXF, TS) and the `gif` crate plus our own

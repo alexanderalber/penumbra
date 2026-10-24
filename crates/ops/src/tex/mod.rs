@@ -15,7 +15,7 @@ mod denoise;
 mod filters;
 mod flow;
 mod fluid;
-mod image;
+mod image_file;
 mod layer;
 pub mod mapper;
 pub(crate) mod meters_picture;
@@ -32,13 +32,13 @@ pub mod shapes;
 pub mod spout_in;
 mod text;
 mod time_machine;
-mod video;
+mod video_file;
 pub mod video_in;
 
 pub use ndi_in::NDI_IN;
 pub use spout_in::SPOUT_IN;
 pub use text::{DEFAULT_FONT, TEXT, families as font_families};
-pub use video::VIDEO;
+pub use video_file::VIDEO_FILE;
 pub use video_in::VIDEO_IN;
 
 use std::sync::Arc;
@@ -492,7 +492,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     flow::register(types)?;
     sequence::register(types)?;
     fluid::register(types)?;
-    image::register(types)?;
+    image_file::register(types)?;
     layer::register(types)?;
     mapper::register(types)?;
     ndi_in::register(types)?;
@@ -505,7 +505,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     spout_in::register(types)?;
     text::register(types)?;
     time_machine::register(types)?;
-    video::register(types)?;
+    video_file::register(types)?;
     video_in::register(types)?;
     Ok(())
 }

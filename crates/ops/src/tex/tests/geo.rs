@@ -872,7 +872,7 @@ fn projectors_throw_their_picture_and_lights_cast_shadows() {
             "view.camera",
             &[("position", Value::Vec3([0.0, -4.0, 0.0])), ("fov", Value::Float(20.0))],
         ),
-        create("/ramp", "tex.image", &[("file", "ramp.png".into())]),
+        create("/ramp", "tex.image_file", &[("file", "ramp.png".into())]),
         create("/projector", "light.projector", &[("shadows", Value::Bool(false))]),
         connect("/beamer", "/projector", 0),
         connect("/ramp", "/projector", 1),
@@ -1169,7 +1169,7 @@ fn an_environment_lights_and_reflects_by_its_picture() {
         ]
     };
     let mut ops = vec![
-        create("/sky", "tex.image", &[("file", "sky.png".into())]),
+        create("/sky", "tex.image_file", &[("file", "sky.png".into())]),
         create("/env", "light.environment", &[("size", Value::Int(64))]),
         connect("/sky", "/env", 0),
         create("/env_ccw", "light.environment", &[("size", Value::Int(64)), ("turn", Value::Float(90.0))]),

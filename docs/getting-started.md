@@ -94,7 +94,7 @@ press play once the cause is fixed. The record of that lives in
   [Audio](audio.md#the-meters-in-the-viewer)); `view: meters` in the header switches to the
   plot and back, kept with the project as well (`ui.options {audio_view}`).
   Some nodes are edited right in the viewer: a mapper's corners and mesh, a `tex.shapes`' shapes,
-  and a `tex.image` showing a scanned scene's `regions_camera.png`, whose faces are grouped
+  and a `tex.image_file` showing a scanned scene's `regions_camera.png`, whose faces are grouped
   into regions there ([Scanning](scanning.md#51-regions-scanregions)).
 - **Changes** (bottom right): every edit, newest first, with who made it (you, Claude, the
   project file). Hover an entry to outline the nodes it touched, click it to select them.

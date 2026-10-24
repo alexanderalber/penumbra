@@ -15,7 +15,7 @@ come out as a table and as channels, ready to bind.
    press **learn background** in the param panel, or **in 5 s** to give yourself time to walk
    out first. From a script: `blob_track.learn {path, delay?}`.
    Instead of learning, a picture can be connected to the second input, `background`: a
-   photo of the empty room (`tex.image`), a frame held by a `tex.cache` (`record` off), or
+   photo of the empty room (`tex.image_file`), a frame held by a `tex.cache` (`record` off), or
    anything computed. While it is connected it is the background for every frame; learning
    and `adapt` do nothing.
 3. Look at `out` in the viewer and set `threshold`. `show` switches what `out` shows:

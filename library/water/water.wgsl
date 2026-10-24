@@ -4,7 +4,7 @@
 // shallow pond, with rings running out from the foot of the object standing on it. The object
 // gets the light the water throws up, warm, on its lower half. Nothing outside the three regions
 // and the object is lit.
-// in0: the regions (scan.regions' regions_camera.png through tex.image, 8-bit labels), in1: a
+// in0: the regions (scan.regions' regions_camera.png through tex.image_file, 8-bit labels), in1: a
 // labels picture (green: the object), in2: a water texture (tiles), in3: the distance from the
 // object's silhouette (scan_labels' `sdf`: red in widths of the picture, negative inside).
 // The front's and the side's corners (scan.regions' straight corners, camera px) give each a
@@ -33,7 +33,7 @@
 // @param shimmer_color color = [1, 0.85, 0.5, 1] -- warm, as blue light turns an orange skin dark
 // @param size vec3 = [60, 40, 32] -- the box's front width, side depth and height, centimetres
 
-// A byte of an 8-bit picture read through tex.image (which decodes sRGB): its stored value.
+// A byte of an 8-bit picture read through tex.image_file (which decodes sRGB): its stored value.
 fn byte(c: f32) -> i32 {
     let s = select(1.055 * pow(max(c, 0.0), 1.0 / 2.4) - 0.055, c * 12.92, c <= 0.0031308);
     return i32(round(s * 255.0));

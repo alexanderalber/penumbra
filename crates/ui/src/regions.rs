@@ -1,4 +1,4 @@
-//! Editing the regions of a scanned scene in the viewer: a `tex.image` that shows a scene's
+//! Editing the regions of a scanned scene in the viewer: a `tex.image_file` that shows a scene's
 //! `regions_camera.png` (next to the `scene.json` that `scan.scene` wrote) gets this editor in
 //! place of its picture. The camera picture shows every face `scan.scene` found, coloured by the
 //! region it is in, dark lines between regions, faces that are off striped grey, and the faces
@@ -12,7 +12,7 @@
 //!
 //! Every change is one `scan.regions` call with an `edit` list of camera pixels (a pixel inside
 //! each face), run off the UI thread; the grouping file next to the scene is rewritten, and so
-//! are the label pictures, which every `tex.image` showing them reloads. Undo sends the grouping
+//! are the label pictures, which every `tex.image_file` showing them reloads. Undo sends the grouping
 //! as it was before (`regions`), so it is a call of the same command.
 
 use std::collections::BTreeSet;
@@ -35,7 +35,7 @@ use crate::mapping::View;
 use crate::{automation, theme};
 
 /// The node kind the editor opens on.
-const IMAGE: &str = "tex.image";
+const IMAGE: &str = "tex.image_file";
 /// Radius of a suggestion's confirm button, in points.
 const CONFIRM: f32 = 8.0;
 /// Most undo steps kept.
@@ -51,7 +51,7 @@ pub struct RegionInputs {
     pub can_edit: bool,
 }
 
-/// The scene folder whose regions `id` shows: a `tex.image` of a `regions_camera.png` that lies
+/// The scene folder whose regions `id` shows: a `tex.image_file` of a `regions_camera.png` that lies
 /// next to a `scene.json`.
 pub fn scene_of(net: &Network, types: &NodeTypes, id: NodeId, dir: &Path) -> Option<PathBuf> {
     let node = net.node(id)?;

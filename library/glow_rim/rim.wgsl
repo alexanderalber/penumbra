@@ -1,7 +1,7 @@
 // A faint warm rim on the face an object stands on, right round its foot, as from light shining
 // out low through its skin; only in front of the foot, where projectors' shadows of the object do
 // not fall, and flickering with glow.wgsl's flame (the same noises).
-// in0: the regions (an 8-bit label picture through tex.image), in1: the distance from the
+// in0: the regions (an 8-bit label picture through tex.image_file), in1: the distance from the
 // object's silhouette (scan_labels' `sdf`), in2: a labels picture (green the object).
 // @param clock float = -1 -1..100000 -- seconds since the effect started (bind a chan.clock); below 0: the show time
 // @param lid int = 0 0..255 -- region label of the face the object stands on; 0: no rim

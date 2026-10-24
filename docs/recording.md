@@ -1,7 +1,7 @@
 # Recording
 
 `out.video` (Tab > outputs > video) records its input to a movie file: the show as it runs,
-for documentation, for an edit, or to play back later with `tex.video`.
+for documentation, for an edit, or to play back later with `tex.video_file`.
 
 ## Recording
 
@@ -98,7 +98,7 @@ smaller size (`size` fixed, `width` and `height`), or give the encoder more `thr
 ## Colour
 
 Pictures in penumbra are linear light. The recording encodes them with the sRGB curve, the
-BT.709 matrix and video range, and tags the file BT.709, as players expect; `tex.video` reads
+BT.709 matrix and video range, and tags the file BT.709, as players expect; `tex.video_file` reads
 such a file back with the same curve, so a recording played in penumbra looks as it did when
 recorded. Values above 1 are clipped. Without alpha (H.264, ProRes 422) the picture is taken
 over black; ProRes 4444 keeps the alpha channel.

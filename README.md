@@ -66,8 +66,8 @@ lists every one.
 |---|---|---|---|---|
 | Displays, projectors | | yes | `out.projector` | fullscreen per display, or a viewport of one |
 | Camera, capture card | yes | | `tex.video_in` | Media Foundation (UVC webcams, Elgato Cam Link and similar) |
-| Video files | yes | yes | `tex.video`, `out.video` | in: MP4, MOV, MKV, WebM, MXF, MPEG with H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP; GIF. Out: H.264 (MP4), ProRes 422, 422 HQ, 4444 (MOV) |
-| Image files | yes | snapshots | `tex.image`, `tex.layer` | PNG, JPEG, TIFF, EXR, HDR, WebP and more; PSD/PSB layers. `node.snapshot` saves any node as PNG |
+| Video files | yes | yes | `tex.video_file`, `out.video` | in: MP4, MOV, MKV, WebM, MXF, MPEG with H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP; GIF. Out: H.264 (MP4), ProRes 422, 422 HQ, 4444 (MOV) |
+| Image files | yes | snapshots | `tex.image_file`, `tex.layer` | PNG, JPEG, TIFF, EXR, HDR, WebP and more; PSD/PSB layers. `node.snapshot` saves any node as PNG |
 | 3D files | yes | | `geo.file` | OBJ (with MTL), STL, glTF/GLB |
 | Text tables | yes | | `table.file` | CSV, TSV, plain lines |
 | Audio | yes | | `chan.audio_in` | any input device (WASAPI, shared mode). No audio output, no audio files |
