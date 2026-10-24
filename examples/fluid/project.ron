@@ -5,8 +5,8 @@
     nodes: {
         "/black": (kind: "tex.constant", pos: [400.0, 142.0]),
         "/flow": (kind: "tex.optical_flow", inputs: {"in": "movers"}, pos: [200.0, 0.0]),
-        "/fluid": (kind: "tex.fluid", inputs: {"dye": "movers", "force": "flow", "splats": "track:blobs"}, pos: [400.0, 0.0]),
-        "/movers": (kind: "tex.shader", params: {"file": "movers.wgsl", "height": 720, "width": 1280}, pos: [0.0, 0.0]),
+        "/fluid": (kind: "tex.fluid", params: {"dye_fade": 8.0, "velocity_fade": 5.0, "vorticity": 0.8}, inputs: {"dye": "movers", "force": "flow", "splats": "track:blobs"}, pos: [400.0, 0.0]),
+        "/movers": (kind: "tex.shader", params: {"count": 5, "file": "movers.wgsl", "height": 720, "look": "neon", "width": 1280}, pos: [0.0, 0.0]),
         "/track": (kind: "tex.blob_track", params: {"detect": "bright", "threshold": 0.2}, inputs: {"in": "movers"}, pos: [200.0, 142.0]),
         "/view": (kind: "tex.composite", inputs: {"layer1": "black", "layer2": "fluid"}, pos: [600.0, 0.0]),
     },

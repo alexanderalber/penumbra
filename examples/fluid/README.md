@@ -11,7 +11,8 @@ works without a camera.
 - `/movers` itself is the `dye`: where the picture moves, the fluid takes on its colours.
 - `/view` shows the fluid over black.
 
-Try `vorticity` (curlier), `velocity_fade` and `dye_fade` (how long it swirls and glows), and
+Try `/movers` `look` (the spots' palette: `candy`, `primaries`, ...), and on `/fluid`
+`vorticity` (curlier), `velocity_fade` and `dye_fade` (how long it swirls and glows), and
 `edges: open` to let it flow out of the picture. The `velocity` output moves other pictures
 along the fluid with tex.displace (midpoint 0, weight about -0.3).
 

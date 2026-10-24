@@ -3,6 +3,7 @@
 // @param count int = 3 1..6 -- how many spots
 // @param radius float = 0.09 0.01..0.2 -- in image heights
 // @param pace float = 1 0..4 -- how fast they wander
+// @param look palette = neon -- the spots' colours, one each; empty: orange to blue
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
     let aspect = pn.resolution.x / pn.resolution.y;
@@ -19,7 +20,10 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         let inside = 1.0 - smoothstep(params.radius * 0.7, params.radius, length(d));
         // The mottling moves with the spot.
         let mottle = 0.75 + 0.25 * pn_noise(vec3f(d * 40.0, f), 7u);
-        let hue = vec3f(1.0, 0.35, 0.1) * (1.0 - f / 3.0) + vec3f(0.1, 0.45, 1.0) * (f / 3.0);
+        var hue = vec3f(1.0, 0.35, 0.1) * (1.0 - f / 3.0) + vec3f(0.1, 0.45, 1.0) * (f / 3.0);
+        if params.look.count > 0 {
+            hue = pn_palette(params.look, i).rgb;
+        }
         color += hue * inside * mottle;
     }
     return vec4f(min(color, vec3f(1.0)), 1.0);

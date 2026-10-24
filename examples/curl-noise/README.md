@@ -20,7 +20,8 @@ towards `/vel`, stretched by `/scale` (the size times `/pulse`) and coloured by 
 
 Try:
 
-- `/palette` `keys`: other colours (the sticks take them by column).
+- `/palette` `palette`: other colours (the sticks take them by column): `ember`, `plasma`,
+  `ice`, or a list of hex colours.
 - `/vel` `noise`: the first value is the push's strength, the second how small the swirls are.
 - `/pulse` `rate` and `amplitude`, or bind `/scale` `pulse` to a sound level instead.
 - `/box` `size` for thicker or longer sticks.

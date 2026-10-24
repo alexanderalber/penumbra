@@ -8,7 +8,7 @@
         "/ini": (kind: "tex.shader", params: {"file": "ini.wgsl", "height": 256, "keep_size": true, "resolution": "custom", "width": 256}, pos: [0.0, 257.0]),
         "/light": (kind: "light.point", params: {"position": [0.0, -10.0, 0.0]}, pos: [1000.0, 512.0]),
         "/out": (kind: "tex.composite", inputs: {"layer1": "background", "layer2": "render"}, pos: [1400.0, 341.0]),
-        "/palette": (kind: "tex.ramp", params: {"height": 256, "keep_size": true, "keys": "0.0000 0.02178 0.05146 0.06886\n1.0000 1.00000 0.00054 0.00054", "width": 256}, pos: [800.0, 588.0]),
+        "/palette": (kind: "tex.ramp", params: {"height": 256, "keep_size": true, "palette": "magma", "width": 256}, pos: [800.0, 588.0]),
         "/phong": (kind: "mat.phong", params: {"specular": [0.0, 0.0, 0.0, 1.0]}, pos: [0.0, 128.0]),
         "/pos": (kind: "tex.shader", params: {"file": "pos.wgsl", "keep_size": true}, inputs: {"in0": "pos_last", "in1": "vel_last", "in2": "ini"}, pos: [400.0, 314.0]),
         "/pos_last": (kind: "tex.feedback", inputs: {"initial": "ini", "previous": "pos"}, pos: [200.0, 228.0]),

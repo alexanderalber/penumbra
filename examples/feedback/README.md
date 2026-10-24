@@ -11,5 +11,5 @@ and changes colour.
 Try:
 
 - `/fade` `brightness` closer to 1 for longer trails, lower for shorter ones.
-- `/drift` `rotate` negative, or `scale` below 1 so the trails fall inwards.
+- `/drift` `rotate` positive to turn the other way, or `scale` below 1 so the trails fall inwards.
 - `/loop` `reset` on and off to clear the loop.
