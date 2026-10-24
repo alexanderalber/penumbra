@@ -2,7 +2,8 @@
 
 `tex.blob_track` finds blobs and follows them, each keeping its id while it moves. Here it
 tracks spots of light that a shader (`spots.wgsl`) draws, so it works without a camera:
-`detect` is `bright`, so whatever is brighter than `threshold` counts.
+`detect` is `bright`, so whatever is brighter than `threshold` counts: the spots' white cores
+do, the coloured glow around them stays below it (`look` in `/spots` picks the colours).
 
 - `/track` shows the picture with each blob's box and centre; its `blobs` output is a table of
   all blobs, its `chans` output has `count` and, per slot, `id`, `x`, `y` and `area`.

@@ -31,7 +31,7 @@ def cook(cx):
         vy = -abs(vy) * cx.params["bounce"]
         bounces += 1
         if abs(vy) < 0.3:
-            vy = -1.6  # nearly at rest: throw it up again
+            vy = -1.4  # nearly at rest: throw it up again (to a quarter from the top)
 
     # Position in image sizes (0, 0 top left), and as tex.transform's translate (from the centre).
     cx.out["x"] = x
