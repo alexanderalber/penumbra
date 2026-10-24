@@ -1805,6 +1805,7 @@ pub fn claim_face(
             *m = true;
         }
     }
+    let beyond = beyond_face(parts, &pairs, &inside, &member, &fm, to_face, tolerance);
     // Pixels: measured members, and the unmeasured ones whose nearest measured pixel is one.
     let n = w * h;
     let measured: Vec<bool> = (0..n).map(|i| map.measured(i)).collect();
@@ -1815,17 +1816,38 @@ pub fn claim_face(
             *p = k as u32;
         }
     }
-    let mask: Vec<bool> = (0..n)
-        .map(|i| match (nearest.get(i).copied().flatten(), dist.get(i)) {
-            (Some(j), Some(d)) if *d <= GAP && map.uv(i).is_some() => {
-                point_at.get(j as usize).is_some_and(|k| member.get(*k as usize) == Some(&true))
+    let region = |take: &dyn Fn(usize) -> bool| -> Vec<bool> {
+        let mask: Vec<bool> = (0..n)
+            .map(|i| match (nearest.get(i).copied().flatten(), dist.get(i)) {
+                (Some(j), Some(d)) if *d <= GAP && map.uv(i).is_some() => {
+                    point_at.get(j as usize).is_some_and(|k| take(*k as usize))
+                }
+                _ => false,
+            })
+            .collect();
+        let mask = raster::close(w, h, &mask, REGION_CLOSE);
+        let mask = raster::open(w, h, &mask, REGION_OPEN);
+        keep_large(w, h, &mask, WARP_MIN)
+    };
+    let on_plane = |k: usize| member.get(k) == Some(&true);
+    let mut mask = region(&on_plane);
+    if beyond.iter().any(|b| *b) {
+        // The pixels beyond the face join it only where they hang on to what lies on its plane.
+        let core = mask;
+        let with = region(&|k| on_plane(k) || beyond.get(k) == Some(&true));
+        let (comp, sizes) = raster::components(w, h, &with);
+        let mut keep = vec![false; sizes.len() + 1];
+        for (c, m) in comp.iter().zip(&core) {
+            if *m && let Some(x) = keep.get_mut(*c as usize) {
+                *x = true;
             }
-            _ => false,
-        })
-        .collect();
-    let mask = raster::close(w, h, &mask, REGION_CLOSE);
-    let mask = raster::open(w, h, &mask, REGION_OPEN);
-    let mask = keep_large(w, h, &mask, WARP_MIN);
+        }
+        mask = comp
+            .iter()
+            .zip(&with)
+            .map(|(c, m)| *m && *c > 0 && keep.get(*c as usize) == Some(&true))
+            .collect();
+    }
     let label = u16::try_from(parts.planes.len() + 1).ok()?;
     let mut errors = Vec::new();
     let mut seen = vec![false; camera.0 * camera.1];
@@ -1863,6 +1885,106 @@ pub fn claim_face(
         bend: [0.0; 3],
     });
     Some(Claim { plane: parts.planes.len() - 1, camera: seen })
+}
+
+/// Object pixels at least this far off a claimed face (tolerances) show from which side the
+/// object stands on it.
+const ABOVE: f64 = 10.0;
+/// How far a pixel may lie beyond a claimed face and still join it, tolerances.
+const BEYOND: f64 = 15.0;
+/// How alike the directions of those object pixels must be (the length of their mean unit
+/// vector) for a side to count.
+const SIDE_AGREES: f64 = 0.8;
+/// Share of a face's pixels within a claimed face's corners for it to count as a patch of it.
+const ENCLOSED: f64 = 0.9;
+
+/// Per pair of `pairs`: whether it lies beyond the claimed face rather than on it. A face given
+/// by its corners usually carries an object (the lid under the pumpkin), and a lid sags most
+/// right round the object's foot, further than the bowl of [`claim_face`] follows; the pixels
+/// there fail the rough tolerance and end up as part of the object. Seen from a projector,
+/// whatever stands on the face lies on one side of it, so its pixels miss the face's map in one
+/// direction along the epipolar line, by its height; a pixel of the face itself sagging away
+/// misses it the other way, and nothing in front of the face can. So a pixel inside the corners
+/// (no margin), on no face that runs out past them, whose miss points against the object's by at most [`BEYOND`]
+/// tolerances and sideways by under the rough tolerance, is the face. Without an object inside
+/// the corners (or one whose pixels miss in no common direction) there is no side, and nothing.
+fn beyond_face(
+    parts: &SceneParts,
+    pairs: &Pairs,
+    inside: &[usize],
+    member: &[bool],
+    fm: &FaceMap,
+    to_face: &Homography,
+    tolerance: f64,
+) -> Vec<bool> {
+    let mut beyond = vec![false; pairs.idx.len()];
+    let miss = |k: usize| -> Option<[f64; 2]> {
+        let r = fm.apply(*pairs.from.get(k)?)?;
+        let q = pairs.to.get(k)?;
+        let d = [q[0] - r[0], q[1] - r[1]];
+        d.iter().all(|v| v.is_finite()).then_some(d)
+    };
+    let label =
+        |k: usize, labels: &[u16]| pairs.idx.get(k).and_then(|i| labels.get(*i)).copied().unwrap_or(0);
+    let (mut sum, mut count) = ([0.0f64; 2], 0usize);
+    for k in inside {
+        if label(*k, &parts.object_labels) == 0 {
+            continue;
+        }
+        let Some(d) = miss(*k) else { continue };
+        let len = d[0].hypot(d[1]);
+        if len >= ABOVE * tolerance {
+            sum = [sum[0] + d[0] / len, sum[1] + d[1] / len];
+            count += 1;
+        }
+    }
+    if count < WARP_MIN {
+        return beyond;
+    }
+    let side = [sum[0] / count as f64, sum[1] / count as f64];
+    let agree = side[0].hypot(side[1]);
+    if agree < SIDE_AGREES {
+        return beyond;
+    }
+    let side = [side[0] / agree, side[1] / agree];
+    let rough = ROUGH * tolerance;
+    let within = |k: usize| {
+        pairs
+            .to
+            .get(k)
+            .and_then(|q| to_face.apply(*q))
+            .is_some_and(|[u, v]| (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v))
+    };
+    // Faces lying within the corners are patches of the claimed face (a sagging lid's rough
+    // fits) and may join it too; a face running out past them (the crate's front below the
+    // lid's edge) never does.
+    let mut faces = vec![[0usize; 2]; parts.planes.len() + 1];
+    for k in 0..pairs.idx.len() {
+        if let Some(f) = faces.get_mut(usize::from(label(k, &parts.plane_labels))) {
+            f[0] += 1;
+            f[1] += usize::from(within(k));
+        }
+    }
+    let enclosed = |l: u16| {
+        l == 0
+            || faces.get(usize::from(l)).is_some_and(|[all, inner]| *inner as f64 >= ENCLOSED * *all as f64)
+    };
+    for k in inside {
+        if member.get(*k) == Some(&true) || !enclosed(label(*k, &parts.plane_labels)) {
+            continue;
+        }
+        let Some(d) = miss(*k).filter(|_| within(*k)) else { continue };
+        let along = d[0] * side[0] + d[1] * side[1];
+        let across = (d[1] * side[0] - d[0] * side[1]).abs();
+        if along < 0.0
+            && -along <= BEYOND * tolerance
+            && across < rough
+            && let Some(b) = beyond.get_mut(*k)
+        {
+            *b = true;
+        }
+    }
+    beyond
 }
 
 /// What [`claim_face`] claimed: the face's index in the projector's planes, and per camera pixel

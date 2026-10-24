@@ -596,3 +596,92 @@ fn a_long_strip_bent_across_by_noise_stays_a_face() {
     assert_eq!(s.objects, 0);
     assert!(on_face > 600 * 30 * 9 / 10, "{on_face}");
 }
+
+#[test]
+fn a_lid_sinking_round_the_pumpkins_foot_is_claimed_not_the_pumpkin() {
+    let room = Room::pumpkin(2.0);
+    let (mut map, truth) = room.to_camera(0);
+    // The pumpkin's crate top sinks round the pumpkin's foot (a lid giving under the load, 4 cm
+    // right at its foot, nothing 6 cm out) and decodes noisily there (2 camera pixels per
+    // axis): seen at a grazing angle, those pixels miss the top's plane by far more than the
+    // rough tolerance (and the claim's bend), away from the side the pumpkin stands on. Here
+    // they make a rough face of their own; on a real lid they joined the pumpkin's object.
+    // Without the side rule the claim took 3 % of them.
+    let pumpkin = room.pumpkin.unwrap();
+    let projector = room.projector_at(0);
+    let (cw, ch) = (room.camera.0 as f64, room.camera.1 as f64);
+    let reach = pumpkin.radius + 0.6;
+    let dip_at = |at: [f64; 3]| {
+        let r = (at[0] - pumpkin.centre[0]).hypot(at[2] - pumpkin.centre[2]);
+        0.4 * ((reach - r) / 0.6).clamp(0.0, 1.0)
+    };
+    let mut state = 0x2545_f491_u64;
+    let mut noise = || {
+        let mut g = 0.0;
+        for _ in 0..12 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            g += (state >> 11) as f64 / (1u64 << 53) as f64 - 0.5;
+        }
+        2.0 * g
+    };
+    let mut ring = vec![false; map.rgba.len()];
+    for (i, (px, t)) in map.rgba.iter_mut().zip(&truth).enumerate() {
+        let Some((Surface::Top, at)) = t else { continue };
+        if room.box_of(*at) != Some(1) || px[0] < 0.0 {
+            continue;
+        }
+        let dip = dip_at(*at);
+        if dip <= 0.0 {
+            continue;
+        }
+        let d = [at[0] - projector[0], at[1] - projector[1], at[2] - projector[2]];
+        let s = (at[1] - dip - projector[1]) / d[1];
+        let low = [projector[0] + d[0] * s, projector[1] + d[1] * s, projector[2] + d[2] * s];
+        let (Some(was), Some(now)) = (room.camera_point(*at), room.camera_point(low)) else { continue };
+        px[0] = (f64::from(px[0]) + (now[0] - was[0] + noise()) / cw).clamp(0.0, 1.0) as f32;
+        px[1] = (f64::from(px[1]) + (now[1] - was[1] + noise()) / ch).clamp(0.0, 1.0) as f32;
+        // Only where it misses by more than the rough tolerance: the rest the claim takes anyway.
+        ring[i] = (now[0] - was[0]).hypot(now[1] - was[1]) > 6.0;
+    }
+    let corners = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+        .map(|(u, v)| room.camera_point(room.top_point(1, u, v)).unwrap());
+    let to_face = Homography::square_to_quad(corners).unwrap().inverse().unwrap();
+    let o = SceneOptions { min_object: (map.rgba.len() / 256).max(1), ..SceneOptions::default() };
+    let mut s = analyse(&map, room.camera, &o).unwrap();
+    let in_object = |s: &crate::scene::SceneParts| {
+        let (all, object) = ring
+            .iter()
+            .enumerate()
+            .filter(|(i, r)| **r && map.measured(*i))
+            .fold((0usize, 0usize), |(a, b), (i, _)| (a + 1, b + usize::from(s.object_labels[i] > 0)));
+        (all, object as f64 / all.max(1) as f64)
+    };
+    let (ring_px, before) = in_object(&s);
+    let claim =
+        crate::scene::claim_face(&mut s, &map, room.camera, &to_face, f64::from(o.tolerance), 0.01, None)
+            .unwrap();
+    let label = claim.plane as u16 + 1;
+    let (mut on, mut all, mut pumpkin_px, mut pumpkin_on) = (0usize, 0usize, 0usize, 0usize);
+    for (i, t) in truth.iter().enumerate() {
+        if !map.measured(i) {
+            continue;
+        }
+        if ring[i] {
+            all += 1;
+            on += usize::from(s.plane_labels[i] == label);
+        }
+        if matches!(t, Some((Surface::Pumpkin, _))) {
+            pumpkin_px += 1;
+            pumpkin_on += usize::from(s.plane_labels[i] == label);
+        }
+    }
+    let (on, pumpkin_on) = (on as f64 / all.max(1) as f64, pumpkin_on as f64 / pumpkin_px.max(1) as f64);
+    let (_, after) = in_object(&s);
+    eprintln!(
+        "{ring_px} px sunk past the rough tolerance: {before:.2} in the object before the claim, {after:.2} after; {on:.2} claimed, {pumpkin_on:.3} of the pumpkin"
+    );
+    assert!(ring_px > 300, "{ring_px}");
+    assert!(on > 0.8, "{on}");
+    assert!(after < 0.1, "{after}");
+    assert!(pumpkin_on < 0.02, "{pumpkin_on}");
+}

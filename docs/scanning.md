@@ -383,14 +383,22 @@ in the object standing on it. Give its four corners without a `plane`,
 the face is claimed: in each projector the plane most of the measured pixels inside the corners
 lie on (scored by how much of the quad its pixels cover, so a dense patch of the object in
 front does not win), grown with its bend, takes every pixel inside that fits it, from the faces
-and objects they were given to; the other projectors search where the first found it. It gets
-a number of its own like any face, and `"support": "rectified"` makes it the support.
+and objects they were given to; the other projectors search where the first found it. Where the
+lid sinks further right round the object's foot than its bend follows, those pixels miss the
+plane on the side away from the object (the object stands on the near side, nothing in front of
+the face can lie beyond it), so up to 15 tolerances beyond the face they join it too, from the
+object or from rough patches lying within the corners; the object then ends at its own outline
+instead of a band of lid below it. It gets a number of its own like any face, and
+`"support": "rectified"` makes it the support.
 
 **Objects where projectors disagree.** An object pixel of one projector is taken out of the
 objects where another projector measures that camera pixel but sees no object there: a face one
 projector sees at a grazing angle, or the seams between faces, would otherwise join the object.
 `carved_px` in the reply counts the pixels taken out. A sagging lid that every projector sees
-as part of the object still needs its corners.
+as part of the object still needs its corners. In `objects_camera.png` stray projector pixels
+are left out (fewer than six of the object's pixels within 4 camera pixels): where an object
+hides something, its edge pixels carry positions filled in between it and the background and
+would otherwise add a ragged fringe.
 
 **Straight borders.** The faces' borders as measured are as ragged as the decode along them.
 Where a border is a line, `planes_camera.png` and `planes_N.png` get the line instead: each

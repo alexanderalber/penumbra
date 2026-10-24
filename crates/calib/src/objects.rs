@@ -563,6 +563,46 @@ fn shared(a: &[u32], b: &[u32]) -> usize {
     n
 }
 
+/// A splat with fewer than this many splats within [`SPARSE_REACH`] camera pixels (a square) is
+/// dropped before the closing.
+const SPARSE_MIN: u32 = 6;
+const SPARSE_REACH: usize = 4;
+
+/// `mask` without its stray pixels. Where an object hides something from the camera, the
+/// projector pixels at its edge that the camera did not measure carry positions filled in
+/// between the object and what lies behind it; they land scattered over the background, and
+/// the closing would join them to the object as a ragged fringe. An object's own pixels lie
+/// dense.
+fn drop_sparse(w: usize, h: usize, mask: &[bool]) -> Vec<bool> {
+    // Summed-area table, one row and column of zeros in front.
+    let stride = w + 1;
+    let mut sum = vec![0u32; stride * (h + 1)];
+    for y in 0..h {
+        let mut row = 0u32;
+        for x in 0..w {
+            row += u32::from(mask.get(y * w + x).copied().unwrap_or(false));
+            let above = sum.get(y * stride + x + 1).copied().unwrap_or(0);
+            if let Some(s) = sum.get_mut((y + 1) * stride + x + 1) {
+                *s = above + row;
+            }
+        }
+    }
+    let at = |x: usize, y: usize| sum.get(y * stride + x).copied().unwrap_or(0);
+    mask.iter()
+        .enumerate()
+        .map(|(i, m)| {
+            if !*m {
+                return false;
+            }
+            let (x, y) = (i % w.max(1), i / w.max(1));
+            let (x0, y0) = (x.saturating_sub(SPARSE_REACH), y.saturating_sub(SPARSE_REACH));
+            let (x1, y1) = ((x + SPARSE_REACH + 1).min(w), (y + SPARSE_REACH + 1).min(h));
+            let n = (at(x1, y1) + at(x0, y0)).saturating_sub(at(x0, y1) + at(x1, y0));
+            n >= SPARSE_MIN
+        })
+        .collect()
+}
+
 /// The objects in camera space: per camera pixel 0 or the object number. `parts` are numbered
 /// by [`number`]; `scans[p]` is projector `p`'s `proj_to_cam` map of the scene with the objects.
 pub fn camera_labels(
@@ -601,7 +641,7 @@ pub fn camera_labels(
         let Some(b) = raster::bounds(cw, &splat, |s| *s) else { continue };
         let r = b.grown((CAMERA_CLOSE + CAMERA_OPEN + 2) as usize, cw, ch);
         let (rw, rh) = (r.width(), r.height());
-        let crop = r.crop(cw, &splat);
+        let crop = drop_sparse(rw, rh, &r.crop(cw, &splat));
         let closed = raster::close(rw, rh, &crop, CAMERA_CLOSE);
         let filled = raster::fill_holes(rw, rh, &closed);
         let opened = raster::open(rw, rh, &filled, CAMERA_OPEN);

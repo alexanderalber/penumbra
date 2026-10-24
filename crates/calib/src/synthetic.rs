@@ -497,6 +497,11 @@ impl Room {
         self.camera_pinhole().project(p)
     }
 
+    /// Where projector `p` stands.
+    pub fn projector_at(&self, p: usize) -> V {
+        self.projector_pinhole(p).at
+    }
+
     /// The point of box `b`'s top at `(u, v)` (0 to 1; u across from the left, v from the far
     /// edge towards the camera).
     pub fn top_point(&self, b: usize, u: f64, v: f64) -> V {
