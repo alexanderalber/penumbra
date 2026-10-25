@@ -79,10 +79,11 @@ press play once the cause is fixed. The record of that lives in
   [the documentation page](#the-documentation-page)).
 - **Viewer** (middle right): the selected node's output, or the node pinned with `pin`.
 
-The window opens where it was last time, with its size and maximised or not (kept in
+The window opens where it was last time, with its size, maximised or not (kept in
 `%LOCALAPPDATA%\penumbra\window.json`), so a setup that shares the screen with other windows,
-a terminal beside it, say, stays arranged across restarts. If that spot is no longer on any
-display (one was unplugged), it opens where Windows puts it. `ui.window` reads and moves it.
+a terminal beside it, say, stays arranged across restarts. The first time, or when that spot is
+no longer on any display (one was unplugged), it opens maximised. `ui.window` reads and moves
+it.
   `window` shows it in a window of its own (on a second monitor, say). Its picture area stays
   16:9 as the column grows and shrinks; drag its top edge for another shape, which is kept with
   the project, and double-click the edge to go back to 16:9 (`ui.options {viewer_aspect}`).

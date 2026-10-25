@@ -153,9 +153,15 @@ enum Nudge {
 
 impl PenumbraApp {
     pub fn new(cc: &eframe::CreationContext<'_>, engine: Arc<Engine>, options: AppOptions) -> Self {
-        // Maximized by command once the window exists: as a creation flag, Windows left the
+        // Where the window was last time, if that is known and still on a display; else
+        // maximised, by command once the window exists: as a creation flag, Windows left the
         // window at its inner size, in the corner and without a frame.
-        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        let place = options
+            .window
+            .map(|file| crate::window_place::Keeper::new(file, &penumbra_system::pointer::monitors()));
+        if !place.as_ref().is_some_and(crate::window_place::Keeper::restores) {
+            cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+        }
         let mut shared_gpu = None;
         let adapter = match cc.wgpu_render_state.as_ref() {
             Some(rs) => {
@@ -218,9 +224,7 @@ impl PenumbraApp {
             heals: (0, None),
             helpers: crate::helpers::Helpers::default(),
             editor_rect: None,
-            place: options
-                .window
-                .map(|file| crate::window_place::Keeper::new(file, &penumbra_system::pointer::monitors())),
+            place,
             library: (Vec::new(), None),
             copied: None,
             to_clipboard: None,

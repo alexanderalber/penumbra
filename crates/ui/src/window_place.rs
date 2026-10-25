@@ -116,6 +116,11 @@ impl Keeper {
         Self { file, restore: restore.map(|p| (p, false)), saved, normal: None, pending: None, failed: false }
     }
 
+    /// Whether it will move the window to a place kept from last time.
+    pub fn restores(&self) -> bool {
+        self.restore.is_some()
+    }
+
     /// Once per frame. `seen` is the window's place now (`None` while minimised or not known
     /// yet); `ppp` the pixels per point where it is. Returns the viewport commands to send.
     pub fn frame(&mut self, now: Instant, seen: Option<Place>, ppp: f32) -> Vec<egui::ViewportCommand> {
