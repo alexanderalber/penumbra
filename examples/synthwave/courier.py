@@ -117,7 +117,7 @@ class Mesh:
             lines += [f"v {x - cx:.4f} {-(z - cz):.4f} {y - cy:.4f}" for x, y, z in verts]
             lines += ["f " + " ".join(str(base + i) for i in f) for f in faces]
             base += len(verts)
-        path.write_text("\n".join(lines) + "\n", encoding="ascii")
+        path.write_text("\n".join(lines) + "\n", encoding="ascii", newline="\n")
 
 
 def duct(ri, ro, h):
@@ -167,8 +167,11 @@ def body():
 
 def fan():
     m = Mesh()
+    # Each blade pitched about its own length, then turned into place. The original turns them
+    # the other way round, which tilts the whole disc: unseen there, as its fans stand still,
+    # but a tilted disc wobbles once it spins.
     for b in range(4):
-        m.box("blade", (1.5, 0.03, 0.18), (0, 0, 0), (0.25, b * math.pi / 4, 0))
+        m.part("blade", *box_verts((1.5, 0.03, 0.18)), (0, 0, 0), [rot_x(0.25), rot_y(b * math.pi / 4)])
     return m
 
 
