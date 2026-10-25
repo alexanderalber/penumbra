@@ -333,7 +333,7 @@ water      15
 <p>Every edit, by hand, by Claude over the control channel, or by editing <code>project.ron</code> in a text editor, is an entry in one linear history, shown under Changes. Ctrl+Z undoes the latest, whoever made it; to take back one of Claude's changes while keeping later tweaks of your own, ask Claude to revert it. Moving nodes is an edit like any other: a drag (or one arrange) is one entry, and <a class="ref" href="#history.undo"><code>history.undo</code></a> takes it back as well.</p>
 <p>Values that arrive by OSC are live control, not edits: they stay out of the history, and undo or redo of other edits does not roll them back. An edit by hand to the same param takes it back into the history.</p>
 <h3 id="concepts-who-is-editing">Who is editing</h3>
-<p>You and Claude take turns. While Claude edits, the whole UI turns dark blue, the title says &quot;Claude is editing&quot; with what it is doing, and editing widgets are disabled; looking, selecting and pinning the viewer still work (moving nodes is an edit, so it waits too). Claude gets the turn only after 3 seconds without an edit of yours. &quot;Take over&quot; in the blue bar ends Claude's turn at once, and it lapses by itself after 2 minutes without a command from Claude.</p>
+<p>You and Claude take turns. While Claude edits, the whole UI turns dark blue, the title says &quot;Claude is editing&quot; with what it is doing, and editing widgets are disabled; looking, selecting and pinning the viewer still work (moving nodes is an edit, so it waits too). Claude gets the turn only after 3 seconds without an edit of yours. &quot;Take over&quot; in the blue bar ends Claude's turn at once, and the turn lapses by itself after 2 minutes without a command. Single commands without a claim turn the UI blue too, for 5 seconds after the last one; there is no bar then, and an edit of yours ends that turn right away.</p>
 <h3 id="concepts-what-the-editor-shows">What the editor shows</h3>
 <table>
 <thead><tr><th></th><th></th></tr></thead>
@@ -1314,7 +1314,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><a class="ref" href="#edit.begin"><code>edit.begin {label?}</code></a> claims the turn, once the user has not edited for 3 seconds. Until <a class="ref" href="#edit.end"><code>edit.end</code></a>, all edits form one entry in the change log (named by <code>label</code> when there is one), and the UI is blue and read-only for the user. The claim lapses after 2 minutes without a command, and the user can take over at any time.
 </li>
-<li>Without a claim, each editing command waits for the same 3 seconds of quiet and becomes an entry of its own: convenient for one-off <code>penumbra-cli ctl</code> calls.
+<li>Without a claim, each editing command waits for the same 3 seconds of quiet and becomes an entry of its own. It keeps the turn for 5 seconds, so the UI stays blue while commands come in one by one, and goes back to the user when they stop. The hold is a signal, not a lock: an edit of the user's (also from OSC, a key or the 3D mouse) ends it, and the next command waits for quiet again. Convenient for one-off <code>penumbra-cli ctl</code> calls and for <code>command_run</code> over MCP.
 </li>
 <li><a class="ref" href="#node.batch"><code>node.batch {ops}</code></a> applies several operations all or nothing.
 </li>

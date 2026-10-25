@@ -288,7 +288,9 @@ You and Claude take turns. While Claude edits, the whole UI turns dark blue, the
 "Claude is editing" with what it is doing, and editing widgets are disabled; looking,
 selecting and pinning the viewer still work (moving nodes is an edit, so it waits too). Claude gets the turn only after
 3 seconds without an edit of yours. "Take over" in the blue bar ends Claude's turn at once,
-and it lapses by itself after 2 minutes without a command from Claude.
+and the turn lapses by itself after 2 minutes without a command. Single commands without a
+claim turn the UI blue too, for 5 seconds after the last one; there is no bar then, and an
+edit of yours ends that turn right away.
 
 ## What the editor shows
 

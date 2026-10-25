@@ -3,8 +3,10 @@
 //! - Claude claims the mode with `edit.begin` and releases it with `edit.end`. The claim is
 //!   granted only after the user has made no change for [`Gate::QUIET`]; otherwise it is refused
 //!   with a retry hint. While Claude holds it, edits from the UI are refused.
-//! - A control-channel edit without a claim passes the same quiet check and counts as a claim
-//!   for that one command.
+//! - A control-channel edit without a claim passes the same quiet check, is its own history
+//!   entry, and holds the turn for [`Gate::HOLD`] after it: the UI shows Claude at work while
+//!   one-off commands come in. The hold is a signal, not a lock: an edit of the user's ends it
+//!   (and Claude waits for quiet again), and it ends by itself when the commands stop.
 //! - The claim lapses after [`Gate::TIMEOUT`] without a command from Claude, and the UI's "take
 //!   over" ends it at once, so a crashed Claude session cannot lock the user out.
 //! - External edits of the project file wait for the same quiet period while the user edits.
@@ -19,7 +21,13 @@ use serde::Serialize;
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Mode {
     User,
-    Claude { group: GroupId, label: String, last: Instant },
+    /// Claude edits. `group` is `Some` inside an `edit.begin` claim (all edits join it) and
+    /// `None` for the short hold that a one-off edit starts by itself (each edit its own entry).
+    Claude {
+        group: Option<GroupId>,
+        label: String,
+        last: Instant,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -33,6 +41,9 @@ pub struct Gate {
 pub struct GateStatus {
     /// `"user"` or `"claude"`.
     pub mode: &'static str,
+    /// With mode `"claude"`: the turn comes from one-off commands (a hold the user's own edit
+    /// ends), not from an `edit.begin` claim (which refuses the user's edits).
+    pub hold: bool,
     /// What Claude said it is doing (`edit.begin`'s label).
     pub label: Option<String>,
     /// Seconds until Claude's claim lapses without another command.
@@ -52,16 +63,33 @@ impl Gate {
     pub const QUIET: Duration = Duration::from_secs(3);
     /// A claim without a command for this long lapses.
     pub const TIMEOUT: Duration = Duration::from_secs(120);
+    /// How long one-off edits from the control channel keep the turn after the last one. So the
+    /// UI shows Claude at work (blue) while commands come in one by one, and the user does not
+    /// edit between two of them; the hold ends by itself when the commands stop.
+    pub const HOLD: Duration = Duration::from_secs(5);
 
     pub fn new() -> Self {
         Self { mode: Mode::User, last_user_edit: None }
     }
 
+    /// How long the current Claude mode lives without a command: a claim 120 s, a hold 5 s.
+    fn lifetime(&self) -> Duration {
+        match &self.mode {
+            Mode::Claude { group: Some(_), .. } => Self::TIMEOUT,
+            _ => Self::HOLD,
+        }
+    }
+
     fn expire(&mut self, now: Instant) {
-        if let Mode::Claude { last, .. } = &self.mode
-            && now.saturating_duration_since(*last) >= Self::TIMEOUT
+        if let Mode::Claude { group, last, .. } = &self.mode
+            && now.saturating_duration_since(*last) >= self.lifetime()
         {
-            log::info!("Claude's editing claim lapsed after {} s without a command", Self::TIMEOUT.as_secs());
+            if group.is_some() {
+                log::info!(
+                    "Claude's editing claim lapsed after {} s without a command",
+                    Self::TIMEOUT.as_secs()
+                );
+            }
             self.mode = Mode::User;
         }
     }
@@ -86,7 +114,8 @@ impl Gate {
 
     /// `edit.begin`: claim the mode for Claude. `group` is used for all of Claude's edits until
     /// `edit.end`, so they become one history entry. Claiming again while holding the claim
-    /// keeps the group and only refreshes the label.
+    /// keeps the group and only refreshes the label. A claim during a hold needs no quiet: Claude
+    /// has the turn already.
     pub fn begin(&mut self, now: Instant, label: &str, group: GroupId) -> Result<GroupId, Error> {
         self.expire(now);
         if let Mode::Claude { group: held, label: l, last } = &mut self.mode {
@@ -94,10 +123,10 @@ impl Gate {
             if !label.is_empty() {
                 *l = label.to_string();
             }
-            return Ok(*held);
+            return Ok(*held.get_or_insert(group));
         }
         self.user_quiet(now)?;
-        self.mode = Mode::Claude { group, label: label.to_string(), last: now };
+        self.mode = Mode::Claude { group: Some(group), label: label.to_string(), last: now };
         Ok(group)
     }
 
@@ -117,14 +146,16 @@ impl Gate {
     }
 
     /// Before an edit from the control channel. `Some(group)` inside a claim (the edit joins it),
-    /// `None` for a one-command claim (the caller uses a fresh group).
+    /// `None` for a one-off edit (the caller uses a fresh group). A one-off edit starts or
+    /// extends the hold: Claude keeps the turn for [`Gate::HOLD`] after it.
     pub fn claude_edit(&mut self, now: Instant) -> Result<Option<GroupId>, Error> {
         self.expire(now);
         if let Mode::Claude { group, last, .. } = &mut self.mode {
             *last = now;
-            return Ok(Some(*group));
+            return Ok(*group);
         }
         self.user_quiet(now)?;
+        self.mode = Mode::Claude { group: None, label: String::new(), last: now };
         Ok(None)
     }
 
@@ -137,12 +168,18 @@ impl Gate {
         }
     }
 
-    /// Before an edit from the UI. Refused while Claude holds the claim.
+    /// Before an edit from the UI, OSC, a key or the 3D mouse. Refused while Claude holds a
+    /// claim; a hold ends instead (live control must keep working during a show while Claude's
+    /// one-off commands come in), and Claude's next command waits for quiet again.
     pub fn user_edit(&mut self, now: Instant) -> Result<(), Error> {
         self.expire(now);
-        if let Mode::Claude { label, .. } = &self.mode {
-            let doing = if label.is_empty() { String::new() } else { format!(" ({label})") };
-            return Err(Error::new(format!("Claude is editing{doing}; use \"take over\" to edit now")));
+        match &self.mode {
+            Mode::Claude { group: Some(_), label, .. } => {
+                let doing = if label.is_empty() { String::new() } else { format!(" ({label})") };
+                return Err(Error::new(format!("Claude is editing{doing}; use \"take over\" to edit now")));
+            }
+            Mode::Claude { group: None, .. } => self.mode = Mode::User,
+            Mode::User => {}
         }
         self.last_user_edit = Some(now);
         Ok(())
@@ -157,12 +194,13 @@ impl Gate {
         self.expire(now);
         let user_idle = self.last_user_edit.map(|t| now.saturating_duration_since(t).as_secs_f64());
         match &self.mode {
-            Mode::User => GateStatus { mode: "user", label: None, expires_in: None, user_idle },
-            Mode::Claude { label, last, .. } => GateStatus {
+            Mode::User => GateStatus { mode: "user", hold: false, label: None, expires_in: None, user_idle },
+            Mode::Claude { group, label, last } => GateStatus {
                 mode: "claude",
+                hold: group.is_none(),
                 label: (!label.is_empty()).then(|| label.clone()),
                 expires_in: Some(
-                    Self::TIMEOUT.saturating_sub(now.saturating_duration_since(*last)).as_secs_f64(),
+                    self.lifetime().saturating_sub(now.saturating_duration_since(*last)).as_secs_f64(),
                 ),
                 user_idle,
             },
@@ -201,8 +239,33 @@ mod tests {
         assert!(g.end(t0 + 2 * S));
         assert!(!g.end(t0 + 2 * S));
         assert!(g.user_edit(t0 + 2 * S).is_ok());
-        // Without a claim, one command is its own claim.
+        // Without a claim, one command is its own entry.
         assert_eq!(g.claude_edit(t0 + 5 * S), Ok(None));
+    }
+
+    #[test]
+    fn one_off_edits_hold_the_turn_for_five_seconds() {
+        let t0 = Instant::now();
+        let mut g = Gate::new();
+        assert_eq!(g.claude_edit(t0), Ok(None));
+        let s = g.status(t0 + S);
+        assert_eq!((s.mode, s.hold, s.label, s.expires_in), ("claude", true, None, Some(4.0)));
+        // The user's edit (UI, OSC, keys) passes during a hold and ends it; Claude then waits.
+        assert!(g.user_edit(t0 + S).is_ok());
+        assert_eq!(g.status(t0 + S).mode, "user");
+        assert!(g.claude_edit(t0 + 2 * S).is_err());
+        // Each further edit is its own entry and extends the hold.
+        assert_eq!(g.claude_edit(t0 + 4 * S), Ok(None));
+        assert!(g.claude_holds(t0 + 8 * S));
+        assert!(!g.claude_holds(t0 + 9 * S));
+        assert!(g.user_edit(t0 + 9 * S).is_ok());
+        // A claim during a hold needs no quiet and groups from then on.
+        assert_eq!(g.claude_edit(t0 + 12 * S), Ok(None));
+        assert_eq!(g.begin(t0 + 13 * S, "tuning", GroupId(7)), Ok(GroupId(7)));
+        assert_eq!(g.claude_edit(t0 + 14 * S), Ok(Some(GroupId(7))));
+        assert!(g.user_edit(t0 + 14 * S).is_err(), "a claim refuses the user's edits");
+        let s = g.status(t0 + 14 * S);
+        assert_eq!((s.hold, s.expires_in), (false, Some(120.0)));
     }
 
     #[test]

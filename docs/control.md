@@ -80,7 +80,11 @@ editing](concepts.md#who-is-editing)):
   the user. The claim lapses after 2 minutes without a command, and the user can take over at
   any time.
 - Without a claim, each editing command waits for the same 3 seconds of quiet and becomes an
-  entry of its own: convenient for one-off `penumbra-cli ctl` calls.
+  entry of its own. It keeps the turn for 5 seconds, so the UI stays blue while commands come
+  in one by one, and goes back to the user when they stop. The hold is a signal, not a lock:
+  an edit of the user's (also from OSC, a key or the 3D mouse) ends it, and the next command
+  waits for quiet again. Convenient for one-off
+  `penumbra-cli ctl` calls and for `command_run` over MCP.
 - `node.batch {ops}` applies several operations all or nothing.
 
 Commands that only look (`node.info`, `node.snapshot`, `chan.read`, `ui.screenshot`, ...) work

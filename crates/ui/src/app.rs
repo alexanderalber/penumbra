@@ -515,10 +515,10 @@ impl PenumbraApp {
 
     /// Who is editing goes into the window title; a bar on top only while there is more to say:
     /// Claude's claim with its countdown and the take-over button, file and autosave errors
-    /// (a whole line for "You are editing" was too much).
+    /// (a whole line for "You are editing" was too much). A hold from Claude's one-off
+    /// commands gets the title and the blue, not the bar: any edit of the user's ends it.
     fn top_bar(&mut self, ui: &mut Ui, status: &SessionStatus, actions: &mut Vec<Action>) {
-        let claude = status.edit.mode == "claude";
-        let mode = if claude {
+        let mode = if status.edit.mode == "claude" {
             let label = status.edit.label.as_deref().filter(|l| !l.is_empty()).unwrap_or("working");
             format!("Claude is editing: {label}")
         } else {
@@ -529,6 +529,7 @@ impl PenumbraApp {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title = title;
         }
+        let claude = status.edit.mode == "claude" && !status.edit.hold;
         if !claude
             && status.file_error.is_none()
             && status.write_error.is_none()
@@ -684,10 +685,13 @@ impl PenumbraApp {
         let net = session.doc().snapshot();
         let view = self.engine.view();
         let board = self.engine.board().state();
-        let can_edit = status.edit.mode != "claude";
-        if self.themed != Some(!can_edit) {
-            self.themed = Some(!can_edit);
-            ctx.set_visuals(theme::visuals(!can_edit));
+        // Blue while Claude has the turn; editing widgets off only for a claim, since the
+        // user's own edit ends a hold.
+        let claude = status.edit.mode == "claude";
+        let can_edit = !claude || status.edit.hold;
+        if self.themed != Some(claude) {
+            self.themed = Some(claude);
+            ctx.set_visuals(theme::visuals(claude));
         }
         self.changes.refresh(session.doc());
         let recent = self.changes.recent(now);
@@ -947,7 +951,7 @@ impl PenumbraApp {
             self.library = (crate::components::library_names(&self.engine), Some(now));
         }
         let period = view.time.map_or(1.0 / 60.0, |t| t.rate.period().as_secs_f64());
-        let background = if can_edit { theme::BG_USER } else { theme::BG_CLAUDE };
+        let background = if claude { theme::BG_CLAUDE } else { theme::BG_USER };
         let (thumbnails, passive) = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {

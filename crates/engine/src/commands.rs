@@ -4,7 +4,8 @@
 //!
 //! Every edit goes through the session as Claude ([`Actor::Claude`]), so it passes the gate:
 //! inside an `edit.begin` / `edit.end` claim all edits form one history entry; without a claim
-//! each command needs 3 seconds of quiet from the user and is its own entry.
+//! each command needs 3 seconds of quiet from the user, is its own entry and keeps the turn
+//! for 5 seconds.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;

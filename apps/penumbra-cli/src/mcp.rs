@@ -47,7 +47,8 @@ their params ({path, kind, params?} and so on), `command_run` runs one, `command
 entry. `doc_inspect` shows the project and its nodes (paths like /noise1 or /comp/inner). `render_preview` shows a \
 node's picture, `ui_screenshot` the window; the other `ui_*` tools click, drag and type as a user would, by the ids \
 `ui_elements` lists (node./noise1, button.undo, ...). `node.kinds {kind}` explains a node type and its params. Edits wait until the user has not \
-edited for 3 seconds; every edit can be undone with `history.undo`.";
+edited for 3 seconds and keep the turn for 5 seconds after each command (the UI shows Claude at work); every edit can \
+be undone with `history.undo`.";
 
 /// Something that answers control channel requests with the reply envelope
 /// (`{"ok": true, "result": ...}` or `{"ok": false, "error": ...}`).
