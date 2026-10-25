@@ -178,11 +178,11 @@ shaders and drawn instanced, coloured through the `magma` colormap
 
 ![The curl-noise example: sticks in purple, pink and pale yellow swirling in a flow field](assets/gallery/curl-noise.jpg)
 
-The [synthwave](examples/synthwave/README.md) example: a flight over a wireframe city between
-two grids, through a nebula. Everything is made in the network: no pictures, no meshes from
-files.
+The [synthwave](examples/synthwave/README.md) example: the courier glider from Hikyaku flying over a wireframe
+city between two grids, through a nebula. Everything but the glider is made in the network: no
+pictures, no meshes from files.
 
-![The synthwave example: white wireframe blocks and grids in front of a purple and blue nebula](assets/gallery/synthwave.jpg)
+![The synthwave example: a wireframe glider over wireframe blocks between white grids, in front of a purple and blue nebula](assets/gallery/synthwave.jpg)
 
 The [projection-room](examples/projection-room/README.md) example: a 3D room lit by a projector,
 two spot lights and an environment light, with a stained-glass panel, a cube and a chrome ball.

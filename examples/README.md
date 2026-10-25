@@ -21,5 +21,5 @@ saves into it.)
 | [channels-and-pictures](channels-and-pictures/README.md) | a picture turned into channels and back | `/view` | |
 | [projection-room](projection-room/README.md) | a 3D room lit by a projector, lamps and its surroundings | `/view`, `/through_beamer` | |
 | [fluid](fluid/README.md) | a fluid stirred by motion: optical flow and blobs push it, the picture colours it | `/view` | |
-| [synthwave](synthwave/README.md) | a retro flight: wireframe grids and an instanced city through a noise nebula, warm and cold palettes | `/out` | |
+| [synthwave](synthwave/README.md) | a retro flight: the Hikyaku courier glider from OBJ files over an instanced city, wireframe grids, a noise nebula in warm and cold palettes | `/out` | |
 | [projection-onto-objects](projection-onto-objects/README.md) | a relief lit by two projectors from one camera scan: colours and contours by height, a moving sun, tide and snow line; the steps to scan your own object | `/view`, `/out_a` | (to light a real object: two projectors and a camera) |
