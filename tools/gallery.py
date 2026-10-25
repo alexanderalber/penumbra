@@ -3,14 +3,15 @@
 - assets/screenshot.png: the window with the curl-noise example, a node selected;
 - assets/arrange.png: the projection-room example as first placed and after one arrange;
 - assets/gallery/*.jpg: the output pictures of the showcase projects, 1280 pixels wide;
-- assets/gallery/audio-meters.gif: four seconds of the audio analysis' meters, fed by a
-  Python script node that plays a 124 BPM pattern;
+- assets/gallery/audio-meters.png: the audio analysis' meters after four seconds, fed by a
+  Python script node that plays a 124 BPM pattern (a late frame of the run, so the kick, onset
+  and beat strips are full);
 - assets/gallery/relief.jpg: the projection-onto-objects example's camera photo of the relief
   beside the picture penumbra lights it with;
-- assets/gallery/scan.jpg: a made-up crate landscape (scan.synthetic) as the camera sees it and
-  the regions scan.scene and scan.regions find in it;
 - assets/gallery/library.jpg: six of the content library's previews;
 - assets/gallery/palettes.png: the built-in palettes and colormaps.
+
+The photos in assets/photos/ come from a real setup, not from this script.
 
 Run it with no arguments for every picture, or name some:
 `python tools/gallery.py window arrange curl-noise`. It needs Python 3.12 or later with Pillow
@@ -258,10 +259,11 @@ def meters(work: Path) -> None:
         steps.append(call("node.snapshot", path="/analysis", output="meters", file=(frames / f"{i:03}.png").as_posix()))
         steps.append({"wait": 1 / METERS_FPS})
     run(steps, work, "meters")
-    images = [on_black(frames / f"{i:03}.png").quantize(colors=64) for i in range(METERS_FRAMES)]
-    images[0].save(OUT / "audio-meters.gif", save_all=True, append_images=images[1:],
-                   duration=round(1000 / METERS_FPS), loop=0, optimize=True)
-    print("audio-meters: assets/gallery/audio-meters.gif")
+    # The brightest of the last frames: the beat light is on and the strips are full.
+    late = [on_black(frames / f"{i:03}.png").convert("RGB") for i in range(METERS_FRAMES - 16, METERS_FRAMES)]
+    pick = max(late, key=lambda im: sum(im.convert("L").getdata()))
+    pick.save(OUT / "audio-meters.png", optimize=True)
+    print("audio-meters: assets/gallery/audio-meters.png")
 
 
 def label_font(size: int) -> ImageFont.FreeTypeFont:
@@ -304,21 +306,6 @@ def relief(work: Path) -> None:
     sheet = labelled_row([photo, lit], ["the relief, as the camera saw it", "what penumbra lights it with"], 720)
     save_jpg(sheet, OUT / "relief.jpg")
     print("relief: assets/gallery/relief.jpg")
-
-
-def scan(work: Path) -> None:
-    synthetic, scene = work / "synthetic", work / "scene"
-    run([
-        call("project.new", dir=(work / "project").as_posix()),
-        call("scan.synthetic", out=synthetic.as_posix()),
-        call("scan.scene", scans=[(synthetic / "a").as_posix(), (synthetic / "b").as_posix()], out=scene.as_posix()),
-        call("scan.regions", scene=scene.as_posix()),
-    ], work, "scan")
-    images = [Image.open(synthetic / "a" / "photo.png").convert("RGB"),
-              Image.open(scene / "regions_view.png").convert("RGB")]
-    sheet = labelled_row(images, ["the camera's picture", "the regions found, the floor switched off"], 540)
-    save_jpg(sheet, OUT / "scan.jpg")
-    print("scan: assets/gallery/scan.jpg")
 
 
 def library(work: Path) -> None:
@@ -365,7 +352,7 @@ def palettes(work: Path) -> None:
 
 def main() -> int:
     jobs = {entry[0]: (lambda work, entry=entry: showcase(*entry, work)) for entry in SHOWCASE}
-    jobs.update({"window": window, "arrange": arrange, "audio-meters": meters, "relief": relief, "scan": scan,
+    jobs.update({"window": window, "arrange": arrange, "audio-meters": meters, "relief": relief,
                  "library": library, "palettes": palettes})
     wanted = sys.argv[1:] or list(jobs)
     unknown = [name for name in wanted if name not in jobs]

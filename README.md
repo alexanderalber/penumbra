@@ -5,15 +5,16 @@ by sound, DMX or OSC. It is written in Rust on egui and wgpu. It covers part of 
 TouchDesigner is used for. It is not compatible with TouchDesigner: no `.toe`/`.tox` files, no
 TouchDesigner Python API, its own node names.
 
-- **Projection onto real objects from one camera scan.** Each projector shows a sequence of
-  stripe patterns to a camera. From those, penumbra finds the faces and objects in front of it,
-  lines the projectors up and blends them, and puts content on each surface
-  ([below](#projection-onto-objects)).
+![A real pumpkin on a crate in front of a wall of crates, with a grinning jack-o'-lantern face that is only projected on it](assets/photos/lantern.jpg)
+
+- **Projection onto real objects.** Point the projectors and a camera at the scene and scan.
+  penumbra finds the faces and objects, lines the projectors up, blends them and puts content
+  on each surface ([below](#projection-onto-objects)).
 - **Live.** Pictures, 3D, sound, camera, DMX and OSC in one network that keeps running while
   it is edited. Beat tracking from the sound alone, blob tracking from a camera.
 - **Everything is a command.** Every action in the app is also a command on a local JSON
   control channel. A script, or Claude Code, can build, change, run and photograph a network
-  without anyone clicking; `penumbra-cli mcp` serves it to MCP clients.
+  without anyone clicking. `penumbra-cli mcp` serves the same commands to MCP clients.
 - **Plain files.** A project is a folder of text files that can be diffed and edited by hand.
 - **Free and open source** (MIT or Apache-2.0).
 
@@ -48,14 +49,14 @@ lists every one.
   motion (frame drops and stutter) and full fields (dead pixels). Projectors of different
   models matched in colour and brightness from camera measurements, and evened out across each
   picture (`projector.match`, `projector.flatfield`).
-- **Scanned objects:** structured light ([scanning](docs/scanning.md)). `scan.capture` scans
-  the projectors with a live camera, `scan.align` lines them up side by side or stacked,
-  `scan.blend` blends them. `scan.relief` turns a relief panel into height maps. `scan.scene`
-  finds the flat faces and the objects of a scene (crates, a floor, a pumpkin) and
-  `scan.regions` groups the faces into one region per crate front, side or lid, editable by
-  clicking in the viewer. A [content library](library/README.md) of 15 effects fits any scanned
-  scene. Projector and camera calibration (DLT, Levenberg-Marquardt) exists as commands; the
-  interactive calibration UI does not exist yet.
+- **Scanned objects:** structured light from each projector, filmed by a camera
+  ([scanning](docs/scanning.md)). The scan lines the projectors up (side by side or stacked),
+  blends them, finds the flat faces and the objects of a scene (crates, a floor, a pumpkin) and
+  groups the faces into one region per crate front, side or lid. Regions can be edited by
+  clicking in the viewer. A relief panel becomes a height map. A
+  [content library](library/README.md) of 15 effects fits any scanned scene. Projector and
+  camera calibration (DLT, Levenberg-Marquardt) exists as commands; the interactive calibration
+  UI does not exist yet.
 - **Shapes:** content per drawn shape: pulses, chases along outlines, ripples, each shape with
   its own colour and phase. Shapes can be traced from any mask or label picture (a
   background-removed photo, a threshold, a scan's regions), then simplified and edited by hand.
@@ -140,10 +141,10 @@ Different by design:
 
 ## Projection onto objects
 
-A camera films each projector's stripe patterns. From those pictures penumbra learns which
-camera pixel each projector pixel lands on. Content is then drawn once, in the camera's
-picture, and every projector takes its share of it. During the show that costs one lookup and
-one multiply per projector.
+You draw the content once, in the camera's picture. Each projector shows its share of it, in
+place on the objects. The scan behind that: each projector shows stripe patterns, the camera
+films them, and from the films penumbra knows which camera pixel each projector pixel lands
+on. During the show that costs one lookup and one multiply per projector.
 
 A relief panel needs one scan per projector. `scan.relief` turns it into a height map and a
 blend weight for each projector. The [projection-onto-objects](examples/projection-onto-objects/README.md)
@@ -153,16 +154,23 @@ example lights a 3D-printed mountain range this way, from a real scan that ships
 
 A scene of boxes and things on them works the same way. `scan.scene` finds every flat face and
 every object, with straight borders where the faces have them. `scan.regions` groups the faces
-into regions, one per crate front, side or lid, and switches the floor off. Here on a made-up
-scene that `scan.synthetic` ray casts, for trying the chain without projectors:
+into regions, one per crate front, side or lid, and switches the floor off. Here a corner of
+crates with a pumpkin, lit by two projectors:
 
-![Left: crates and a pumpkin as the camera sees them. Right: the same scene, each crate face a coloured region, the pumpkin an object, the floor striped grey](assets/gallery/scan.jpg)
+![Four pictures of the same corner of crates with a pumpkin. Top left: the test patterns of both projectors, blue and orange grids and circles. Top right: vertical stripes from one projector. Bottom left: the regions found, each crate face a colour, the pumpkin white, the floor striped grey. Bottom right: the crates lit with a colour per region](assets/photos/scan.jpg)
+
+Without projectors, `scan.synthetic` ray casts a made-up scene of the same kind, for trying
+the chain at the desk.
 
 The [content library](library/README.md) has effects that fit any scanned scene: colours per
-region, outlines, light from inside an object, a carved face, water. Its previews show a real
-scan of a few crates with a pumpkin:
+region, outlines, light from inside an object, a carved face, water. Its previews show the
+same crates and pumpkin:
 
 ![Six effects on the same scanned crates: colours per face, palette colours, glowing outlines, a carved pumpkin face, candle light around the pumpkin, water in a crate](assets/gallery/library.jpg)
+
+What a show on such a scan looks like in the room:
+
+![Left: glowing lines wrapped around the pumpkin, the crates in dim blue. Right: blood running down the crate fronts and pooling in red along their feet](assets/photos/show.jpg)
 
 The whole chain is in [Scanning](docs/scanning.md). The repository also holds a
 [Claude Code skill](.claude/skills/projection-mapping/SKILL.md) that walks a session through
@@ -172,15 +180,15 @@ it: check the hardware, scan, find the faces, blend, put content on and look at 
 
 Each picture comes from a project that ships with penumbra.
 
-The curl-noise example: 65 536 sticks moved through a curl-noise flow field, simulated in
-shaders and drawn instanced, coloured through the `magma` colormap
-([example](examples/curl-noise/README.md)). Its network is the one in the window above.
+The [curl-noise](examples/curl-noise/README.md) example: 65 536 sticks moved through a
+curl-noise flow field, simulated in shaders and drawn instanced, coloured through the `magma`
+colormap. The screenshot at the top of this page shows its network.
 
 ![The curl-noise example: sticks in purple, pink and pale yellow swirling in a flow field](assets/gallery/curl-noise.jpg)
 
-The [synthwave](examples/synthwave/README.md) example: the courier glider from Hikyaku flying over a wireframe
-city between two grids, through a nebula. Everything but the glider is made in the network: no
-pictures, no meshes from files.
+The [synthwave](examples/synthwave/README.md) example: a glider flying over a wireframe city
+between two grids, through a nebula. The glider is the courier from Hikyaku, a browser game on
+alber.me. Everything else is made in the network: no pictures, no meshes from files.
 
 ![The synthwave example: a wireframe glider over wireframe blocks between white grids, in front of a purple and blue nebula](assets/gallery/synthwave.jpg)
 
@@ -207,16 +215,16 @@ The demo the app opens on its first start: a reaction-diffusion growing around a
 
 `chan.audio_analysis` finds the tempo, the beat and the bar from the sound alone. No tap tempo,
 no clock from another program. It locks on within a few seconds, follows tempo changes and
-keeps the beat running through breakdowns. Its outputs are channels to bind params to: `beat`
-and `bar` rise from 0 to 1 between beats and bars, `tick` is 1 on each beat, `bar_beat` counts
-the beat within the bar, plus `bpm`, `confidence`, `level`, `low`, `mid`, `high`, `onset`,
+keeps the beat running through breakdowns. Its outputs are channels to bind params to. `beat`
+and `bar` rise from 0 to 1 between beats and bars. `tick` is 1 on each beat. `bar_beat` counts
+the beat within the bar. Also `bpm`, `confidence`, `level`, `low`, `mid`, `high`, `onset`,
 `kick` and a spectrum. The `offset` param moves beat and bar ahead to make up for a projector's
 delay.
 
 The analysis draws meters for a sound check, in the viewer and as a texture that can be
 projected or laid over the show:
 
-![The audio meters, animated: level and band bars, 124 BPM at 100 % confidence, the beat light, the four beats of the bar, the last four seconds of kicks, onsets and beats, the spectrum](assets/gallery/audio-meters.gif)
+![The audio meters: level and band bars, 124 BPM at 100 % confidence, the beat light, the four beats of the bar, the last four seconds of kicks, onsets and beats, the spectrum](assets/gallery/audio-meters.png)
 
 Here a Python script node plays a 124 BPM pattern into the analysis. The method is described
 in [Audio](docs/audio.md).
@@ -224,9 +232,10 @@ in [Audio](docs/audio.md).
 ## Palettes
 
 A palette param names a set of colours. `tex.ramp`, `tex.lookup`, shaders and several library
-effects take one, so a look is tried by switching a name. These are built in; a project adds
-its own in `palettes.txt`, as hex colours or a coolors or colorhunt link. Bound to a channel,
-the param picks a palette by its place in the list. See [Concepts](docs/concepts.md#palettes).
+effects take one. To try another look, switch the name. Ten palettes and nine colormaps are
+built in (below). A project adds its own in `palettes.txt`, as hex colours or a coolors or
+colorhunt link. Bound to a channel, the param picks a palette by its place in the list. See
+[Concepts](docs/concepts.md#palettes).
 
 ![The built-in palettes as colour bands (sea, blood, candy, pumpkin, ember, neon, pastel, forest, primaries, mono) and the colormaps as gradients (grey, fire, ice, viridis, magma, inferno, plasma, cividis, twilight)](assets/gallery/palettes.png)
 
