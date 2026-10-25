@@ -246,7 +246,7 @@ column, nodes are ordered so that wires cross as little as possible. Wires are r
 nodes and kept apart from each other. With two or more nodes selected, only the selection
 moves. Ctrl+Z undoes the layout.
 
-![The projection-room example before and after arranging](assets/arrange.png)
+![The curl-noise example before and after arranging](assets/arrange.png)
 
 ## Download (Windows)
 

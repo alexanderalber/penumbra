@@ -1,7 +1,7 @@
 """Makes the README's pictures, each from a headless run of the release build:
 
 - assets/screenshot.png: the window with the curl-noise example, a node selected;
-- assets/arrange.png: the projection-room example as first placed and after one arrange;
+- assets/arrange.png: the curl-noise example as first placed and after one arrange;
 - assets/gallery/*.jpg: the output pictures of the showcase projects, 1280 pixels wide;
 - assets/gallery/audio-meters.png: the audio analysis' meters after four seconds, fed by a
   Python script node that plays a 124 BPM pattern (a late frame of the run, so the kick, onset
@@ -58,7 +58,7 @@ WINDOW = (EXAMPLES / "curl-noise", "1760x960", "/out", "/vel", 45)
 
 # The arrange picture: a project shot without its node positions, so its nodes sit where the
 # editor places nodes that come without one, and the window size it is shot at.
-ARRANGE = (EXAMPLES / "projection-room", "1800x1500")
+ARRANGE = (EXAMPLES / "curl-noise", "1700x900")
 ARRANGE_LABELS = ("before: as the nodes were first placed", "after: one press of L")
 
 # The relief picture: the example, the node shot, seconds of show time, and the part of the
@@ -229,16 +229,18 @@ def arrange(work: Path) -> None:
         font = ImageFont.truetype("segoeui.ttf", 30)
     except OSError:
         font = ImageFont.load_default(30)
+    # Before above after: a network is wider than tall, and side by side the sheet would be
+    # too wide to read in the README.
     label, gap = 60, 40
-    width = sum(shot.width for shot in shots) + gap * 3
-    height = max(shot.height for shot in shots) + label + gap
+    width = max(shot.width for shot in shots) + gap * 2
+    height = sum(shot.height + label for shot in shots) + gap
     sheet = Image.new("RGB", (width, height), (27, 27, 27))
     draw = ImageDraw.Draw(sheet)
-    x = gap
+    y = 0
     for shot, text in zip(shots, ARRANGE_LABELS):
-        draw.text((x, 12), text, fill=(200, 200, 200), font=font)
-        sheet.paste(shot, (x, label))
-        x += shot.width + gap
+        draw.text((gap, y + 12), text, fill=(200, 200, 200), font=font)
+        sheet.paste(shot, (gap, y + label))
+        y += shot.height + label
     sheet.save(ASSETS / "arrange.png", optimize=True)
     print("arrange: assets/arrange.png")
 
