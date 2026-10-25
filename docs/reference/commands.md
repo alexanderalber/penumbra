@@ -304,6 +304,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.state` | Selection, viewer, pan and zoom, editing mode, the status bar's message; {positions?} |
 | `ui.type` | Type text into the focused field; {text} |
 | `ui.view` | Pin the viewer to a node, or unpin without a path; {path?, output?: name or index} |
+| `ui.window` | Where the editor window is, and moves it: {position?: [x, y], size?: [width, height], maximized?}; physical pixels of the desktop as output.list gives the displays, the position its outer top left corner, the size the part inside the frame; the window opens there again on the next start |
 
 ## video_in
 

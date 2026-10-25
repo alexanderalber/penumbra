@@ -59,6 +59,9 @@ pub struct AppOptions {
     pub bridge: Option<Arc<crate::control::Bridge>>,
     /// Open the 3D mouse (not in headless runs, which must not grab devices).
     pub spacenav: bool,
+    /// The file the editor window's place is kept in across restarts
+    /// ([`crate::window_place`]); `None` in headless runs.
+    pub window: Option<PathBuf>,
 }
 
 struct Shot {
@@ -119,6 +122,8 @@ pub struct PenumbraApp {
     helpers: crate::helpers::Helpers,
     /// The window's place on the desktop as last told to the outputs.
     editor_rect: Option<[i32; 4]>,
+    /// Puts the window back where it was last time and keeps its place.
+    place: Option<crate::window_place::Keeper>,
     /// Component files on offer in the add dialog, and when they were last listed.
     library: (Vec<crate::add_dialog::Offered>, Option<Instant>),
     /// What this run copied last, and text waiting to go to the system clipboard.
@@ -213,6 +218,9 @@ impl PenumbraApp {
             heals: (0, None),
             helpers: crate::helpers::Helpers::default(),
             editor_rect: None,
+            place: options
+                .window
+                .map(|file| crate::window_place::Keeper::new(file, &penumbra_system::pointer::monitors())),
             library: (Vec::new(), None),
             copied: None,
             to_clipboard: None,
@@ -1244,6 +1252,19 @@ impl PenumbraApp {
         }
     }
 
+    /// Restores the window's place at the start, then keeps it as it changes.
+    fn keep_place(&mut self, ctx: &egui::Context) {
+        let Some(keeper) = &mut self.place else { return };
+        let seen = ctx.input(|i| crate::window_place::seen(i.viewport()));
+        let (place, ppp) = match seen {
+            Some((p, ppp)) => (Some(p), ppp),
+            None => (None, 1.0),
+        };
+        for cmd in keeper.frame(Instant::now(), place, ppp) {
+            ctx.send_viewport_cmd(cmd);
+        }
+    }
+
     // ------------------------------------------------------------------------- ui.* commands
 
     fn drain_requests(&mut self, ctx: &egui::Context) {
@@ -1542,6 +1563,7 @@ impl eframe::App for PenumbraApp {
         crate::keyboard::feed(ui.ctx(), self.engine.keyboard(), penumbra_ops::keyboard::Source::Editor);
         self.frame(ui);
         self.tell_outputs(ui.ctx());
+        self.keep_place(ui.ctx());
         // The native title bar follows the theme (Windows 11; elsewhere nothing happens).
         if self.title_bar != self.themed
             && let Some(claude) = self.themed

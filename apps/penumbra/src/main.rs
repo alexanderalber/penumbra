@@ -227,8 +227,16 @@ fn run_window(
             if let Some(rs) = &cc.wgpu_render_state {
                 *lock(&slot) = Some(rs.instance.clone());
             }
-            let app_options =
-                AppOptions { control, requests: Some(requests), bridge: Some(bridge), spacenav: true };
+            let window = penumbra_ui::window_place::default_file()
+                .map_err(|e| log::warn!("the editor window's place is not kept: {e}"))
+                .ok();
+            let app_options = AppOptions {
+                control,
+                requests: Some(requests),
+                bridge: Some(bridge),
+                spacenav: true,
+                window,
+            };
             Ok(Box::new(PenumbraApp::new(cc, app_engine, app_options)))
         }),
         &event_loop,

@@ -93,6 +93,9 @@ at any time.
 - `chan.read`, `table.read` and `geo.info` read the other kinds.
 - `ui.screenshot {file?}` saves a PNG of the whole window; the other `ui.*` commands click,
   drag, type and select as a user would, by automation ids that `ui.elements` lists.
+- `ui.window {position?, size?, maximized?}` says where the editor window is and moves it, in
+  physical pixels of the desktop as `output.list` gives the displays; the next start opens it
+  there again.
 
 ## Headless runs
 

@@ -109,6 +109,7 @@ pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(
                     requests: Some(requests),
                     bridge: Some(bridge),
                     spacenav: false,
+                    window: None,
                 },
             )
         });

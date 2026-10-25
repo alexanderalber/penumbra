@@ -103,6 +103,7 @@ impl PenumbraApp {
                 self.editor.frame_all();
                 done(json!({}))
             }
+            "ui.window" => done(window(ctx, p)?),
             "ui.screenshot" => {
                 let file = match p.get("file").and_then(Json::as_str) {
                     Some(f) => PathBuf::from(f),
@@ -504,4 +505,50 @@ fn numbers<const N: usize>(p: &Json, name: &str) -> Result<Option<[f64; N]>, Str
 
 fn rect_json(r: egui::Rect) -> Json {
     json!([r.min.x, r.min.y, r.width(), r.height()])
+}
+
+/// `ui.window`: the window's place before the moves asked for, which take effect over the next
+/// frames (the size at the scale of the display the window lands on is the OS's to finish).
+fn window(ctx: &egui::Context, p: &Json) -> Result<Json, String> {
+    let pair = |key: &str| -> Result<Option<[f32; 2]>, String> {
+        let Some(v) = p.get(key) else { return Ok(None) };
+        let bad = || format!("`{key}` wants two numbers, [x, y] or [width, height], in physical pixels");
+        let Some([a, b]) = v.as_array().map(Vec::as_slice) else { return Err(bad()) };
+        let n = |v: &Json| v.as_f64().filter(|x| x.is_finite() && x.abs() < 100_000.0).ok_or_else(bad);
+        Ok(Some([n(a)? as f32, n(b)? as f32]))
+    };
+    let position = pair("position")?;
+    let size = pair("size")?;
+    if size.is_some_and(|[w, h]| w < 200.0 || h < 200.0) {
+        return Err("`size` below 200 x 200 pixels".into());
+    }
+    let maximized = match p.get("maximized") {
+        None => None,
+        Some(v) => Some(v.as_bool().ok_or("`maximized` is true or false")?),
+    };
+    let seen = ctx.input(|i| crate::window_place::seen(i.viewport()));
+    let ppp = seen.map_or(1.0, |(_, ppp)| ppp);
+    if maximized == Some(false) || (maximized.is_none() && (position.is_some() || size.is_some())) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+    }
+    if let Some([x, y]) = position {
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(x / ppp, y / ppp)));
+    }
+    if let Some([w, h]) = size {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(w / ppp, h / ppp)));
+    }
+    if maximized == Some(true) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+    }
+    ctx.request_repaint();
+    Ok(match seen {
+        Some((place, _)) => json!({
+            "position": [place.x, place.y],
+            "size": [place.width, place.height],
+            "maximized": place.maximized,
+        }),
+        None => {
+            json!({"position": null, "size": null, "maximized": null, "note": "the window is minimised or has no place yet (headless)"})
+        }
+    })
 }

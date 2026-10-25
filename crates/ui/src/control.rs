@@ -127,6 +127,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "How tidy the level shown is, in graph units: width and height of the nodes, total and longest wire length, crossings, wire length on top of a wire from another output (overlap; where: overlaps), wire length through nodes",
     ),
     ("ui.screenshot", "PNG of the window; {file?} (default %TEMP%/penumbra/ui.png)"),
+    (
+        "ui.window",
+        "Where the editor window is, and moves it: {position?: [x, y], size?: [width, height], maximized?};          physical pixels of the desktop as output.list gives the displays, the position its outer top left corner,          the size the part inside the frame; the window opens there again on the next start",
+    ),
 ];
 
 /// Registers the `ui.*` commands, all forwarded to the UI thread through `bridge`.
