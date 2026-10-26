@@ -64,9 +64,11 @@ impl Decoder for FilmDecoder {
             return Err("no frame rate".into());
         };
         let i = i64::try_from(index).map_err(|_| "frame index out of range".to_string())?;
-        // The middle of the frame, so rounding in the container's timestamps cannot pick the
-        // neighbour.
-        let t = Tick::from_units(2 * i * den + den, 2 * num);
+        // A quarter into the frame, so rounding in the container's timestamps cannot pick the
+        // neighbour. Not the middle: FilmCraft rounds the time to the nearest unit of the
+        // track's timescale, and in a file whose unit is one frame (penumbra's recordings) the
+        // middle of frame i rounds up to frame i + 1.
+        let t = Tick::from_units(4 * i * den + den, 4 * num);
         let source = &self.source;
         guarded(|| source.video_frame(FrameRequest::full(t)).map(Frame::Pixels).map_err(|e| e.to_string()))
     }
