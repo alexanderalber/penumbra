@@ -12,6 +12,7 @@ pub mod history;
 pub mod job;
 pub mod network;
 pub mod node;
+pub mod rename;
 pub mod replace;
 pub mod watch;
 
@@ -34,5 +35,6 @@ pub use node::{
     CookError, Cooked, Data, DataKind, Density, FnNodeType, Inactive, InputChooser, InputRun, ListedInput,
     MAX_RUN, NodeDesc, NodeType, NodeTypes, Operator, PortRole, StateItem, WarmUp,
 };
+pub use rename::rename;
 pub use replace::{Replacement, replace};
 pub use watch::FileWatch;

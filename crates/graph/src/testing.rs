@@ -115,6 +115,9 @@ pub fn test_types() -> NodeTypes {
         Ok(Cooked::Outputs(vec![]))
     });
     simple(&mut t, NodeDesc::new("test.group", "Holds nodes").container(), |_| Ok(Cooked::Outputs(vec![])));
+    simple(&mut t, NodeDesc::new("test.ref", "Names another node").param(ParamSpec::node("node")), |_| {
+        Ok(Cooked::Outputs(vec![]))
+    });
     simple(
         &mut t,
         NodeDesc::new("test.comp", "A component")

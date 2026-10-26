@@ -1166,6 +1166,47 @@ fn a_project_with_an_old_kind_opens_with_the_new_one_and_saves_it() {
 }
 
 #[test]
+fn renaming_a_node_in_a_component_keeps_its_exposed_params_and_references() {
+    let f = Fixture::new("rename-follows");
+    f.call("node.create", json!({"path": "/fx", "kind": "comp.base"}));
+    f.call("node.create", json!({"path": "/fx/k", "kind": "chan.constant"}));
+    f.call("node.create", json!({"path": "/fx/n", "kind": "tex.noise"}));
+    f.call("node.create", json!({"path": "/fx/sel", "kind": "tex.select", "params": {"node": "n"}}));
+    f.call("node.create", json!({"path": "/far", "kind": "tex.select", "params": {"node": "/fx/n"}}));
+    f.call("node.create", json!({"path": "/fx/m", "kind": "chan.math"}));
+    f.call("node.bind", json!({"param": "/fx/m.b", "from": "/fx/k"}));
+    f.call("node.set", json!({"path": "/fx", "params": {"expose": "level = k.value0  # main\nn.seed"}}));
+    let param = |path: &str, name: &str| -> Json {
+        let info = f.call("node.info", json!({"path": path}));
+        let params = info["params"].as_array().cloned().unwrap_or_default();
+        params.into_iter().find(|p| p["name"] == name).map(|p| p["value"].clone()).unwrap_or(Json::Null)
+    };
+
+    let r = f.call("node.rename", json!({"path": "/fx/k", "name": "konst"}));
+    assert_eq!(r["history"], "new", "{r}");
+    f.call("node.rename", json!({"path": "/fx/n", "name": "noise"}));
+    assert_eq!(param("/fx", "expose"), "level = konst.value0  # main\nnoise.seed");
+    assert_eq!(param("/fx/sel", "node"), "noise");
+    assert_eq!(param("/far", "node"), "/fx/noise");
+    let binds = f.call("node.info", json!({"path": "/fx/m"}))["binds"].clone();
+    assert_eq!(binds[0]["from"], "/fx/konst", "{binds}");
+    // The exposed params still act on the inner ones.
+    f.call("node.set", json!({"path": "/fx", "params": {"level": 3.0}}));
+    assert_eq!(param("/fx/konst", "value0"), 3.0);
+    f.call("history.undo", json!({}));
+
+    // One undo step takes back a rename with everything it rewrote.
+    f.call("history.undo", json!({}));
+    assert_eq!(param("/fx", "expose"), "level = konst.value0  # main\nn.seed");
+    assert_eq!(param("/fx/sel", "node"), "n");
+    assert_eq!(param("/far", "node"), "/fx/n");
+    f.call("history.undo", json!({}));
+    assert_eq!(param("/fx", "expose"), "level = k.value0  # main\nn.seed");
+    let binds = f.call("node.info", json!({"path": "/fx/m"}))["binds"].clone();
+    assert_eq!(binds[0]["from"], "/fx/k", "{binds}");
+}
+
+#[test]
 fn vsyncs_that_pile_up_during_a_slow_pass_cook_once() {
     let f = Fixture::new("vsync-backlog");
     let before = f.engine.on_cook(|st| st.last.pass).unwrap();

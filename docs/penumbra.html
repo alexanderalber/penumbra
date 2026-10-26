@@ -356,6 +356,8 @@ water      15
 </li>
 <li><strong>Expose params:</strong> the component's <code>expose</code> param lists inner params, one per line, <code>speed = noise1.speed</code> or just <code>noise1.speed</code>. They show on the component and act on the inner param.
 </li>
+<li><strong>Rename:</strong> renaming a node (the name field at the top of the param panel, or <a class="ref" href="#node.rename"><code>node.rename</code></a>) also rewrites the <code>expose</code> lines and node references (<a class="ref" href="#tex.select"><code>tex.select</code></a>'s <code>node</code>) that name it or a node inside it. One undo takes all of it back. Wires and bindings follow a rename by themselves. Params that name a node in plain text, such as <a class="ref" href="#tex.scan"><code>tex.scan</code></a>'s <code>projector</code>, keep the old name: fix them by hand.
+</li>
 <li><strong>Library:</strong> &quot;Save to the library&quot; in the node menu writes a <code>&lt;name&gt;.comp.ron</code> file; the add dialog's <code>comp</code> tab lists the project's <code>components/</code> folder, the library shared by all projects (<code>%LOCALAPPDATA%\penumbra\components</code>, or <code>PENUMBRA_LIBRARY</code>) and the content library that ships with penumbra (marked <code>penumbra</code>; the <code>library</code> folder beside the app, catalogued with a preview of each in <a href="../library/README.md">its README</a>): effects for scanned objects such as water in a crate, a lamp going round a pumpkin, contour lines or a carved face. Adding one adds a copy. The cross beside a user's library entry moves its file into a <code>removed/</code> folder beside it; penumbra's own cannot be removed.
 </li>
 </ul>
@@ -2453,7 +2455,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>fill</code></td><td>int</td><td><code>32</code></td><td>0 to 128 (soft)</td><td>Projector pixels the decode fills in from measured neighbours</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-blend-and-match">The Helpers window › Blend and match</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#helpers-blend-and-match">The Helpers window › Blend and match</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
 <details class="entry node" id="tex.scan_pattern"><summary><code class="name">tex.scan_pattern</code><span class="sum">The striped pictures of a structured light scan (Gray code), one per <code>pattern</code>: for scanning with another camera by hand</span></summary>
 <div class="body">
@@ -2513,7 +2515,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p><code>output</code> picks which output of that node, counted from 0, for nodes with more than one: <a class="ref" href="#tex.render"><code>tex.render</code></a>'s <code>data</code> is 1.</p>
 <p>A select that points at a <a class="ref" href="#tex.null"><code>tex.null</code></a> at the end of a chain stays valid however that chain changes.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-paths">Concepts › Paths</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-paths">Concepts › Paths</a>, <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
 <details class="entry node" id="tex.sequence"><summary><code class="name">tex.sequence</code><span class="sum">The picture of a timed show: plays the pieces a chan.sequence lists, with cuts and fades. Only the piece on screen runs</span></summary>
 <div class="body">
@@ -4640,9 +4642,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>Move nodes in the editor; top left corner, graph units on their component's plane, one undo step. null leaves a node to the editor to place; {nodes: {path: [x, y]}}</p>
 </div></details>
-<details class="entry command" id="node.rename"><summary><code class="name">node.rename</code><span class="sum">Rename a node</span></summary>
+<details class="entry command" id="node.rename"><summary><code class="name">node.rename</code><span class="sum">Rename a node; the expose lines and node references that name it follow, in the same undo step</span></summary>
 <div class="body">
-<p>Rename a node; {path, name}</p>
+<p>Rename a node; the expose lines and node references that name it follow, in the same undo step; {path, name}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
 <details class="entry command" id="node.replace"><summary><code class="name">node.replace</code><span class="sum">Replace a node with one of another kind under the same name (one undo step). Keeps the params, wires and bindings that fit and lists what was not kept</span></summary>
 <div class="body">

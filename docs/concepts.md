@@ -302,6 +302,11 @@ reach anywhere.
 - **Expose params:** the component's `expose` param lists inner params, one per line,
   `speed = noise1.speed` or just `noise1.speed`. They show on the component and act on the
   inner param.
+- **Rename:** renaming a node (the name field at the top of the param panel, or `node.rename`)
+  also rewrites the `expose` lines and node references (`tex.select`'s `node`) that name it or a
+  node inside it. One undo takes all of it back. Wires and bindings follow a rename by
+  themselves. Params that name a node in plain text, such as `tex.scan`'s `projector`, keep the
+  old name: fix them by hand.
 - **Library:** "Save to the library" in the node menu writes a `<name>.comp.ron` file; the add
   dialog's `comp` tab lists the project's `components/` folder, the library shared by all
   projects (`%LOCALAPPDATA%\penumbra\components`, or `PENUMBRA_LIBRARY`) and the content

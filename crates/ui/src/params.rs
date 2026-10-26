@@ -130,7 +130,11 @@ impl ParamPanel {
                 auto.add("param.name", r.rect, "name");
                 if r.lost_focus() && text.as_str() != node.name.as_str() {
                     match text.parse() {
-                        Ok(name) => actions.push(Action::edit(vec![Op::Rename { path: path.clone(), name }])),
+                        // The same ops as node.rename: expose lines and node references follow.
+                        Ok(name) => match penumbra_graph::rename(input.net, input.types, &path, &name) {
+                            Ok(ops) => actions.push(Action::edit(ops)),
+                            Err(e) => actions.push(Action::Message(format!("{e}"))),
+                        },
                         Err(e) => actions.push(Action::Message(format!("{e}"))),
                     }
                     self.rename = None;

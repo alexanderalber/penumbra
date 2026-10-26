@@ -155,7 +155,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `node.lock` | Lock (hold outputs) or unlock a node; {path, locked?} |
 | `node.paste` | Paste the nodes copied last (or `text`) into a component or the root; {into?, text?} |
 | `node.place` | Move nodes in the editor; top left corner, graph units on their component's plane, one undo step. null leaves a node to the editor to place; {nodes: {path: [x, y]}} |
-| `node.rename` | Rename a node; {path, name} |
+| `node.rename` | Rename a node; the expose lines and node references that name it follow, in the same undo step; {path, name} |
 | `node.replace` | Replace a node with one of another kind under the same name (one undo step). Keeps the params, wires and bindings that fit and lists what was not kept; {path, kind} |
 | `node.reset` | Start stateful nodes over (feedback, cache, time machine, tracker, filter...). A component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path} |
 | `node.set` | Set params, null resets to the default; {path, params: {name: value}} |

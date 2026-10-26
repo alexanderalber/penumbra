@@ -83,7 +83,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Replace a node with one of another kind under the same name (one undo step). Keeps the params, wires and bindings that fit and lists what was not kept; {path, kind}",
         node_replace,
     );
-    add("node.rename", "Rename a node; {path, name}", node_rename);
+    add(
+        "node.rename",
+        "Rename a node; the expose lines and node references that name it follow, in the same undo step; {path, name}",
+        node_rename,
+    );
     add("node.set", "Set params, null resets to the default; {path, params: {name: value}}", node_set);
     add(
         "node.connect",
@@ -670,7 +674,9 @@ fn node_rename(e: &Engine, p: &Json) -> Result<Json> {
         name: Name,
     }
     let a: A = args(p)?;
-    Ok(outcome(&edit(e, &[Op::Rename { path: a.path, name: a.name }], "")?))
+    let net = e.session().doc().snapshot();
+    let ops = penumbra_graph::rename(&net, e.types(), &a.path, &a.name)?;
+    Ok(outcome(&edit(e, &ops, "")?))
 }
 
 fn node_set(e: &Engine, p: &Json) -> Result<Json> {
