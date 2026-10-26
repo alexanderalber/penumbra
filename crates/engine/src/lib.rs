@@ -44,6 +44,7 @@ pub mod state;
 pub mod state_commands;
 pub mod table_out;
 pub mod ticker;
+pub mod video_file;
 pub mod video_in;
 pub mod video_out;
 
@@ -81,6 +82,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     dmx::register(&mut registry, engine);
     ndi::register(&mut registry);
     spout::register(&mut registry);
+    video_file::register(&mut registry, engine);
     video_in::register(&mut registry, engine);
     video_out::register(&mut registry, engine);
     table_out::register(&mut registry, engine);

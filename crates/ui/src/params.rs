@@ -200,6 +200,15 @@ impl ParamPanel {
                 }
             });
         }
+        if node.kind == penumbra_ops::tex::VIDEO_FILE {
+            // Not an edit either: a cue, allowed while Claude edits.
+            let r =
+                ui.button("restart").on_hover_text("Start the clip over from `start` (video_file.restart)");
+            auto.add("param.restart", r.rect, "restart");
+            if r.clicked() {
+                actions.push(Action::RestartVideo(input.node));
+            }
+        }
         if node.kind == penumbra_ops::out::video::VIDEO_OUT {
             record_row(ui, input, node, auto, actions);
         }

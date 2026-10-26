@@ -1082,7 +1082,7 @@ Inputs: none.
 Outputs:
 
 - `out` (tex): The video's picture, at the file's size
-- `info` (chan): Playback: frame, progress (0 to 1), loops, late, seeks
+- `info` (chan): Playback: frame, progress (0 to 1), loops, late, seeks, restarts
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -1090,7 +1090,9 @@ Outputs:
 | `play` | bool | `true` |  | Off holds the current frame |
 | `speed` | float | `1` | 0 to 4 (soft) | Playback rate; every frame is still decoded, so high speeds cost CPU |
 | `loop` | bool | `true` |  | Off stops on the last frame |
-| `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is (re)loaded |
+| `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is loaded and where a restart goes |
+| `restart` | bool | `false` |  | Turning on starts the clip over from `start`; bind a channel to cue it |
+| `restart_on_show` | bool | `false` |  | Starts over whenever the clip comes back into use, such as a switch or sequence picking it |
 
 ### tex.video_in
 

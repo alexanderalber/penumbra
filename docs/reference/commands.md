@@ -327,6 +327,12 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `video.loop` | Make a movie loop seamlessly, as a job in the background: method cut (the best stretch), fade (end cross-faded into the start), pingpong (forward, then backward) or cut_fade; writes <stem>_loop.<ext> beside it unless out names a file, never overwriting; {file, method, min_seconds? (5), fade_seconds? (1), out?, codec?}; answers at once with the status |
 | `video.loop_status` | Loops: file, out, method, codec, frames_in, frames_out, loop_start, loop_end, fade_frames, score, motion, progress, done, error, seconds; {file?} (the recording or the loop) for the newest of that file |
 
+## video_file
+
+| command | |
+|---|---|
+| `video_file.restart` | A tex.video_file starts its clip over from its `start`, at the next frame: {path} |
+
 ## video_in
 
 | command | |

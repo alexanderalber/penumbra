@@ -358,6 +358,14 @@ impl PenumbraApp {
                 Action::Reset(ids) => self.engine.reset_nodes(&ids).map(|report| {
                     self.message = Some((report.message(), now));
                 }),
+                Action::RestartVideo(node) => {
+                    let net = self.engine.session().doc().snapshot();
+                    match net.path_of(node) {
+                        Some(path) => penumbra_engine::video_file::restart(&self.engine, &path)
+                            .map_err(|e| penumbra_core::Error::new(e.0)),
+                        None => Err(penumbra_core::Error::new("the node is gone")),
+                    }
+                }
                 Action::LearnBackground { node, delay } => {
                     let net = self.engine.session().doc().snapshot();
                     match net.path_of(node) {

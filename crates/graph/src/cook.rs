@@ -75,6 +75,7 @@ pub struct CookContext<'a> {
     /// Per output: whether it is to be made ([`CookContext::output_wanted`]).
     wanted: &'a [bool],
     wanted_changed: bool,
+    since_last_use: Option<f64>,
     spawner: &'a Spawner,
     services: &'a Services,
     warning: RefCell<Option<String>>,
@@ -159,6 +160,15 @@ impl<'a> CookContext<'a> {
 
     pub fn inputs_changed(&self) -> bool {
         self.inputs_changed
+    }
+
+    /// Show seconds since the node was last in use before this pass, when this pass uses it:
+    /// one frame while it stays in use, more when it comes back (a switch or sequence that skipped
+    /// it picks it again). In use means an output, a viewer or a snapshot pulls the node; a
+    /// thumbnail alone does not count. `None` in a cook only for a thumbnail, and in the first
+    /// pass that uses the node.
+    pub fn since_last_use(&self) -> Option<f64> {
+        self.since_last_use
     }
 
     /// Whether output `index` is to be made in this cook: always for an ordinary output; for a
@@ -469,6 +479,9 @@ struct Runtime {
     cooked_pass: u64,
     trimmed: bool,
     last_thumb_pass: Option<u64>,
+    /// Show time of the last pass that used the node for more than a thumbnail
+    /// ([`CookContext::since_last_use`]).
+    used: Option<FrameTime>,
     error: Option<String>,
     warning: Option<String>,
     stats: CookStats,
@@ -527,6 +540,7 @@ impl Runtime {
             cooked_pass: 0,
             trimmed: false,
             last_thumb_pass: None,
+            used: None,
             error: None,
             warning: None,
             stats: CookStats::default(),
@@ -558,6 +572,8 @@ pub struct Cooker {
     read_all: BTreeSet<NodeId>,
     /// The nodes cooked in every pass ([`NodeDesc::eager`]), as of the last sync.
     eager: Vec<NodeId>,
+    /// Nodes are evaluated for thumbnails now, which does not count as use.
+    for_thumbnails: bool,
 }
 
 impl Cooker {
@@ -579,6 +595,7 @@ impl Cooker {
             read: BTreeSet::new(),
             read_all: BTreeSet::new(),
             eager: Vec::new(),
+            for_thumbnails: false,
         }
     }
 
@@ -648,7 +665,9 @@ impl Cooker {
         for id in self.eager.clone() {
             self.evaluate(id, time, &mut report);
         }
+        self.for_thumbnails = true;
         self.cook_thumbnails(thumbnails, time, &mut report);
+        self.for_thumbnails = false;
         if self.pass.is_multiple_of(TRIM_CHECK_EVERY) {
             self.trim_idle();
         }
@@ -941,6 +960,12 @@ impl Cooker {
 
         let Some(rt) = self.runtimes.get_mut(&id) else { return };
         rt.evaluated_pass = self.pass;
+        let since_last_use = if self.for_thumbnails {
+            None
+        } else {
+            let last = rt.used.replace(time);
+            last.map(|t| time.seconds() - t.seconds())
+        };
         // A locked node holds what it has. Its seen inputs stay as they were, so after
         // unlocking it recooks exactly when something changed meanwhile. A node locked before
         // it ever produced anything cooks once to have something to hold.
@@ -987,6 +1012,7 @@ impl Cooker {
             inputs_changed,
             wanted: &wanted,
             wanted_changed,
+            since_last_use,
             spawner: &self.spawner,
             services: &self.services,
             warning: RefCell::new(None),
@@ -2206,6 +2232,37 @@ mod tests {
         let (cooked, report) = f.cook_with(&["/pick"], &["/b"]);
         assert_eq!(cooked, ["/b"]);
         assert_eq!(report.thumbnails, [f.id("/b")]);
+    }
+
+    #[test]
+    fn since_last_use_counts_outputs_not_thumbnails() {
+        let mut f = Fixture::new(&[
+            create("/a", "test.const"),
+            create("/s", "test.since"),
+            create("/pick", "test.pick"),
+            connect("/a", "/pick", 0),
+            connect("/s", "/pick", 1),
+        ]);
+        f.set("/pick.skip", Value::Bool(true));
+        f.set("/pick.index", Value::Float(1.0));
+        f.cook(&["/pick"]);
+        assert_eq!(f.value("/s"), Some(-1.0), "first use");
+        f.clock.advance(1);
+        f.cook(&["/pick"]);
+        assert_eq!(f.value("/s"), Some(1.0 / 60.0), "in use: one frame");
+        f.set("/pick.index", Value::Float(0.0));
+        for _ in 0..30 {
+            f.clock.advance(1);
+            f.cook(&["/pick"]);
+        }
+        // A thumbnail cooks it meanwhile: no use, and it learns nothing.
+        f.clock.advance(1);
+        f.cook_with(&["/pick"], &["/s"]);
+        assert_eq!(f.value("/s"), Some(-1.0));
+        f.set("/pick.index", Value::Float(1.0));
+        f.clock.advance(1);
+        f.cook(&["/pick"]);
+        assert_eq!(f.value("/s"), Some(32.0 / 60.0), "back after 32 frames");
     }
 
     #[test]

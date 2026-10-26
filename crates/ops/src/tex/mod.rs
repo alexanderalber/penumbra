@@ -33,7 +33,7 @@ pub mod shapes;
 pub mod spout_in;
 mod text;
 mod time_machine;
-mod video_file;
+pub mod video_file;
 pub mod video_in;
 
 pub use ndi_in::NDI_IN;

@@ -1450,6 +1450,82 @@ fn select_follows_the_named_node_and_switch_picks_or_blends() {
     assert!((red(&mut rig, "/sw") - 0.6).abs() < 0.01, "past the last is the last");
 }
 
+/// `tex.video_file` on the 30-frame ramp (frame n at n / 30 s) behind a switch that skips what
+/// it does not show; `play` off, so the frame shown is where the last restart went.
+#[test]
+fn video_file_restarts_on_an_edge_a_request_and_coming_back() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("video_restart");
+    std::fs::copy(manifest().join("../video/tests/fixtures/ramp30.mp4"), dir.join("ramp30.mp4")).unwrap();
+    let ops = [
+        constant("/k", 0.5),
+        create(
+            "/v",
+            "tex.video_file",
+            &[
+                ("file", "ramp30.mp4".into()),
+                ("play", Value::Bool(false)),
+                ("loop", Value::Bool(false)),
+                ("start", Value::Float(0.8)),
+            ],
+        ),
+        create("/sw", "tex.switch", &[("index", Value::Float(1.0)), ("inactive", "skip".into())]),
+        connect("/k", "/sw", 0),
+        connect("/v", "/sw", 1),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let restarts = crate::tex::video_file::VideoRestarts::new();
+    rig.cooker.provide(restarts.clone());
+    let info = |rig: &Rig, name: &str| {
+        let port = Port { node: rig.id("/v"), output: 1 };
+        rig.cooker.output(port).and_then(|d| d.get::<penumbra_core::Chans>()?.value(Some(name)))
+    };
+    // Cooks the switch (time standing still) until the video shows `frame`.
+    let until = |rig: &mut Rig, frame: f64, why: &str| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            rig.cook("/sw");
+            if info(rig, "frame") == Some(frame) {
+                return;
+            }
+            assert!(Instant::now() < deadline, "{why}: frame {:?}, not {frame}", info(rig, "frame"));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    until(&mut rig, 24.0, "opened at start");
+    // A rising edge restarts at the start as it is now.
+    rig.edit(&[set("/v.start", Value::Float(0.5)), set("/v.restart", Value::Bool(true))]);
+    until(&mut rig, 15.0, "the edge");
+    assert_eq!(info(&rig, "restarts"), Some(1.0));
+    // Held on, no further restart; a request does one.
+    rig.edit(&[set("/v.start", Value::Float(0.2))]);
+    for _ in 0..5 {
+        rig.cook("/sw");
+    }
+    assert_eq!(info(&rig, "frame"), Some(15.0), "on is not an edge");
+    assert!(restarts.request(rig.id("/v")));
+    until(&mut rig, 6.0, "the request");
+    // Coming back after a second out of use restarts; staying in use does not.
+    rig.edit(&[set("/v.restart_on_show", Value::Bool(true)), set("/v.start", Value::Float(0.1))]);
+    rig.clock.advance(1);
+    rig.cook("/sw");
+    rig.edit(&[set("/sw.index", Value::Float(0.0))]);
+    for _ in 0..60 {
+        rig.clock.advance(1);
+        rig.cook("/sw");
+    }
+    rig.edit(&[set("/sw.index", Value::Float(1.0))]);
+    rig.clock.advance(1);
+    until(&mut rig, 3.0, "back in use");
+    rig.edit(&[set("/v.start", Value::Float(0.3))]);
+    for _ in 0..5 {
+        rig.clock.advance(1);
+        rig.cook("/sw");
+    }
+    assert_eq!(info(&rig, "frame"), Some(3.0), "in use all along");
+    assert_eq!(info(&rig, "restarts"), Some(3.0));
+}
+
 #[test]
 fn a_switch_that_skips_cooks_only_what_it_shows() {
     let Some(gpu) = gpu() else { return };

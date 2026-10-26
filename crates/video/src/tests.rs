@@ -364,6 +364,50 @@ fn player_holds_the_last_frame_and_seeks_backwards() {
     assert!(p.stats().seeks >= 1);
 }
 
+/// Calls `show` at `t` for a while, as a cook thread would every frame, so the second thread
+/// gets its pre-roll decoded.
+fn hold(p: &mut Player, t: f64, looping: bool) {
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(300) {
+        p.show(t, looping).unwrap();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn player_restarts_at_the_cue_without_seeking() {
+    // Not looping: at the end the second thread holds the cue.
+    let mut p = Player::new(&ramp(), Limits::default(), None).unwrap();
+    p.set_cue(0.5);
+    let Shown::New(f) = wait_for(&mut p, 5.0, false) else { panic!("no frame") };
+    assert_eq!(ramp_index(&f), 29);
+    hold(&mut p, 5.0, false);
+    p.restart();
+    let Shown::New(f) = p.show(0.5, false).unwrap() else { panic!("the cue was not ready: {:?}", p.stats()) };
+    assert_eq!(ramp_index(&f), 15);
+    let Shown::New(f) = wait_for(&mut p, 0.55, false) else { panic!("no frame after the cue") };
+    assert_eq!(ramp_index(&f), 16);
+    let stats = p.stats();
+    assert_eq!((stats.seeks, stats.restarts, stats.loops), (0, 1, 0), "{stats:?}");
+    assert_eq!(p.position(), Some((0, 16)));
+
+    // Looping with the cue at the start: the loop's pre-roll serves the restart.
+    let mut p = Player::new(&ramp(), Limits::default(), None).unwrap();
+    let Shown::New(_) = wait_for(&mut p, 0.4, true) else { panic!("no frame") };
+    hold(&mut p, 0.4, true);
+    p.restart();
+    let Shown::New(f) = p.show(0.0, true).unwrap() else {
+        panic!("the start was not ready: {:?}", p.stats())
+    };
+    assert_eq!(ramp_index(&f), 0);
+    let stats = p.stats();
+    assert_eq!((stats.seeks, stats.restarts, stats.loops), (0, 1, 0), "{stats:?}");
+    // Playback goes on from the new pass, loops included.
+    let Shown::New(f) = wait_for(&mut p, 1.1, true) else { panic!("no frame after the loop") };
+    assert_eq!(ramp_index(&f), 3);
+    assert_eq!(p.position(), Some((1, 3)));
+}
+
 #[test]
 fn player_reports_open_errors() {
     let mut p = Player::new(&fixture("missing.mp4"), Limits::default(), None).unwrap();

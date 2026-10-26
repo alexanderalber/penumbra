@@ -7,17 +7,26 @@
 //! cooking (nothing downstream wants it) pauses there and resumes where it was, instead of
 //! seeking to wherever the show time has moved meanwhile.
 //!
+//! A restart starts the clip over from `start`: a rising edge on the `restart` param (a bound
+//! channel crossing 0.5), a request through [`VideoRestarts`] (`video_file.restart`, the panel's
+//! button), or, with `restart_on_show`, the node coming back into use after half a second or more
+//! out of it (a switch or sequence picked it again; thumbnails do not count). The player keeps
+//! the frames at `start` decoded where it can, so the restart shows at once.
+//!
 //! The `info` output carries channels about playback, updated with every new frame: `frame`,
-//! `progress` (0 to 1 through the clip), `loops` (passes completed), `late` (frames that were
-//! due before they were decoded) and `seeks`.
+//! `progress` (0 to 1 through the clip), `loops` (passes completed since the last restart),
+//! `late` (frames that were due before they were decoded), `seeks` and `restarts`.
 
-use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, Unit};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
+
+use penumbra_core::{Channel, Chans, Error, Name, NodeId, ParamSpec, Unit, lock};
 use penumbra_gpu::bc::{BcColor, BcConverter, BcFormat, BcFrame};
 use penumbra_gpu::video::{Converter, Planes, Transfer, VideoColor, VideoPlanes};
 use penumbra_gpu::{Gpu, TexRing};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc, NodeTypes,
-    Operator,
+    Operator, Waker,
 };
 use penumbra_video::{
     Frame, HapColor, HapFrame, Limits, Matrix, PixelData, Player, Range, Shown, VideoFrame,
@@ -56,12 +65,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                         .range(0.0, 60.0)
                         .unit(Unit::Seconds)
                         .more()
-                        .doc("Where playback begins when the file is (re)loaded"),
+                        .doc("Where playback begins when the file is loaded and where a restart goes"),
                 )
+                .param(
+                    ParamSpec::bool("restart", false)
+                        .doc("Turning on starts the clip over from `start`; bind a channel to cue it"),
+                )
+                .param(ParamSpec::bool("restart_on_show", false).doc(
+                    "Starts over whenever the clip comes back into use, such as a switch or sequence picking it",
+                ))
                 .output("out", DataKind::Tex)
                 .output("info", DataKind::Chan)
                 .describe_output("out", "The video's picture, at the file's size")
-                .describe_output("info", "Playback: frame, progress (0 to 1), loops, late, seeks")
+                .describe_output("info", "Playback: frame, progress (0 to 1), loops, late, seeks, restarts")
                 .time_dependent(),
             || Box::new(Video::default()) as Box<dyn Operator>,
         )
@@ -85,6 +101,63 @@ struct Video {
     has_output: bool,
     /// The file could not be opened.
     failed: Option<String>,
+    /// `restart` at the last cook (`None` before the first), for its rising edge.
+    restart_was: Option<bool>,
+    /// Restart requests through [`VideoRestarts`] taken so far (`None` before the first cook).
+    requests: Option<u64>,
+}
+
+/// Restart requests from outside the cook (`video_file.restart`, the panel's button), by node.
+/// Provided by the engine as a cooker resource; cheap to clone.
+#[derive(Clone, Default)]
+pub struct VideoRestarts(Arc<Mutex<BTreeMap<NodeId, Entry>>>);
+
+struct Entry {
+    waker: Waker,
+    requested: u64,
+}
+
+impl VideoRestarts {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The node starts its clip over at its next cook. False when it has not cooked yet.
+    pub fn request(&self, node: NodeId) -> bool {
+        let mut entries = lock(&self.0);
+        let Some(e) = entries.get_mut(&node) else { return false };
+        e.requested += 1;
+        e.waker.wake();
+        true
+    }
+
+    /// Forgets nodes not in `keep`.
+    pub fn prune(&self, keep: impl Fn(NodeId) -> bool) {
+        lock(&self.0).retain(|id, _| keep(*id));
+    }
+
+    /// Registers the node's waker; the number of requests made so far.
+    fn check_in(&self, node: NodeId, waker: Waker) -> u64 {
+        let mut entries = lock(&self.0);
+        let e = entries.entry(node).or_insert(Entry { waker: waker.clone(), requested: 0 });
+        e.waker = waker;
+        e.requested
+    }
+}
+
+impl Video {
+    /// Whether this cook starts the clip over (see the module docs). Reads every trigger, so
+    /// edges and requests are taken even while the file is not open yet.
+    fn restart_due(&mut self, cx: &CookContext<'_>) -> Result<bool, CookError> {
+        let on = cx.bool("restart")?;
+        let edge = on && self.restart_was == Some(false);
+        self.restart_was = Some(on);
+        let requested = cx.resource::<VideoRestarts>().map_or(0, |r| r.check_in(cx.node(), cx.waker()));
+        let asked = self.requests.is_some_and(|r| requested > r);
+        self.requests = Some(requested);
+        let back = cx.bool("restart_on_show")? && cx.since_last_use().is_some_and(|gap| gap > GAP_SECONDS);
+        Ok(edge || asked || back)
+    }
 }
 
 impl Operator for Video {
@@ -109,6 +182,8 @@ impl Operator for Video {
             self.failed = None;
             self.late = (0, 0.0);
         }
+        let start = cx.float("start")?;
+        let restart = self.restart_due(cx)?;
         let now = cx.time().seconds();
         let dt = match self.last_time {
             Some(last) if (0.0..=GAP_SECONDS).contains(&(now - last)) => now - last,
@@ -117,13 +192,19 @@ impl Operator for Video {
             None => 0.0,
         };
         self.last_time = Some(now);
-        if cx.bool("play")? {
+        if restart {
+            self.playhead = start;
+        } else if cx.bool("play")? {
             self.playhead += dt * cx.float("speed")?.clamp(0.0, 16.0);
         }
         let looping = cx.bool("loop")?;
         let Some(player) = self.player.as_mut() else {
             return Err(CookError::Pending);
         };
+        player.set_cue(start);
+        if restart {
+            player.restart();
+        }
         let shown = player.show(self.playhead, looping);
         let stats = player.stats();
         if stats.late > self.late.0 {
@@ -180,6 +261,7 @@ fn info(player: &mut Player, rate: f64) -> Result<Chans, CookError> {
         ("loops", pass as f64),
         ("late", stats.late as f64),
         ("seeks", stats.seeks as f64),
+        ("restarts", stats.restarts as f64),
     ];
     let mut channels = Vec::with_capacity(values.len());
     for (name, v) in values {

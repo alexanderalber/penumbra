@@ -107,6 +107,8 @@ pub enum Action {
         node: NodeId,
         delay: f64,
     },
+    /// A `tex.video_file` starts its clip over (`video_file.restart`).
+    RestartVideo(NodeId),
     /// The outlines of `from`'s picture (a path, or a name beside `node`) become `poly` lines
     /// in the `tex.shapes` `node` (`shapes.trace`).
     Trace {

@@ -64,6 +64,16 @@ pub fn test_types() -> NodeTypes {
     );
     simple(
         &mut t,
+        NodeDesc::new("test.since", "Seconds since last in use, -1 for none")
+            .time_dependent()
+            .output("out", DataKind::Chan),
+        |cx| {
+            cx.time();
+            chan(cx.since_last_use().unwrap_or(-1.0))
+        },
+    );
+    simple(
+        &mut t,
         NodeDesc::new("test.sneaky", "Reads time undeclared").output("out", DataKind::Chan),
         |cx| chan(cx.time().seconds()),
     );

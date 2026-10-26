@@ -9,6 +9,10 @@
 //! ahead (its queue full or its run decoded), so the two never compete for the CPU right where a
 //! loop just began. A jump in time (a pause scrubbed elsewhere, a speed change that outruns the
 //! decoder) seeks on the thread that is not needed for the loop.
+//!
+//! A clip that does not loop has no use for the second thread at its end, so that thread decodes
+//! the *cue* instead: where [`Player::restart`] starts playback over. A restart then is a queue
+//! switch as well. A looping clip whose cue is its start gets the same from the loop's pre-roll.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -49,6 +53,8 @@ pub struct PlayerStats {
     pub seeks: u64,
     /// Loop points crossed onto a decoded start.
     pub loops: u64,
+    /// Restarts ([`Player::restart`]).
+    pub restarts: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -98,6 +104,14 @@ pub struct Player {
     late_key: Option<(u64, usize)>,
     next_id: u64,
     stats: PlayerStats,
+    /// The iteration playback (re)started at: the `t` of [`Player::show`] counts from it.
+    epoch: u64,
+    /// The iteration [`Player::show`] wanted last.
+    last_iter: u64,
+    /// Seconds into the clip where a restart begins.
+    cue: f64,
+    /// A restart happened and no frame was asked for since (so its jump is not a loop).
+    restarting: bool,
 }
 
 impl Player {
@@ -135,6 +149,10 @@ impl Player {
             late_key: None,
             next_id: 0,
             stats: PlayerStats::default(),
+            epoch: 0,
+            last_iter: 0,
+            cue: 0.0,
+            restarting: false,
         })
     }
 
@@ -165,9 +183,24 @@ impl Player {
         Ok(self.info.as_ref())
     }
 
-    /// (loop pass, frame) of the frame shown last.
+    /// (loop pass since the last restart, frame) of the frame shown last.
     pub fn position(&self) -> Option<(u64, usize)> {
-        self.current
+        self.current.map(|(iter, frame)| (iter.saturating_sub(self.epoch), frame))
+    }
+
+    /// Where a restart begins, in seconds into the clip (clamped to it). Not looping, the
+    /// second thread keeps the frames from there decoded, so the restart shows at once.
+    pub fn set_cue(&mut self, t: f64) {
+        self.cue = if t.is_finite() { t.max(0.0) } else { 0.0 };
+    }
+
+    /// Starts playback over: from the next [`Player::show`] on, `t` counts from the start of a
+    /// new pass, so the caller passes the cue time again and moves on from there. Never waits;
+    /// the frames come from the thread holding the cue or, if none does, from a seek.
+    pub fn restart(&mut self) {
+        self.epoch = self.last_iter.saturating_add(1);
+        self.restarting = true;
+        self.stats.restarts += 1;
     }
 
     pub fn stats(&self) -> PlayerStats {
@@ -184,10 +217,11 @@ impl Player {
         let t = if t.is_finite() { t.max(0.0) } else { 0.0 };
         let (iter, local) = if looping {
             let k = (t / d).floor();
-            (k as u64, t - k * d)
+            (self.epoch.saturating_add(k as u64), t - k * d)
         } else {
-            (0, t.min(d))
+            (self.epoch, t.min(d))
         };
+        self.last_iter = iter;
         let index = info.index_at(local);
         let key = (iter, index);
         // Without keyframes a seek decodes from the start: catching up is never slower.
@@ -199,9 +233,10 @@ impl Player {
 
         let result =
             if self.current == Some(key) { Ok(Shown::Same) } else { self.take(key, info.frames, catch_up) };
-        if looping {
-            self.preroll(iter + 1, info.frames);
-        }
+        self.restarting = false;
+        // Next for the second thread: the start of the next pass, or where a restart goes.
+        let next = if looping { 0 } else { info.index_at(self.cue.min(d)) };
+        self.preroll(iter + 1, next, info.frames);
         result
     }
 
@@ -228,7 +263,7 @@ impl Player {
             self.active = Some(w);
             return Ok(self.not_ready(key));
         };
-        if self.active.is_some_and(|a| a != w) && index == 0 {
+        if self.active.is_some_and(|a| a != w) && index == 0 && !self.restarting {
             self.stats.loops += 1;
         }
         self.active = Some(w);
@@ -270,12 +305,12 @@ impl Player {
         Shown::Late
     }
 
-    /// Has the thread that is not active decode the start of iteration `iter`, once the active
-    /// one is ahead.
-    fn preroll(&mut self, iter: u64, frames: usize) {
+    /// Has the thread that is not active decode iteration `iter` from frame `start`, once the
+    /// active one is ahead.
+    fn preroll(&mut self, iter: u64, start: usize, frames: usize) {
         let Some(a) = self.active else { return };
         let o = 1 - a.min(1);
-        let ready = self.w(o).lock().run.is_some_and(|r| r.iter == iter && r.start == 0);
+        let ready = self.w(o).lock().run.is_some_and(|r| r.iter == iter && r.start == start);
         if ready {
             return;
         }
@@ -284,7 +319,7 @@ impl Player {
             s.run.is_some_and(|r| r.next >= r.end || s.queue.len() >= s.capacity)
         };
         if ahead {
-            self.assign(o, iter, 0, frames);
+            self.assign(o, iter, start, frames);
         }
     }
 

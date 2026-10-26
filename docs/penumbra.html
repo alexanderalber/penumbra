@@ -118,7 +118,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -312,6 +312,18 @@ water      15
 <li><p><strong><a class="ref" href="#tex.sequence"><code>tex.sequence</code></a></strong> makes the picture: wire the <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> into its <code>sequence</code> input and each piece's picture into <code>in&lt;k&gt;</code>. It passes the piece shown on as it is and blends two during a transition; only the one or two inputs shown cook, the others cost nothing. Black and white are made by the node (at the size of the picture they blend with, else <code>width</code> x <code>height</code>), unless <code>black</code> or <code>white</code> are wired: a projector's output can take its own black and a white limited to what it reaches. An input not wired shows black. For pictures per projector, use one <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> per output, all wired to the same <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a>.</p>
 </li>
 </ul>
+<h4 id="concepts-video-clips-on-cue">Video clips on cue</h4>
+<p>A <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a> starts its clip over from <code>start</code> in three ways:</p>
+<ul>
+<li><strong><code>restart</code></strong> turning on. Bind it to a channel: each time the channel crosses 0.5 upwards, the clip starts over. A channel that stays at 1 does not restart again.
+</li>
+<li><strong><code>restart_on_show</code></strong> on: the clip starts over each time it comes back into use after at least half a second out of it. A <a class="ref" href="#tex.switch"><code>tex.switch</code></a> with <code>inactive: skip</code> or a <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> picking the clip counts. A switch with <code>inactive: cook</code> keeps every input in use, so its clips never come back. The editor's thumbnails do not count as use.
+</li>
+<li><strong>The <code>restart</code> button</strong> in the param panel, or the command <a class="ref" href="#video_file.restart"><code>video_file.restart {path}</code></a>.
+</li>
+</ul>
+<p>The clip shows its first frame at once when the player holds it decoded: always for a clip with <code>loop</code> off, and for a looping clip whose <code>start</code> is 0. Otherwise the first frame takes a seek, a few frames on H.264, none on HAP. With <code>play</code> off, the clip jumps to <code>start</code> and holds there.</p>
+<p><strong>A cue from QLab or a lighting desk.</strong> Add a <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> and send it <code>/scene &lt;number&gt;</code> from the desk. Bind a <a class="ref" href="#tex.switch"><code>tex.switch</code></a>'s <code>index</code> to the <code>scene</code> channel, set <code>inactive: skip</code> and turn on <code>restart_on_show</code> on each clip. A GO then cuts to the clip's scene and the clip plays from its start. For a fade, turn on the switch's <code>blend</code> and bind <code>index</code> through a <a class="ref" href="#chan.filter"><code>chan.filter</code></a>; the incoming clip starts with the fade. To start the clip on screen over, send <code>/restart 1</code> and then <code>/restart 0</code>, and bind the clip's <code>restart</code> to the <code>restart</code> channel. In a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> show, bind <code>restart</code> to the piece's <code>run_&lt;name&gt;</code>, so a clip shown in two steps in a row starts over in each.</p>
 <p>A saved component could hold the same nodes, but the show itself (the steps, the row of entries, the gates) is the native node; a component around a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> and its <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> nodes is only worth it to reuse a whole show setup.</p>
 <h3 id="concepts-paths">Paths</h3>
 <p>Every node has a path: <code>/noise1</code> at the top level, <code>/scene/noise1</code> inside the component <code>scene</code>. A param is addressed as <code>/scene/noise1.speed</code>, one component of a vector as <code>/t.translate.0</code>.</p>
@@ -2515,7 +2527,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>64 to 2160 (soft)</td><td>Height of the black or white made while no picture is shown to take the size from</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#concepts-shows">Concepts › Shows</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#concepts-shows">Concepts › Shows</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a></p>
 </div></details>
 <details class="entry node" id="tex.shader"><summary><code class="name">tex.shader</code><span class="sum">An effect or generator of your own, written as a WGSL shader in a file; reloads when saved, its <code>// @param</code> lines become params</span></summary>
 <div class="body">
@@ -2699,7 +2711,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="tex.switch-example">Example</h5>
 <p>Scenes on the number keys: wire four scenes into <code>in0</code> to <code>in3</code>, add a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a> (its <code>keys</code> are <code>1 2 3 4</code> by default) and bind <code>index</code> to its <code>last</code> channel. Key 1 shows <code>in0</code>, key 2 <code>in1</code>, and so on. With <code>inactive: skip</code>, only the scene on screen costs anything.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a></p>
 </div></details>
 <details class="entry node" id="tex.text"><summary><code class="name">tex.text</code><span class="sum">Writes text into a picture, in an installed font or a bundled one</span></summary>
 <div class="body">
@@ -2836,7 +2848,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">tex</span>: The video's picture, at the file's size</li>
-<li><code>info</code> <span class="kind">chan</span>: Playback: frame, progress (0 to 1), loops, late, seeks</li>
+<li><code>info</code> <span class="kind">chan</span>: Playback: frame, progress (0 to 1), loops, late, seeks, restarts</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -2846,11 +2858,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>play</code></td><td>bool</td><td><code>true</code></td><td></td><td>Off holds the current frame</td></tr>
 <tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft)</td><td>Playback rate; every frame is still decoded, so high speeds cost CPU</td></tr>
 <tr><td><code>loop</code></td><td>bool</td><td><code>true</code></td><td></td><td>Off stops on the last frame</td></tr>
+<tr><td><code>restart</code></td><td>bool</td><td><code>false</code></td><td></td><td>Turning on starts the clip over from <code>start</code>; bind a channel to cue it</td></tr>
+<tr><td><code>restart_on_show</code></td><td>bool</td><td><code>false</code></td><td></td><td>Starts over whenever the clip comes back into use, such as a switch or sequence picking it</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>start</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where playback begins when the file is (re)loaded</td></tr>
+<tr><td><code>start</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where playback begins when the file is loaded and where a restart goes</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#recording">Recording</a>, <a href="#recording-colour">Recording › Colour</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#recording">Recording</a>, <a href="#recording-colour">Recording › Colour</a></p>
 </div></details>
 <details class="entry node" id="tex.video_in"><summary><code class="name">tex.video_in</code><span class="sum">A live camera or capture card</span></summary>
 <div class="body">
@@ -3086,7 +3100,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="chan.filter-timing">Timing</h5>
 <p>A channel with one value per frame steps by the time since the last cook. Frames in which nothing asked for the node still count. A channel with many samples is filtered sample by sample at its own rate. The first value of a channel passes unchanged. Switching <code>type</code> or <code>order</code> carries on from the last output. A seek back in time, <a class="ref" href="#node.reset"><code>node.reset</code></a> or R start the node over.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#audio-tips">Audio › Tips</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
 <details class="entry node" id="chan.from_table"><summary><code class="name">chan.from_table</code><span class="sum">Turns a table of numbers into channels, so its cells can drive params through bindings</span></summary>
 <div class="body">
@@ -3372,7 +3386,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>params</code></td><td>bool</td><td><code>false</code></td><td></td><td>Also set the params the addresses name: <code>/scene/speed 0.5</code> sets /scene.speed (live, outside the undo history). For continuous control, bind params to the channels instead</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-osc">The Helpers window › OSC</a>, <a href="#control">Control</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#helpers-osc">The Helpers window › OSC</a>, <a href="#control">Control</a></p>
 </div></details>
 <details class="entry node" id="chan.osc_out"><summary><code class="name">chan.osc_out</code><span class="sum">Sends channels and table rows as OSC to another program or device</span></summary>
 <div class="body">
@@ -3476,7 +3490,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>mode</code></td><td>once | loop</td><td><code>&quot;once&quot;</code></td><td></td><td>What the show does after its last step<ul><li><code>once</code>: it ends in black and stays there</li><li><code>loop</code>: it starts over from its lead-in, round after round</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#concepts-shows">Concepts › Shows</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#concepts-shows">Concepts › Shows</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a></p>
 </div></details>
 <details class="entry node" id="chan.spacemouse_in"><summary><code class="name">chan.spacemouse_in</code><span class="sum">The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show</span></summary>
 <div class="body">
@@ -5052,6 +5066,14 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>Loops: file, out, method, codec, frames_in, frames_out, loop_start, loop_end, fade_frames, score, motion, progress, done, error, seconds; {file?} (the recording or the loop) for the newest of that file</p>
 <p class="mentions">Mentioned in: <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
+</div></details>
+</div>
+<div class="group" id="group-video_file">
+<h3>video_file</h3>
+<details class="entry command" id="video_file.restart"><summary><code class="name">video_file.restart</code><span class="sum">A tex.video_file starts its clip over from its <code>start</code>, at the next frame: {path}</span></summary>
+<div class="body">
+<p>A tex.video_file starts its clip over from its <code>start</code>, at the next frame: {path}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a></p>
 </div></details>
 </div>
 <div class="group" id="group-video_in">

@@ -239,6 +239,32 @@ between them. Two kinds of node make it:
   limited to what it reaches. An input not wired shows black. For pictures per projector, use
   one `tex.sequence` per output, all wired to the same `chan.sequence`.
 
+### Video clips on cue
+
+A `tex.video_file` starts its clip over from `start` in three ways:
+
+- **`restart`** turning on. Bind it to a channel: each time the channel crosses 0.5 upwards,
+  the clip starts over. A channel that stays at 1 does not restart again.
+- **`restart_on_show`** on: the clip starts over each time it comes back into use after at
+  least half a second out of it. A `tex.switch` with `inactive: skip` or a `tex.sequence`
+  picking the clip counts. A switch with `inactive: cook` keeps every input in use, so its
+  clips never come back. The editor's thumbnails do not count as use.
+- **The `restart` button** in the param panel, or the command `video_file.restart {path}`.
+
+The clip shows its first frame at once when the player holds it decoded: always for a clip
+with `loop` off, and for a looping clip whose `start` is 0. Otherwise the first frame takes a
+seek, a few frames on H.264, none on HAP. With `play` off, the clip jumps to `start` and holds
+there.
+
+**A cue from QLab or a lighting desk.** Add a `chan.osc_in` and send it `/scene <number>` from
+the desk. Bind a `tex.switch`'s `index` to the `scene` channel, set `inactive: skip` and turn on
+`restart_on_show` on each clip. A GO then cuts to the clip's scene and the clip plays from its
+start. For a fade, turn on the switch's `blend` and bind `index` through a `chan.filter`; the
+incoming clip starts with the fade. To start the clip on screen over, send `/restart 1` and then
+`/restart 0`, and bind the clip's `restart` to the `restart` channel. In a `chan.sequence`
+show, bind `restart` to the piece's `run_<name>`, so a clip shown in two steps in a row starts
+over in each.
+
 A saved component could hold the same nodes, but the show itself (the steps, the row of
 entries, the gates) is the native node; a component around a `chan.sequence` and its
 `tex.sequence` nodes is only worth it to reuse a whole show setup.
