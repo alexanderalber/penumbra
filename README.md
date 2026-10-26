@@ -203,7 +203,7 @@ blobs, here from wandering spots that stand in for a camera.
 ![The fluid example: pink, yellow and cyan dye swirling over black](assets/gallery/fluid.jpg)
 
 The [feedback](examples/feedback/README.md) example: each frame fed back into the next, zoomed,
-turned, dimmed and shifted in hue.
+turned, softened, dimmed and shifted in hue.
 
 ![The feedback example: a rainbow ribbon trailing behind the word penumbra](assets/gallery/feedback.jpg)
 
