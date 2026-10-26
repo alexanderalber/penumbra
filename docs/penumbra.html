@@ -145,8 +145,6 @@ details.target { outline: 2px solid var(--accent); }
 </tbody>
 </table>
 <p>The script node needs a Python 3.12 or newer installed (see <a href="#scripts">Scripts</a>); everything else runs without it.</p>
-<h4 id="getting-started-when-the-gpu-gives-up">When the GPU gives up</h4>
-<p>penumbra stops creating GPU memory at 90 % of what Windows grants it, so a node asking for too much gets an error (or, for <a class="ref" href="#tex.time_machine"><code>tex.time_machine</code></a>, fewer frames and a warning) instead of taking the driver down. Should the GPU device still be lost (a driver reset, another program filling the GPU), penumbra saves the project file but no state, shows a message and exits with code 3. The next start opens the project with the show clock stopped and says why in the status bar; press play once the cause is fixed. The record of that lives in <code>%LOCALAPPDATA%\penumbra\gpu-lost.json</code> until the next start reads it.</p>
 <h3 id="getting-started-the-window">The window</h3>
 <p><img src="../assets/screenshot.png" alt="The window: the node editor on the left, parameters, viewer and change log on the right, the status bar at the bottom"></p>
 <ul>
@@ -154,7 +152,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong>Parameters</strong> (top right): the selected node's name, kind, a one-line summary, the lock, its cook time, and its params. Params that belong together sit in folded sections, the rarely used ones under &quot;more&quot;. The <code>?</code> beside the kind opens the node's documentation in the browser, as the <code>?</code> at the right end of every node's header in the editor does (see <a href="#getting-started-the-documentation-page">the documentation page</a>).
 </li>
-<li><strong>Viewer</strong> (middle right): the selected node's output, or the node pinned with <code>pin</code>. <code>window</code> shows it in a window of its own (on a second monitor, say). Its picture area stays 16:9 as the column grows and shrinks; drag its top edge for another shape, which is kept with the project, and double-click the edge to go back to 16:9 (<a class="ref" href="#ui.options"><code>ui.options {viewer_aspect}</code></a>). When the window is too low, the viewer gets shorter so the parameters keep some room. A node with several outputs gets a button per output. For geometry and renders it can also look around in the scene (<a href="#navigation">Looking around in 3D</a>). Channels are drawn as curves with a value axis and, along the bottom, seconds before now (the last 240 frames of a channel with one value, all samples of one with many; a spectrum or a picture's row is counted by sample instead). A <a class="ref" href="#chan.trail"><code>chan.trail</code></a> that is still filling spans its full <code>length</code> and grows in from the right. The <code>scale</code> button switches between one shared scale for all channels, a lane per channel with its own scale, and auto, which takes lanes when a channel that moves would be flat on the shared scale (<code>bpm</code> next to levels of 0 to 1). The choice is kept with the project (<a class="ref" href="#ui.options"><code>ui.options {chan_scale}</code></a>). A <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> shows its meters instead (see <a href="#audio-the-meters-in-the-viewer">Audio</a>); <code>view: meters</code> in the header switches to the plot and back, kept with the project as well (<a class="ref" href="#ui.options"><code>ui.options {audio_view}</code></a>). Some nodes are edited right in the viewer: a mapper's corners and mesh, a <a class="ref" href="#tex.shapes"><code>tex.shapes</code></a>' shapes, and a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> showing a scanned scene's <code>regions_camera.png</code>, whose faces are grouped into regions there (<a href="#scanning-51-regions-scanregions">Scanning</a>).
+<li><strong>Viewer</strong> (middle right): the selected node's output, or the node pinned with <code>pin</code>; <code>window</code> shows it in a window of its own. Channels are drawn as curves, geometry and renders can be looked around in, and some nodes are edited right here (a mapper's corners, shapes, a scan's regions). Details in <a href="#getting-started-the-viewer">The viewer</a>.
 </li>
 <li><strong>Changes</strong> (bottom right): every edit, newest first, with who made it (you, Claude, the project file). Hover an entry to outline the nodes it touched, click it to select them. Undo and Redo sit in its header.
 </li>
@@ -209,6 +207,12 @@ details.target { outline: 2px solid var(--accent); }
 </tbody>
 </table>
 <p>Keys go to the pane under the pointer, so F over the viewer does not frame the editor. Undo and redo work everywhere except while a text field has the focus, and over the region editor's picture, where they step through its own changes (the grouping is a file next to the scan, not part of the project). Moving nodes is an edit too: a drag is one step in the same history.</p>
+<h3 id="getting-started-the-viewer">The viewer</h3>
+<p>The viewer shows the selected node's output, or the node pinned with <code>pin</code>. <code>window</code> shows it in a window of its own (on a second monitor, say). Its picture area stays 16:9 as the column grows and shrinks; drag its top edge for another shape, which is kept with the project, and double-click the edge to go back to 16:9 (<a class="ref" href="#ui.options"><code>ui.options {viewer_aspect}</code></a>). When the window is too low, the viewer gets shorter so the parameters keep some room. A node with several outputs gets a button per output. For geometry and renders it can also look around in the scene (<a href="#navigation">Looking around in 3D</a>).</p>
+<p>Channels are drawn as curves with a value axis and, along the bottom, seconds before now (the last 240 frames of a channel with one value, all samples of one with many; a spectrum or a picture's row is counted by sample instead). A <a class="ref" href="#chan.trail"><code>chan.trail</code></a> that is still filling spans its full <code>length</code> and grows in from the right. The <code>scale</code> button switches between one shared scale for all channels, a lane per channel with its own scale, and auto, which takes lanes when a channel that moves would be flat on the shared scale (<code>bpm</code> next to levels of 0 to 1). The choice is kept with the project (<a class="ref" href="#ui.options"><code>ui.options {chan_scale}</code></a>). A <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> shows its meters instead (see <a href="#audio-the-meters-in-the-viewer">Audio</a>); <code>view: meters</code> in the header switches to the plot and back, kept with the project as well (<a class="ref" href="#ui.options"><code>ui.options {audio_view}</code></a>).</p>
+<p>Some nodes are edited right in the viewer: a mapper's corners and mesh, a <a class="ref" href="#tex.shapes"><code>tex.shapes</code></a>' shapes, and a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> showing a scanned scene's <code>regions_camera.png</code>, whose faces are grouped into regions there (<a href="#scanning-51-regions-scanregions">Scanning</a>).</p>
+<h3 id="getting-started-when-the-gpu-gives-up">When the GPU gives up</h3>
+<p>penumbra stops creating GPU memory at 90 % of what Windows grants it, so a node asking for too much gets an error (or, for <a class="ref" href="#tex.time_machine"><code>tex.time_machine</code></a>, fewer frames and a warning) instead of taking the driver down. Should the GPU device still be lost (a driver reset, another program filling the GPU), penumbra saves the project file but no state, shows a message and exits with code 3. The next start opens the project with the show clock stopped and says why in the status bar; press play once the cause is fixed. The record of that lives in <code>%LOCALAPPDATA%\penumbra\gpu-lost.json</code> until the next start reads it.</p>
 </div></details>
 <details class="entry guide" id="concepts"><summary><span class="name">Concepts</span></summary>
 <div class="body">
@@ -263,7 +267,7 @@ details.target { outline: 2px solid var(--accent); }
 <h3 id="concepts-palettes">Palettes</h3>
 <p>A palette param picks a set of colours by name, so a look is tried by switching the name instead of editing colours one by one. <a class="ref" href="#tex.ramp"><code>tex.ramp</code></a> and <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a> have one (a gradient, or a picture recoloured through a colormap, in one node), so do the library's <code>breathe</code> and <code>pulse</code>, and a shader declares its own (<code>// @param look palette = blood</code>, see <a href="#shaders-params">Shaders</a>).</p>
 <ul>
-<li><p><strong>Palettes</strong> are a handful of colours meant one by one (a colour per face): <code>sea</code>, <code>blood</code>, <code>candy</code> (the Halloween film's), <code>pumpkin</code>, <code>ember</code>, <code>neon</code>, <code>pastel</code>, <code>forest</code>, <code>primaries</code>, <code>mono</code>. <strong>Colormaps</strong> are ramps meant to be blended along: <code>grey</code>, <code>fire</code>, <code>ice</code>, <code>viridis</code>, <code>magma</code>, <code>inferno</code>, <code>plasma</code>, <code>cividis</code> and <code>twilight</code> (the last five from matplotlib). Either works anywhere; a node decides whether it takes the colours one by one or blends.</p>
+<li><p><strong>Palettes</strong> are a handful of colours meant one by one (a colour per face): <code>sea</code>, <code>blood</code>, <code>candy</code>, <code>pumpkin</code>, <code>ember</code>, <code>neon</code>, <code>pastel</code>, <code>forest</code>, <code>primaries</code>, <code>mono</code>. <strong>Colormaps</strong> are ramps meant to be blended along: <code>grey</code>, <code>fire</code>, <code>ice</code>, <code>viridis</code>, <code>magma</code>, <code>inferno</code>, <code>plasma</code>, <code>cividis</code> and <code>twilight</code> (the last five from matplotlib). Either works anywhere; a node decides whether it takes the colours one by one or blends.</p>
 </li>
 <li><p><strong>Your own:</strong> type hex colours straight into the param, as colorhunt or coolors give them: <code>31aaa9 f8e0a4 a82020 6c1a1a</code>, <code>#31aaa9, #f8e0a4</code>, <code>31aaa9-f8e0a4-a82020</code>, a pasted colorhunt or coolors URL, or the digits run together. 6 digits per colour (sRGB, as every colour picker shows them), 8 with alpha, up to 32 colours. To give one a name, put it in <code>palettes.txt</code> in the project directory, one per line:</p>
 <pre><code># my palettes
@@ -1288,7 +1292,7 @@ def cook(cx):
 </div></details>
 <details class="entry guide" id="control"><summary><span class="name">Control</span></summary>
 <div class="body">
-<p>Everything the UI does is a command, and every command is reachable over a local control channel. That is how Claude Code builds and changes networks, and how a script, a test or another program can drive penumbra. The full list is the <a href="#commands">command reference</a>; <code>commands</code> on the channel returns the same list from the running app.</p>
+<p>Everything the UI does is a command, and every command is reachable over a local control channel. That is how Claude Code builds and changes networks, and how a script, a test or another program can drive penumbra. The full list is the <a href="#commands">command reference</a>; <code>commands</code> on the channel returns the same list from the running app. This page is about that channel; OSC from a desk, QLab or a phone is in <a href="#helpers-osc">Helpers</a> and <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a>.</p>
 <h3 id="control-penumbra-cli-ctl"><code>penumbra-cli ctl</code></h3>
 <p><code>penumbra-cli</code> sends one request to the running app and prints the reply:</p>
 <pre><code>cargo run -p penumbra-cli -- ctl node.list
@@ -1915,7 +1919,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>file</code></td><td>file (png, jpg, jpeg, tif, tiff, exr, hdr, webp, bmp, tga, gif, qoi, pfm, ppm, pgm)</td><td></td><td></td><td>The picture file, relative to the project directory; saving it again reloads the node</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#tracking-setting-up">Tracking › Setting up</a>, <a href="#scanning">Scanning</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-51-regions-scanregions">Scanning › 5.1 Regions: scan.regions</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#tracking-setting-up">Tracking › Setting up</a>, <a href="#scanning">Scanning</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-51-regions-scanregions">Scanning › 5.1 Regions: scan.regions</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
 <details class="entry node" id="tex.in"><summary><code class="name">tex.in</code><span class="sum">An input port of the component this node sits in: what is wired to that port outside comes out here</span></summary>
 <div class="body">
@@ -2612,7 +2616,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>trace_min_area</code></td><td>float</td><td><code>64</code></td><td>0 to 10000 (soft)</td><td>Regions of fewer pixels of the picture are specks and dropped; holes in regions are filled</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
 </div></details>
 <details class="entry node" id="tex.slope"><summary><code class="name">tex.slope</code><span class="sum">How steeply a height map or picture rises, left to right in red and top to bottom in green: relief, or a map for tex.displace</span></summary>
 <div class="body">
@@ -2911,7 +2915,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves the width and height of the meters output alone</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
 </div></details>
 <details class="entry node" id="chan.audio_in"><summary><code class="name">chan.audio_in</code><span class="sum">Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel</span></summary>
 <div class="body">
@@ -3368,7 +3372,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>params</code></td><td>bool</td><td><code>false</code></td><td></td><td>Also set the params the addresses name: <code>/scene/speed 0.5</code> sets /scene.speed (live, outside the undo history). For continuous control, bind params to the channels instead</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-osc">The Helpers window › OSC</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-osc">The Helpers window › OSC</a>, <a href="#control">Control</a></p>
 </div></details>
 <details class="entry node" id="chan.osc_out"><summary><code class="name">chan.osc_out</code><span class="sum">Sends channels and table rows as OSC to another program or device</span></summary>
 <div class="body">
@@ -3507,7 +3511,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>active</code></td><td>bool</td><td><code>true</code></td><td></td><td>Records while on. Off holds the trail as it is; recording resumes from the moment active is on again</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#audio-tips">Audio › Tips</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
 </div>
 <div class="group" id="family-table">
@@ -5003,7 +5007,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="ui.options"><summary><code class="name">ui.options</code><span class="sum">The editor's options (right-click on empty space) and the viewer's channel options</span></summary>
 <div class="body">
 <p>The editor's options (right-click on empty space) and the viewer's channel options; {chan_bars?, viewer_background?, binding_lines?, chan_scale?: auto|shared|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale), audio_view?: meters|plot (what the viewer shows of a chan.audio_analysis: meters, beat and spectrum, or the channel plot), viewer_aspect?: auto|number (width over height of the viewer's picture area; the height follows the column's width; dragging the viewer's edge sets the aspect, auto is 16:9)}</p>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#audio-the-meters-in-the-viewer">Audio › The meters in the viewer</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#audio-the-meters-in-the-viewer">Audio › The meters in the viewer</a></p>
 </div></details>
 <details class="entry command" id="ui.screenshot"><summary><code class="name">ui.screenshot</code><span class="sum">PNG of the window</span></summary>
 <div class="body">

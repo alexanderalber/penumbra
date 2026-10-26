@@ -33,8 +33,7 @@ lists every one.
 - **Pictures:** sources are noise, ramps, text, shapes, images, PSD layers and video. Filters
   include level, HSV, blur, edge, displace, lookup, threshold, chroma key, matte and composite.
   Also feedback loops, a per-pixel time machine, a frame cache, a 2D fluid pushed by motion or
-  blobs, and a shader node in WGSL. The shader node reads its params from the shader file and
-  reloads on save.
+  blobs, and a shader node in WGSL whose params come from the shader file.
 - **Palettes and colormaps** as a kind of param: pick a set of colours by name, paste hex
   colours or a coolors or colorhunt link, or let a channel switch between them
   ([below](#palettes)).
@@ -45,18 +44,16 @@ lists every one.
   picture onto a 3D model of the room, to try a mapping before going on site.
 - **Projectors:** one output per display or per part of a display (for 4K splitters), found
   again after a replug by model and serial number (or connector). Corner pin, mesh warp,
-  soft-edge blending, drawn masks. Test patterns on every projector at once: alignment, focus,
-  motion (frame drops and stutter) and full fields (dead pixels). Projectors of different
-  models matched in colour and brightness from camera measurements, and evened out across each
-  picture (`projector.match`, `projector.flatfield`).
+  soft-edge blending, drawn masks. Test patterns on every projector at once (alignment, focus,
+  frame drops, dead pixels). Projectors of different models matched in colour and brightness
+  from camera measurements, and evened out across each picture.
 - **Scanned objects:** structured light from each projector, filmed by a camera
   ([scanning](docs/scanning.md)). The scan lines the projectors up (side by side or stacked),
   blends them, finds the flat faces and the objects of a scene (crates, a floor, a pumpkin) and
-  groups the faces into one region per crate front, side or lid. Regions can be edited by
-  clicking in the viewer. A relief panel becomes a height map. A
-  [content library](library/README.md) of 15 effects fits any scanned scene. Projector and
-  camera calibration (DLT, Levenberg-Marquardt) exists as commands; the interactive calibration
-  UI does not exist yet.
+  groups the faces into regions that can be edited by clicking. A relief panel becomes a height
+  map. A [content library](library/README.md) of 15 effects fits any scanned scene. Projector and
+  camera calibration (where a projector or camera stands and how it sees, solved from point
+  pairs) exists as commands; the interactive calibration UI does not exist yet.
 - **Shapes:** content per drawn shape: pulses, chases along outlines, ripples, each shape with
   its own colour and phase. Shapes can be traced from any mask or label picture (a
   background-removed photo, a threshold, a scan's regions), then simplified and edited by hand.
@@ -85,8 +82,8 @@ lists every one.
   any geometry as OBJ, STL or GLB with its transforms and instances baked in (`out.mesh`); each
   writes when its input changes or on command, into the project's `export/` folder by default.
 - **Automation:** headless runs execute a script of commands and save pictures of any node or
-  of the whole window. Every picture in this README was made that way
-  (`python tools/gallery.py`).
+  of the whole window. Every rendered picture in this README was made that way
+  (`python tools/gallery.py`); the photos are of a real setup.
 
 ## Inputs and outputs
 
@@ -120,7 +117,7 @@ one person's installations and has far fewer nodes in each family.
 
 Not in penumbra, as of now:
 
-- MIDI, audio output, audio files, VST plugins.
+- MIDI, timecode (LTC, MTC), audio output, audio files, VST plugins.
 - Depth cameras and other tracking hardware (Kinect, RealSense, ZED, Leap Motion).
 - Python expressions on parameters. Parameters are driven by binding them to channels. Python
   runs only in script nodes.
@@ -190,8 +187,8 @@ colormap. The screenshot at the top of this page shows its network.
 ![The curl-noise example: sticks in purple, pink and pale yellow swirling in a flow field](assets/gallery/curl-noise.jpg)
 
 The [synthwave](examples/synthwave/README.md) example: a glider flying over a wireframe city
-between two grids, through a nebula. The glider is the courier from Hikyaku, a browser game on
-alber.me. Everything else is made in the network: no pictures, no meshes from files.
+between two grids, through a nebula. Everything is made in the network: no pictures, no meshes
+from files.
 
 ![The synthwave example: a wireframe glider over wireframe blocks between white grids, in front of a purple and blue nebula](assets/gallery/synthwave.jpg)
 
@@ -272,6 +269,32 @@ cargo run -p penumbra
 
 With no arguments the app opens the project that was open last, on the first start the demo
 project.
+
+What a build needs:
+
+- Rust 1.95 or newer (`rust-version` in `Cargo.toml`).
+- Network on the first build: some dependencies (`photocraft`, `filmcraft`, `effectcraft`) are
+  git dependencies pinned to a revision, not crates.io releases.
+- Nothing else at build time. At run time the script node needs a Python 3.12 or newer
+  ([scripts](docs/scripts.md)) and the two NDI nodes the NDI runtime ([NDI](docs/ndi.md));
+  everything else runs without them.
+
+`cargo xtask ci` is the gate before a commit: `fmt`, `clippy`, `test`, `clippy` for Linux,
+the layer check (`core` and `graph` must not depend on wgpu or egui, nothing below `ui` on
+egui) and the third-party notices. `cargo xtask docs` regenerates the reference from the node
+types and commands, `cargo xtask bless` rewrites the golden images after an intended change
+of a render, `cargo xtask dist` builds the release zip. Linux is only checked by clippy so far.
+
+## How this is built
+
+Most of the code is written by Claude Code; the author directs it, reviews what it wrote and
+tests the result on the projectors, the camera and the shows the tool is built for. What keeps
+that honest is enforced, not promised: the workspace denies `unwrap`, `expect`, `panic`,
+`unreachable`, indexing that can panic and `unsafe` outside delimited FFI modules; the layer
+check runs on every dependency set; renders are compared with golden images; file, network and
+hardware input is tested with hostile data. The history on GitHub begins with the split into a
+public repository in October 2026; the work before that is in a private archive. How the
+code is put together is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Documentation
 

@@ -147,7 +147,7 @@ pub struct NodeDesc {
     /// without declaring it gets a warning (see [`CookContext::time`]); dirty tracking depends on
     /// the declaration being right.
     pub time_dependent: bool,
-    /// May hold child nodes (components, M2b).
+    /// May hold child nodes (a component).
     pub container: bool,
     /// An input or output of the component it sits in ([`PortRole`]).
     pub port: Option<PortRole>,

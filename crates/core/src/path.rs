@@ -3,7 +3,7 @@
 //! A node path is the chain of names from the root of the project to a node, written
 //! `/comp1/noise1`; `/` alone is the root. A parameter path appends the parameter after a dot:
 //! `/comp1/noise1.scale`. Names cannot contain `/` or `.`, so both forms parse without
-//! ambiguity. Paths already allow nesting, so components (M2b) need no new syntax.
+//! ambiguity. Paths already allow nesting, so components need no new syntax.
 
 use std::borrow::Borrow;
 use std::fmt;

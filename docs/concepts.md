@@ -98,7 +98,7 @@ and a shader declares its own (`// @param look palette = blood`, see
 [Shaders](shaders.md#params)).
 
 - **Palettes** are a handful of colours meant one by one (a colour per face): `sea`, `blood`,
-  `candy` (the Halloween film's), `pumpkin`, `ember`, `neon`, `pastel`, `forest`, `primaries`,
+  `candy`, `pumpkin`, `ember`, `neon`, `pastel`, `forest`, `primaries`,
   `mono`. **Colormaps** are ramps meant to be blended along: `grey`, `fire`, `ice`, `viridis`,
   `magma`, `inferno`, `plasma`, `cividis` and `twilight` (the last five from matplotlib).
   Either works anywhere; a node decides whether it takes the colours one by one or blends.

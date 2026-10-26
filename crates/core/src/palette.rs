@@ -123,8 +123,8 @@ impl Palette {
     }
 }
 
-/// The built-in set: (name, kind, colours as sRGB hex). The faces palettes of the Halloween
-/// film (sea, blood, candy) come first; the colormaps viridis, magma, inferno, plasma, cividis
+/// The built-in set: (name, kind, colours as sRGB hex). The palettes meant for faces (sea,
+/// blood, candy) come first; the colormaps viridis, magma, inferno, plasma, cividis
 /// and twilight are matplotlib's (CC0), sampled at 16 points.
 const BUILTIN: &[(&str, Kind, &str)] = &[
     ("sea", Kind::Palette, "8ad6d1 359fa0 fff0c5 ff8c52"),

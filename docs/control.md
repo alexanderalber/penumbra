@@ -3,7 +3,8 @@
 Everything the UI does is a command, and every command is reachable over a local control
 channel. That is how Claude Code builds and changes networks, and how a script, a test or
 another program can drive penumbra. The full list is the [command reference](reference/commands.md);
-`commands` on the channel returns the same list from the running app.
+`commands` on the channel returns the same list from the running app. This page is about that
+channel; OSC from a desk, QLab or a phone is in [Helpers](helpers.md#osc) and `chan.osc_in`.
 
 ## `penumbra-cli ctl`
 

@@ -1,8 +1,8 @@
 # synthwave
 
 A glider flies over a city of wireframe blocks, between a floor grid and a ceiling grid. Behind
-it lies a nebula, tinted warm and then cold. The glider is the courier from Hikyaku, a browser
-game on alber.me. Everything else is made in the network: no pictures, no meshes from files.
+it lies a nebula, tinted warm and then cold. Everything is made in the network: no pictures, no
+meshes from files.
 
 - **Grid:** `/grid_plane` is a plane split into 80 by 80 `cells`. `/grid_lines`
   (mat.wireframe) draws it as a grid. `/floor` lays it flat and moves it one cell per beat,
@@ -19,8 +19,8 @@ game on alber.me. Everything else is made in the network: no pictures, no meshes
 - **Glider:** `courier.obj` (`/courier`) holds hull, cabin, ducts, nozzles and fins. `fan.obj`
   (`/fan`) holds the blades of one lift fan. `/fan_turn` spins the blades by `/spin`, and
   `/fans` (geo.instance) puts four copies into the ducts by the rows of `/fan_places`. Two
-  copies are mirrored, so they turn the other way. `courier.py` writes both files; run it after
-  changing it.
+  copies are mirrored, so they turn the other way. `courier.py` writes both files (`python courier.py` in
+  this folder, standard library only); run it after changing it.
 - **Steering:** `/steer` runs `blocks.wgsl` at 1 by 1 pixels and hands on the lane where the
   glider flies: its place, its turn and its lean. `/course` reads that pixel as channels.
   `/ship` moves, turns and rolls the glider by them, and `/bob` lifts it up and down.
