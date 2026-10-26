@@ -172,6 +172,34 @@ pub enum PortRole {
     Out,
 }
 
+/// A block of its family a node type is listed in, after the family's common types: the add
+/// dialog gives each block columns of its own under a heading, and `node.kinds` reports it, so
+/// the control channel sees the same groups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum Block {
+    /// Live pictures and channels from outside: cameras, other programs, controllers, the
+    /// network. Files are not in it: a file is part of the project, an input comes and goes.
+    #[serde(rename = "in")]
+    In,
+    /// The steps of a structured-light scan and what draws on its result. Placed by the scan
+    /// commands far more often than by hand, so they stay out of the way of the common types.
+    #[serde(rename = "scan and shapes")]
+    ScanAndShapes,
+}
+
+impl Block {
+    /// The blocks in the order they follow the common types.
+    pub const ALL: [Block; 2] = [Block::In, Block::ScanAndShapes];
+
+    /// The heading over the block, as `node.kinds` names it.
+    pub fn heading(self) -> &'static str {
+        match self {
+            Block::In => "in",
+            Block::ScanAndShapes => "scan and shapes",
+        }
+    }
+}
+
 /// Everything a node type declares about itself. Owned data rather than `&'static`, because
 /// some node types (the shader node) derive their parameters from a file.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -191,6 +219,9 @@ pub struct NodeDesc {
     pub container: bool,
     /// An input or output of the component it sits in ([`PortRole`]).
     pub port: Option<PortRole>,
+    /// The block of its family it is listed in ([`Block`]); none for the common types.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub block: Option<Block>,
     /// Accepts parameters beyond `params`, declared per instance at cook time (the shader node
     /// reads them from its file, [`Operator::params`]). Such values are only checked for being
     /// finite when set; the operator checks them against its own declaration.
@@ -227,6 +258,7 @@ impl NodeDesc {
             time_dependent: false,
             container: false,
             port: None,
+            block: None,
             extra_params: false,
             stateful: false,
             sampled: false,
@@ -417,6 +449,12 @@ impl NodeDesc {
     /// An input or output of its component: one input and one output of the same kind.
     pub fn port(mut self, role: PortRole) -> Self {
         self.port = Some(role);
+        self
+    }
+
+    /// Lists the type in a block of its family ([`NodeDesc::block`]).
+    pub fn block(mut self, block: Block) -> Self {
+        self.block = Some(block);
         self
     }
 

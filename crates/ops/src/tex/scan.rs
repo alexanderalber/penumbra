@@ -45,7 +45,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             SCAN,
             "Measures with a camera what a projector lights (structured light) and keeps the result until the \
              next scan: maps to put content onto real objects",
-        )
+        ).block(penumbra_graph::Block::ScanAndShapes)
         .param(ParamSpec::text("projector", "").doc("The out.projector scanned (a path, or a name beside this node)"))
         .param(ParamSpec::text("camera", "").doc(
             "The tex.video_in that films the projectors; the scan button scans every tex.scan naming the same camera",

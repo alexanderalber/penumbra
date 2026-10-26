@@ -25,7 +25,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         NodeDesc::new(
             SPACEMOUSE_IN,
             "The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show",
-        )
+        ).block(penumbra_graph::Block::In)
         .output("out", DataKind::Chan)
         .describe_output(
             "out",

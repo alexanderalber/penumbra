@@ -309,13 +309,14 @@ reach anywhere.
   node inside it. One undo takes all of it back. Wires and bindings follow a rename by
   themselves. Params that name a node in plain text, such as `tex.scan`'s `projector`, keep the
   old name: fix them by hand.
-- **Library:** "Save to the library" in the node menu writes a `<name>.comp.ron` file; the add
-  dialog's `comp` tab lists the project's `components/` folder, the library shared by all
+- **Library:** "Save to the library" in the node menu writes a `<name>.comp.ron` file. The add
+  dialog's `library` tab lists the project's `components/` folder, the library shared by all
   projects (`%LOCALAPPDATA%\penumbra\components`, or `PENUMBRA_LIBRARY`) and the content
   library that ships with penumbra (marked `penumbra`; the `library` folder beside the app,
   catalogued with a preview of each in [its README](../library/README.md)): effects for scanned
   objects such as water in a crate, a lamp going round a pumpkin, contour lines or a carved
-  face. Adding one adds a copy. The cross beside a user's library entry moves its file into a
+  face. All of them stand in one list by name; the place each comes from is at the right of
+  its entry. Adding one adds a copy. The cross beside a user's library entry moves its file into a
   `removed/` folder beside it; penumbra's own cannot be removed.
 
 Files a component refers to (a shader, an image) are relative to the project. A component in a

@@ -20,6 +20,7 @@ pub const SPOUT_IN: &str = "tex.spout_in";
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(SPOUT_IN, "A picture from another program on this machine, through Spout (Windows)")
+            .block(penumbra_graph::Block::In)
             .param(ParamSpec::text("sender", "").doc(
                 "The sender's name (the ... menu lists those running); empty: the active sender, the one \
                  picked last in a Spout program, else the first",

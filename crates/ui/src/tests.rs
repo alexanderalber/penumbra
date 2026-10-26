@@ -99,7 +99,7 @@ fn build_wire_tweak_and_undo_through_the_ui() {
         .collect();
     assert_eq!(
         tabs,
-        ["tex", "chan (match)", "table", "rendering", "system"],
+        ["tex", "chan (match)", "table", "rendering", "system", "library"],
         "Enter without a match in tex did nothing"
     );
     assert_eq!(reply(&replies, "node.info", 3)["kind"], "chan.lfo", "typed into the dialog, Enter");

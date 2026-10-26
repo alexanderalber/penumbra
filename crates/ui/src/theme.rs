@@ -139,7 +139,8 @@ pub fn family_color(family: &str) -> Color32 {
         "script" => Color32::from_rgb(225, 205, 80),
         // Components hold nodes of every family: a colour of their own, turquoise, away from
         // tex's violet (the two looked alike).
-        "comp" => Color32::from_rgb(60, 190, 180),
+        // The library tab of the add dialog holds component files: their colour.
+        "comp" | "library" => Color32::from_rgb(60, 190, 180),
         _ => Color32::from_gray(120),
     };
     c.gamma_multiply(0.55)

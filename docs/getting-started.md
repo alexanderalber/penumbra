@@ -94,7 +94,10 @@ it.
 
 1. **Add a node:** press Tab, or double-click on empty canvas. The add dialog has a tab per
    family (Tab cycles them); type to narrow the list, Enter takes the first match, a click
-   takes any. Try `tex` > `noise`.
+   takes any. Try `tex` > `noise`. The everyday types come first in each tab. Live inputs
+   (cameras, NDI, OSC, the keyboard and the like) stand apart under "in", the scan's own
+   nodes under "scan and shapes" at the end of `tex`. Ready-made effects are in the `library`
+   tab.
 2. **Add a second one fed from the first:** with exactly one node selected, a new node is
    wired to it and placed to its right. Select the noise, add `tex` > `level`.
 3. **Wire by hand:** drag from an output (right edge of a node) to an input (left edge). Drag

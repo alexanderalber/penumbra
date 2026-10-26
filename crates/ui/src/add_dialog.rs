@@ -5,6 +5,13 @@
 //! were too many); the colours tell them apart, and a heading over each family's columns says
 //! what it holds, since the colours alone left one guessing which block was which.
 //!
+//! Within a family the common types come first, the family's component ports after them behind a
+//! line. The live inputs (`in`) and, in `tex`, the scan workflow (`scan and shapes`) follow in
+//! columns of their own under a heading ([`penumbra_graph::Block`]), so the types placed by hand
+//! every day are not spread out between them. The content library has a tab of its own,
+//! `library`, in the components' colour: penumbra's components and the user's in one list, each
+//! marked with where it lies.
+//!
 //! Typing does not hide types: those whose name does not contain the text are greyed out, so
 //! the grid keeps its shape and the eye its places. Families with a match are marked in their
 //! tab (bright text, a bar underneath), the others dimmed; the dialog never switches the tab by
@@ -17,7 +24,7 @@ use std::sync::Arc;
 use egui::{
     Align2, Color32, CornerRadius, FontId, Key, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2,
 };
-use penumbra_graph::NodeTypes;
+use penumbra_graph::{Block, NodeTypes};
 
 use crate::icons::{self, Icon};
 use crate::{automation, theme};
@@ -26,6 +33,9 @@ use crate::{automation, theme};
 /// found in the registry follow alphabetically, one tab each.
 const GROUPS: [&[&str]; 5] =
     [&["tex"], &["chan"], &["table"], &["geo", "mat", "light", "view"], &["script", "out", "comp"]];
+/// The tab of the component files on offer: penumbra's library, the user's and the project's
+/// `components/`. Not a family of node types; it takes the colour of `comp`.
+pub const LIBRARY: &str = "library";
 /// Names of the tabs holding several families, by their first family; a tab of one family is named
 /// by it.
 const NAMES: [(&str, &str); 2] = [("geo", "rendering"), ("script", "system")];
@@ -87,6 +97,7 @@ fn groups(types: &NodeTypes) -> Vec<Vec<String>> {
         .collect();
     extra.sort();
     extra.dedup();
+    out.push(vec![LIBRARY.to_string()]);
     out.extend(extra.into_iter().map(|f| vec![f]));
     out
 }
@@ -99,50 +110,89 @@ struct Cell {
     family: String,
 }
 
-/// The types of a tab, each family from a new column; empty families take no room.
-fn cells(types: &NodeTypes, group: &[String], library: &[Offered]) -> Vec<Cell> {
-    let mut out = Vec::new();
-    let mut col = 0;
-    for family in group {
-        let kinds = kinds_of(types, family, library);
-        let columns = kinds.len().div_ceil(ROWS);
-        for (i, kind) in kinds.into_iter().enumerate() {
-            out.push(Cell { col: col + i / ROWS, row: i % ROWS, kind, family: family.clone() });
-        }
-        col += columns;
-    }
-    out
+/// Columns under one heading: a family's common types or one of its blocks.
+struct Section {
+    family: String,
+    block: Option<Block>,
+    first: usize,
+    last: usize,
 }
 
-/// The kinds of `family`, sorted by their short name, its component ports (`tex.in`,
-/// `tex.out`) last after a gap ([`GAP`]), so they do not read as a source and a sink; for
-/// `comp`, `base` first, then a gap and the component files on offer as `@name`.
+/// The types of a tab, each family and each block of it from a new column; empty ones take no
+/// room.
+fn cells(types: &NodeTypes, group: &[String], library: &[Offered]) -> (Vec<Cell>, Vec<Section>) {
+    let all: Vec<(&String, Option<Block>, Vec<String>)> = group
+        .iter()
+        .flat_map(|f| sections_of(types, f, library).into_iter().map(move |(b, k)| (f, b, k)))
+        .collect();
+    let rows = all.iter().map(|(_, _, kinds)| rows_for(kinds)).max().unwrap_or(ROWS);
+    let mut out = Vec::new();
+    let mut sections = Vec::new();
+    let mut col = 0;
+    for (family, block, kinds) in all {
+        let columns = kinds.len().div_ceil(rows);
+        if columns == 0 {
+            continue;
+        }
+        for (i, kind) in kinds.into_iter().enumerate() {
+            out.push(Cell { col: col + i / rows, row: i % rows, kind, family: family.clone() });
+        }
+        sections.push(Section { family: family.clone(), block, first: col, last: col + columns - 1 });
+        col += columns;
+    }
+    (out, sections)
+}
+
+/// Rows a section needs: [`ROWS`], or a few more where the line and the component ports would
+/// otherwise spill into a column of their own.
+fn rows_for(kinds: &[String]) -> usize {
+    let types = kinds.iter().position(|k| k == GAP).unwrap_or(kinds.len());
+    let columns = types.div_ceil(ROWS).max(1);
+    kinds.len().div_ceil(columns).max(ROWS)
+}
+
+/// Everything `family` offers, in grid order.
 fn kinds_of(types: &NodeTypes, family: &str, library: &[Offered]) -> Vec<String> {
+    sections_of(types, family, library).into_iter().flat_map(|(_, kinds)| kinds).collect()
+}
+
+/// The kinds of `family` by section: its common types sorted by their short name (`comp.base`
+/// first) and its component ports (`tex.in`, `tex.out`) after them behind a gap ([`GAP`]), so
+/// they do not read as a source and a sink; then each [`Block`], empty or not. The `library`
+/// tab holds the component files on offer as `@name`, by name.
+fn sections_of(types: &NodeTypes, family: &str, library: &[Offered]) -> Vec<(Option<Block>, Vec<String>)> {
+    if family == LIBRARY {
+        let mut files: Vec<&Offered> = library.iter().collect();
+        files.sort_by_key(|o| o.name.to_lowercase());
+        return vec![(None, files.iter().map(|o| format!("{LIBRARY_MARK}{}", o.name)).collect())];
+    }
     let in_family = |k: &&str| k.split_once('.').is_some_and(|(f, _)| f == family);
+    let block_of = |k: &str| types.desc(k).and_then(|d| d.block);
     let is_port = |k: &str| types.desc(k).is_some_and(|d| d.port.is_some());
-    let mut kinds: Vec<String> = types
+    let listed: Vec<&str> = types
         .kinds()
         .filter(in_family)
         // Only loading a project makes a placeholder of a node that did not load.
         .filter(|k| *k != penumbra_graph::broken::BROKEN_KIND)
-        .filter(|k| !is_port(k))
-        .map(str::to_string)
         .collect();
-    kinds.sort_by_key(|k| (*k != penumbra_ops::comp::COMP_KIND, short(k).to_lowercase()));
-    let mut ports: Vec<String> =
-        types.kinds().filter(in_family).filter(|k| is_port(k)).map(str::to_string).collect();
-    ports.sort_by_key(|k| short(k).to_lowercase());
+    let sorted = |keep: &dyn Fn(&str) -> bool| {
+        let mut kinds: Vec<String> = listed.iter().filter(|k| keep(k)).map(|k| (*k).to_string()).collect();
+        kinds.sort_by_key(|k| (*k != penumbra_ops::comp::COMP_KIND, short(k).to_lowercase()));
+        kinds
+    };
+    let mut common = sorted(&|k| !is_port(k) && block_of(k).is_none());
+    let ports = sorted(&|k| is_port(k));
     if !ports.is_empty() {
-        if !kinds.is_empty() {
-            kinds.push(GAP.to_string());
+        if !common.is_empty() {
+            common.push(GAP.to_string());
         }
-        kinds.extend(ports);
+        common.extend(ports);
     }
-    if family == "comp" && !library.is_empty() {
-        kinds.push(GAP.to_string());
-        kinds.extend(library.iter().map(|o| format!("{LIBRARY_MARK}{}", o.name)));
+    let mut out = vec![(None, common)];
+    for block in Block::ALL {
+        out.push((Some(block), sorted(&|k| !is_port(k) && block_of(k) == Some(block))));
     }
-    kinds
+    out
 }
 
 /// A component file on offer and where it lies: `project` (the project's `components/`) or
@@ -153,12 +203,10 @@ pub struct Offered {
     pub place: &'static str,
 }
 
-/// The empty cell before a family's component ports and between the `comp` tab's built-in types
-/// and the component files: a line, not a choice. Once the family has more built-in types than `base`, or penumbra ships
-/// components of its own, the tab gets a toggle between standard and user components instead.
+/// The empty cell before a family's component ports: a line, not a choice.
 const GAP: &str = "";
 
-/// Marks a component from the library among the kinds of the `comp` tab.
+/// Marks a component file among the kinds of the `library` tab.
 pub const LIBRARY_MARK: char = '@';
 
 fn short(kind: &str) -> &str {
@@ -177,7 +225,7 @@ impl AddDialog {
         Self { at, screen, filter: String::new(), focus: true, family: family.to_string(), title: None }
     }
 
-    /// `library`: the component files on offer, shown in the `comp` tab; choosing one gives
+    /// `library`: the component files on offer, shown in the `library` tab; choosing one gives
     /// `@name`.
     pub fn show(
         &mut self,
@@ -211,7 +259,7 @@ impl AddDialog {
             outcome = Outcome::Close;
         }
 
-        let cells = cells(types, group, library);
+        let (cells, sections) = cells(types, group, library);
         let first = cells.iter().map(|c| &c.kind).find(|k| matches(k, &filter)).cloned();
         if enter && let Some(k) = &first {
             outcome = Outcome::Chosen(k.clone());
@@ -230,7 +278,7 @@ impl AddDialog {
                     ui.add_space(2.0);
                     self.tabs(ui, &groups, active, types, library, &filter, auto);
                     ui.separator();
-                    headings(ui, group, &cells, width, auto);
+                    headings(ui, group, &sections, width, auto);
                     let grid = Grid {
                         cells: &cells,
                         group,
@@ -372,22 +420,32 @@ fn tab(
     r
 }
 
-/// A tab of several families: a heading over each, with a line in its colour across its
-/// columns.
-fn headings(ui: &mut Ui, group: &[String], cells: &[Cell], width: f32, auto: &mut automation::Registry) {
-    if group.len() <= 1 {
+/// A tab of several families or blocks: a heading over each, with a line in its family's colour
+/// across its columns. A family's common types are headed by the family in a shared tab, and
+/// by the line alone in a tab of their own, whose name says it already.
+fn headings(
+    ui: &mut Ui,
+    group: &[String],
+    sections: &[Section],
+    width: f32,
+    auto: &mut automation::Registry,
+) {
+    if sections.len() <= 1 {
         return;
     }
     let (row, _) = ui.allocate_exact_size(vec2(width, HEADING), Sense::hover());
     let painter = ui.painter_at(row);
-    for family in group {
-        let columns: Vec<usize> = cells.iter().filter(|c| &c.family == family).map(|c| c.col).collect();
-        let (Some(first), Some(last)) = (columns.iter().min(), columns.iter().max()) else {
-            continue;
-        };
+    for Section { family, block, first, last } in sections {
         let left = row.min.x + *first as f32 * CELL.x + 1.0;
         let right = row.min.x + (*last + 1) as f32 * CELL.x - 1.0;
-        let heading = HEADINGS.iter().find(|(f, _)| f == family).map_or(family.as_str(), |(_, h)| *h);
+        let (id, heading) = match block {
+            Some(b) => (format!("{family}.{}", b.heading().replace(' ', "_")), b.heading()),
+            None if group.len() > 1 => (
+                family.clone(),
+                HEADINGS.iter().find(|(f, _)| f == family).map_or(family.as_str(), |(_, h)| *h),
+            ),
+            None => (family.clone(), ""),
+        };
         let r = painter.text(
             pos2(left + 5.0, row.center().y - 1.0),
             Align2::LEFT_CENTER,
@@ -395,7 +453,9 @@ fn headings(ui: &mut Ui, group: &[String], cells: &[Cell], width: f32, auto: &mu
             FontId::proportional(13.0),
             theme::TEXT,
         );
-        auto.add(format!("add.heading.{family}"), r, heading);
+        if !heading.is_empty() {
+            auto.add(format!("add.heading.{id}"), r, heading);
+        }
         painter.line_segment(
             [pos2(left, row.max.y - 1.0), pos2(right, row.max.y - 1.0)],
             Stroke::new(2.0, theme::family_color(family)),
@@ -422,10 +482,15 @@ impl<'a> Grid<'a> {
         let (grid, _) = ui.allocate_exact_size(vec2(self.width, rows as f32 * CELL.y), Sense::hover());
         let painter = ui.painter_at(grid);
         if self.cells.is_empty() {
+            let text = if self.group.iter().any(|f| f == LIBRARY) {
+                "no component files yet: \"Save to the library\" in a component's menu adds one".to_string()
+            } else {
+                format!("no {} node types yet", self.group.join(" or "))
+            };
             painter.text(
                 grid.left_top() + vec2(6.0, CELL.y / 2.0),
                 Align2::LEFT_CENTER,
-                format!("no {} node types yet", self.group.join(" or ")),
+                text,
                 FontId::proportional(14.0),
                 theme::TEXT_WEAK,
             );
@@ -553,4 +618,44 @@ fn summary(ui: &mut Ui, about: Option<&str>, types: &NodeTypes, library: &[Offer
     ui.allocate_ui_with_layout(vec2(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.add(egui::Label::new(egui::RichText::new(text).color(theme::TEXT_WEAK)).truncate())
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inputs_and_the_scan_workflow_follow_the_common_types() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let tex = sections_of(&types, "tex", &[]);
+        let blocks: Vec<Option<Block>> = tex.iter().map(|(b, _)| *b).collect();
+        assert_eq!(blocks, [None, Some(Block::In), Some(Block::ScanAndShapes)]);
+        let common = &tex[0].1;
+        assert!(common.contains(&"tex.blur".to_string()));
+        assert!(!common.contains(&"tex.video_in".to_string()));
+        assert_eq!(common[common.len() - 3..], [GAP, "tex.in", "tex.out"], "ports last, after a line");
+        assert_eq!(tex[1].1, ["tex.ndi_in", "tex.spout_in", "tex.video_in"]);
+        assert_eq!(
+            tex[2].1,
+            ["tex.blend_weight", "tex.scan", "tex.scan_pattern", "tex.shape_content", "tex.shapes"]
+        );
+        let chan = sections_of(&types, "chan", &[]);
+        assert!(chan[1].1.contains(&"chan.audio_in".to_string()));
+        assert!(chan[0].1.contains(&"chan.osc_out".to_string()), "an output is a common type");
+    }
+
+    #[test]
+    fn the_library_is_a_tab_of_its_own() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let library = [
+            Offered { name: "water".into(), place: "penumbra" },
+            Offered { name: "Mine".into(), place: "library" },
+        ];
+        let tabs = groups(&types);
+        assert!(tabs.contains(&vec![LIBRARY.to_string()]));
+        assert_eq!(kinds_of(&types, LIBRARY, &library), ["@Mine", "@water"], "one list, by name");
+        assert_eq!(kinds_of(&types, "comp", &library), ["comp.base"], "comp keeps its own types");
+        let (_, sections) = cells(&types, &[LIBRARY.to_string()], &library);
+        assert_eq!(sections.len(), 1, "no sub-division");
+    }
 }

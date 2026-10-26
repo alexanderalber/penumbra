@@ -32,8 +32,8 @@ pub use network::{
     check_setting, natural_cmp, parse_expose,
 };
 pub use node::{
-    CookError, Cooked, Data, DataKind, Density, FnNodeType, Inactive, InputChooser, InputRun, ListedInput,
-    MAX_RUN, NodeDesc, NodeType, NodeTypes, Operator, PortRole, StateItem, WarmUp,
+    Block, CookError, Cooked, Data, DataKind, Density, FnNodeType, Inactive, InputChooser, InputRun,
+    ListedInput, MAX_RUN, NodeDesc, NodeType, NodeTypes, Operator, PortRole, StateItem, WarmUp,
 };
 pub use rename::rename;
 pub use replace::{Replacement, replace};

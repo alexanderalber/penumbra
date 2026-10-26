@@ -27,7 +27,7 @@ offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
 [Examples](../examples/README.md): small projects, each showing one side of penumbra.
 
 [Content library](../library/README.md): ready-made effects for scanned objects, as components
-with a preview each (add them from the add dialog's `comp` tab).
+with a preview each (add them from the add dialog's `library` tab).
 
 Generated from the code, so always complete:
 

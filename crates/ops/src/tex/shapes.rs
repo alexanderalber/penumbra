@@ -50,7 +50,7 @@ fn desc() -> NodeDesc {
     NodeDesc::new(
         SHAPES,
         "Shapes drawn on the surface (rectangles, ellipses, polygons) with tags: masks and outlines to light parts of a facade or object on their own",
-    )
+    ).block(penumbra_graph::Block::ScanAndShapes)
     .param(
         ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).doc(
             "Width of the surface in pixels (the mappers' input); shape coordinates are in these pixels",

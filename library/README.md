@@ -9,7 +9,7 @@ scan's regions.
 
 ## Using one
 
-- **Add it:** the add dialog's `comp` tab lists them marked `penumbra`; over the control channel
+- **Add it:** the add dialog's `library` tab lists them marked `penumbra`; over the control channel
   `comp.load {"file": "<name>"}`. Adding copies the component's own files (shaders, textures)
   into the project's `library/<name>/`, where its nodes look for them, so the project keeps
   working without penumbra's folder and can change its copies. A file the project already has is

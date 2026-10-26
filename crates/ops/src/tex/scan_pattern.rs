@@ -15,7 +15,7 @@ pub(super) fn builtin() -> Builtin {
             NodeDesc::new(
                 "tex.scan_pattern",
                 "The striped pictures of a structured light scan (Gray code), one per `pattern`: for scanning with another camera by hand",
-            ),
+            ).block(penumbra_graph::Block::ScanAndShapes),
             true,
         )
         .param(

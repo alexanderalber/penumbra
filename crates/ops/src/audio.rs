@@ -64,7 +64,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         NodeDesc::new(
             AUDIO_IN,
             "Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel",
-        )
+        ).block(penumbra_graph::Block::In)
         .sampled()
         .param(ParamSpec::text("device", "").doc(
             "Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's \

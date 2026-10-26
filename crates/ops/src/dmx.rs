@@ -81,7 +81,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         NodeDesc::new(
             DMX_IN,
             "DMX from a lighting desk over the network (Art-Net or sACN): each slot a channel to drive content with",
-        )
+        ).block(penumbra_graph::Block::In)
         .param(
             ParamSpec::choice("protocol", &["art_net", "sacn"])
                 .doc("What the sender speaks")

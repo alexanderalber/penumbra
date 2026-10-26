@@ -123,7 +123,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         NodeDesc::new(
             MOUSE_IN,
             "The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show",
-        )
+        ).block(penumbra_graph::Block::In)
         .param(ParamSpec::text("display", "").doc(
             "The display `x` and `y` are shares of, named as an output's `display` (or `\\\\.\\DISPLAY2`); \
              empty: the display the pointer is on",

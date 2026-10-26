@@ -1302,7 +1302,7 @@ impl Editor {
                 ui.close();
             }
             if is_comp {
-                let tip = "Save this component to the library. Add it to any project from the comp tab";
+                let tip = "Save this component to the library. Add it to any project from the add dialog's library tab";
                 if ui.button("Save to the library").on_hover_text(tip).clicked() {
                     actions.push(Action::SaveComponent(id));
                     ui.close();

@@ -33,7 +33,7 @@ fn desc() -> NodeDesc {
     NodeDesc::new(
         KIND,
         "A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only",
-    )
+    ).block(penumbra_graph::Block::ScanAndShapes)
     .param(
         ParamSpec::choice("mode", &["smooth", "detail"])
             .doc("How the picture is weighted")

@@ -235,14 +235,28 @@ fn nodes_md(types: &NodeTypes) -> String {
 "
             );
         }
-        let list: Vec<String> =
-            section.descs.iter().map(|d| format!("[{}](#{})", d.kind, d.kind.replace('.', ""))).collect();
+        let link = |d: &&NodeDesc| format!("[{}](#{})", d.kind, d.kind.replace('.', ""));
+        let list: Vec<String> = section.descs.iter().filter(|d| d.block.is_none()).map(link).collect();
         let _ = writeln!(
             out,
             "{}
 ",
             list.join(", ")
         );
+        // The blocks the add dialog sets apart, named as it heads them.
+        for block in penumbra_graph::Block::ALL {
+            let list: Vec<String> =
+                section.descs.iter().filter(|d| d.block == Some(block)).map(link).collect();
+            if !list.is_empty() {
+                let _ = writeln!(
+                    out,
+                    "*{}:* {}
+",
+                    block.heading(),
+                    list.join(", ")
+                );
+            }
+        }
         for desc in &section.descs {
             node_section(&mut out, desc);
         }

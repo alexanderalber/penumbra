@@ -31,6 +31,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "A picture (and sound) from another program or computer on the network, through NDI\u{ae}; needs \
              the NDI runtime (ndi.video)",
         )
+        .block(penumbra_graph::Block::In)
         .param(ParamSpec::text("source", "").doc(
             "The source's name as `PC (Source)` or a part of it, e.g. `OBS` (the ... menu lists those on \
              the network); empty: the first source",

@@ -40,7 +40,7 @@ pub const SEND_PACKET: usize = 1400;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
-        NodeDesc::new(OSC_IN, "OSC from apps, controllers and other programs (TouchOSC on a phone, say): every address a channel")
+        NodeDesc::new(OSC_IN, "OSC from apps, controllers and other programs (TouchOSC on a phone, say): every address a channel").block(penumbra_graph::Block::In)
             .param(
                 ParamSpec::int("port", DEFAULT_IN_PORT)
                     .clamp(0.0, 65535.0)
