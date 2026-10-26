@@ -637,7 +637,14 @@ mod tests {
         assert_eq!(tex[1].1, ["tex.ndi_in", "tex.spout_in", "tex.video_in"]);
         assert_eq!(
             tex[2].1,
-            ["tex.blend_weight", "tex.scan", "tex.scan_pattern", "tex.shape_content", "tex.shapes"]
+            [
+                "tex.blend_weight",
+                "tex.face_content",
+                "tex.scan",
+                "tex.scan_pattern",
+                "tex.shape_content",
+                "tex.shapes"
+            ]
         );
         let chan = sections_of(&types, "chan", &[]);
         assert!(chan[1].1.contains(&"chan.audio_in".to_string()));

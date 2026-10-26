@@ -10,6 +10,8 @@ per projector into height maps and light masks. Nor does a scene of flat faces w
 among them (boxes, a floor, a wall, a pumpkin on a crate): `scan.scene` finds every face and
 every object in one scan per projector, and rectifies any face of known aspect; `scan.regions`
 groups its faces into one region per crate front, side or lid and switches the floor off.
+Content delivered per face (a clip per crate front) gets a template per face from
+`scan.face_template` and lands on its face through `tex.face_content`.
 
 Everything here is a command (see [Control](control.md)); the results are plain files in the
 project, read by `tex.image_file`. Nothing of it runs per frame: during the show what remains is a
@@ -634,6 +636,71 @@ Then, optionally, even out each projector's light and the black around overlaps 
 `projector.flatfield` and the same scan folders (see [Even light across a projector, and black in
 overlaps](helpers.md#even-light-across-a-projector-and-black-in-overlaps)): it connects a gain map
 and a black lift to each `out.projector`.
+
+## 8. Content delivered per face
+
+A video designer often delivers one clip per surface: an MP4 or ProRes for the left crate's
+front, another for the lid. penumbra gives the designer a frame to paint in for each face, and
+puts the delivered clip back onto that face.
+
+**The faces.** `scan.faces` lists the faces of a scene by the names the commands and the node
+take. A region of `scan.regions` goes by its name ("pumpkin crate, lid"), or by `region 3`
+when it has none. A face of `scan.scene` goes by `face 7`, or just `7`. Region names survive a
+rescan; face numbers change with every one.
+
+    penumbra-cli ctl scan.faces
+
+**The templates.** `scan.face_template` writes one folder per face into `scene/faces/`. Without
+`faces` it writes every region of some size, or every face when the scene has no regions:
+
+    penumbra-cli ctl scan.face_template '{"faces": ["pumpkin crate, lid", 12], "size": 1920}'
+
+| file | what |
+|---|---|
+| `template.png` | the frame to paint in: the camera's photo of the face, the area outside it dimmed, its edge yellow, objects in front of it hatched, a grid in true squares |
+| `mask.png` | the same frame: white the face, grey an object in front of it, black not the face |
+| `face.json` | name, `size` in pixels, `aspect`, and how the frame was found |
+| `uv.png` | the face in the camera's picture (16-bit: red u, green v, blue 1 on the face), to preview a delivery on the photo in any tool that remaps by uv |
+| `uv_camera.exr`, `uv_N.exr` | the maps `tex.face_content` reads |
+
+`faces.json` in `scene/faces/` lists every face with a template, with its size and aspect.
+
+**The frame.** A face that is a quadrilateral is rectified: the template shows the face as if
+seen straight on, and a circle painted in it lands round on the real face when the aspect is
+right. Its corners come from `scan.scene` (a face rectified there, the lid given by its
+corners), from the straight corners `scan.regions` found, or from four edges fitted to its
+border. Any other face (an L-shaped region, a front cut by another crate) is framed by its
+bounding box in the camera's picture. Its template is then what the camera sees, perspective
+included; `frame_note` in the reply says why. Give such a face its four corners in camera
+pixels, far left first and clockwise, to rectify it anyway: `{"face": "left crate", "corners":
+[[x, y], ...]}`.
+
+**The aspect.** A face whose size is known should get it: `{"face": "pumpkin crate, lid",
+"aspect": [60, 40]}`. Without it the aspect is estimated from the perspective of the corners.
+That needs the camera's focal length, which the corners tell only when the camera sees the face
+at an angle from the side. Faces seen square on (the camera only tilted down at them) take the
+focal length the other faces of the same call told, else 1.5 times the picture's width;
+`focal` (pixels) gives it. `aspect_from` in the reply says which happened. A wrong aspect only
+stretches the template; the node still fills the face.
+
+**On the face: `tex.face_content`.** The delivered picture or clip (`tex.image_file`,
+`tex.video_file`) goes into its input. Pick the face from the menu (`...`) beside `face`: it
+lists the regions, the faces of `scan.scene` in a submenu, and makes a missing template on the
+spot. Out comes the picture on the face and transparent elsewhere:
+
+- `projector` camera: in the camera's picture. Lay it over other content made there with
+  `tex.composite`, then on to each projector as in [The network](#7-the-network).
+- `projector` 0, 1, ...: straight in that projector's pixels, numbered as `scan.scene`'s
+  `scans`. Sharper, since the clip is sampled once. Then `tex.blend_weight` with that
+  projector's weight, as for any content.
+
+`fit` stretch fills the face exactly; contain and cover keep the clip undistorted at the
+template's aspect. `objects` on also draws over objects standing in front of the face. A clip
+that should restart on a cue is a `tex.video_file` with `restart`, see [Video clips on
+cue](concepts.md#video-clips-on-cue).
+
+After a rescan, run `scan.face_template` again: the maps follow the new scan, the nodes reload
+them, and the delivered clips stay as they are.
 
 ## Example: a relief from scan to picture
 

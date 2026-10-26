@@ -12,7 +12,7 @@ Sections: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat),
 
 *in:* [tex.ndi_in](#texndi_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
-*scan and shapes:* [tex.blend_weight](#texblend_weight), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes)
+*scan and shapes:* [tex.blend_weight](#texblend_weight), [tex.face_content](#texface_content), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes)
 
 ### tex.blend_weight
 
@@ -262,6 +262,27 @@ Outputs: `out` (tex).
 | `distance` | float | `1` | 0.5 to 8 px (soft) | Distance of the neighbours compared; larger finds broader, softer edges |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the edges |
 | `mode` | edges \| alpha \| over | `"edges"` |  | What the edges are drawn on; edges: on opaque black; alpha: on transparent, to lay over something else; over: over the input |
+
+### tex.face_content
+
+Puts a picture or video delivered for one face of a scanned scene onto that face, through the scan's mapping
+
+Inputs:
+
+- `in` (tex): The picture delivered for the face, at any size; best in its template's aspect
+
+Outputs:
+
+- `out` (tex): The picture on the face, transparent elsewhere; the camera's size or the projector's
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `face` | text |  |  | The face: a region's name, `region 3`, or `face 7` (scan.faces lists them). The menu beside it picks one and makes its template when there is none yet |
+| `scene` | text | `"scene"` |  | The folder scan.scene wrote, relative to the project. The faces' templates are in its faces folder |
+| `projector` | int | `-1` (camera) | -1 to 3 (soft) | Where the picture is made: camera, the camera's picture, to compose with other content made there; 0, 1, ...: that projector's own pixels (the order of scan.scene's scans), sharper than the camera's picture remapped; -1: camera |
+| `fit` | stretch \| contain \| cover | `"stretch"` |  | How the picture fills the face when its aspect differs from the face's; stretch: fills the face exactly, distorted if the aspect differs; contain: whole and undistorted, with empty bands at two sides; cover: fills the face undistorted, cut off at two sides |
+| `objects` | bool | `false` |  | Also over objects standing in front of the face (a pumpkin on a lid). Off: on the face only |
+| `aspect` *(more)* | float | `0` (template) | 0 to 100 | The face's width over its height, for contain and cover: template, as the face's template says; 0: template |
 
 ### tex.feedback
 

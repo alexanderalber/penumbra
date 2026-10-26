@@ -144,6 +144,8 @@ pub struct PenumbraApp {
     starts_fresh: bool,
     /// The `?` buttons may open the browser ([`crate::control::Bridge::allow_browser`]).
     browser: bool,
+    /// Face templates being made off the UI thread; each sends what to show when done.
+    face_jobs: Vec<Receiver<String>>,
 }
 
 /// Resizing the window once more so egui-wgpu reconfigures a surface whose last configure
@@ -238,6 +240,7 @@ impl PenumbraApp {
             flown: Instant::now(),
             starts_fresh: penumbra_engine::projects::starts_fresh(engine.session().dir()),
             browser: options.bridge.as_ref().is_some_and(|b| b.browser()),
+            face_jobs: Vec::new(),
             engine,
         }
     }
@@ -292,6 +295,19 @@ impl PenumbraApp {
     }
 
     fn apply(&mut self, actions: Vec<Action>, now: Instant) {
+        // Face templates made since: their message.
+        let mut done = Vec::new();
+        self.face_jobs.retain(|rx| match rx.try_recv() {
+            Ok(text) => {
+                done.push(text);
+                false
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => true,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => false,
+        });
+        if let Some(text) = done.pop() {
+            self.message = Some((text, now));
+        }
         let session = self.engine.session().clone();
         for action in actions {
             let result = match action {
@@ -438,6 +454,31 @@ impl PenumbraApp {
                             self.message = Some((text, now));
                         })
                         .map_err(|e| penumbra_core::Error::new(e.0))
+                }
+                Action::FaceTemplate { scene, face } => {
+                    let dir = self.engine.session().dir().to_path_buf();
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    let args = penumbra_engine::scan_faces::TemplateArgs::one(&scene, &face);
+                    let name = face.clone();
+                    let spawned = std::thread::Builder::new().name("face template".into()).spawn(move || {
+                        let text = match penumbra_engine::scan_faces::template(&dir, &args) {
+                            Ok(r) => r
+                                .get("message")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("template made")
+                                .to_string(),
+                            Err(e) => format!("no template for {name}: {}", e.0),
+                        };
+                        tx.send(text).ok();
+                    });
+                    match spawned {
+                        Ok(_) => {
+                            self.face_jobs.push(rx);
+                            self.message = Some((format!("making the template of {face}..."), now));
+                            Ok(())
+                        }
+                        Err(e) => Err(penumbra_core::Error::new(format!("cannot start the template: {e}"))),
+                    }
                 }
                 Action::CancelScan => {
                     if self.engine.scans().cancel() {

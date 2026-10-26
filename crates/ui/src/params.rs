@@ -73,6 +73,10 @@ pub struct ParamPanel {
     cameras: Option<(String, Result<Vec<penumbra_camera::DeviceInfo>, String>)>,
     /// Spout senders offered for a `tex.spout_in`'s `sender`, listed when the menu opens.
     spout_senders: Option<(String, Vec<penumbra_spout::Listing>)>,
+    /// The faces of the scene a `tex.face_content` names, listed when its face menu opens.
+    faces: Option<(String, Result<Vec<FaceOffer>, String>)>,
+    /// Actions a widget asked for that are not edits of the param (a face's template).
+    pending: Vec<Action>,
     /// Lines the colour row being drawn takes: swatch and fields on one, the fields below the
     /// swatch, or the fields two by two below it (narrow column).
     color_lines: u8,
@@ -264,6 +268,7 @@ impl ParamPanel {
         if !self.group_seen {
             self.group = None;
         }
+        actions.append(&mut self.pending);
     }
 
     /// A component's exposed params: rows of the inner params they stand for, under the exposed
@@ -921,6 +926,16 @@ impl ParamPanel {
                             .to_string();
                         self.camera_menu(ui, input.cameras, key, spec.name == "mode", &device, auto, new);
                     }
+                    if node.kind == penumbra_ops::tex::face_content::FACE_CONTENT && spec.name == "face" {
+                        let scene = input
+                            .types
+                            .desc(&node.kind)
+                            .and_then(|d| node.param(d, "scene"))
+                            .and_then(Value::as_str)
+                            .unwrap_or(penumbra_ops::tex::face_content::DEFAULT_SCENE)
+                            .to_string();
+                        self.face_menu(ui, input.project_dir, &scene, key, auto, new);
+                    }
                     if node.kind == penumbra_ops::tex::SPOUT_IN && spec.name == "sender" {
                         self.spout_menu(ui, key, auto, new);
                     }
@@ -1046,6 +1061,76 @@ impl ParamPanel {
         auto.add(format!("param.{key}.menu"), r.response.rect, "audio inputs");
         if r.inner.is_none() && self.audio_inputs.as_ref().is_some_and(|(k, _)| k == key) {
             self.audio_inputs = None;
+        }
+    }
+
+    /// The faces of the scene in folder `scene` for a `tex.face_content`'s `face`
+    /// (`param.<path>.menu`, entries `face.<folder>`): regions first, then the faces of
+    /// `scan.scene` in a submenu. Picking one without a template makes it, off the UI thread.
+    fn face_menu(
+        &mut self,
+        ui: &mut Ui,
+        dir: Option<&Path>,
+        scene: &str,
+        key: &str,
+        auto: &mut automation::Registry,
+        new: &mut Option<Value>,
+    ) {
+        let Some(dir) = dir else { return };
+        let mut picked: Option<FaceOffer> = None;
+        let r = ui.menu_button("\u{2026}", |ui| {
+            if self.faces.as_ref().is_none_or(|(k, _)| k != key) {
+                self.faces = Some((key.to_string(), face_offers(dir, scene)));
+            }
+            match self.faces.as_ref().map(|(_, l)| l) {
+                Some(Ok(list)) => {
+                    let entry = |ui: &mut Ui, f: &FaceOffer, auto: &mut automation::Registry| {
+                        let made = if f.made { "" } else { "  (its template is made when picked)" };
+                        let r = ui.button(format!("{}  {} px{made}", f.name, f.pixels));
+                        auto.add(format!("face.{}", f.folder), r.rect, f.name.clone());
+                        r.clicked()
+                    };
+                    let (regions, faces): (Vec<&FaceOffer>, Vec<&FaceOffer>) =
+                        list.iter().partition(|f| f.region);
+                    if regions.is_empty() {
+                        ui.label(
+                            RichText::new("no regions (scan.regions groups the faces)")
+                                .color(theme::TEXT_WEAK),
+                        );
+                    }
+                    for f in regions {
+                        if entry(ui, f, auto) {
+                            picked = Some(f.clone());
+                            ui.close();
+                        }
+                    }
+                    let r = ui.menu_button(format!("faces of scan.scene ({})", faces.len()), |ui| {
+                        egui::ScrollArea::vertical().max_height(480.0).show(ui, |ui| {
+                            for f in &faces {
+                                if entry(ui, f, auto) {
+                                    picked = Some((*f).clone());
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
+                    auto.add("face.faces", r.response.rect, "faces of scan.scene");
+                }
+                Some(Err(e)) => {
+                    ui.colored_label(theme::WARNING, e);
+                }
+                None => {}
+            }
+        });
+        auto.add(format!("param.{key}.menu"), r.response.rect, "faces of the scene");
+        if r.inner.is_none() && self.faces.as_ref().is_some_and(|(k, _)| k == key) {
+            self.faces = None;
+        }
+        if let Some(f) = picked {
+            *new = Some(Value::Text(f.name.clone()));
+            if !f.made {
+                self.pending.push(Action::FaceTemplate { scene: scene.to_string(), face: f.name });
+            }
         }
     }
 
@@ -1693,6 +1778,35 @@ fn font_options(node: &NodeDef, spec: &ParamSpec) -> Option<Vec<String>> {
         }
         _ => None,
     }
+}
+
+/// A face a `tex.face_content` can show, as its face menu offers it.
+#[derive(Clone, Debug)]
+struct FaceOffer {
+    name: String,
+    folder: String,
+    pixels: u64,
+    region: bool,
+    /// Its template exists.
+    made: bool,
+}
+
+/// The faces of the scene in `scene` (relative to the project `dir`), as `scan.faces` lists them.
+fn face_offers(dir: &Path, scene: &str) -> Result<Vec<FaceOffer>, String> {
+    use penumbra_engine::scan_faces;
+    use penumbra_ops::tex::face_content::{FACES_FOLDER, UV_CAMERA};
+    let scene_dir = scan_faces::scene_dir(dir, Some(Path::new(scene)));
+    let (list, _) = scan_faces::surfaces(&scene_dir).map_err(|e| e.0)?;
+    Ok(list
+        .into_iter()
+        .map(|s| FaceOffer {
+            made: scene_dir.join(FACES_FOLDER).join(&s.folder).join(UV_CAMERA).exists(),
+            name: s.name,
+            folder: s.folder,
+            pixels: s.camera_pixels,
+            region: s.kind == scan_faces::Kind::Region,
+        })
+        .collect())
 }
 
 /// The connected displays for a projector's `display` (`param.<path>.display.menu`, entries

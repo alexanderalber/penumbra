@@ -123,6 +123,12 @@ pub enum Action {
     Scan(NodeId),
     /// Stop the scan going on (`scan.cancel`).
     CancelScan,
+    /// Make the template of face `face` of the scene in folder `scene` (`scan.face_template`),
+    /// off the UI thread.
+    FaceTemplate {
+        scene: String,
+        face: String,
+    },
     /// The documentation at this node kind's entry, in the browser (`help.open`).
     Help(String),
 }

@@ -534,6 +534,12 @@ fn every_builtin_cooks_without_warnings() {
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
     std::fs::write(dir.join("poster.psd"), layers::psd()).unwrap();
+    // A face's uv map as scan.face_template writes it: the whole picture is the face.
+    let face = dir.join("scene/faces/face_1");
+    std::fs::create_dir_all(&face).unwrap();
+    let uv: Vec<[f32; 4]> = (0..64).map(|i| [(i % 8) as f32 / 8.0, (i / 8) as f32 / 8.0, 1.0, 1.0]).collect();
+    std::fs::write(face.join("uv_camera.exr"), penumbra_gpu::image::encode_exr_rgba32f(8, 8, &uv).unwrap())
+        .unwrap();
     // The placeholder of a node that did not load fails its cook on purpose.
     let kinds: Vec<String> =
         types.kinds().filter(|k| *k != penumbra_graph::broken::BROKEN_KIND).map(str::to_string).collect();
@@ -565,6 +571,7 @@ fn every_builtin_cooks_without_warnings() {
         }
         match kind.as_str() {
             "tex.image_file" => params.push(("file", "ramp.png".into())),
+            "tex.face_content" => params.push(("face", "1".into())),
             "tex.shader" => params.push(("file", "rings.wgsl".into())),
             "tex.video_file" => params.push(("file", "bars.mp4".into())),
             "tex.noise" => params.push(("speed", Value::Float(0.5))),

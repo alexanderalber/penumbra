@@ -34,6 +34,7 @@ pub mod projects;
 pub mod scan;
 pub mod scan_align;
 pub mod scan_capture;
+pub mod scan_faces;
 pub mod scan_regions;
 pub mod scan_relief;
 pub mod scan_run;
@@ -97,6 +98,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     scan_relief::register(&mut registry, engine);
     scan_scene::register(&mut registry, engine);
     scan_regions::register(&mut registry, engine);
+    scan_faces::register(&mut registry, engine);
     scan_synthetic::register(&mut registry, engine);
     scan_run::register(&mut registry, engine);
     projector::register(&mut registry, engine);

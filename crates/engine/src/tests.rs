@@ -1864,6 +1864,100 @@ fn regions_group_faces_by_pixel_and_switch_the_floor_off() {
 }
 
 #[test]
+fn a_face_gets_a_template_and_content_delivered_for_it_lands_on_it() {
+    use penumbra_calib::synthetic::Room;
+    let f = Fixture::new("scan_face_template");
+    let dir = f.engine.session().dir().to_path_buf();
+    let room = Room::default();
+    let exr = |m: &penumbra_calib::objects::Map| {
+        penumbra_gpu::image::encode_exr_rgba32f(m.width as u32, m.height as u32, &m.rgba).unwrap()
+    };
+    for (p, name) in ["a", "b"].iter().enumerate() {
+        let folder = dir.join(name);
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("proj_to_cam.exr"), exr(&room.to_camera(p).0)).unwrap();
+        std::fs::write(folder.join("cam_to_proj.exr"), exr(&room.from_camera(p))).unwrap();
+    }
+    assert!(f.fail("scan.faces", json!({})).contains("scan.scene"));
+    f.call("scan.scene", json!({"scans": ["a", "b"], "min_object": 500, "rectify": []}));
+    // Wall, top, front, floor.
+    let r = f.call("scan.faces", json!({}));
+    let names: Vec<&str> =
+        r["faces"].as_array().unwrap().iter().map(|x| x["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["face 1", "face 2", "face 3", "face 4"], "{r}");
+    assert_eq!(r["faces"][1]["template"], false, "{r}");
+
+    // The top (6 x 4, seen from above at an angle) and the front (6 x 3.1): rectified. The
+    // camera looks square at the crate, so the corners do not tell its focal length: given.
+    let r = f.call("scan.face_template", json!({"faces": [2, "face 3"], "size": 300}));
+    assert_eq!(r["faces"][0]["aspect_from"], "estimated, focal length assumed", "{r}");
+    let r = f.call("scan.face_template", json!({"faces": [2, "face 3"], "size": 300, "focal": room.focal}));
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    let top = &r["faces"][0];
+    assert_eq!(top["frame"], "rectified", "{r}");
+    assert_eq!(top["aspect_from"], "estimated with the focal length given", "{r}");
+    let aspect = |j: &Json| j["aspect"][0].as_f64().unwrap() / j["aspect"][1].as_f64().unwrap();
+    assert!((aspect(top) - 1.5).abs() < 0.08, "{r}");
+    assert!((aspect(&r["faces"][1]) - 6.0 / 3.1).abs() < 0.12, "{r}");
+    assert_eq!(top["size"][0], 300, "{r}");
+    for file in ["template.png", "mask.png", "uv.png", "uv_camera.exr", "uv_0.exr", "uv_1.exr", "face.json"] {
+        assert!(dir.join("scene/faces/face_2").join(file).exists(), "{file}");
+    }
+    assert!(dir.join("scene/faces/faces.json").exists());
+    assert_eq!(f.call("scan.faces", json!({}))["faces"][1]["template"], true);
+    // The mask: the ball stands on the top, so part of it is grey; most of it white.
+    let mask = penumbra_gpu::image::decode_file_raw(&dir.join("scene/faces/face_2/mask.png"), 8192, 1 << 24)
+        .unwrap();
+    let white = mask.rgba.iter().filter(|p| p[0] > 0.9).count() as f64 / mask.rgba.len() as f64;
+    let grey = mask.rgba.iter().filter(|p| (p[0] - 0.5).abs() < 0.1).count();
+    assert!(white > 0.7 && grey > 0, "{white} {grey}");
+
+    // Content delivered for the top: left half red, right half blue.
+    let (w, h) = (64u32, 40u32);
+    let picture: Vec<u8> =
+        (0..w * h).flat_map(|i| if i % w < w / 2 { [255, 0, 0, 255] } else { [0, 0, 255, 255] }).collect();
+    std::fs::write(dir.join("delivered.png"), penumbra_gpu::encode_png_rgba8(w, h, picture).unwrap())
+        .unwrap();
+    let Some(gpu) = warp() else { return };
+    f.engine.attach_gpu(gpu).unwrap();
+    f.call(
+        "node.create",
+        json!({"path": "/clip", "kind": "tex.image_file", "params": {"file": "delivered.png"}}),
+    );
+    f.call("node.create", json!({"path": "/on", "kind": "tex.face_content", "params": {"face": "face 7"}}));
+    f.call("node.connect", json!({"from": "/clip", "to": "/on", "input": "in"}));
+    assert!(f.fail("node.snapshot", json!({"path": "/on"})).contains("no template"));
+    f.call("node.set", json!({"path": "/on", "params": {"face": "2"}}));
+    let shot = dir.join("on.png");
+    let r = f.call("node.snapshot", json!({"path": "/on", "file": shot}));
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(480), Some(360)), "{r}");
+    let png = penumbra_gpu::image::decode_file_raw(&shot, 8192, 1 << 24).unwrap();
+    let at = |p: [f64; 3]| {
+        let c = room.camera_point(p).unwrap();
+        png.rgba[c[1] as usize * 480 + c[0] as usize]
+    };
+    // u runs along the top's far edge from its far left corner: the left of the crate.
+    let left = at(room.top_point(0, 0.2, 0.1));
+    let right = at(room.top_point(0, 0.8, 0.1));
+    assert!(left[0] > 0.9 && left[2] < 0.1 && left[3] > 0.9, "{left:?}");
+    assert!(right[2] > 0.9 && right[0] < 0.1, "{right:?}");
+    // Nothing on the wall or the front.
+    assert!(at(room.front_point(0, 0.5, 0.5))[3] < 0.01);
+    // Projector 0: its own pixels, half red half blue too.
+    f.call("node.set", json!({"path": "/on", "params": {"projector": 0}}));
+    let r = f.call("node.snapshot", json!({"path": "/on"}));
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(400), Some(300)), "{r}");
+    let mean = |k: usize| r["stats"]["mean"][k].as_f64().unwrap();
+    assert!(mean(0) > 0.004 && mean(2) > 0.004 && mean(1) < 0.001, "{r}");
+
+    assert!(f.fail("scan.face_template", json!({"faces": [9]})).contains("no face"));
+    assert!(f.fail("scan.face_template", json!({"size": 4})).contains("size"));
+    assert!(
+        f.fail("scan.face_template", json!({"faces": [{"face": 2, "aspect": [0, 1]}]})).contains("aspect")
+    );
+}
+
+#[test]
 fn scene_rectifies_any_face_of_a_crate_landscape() {
     use penumbra_calib::synthetic::Room;
     let f = Fixture::new("scan_scene_landscape");

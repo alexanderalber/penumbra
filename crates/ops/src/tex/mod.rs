@@ -13,6 +13,7 @@ mod cache;
 mod contour;
 mod convert;
 mod denoise;
+pub mod face_content;
 mod filters;
 mod flow;
 mod fluid;
@@ -496,6 +497,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     contour::register(types)?;
     convert::register(types)?;
     denoise::register(types)?;
+    face_content::register(types)?;
     flow::register(types)?;
     sequence::register(types)?;
     fluid::register(types)?;
