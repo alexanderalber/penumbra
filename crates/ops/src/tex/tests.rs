@@ -611,7 +611,10 @@ fn every_builtin_cooks_without_warnings() {
                     Some("/chan_feed")
                 }
                 penumbra_graph::DataKind::Table
-                    if desc.port.is_some() || passes_on(kind) || kind == "geo.instance" =>
+                    if desc.port.is_some()
+                        || passes_on(kind)
+                        || kind == "geo.instance"
+                        || kind == crate::table::FROM_TABLE =>
                 {
                     Some("/table_feed")
                 }

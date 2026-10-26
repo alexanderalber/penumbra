@@ -1111,7 +1111,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.mouse_in](#chanmouse_in), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.spacemouse_in](#chanspacemouse_in), [chan.speed](#chanspeed), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.mouse_in](#chanmouse_in), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.spacemouse_in](#chanspacemouse_in), [chan.speed](#chanspeed), [chan.trail](#chantrail)
 
 ### chan.audio_analysis
 
@@ -1229,6 +1229,21 @@ Outputs: `out` (chan).
 |---|---|---|---|---|
 | `rise` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step up; 0 follows at once |
 | `fall` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step down |
+
+### chan.from_table
+
+Turns a table of numbers into channels, so its cells can drive params through bindings
+
+Inputs:
+
+- `in` (table)
+
+Outputs: `out` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `layout` | columns \| rows | `"columns"` |  | Which cells make up one channel; columns: each column is a channel, its samples read top to bottom; rows: each row is a channel, its samples read left to right |
+| `names` | bool | `true` |  | On, the first cell of each column (or row) is the channel's name; off, the channels are called chan0, chan1, ... and every cell is a value |
 
 ### chan.from_tex
 

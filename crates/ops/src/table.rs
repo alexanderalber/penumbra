@@ -1,13 +1,14 @@
 //! `table` nodes: rows of text cells on the CPU. `table.text` holds its text in a parameter,
 //! `table.file` reads a file off the cook thread and reloads it when it changes on disk.
+//! `chan.from_table` turns a table of numbers into channels, so cells can drive params.
 
-use penumbra_core::{Error, ParamSpec, Table, table::Format};
+use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, SampleAxis, Table, table::Format};
 use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc,
     NodeTypes, Operator,
 };
 
-use crate::Null;
+use crate::{Null, waiting};
 
 /// Largest file `table.file` reads.
 pub const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
@@ -63,8 +64,29 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Table),
         || Box::new(Null) as Box<dyn Operator>,
     ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new(
+            FROM_TABLE,
+            "Turns a table of numbers into channels, so its cells can drive params through bindings",
+        )
+        .param(
+            ParamSpec::choice("layout", &["columns", "rows"])
+                .doc("Which cells make up one channel")
+                .choice_doc("columns", "each column is a channel, its samples read top to bottom")
+                .choice_doc("rows", "each row is a channel, its samples read left to right"),
+        )
+        .param(ParamSpec::bool("names", true).doc(
+            "On, the first cell of each column (or row) is the channel's name; off, the channels              are called chan0, chan1, ... and every cell is a value",
+        ))
+        .input("in", DataKind::Table)
+        .output("out", DataKind::Chan),
+        || Box::new(FromTable) as Box<dyn Operator>,
+    ))?;
     Ok(())
 }
+
+/// The kind of the node that turns a table into channels.
+pub const FROM_TABLE: &str = "chan.from_table";
 
 fn format(name: &str) -> Result<Format, CookError> {
     Format::from_name(name).ok_or_else(|| CookError::failed(format!("unknown format `{name}`")))
@@ -133,13 +155,109 @@ impl Operator for File {
     }
 }
 
+/// `chan.from_table`: a channel per column (or row). The last value is the one a binding reads.
+/// Empty cells and missing cells of a short row are 0; text that is no number is 0 too, with a
+/// warning. Columns (or rows) without a single filled cell are left out, so a trailing comma
+/// makes no channel.
+struct FromTable;
+
+impl Operator for FromTable {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let table = cx.input_as::<Table>(0).ok_or_else(|| waiting(cx))?;
+        let by_rows = cx.text("layout")? == "rows";
+        let named = cx.bool("names")?;
+        let rate = cx.rate().as_f64();
+        let (lines, cells) =
+            if by_rows { (table.num_rows(), table.num_cols()) } else { (table.num_cols(), table.num_rows()) };
+        // Cell `k` of channel `i`, with its 1-based row and column for messages.
+        let cell = |i: usize, k: usize| {
+            let (row, col) = if by_rows { (i, k) } else { (k, i) };
+            (table.cell(row, col).trim(), row + 1, col + 1)
+        };
+        let first = usize::from(named);
+        let len = cells.saturating_sub(first).max(1);
+        let mut channels: Vec<Channel> = Vec::new();
+        let mut not_numbers: Vec<String> = Vec::new();
+        let mut twice: Vec<String> = Vec::new();
+        for i in 0..lines {
+            if (0..cells).all(|k| cell(i, k).0.is_empty()) {
+                continue;
+            }
+            let name = if named { channel_name(cell(i, 0).0) } else { None };
+            let name = match name {
+                Some(n) => n,
+                None => Name::new(&format!("chan{i}"))?,
+            };
+            if channels.iter().any(|c| c.name == name) {
+                twice.push(name.as_str().to_string());
+                continue;
+            }
+            let mut samples = vec![0.0; len];
+            for (k, s) in (first..cells).zip(samples.iter_mut()) {
+                let (text, row, col) = cell(i, k);
+                if text.is_empty() {
+                    continue;
+                }
+                match text.parse::<f64>() {
+                    Ok(v) => *s = v,
+                    Err(_) => not_numbers.push(format!("`{}` (row {row}, column {col})", short(text))),
+                }
+            }
+            channels.push(Channel { name, samples });
+        }
+        let mut warnings = Vec::new();
+        if named && cells < 2 && !channels.is_empty() {
+            warnings.push("there are only names, no values: every channel is 0".to_string());
+        }
+        if let Some(t) = not_numbers.first() {
+            let more = match not_numbers.len() {
+                1 => String::new(),
+                n => format!(" and {} more cells", n - 1),
+            };
+            warnings.push(format!("{t}{more} hold no number and count as 0"));
+        }
+        if !twice.is_empty() {
+            warnings.push(format!("{} named twice, the first is kept", twice.join(", ")));
+        }
+        if !warnings.is_empty() {
+            cx.warn(warnings.join("; "));
+        }
+        let axis = if len > 1 { SampleAxis::Index } else { SampleAxis::Time };
+        let chans = Chans::new(rate, channels)?.with_axis(axis);
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, chans)]))
+    }
+}
+
+/// A channel name made from a header cell: characters a name cannot hold become `_`, a leading
+/// digit gets a `_` before it, the rest is cut at the longest name. `None` for an empty cell.
+fn channel_name(text: &str) -> Option<Name> {
+    if text.is_empty() {
+        return None;
+    }
+    let mut name: String =
+        text.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' { c } else { '_' }).collect();
+    if name.starts_with(|c: char| c.is_ascii_digit()) {
+        name.insert(0, '_');
+    }
+    name.truncate(Name::MAX_LEN);
+    Name::new(&name).ok()
+}
+
+/// At most 40 characters of a cell, for a message.
+fn short(text: &str) -> String {
+    match text.char_indices().nth(40) {
+        Some((i, _)) => format!("{}...", &text[..i]),
+        None => text.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::builtin_types;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use penumbra_core::{NodePath, ParamPath, Rate, ShowClock, Table, Value};
+    use penumbra_core::{Chans, NodePath, ParamPath, Rate, SampleAxis, ShowClock, Table, Value};
     use penumbra_graph::{Cooker, JobPool, Network, Op, Port};
 
     fn create(path: &str, kind: &str) -> Op {
@@ -231,5 +349,68 @@ mod tests {
         );
         let mut cooker = Cooker::new(types, Arc::new(JobPool::new(1).unwrap()));
         assert!(cook(&net, &mut cooker).unwrap_err().contains("nope.csv"));
+    }
+
+    /// Cooks `/c` (a `chan.from_table` fed by a `table.text` at `/t`) and returns its channels
+    /// and warning.
+    fn from_table(text: &str, ops: &[Op]) -> (Chans, Option<String>) {
+        let types = Arc::new(builtin_types().unwrap());
+        let mut all = vec![
+            create("/t", "table.text"),
+            set("/t.text", text),
+            set("/t.format", "csv"),
+            create("/c", "chan.from_table"),
+            Op::Connect { from: "/t".parse().unwrap(), output: 0, to: "/c".parse().unwrap(), input: 0 },
+        ];
+        all.extend_from_slice(ops);
+        let net = Arc::new(Network::new().apply(&types, &all).unwrap().network);
+        let mut cooker = Cooker::new(types, Arc::new(JobPool::new(1).unwrap()));
+        let id = net.resolve(&"/c".parse().unwrap()).unwrap();
+        let clock = ShowClock::new(Rate::FPS_60, Default::default());
+        cooker.cook(&net, clock.now(), &[id], &[]);
+        let status = cooker.status(id).unwrap();
+        assert!(status.error.is_none(), "{:?}", status.error);
+        let chans = cooker.output(Port { node: id, output: 0 }).unwrap().get::<Chans>().unwrap().clone();
+        (chans, status.warning)
+    }
+
+    fn names(c: &Chans) -> Vec<&str> {
+        c.names().map(|n| n.as_str()).collect()
+    }
+
+    #[test]
+    fn chans_from_table() {
+        // Columns, named by the first row; the last row is the value now.
+        let (c, warning) = from_table("speed,size\n1,2\n3,4.5", &[]);
+        assert_eq!(names(&c), ["speed", "size"]);
+        assert_eq!(c.get("speed").unwrap().samples, [1.0, 3.0]);
+        assert_eq!(c.value(Some("size")), Some(4.5));
+        assert_eq!(c.axis(), SampleAxis::Index);
+        assert_eq!(warning, None);
+
+        // Rows, unnamed.
+        let (c, _) = from_table("1,2\n3", &[set("/c.layout", "rows"), set("/c.names", false)]);
+        assert_eq!(names(&c), ["chan0", "chan1"]);
+        assert_eq!(c.get("chan1").unwrap().samples, [3.0, 0.0], "a short row ends in zeros");
+
+        // Header cells become names; text is 0 with a warning; a trailing comma makes no channel;
+        // a name twice keeps the first.
+        let (c, warning) = from_table("pos x,2nd,a,a,\n1,abc,2,3,\n", &[]);
+        assert_eq!(names(&c), ["pos_x", "_2nd", "a"]);
+        assert_eq!(c.value(Some("_2nd")), Some(0.0));
+        assert_eq!(c.value(Some("a")), Some(2.0));
+        assert_eq!(c.axis(), SampleAxis::Time, "one value per channel is a value now");
+        let warning = warning.unwrap();
+        assert!(warning.contains("`abc` (row 2, column 2)"), "{warning}");
+        assert!(warning.contains("a named twice"), "{warning}");
+
+        // Only names: channels at 0, said so. An empty table (nothing typed yet): no channels.
+        let (c, warning) = from_table("x,y", &[]);
+        assert_eq!(names(&c), ["x", "y"]);
+        assert_eq!(c.value(Some("y")), Some(0.0));
+        assert!(warning.unwrap().contains("only names"));
+        let (c, warning) = from_table("", &[]);
+        assert!(c.is_empty());
+        assert_eq!(warning, None);
     }
 }
