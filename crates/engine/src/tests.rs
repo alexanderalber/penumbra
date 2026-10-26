@@ -2108,3 +2108,45 @@ fn show_mode_locks_the_project_and_is_kept_in_its_file() {
     });
     f.call("node.set", json!({"path": "/c", "params": {"value0": 0.5}}));
 }
+
+#[test]
+fn scan_folders_and_a_blend_in_the_background() {
+    let f = Fixture::new("scan_folders_blend");
+    assert_eq!(f.call("scan.folders", json!({}))["scans"], json!([]));
+    f.call("scan.synthetic", json!({"room": "crate"}));
+    f.call("node.create", json!({"path": "/a", "kind": "out.projector"}));
+    let r = f.call("scan.folders", json!({}));
+    let scans = r["scans"].as_array().unwrap();
+    let folders: Vec<&str> = scans.iter().map(|s| s["folder"].as_str().unwrap()).collect();
+    assert_eq!(folders, ["synthetic/a", "synthetic/b"], "{r}");
+    // Named after a projector: it belongs to it.
+    assert_eq!(scans[0]["projector"], "/a", "{r}");
+    assert!(scans[1]["projector"].is_null() && scans[0]["blended"] == false, "{r}");
+
+    let r = f.call("scan.blend", json!({"scans": folders, "into_scans": true, "wait": false}));
+    assert_eq!(r["started"], true, "{r}");
+    let started = std::time::Instant::now();
+    let last = loop {
+        let s = f.call("job.status", json!({}));
+        if s["running"].is_null() {
+            break s["last"]["scan.blend"].clone();
+        }
+        assert!(started.elapsed().as_secs() < 60, "{s}");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert_eq!(last["ok"], true, "{last}");
+    assert!(last["reply"]["overlap"]["camera_pixels"].as_u64().unwrap() > 0, "{last}");
+    let r = f.call("scan.folders", json!({}));
+    assert!(r["scans"].as_array().unwrap().iter().all(|s| s["blended"] == true), "{r}");
+
+    // A failed job keeps its error.
+    f.call("scan.blend", json!({"scans": ["nowhere"], "wait": false}));
+    let last = loop {
+        let s = f.call("job.status", json!({}));
+        if s["running"].is_null() {
+            break s["last"]["scan.blend"].clone();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+    assert!(last["ok"] == false && last["message"].as_str().unwrap().contains("nowhere"), "{last}");
+}

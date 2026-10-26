@@ -21,9 +21,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
 use crate::command::CommandError;
-use crate::commands::{edit_in, outcome};
+use crate::commands::{edit_as, outcome};
 use crate::engine::Engine;
 use crate::projector::{MatchArgs, projector_list};
+use penumbra_project::Actor;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -218,7 +219,7 @@ fn mixed_runs(files: &[MeasurementFile], paths: &[(NodeId, String)]) -> Vec<Stri
 }
 
 /// `projector.match` with `from`: the files read, matched, the params written.
-pub fn run(e: &Engine, a: &MatchArgs, from: &Source) -> CmdResult<Json> {
+pub fn run(e: &Engine, a: &MatchArgs, from: &Source, actor: Actor) -> CmdResult<Json> {
     if a.camera.is_some() {
         return Err("`from` matches without the camera: give `camera` or `from`, not both".into());
     }
@@ -296,7 +297,8 @@ pub fn run(e: &Engine, a: &MatchArgs, from: &Source) -> CmdResult<Json> {
         }));
     }
     let apply = a.apply.unwrap_or(true);
-    let history = if apply { Some(outcome(&edit_in(&session, &ops, "projector.match")?)) } else { None };
+    let history =
+        if apply { Some(outcome(&edit_as(&session, actor, &ops, "projector.match")?)) } else { None };
     let limiter = |k: usize| projectors.get(k).map(|(_, p)| p.clone()).unwrap_or_default();
     let limited: Vec<String> = matched.limited_by.iter().map(|k| limiter(*k)).collect();
     let peaks: Vec<String> =

@@ -149,7 +149,7 @@ pub fn refuses(method: &str) -> bool {
         return true;
     }
     // Scans write pictures into the project folder and take over the projectors.
-    method.starts_with("scan.") && !matches!(method, "scan.status" | "scan.cancel")
+    method.starts_with("scan.") && !matches!(method, "scan.status" | "scan.cancel" | "scan.folders")
 }
 
 /// The error for a command show mode refuses.

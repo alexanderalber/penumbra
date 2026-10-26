@@ -461,3 +461,64 @@ fn projector_test_switches_every_projector() {
     );
     assert!(f.fail("projector.test", json!({"pattern": "focus"})).contains("on"));
 }
+
+#[test]
+fn projector_match_runs_as_a_job() {
+    let f = Fixture::new("projector-match-job");
+    let key = Key::new("sim", "");
+    f.engine.camera().feed(&key, frame(&vec![[0.0; 3]; W * H], 0, Instant::now()));
+    f.call("node.create", json!({"path": "/cam", "kind": "tex.video_in", "params": {"device": "sim"}}));
+    f.call("node.create", json!({"path": "/proj_a", "kind": "out.projector"}));
+    f.call("node.create", json!({"path": "/proj_b", "kind": "out.projector"}));
+    f.call("cook.play", json!({"playing": true}));
+    let net = f.engine.session().doc().snapshot();
+    let id = |p: &str| net.resolve(&p.parse().unwrap()).unwrap();
+    let _camera = Camera::start(f.engine.clone(), key, vec![id("/proj_a"), id("/proj_b")], [1.0; 3]);
+
+    let r = f.call("projector.match", json!({"camera": "/cam", "levels": 4, "settle": 0.0, "wait": false}));
+    assert_eq!(r["started"], true, "{r}");
+    // One job at a time.
+    assert!(f.fail("scan.blend", json!({"scans": ["x"]})).contains("projector.match is running"));
+    let started = Instant::now();
+    let mut seen_progress = false;
+    let last = loop {
+        let s = f.call("job.status", json!({}));
+        if let Some(p) = s["running"]["progress"].as_f64() {
+            seen_progress |= p > 0.0 && p < 1.0;
+        }
+        if s["running"].is_null() {
+            break s["last"]["projector.match"].clone();
+        }
+        assert!(started.elapsed() < Duration::from_secs(60), "{s}");
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert!(seen_progress);
+    assert_eq!(last["ok"], true, "{last}");
+    assert_eq!(last["by"], "claude");
+    assert_eq!(last["reply"]["reference"], "/proj_b", "{last}");
+    assert!(
+        last["reply"]["projectors"][0]["refine"]["check"]["grey 0.5"]["residual_codes"].is_array(),
+        "{last}"
+    );
+
+    // Cancelled before its next picture: nothing applied, the flat signals cleared.
+    let before = f.engine.session().doc().snapshot();
+    f.call("projector.match", json!({"camera": "/cam", "levels": 8, "settle": 0.05, "wait": false}));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(f.call("job.cancel", json!({}))["cancelled"], true);
+    let last = loop {
+        let s = f.call("job.status", json!({}));
+        if s["running"].is_null() {
+            break s["last"]["projector.match"].clone();
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(last["cancelled"], true, "{last}");
+    assert!(f.engine.board().state().flat.is_empty());
+    let after = f.engine.session().doc().snapshot();
+    let desc = f.engine.types().desc(penumbra_ops::out::PROJECTOR).unwrap();
+    let matrix =
+        |net: &penumbra_graph::Network| net.node(id("/proj_a")).unwrap().param(desc, "matrix").cloned();
+    assert_eq!(matrix(&before), matrix(&after));
+    assert_eq!(f.call("job.cancel", json!({}))["cancelled"], false);
+}

@@ -34,9 +34,11 @@ use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
-use crate::commands::{edit_in, outcome, require};
+use crate::commands::{edit_as, edit_in, outcome, require};
 use crate::engine::Engine;
+use crate::jobs::Job;
 use crate::projector_stored::{self as stored_files, CameraOf, RunInfo, Source};
+use penumbra_project::Actor;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -86,16 +88,14 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          5; 0 off), grey_levels? (greys the curves are refined on, evenly spaced; 3), save? (folder, \
          relative to the project: also measures a grey ramp and writes each projector's measurement as \
          NAME.json with NAME the node name, to match from later), note? (text saved with them: settings, lamp hours), \
-         apply? (true: write the params as one undo step)}. Without the camera: {from (folder of \
-         NAME.json, or {projector path: file}), projectors?, samples?, apply?} matches from stored \
+         apply? (true: write the params as one undo step), wait? (false: start and answer at once; \
+         job.status follows it and keeps the reply; true)}. Without the camera: {from (folder of \
+         NAME.json, or {projector path: file}), projectors?, samples?, apply?, wait?} matches from stored \
          measurements; each camera channel follows the projector dimmest there, so the common white lies \
          between the white points when no projector is the dimmest in every channel",
         move |p| {
             let a: MatchArgs = args(p)?;
-            match &a.from {
-                Some(from) => stored_files::run(&e, &a, from),
-                None => run(&e, &a),
-            }
+            match_job(&e, a, Actor::Claude)
         },
     ));
     let e = Arc::clone(engine);
@@ -193,7 +193,7 @@ pub fn test_ops(
     Ok((ops, projectors))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct MatchArgs {
     pub camera: Option<NodePath>,
@@ -203,6 +203,8 @@ pub struct MatchArgs {
     pub save: Option<String>,
     /// Free text saved with the measurements.
     pub note: Option<String>,
+    /// Answer when done (the default), or start and answer at once (`job.status` follows it).
+    pub wait: Option<bool>,
     pub projectors: Option<Vec<NodePath>>,
     pub levels: Option<u32>,
     pub settle: Option<f64>,
@@ -400,12 +402,32 @@ pub(crate) struct Rig<'a> {
     pub pass: u64,
     /// Camera frames averaged per picture (at least 1).
     pub frames: usize,
+    /// The job it runs in: told of every picture, and asked whether to stop.
+    pub job: Option<&'a Job>,
 }
 
 impl Rig<'_> {
     /// Shows `signal(k)` on projector `k` (sRGB-encoded, uncorrected) and returns the camera's
     /// picture of it: the mean of `frames` consecutive frames.
     pub(crate) fn shot(&mut self, signal: impl Fn(usize) -> [f32; 3]) -> CmdResult<Picture> {
+        if let Some(job) = self.job {
+            job.check()?;
+        }
+        let picture = self.shot_now(signal)?;
+        if let Some(job) = self.job {
+            job.shot();
+        }
+        Ok(picture)
+    }
+
+    /// What the measurement does now, for the job's status.
+    pub(crate) fn note(&self, step: &str) {
+        if let Some(job) = self.job {
+            job.step(step, None);
+        }
+    }
+
+    fn shot_now(&mut self, signal: impl Fn(usize) -> [f32; 3]) -> CmdResult<Picture> {
         let wanted: BTreeMap<NodeId, [f32; 3]> =
             self.projectors.iter().enumerate().map(|(k, (id, _))| (*id, signal(k))).collect();
         self.engine.board().update(|b| b.flat.extend(wanted.iter().map(|(k, v)| (*k, *v))));
@@ -452,6 +474,9 @@ pub(crate) trait Shoot {
     /// picture of it.
     fn shoot(&mut self, signal: &dyn Fn(usize) -> [f32; 3]) -> CmdResult<Picture>;
 
+    /// What the measurement does now, for whoever follows it.
+    fn note(&mut self, _step: &str) {}
+
     /// Projector `k` alone showing `s`, every other one black.
     fn alone(&mut self, k: usize, s: [f32; 3]) -> CmdResult<Picture> {
         self.shoot(&|j| if j == k { s } else { [0.0; 3] })
@@ -461,6 +486,10 @@ pub(crate) trait Shoot {
 impl Shoot for Rig<'_> {
     fn shoot(&mut self, signal: &dyn Fn(usize) -> [f32; 3]) -> CmdResult<Picture> {
         self.shot(signal)
+    }
+
+    fn note(&mut self, step: &str) {
+        Rig::note(self, step);
     }
 }
 
@@ -712,6 +741,7 @@ fn measure_ramps(
     let mut blacks = Vec::with_capacity(projectors.len());
     let mut greys = Vec::with_capacity(projectors.len());
     for (k, (_, path)) in projectors.iter().enumerate() {
+        shoot.note(&format!("ramps of {path} ({} of {})", k + 1, projectors.len()));
         let spot = spots.masks.get(k).map(Vec::as_slice).unwrap_or(&[]);
         let mean = |p: &Picture| {
             colour::trimmed_mean(p, spot).ok_or_else(|| format!("{path}: an empty measuring spot"))
@@ -1022,7 +1052,31 @@ fn results(
 /// the camera ([`measure_lit`]); the ramps ([`measure_ramps`]) and the correction they give; the
 /// closed loop per projector ([`refine_projector`]); the params and the report ([`results`]),
 /// written as one undo step.
-pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
+/// `projector.match` as a job, its edit made as `actor`: answers when done unless `a.wait` is
+/// false.
+pub fn match_job(e: &Arc<Engine>, a: MatchArgs, actor: Actor) -> CmdResult<Json> {
+    let wait = a.wait.unwrap_or(true);
+    crate::jobs::run(e, "projector.match", actor, wait, move |e, job| match &a.from {
+        Some(from) => stored_files::run(e, &a, from, actor),
+        None => run(e, &a, Some(job), actor),
+    })
+}
+
+/// The camera pictures a match takes at most: where each projector lights, the ramps (and
+/// greys), and the rounds against the reference.
+fn expected_shots(n: usize, levels: u32, save: bool, refine: u32, greys: usize) -> usize {
+    let levels = levels as usize;
+    let lit = 1 + n;
+    let ramps = n * levels * if save { 4 } else { 3 };
+    if refine == 0 || n < 2 {
+        return lit + ramps;
+    }
+    let rounds = refine as usize + 1;
+    let compared = compared_contents(&vec![0.5; greys]).len();
+    lit + ramps + compared + (n - 1) * (rounds * (1 + greys) + compared - 1)
+}
+
+pub fn run(e: &Engine, a: &MatchArgs, job: Option<&Job>, actor: Actor) -> CmdResult<Json> {
     let started = Instant::now();
     let Settings { levels, settle, timeout, samples, refine, greys } = settings(a)?;
 
@@ -1066,7 +1120,12 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
         timeout: Duration::from_secs_f64(timeout),
         pass: e.output().pass,
         frames: 1,
+        job,
     };
+    if let Some(job) = job {
+        job.expect(expected_shots(projectors.len(), levels, a.save.is_some(), refine, greys.len()));
+        job.step("finding where each projector lights the camera's picture", Some(0.0));
+    }
 
     // Where each projector lights the camera picture.
     let lit = measure_lit(&mut rig, &projectors, a.area)?;
@@ -1124,6 +1183,10 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
                 continue;
             }
             let base = matrices.get(k).copied().ok_or("lost a matrix")?;
+            rig.note(&format!(
+                "refining {path} against {}",
+                projectors.get(r).map_or("the reference", |(_, p)| p.as_str())
+            ));
             let pair = Pair { own: spot(k), reference: spot(r), path, rounds: refine };
             let done = refine_projector(&mut rig, pair, base, &curves_of(k), &want_all, &greys)?;
             if let Some(slot) = curve_sets.get_mut(k) {
@@ -1182,7 +1245,8 @@ pub fn run(e: &Engine, a: &MatchArgs) -> CmdResult<Json> {
 
     let (ops, report) = results(&projectors, &matched, &ramps, &matrices, &curve_sets, &refined)?;
     let apply = a.apply.unwrap_or(true);
-    let history = if apply { Some(outcome(&edit_in(&session, &ops, "projector.match")?)) } else { None };
+    let history =
+        if apply { Some(outcome(&edit_as(&session, actor, &ops, "projector.match")?)) } else { None };
     let reference = projectors.get(matched.reference).map(|(_, p)| p.clone());
     Ok(json!({
         "message": format!(

@@ -22,6 +22,8 @@ use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
 use crate::engine::Engine;
+use crate::jobs::Job;
+use penumbra_project::Actor;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -123,10 +125,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? \
          (folder, objects), ramp? (projector px, 200), blur? (projector px, 3), reach? (camera px, 6), \
          sigma? (projector px, 6), into_scans? (write weight.png, detail.png and proj_to_cam_smooth.exr into each \
-         scan's folder, where tex.scan reads them, false)}",
+         scan's folder, where tex.scan reads them, false), wait? (false: start and answer at once, \
+         job.status follows it; true)}",
         move |p| {
             let a: BlendArgs = args(p)?;
-            blend(e.session().dir(), &a)
+            blend_job(&e, a, Actor::Claude)
         },
     ));
 }
@@ -735,7 +738,7 @@ pub fn objects(dir: &Path, a: &ObjectsArgs) -> CmdResult<Json> {
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct BlendArgs {
     pub scans: Vec<PathBuf>,
@@ -748,10 +751,33 @@ pub struct BlendArgs {
     /// Write `weight.png` and `proj_to_cam_smooth.exr` into each scan's folder (where a
     /// `tex.scan` reads them) instead of numbered files into `out`.
     pub into_scans: Option<bool>,
+    /// Answer when done (the default), or start and answer at once (`job.status` follows it).
+    pub wait: Option<bool>,
+}
+
+/// `scan.blend` as a job: the project's scans blended, as `actor`; answers when done unless
+/// `a.wait` is false.
+pub fn blend_job(e: &Arc<Engine>, a: BlendArgs, actor: Actor) -> CmdResult<Json> {
+    let wait = a.wait.unwrap_or(true);
+    let dir = e.session().dir().to_path_buf();
+    crate::jobs::run(e, "scan.blend", actor, wait, move |_, job| blend_watched(&dir, &a, Some(job)))
 }
 
 /// Blend weights and smoothed maps for the scans of `a` (paths relative to `dir`).
 pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
+    blend_watched(dir, a, None)
+}
+
+/// [`blend`], telling `job` its steps.
+fn blend_watched(dir: &Path, a: &BlendArgs, job: Option<&Job>) -> CmdResult<Json> {
+    let step = |text: &str, progress: f32| -> CmdResult<()> {
+        if let Some(job) = job {
+            job.check()?;
+            job.step(text, Some(progress));
+        }
+        Ok(())
+    };
+    step("reading the scans", 0.0)?;
     let started = Instant::now();
     if a.scans.is_empty() || a.scans.len() > objects::MAX_PROJECTORS {
         return Err(CommandError(format!("`scans` lists 1 to {} folders", objects::MAX_PROJECTORS)));
@@ -787,6 +813,7 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
         masks.push(mask);
     }
     let read = started.elapsed();
+    step("weighing the projectors", 0.3)?;
     let t = Instant::now();
     let inputs: Vec<objects::BlendInput<'_>> = to_camera
         .iter()
@@ -797,6 +824,7 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
     let b = objects::blend(&inputs, &o).map_err(CommandError)?;
     let (overlap, error) = objects::coverage(&inputs, &b.weights);
     let blended = t.elapsed();
+    step("smoothing the maps", 0.6)?;
     let t = Instant::now();
     let smoothed: Vec<Vec<[f32; 4]>> = to_camera
         .iter()
@@ -805,6 +833,7 @@ pub fn blend(dir: &Path, a: &BlendArgs) -> CmdResult<Json> {
         .collect::<Result<_, _>>()
         .map_err(CommandError)?;
     let smoothing = t.elapsed();
+    step("writing the files", 0.85)?;
 
     let t = Instant::now();
     let into_scans = a.into_scans.unwrap_or(false);

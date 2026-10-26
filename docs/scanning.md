@@ -572,6 +572,10 @@ projector, so only some projector pixels have a measured camera position and con
 through the raw map has jagged edges. The smoothed map averages the measured positions with a
 Gaussian (`sigma`, 6 projector pixels) within each object (or the decoded area without masks).
 
+Without the command line: Helpers window, **Blend and match**. It lists the scans in the
+project, each with a checkbox, and blends the checked ones with **Blend** (see
+[the Helpers window](helpers.md#blend-and-match)).
+
 Written into `out` (default `objects/`):
 
 | file | what |

@@ -8,6 +8,7 @@ pub mod add_dialog;
 pub mod app;
 pub mod arrange;
 pub mod automation;
+mod blend_match;
 pub mod changes;
 mod clipboard;
 mod components;

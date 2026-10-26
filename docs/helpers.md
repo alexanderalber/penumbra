@@ -90,6 +90,50 @@ patches and the motion pattern's counts sit lower for the second projector and l
 the third, so projectors stacked on the same area show theirs side by side. The full fields are
 always in their own colours.
 
+## Blend and match
+
+Under the outputs, this section runs the three jobs that make several projectors look like one:
+blend weights from the scans, the colour match and the flat field. Each has a button and its few
+options; the rest keeps the commands' defaults, and the files go where the commands put them.
+
+- **Scans** lists every folder in the project that holds a scan's maps (`cam_to_proj.exr` and
+  `proj_to_cam.exr`, up to four folders deep), with the projector it belongs to, whether it was
+  blended and when it was scanned. A scan belongs to the projector its `tex.scan` names, or to the
+  projector it is named after (`scan/proj_a` to `/proj_a`). **look again** after scanning
+  elsewhere.
+- **Blend** blends the checked scans (`scan.blend`, see [scanning](scanning.md#6-blend-scanblend)).
+  **ramp** is the width of the soft edge. **into the scan folders** writes the weights into each
+  scan's folder, where its `tex.scan` reads them; on by default when a `tex.scan` writes one of
+  the scans. Off, numbered files (`weight_0.png`, in the order listed) go into the folder named
+  beside it (`objects`).
+- **Camera** and **Projectors** choose what the two measurements use: the `tex.video_in` (the
+  one the `tex.scan` nodes name, at first) and the active projectors (all, at first).
+- **Colour match**: **Match** measures with the camera (see [below](#matching-projectors)).
+  **keep the measurements in** also writes one file per projector into the folder, with the
+  **note**. **Match from the files** matches from that folder without the camera. **apply** off
+  only measures and reports.
+- **Flat field**: each projector with the scan to take (the one found for it, at first), **even**
+  (brightness and colour on a bare wall, colour only on a relief) and **Measure** (see
+  [below](#even-light-across-a-projector-and-black-in-overlaps)). It connects the maps when
+  **apply** is on.
+
+While a job runs, a bar shows its step and how far it got, with **Cancel**: a measurement stops
+before its next picture, the blend between its steps, and nothing is applied. One job runs at a
+time; the others' buttons wait. When it ends, the result stays under its button until the next
+run of the same job: its message, its warnings, and what matters of the reply. For the match a
+table: per projector the share of its white it keeps, and for white, red, green, blue and the
+greys how far the camera reads it from the reference, in 8-bit camera codes (the largest of the
+three channels). Above 4 codes on white or a grey is marked; saturated colours match only
+roughly, so their numbers run larger.
+
+The match and the flat field edit as you, as one undo step each. A job started by Claude over
+the control channel shows here too, with its progress.
+
+On the control channel the same commands run in the background with `"wait": false`: they
+answer at once, `job.status` reports the step, the progress and the last reply of each,
+`job.cancel` stops the job. `scan.folders` lists the scans. Without `wait` they answer when done,
+as before.
+
 ## Matching projectors
 
 Projectors of different models, or of different age, differ in brightness, white point, tone

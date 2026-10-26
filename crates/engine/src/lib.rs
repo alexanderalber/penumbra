@@ -18,6 +18,7 @@ pub mod engine;
 pub mod file_out;
 pub mod flatfield;
 pub mod hubs;
+pub mod jobs;
 pub mod keyboard;
 pub mod mesh_out;
 pub mod meter;
@@ -100,6 +101,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     scan_run::register(&mut registry, engine);
     projector::register(&mut registry, engine);
     flatfield::register(&mut registry, engine);
+    jobs::register(&mut registry, engine);
     projects::register(&mut registry, engine);
     navigation::register(&mut registry, engine);
     show::register(&mut registry, engine);

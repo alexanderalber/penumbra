@@ -625,6 +625,8 @@ pub struct Engine {
     /// A measurement (`projector.match`, `scan.capture`, `projector.flatfield`) is running: one
     /// at a time, two would fight over the projectors.
     measuring: AtomicBool,
+    /// The helper job going on and the last of each (`job.status`).
+    jobs: crate::jobs::Jobs,
     shut: AtomicBool,
 }
 
@@ -698,6 +700,7 @@ impl Engine {
             ticker: Arc::new(Ticker::default()),
             load: LoadMeter::new(),
             measuring: AtomicBool::new(false),
+            jobs: crate::jobs::Jobs::default(),
             shut: AtomicBool::new(false),
         });
         engine.launch(&session, 0)?;
@@ -1157,6 +1160,11 @@ impl Engine {
     /// The movie recordings.
     pub fn record(&self) -> &RecordHub {
         &self.hubs.record
+    }
+
+    /// The helper jobs (`scan.blend`, `projector.match`, `projector.flatfield`).
+    pub fn jobs(&self) -> &crate::jobs::Jobs {
+        &self.jobs
     }
 
     /// The scans of `tex.scan` nodes.

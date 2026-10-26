@@ -578,7 +578,12 @@ pub(crate) fn edit(e: &Engine, ops: &[Op], label: &str) -> Result<EditOutcome> {
 /// [`edit`] in `session`: a command that read the network from it edits the same project, even
 /// if another one opened meanwhile.
 pub(crate) fn edit_in(session: &Session, ops: &[Op], label: &str) -> Result<EditOutcome> {
-    Ok(session.edit(Actor::Claude, ops, None, label, Instant::now())?)
+    edit_as(session, Actor::Claude, ops, label)
+}
+
+/// [`edit_in`] as `actor` (the Helpers window's jobs edit as the user).
+pub(crate) fn edit_as(session: &Session, actor: Actor, ops: &[Op], label: &str) -> Result<EditOutcome> {
+    Ok(session.edit(actor, ops, None, label, Instant::now())?)
 }
 
 /// The reply of an editing command: whether it made a history entry, and the nodes it created.

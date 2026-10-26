@@ -22,10 +22,12 @@ use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
-use crate::commands::{edit_in, outcome};
+use crate::commands::{edit_as, outcome};
 use crate::engine::Engine;
+use crate::jobs::Job;
 use crate::projector::{CameraStream, Claim, Rig, projector_list, settle_of, timeout_of};
 use crate::scan::{CAMERA_MAP, PROJECTOR_MAP, read_map};
+use penumbra_project::Actor;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -80,10 +82,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          projector px, 6), contrast? (projector contrast, black = white / contrast, where the camera \
          cannot read the black), out? (folder in the project, flatfield), apply? (true: connect the \
          maps, one undo step), pictures? (false: also keep the camera's pictures, 16-bit sRGB PNGs, in \
-         out/pictures)}",
+         out/pictures), wait? (false: start and answer at once; job.status follows it; true)}",
         move |p| {
             let a: FlatfieldArgs = args(p)?;
-            run(&e, &a)
+            flatfield_job(&e, a, Actor::Claude)
         },
     ));
 }
@@ -100,7 +102,7 @@ pub enum Even {
     Colour,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct FlatfieldArgs {
     pub camera: NodePath,
@@ -122,6 +124,8 @@ pub struct FlatfieldArgs {
     pub pictures: Option<bool>,
     #[serde(default)]
     pub even: Even,
+    /// Answer when done (the default), or start and answer at once (`job.status` follows it).
+    pub wait: Option<bool>,
 }
 
 fn round(v: f64, digits: i32) -> f64 {
@@ -242,6 +246,7 @@ struct Pictures {
 /// three times as many for black (its values are the faintest).
 fn measure(rig: &mut Rig<'_>, count: usize, drives: &[f64], frames: usize) -> CmdResult<Pictures> {
     rig.frames = frames * 3;
+    rig.note("all black, then each projector's white");
     let black = rig.shot(|_| [0.0; 3])?;
     rig.frames = frames;
     let mut whites = Vec::with_capacity(count);
@@ -250,6 +255,8 @@ fn measure(rig: &mut Rig<'_>, count: usize, drives: &[f64], frames: usize) -> Cm
     }
     let mut ramps: Vec<[Vec<Picture>; 3]> = Vec::with_capacity(count);
     for k in 0..count {
+        let path = rig.projectors.get(k).map(|(_, p)| p.clone()).unwrap_or_default();
+        rig.note(&format!("ramps of {path} ({} of {count})", k + 1));
         let mut per: [Vec<Picture>; 3] = Default::default();
         for (c, ramp) in per.iter_mut().enumerate() {
             for d in drives {
@@ -563,7 +570,14 @@ fn projector_maps(
 /// ([`measure`]); where each projector lights ([`lighting`]); per projector its gain ([`gain`])
 /// and their common scale; the black lift ([`blacks`]); the maps written per projector
 /// ([`projector_maps`]) and connected as one undo step.
-pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
+/// `projector.flatfield` as a job, its edit made as `actor`: answers when done unless `a.wait`
+/// is false.
+pub fn flatfield_job(e: &Arc<Engine>, a: FlatfieldArgs, actor: Actor) -> CmdResult<Json> {
+    let wait = a.wait.unwrap_or(true);
+    crate::jobs::run(e, "projector.flatfield", actor, wait, move |e, job| run(e, &a, Some(job), actor))
+}
+
+pub fn run(e: &Engine, a: &FlatfieldArgs, job: Option<&Job>, actor: Actor) -> CmdResult<Json> {
     let started = Instant::now();
     let Settings { levels, low, frames, settle, timeout, fit, floor, cover, blur } = settings(a)?;
     let session = e.session();
@@ -591,11 +605,18 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
         timeout: Duration::from_secs_f64(timeout),
         pass: e.output().pass,
         frames: frames * 3,
+        job,
     };
+    if let Some(job) = job {
+        job.expect(1 + projectors.len() * (1 + 3 * levels));
+    }
     let drives = drives(levels, low);
     let pictures = measure(&mut rig, projectors.len(), &drives, frames)?;
     drop(claim);
     let measured_s = started.elapsed().as_secs_f64();
+    if let Some(job) = job {
+        job.step("fitting the gain and the black", Some(0.95));
+    }
     let (cw, ch) = (pictures.black.width, pictures.black.height);
 
     let mut warnings: Vec<String> = Vec::new();
@@ -661,7 +682,7 @@ pub fn run(e: &Engine, a: &FlatfieldArgs) -> CmdResult<Json> {
     let apply = a.apply.unwrap_or(true);
     let history = if apply {
         let ops = connect_ops(e, &net, &files, &out_rel)?;
-        Some(outcome(&edit_in(&session, &ops, "projector.flatfield")?))
+        Some(outcome(&edit_as(&session, actor, &ops, "projector.flatfield")?))
     } else {
         None
     };

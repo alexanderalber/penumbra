@@ -1,5 +1,6 @@
 //! The "Helpers" window: the outputs (displays, windows, projectors, what paces the show clock,
-//! the test pattern of every projector),
+//! the test pattern of every projector), blend weights, colour match and flat field of the
+//! projectors (`crate::blend_match`),
 //! the resolution analysis with its overlay and optimise button, and the show-machine checks with a
 //! fix and a restore button each, the persistent state (when it was last saved, save now, restore)
 //! and OSC (listeners, senders, what arrived, learn). Opened from the status bar; the same things
@@ -48,6 +49,8 @@ pub struct Helpers {
     /// The audio inputs of this machine, listed on first view and on request (listing takes
     /// some milliseconds, too long for every frame).
     audio_inputs: Option<Result<Vec<penumbra_audio::DeviceInfo>, String>>,
+    /// The "Blend and match" section.
+    blend_match: crate::blend_match::BlendMatch,
 }
 
 impl Helpers {
@@ -133,6 +136,8 @@ impl Helpers {
                         .unwrap_or_default();
                     self.outputs(ui, input.board, input.net, input.view.pace, &tints);
                     test_buttons(ui, input, auto, actions);
+                    ui.separator();
+                    self.blend_match.show(ui, input, auto);
                     ui.separator();
                     resolution(ui, input, auto, actions);
                     ui.separator();

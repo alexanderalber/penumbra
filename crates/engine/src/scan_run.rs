@@ -67,6 +67,23 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     ));
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
+        "scan.folders",
+        "The scans in the project, what scan.blend and projector.flatfield take as scans: every folder \
+         (up to 4 deep, not state or library) holding cam_to_proj.exr and proj_to_cam.exr, with the \
+         out.projector it belongs to (the one a tex.scan writing it names, else the one it is named \
+         after), the tex.scan, whether scan.blend wrote its weight into it, and when its map was \
+         written (unix seconds); {}",
+        move |p| {
+            #[derive(Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct A {}
+            let _: A = args(p)?;
+            let folders = scan_folders(&e);
+            Ok(json!({"message": format!("{} scan(s)", folders.len()), "scans": folders}))
+        },
+    ));
+    let e = Arc::clone(engine);
+    registry.register(FnCommand::new(
         "scan.cancel",
         "Stop the scan going on (scan.run) before its next picture. The projectors show their pictures \
          again; the files of earlier scans stay; {}",
@@ -408,6 +425,7 @@ fn run(e: &Engine, plan: &Plan, ticket: &RunTicket, actor: Actor) -> CmdResult<J
         reach: None,
         sigma: None,
         into_scans: Some(true),
+        wait: None,
     };
     let blended = match blend(&plan.dir, &b) {
         Ok(r) => {
@@ -450,4 +468,102 @@ pub fn status(e: &Engine) -> Json {
         })
         .collect();
     json!({"running": e.scans().running(), "nodes": nodes})
+}
+
+/// A scan in the project: a folder holding both maps of a decoded scan.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct ScanFolder {
+    /// Relative to the project, with `/`.
+    pub folder: String,
+    /// The `out.projector` it belongs to: the one a `tex.scan` writing it names, else the one
+    /// the folder is named after.
+    pub projector: Option<String>,
+    /// The `tex.scan` writing it.
+    pub node: Option<String>,
+    /// `scan.blend` wrote its weight into it.
+    pub blended: bool,
+    /// When its map was written, seconds since 1970.
+    pub modified: Option<f64>,
+}
+
+/// How deep below the project [`scan_folders`] looks, and how many folders at most.
+const FOLDER_DEPTH: usize = 4;
+const MAX_FOLDERS: usize = 4000;
+/// Folders that hold no scans of their own.
+const SKIPPED: &[&str] = &["state", "library", "target", "node_modules"];
+
+/// The scans in the open project, sorted by folder.
+pub fn scan_folders(e: &Engine) -> Vec<ScanFolder> {
+    let dir = e.session().dir().to_path_buf();
+    let net = e.session().doc().snapshot();
+    // What the tex.scan nodes write: folder -> (node, projector).
+    let mut written: Vec<(PathBuf, String, String)> = Vec::new();
+    for n in net.nodes().filter(|n| n.kind == SCAN) {
+        let path = net.path_of(n.id).map(|p| p.to_string()).unwrap_or_default();
+        let Ok(projector) =
+            named(&net, n.id, &path, "projector", text(&net, e, n.id, "projector"), PROJECTOR)
+        else {
+            continue;
+        };
+        let root = match text(&net, e, n.id, "folder") {
+            "" => penumbra_ops::tex::scan::DEFAULT_FOLDER,
+            f => f,
+        };
+        let folder = PathBuf::from(root).join(folder_name(&projector.to_string()));
+        written.push((folder, path, projector.to_string()));
+    }
+    let projectors: Vec<String> = net
+        .nodes()
+        .filter(|n| n.kind == PROJECTOR)
+        .filter_map(|n| net.path_of(n.id))
+        .map(|p| p.to_string())
+        .collect();
+
+    let mut found = Vec::new();
+    let mut queue = std::collections::VecDeque::from([(PathBuf::new(), 0usize)]);
+    let mut visited = 0;
+    while let Some((rel, depth)) = queue.pop_front() {
+        visited += 1;
+        if visited > MAX_FOLDERS {
+            break;
+        }
+        let abs = dir.join(&rel);
+        let Ok(entries) = std::fs::read_dir(&abs) else { continue };
+        let (mut c2p, mut p2c, mut weight) = (false, None, false);
+        let mut subs = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                if depth < FOLDER_DEPTH && !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
+                    subs.push(rel.join(&name));
+                }
+            } else if name == crate::scan::CAMERA_MAP {
+                c2p = true;
+            } else if name == crate::scan::PROJECTOR_MAP {
+                p2c = entry.metadata().ok().and_then(|m| m.modified().ok()).or(Some(std::time::UNIX_EPOCH));
+            } else if name == penumbra_ops::tex::scan::WEIGHT {
+                weight = true;
+            }
+        }
+        subs.sort();
+        queue.extend(subs.into_iter().map(|s| (s, depth + 1)));
+        if let (true, Some(at)) = (c2p, p2c) {
+            let folder = rel.to_string_lossy().replace('\\', "/");
+            let by_node = written.iter().find(|(f, _, _)| *f == rel);
+            let by_name = || {
+                let last = rel.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                projectors.iter().find(|p| folder_name(p) == last).cloned()
+            };
+            found.push(ScanFolder {
+                folder,
+                projector: by_node.map(|(_, _, p)| p.clone()).or_else(by_name),
+                node: by_node.map(|(_, n, _)| n.clone()),
+                blended: weight,
+                modified: at.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs_f64().round()),
+            });
+        }
+    }
+    found.sort_by(|a, b| a.folder.cmp(&b.folder));
+    found
 }
