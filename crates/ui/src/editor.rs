@@ -113,24 +113,71 @@ pub struct Editor {
 }
 
 /// Routes for one arrangement of wires and nodes, recomputed when either changes. While nodes
-/// are dragged, each wire is routed on its own (quick); once they rest, all together, keeping
-/// wires off each other.
+/// are dragged, each wire is routed on its own (quick). Once they rest, all wires are routed
+/// together, keeping them off each other; on a large level that takes a few hundred
+/// milliseconds, so it runs on a thread of its own and the quick routes stand in meanwhile.
 #[derive(Default)]
 struct RouteCache {
-    key: Option<(Vec<Ends>, Vec<Rect>, bool)>,
+    key: Option<RouteKey>,
     routes: Vec<Route>,
+    /// The careful routing running, for the arrangement in its key.
+    pending: Option<(RouteKey, std::sync::mpsc::Receiver<Vec<Route>>)>,
 }
 
+/// Wires, nodes and whether the routes are quick ones.
+type RouteKey = (Vec<Ends>, Vec<Rect>, bool);
+
 impl RouteCache {
-    fn get(&mut self, wires: &[Ends], nodes: &[Rect], quick: bool) -> &[Route] {
-        let fresh = self
-            .key
-            .as_ref()
-            .is_some_and(|(w, n, q)| *q == quick && w.as_slice() == wires && n.as_slice() == nodes);
-        if !fresh {
-            self.routes =
-                if quick { wires::route_each(wires, nodes) } else { wires::route_all(wires, nodes) };
-            self.key = Some((wires.to_vec(), nodes.to_vec(), quick));
+    fn get(&mut self, ctx: &egui::Context, wires: &[Ends], nodes: &[Rect], quick: bool) -> &[Route] {
+        let same = |k: &RouteKey| k.0.as_slice() == wires && k.1.as_slice() == nodes;
+        // A careful result that arrived, if it is still for what is shown.
+        if let Some((key, rx)) = &self.pending {
+            match rx.try_recv() {
+                Ok(routes) => {
+                    if !quick && same(key) {
+                        self.routes = routes;
+                        self.key = Some((wires.to_vec(), nodes.to_vec(), false));
+                    }
+                    self.pending = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.pending = None,
+            }
+        }
+        match self.key.as_ref().filter(|k| same(k)) {
+            // Careful routes for this arrangement are the best there is; quick ones are what
+            // a drag wants.
+            Some((_, _, false)) => return &self.routes,
+            Some(_) if quick => return &self.routes,
+            Some(_) => {}
+            None => {
+                self.routes = wires::route_each(wires, nodes);
+                self.key = Some((wires.to_vec(), nodes.to_vec(), true));
+                if quick {
+                    return &self.routes;
+                }
+            }
+        }
+        // The quick routes stand in; a careful run starts unless one is under way (one at a
+        // time: a stale run finishes, and the next frame starts the one for now).
+        if self.pending.is_none() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let (w, n) = (wires.to_vec(), nodes.to_vec());
+            let repaint = ctx.clone();
+            let started = std::thread::Builder::new().name("wire routes".into()).spawn(move || {
+                let routes = wires::route_all(&w, &n);
+                // The editor may be gone; then nobody waits for the routes.
+                let _ = tx.send(routes);
+                repaint.request_repaint();
+            });
+            match started {
+                Ok(_) => self.pending = Some(((wires.to_vec(), nodes.to_vec(), false), rx)),
+                Err(e) => {
+                    log::warn!("routing wires on a thread: {e}; routing here");
+                    self.routes = wires::route_all(wires, nodes);
+                    self.key = Some((wires.to_vec(), nodes.to_vec(), false));
+                }
+            }
         }
         &self.routes
     }
@@ -815,7 +862,7 @@ impl Editor {
         }
         let rects: Vec<Rect> = geos.iter().map(|g| g.graph).collect();
         let quick = matches!(self.drag, Drag::Nodes);
-        let routes = self.routes.get(&ends, &rects, quick);
+        let routes = self.routes.get(painter.ctx(), &ends, &rects, quick);
         for (&(key, color, previous, hot), route) in shown.iter().zip(routes) {
             let on_screen: Route =
                 route.iter().map(|s| s.map(|p| to_screen(placed.canvas, placed.view, p))).collect();
@@ -2463,4 +2510,46 @@ fn draw_grid(painter: &egui::Painter, canvas: Rect, view: View) {
 fn help_rect(node: Rect, zoom: f32) -> Rect {
     let size = HEADER * zoom;
     Rect::from_min_size(pos2(node.max.x - size, node.min.y), vec2(size, size))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two nodes with a third between them, so the careful route differs from the quick one
+    /// only by where the routing runs; what counts is that it arrives without blocking.
+    #[test]
+    fn careful_routes_arrive_from_a_thread() {
+        let ctx = egui::Context::default();
+        let nodes = [
+            Rect::from_min_size(pos2(0.0, 0.0), vec2(80.0, 40.0)),
+            Rect::from_min_size(pos2(150.0, 0.0), vec2(80.0, 40.0)),
+            Rect::from_min_size(pos2(300.0, 0.0), vec2(80.0, 40.0)),
+        ];
+        let wires: Vec<Ends> = [(0, 2), (0, 1), (1, 2)]
+            .iter()
+            .map(|&(f, t): &(usize, usize)| Ends {
+                a: nodes[f].right_center(),
+                b: nodes[t].left_center(),
+                from: nodes[f],
+                to: nodes[t],
+                source: (NodeId(f as u64), 0),
+            })
+            .collect();
+        let mut cache = RouteCache::default();
+        let quick = cache.get(&ctx, &wires, &nodes, false).to_vec();
+        assert_eq!(quick, wires::route_each(&wires, &nodes), "the quick routes stand in at once");
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while cache.key.as_ref().is_some_and(|k| k.2) {
+            assert!(Instant::now() < deadline, "the careful routes never came");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+            cache.get(&ctx, &wires, &nodes, false);
+        }
+        assert_eq!(cache.get(&ctx, &wires, &nodes, false), wires::route_all(&wires, &nodes).as_slice());
+        // A drag routes quickly again; resting brings a new careful run.
+        let moved = [nodes[0], nodes[1].translate(vec2(0.0, 60.0)), nodes[2]];
+        let dragged = cache.get(&ctx, &wires, &moved, true).to_vec();
+        assert_eq!(dragged, wires::route_each(&wires, &moved));
+        assert!(cache.pending.is_none());
+    }
 }
