@@ -1,12 +1,14 @@
 //! Movie recording in the engine: the record hub is a resource of the cooker; each `out.video`
 //! node records through it.
 //!
-//! Commands: `video_out.start`, `video_out.stop`, `video_out.status`. Starting and stopping set
+//! Commands: `video_out.start`, `video_out.stop`, `video_out.status`, and `video.loop` /
+//! `video.loop_status` for loops of recordings (or any movie). Starting and stopping set
 //! the node's `record` param, so there is one switch whoever flips it: each is an edit of its
 //! own (undoable) through the gate. When the user changed something less than
 //! [`Gate::QUIET`] ago, the command waits for that quiet rather than fail; while the user keeps
 //! editing, or while `record` follows a channel (a binding), it fails and says why.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,7 +16,8 @@ use penumbra_core::{Name, NodeId, NodePath, ParamPath, Value};
 use penumbra_graph::Op;
 use penumbra_ops::out::video::VIDEO_OUT;
 use penumbra_project::{Actor, Gate};
-use penumbra_record::Status;
+use penumbra_record::looping::{LoopStatus, Method, Spec};
+use penumbra_record::{Codec, Status};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
@@ -41,8 +44,18 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "video_out.status",
-        "Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error; {path?}",
+        "Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, and loop (as video.loop_status) once a loop was asked for; {path?}",
         status,
+    );
+    add(
+        "video.loop",
+        "Make a movie loop seamlessly, as a job in the background: method cut (the best stretch), fade (end cross-faded into the start), pingpong (forward, then backward) or cut_fade; writes <stem>_loop.<ext> beside it unless out names a file, never overwriting; {file, method, min_seconds? (5), fade_seconds? (1), out?, codec?}; answers at once with the status",
+        make_loop,
+    );
+    add(
+        "video.loop_status",
+        "Loops: file, out, method, codec, frames_in, frames_out, loop_start, loop_end, fade_frames, score, motion, progress, done, error, seconds; {file?} (the recording or the loop) for the newest of that file",
+        loop_status,
     );
 }
 
@@ -190,4 +203,69 @@ fn status(e: &Engine, p: &Json) -> CmdResult<Json> {
     }
     let list: Vec<Json> = hub.all().into_iter().map(|(id, s)| with_path(e, id, s)).collect();
     Ok(json!({ "recordings": list }))
+}
+
+/// `path` relative to the project's folder, unless absolute.
+fn project_path(e: &Engine, path: &str) -> PathBuf {
+    let p = Path::new(path.trim());
+    if p.is_absolute() { p.to_path_buf() } else { e.session().dir().join(p) }
+}
+
+fn loop_json(s: LoopStatus) -> Json {
+    serde_json::to_value(s).unwrap_or(Json::Null)
+}
+
+fn make_loop(e: &Engine, p: &Json) -> CmdResult<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        file: String,
+        method: String,
+        min_seconds: Option<f64>,
+        fade_seconds: Option<f64>,
+        out: Option<String>,
+        codec: Option<String>,
+    }
+    let a: A = args(p)?;
+    let method = Method::parse(&a.method).ok_or_else(|| {
+        CommandError(format!("unknown method `{}`; one of {}", a.method, Method::NAMES.join(", ")))
+    })?;
+    let codec = match a.codec.as_deref() {
+        None => None,
+        Some(c) => Some(Codec::parse(c).ok_or_else(|| {
+            CommandError(format!("unknown codec `{c}`; one of {}", Codec::NAMES.join(", ")))
+        })?),
+    };
+    let seconds = |name: &str, v: Option<f64>, default: f64| match v {
+        None => Ok(default),
+        Some(v) if v.is_finite() && (0.0..=3600.0).contains(&v) => Ok(v),
+        Some(v) => Err(CommandError(format!("{name} {v} is not 0 to 3600 seconds"))),
+    };
+    let mut spec = Spec::new(method);
+    spec.min_seconds = seconds("min_seconds", a.min_seconds, spec.min_seconds)?;
+    spec.fade_seconds = seconds("fade_seconds", a.fade_seconds, spec.fade_seconds)?;
+    spec.out = a.out.as_deref().filter(|o| !o.trim().is_empty()).map(|o| project_path(e, o));
+    spec.codec = codec;
+    let file = project_path(e, &a.file);
+    let job = e.record().loops().start(&file, spec).map_err(CommandError)?;
+    Ok(loop_json(job.status()))
+}
+
+fn loop_status(e: &Engine, p: &Json) -> CmdResult<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        file: Option<String>,
+    }
+    let a: A = args(p)?;
+    let all = e.record().loops().all();
+    let Some(file) = a.file else {
+        return Ok(json!({ "loops": all.into_iter().map(loop_json).collect::<Vec<_>>() }));
+    };
+    let path = project_path(e, &file);
+    all.into_iter()
+        .rev()
+        .find(|s| Path::new(&s.file) == path || Path::new(&s.out) == path)
+        .map(loop_json)
+        .ok_or_else(|| CommandError(format!("no loop of {} was made since the app started", path.display())))
 }

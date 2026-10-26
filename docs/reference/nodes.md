@@ -2093,6 +2093,9 @@ Outputs: none.
 | `width` | int | `1920` | 16 to 3840 (soft) | Width of the file in pixels with `size` fixed (rounded down to even) |
 | `height` | int | `1080` | 16 to 2160 (soft) | Height of the file in pixels with `size` fixed (rounded down to even) |
 | `threads` *(more)* | int | `0` (automatic) | 0 to 16 (soft) | Encoder threads; automatic is all of this machine's logical cores but two. Fewer threads leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner; 0: automatic |
+| `loop` | off \| cut \| fade \| pingpong \| cut_fade | `"off"` |  | After recording stops, also write a loop of the file as <name>_loop: a movie a player can repeat without a jump. The node shows looping... until it is written; off: no loop; cut: keeps the stretch whose end looks most like its start, at least loop_min long; for content that comes back to similar pictures; fade: cross-fades the last loop_fade seconds into the start; works for any content, the fade may show as a soft double picture; pingpong: plays forward, then backward; seamless, motion reverses at both ends; cut_fade: cuts, then cross-fades over the seam that remains |
+| `loop_min` *(more)* | float | `5` | 1 to 60 s (soft) | Shortest loop `cut` may keep. A longer minimum repeats less often but may find a worse seam |
+| `loop_fade` *(more)* | float | `1` | 0.1 to 10 s (soft) | Length of the cross-fade at the seam. The loop gets this much shorter than the recording |
 
 ## comp
 

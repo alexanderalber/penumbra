@@ -118,7 +118,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -679,6 +679,22 @@ water      15
 <li><code>size</code> input records at the input's size when recording starts (rounded down to even sides); <code>fixed</code> scales the input to <code>width</code> x <code>height</code>, aspect not kept. The size of a running recording stays: an input that changes size is scaled to it.
 </li>
 </ul>
+<h3 id="recording-looping-a-recording">Looping a recording</h3>
+<p>A media player that repeats a recording jumps from its last frame back to its first. With generative content the jump shows: noise never returns to the same picture. A loop is a copy of the recording made so that a player can repeat it without that jump.</p>
+<p><strong>Automatically:</strong> set <code>loop</code> on the <a class="ref" href="#out.video"><code>out.video</code></a>. When recording stops, the node writes <code>&lt;name&gt;_loop.mp4</code> (or <code>.mov</code>) beside the recording and shows &quot;looping...&quot; until it is done. <a class="ref" href="#video_out.status"><code>video_out.status</code></a> shows the loop under <code>loop</code>. The params count as they are when recording stops.</p>
+<p><strong>By command:</strong> <a class="ref" href="#video.loop"><code>video.loop {file, method}</code></a> loops any movie file; <a class="ref" href="#video.loop_status"><code>video.loop_status</code></a> reports progress and the result. A loop never overwrites a file.</p>
+<table>
+<thead><tr><th>method</th><th>what it does</th><th>use it when</th></tr></thead>
+<tbody>
+<tr><td><code>cut</code></td><td>keeps the stretch whose end looks most like its start, at least <code>loop_min</code> long (5 s)</td><td>the content comes back to similar pictures: slow noise, rotation, cycles</td></tr>
+<tr><td><code>fade</code></td><td>cross-fades the last <code>loop_fade</code> seconds (1 s) into the start</td><td>anything; the fade can show as a soft double picture</td></tr>
+<tr><td><code>pingpong</code></td><td>plays forward, then backward</td><td>the content still looks right played backward</td></tr>
+<tr><td><code>cut_fade</code></td><td>cuts, then cross-fades over the seam</td><td><code>cut</code> alone leaves a small jump</td></tr>
+</tbody>
+</table>
+<p><strong>What cut cannot do:</strong> content that drifts away and never returns has no good cut. The status gives the seam's <code>score</code> and the recording's <code>motion</code>, both as mean luma differences. A <code>score</code> no larger than <code>motion</code> makes a seam as smooth as any other frame change. A much larger <code>score</code> shows as a jump: use <code>fade</code> or <code>cut_fade</code>, or record longer, which gives <code>cut</code> more to choose from.</p>
+<p><strong>Players:</strong> many media players stutter at the loop point whatever the file holds. Try the player before the show. An H.264 file can only start playing at a keyframe: every loop starts with one and has one every 2 seconds. ProRes has a keyframe on every frame.</p>
+<p><strong>Time:</strong> the loop runs in the background, on the CPU. A 10 s 1080p60 H.264 recording took 6 to 18 s, depending on the method (pingpong writes twice the frames).</p>
 <h3 id="recording-colour">Colour</h3>
 <p>Pictures in penumbra are linear light. The recording encodes them with the sRGB curve, the BT.709 matrix and video range, and tags the file BT.709, as players expect; <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a> reads such a file back with the same curve, so a recording played in penumbra looks as it did when recorded. Values above 1 are clipped. Without alpha (H.264, ProRes 422) the picture is taken over black; ProRes 4444 keeps the alpha channel.</p>
 <h3 id="recording-not-yet">Not yet</h3>
@@ -4144,11 +4160,14 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>size</code></td><td>input | fixed</td><td><code>&quot;input&quot;</code></td><td></td><td>The picture size of the file, fixed when the recording starts<ul><li><code>input</code>: the input's size when recording starts (rounded down to even)</li><li><code>fixed</code>: width x height; the input is scaled to it, aspect not kept</li></ul></td></tr>
 <tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>16 to 3840 (soft)</td><td>Width of the file in pixels with <code>size</code> fixed (rounded down to even)</td></tr>
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>16 to 2160 (soft)</td><td>Height of the file in pixels with <code>size</code> fixed (rounded down to even)</td></tr>
+<tr><td><code>loop</code></td><td>off | cut | fade | pingpong | cut_fade</td><td><code>&quot;off&quot;</code></td><td></td><td>After recording stops, also write a loop of the file as &lt;name&gt;_loop: a movie a player can repeat without a jump. The node shows looping... until it is written<ul><li><code>off</code>: no loop</li><li><code>cut</code>: keeps the stretch whose end looks most like its start, at least loop_min long; for content that comes back to similar pictures</li><li><code>fade</code>: cross-fades the last loop_fade seconds into the start; works for any content, the fade may show as a soft double picture</li><li><code>pingpong</code>: plays forward, then backward; seamless, motion reverses at both ends</li><li><code>cut_fade</code>: cuts, then cross-fades over the seam that remains</li></ul></td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>threads</code></td><td>int</td><td><code>0</code> (automatic)</td><td>0 to 16 (soft)</td><td>Encoder threads; automatic is all of this machine's logical cores but two. Fewer threads leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner<ul><li>0: automatic</li></ul></td></tr>
+<tr><td><code>loop_min</code></td><td>float</td><td><code>5</code></td><td>1 to 60 s (soft)</td><td>Shortest loop <code>cut</code> may keep. A longer minimum repeats less often but may find a worse seam</td></tr>
+<tr><td><code>loop_fade</code></td><td>float</td><td><code>1</code></td><td>0.1 to 10 s (soft)</td><td>Length of the cross-fade at the seam. The loop gets this much shorter than the recording</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#recording">Recording</a>, <a href="#recording-recording-1">Recording › Recording</a></p>
+<p class="mentions">Mentioned in: <a href="#recording">Recording</a>, <a href="#recording-recording-1">Recording › Recording</a>, <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
 </div></details>
 </div>
 <div class="group" id="family-comp">
@@ -4937,6 +4956,19 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 </div>
+<div class="group" id="group-video">
+<h3>video</h3>
+<details class="entry command" id="video.loop"><summary><code class="name">video.loop</code><span class="sum">Make a movie loop seamlessly, as a job in the background: method cut (the best stretch), fade (end cross-faded into the start), pingpong (forward, then backward) or cut_fade; writes &lt;stem&gt;_loop.&lt;ext&gt; beside it unless out names a file, never overwriting</span></summary>
+<div class="body">
+<p>Make a movie loop seamlessly, as a job in the background: method cut (the best stretch), fade (end cross-faded into the start), pingpong (forward, then backward) or cut_fade; writes &lt;stem&gt;_loop.&lt;ext&gt; beside it unless out names a file, never overwriting; {file, method, min_seconds? (5), fade_seconds? (1), out?, codec?}; answers at once with the status</p>
+<p class="mentions">Mentioned in: <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
+</div></details>
+<details class="entry command" id="video.loop_status"><summary><code class="name">video.loop_status</code><span class="sum">Loops: file, out, method, codec, frames_in, frames_out, loop_start, loop_end, fade_frames, score, motion, progress, done, error, seconds</span></summary>
+<div class="body">
+<p>Loops: file, out, method, codec, frames_in, frames_out, loop_start, loop_end, fade_frames, score, motion, progress, done, error, seconds; {file?} (the recording or the loop) for the newest of that file</p>
+<p class="mentions">Mentioned in: <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
+</div></details>
+</div>
 <div class="group" id="group-video_in">
 <h3>video_in</h3>
 <details class="entry command" id="video_in.config"><summary><code class="name">video_in.config</code><span class="sum">Camera settings for this run: {enabled?}</span></summary>
@@ -4962,9 +4994,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit); {path}; answers with the status once recording</p>
 <p class="mentions">Mentioned in: <a href="#recording-recording-1">Recording › Recording</a></p>
 </div></details>
-<details class="entry command" id="video_out.status"><summary><code class="name">video_out.status</code><span class="sum">Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error</span></summary>
+<details class="entry command" id="video_out.status"><summary><code class="name">video_out.status</code><span class="sum">Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, and loop (as video.loop_status) once a loop was asked for</span></summary>
 <div class="body">
-<p>Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error; {path?}</p>
+<p>Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, and loop (as video.loop_status) once a loop was asked for; {path?}</p>
+<p class="mentions">Mentioned in: <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
 </div></details>
 <details class="entry command" id="video_out.stop"><summary><code class="name">video_out.stop</code><span class="sum">Stop an out.video's recording and finish the file: turns record off (an edit)</span></summary>
 <div class="body">

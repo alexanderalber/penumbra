@@ -7,12 +7,16 @@
 //!   dropped (the caller counts it), so whoever records never waits for the encoder.
 //! - [`hub`]: the recordings of a process: their status, and finishing every file when the app
 //!   closes.
+//! - [`looping`]: a movie made from a recording that a player can repeat without a visible
+//!   jump: the best stretch cut out, a cross-fade of the end into the start, or forward then
+//!   backward. It decodes the recording with `penumbra-video`.
 //!
 //! The pictures arrive as Y'CbCr planes already converted (on the GPU, in `penumbra-gpu`),
 //! through the [`Planes`] trait, so this crate needs no GPU. No UI, no graph: the node type
 //! lives in `penumbra-ops`, the commands in `penumbra-engine`.
 
 pub mod hub;
+pub mod looping;
 pub mod writer;
 
 #[cfg(test)]
@@ -23,7 +27,7 @@ use std::time::Duration;
 use serde::Serialize;
 
 pub use hub::{Hub, Status};
-pub use writer::{Recording, Settings};
+pub use writer::{Recording, Settings, Sink};
 
 /// How hard the H.264 encoder works for each frame: the trade of speed against size and
 /// quality. FilmCraft's encoder runs on the CPU; how many frames per second it manages depends

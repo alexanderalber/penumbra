@@ -3389,6 +3389,7 @@ dependencies = [
  "penumbra-video",
  "rayon",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

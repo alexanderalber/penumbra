@@ -17,12 +17,17 @@
 //! `record` opens off whatever the project file says, so opening a project never starts a
 //! recording by itself. A recording that could not start or ended by itself (an error) is not
 //! tried again until `record` turns off and on.
+//!
+//! With `loop` set, a finished recording is made into a loop as well
+//! ([`penumbra_record::looping`]), on a thread of the record hub's; the node warns while it runs.
+//! The params count as they are when the recording stops.
 
 use penumbra_core::{Error, NodeId, ParamSpec, Rate, Resolves, Tick, Unit, Value};
 use penumbra_gpu::{Gpu, MappedPlanes, PlaneLayout, Tex, YuvReader};
 use penumbra_graph::{
     CookContext, CookError, Cooked, DataKind, FnNodeType, NodeDef, NodeDesc, NodeTypes, Operator,
 };
+use penumbra_record::looping::{Method, Spec};
 use penumbra_record::{Codec, Fps, Frame, H264Preset, Hub, Layout, Planes, Recording, Settings};
 
 use crate::on_gpu;
@@ -72,6 +77,25 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             spec.choice_doc(name, doc)
         },
     );
+    let looping = ["off"].into_iter().chain(Method::NAMES).collect::<Vec<_>>();
+    let looping = ParamSpec::choice("loop", &looping)
+        .doc(
+            "After recording stops, also write a loop of the file as <name>_loop: a movie a player can \
+             repeat without a jump. The node shows looping... until it is written",
+        )
+        .choice_doc("off", "no loop")
+        .choice_doc(
+            "cut",
+            "keeps the stretch whose end looks most like its start, at least loop_min long; for content \
+             that comes back to similar pictures",
+        )
+        .choice_doc(
+            "fade",
+            "cross-fades the last loop_fade seconds into the start; works for any content, the fade may show \
+             as a soft double picture",
+        )
+        .choice_doc("pingpong", "plays forward, then backward; seamless, motion reverses at both ends")
+        .choice_doc("cut_fade", "cuts, then cross-fades over the seam that remains");
     types.register(FnNodeType::new(
         NodeDesc::new(VIDEO_OUT, "Records its input to a movie file (H.264 or ProRes)")
             .param(ParamSpec::bool("record", false).opens_at_default().doc(
@@ -113,6 +137,23 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                  leave more to the rest of the show (video decoding, scripts) but drop frames of busy \
                  pictures sooner",
             ))
+            .param(looping)
+            .param(
+                ParamSpec::float("loop_min", 5.0)
+                    .clamp(0.0, 3600.0)
+                    .range(1.0, 60.0)
+                    .unit(Unit::Seconds)
+                    .more()
+                    .doc("Shortest loop `cut` may keep. A longer minimum repeats less often but may find a worse seam"),
+            )
+            .param(
+                ParamSpec::float("loop_fade", 1.0)
+                    .clamp(0.0, 600.0)
+                    .range(0.1, 10.0)
+                    .unit(Unit::Seconds)
+                    .more()
+                    .doc("Length of the cross-fade at the seam. The loop gets this much shorter than the recording"),
+            )
             .input("in", DataKind::Tex)
             .describe_input("in", "The picture to record")
             // Reads the clock: a frame is due at the recording's rate whether or not the input
@@ -129,9 +170,16 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str> {
     let size = node.param(desc, "size").and_then(Value::as_str).unwrap_or("input");
     let codec = node.param(desc, "codec").and_then(Value::as_str).unwrap_or("h264");
+    let method = node.param(desc, "loop").and_then(Value::as_str).and_then(Method::parse);
     match (size, name) {
         ("input", "width" | "height") => Some("`size` is input: the file takes the input's size"),
         _ if name == "preset" && codec != "h264" => Some("only the h264 codec has presets"),
+        _ if name == "loop_min" && !method.is_some_and(Method::cuts) => {
+            Some("only cut and cut_fade search a loop")
+        }
+        _ if name == "loop_fade" && !method.is_some_and(Method::fades) => {
+            Some("only fade and cut_fade cross-fade")
+        }
         _ => None,
     }
 }
@@ -171,9 +219,20 @@ impl Planes for GpuPlanes {
     }
 }
 
+/// The loop the params ask for, made of a file in `codec`.
+fn loop_spec(cx: &CookContext<'_>, codec: Codec) -> Result<Option<Spec>, CookError> {
+    let Some(method) = Method::parse(cx.text("loop")?) else { return Ok(None) };
+    let mut spec = Spec::new(method);
+    spec.min_seconds = cx.float("loop_min")?.max(0.0);
+    spec.fade_seconds = cx.float("loop_fade")?.max(0.0);
+    spec.codec = Some(codec);
+    Ok(Some(spec))
+}
+
 /// A recording under way and where it stands.
 struct Take {
     recording: Recording,
+    codec: Codec,
     reader: YuvReader,
     planes: PlaneLayout,
     queue: usize,
@@ -265,7 +324,9 @@ impl VideoOut {
         let queue = ring.saturating_sub(1).max(1);
         let settings = Settings { path, codec, width: w, height: h, fps, threads, queue, h264 };
         let recording = hub.start(node, settings).map_err(CookError::failed)?;
+        recording.then_loop(loop_spec(cx, codec)?);
         self.take = Some(Take {
+            codec,
             planes: plane_layout(&recording.layout()),
             recording,
             reader: YuvReader::new(ring),
@@ -338,7 +399,10 @@ impl Operator for VideoOut {
             self.take = None;
         }
         if !record {
-            self.take = None;
+            // The loop follows the params as they are when the recording stops.
+            if let Some(take) = self.take.take() {
+                take.recording.then_loop(loop_spec(cx, take.codec).unwrap_or(None));
+            }
             self.tried = false;
             self.failed = None;
         } else if !self.tried {
@@ -369,6 +433,13 @@ impl Operator for VideoOut {
             }
             if s.recording && cx.input(0).is_none() {
                 cx.warn("nothing connected: the file holds the last picture");
+            }
+        }
+        if let Some(l) = hub.status(node).and_then(|s| s.looping) {
+            if !l.done {
+                cx.warn(format!("looping... {:.0} %", l.progress * 100.0));
+            } else if let Some(e) = l.error {
+                cx.warn(format!("the loop of the last recording failed: {e}"));
             }
         }
         Ok(Cooked::Outputs(Vec::new()))

@@ -320,6 +320,13 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.view` | Pin the viewer to a node, or unpin without a path; {path?, output?: name or index} |
 | `ui.window` | Where the editor window is, and moves it: {position?: [x, y], size?: [width, height], maximized?}; physical pixels of the desktop as output.list gives the displays, the position its outer top left corner, the size the part inside the frame; the window opens there again on the next start |
 
+## video
+
+| command | |
+|---|---|
+| `video.loop` | Make a movie loop seamlessly, as a job in the background: method cut (the best stretch), fade (end cross-faded into the start), pingpong (forward, then backward) or cut_fade; writes <stem>_loop.<ext> beside it unless out names a file, never overwriting; {file, method, min_seconds? (5), fade_seconds? (1), out?, codec?}; answers at once with the status |
+| `video.loop_status` | Loops: file, out, method, codec, frames_in, frames_out, loop_start, loop_end, fade_frames, score, motion, progress, done, error, seconds; {file?} (the recording or the loop) for the newest of that file |
+
 ## video_in
 
 | command | |
@@ -333,7 +340,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `video_out.start` | Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit); {path}; answers with the status once recording |
-| `video_out.status` | Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error; {path?} |
+| `video_out.status` | Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, and loop (as video.loop_status) once a loop was asked for; {path?} |
 | `video_out.stop` | Stop an out.video's recording and finish the file: turns record off (an edit); {path}; answers with the status |
 
 ## view

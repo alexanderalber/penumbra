@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use penumbra_core::{NodeId, lock};
 use serde::Serialize;
 
+use crate::looping::{Jobs, LoopStatus};
 use crate::writer::{self, Recording, Settings, Shared};
 
 /// A recording as far as it got.
@@ -55,6 +56,9 @@ pub struct Status {
     /// Frames waiting for the encoder.
     pub queue: usize,
     pub error: Option<String>,
+    /// The loop made of the finished file, when one was asked for.
+    #[serde(rename = "loop", skip_serializing_if = "Option::is_none")]
+    pub looping: Option<LoopStatus>,
 }
 
 #[derive(Default)]
@@ -82,6 +86,8 @@ struct Inner {
 #[derive(Clone, Default)]
 pub struct Hub {
     inner: Arc<Mutex<Inner>>,
+    /// Loops of recordings, asked for by a recording or by command.
+    loops: Jobs,
 }
 
 impl Hub {
@@ -143,7 +149,7 @@ impl Hub {
         }
         let path = inner.nodes.get(&node).map(|e| e.path.clone()).unwrap_or_default();
         let timeout = inner.planes_timeout.unwrap_or(writer::PLANES_TIMEOUT);
-        let (recording, shared, handle) = writer::start(&path, settings, timeout)?;
+        let (recording, shared, handle) = writer::start(&path, settings, timeout, self.loops.clone())?;
         inner.threads.push(handle);
         inner.nodes.entry(node).or_default().current = Some(shared);
         Ok(recording)
@@ -157,6 +163,11 @@ impl Hub {
         let mut s = e.current.as_ref()?.status();
         s.node.clone_from(&e.path);
         Some(s)
+    }
+
+    /// The loops of recordings: those the recordings asked for and those started by command.
+    pub fn loops(&self) -> &Jobs {
+        &self.loops
     }
 
     /// Every attached node with its current or last recording (a default status, with only the
@@ -175,8 +186,10 @@ impl Hub {
     }
 
     /// Stops every recording and waits up to `timeout` for their files to be finished; no new
-    /// ones start afterwards. Returns how many were still busy at the deadline.
+    /// ones start afterwards. Loops being made stop, and their files are removed. Returns how
+    /// many threads were still busy at the deadline.
     pub fn shutdown(&self, timeout: Duration) -> usize {
+        self.loops.close();
         let threads = {
             let mut inner = lock(&self.inner);
             inner.closed = true;
@@ -202,6 +215,6 @@ impl Hub {
                 log::warn!("a recording did not finish its file in time");
             }
         }
-        busy
+        busy + self.loops.shutdown(deadline.saturating_duration_since(Instant::now()))
     }
 }

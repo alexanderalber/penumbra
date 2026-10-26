@@ -95,6 +95,40 @@ smaller size (`size` fixed, `width` and `height`), or give the encoder more `thr
   `fixed` scales the input to `width` x `height`, aspect not kept. The size of a running
   recording stays: an input that changes size is scaled to it.
 
+## Looping a recording
+
+A media player that repeats a recording jumps from its last frame back to its first. With
+generative content the jump shows: noise never returns to the same picture. A loop is a copy
+of the recording made so that a player can repeat it without that jump.
+
+**Automatically:** set `loop` on the `out.video`. When recording stops, the node writes
+`<name>_loop.mp4` (or `.mov`) beside the recording and shows "looping..." until it is done.
+`video_out.status` shows the loop under `loop`. The params count as they are when recording
+stops.
+
+**By command:** `video.loop {file, method}` loops any movie file; `video.loop_status` reports
+progress and the result. A loop never overwrites a file.
+
+| method | what it does | use it when |
+|---|---|---|
+| `cut` | keeps the stretch whose end looks most like its start, at least `loop_min` long (5 s) | the content comes back to similar pictures: slow noise, rotation, cycles |
+| `fade` | cross-fades the last `loop_fade` seconds (1 s) into the start | anything; the fade can show as a soft double picture |
+| `pingpong` | plays forward, then backward | the content still looks right played backward |
+| `cut_fade` | cuts, then cross-fades over the seam | `cut` alone leaves a small jump |
+
+**What cut cannot do:** content that drifts away and never returns has no good cut. The
+status gives the seam's `score` and the recording's `motion`, both as mean luma differences.
+A `score` no larger than `motion` makes a seam as smooth as any other frame change. A much
+larger `score` shows as a jump: use `fade` or `cut_fade`, or record longer, which gives `cut`
+more to choose from.
+
+**Players:** many media players stutter at the loop point whatever the file holds. Try the
+player before the show. An H.264 file can only start playing at a keyframe: every loop starts
+with one and has one every 2 seconds. ProRes has a keyframe on every frame.
+
+**Time:** the loop runs in the background, on the CPU. A 10 s 1080p60 H.264 recording took 6
+to 18 s, depending on the method (pingpong writes twice the frames).
+
 ## Colour
 
 Pictures in penumbra are linear light. The recording encodes them with the sRGB curve, the

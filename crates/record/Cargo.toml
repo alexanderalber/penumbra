@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 penumbra-core.workspace = true
+# Decodes recordings to make loops of them.
+penumbra-video.workspace = true
 filmcraft-h264enc.workspace = true
 filmcraft-prores.workspace = true
 filmcraft-isobmff.workspace = true
@@ -17,8 +19,8 @@ log.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
-# Reads the recordings back in the tests.
-penumbra-video.workspace = true
+# The status as the commands show it, in the tests.
+serde_json.workspace = true
 
 [lints]
 workspace = true

@@ -14,7 +14,7 @@
 use std::fs::File;
 use std::io::BufWriter;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
@@ -25,7 +25,8 @@ use filmcraft_isobmff as iso;
 use penumbra_core::lock;
 
 use crate::hub::Status;
-use crate::{Codec, Fps, Frame, H264Preset, Layout};
+use crate::looping::{Job, Jobs, Spec};
+use crate::{Codec, Fps, Frame, H264Preset, Layout, Planes};
 
 /// How long the thread waits for one frame's planes (a GPU readback) before giving up on it,
 /// unless its [`crate::Hub`] says otherwise.
@@ -78,6 +79,10 @@ pub(crate) struct Shared {
     skipped: AtomicU64,
     /// The highest frame index that came due, -1 before the first.
     due: AtomicI64,
+    /// The loop to make of the file once it is finished.
+    then: Mutex<Option<Spec>>,
+    /// The loop being made of the file, or made.
+    looping: Mutex<Option<Arc<Job>>>,
 }
 
 impl Shared {
@@ -89,6 +94,8 @@ impl Shared {
             dropped: AtomicU64::new(0),
             skipped: AtomicU64::new(0),
             due: AtomicI64::new(-1),
+            then: Mutex::new(None),
+            looping: Mutex::new(None),
         }
     }
 
@@ -97,6 +104,7 @@ impl Shared {
         s.queue = self.queued.load(Ordering::Acquire);
         s.dropped = self.dropped.load(Ordering::Acquire);
         s.skipped = self.skipped.load(Ordering::Acquire);
+        s.looping = lock(&self.looping).as_ref().map(|j| j.status());
         s
     }
 
@@ -166,6 +174,12 @@ impl Recording {
         self.shared.status()
     }
 
+    /// Makes a loop of the file once it is finished, or none. The last call before the
+    /// recording ends counts; a recording that fails makes no loop.
+    pub fn then_loop(&self, spec: Option<Spec>) {
+        *lock(&self.shared.then) = spec;
+    }
+
     /// Whether it still takes frames (it ended when an error occurred).
     pub fn is_running(&self) -> bool {
         self.shared.status().recording
@@ -192,6 +206,7 @@ pub(crate) fn start(
     node: &str,
     s: Settings,
     planes_timeout: Duration,
+    loops: Jobs,
 ) -> Result<(Recording, Arc<Shared>, JoinHandle<()>), String> {
     let layout = s.layout();
     layout.check()?;
@@ -215,12 +230,12 @@ pub(crate) fn start(
     let thread_shared = shared.clone();
     let handle = std::thread::Builder::new()
         .name("record".into())
-        .spawn(move || run(&s, &rx, &thread_shared, planes_timeout))
+        .spawn(move || run(&s, &rx, &thread_shared, planes_timeout, &loops))
         .map_err(|e| format!("cannot start the recording thread: {e}"))?;
     Ok((Recording { tx: Some(tx), shared: shared.clone(), layout, fps }, shared, handle))
 }
 
-fn run(s: &Settings, rx: &Receiver<Frame>, shared: &Shared, planes_timeout: Duration) {
+fn run(s: &Settings, rx: &Receiver<Frame>, shared: &Shared, planes_timeout: Duration, loops: &Jobs) {
     let outcome = catch_unwind(AssertUnwindSafe(|| record(s, rx, shared, planes_timeout)));
     let error = match outcome {
         Ok(Ok(())) => None,
@@ -229,6 +244,16 @@ fn run(s: &Settings, rx: &Receiver<Frame>, shared: &Shared, planes_timeout: Dura
     };
     if let Some(e) = &error {
         log::warn!("recording {}: {e}", s.path.display());
+    }
+    // The loop starts before the recording says it is done, so whoever waits for done sees it.
+    let then = lock(&shared.then).take();
+    if let (Some(spec), None) = (then, &error) {
+        let file = PathBuf::from(shared.status().file);
+        let job = loops.start(&file, spec.clone()).unwrap_or_else(|e| {
+            log::warn!("no loop of {}: {e}", file.display());
+            Job::failed(&file, &spec, e)
+        });
+        *lock(&shared.looping) = Some(job);
     }
     shared.update(|st| {
         st.recording = false;
@@ -256,34 +281,15 @@ fn record(
     shared: &Shared,
     planes_timeout: Duration,
 ) -> Result<(), String> {
-    let layout = s.layout();
-    let path = s.path.as_path();
-    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
-        std::fs::create_dir_all(dir)
-            .map_err(|e| format!("cannot create the folder {}: {e}", dir.display()))?;
-    }
-    let (file, path) = penumbra_core::files::create_numbered(path)?;
-    shared.update(|st| {
-        st.file = path.display().to_string();
-        st.opened = true;
-    });
-    let mut encoder = Encoder::new(s)?;
-    let mp4 = s.codec == Codec::H264
-        && path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("mp4") || e.eq_ignore_ascii_case("m4v"));
-    let mut opts = iso::WriterOptions::new(if mp4 { iso::Brand::Mp4 } else { iso::Brand::Mov });
-    opts.metadata.push(("\u{a9}too".into(), "penumbra".into()));
-    let mut mux =
-        iso::Mp4Writer::new(BufWriter::with_capacity(WRITE_BUFFER, file), opts).map_err(write_error)?;
-    let track = mux.add_track(encoder.track(&layout, s.fps, mp4)?).map_err(write_error)?;
-
-    let mut held: Option<Packet> = None;
+    let mut sink = Sink::create(s, |path| {
+        shared.update(|st| {
+            st.file = path.display().to_string();
+            st.opened = true;
+        });
+    })?;
     let mut last_index = -1i64;
     let mut busy: Option<f64> = None;
     let mut failure: Option<String> = None;
-    let mut written = Written::default();
     loop {
         let mut frame = match rx.recv_timeout(NAP) {
             Ok(f) => f,
@@ -295,8 +301,8 @@ fn record(
             continue;
         }
         last_index = frame.index;
-        let (packets, took) = match encoder.encode(&layout, &mut frame, planes_timeout) {
-            Ok(p) => p,
+        let took = match sink.encode(frame.index, frame.planes.as_mut(), planes_timeout) {
+            Ok(t) => t,
             Err(e) => {
                 failure = Some(e);
                 break;
@@ -304,14 +310,11 @@ fn record(
         };
         drop(frame);
         busy = Some(busy.map_or(took, |b| 0.9 * b + 0.1 * took));
-        if let Err(e) = written.pass(&mut mux, track, s.fps, &mut held, packets) {
-            failure = Some(e);
-            break;
-        }
         let seconds = (last_index + 1) as f64 / s.fps.as_f64();
+        let (frames, bytes) = (sink.frames(), sink.bytes());
         shared.update(|st| {
-            st.frames = written.frames + u64::from(held.is_some());
-            st.bytes = written.bytes + held.as_ref().map_or(0, |h| h.data.len() as u64);
+            st.frames = frames;
+            st.bytes = bytes;
             st.seconds = seconds;
             st.encoder_fps = busy.filter(|b| *b > 0.0).map_or(0.0, |b| 1.0 / b);
         });
@@ -320,36 +323,184 @@ fn record(
         st.recording = false;
         st.finishing = true;
     });
-    if failure.is_none() {
-        let rest = encoder.flush();
-        if let Err(e) = rest.and_then(|rest| written.pass(&mut mux, track, s.fps, &mut held, rest)) {
-            failure = Some(e);
-        }
-    }
-    // The last frame lasts one frame, or until the end of the last frame that came due.
-    if let Some(h) = held.take() {
-        let next = (h.index + 1).max(shared.due.load(Ordering::Acquire).saturating_add(1));
-        let seconds = next as f64 / s.fps.as_f64();
-        shared.update(|st| st.seconds = seconds);
-        if let Err(e) = written.put(&mut mux, track, s.fps, h, next)
-            && failure.is_none()
-        {
-            failure = Some(e);
-        }
-    }
-    let finished = mux.finish().map_err(write_error).and_then(|w| {
-        let file = w.into_inner().map_err(|e| format!("cannot write the file: {}", e.error()))?;
-        file.sync_all().map_err(|e| format!("cannot write the file: {e}"))
-    });
+    let closed = sink.close(failure, shared.due.load(Ordering::Acquire));
     shared.update(|st| {
-        st.frames = written.frames;
-        st.bytes = written.bytes;
+        st.frames = closed.frames;
+        st.bytes = closed.bytes;
+        if let Some(seconds) = closed.seconds {
+            st.seconds = seconds;
+        }
     });
-    match (failure, finished) {
-        (Some(e), Ok(())) => Err(format!("{e} (the file is finished up to there)")),
-        (Some(e), Err(_)) => Err(e),
-        (None, Err(e)) => Err(e),
-        (None, Ok(())) => Ok(()),
+    closed.result
+}
+
+/// A movie file written frame after frame on the caller's thread. The recording thread uses
+/// one, and so does anything that makes a movie from frames it has in memory (a loop of a
+/// recording). [`Sink::push`] encodes the frame before it returns; nothing is dropped.
+pub struct Sink {
+    encoder: Encoder,
+    mux: iso::Mp4Writer<BufWriter<File>>,
+    track: usize,
+    layout: Layout,
+    fps: Fps,
+    /// The last packet, held until the next says how long it lasts.
+    held: Option<Packet>,
+    written: Written,
+    path: PathBuf,
+    /// Index of the frame [`Sink::push`] writes next.
+    next: i64,
+}
+
+/// What [`Sink::close`] reports.
+struct Closed {
+    frames: u64,
+    bytes: u64,
+    /// Length of the file, when a last frame was written.
+    seconds: Option<f64>,
+    result: Result<(), String>,
+}
+
+impl Sink {
+    /// Creates the file `s.path` names and starts the encoder. An existing file is never
+    /// overwritten: the sink takes the first free `<stem>_<n>.<ext>` beside it. Missing folders
+    /// are created. `on_file` hears the name actually created, before the encoder starts.
+    pub fn create(s: &Settings, on_file: impl FnOnce(&Path)) -> Result<Sink, String> {
+        check(s)?;
+        let path = s.path.as_path();
+        if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| format!("cannot create the folder {}: {e}", dir.display()))?;
+        }
+        let (file, path) = penumbra_core::files::create_numbered(path)?;
+        on_file(&path);
+        Sink::with_file(s, file, path)
+    }
+
+    /// Writes into `file`, created empty as `path` (`s.path` is not looked at).
+    pub fn with_file(s: &Settings, file: File, path: PathBuf) -> Result<Sink, String> {
+        check(s)?;
+        let layout = s.layout();
+        let encoder = Encoder::new(s)?;
+        let mp4 = s.codec == Codec::H264
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("mp4") || e.eq_ignore_ascii_case("m4v"));
+        let mut opts = iso::WriterOptions::new(if mp4 { iso::Brand::Mp4 } else { iso::Brand::Mov });
+        opts.metadata.push(("\u{a9}too".into(), "penumbra".into()));
+        let mut mux =
+            iso::Mp4Writer::new(BufWriter::with_capacity(WRITE_BUFFER, file), opts).map_err(write_error)?;
+        let track = mux.add_track(encoder.track(&layout, s.fps, mp4)?).map_err(write_error)?;
+        Ok(Sink {
+            encoder,
+            mux,
+            track,
+            layout,
+            fps: s.fps,
+            held: None,
+            written: Written::default(),
+            path,
+            next: 0,
+        })
+    }
+
+    /// The file written.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The planes [`Sink::push`] takes.
+    pub fn layout(&self) -> Layout {
+        self.layout
+    }
+
+    /// Frames encoded so far.
+    pub fn frames(&self) -> u64 {
+        self.written.frames + u64::from(self.held.is_some())
+    }
+
+    /// Bytes of coded pictures so far.
+    pub fn bytes(&self) -> u64 {
+        self.written.bytes + self.held.as_ref().map_or(0, |h| h.data.len() as u64)
+    }
+
+    /// Encodes frame `index`, waiting up to `timeout` for its planes; says how long the work
+    /// took in seconds.
+    fn encode(&mut self, index: i64, planes: &mut dyn Planes, timeout: Duration) -> Result<f64, String> {
+        let (packets, took) = self.encoder.encode(&self.layout, index, planes, timeout)?;
+        self.written.pass(&mut self.mux, self.track, self.fps, &mut self.held, packets)?;
+        Ok(took)
+    }
+
+    /// Encodes `planes` (as [`Sink::layout`] says) as the next frame, one frame long.
+    pub fn push(&mut self, planes: &[u8]) -> Result<(), String> {
+        let index = self.next;
+        self.next += 1;
+        self.encode(index, &mut Slice(planes), Duration::ZERO).map(|_| ())
+    }
+
+    /// Writes what the encoder still holds and finishes the file; returns the frames written.
+    pub fn finish(self) -> Result<u64, String> {
+        let closed = self.close(None, -1);
+        closed.result.map(|()| closed.frames)
+    }
+
+    /// Ends the file. Without a `failure`, first encodes what the encoder still holds. The last
+    /// frame lasts until the end of frame `due`, at least one frame. The file is finished as far
+    /// as it got.
+    fn close(mut self, mut failure: Option<String>, due: i64) -> Closed {
+        if failure.is_none() {
+            let rest = self.encoder.flush();
+            let passed = rest.and_then(|rest| {
+                self.written.pass(&mut self.mux, self.track, self.fps, &mut self.held, rest)
+            });
+            if let Err(e) = passed {
+                failure = Some(e);
+            }
+        }
+        let mut seconds = None;
+        if let Some(h) = self.held.take() {
+            let next = (h.index + 1).max(due.saturating_add(1));
+            seconds = Some(next as f64 / self.fps.as_f64());
+            if let Err(e) = self.written.put(&mut self.mux, self.track, self.fps, h, next)
+                && failure.is_none()
+            {
+                failure = Some(e);
+            }
+        }
+        let finished = self.mux.finish().map_err(write_error).and_then(|w| {
+            let file = w.into_inner().map_err(|e| format!("cannot write the file: {}", e.error()))?;
+            file.sync_all().map_err(|e| format!("cannot write the file: {e}"))
+        });
+        let result = match (failure, finished) {
+            (Some(e), Ok(())) => Err(format!("{e} (the file is finished up to there)")),
+            (Some(e), Err(_)) => Err(e),
+            (None, Err(e)) => Err(e),
+            (None, Ok(())) => Ok(()),
+        };
+        Closed { frames: self.written.frames, bytes: self.written.bytes, seconds, result }
+    }
+}
+
+/// Whether the settings can be encoded at all.
+fn check(s: &Settings) -> Result<(), String> {
+    s.layout().check()?;
+    if s.fps.num == 0 || s.fps.den == 0 {
+        return Err("the frame rate is 0".into());
+    }
+    Ok(())
+}
+
+/// Planes borrowed for one [`Sink::push`].
+struct Slice<'a>(&'a [u8]);
+
+impl Planes for Slice<'_> {
+    fn read(
+        &mut self,
+        _timeout: Duration,
+        f: &mut dyn FnMut(&[u8]) -> Result<(), String>,
+    ) -> Result<(), String> {
+        f(self.0)
     }
 }
 
@@ -487,15 +638,15 @@ impl Encoder {
         Ok(iso::TrackConfig::new(entry, fps.num))
     }
 
-    /// Encodes `frame`, waiting up to `timeout` for its planes; also says how long the work took
+    /// Encodes frame `index` from `planes`, waiting up to `timeout` for them; also says how long the work took
     /// in seconds, from when the planes were there (not counting the wait for them).
     fn encode(
         &mut self,
         layout: &Layout,
-        frame: &mut Frame,
+        index: i64,
+        planes: &mut dyn Planes,
         timeout: Duration,
     ) -> Result<(Vec<Packet>, f64), String> {
-        let index = frame.index;
         let [oy, ou, ov, oa] = layout.offsets();
         let mut out = Vec::new();
         let mut started = None;
@@ -503,7 +654,7 @@ impl Encoder {
             Encoder::H264(enc) => {
                 let luma = layout.luma_stride() as usize;
                 let chroma = layout.chroma_stride() as usize;
-                frame.planes.read(timeout, &mut |b| {
+                planes.read(timeout, &mut |b| {
                     started = Some(Instant::now());
                     let plane = |from: usize, to: usize| b.get(from..to).ok_or("the frame is too short");
                     let yuv = filmcraft_h264enc::YuvFrame {
@@ -528,7 +679,7 @@ impl Encoder {
                 let (cw, ch) = (cw as usize, ch as usize);
                 let luma = layout.luma_stride() as usize * 2;
                 let chroma = layout.chroma_stride() as usize * 2;
-                frame.planes.read(timeout, &mut |b| {
+                planes.read(timeout, &mut |b| {
                     started = Some(Instant::now());
                     unpack(b, oy, luma, w, h, &mut pf.y)?;
                     unpack(b, ou, chroma, cw, ch, &mut pf.cb)?;
