@@ -241,13 +241,27 @@ fn density(uv: vec2f) -> f32 {
     return pn_density(uv * vec2f(textureDimensions(tex)), frame.overlay_scale, frame.overlay_factor, frame.overlay_cap);
 }
 
-// A projector's picture at `uv` (0..1 from the top left); white without one.
-fn picture(slot: u32, uv: vec2f) -> vec3f {
+// The fragment's position's change to the next pixel across and down, for the projector
+// pictures' mip level. Set by shade(), in uniform control flow; the lights' loop that samples the
+// pictures is not.
+var<private> world_dx: vec3f;
+var<private> world_dy: vec3f;
+
+// Where `light`'s picture lands at `p`: 0..1 from the top left, and the picture's clip w (not
+// in front of the projector where it is not above zero).
+fn picture_uv(light: Light, p: vec3f) -> vec3f {
+    let c = light.clip * vec4f(p, 1.0);
+    return vec3f(c.xy / c.w * vec2f(0.5, -0.5) + 0.5, c.w);
+}
+
+// A projector's picture at `uv` (0..1 from the top left), its change to the next pixel across
+// `dx` and down `dy` choosing the mip; white without one.
+fn picture(slot: u32, uv: vec2f, dx: vec2f, dy: vec2f) -> vec3f {
     switch slot {
-        case 1u: { return textureSampleLevel(picture0, picture_samp, uv, 0.0).rgb; }
-        case 2u: { return textureSampleLevel(picture1, picture_samp, uv, 0.0).rgb; }
-        case 3u: { return textureSampleLevel(picture2, picture_samp, uv, 0.0).rgb; }
-        case 4u: { return textureSampleLevel(picture3, picture_samp, uv, 0.0).rgb; }
+        case 1u: { return textureSampleGrad(picture0, picture_samp, uv, dx, dy).rgb; }
+        case 2u: { return textureSampleGrad(picture1, picture_samp, uv, dx, dy).rgb; }
+        case 3u: { return textureSampleGrad(picture2, picture_samp, uv, dx, dy).rgb; }
+        case 4u: { return textureSampleGrad(picture3, picture_samp, uv, dx, dy).rgb; }
         default: { return vec3f(1.0); }
     }
 }
@@ -331,15 +345,19 @@ fn incoming(light: Light, kind: u32, p: vec3f, n: vec3f) -> Incoming {
     var tint = vec3f(1.0);
     if kind == 4u {
         // Only inside the projector's frustum, its picture's colour there.
-        let c = light.clip * vec4f(p, 1.0);
-        if c.w <= 1e-9 {
+        let at = picture_uv(light, p);
+        if at.z <= 1e-9 {
             return out;
         }
-        let ndc = c.xy / c.w;
-        if abs(ndc.x) > 1.0 || abs(ndc.y) > 1.0 {
+        if any(abs(at.xy - 0.5) > vec2f(0.5)) {
             return out;
         }
-        tint = picture(u32(light.extra.z + 0.5), ndc * vec2f(0.5, -0.5) + 0.5);
+        // The neighbours' spots in the picture; one behind the projector counts as no change.
+        let ax = picture_uv(light, p + world_dx);
+        let ay = picture_uv(light, p + world_dy);
+        let dx = select(vec2f(0.0), ax.xy - at.xy, ax.z > 1e-9);
+        let dy = select(vec2f(0.0), ay.xy - at.xy, ay.z > 1e-9);
+        tint = picture(u32(light.extra.z + 0.5), at.xy, dx, dy);
     }
     // A parallel projector (an orthographic camera, its clip matrix's w row 0 0 0 1) throws
     // along its axis from everywhere alike, as a directional light.
@@ -559,6 +577,8 @@ fn fs_blend(v: VOut) -> @location(0) vec4f {
 fn shade(v: VOut, open: f32) -> vec4f {
     let t = texel(v);
     // Derivatives in uniform control flow, before any branch.
+    world_dx = dpdx(v.world);
+    world_dy = dpdy(v.world);
     let r = density(v.uv);
     let line = lines(v);
     var n = v.normal;

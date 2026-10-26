@@ -33,6 +33,10 @@
 //! casting shadows also keep a tint map of what see-through surfaces let through. One environment
 //! light per render ([`Environment`]) lights phong and pbr materials from its baked maps.
 //!
+//! Textures and projector pictures are sampled through mip chains each render makes of them
+//! (`mips`), trilinear and anisotropic: a texture much finer than the pixels it lands in shows
+//! the mean of its texels instead of stairs and shimmer.
+//!
 //! Ambient occlusion ([`Ao`]): before the colour pass, a pass without multisampling writes the
 //! opaque surfaces' positions and normals; a fullscreen pass (`ao.wgsl`) estimates per pixel how
 //! much of the hemisphere above the surface the geometry around it hides, then a blur over the
@@ -57,6 +61,7 @@ const SOURCE: &str = concat!(include_str!("common.wgsl"), include_str!("render.w
 
 #[cfg(test)]
 mod layout_tests;
+mod mips;
 mod passes;
 
 use passes::{Calls, Encoding, MeasureTargets, RenderPipes, Shared, Wanted};
@@ -67,6 +72,9 @@ const MEASURE: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
 /// The measuring pass's longest side. Enough for a 95th percentile (130 000 samples at 16:9)
 /// and small enough to read back and sort in a few milliseconds.
 pub const MEASURE_SIDE: u32 = 480;
+/// Texels a sample may take along the longer axis of its footprint, where a surface is seen at a
+/// slant (and its texture squeezed in one direction only).
+const ANISOTROPY: u16 = 16;
 /// Most lights one render draws.
 pub const MAX_LIGHTS: usize = 16;
 /// Most lights casting shadows in one render; further ones light without.
@@ -424,6 +432,8 @@ pub struct Pipelines {
     ao_layout: wgpu::BindGroupLayout,
     ao_estimate: wgpu::RenderPipeline,
     ao_blur: wgpu::RenderPipeline,
+    /// Halves a level of the sampled textures' mip chains.
+    mips: mips::MipPipeline,
 }
 
 /// The bind group layouts of the render shader: frame, draw, texture, and the colour pass's
@@ -634,6 +644,10 @@ impl Pipelines {
         if let Some(e) = error {
             return Err(Error::new(format!("cannot build the ambient occlusion shader: {e}")));
         }
+        let (mips, error) = gpu.scoped(|| mips::MipPipeline::new(device));
+        if let Some(e) = error {
+            return Err(Error::new(format!("cannot build the mip shader: {e}")));
+        }
         let msaa = gpu.adapter().get_texture_format_features(FORMAT).flags.sample_count_supported(4)
             && gpu.adapter().get_texture_format_features(DEPTH).flags.sample_count_supported(4);
         let Layouts { frame, draw, tex, light } = layouts;
@@ -650,6 +664,7 @@ impl Pipelines {
             ao_layout,
             ao_estimate,
             ao_blur,
+            mips,
         })
     }
 
@@ -787,6 +802,8 @@ pub struct Renderer {
     /// Ambient occlusion's targets, of the render's size, and its uniforms.
     ao: Option<AoTargets>,
     ao_uniforms: Option<wgpu::Buffer>,
+    /// Mip chains of the textures and pictures sampled.
+    mips: mips::Mips,
 }
 
 /// What ambient occlusion draws into: the prepass's positions (and distance along the view) and
@@ -994,6 +1011,7 @@ impl Renderer {
             light_samplers: None,
             ao: None,
             ao_uniforms: None,
+            mips: mips::Mips::default(),
         }
     }
 
@@ -1127,6 +1145,12 @@ impl Renderer {
                     }],
                 })
             });
+            let mut encoder =
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("render") });
+            let pictures =
+                lights.iter().filter_map(|l| l.projector.as_ref().and_then(|p| p.texture.as_ref()));
+            let mipped =
+                self.mips.update(gpu, &pipelines.mips, &mut encoder, calls.textures().chain(pictures));
             let enc = Encoding {
                 device,
                 pipelines: &pipelines,
@@ -1134,7 +1158,7 @@ impl Renderer {
                 calls: &calls,
                 wires: &wires,
                 shared: &shared,
-                groups: passes::texture_groups(device, &pipelines, &calls, &shared.white),
+                groups: passes::texture_groups(device, &pipelines, &calls, &shared.white, &mipped),
                 draw_group,
                 frame_group: passes::frame_group(
                     device,
@@ -1143,11 +1167,17 @@ impl Renderer {
                     &shared.sampler,
                     "render frame",
                 ),
-                light_group: self.light_group(device, &pipelines, &shared, lights, &placed, ao.is_some())?,
+                light_group: self.light_group(
+                    device,
+                    &pipelines,
+                    &shared,
+                    lights,
+                    &placed,
+                    ao.is_some(),
+                    &mipped,
+                )?,
                 background: wgpu::Color { r, g, b, a },
             };
-            let mut encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("render") });
             self.encode_shadows(&mut encoder, &enc, &pipes, layers);
             self.encode_ao(&mut encoder, &enc, &pipes);
             self.encode_passes(&mut encoder, &enc, &pipes, color, data, measuring.as_ref());
@@ -1267,6 +1297,8 @@ impl Renderer {
                     label: Some("projector pictures"),
                     mag_filter: wgpu::FilterMode::Linear,
                     min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                    anisotropy_clamp: ANISOTROPY,
                     ..Default::default()
                 });
                 (compare, clamp, crate::environment::sampler(gpu, "environment"))
@@ -1295,6 +1327,8 @@ impl Renderer {
                     address_mode_v: wgpu::AddressMode::Repeat,
                     mag_filter: wgpu::FilterMode::Linear,
                     min_filter: wgpu::FilterMode::Linear,
+                    mipmap_filter: wgpu::MipmapFilterMode::Linear,
+                    anisotropy_clamp: ANISOTROPY,
                     ..Default::default()
                 })
             })

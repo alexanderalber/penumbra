@@ -1635,3 +1635,82 @@ fn tex_instance_places_a_copy_per_texel() {
     let b = geo.bounds().unwrap();
     assert!(b.max[0] >= 10.0 && b.min[2] <= -10.0, "{b:?}");
 }
+
+/// A texture far finer than the pixels it lands in, on a surface and thrown by a projector:
+/// each pixel shows the texels' mean (mip chains), not one texel picked at random.
+#[test]
+fn textures_far_finer_than_the_pixels_average_out() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("geo-mips");
+    // One-texel black and white squares: 512 across land in about 30 pixels.
+    std::fs::write(
+        dir.join("checker.wgsl"),
+        "@fragment\nfn main(v: PnVertex) -> @location(0) vec4f {\n    let p = vec2u(v.pos.xy);\n    let c = f32((p.x + p.y) & 1u);\n    return vec4f(c, c, c, 1.0);\n}\n",
+    )
+    .unwrap();
+    let eye = [("position", Value::Vec3([0.0, -6.0, 0.0])), ("antialias", Value::Bool(false))];
+    let ops = vec![
+        create(
+            "/checker",
+            "tex.shader",
+            &[
+                ("file", "checker.wgsl".into()),
+                ("resolution", "custom".into()),
+                ("width", Value::Int(512)),
+                ("height", Value::Int(512)),
+            ],
+        ),
+        create(
+            "/plane",
+            "geo.primitive",
+            &[("shape", "plane".into()), ("size", Value::Vec3([2.0, 1.0, 2.0]))],
+        ),
+        // The checker on the surface, unlit.
+        create("/printed", "mat.constant", &[]),
+        connect("/checker", "/printed", 0),
+        create("/printed_on", "geo.assign_material", &[]),
+        connect("/plane", "/printed_on", 0),
+        connect("/printed", "/printed_on", 1),
+        render("/surface", &eye),
+        connect("/printed_on", "/surface", 0),
+        // The checker thrown onto a white surface from near the camera (not from exactly there:
+        // texels and pixels in step would sample alike everywhere).
+        create("/white", "mat.phong", &[("specular", Value::Vec4([0.0, 0.0, 0.0, 1.0]))]),
+        create("/white_on", "geo.assign_material", &[]),
+        connect("/plane", "/white_on", 0),
+        connect("/white", "/white_on", 1),
+        create(
+            "/beamer",
+            "view.camera",
+            &[("position", Value::Vec3([0.3, -5.3, 0.2])), ("fov", Value::Float(37.0))],
+        ),
+        create("/projector", "light.projector", &[("shadows", Value::Bool(false))]),
+        connect("/beamer", "/projector", 0),
+        connect("/checker", "/projector", 1),
+        render("/thrown", &eye),
+        connect("/white_on", "/thrown", 0),
+        connect("/projector", "/thrown", 2),
+    ];
+    let mut rig = rig(gpu, Some(&dir), &ops);
+    // The shader compiles in the background; until then the renders have no checker.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !rig.pixels("/checker").data.iter().any(|p| p[0] < 0.5) {
+        assert!(Instant::now() < deadline, "the checker never came");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    for name in ["/surface", "/thrown"] {
+        let px = rig.pixels(name);
+        // The pixels well inside the plane: all their neighbours covered too.
+        let (w, h) = (px.width, px.height);
+        let inside: Vec<f32> = (1..h - 1)
+            .flat_map(|y| (1..w - 1).map(move |x| (x, y)))
+            .filter(|&(x, y)| (0..9).all(|k| at(&px, x + k % 3 - 1, y + k / 3 - 1)[3] > 0.999))
+            .map(|(x, y)| at(&px, x, y)[0])
+            .collect();
+        assert!(inside.len() > 200, "{name}: {} pixels inside", inside.len());
+        let mean = inside.iter().sum::<f32>() / inside.len() as f32;
+        let (lo, hi) = inside.iter().fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(*v), hi.max(*v)));
+        assert!(mean > 0.05, "{name}: mean {mean}");
+        assert!(lo > mean * 0.8 && hi < mean * 1.2, "{name}: {lo} to {hi} around {mean}");
+    }
+}

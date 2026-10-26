@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use penumbra_core::Error;
 
+use super::mips::Mipped;
 use super::{
     DEPTH, Light, Look, MAX_DRAWS, MAX_PROJECTORS, MEASURE, Measurement, OPAQUE, Pass, Pipelines, Pipes,
     Placed, Renderer, Stage, Surface, View, draw_slot, measure_size,
@@ -162,6 +163,11 @@ impl Calls {
         let casting = pick(|c| c.shadows);
         let tinting = behind.iter().copied().filter(|k| calls.get(*k).is_some_and(|c| c.shadows)).collect();
         Ok(Self { calls, bytes, align, rest, hiding, behind, casting, tinting })
+    }
+
+    /// The textures the draws sample, a texture as often as draws name it.
+    pub(super) fn textures(&self) -> impl Iterator<Item = &Tex> {
+        self.calls.iter().filter_map(|c| c.texture.as_ref())
     }
 
     /// The wireframe vertices of every model drawn as one.
@@ -400,12 +406,13 @@ pub(super) fn frame_group(
 }
 
 /// One texture group per draw (white without a texture, white for missing instance
-/// textures), made once per distinct texture and instances.
+/// textures), made once per distinct texture and instances; the texture through its mip chain.
 pub(super) fn texture_groups(
     device: &wgpu::Device,
     pipelines: &Pipelines,
     calls: &Calls,
     white: &Tex,
+    mipped: &Mipped,
 ) -> Vec<wgpu::BindGroup> {
     type Key = (Tex, Option<Arc<Instances>>);
     let same = |a: &Key, b: &Key| {
@@ -429,7 +436,7 @@ pub(super) fn texture_groups(
             label: Some("render texture"),
             layout: &pipelines.tex_layout,
             entries: &[
-                view_entry(0, key.0.view()),
+                view_entry(0, mipped.view(&key.0)),
                 view_entry(1, or(inst.map(|i| &i.position), white)),
                 view_entry(2, or(inst.and_then(|i| i.aim.as_ref()), white)),
                 view_entry(3, or(inst.and_then(|i| i.scale.as_ref()), white)),
@@ -511,9 +518,10 @@ fn depth_cleared(
 }
 
 impl Renderer {
-    /// The light group: the shadow and tint maps, the projector pictures and the first
-    /// environment light's maps (white where a slot is free), and ambient occlusion's result
-    /// (white without it; the shader then does not read it).
+    /// The light group: the shadow and tint maps, the projector pictures (through their mip
+    /// chains) and the first environment light's maps (white where a slot is free), and ambient
+    /// occlusion's result (white without it; the shader then does not read it).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn light_group(
         &self,
         device: &wgpu::Device,
@@ -522,6 +530,7 @@ impl Renderer {
         lights: &[Light],
         placed: &[Placed],
         ao: bool,
+        mipped: &Mipped,
     ) -> Result<wgpu::BindGroup, Error> {
         let (Some(shadows), Some(tints)) = (self.shadows.as_ref(), self.tints.as_ref()) else {
             return Err(Error::new("no shadow maps"));
@@ -531,7 +540,7 @@ impl Renderer {
         for (p, l) in placed.iter().zip(lights) {
             let picture = l.projector.as_ref().and_then(|j| j.texture.as_ref());
             if let (Some(slot), Some(t)) = (p.slot.and_then(|k| pictures.get_mut(k as usize)), picture) {
-                *slot = t.view();
+                *slot = mipped.view(t);
             }
         }
         let [p0, p1, p2, p3] = pictures;
