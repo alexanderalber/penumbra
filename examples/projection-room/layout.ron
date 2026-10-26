@@ -2,8 +2,8 @@
 (
     version: 1,
     view: Some((
-        pan: (90.37828, -195.28203),
-        zoom: 0.5784274,
+        pan: (-1071.4661, -473.50305),
+        zoom: 0.54419583,
     )),
     sections: Some((
         params: true,
@@ -12,5 +12,11 @@
     )),
     options: Some((
         chan_bars: true,
+        viewer_background: false,
+        binding_lines: true,
+        chan_scale: auto,
+        audio_view: meters,
     )),
+    column: Some(0.3),
+    viewer_aspect: None,
 )

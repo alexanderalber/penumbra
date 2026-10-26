@@ -198,7 +198,7 @@ alber.me. Everything else is made in the network: no pictures, no meshes from fi
 The [projection-room](examples/projection-room/README.md) example: a 3D room lit by a projector,
 two spot lights and an environment light, with a stained-glass panel, a cube and a chrome ball.
 
-![The projection-room example: a room with the projected title on the back wall, a stained-glass panel, a cube and a chrome ball](assets/gallery/projection-room.jpg)
+![The projection-room example: a room with the projected title on the back wall, a stained-glass panel, a cube and a chrome ball; sun through a window in the side wall throws the panel's colours onto the back wall](assets/gallery/projection-room.jpg)
 
 The [fluid](examples/fluid/README.md) example: a 2D fluid pushed by optical flow and tracked
 blobs, here from wandering spots that stand in for a camera.
