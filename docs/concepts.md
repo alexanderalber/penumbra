@@ -31,6 +31,12 @@ The families:
   into channels (at 1 x 1, its mean colour). Channels named `r`, `g`, `b` (and `a`), as
   `chan.from_tex` makes them, come back from `tex.from_chan` as a colour.
 - **`table`**: text tables, typed in or read from a file, for scripts and OSC.
+  `table.file` reads a CSV, TSV or text file and reloads it when the file changes. `out.table`
+  writes a table to a CSV or TSV file. With `file` empty it writes `export/<node name>.csv` in
+  the project folder. In mode `changes` it writes whenever the table differs from what the file
+  holds; in mode `manual` it writes only on `table_out.write`. `overwrite` on replaces the file
+  in place, for a program that keeps reading it; off, every write gets a new name with `_2`,
+  `_3`, ...
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
   `view.camera` wired into a `tex.render`, which makes a picture of it all (a render needs its

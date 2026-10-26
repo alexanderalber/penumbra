@@ -2,6 +2,7 @@
 //!
 //! `out.video` records its input to a movie file ([`video`]); `out.spout` shares it with other
 //! programs on this machine ([`spout`]), `out.ndi` with programs on the network ([`ndi`]).
+//! `out.table` writes a table to a CSV or TSV file ([`table`]).
 //!
 //! `out.projector` is one projector: a viewport inside the fullscreen output window on one
 //! display. Usually a projector fills its display; a 4K signal into a hardware splitter is one
@@ -33,6 +34,7 @@ pub mod correct;
 pub mod ndi;
 pub mod place;
 pub mod spout;
+pub mod table;
 pub mod video;
 
 use std::collections::{BTreeMap, HashMap};
@@ -303,6 +305,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>))?;
     ndi::register(types)?;
     spout::register(types)?;
+    table::register(types)?;
     video::register(types)
 }
 

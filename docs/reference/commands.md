@@ -278,6 +278,13 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `table.read` | Cook a table node and read its rows; {path, output?, rows?} (rows: at most, default 100) |
 
+## table_out
+
+| command | |
+|---|---|
+| `table_out.status` | Table files: node, file, mode, written_seconds_ago, rows, cols, bytes, writing, error; {path?} |
+| `table_out.write` | Write an out.table's input to its file now, in either mode; {path}; answers with the status once written, fails with the node's error |
+
 ## text
 
 | command | |

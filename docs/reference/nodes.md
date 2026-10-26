@@ -1952,7 +1952,7 @@ Outputs:
 
 ## out
 
-[out.dmx](#outdmx), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.video](#outvideo)
+[out.dmx](#outdmx), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
 
 ### out.dmx
 
@@ -2034,6 +2034,23 @@ Outputs: none.
 | `name` | text |  |  | The sender name receivers pick, ASCII only; empty: `penumbra` and the node's name, such as `penumbra spout1`. A name another program has taken gets a number (`name_1`) |
 | `format` | 8bit \| 16bit_float | `"8bit"` |  | The pixel format of the shared texture; 8bit: BGRA, 8 bits per channel: what every Spout program takes; 16bit_float: RGBA, 16-bit float: finer steps and values above 1, for receivers that take it (TouchDesigner does) |
 | `alpha` | straight \| premultiplied \| opaque | `"straight"` |  | How transparency travels to the receivers; straight: colour and alpha apart, as most programs take it; premultiplied: colour multiplied by alpha; opaque: no transparency: sent over black, or a received alpha ignored |
+
+### out.table
+
+Writes its input table to a CSV or TSV file
+
+Inputs:
+
+- `in` (table): The table to write
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `file` | file (csv, tsv, txt) |  |  | The file to write, relative to the project; empty writes export/<node name>.csv (.tsv with format tsv). The node creates the export folder but no other |
+| `overwrite` | bool | `true` |  | On: every write replaces the file, for a file another program keeps reading. Off: every write makes a new file with the next free name (_2, _3, ...); in mode changes that is a new file per change |
+| `format` | auto \| csv \| tsv | `"auto"` |  | How the cells are written; auto: by extension: csv for .csv, tsv for any other; csv: separated by commas; a cell with a comma, quote or line break in quotes; tsv: separated by tabs; a cell holding a tab or line break is an error, write it as csv |
+| `mode` | changes \| manual | `"changes"` |  | When the node writes; changes: whenever the table differs from what the file holds; manual: only on the command table_out.write |
 
 ### out.video
 

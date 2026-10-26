@@ -540,7 +540,13 @@ fn every_builtin_cooks_without_warnings() {
     let passes_on = |kind: &str| {
         matches!(
             kind,
-            "chan.null" | "chan.select" | "chan.rename" | "table.null" | "chan.osc_out" | "out.dmx"
+            "chan.null"
+                | "chan.select"
+                | "chan.rename"
+                | "table.null"
+                | "chan.osc_out"
+                | "out.dmx"
+                | "out.table"
         )
     };
     // out.dmx sends here rather than to an Open DMX USB that may be plugged in.

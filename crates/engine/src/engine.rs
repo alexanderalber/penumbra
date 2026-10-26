@@ -422,6 +422,9 @@ impl CookState {
         if let Some(t) = self.cooker.resource::<penumbra_ops::tex::blob_track::BlobTracks>() {
             t.prune(|id| net.node(id).is_some());
         }
+        if let Some(t) = self.cooker.resource::<penumbra_ops::out::table::TableOuts>() {
+            t.prune(|id| net.node(id).is_some());
+        }
         self.refresh_resolution(&net, session.types(), request.resolution);
         if let Some(gpu) = &self.gpu {
             gpu.poll();
@@ -703,6 +706,7 @@ impl Engine {
             hub.provide(&mut cooker);
         }
         cooker.provide(penumbra_ops::tex::blob_track::BlobTracks::new());
+        cooker.provide(penumbra_ops::out::table::TableOuts::new());
         let gpu = self.gpu.get().cloned();
         if let Some(gpu) = &gpu {
             cooker.provide(gpu.clone());

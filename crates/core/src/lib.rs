@@ -6,6 +6,7 @@
 
 pub mod chan;
 pub mod error;
+pub mod files;
 pub mod id;
 pub mod palette;
 pub mod param;

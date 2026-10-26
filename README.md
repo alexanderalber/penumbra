@@ -94,7 +94,7 @@ lists every one.
 | Video files | yes | yes | `tex.video_file`, `out.video` | in: MP4, MOV, MKV, WebM, MXF, MPEG with H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP; GIF. Out: H.264 (MP4), ProRes 422, 422 HQ, 4444 (MOV) |
 | Image files | yes | snapshots | `tex.image_file`, `tex.layer` | PNG, JPEG, TIFF, EXR, HDR, WebP and more; PSD/PSB layers. `node.snapshot` saves any node as PNG |
 | 3D files | yes | | `geo.file` | OBJ (with MTL), STL, glTF/GLB |
-| Text tables | yes | | `table.file` | CSV, TSV, plain lines |
+| Text tables | yes | yes | `table.file`, `out.table` | in: CSV, TSV, plain lines. Out: CSV, TSV |
 | Audio | yes | | `chan.audio_in` | any input device (WASAPI, shared mode). No audio output, no audio files |
 | Spout | yes | yes | `tex.spout_in`, `out.spout` | textures shared with other programs on the same machine |
 | NDI® | video and audio | video | `tex.ndi_in`, `out.ndi` | needs the NDI runtime installed |

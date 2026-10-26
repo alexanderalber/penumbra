@@ -11,10 +11,10 @@
 //! writable, the encoder failing) ends the recording early; the file is still finished as far
 //! as it got, where that is possible, and the error stays in the [`Status`].
 
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::BufWriter;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
@@ -262,7 +262,7 @@ fn record(
         std::fs::create_dir_all(dir)
             .map_err(|e| format!("cannot create the folder {}: {e}", dir.display()))?;
     }
-    let (file, path) = create(path)?;
+    let (file, path) = penumbra_core::files::create_numbered(path)?;
     shared.update(|st| {
         st.file = path.display().to_string();
         st.opened = true;
@@ -396,32 +396,6 @@ impl Written {
         self.bytes += p.data.len() as u64;
         Ok(())
     }
-}
-
-/// Most numbered names tried beside an existing file.
-const MAX_NUMBER: u32 = 9999;
-
-/// Creates `wanted`, or the first free numbered name beside it.
-fn create(wanted: &Path) -> Result<(File, PathBuf), String> {
-    let stem = wanted.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-    let ext = wanted.extension().map(|e| e.to_string_lossy().into_owned());
-    for n in 1..=MAX_NUMBER {
-        let path = if n == 1 {
-            wanted.to_path_buf()
-        } else {
-            let name = match &ext {
-                Some(e) => format!("{stem}_{n}.{e}"),
-                None => format!("{stem}_{n}"),
-            };
-            wanted.with_file_name(name)
-        };
-        match OpenOptions::new().read(true).write(true).create_new(true).open(&path) {
-            Ok(f) => return Ok((f, path)),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(format!("cannot create {}: {e}", path.display())),
-        }
-    }
-    Err(format!("{} and {MAX_NUMBER} numbered names beside it exist already", wanted.display()))
 }
 
 fn write_error(e: iso::Error) -> String {

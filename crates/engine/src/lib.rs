@@ -40,6 +40,7 @@ pub mod shapes;
 pub mod spout;
 pub mod state;
 pub mod state_commands;
+pub mod table_out;
 pub mod ticker;
 pub mod video_in;
 pub mod video_out;
@@ -80,6 +81,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     spout::register(&mut registry);
     video_in::register(&mut registry, engine);
     video_out::register(&mut registry, engine);
+    table_out::register(&mut registry, engine);
     blob_track::register(&mut registry, engine);
     shapes::register(&mut registry, engine);
     scan::register(&mut registry, engine);

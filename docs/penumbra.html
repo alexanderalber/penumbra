@@ -118,7 +118,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -234,7 +234,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>chan</code></strong>: numbers that change over time. Generators (<code>lfo</code>, <code>noise</code>, <code>constant</code>), <code>math</code>, <code>filter</code>, <code>trail</code> (the last seconds of a channel as samples, to plot or to feed on; it starts empty and fills up), and OSC in and out. Channels drive params through <a href="#concepts-bindings">bindings</a>. A channel holds one or many samples, so a set of channels is a small grid of numbers: <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> turns it into a picture (a row per channel, a pixel per sample) for shaders to look values up in, and <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> averages a picture down to a few pixels and turns them into channels (at 1 x 1, its mean colour). Channels named <code>r</code>, <code>g</code>, <code>b</code> (and <code>a</code>), as <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> makes them, come back from <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> as a colour.
 </li>
-<li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC.
+<li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
 </li>
 <li><strong><code>geo</code></strong>, <strong><code>mat</code></strong>, <strong><code>light</code></strong>, <strong><code>view</code></strong>: a 3D scene. Geometry from files or primitives, transformed and merged; materials put on it with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>; lights and a <a class="ref" href="#view.camera"><code>view.camera</code></a> wired into a <a class="ref" href="#tex.render"><code>tex.render</code></a>, which makes a picture of it all (a render needs its camera; the camera is perspective, orthographic or calibrated). <a class="ref" href="#light.projector"><code>light.projector</code></a> throws a picture through a camera onto the geometry: a virtual projector, for trying a mapping on a model of the room. Coordinates are metres, z up.
 </li>
@@ -3433,6 +3433,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>format</code></td><td>auto | lines | tsv | csv</td><td><code>&quot;auto&quot;</code></td><td></td><td>How a line of the file is split into cells<ul><li><code>auto</code>: by extension: csv, tsv (or tab), else lines</li><li><code>lines</code>: not at all: one cell per row</li><li><code>tsv</code>: at tabs</li><li><code>csv</code>: at commas; &quot;a, b&quot; in quotes is one cell, &quot;&quot; a quote</li></ul></td></tr>
 </tbody>
 </table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="table.in"><summary><code class="name">table.in</code><span class="sum">An input port of the component this node sits in: what is wired to that port outside comes out here</span></summary>
 <div class="body">
@@ -3978,7 +3979,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-out">
 <h3>out</h3>
-<p class="kinds"><a href="#out.dmx">out.dmx</a> <a href="#out.ndi">out.ndi</a> <a href="#out.projector">out.projector</a> <a href="#out.spout">out.spout</a> <a href="#out.video">out.video</a></p>
+<p class="kinds"><a href="#out.dmx">out.dmx</a> <a href="#out.ndi">out.ndi</a> <a href="#out.projector">out.projector</a> <a href="#out.spout">out.spout</a> <a href="#out.table">out.table</a> <a href="#out.video">out.video</a></p>
 <details class="entry node" id="out.dmx"><summary><code class="name">out.dmx</code><span class="sum">Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</span></summary>
 <div class="body">
 <p>Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</p>
@@ -4076,6 +4077,27 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#spout-sending-outspout">Spout › Sending: out.spout</a></p>
+</div></details>
+<details class="entry node" id="out.table"><summary><code class="name">out.table</code><span class="sum">Writes its input table to a CSV or TSV file</span></summary>
+<div class="body">
+<p>Writes its input table to a CSV or TSV file</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">table</span>: The table to write</li>
+</ul>
+<h4>Outputs</h4>
+<p>none</p>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>file</code></td><td>file (csv, tsv, txt)</td><td></td><td></td><td>The file to write, relative to the project; empty writes export/&lt;node name&gt;.csv (.tsv with format tsv). The node creates the export folder but no other</td></tr>
+<tr><td><code>overwrite</code></td><td>bool</td><td><code>true</code></td><td></td><td>On: every write replaces the file, for a file another program keeps reading. Off: every write makes a new file with the next free name (_2, _3, ...); in mode changes that is a new file per change</td></tr>
+<tr><td><code>format</code></td><td>auto | csv | tsv</td><td><code>&quot;auto&quot;</code></td><td></td><td>How the cells are written<ul><li><code>auto</code>: by extension: csv for .csv, tsv for any other</li><li><code>csv</code>: separated by commas; a cell with a comma, quote or line break in quotes</li><li><code>tsv</code>: separated by tabs; a cell holding a tab or line break is an error, write it as csv</li></ul></td></tr>
+<tr><td><code>mode</code></td><td>changes | manual</td><td><code>&quot;changes&quot;</code></td><td></td><td>When the node writes<ul><li><code>changes</code>: whenever the table differs from what the file holds</li><li><code>manual</code>: only on the command table_out.write</li></ul></td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="out.video"><summary><code class="name">out.video</code><span class="sum">Records its input to a movie file (H.264 or ProRes)</span></summary>
 <div class="body">
@@ -4782,6 +4804,18 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>Cook a table node and read its rows; {path, output?, rows?} (rows: at most, default 100)</p>
 <p class="mentions">Mentioned in: <a href="#control-looking-at-results">Control › Looking at results</a></p>
+</div></details>
+</div>
+<div class="group" id="group-table_out">
+<h3>table_out</h3>
+<details class="entry command" id="table_out.status"><summary><code class="name">table_out.status</code><span class="sum">Table files: node, file, mode, written_seconds_ago, rows, cols, bytes, writing, error</span></summary>
+<div class="body">
+<p>Table files: node, file, mode, written_seconds_ago, rows, cols, bytes, writing, error; {path?}</p>
+</div></details>
+<details class="entry command" id="table_out.write"><summary><code class="name">table_out.write</code><span class="sum">Write an out.table's input to its file now, in either mode</span></summary>
+<div class="body">
+<p>Write an out.table's input to its file now, in either mode; {path}; answers with the status once written, fails with the node's error</p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 </div>
 <div class="group" id="group-text">

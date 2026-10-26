@@ -83,6 +83,52 @@ impl Table {
     pub fn cell(&self, row: usize, col: usize) -> &str {
         self.rows.get(row).and_then(|r| r.get(col)).map_or("", String::as_str)
     }
+
+    /// The table as text in `format`, each row ended by `\n`; [`Table::parse`] reads it back.
+    /// CSV quotes a cell holding a comma, a quote or a line break. TSV and lines have no
+    /// quoting: a cell holding a tab (TSV) or a line break fails, and so does a row of more than
+    /// one cell in lines. A table of one empty row reads back as no rows in TSV and lines.
+    pub fn to_text(&self, format: Format) -> Result<String, Error> {
+        let mut text = String::new();
+        for (r, row) in self.rows.iter().enumerate() {
+            if format == Format::Lines && row.len() > 1 {
+                return Err(Error::new(format!(
+                    "row {} has {} cells; lines holds one cell per row",
+                    r + 1,
+                    row.len()
+                )));
+            }
+            for (c, cell) in row.iter().enumerate() {
+                if c > 0 {
+                    text.push(if format == Format::Csv { ',' } else { '\t' });
+                }
+                let (bad, what): (&[char], &str) = match format {
+                    Format::Csv => {
+                        if cell.contains([',', '"', '\n', '\r']) {
+                            text.push('"');
+                            text.push_str(&cell.replace('"', "\"\""));
+                            text.push('"');
+                        } else {
+                            text.push_str(cell);
+                        }
+                        continue;
+                    }
+                    Format::Tsv => (&['\t', '\n', '\r'], "a tab or line break"),
+                    Format::Lines => (&['\n', '\r'], "a line break"),
+                };
+                if cell.contains(bad) {
+                    return Err(Error::new(format!(
+                        "the cell in row {}, column {} holds {what}; write it as csv",
+                        r + 1,
+                        c + 1
+                    )));
+                }
+                text.push_str(cell);
+            }
+            text.push('\n');
+        }
+        Ok(text)
+    }
 }
 
 fn lines(text: &str) -> impl Iterator<Item = &str> {
@@ -159,6 +205,45 @@ mod tests {
         assert_eq!(rows(&t), [["open"]]);
         assert_eq!(Format::from_extension("CSV"), Format::Csv);
         assert_eq!(Format::from_extension("txt"), Format::Lines);
+    }
+
+    fn table(rows: &[&[&str]]) -> Table {
+        Table::new(rows.iter().map(|r| r.iter().map(|c| c.to_string()).collect()).collect()).unwrap()
+    }
+
+    #[test]
+    fn written_text_reads_back() {
+        let t = table(&[
+            &["name", "say \"hi\"", ""],
+            &["a, b", "two\nlines", "cr\r\nlf"],
+            &["solo"],
+            &[],
+            &["\"lead", " spaced ", "x"],
+        ]);
+        let csv = t.to_text(Format::Csv).unwrap();
+        assert_eq!(csv.lines().next(), Some("name,\"say \"\"hi\"\"\","));
+        let back = Table::parse(&csv, Format::Csv).unwrap();
+        // An empty row comes back as one empty cell.
+        let mut want = t.rows().to_vec();
+        want[3] = vec![String::new()];
+        assert_eq!(back.rows(), want.as_slice());
+
+        let t = table(&[&["name", "age"], &["alex", ""], &["solo"], &[""], &["a, \"b\""]]);
+        for format in [Format::Csv, Format::Tsv] {
+            let text = t.to_text(format).unwrap();
+            assert_eq!(Table::parse(&text, format).unwrap(), t, "{format:?}: {text:?}");
+        }
+        assert_eq!(t.to_text(Format::Tsv).unwrap(), "name\tage\nalex\t\nsolo\n\na, \"b\"\n");
+        let lines = table(&[&["one"], &["two, three"], &[""]]);
+        assert_eq!(Table::parse(&lines.to_text(Format::Lines).unwrap(), Format::Lines).unwrap(), lines);
+        assert_eq!(Table::default().to_text(Format::Csv).unwrap(), "");
+
+        // No quoting in TSV and lines: what cannot be read back fails.
+        assert!(table(&[&["a\tb"]]).to_text(Format::Tsv).unwrap_err().0.contains("row 1, column 1"));
+        assert!(table(&[&["x", "a\nb"]]).to_text(Format::Tsv).unwrap_err().0.contains("column 2"));
+        assert!(table(&[&["a\tb"]]).to_text(Format::Lines).is_ok());
+        assert!(table(&[&["a\rb"]]).to_text(Format::Lines).is_err());
+        assert!(table(&[&["a", "b"]]).to_text(Format::Lines).unwrap_err().0.contains("2 cells"));
     }
 
     #[test]
