@@ -355,3 +355,6 @@ redraws at about 60 Hz while nothing moves, so a 240 Hz monitor drops to 60 Hz (
 pointer turns choppy) as long as penumbra has the focus. Enable G-Sync for fullscreen only, or
 set **Monitor Technology** to **Fixed Refresh** for `penumbra.exe` in the NVIDIA Control Panel.
 The output windows are not affected; they present at their display's fixed vsync.
+
+For the performance itself, [show mode](getting-started.md#show-mode) locks the project
+against edits and starts the app again after a crash.

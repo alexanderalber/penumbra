@@ -5,9 +5,11 @@ explained here. All of it, with every node and command, is also one page to sear
 offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
 
 - [Getting started](getting-started.md): running the app, the window, building a first network.
-- [Concepts](concepts.md): data kinds and node families, params and bindings, components,
-  undo and the change log, who is editing, what the editor's colours and badges mean, the
-  project directory.
+- [Concepts](concepts.md): how the network runs (cooking, wires and references, time), data kinds
+  and node families, params and bindings, components, undo and the change log, who is editing,
+  what the editor's colours and badges mean, the project directory.
+- [Glossary](glossary.md): the words of the first hour, from binding and cook to premultiplied
+  alpha and show mode.
 - [The Helpers window](helpers.md): outputs, resolution, show-machine checks, persistent state,
   OSC, audio.
 - [Audio](audio.md): reacting to sound: levels, onsets, tempo, beat and bar.
@@ -18,9 +20,10 @@ offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
 - [NDI](ndi.md): pictures (and sound in) over the network, to and from OBS, vMix, cameras or another machine, with `out.ndi` and `tex.ndi_in`.
 - [Camera](camera.md): a live camera or capture card with `tex.video_in`, calmed with `tex.denoise`, its motion with `tex.optical_flow`.
 - [Tracking](tracking.md): blobs with ids that stay, from a camera, with `tex.blob_track`.
+- [Mapping without a camera](mapping-without-camera.md): corners, mesh warp, soft edges and masks by eye, with `tex.mapper` and `tex.shapes`.
 - [Scanning](scanning.md): structured light: which camera pixel each projector pixel lands on, the objects in front of a wall, blend weights, content on objects across projectors.
 - [Looking around in 3D](navigation.md): the viewer's free view, steering a camera, the 3D mouse.
-- [Shaders](shaders.md): writing a `tex.shader` in WGSL.
+- [Shaders](shaders.md): writing a `tex.shader` in WGSL, porting from Shadertoy, a shader in a feedback loop that follows the music.
 - [Scripts](scripts.md): writing a `script.python` node.
 - [Control](control.md): the control channel, `penumbra-cli ctl`, the MCP server, headless runs, environment variables.
 

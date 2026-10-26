@@ -1,5 +1,79 @@
 # Concepts
 
+## How the network runs
+
+This section says when a node does its work, in what order, and what decides it. For someone
+reading the code, [ARCHITECTURE.md](../ARCHITECTURE.md#cooking) has the same from the inside.
+Words used here are also in the [glossary](glossary.md).
+
+**Cooking.** A node *cooks* when it computes its outputs. penumbra runs one cook pass per show
+frame, 60 a second. A pass starts from what is wanted: every node without outputs (projectors,
+recorders, senders such as `out.ndi` or `chan.osc_out`), the node in the viewer, and the visible
+thumbnails while there is time left. From there it pulls: before a wanted node cooks, the nodes
+feeding it cook, and the nodes feeding those. A node nothing wants does not cook and costs
+nothing. The editor marks it "not cooked".
+
+**When a node cooks again.** Only when something it depends on changed:
+
+- one of its params changed, by hand, from the control channel or through a binding;
+- a node feeding it made a new result;
+- it follows the clock (a noise that moves, a video, a shader that reads `pn_time`) and the
+  clock moved;
+- a slow job of its own finished (a file loaded, a frame decoded).
+
+Otherwise its last result is reused. So a still picture behind a heavy filter costs that filter
+once, not every frame. The reference says for each node type whether it follows the clock.
+
+**When a node fails,** it keeps putting out its last good result and shows the error. A typo
+in a shader during a show leaves the projector on the last working picture.
+
+### Wires, bindings and node references
+
+Three ways a node can use another, each with its own line in the editor:
+
+| | what it carries | drawn as | across a component's edge |
+|---|---|---|---|
+| **wire** | a whole output (picture, channels, table, 3D) into an input of the same kind | a solid line in the kind's colour | only through its [ports](#components) |
+| **binding** | one channel's value into one param | a dashed green line into the node's top | anywhere |
+| **node reference** | a node named in a param (`tex.select`'s `node`) | a dashed line | anywhere |
+
+All three make the source cook first. A bound param recooks its node only when the value it
+takes changes. Wires may not form a loop, except into a feedback input (below). Bindings are
+explained [below](#bindings), references under [Paths](#paths).
+
+### Inputs and nodes that cook differently
+
+- **Feedback (`previous`).** A `tex.feedback`'s `previous` input sees what its source made in
+  the frame before. The wire into it may run backwards and close a loop; it is drawn dashed.
+  This is the only way to build a loop.
+- **Inputs a node skips.** `tex.switch` with `inactive: skip` and `tex.sequence` cook only the
+  inputs they show. The chains behind the others stand still and cost nothing until they are
+  shown again. A feedback loop, cache or time machine there carries on from where it stopped.
+- **Steering inputs.** `tex.sequence`'s `sequence` input decides which inputs are needed. So it
+  cooks first, before the inputs, whichever piece is shown.
+- **Every frame (eager).** `chan.clock` and `chan.sequence` cook in every pass, wanted or not.
+  So a clock sees its `run` turn off and on while the piece it drives is skipped. The reference
+  marks such nodes "Cooks in every frame".
+- **Outputs made on demand (lazy).** Some outputs are made only while something reads them:
+  `chan.audio_analysis`'s `meters`, `tex.ndi_in`'s `audio`, `tex.fluid`'s `velocity`. Wire one
+  up, show it in the viewer or reference it, and the node makes it from then on.
+
+### Time
+
+- **The show clock** counts frames at 60 a second and starts at 0 when a project opens. Every
+  node that follows the clock reads the same time in a pass. It is paced by a projector's
+  display, or by a timer when no output runs (see [Helpers](helpers.md#outputs)).
+- **Late frames are skipped.** When a pass takes longer than a frame, the clock jumps ahead to
+  where it should be. Animations stay in step with the wall clock and with the music.
+- **Pause** (the status bar, or `cook.play`) stops the clock. Everything that follows it stands
+  still. Edits, cameras and incoming OSC still show.
+- **Cues and restarts.** penumbra has no cue list of its own. A piece or a clip starts over
+  when a channel turns on: a `chan.clock`'s or `chan.sequence`'s `run`, a `tex.video_file`'s
+  `restart`. Bind that channel to a key, an OSC message or a show step (see [A clock per
+  piece](#a-clock-per-piece), [Shows](#shows), [Video clips on cue](#video-clips-on-cue)).
+  Feedback loops, caches and other nodes that keep state start over with R, the reset button
+  or `node.reset`.
+
 ## Nodes, families and data kinds
 
 A project is a network of nodes. Each node has a kind, written `family.name` (`tex.noise`,
@@ -65,14 +139,8 @@ The families:
 - **`out`**: sinks. `out.projector` shows a picture fullscreen on a display.
 - **`comp`**: components, nodes that hold nodes (see [Components](#components)).
 
-Every type, with every param, is in the [node reference](reference/nodes.md). Nodes cook only
-when something needs them (an output, the viewer, a visible thumbnail) and only when something
-they depend on changed. A node may need only some of its inputs: `tex.switch` with
-`inactive: skip` cooks only the chain it shows, and the others stand still (their state pauses,
-their thumbnails cook only as thumbnails) until it switches to them; `tex.sequence` does the
-same for a show. A few cheap nodes cook in every frame whether anything shows them or not
-(`chan.clock`, `chan.sequence`; the reference says so), so they see every change of their
-params.
+Every type, with every param, is in the [node reference](reference/nodes.md). When each node
+cooks is under [How the network runs](#how-the-network-runs).
 
 ## Params
 
@@ -264,8 +332,9 @@ seek, a few frames on H.264, none on HAP. With `play` off, the clip jumps to `st
 there.
 
 **A cue from QLab or a lighting desk.** Add a `chan.osc_in` and send it `/scene <number>` from
-the desk. Bind a `tex.switch`'s `index` to the `scene` channel, set `inactive: skip` and turn on
-`restart_on_show` on each clip. A GO then cuts to the clip's scene and the clip plays from its
+the desk. When the desk is another machine, turn on the node's `lan`. Bind a `tex.switch`'s
+`index` to the `scene` channel, set `inactive: skip` and turn on `restart_on_show` on each
+clip. A GO then cuts to the clip's scene and the clip plays from its
 start. For a fade, turn on the switch's `blend` and bind `index` through a `chan.filter`; the
 incoming clip starts with the fade. To start the clip on screen over, send `/restart 1` and then
 `/restart 0`, and bind the clip's `restart` to the `restart` channel. In a `chan.sequence`

@@ -122,3 +122,120 @@ or params change.
 
 The node's `resolution` param: `input` takes the size of `in0` (`width` and `height` while
 `in0` is unconnected), `custom` always uses `width` and `height`.
+
+## From Shadertoy and GLSL
+
+A Shadertoy shader ports line by line. Shadertoy's template for a new shader, and the same in
+penumbra:
+
+```glsl
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = 0.5 + 0.5 * cos(iTime + uv.xyx + vec3(0, 2, 4));
+    fragColor = vec4(col, 1.0);
+}
+```
+
+```wgsl
+@fragment
+fn main(v: PnVertex) -> @location(0) vec4f {
+    let fragCoord = vec2f(v.pos.x, pn.resolution.y - v.pos.y);
+    let uv = fragCoord / pn.resolution;
+    let col = 0.5 + 0.5 * cos(pn_time.seconds + uv.xyx + vec3f(0.0, 2.0, 4.0));
+    return vec4f(pow(col, vec3f(2.2)), 1.0);
+}
+```
+
+Three differences matter in every port:
+
+- **Pixels count from the top.** `v.pos.xy` is the pixel position with 0 at the top left.
+  Shadertoy's `fragCoord` has 0 at the bottom left. The first line above flips it, so the rest
+  of the code stays as it was.
+- **Colours are linear.** Shadertoy writes its numbers straight to the screen. penumbra takes
+  them as light and encodes them for the display, so a ported shader looks pale.
+  `pow(col, vec3f(2.2))` at the end brings back the look it had on Shadertoy.
+- **Alpha is premultiplied.** For a transparent part, multiply the colour by the alpha:
+  `vec4f(col * a, a)`. A shader whose alpha stays 1 needs nothing.
+
+The names:
+
+| Shadertoy | penumbra |
+|---|---|
+| `iTime` | `pn_time.seconds`: show time, stands still while the clock is paused |
+| `iFrame` | `pn_time.frame` (an `f32`) |
+| `iResolution.xy` | `pn.resolution` (a `vec2f`) |
+| `fragCoord` | `vec2f(v.pos.x, pn.resolution.y - v.pos.y)` |
+| `fragCoord / iResolution.xy` | `vec2f(v.uv.x, 1.0 - v.uv.y)`; `v.uv` itself runs from the top left |
+| `iMouse.xy` | `params.mouse * pn.resolution`, with `// @param mouse vec2` bound to a `chan.mouse_in`'s `x` and `y` (they count from the bottom left, as Shadertoy does) |
+| `iChannel0` to `iChannel3` | `in0` to `in3`, wired into the node |
+| `texture(iChannel0, uv)` | `textureSampleLevel(in0, pn_repeat, uv, 0.0)`, with `uv` from the top left; `pn_clamp` and `pn_mirror` for the other edge modes |
+| `iChannelResolution[0].xy` | `vec2f(textureDimensions(in0))` |
+| `fragColor = c;` | `return c;` |
+| Buffer A to D | one `tex.shader` per buffer, wired into the next; a buffer that reads itself goes into a `tex.feedback` loop (below) |
+
+The language:
+
+| GLSL | WGSL |
+|---|---|
+| `float`, `int`, `vec2`, `vec3`, `vec4`, `ivec2`, `mat2` | `f32`, `i32`, `vec2f`, `vec3f`, `vec4f`, `vec2i`, `mat2x2f` |
+| `float x = 1.0;` | `let x = 1.0;` when it never changes, `var x = 1.0;` when it does |
+| `#define PI 3.14159`, `const float PI = ...` | `const PI = 3.14159;` |
+| `float f(vec2 p) { ... }` | `fn f(p: vec2f) -> f32 { ... }` |
+| `for (int i = 0; i < 8; i++)` | `for (var i = 0; i < 8; i++)` |
+| `float(i)` | `f32(i)`: an `i32` never turns into an `f32` by itself |
+| `c ? a : b` | `select(b, a, c)`: the false value comes first |
+| `mod(x, y)` | `x - y * floor(x / y)`. WGSL's `x % y` keeps the sign of `x` and differs below 0 |
+| `atan(y, x)` | `atan2(y, x)` |
+| `dFdx`, `dFdy` | `dpdx`, `dpdy` |
+| `col.rg = vec2(1.0);` | one component at a time (`col.x = 1.0;`), or build the vector anew |
+| `out` and `inout` params | return the value, or a struct of several |
+
+The same in both: swizzles that read (`p.xy`, `col.bgr`, `uv.xyx`), `fract`, `floor`, `mix`,
+`clamp`, `step`, `smoothstep`, `length`, `normalize`, `dot`, `cross`, `sin`, `cos`, `pow`,
+`abs`, `min` and `max`. Numbers and vectors mix as in GLSL: `0.5 + 0.5 * v` works.
+
+## From a snippet to a loop that moves with the music
+
+Three steps, each a few minutes, from a shader to a picture that reacts to sound.
+
+**1. The shader.** Save this as `ring.wgsl` in the project folder. Add a `tex.shader` and set
+its `file` to `ring.wgsl`. Select the node: the viewer shows a ring, and the row `energy`
+appears under "from the shader".
+
+```wgsl
+// A ring in the template's colours, transparent around it.
+// @param energy float = 0 0..1 -- how far the ring opens; bind it to the music
+@fragment
+fn main(v: PnVertex) -> @location(0) vec4f {
+    let p = (v.uv - 0.5) * vec2f(pn.resolution.x / pn.resolution.y, 1.0);
+    let radius = 0.1 + 0.3 * params.energy;
+    let ring = 1.0 - smoothstep(0.0, 0.01, abs(length(p) - radius));
+    let col = 0.5 + 0.5 * cos(pn_time.seconds + p.xyx + vec3f(0.0, 2.0, 4.0));
+    return vec4f(pow(col, vec3f(2.2)) * ring, ring);
+}
+```
+
+**2. Feedback.** Each frame builds on the one before, so the ring leaves trails:
+
+- a `tex.constant` (black) into the `initial` input of a `tex.feedback`;
+- the feedback into a `tex.transform` with `scale` 1.01 and `rotate` 0.5: the trails drift
+  outwards and turn;
+- into a `tex.level` with `brightness` 0.95: the trails fade within a second or two;
+- into `in0` of a `tex.composite`, the shader into its `in1`;
+- the composite back into the feedback's `previous`. That wire is drawn dashed.
+
+The composite is the picture. [tex.feedback](reference/nodes.md#texfeedback) and the `feedback`
+example show more of what a loop can do.
+
+**3. Sound.** Add a `chan.audio_in` and wire it into a `chan.audio_analysis` (see
+[Audio](audio.md)). Wire the analysis into a `chan.filter`, which smooths the jumps. Then bind
+`energy`: the link button at the end of its row offers the filter's channels, pick `low`. The
+ring now opens with every bass note. Without a microphone, a `chan.lfo` with `offset` 0.5
+and `amplitude` 0.5 stands in.
+
+The whole spectrum fits into a shader too: `chan.audio_analysis`'s `spectrum` output into a
+`tex.from_chan`, that into `in1`. Then `textureSampleLevel(in1, pn_clamp, vec2f(x, 0.5), 0.0).r`
+is the loudness at `x`, low frequencies at 0.
+
+To show it on a wall, wire the composite into an `out.projector`, or through a `tex.mapper`
+first ([Mapping without a camera](mapping-without-camera.md)).

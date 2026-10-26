@@ -1,6 +1,6 @@
 # Recording
 
-`out.video` (Tab > outputs > video) records its input to a movie file: the show as it runs,
+`out.video` (Tab > system > video) records its input to a movie file: the show as it runs,
 for documentation, for an edit, or to play back later with `tex.video_file`.
 
 ## Recording

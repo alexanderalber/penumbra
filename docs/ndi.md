@@ -26,7 +26,7 @@ up with NDI Access Manager and used by penumbra as well.
 
 ## Sending: `out.ndi`
 
-Add an `out.ndi` (Tab > outputs > ndi) and connect the picture. From its first cook it is a
+Add an `out.ndi` (Tab > system > ndi) and connect the picture. From its first cook it is a
 source on the network; other programs list it as `MACHINE (name)`.
 
 - `name`: what receivers see after the machine's name. Empty: `penumbra` and the node's name,

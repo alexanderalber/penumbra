@@ -1,6 +1,6 @@
 # DMX
 
-`out.dmx` (Tab > outputs > dmx) sends channels to lights: through an Enttec Open DMX USB on
+`out.dmx` (Tab > system > dmx) sends channels to lights: through an Enttec Open DMX USB on
 this machine, or over the network as Art-Net, sACN or DDP. `chan.dmx_in` (Tab > chan > dmx_in)
 goes the other way: it receives Art-Net or sACN, from a lighting desk say, and makes the slots
 channels to bind params to. See [Receiving](#receiving).

@@ -53,7 +53,7 @@ fn desc() -> NodeDesc {
     ).block(penumbra_graph::Block::ScanAndShapes)
     .param(
         ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).doc(
-            "Width of the surface in pixels (the mappers' input); shape coordinates are in these pixels",
+            "Width of the surface in pixels (the mappers' input); shape coordinates are shares of it, 0 to 1 across",
         ),
     )
     .param(
@@ -61,12 +61,12 @@ fn desc() -> NodeDesc {
             .clamp(1.0, MAX_SIDE)
             .curve(Curve::Log)
             .unit(Unit::Pixels)
-            .doc("Height of the surface in pixels; shape coordinates are in these pixels"),
+            .doc("Height of the surface in pixels; shape coordinates are shares of it, 0 to 1 down"),
     )
     .param(super::keep_size())
     .param(ParamSpec::text("shapes", "").multiline().doc(
         "One per line: `tag rect x,y w,h`, `tag ellipse x,y w,h` or `tag poly x,y x,y ...`, \
-             optionally `repeat CxR dx,dy`; surface coordinates (draw them in the viewer)",
+             optionally `repeat CxR dx,dy`; surface coordinates, 0 to 1 from the top left (draw them in the viewer)",
     ))
     .param(
         ParamSpec::text("tag", "")

@@ -74,7 +74,9 @@ details.target { outline: 2px solid var(--accent); }
 <ul>
 <li><a href="#getting-started">Getting started</a>: running the app, the window, building a first network.
 </li>
-<li><a href="#concepts">Concepts</a>: data kinds and node families, params and bindings, components, undo and the change log, who is editing, what the editor's colours and badges mean, the project directory.
+<li><a href="#concepts">Concepts</a>: how the network runs (cooking, wires and references, time), data kinds and node families, params and bindings, components, undo and the change log, who is editing, what the editor's colours and badges mean, the project directory.
+</li>
+<li><a href="#glossary">Glossary</a>: the words of the first hour, from binding and cook to premultiplied alpha and show mode.
 </li>
 <li><a href="#helpers">The Helpers window</a>: outputs, resolution, show-machine checks, persistent state, OSC, audio.
 </li>
@@ -92,11 +94,13 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><a href="#tracking">Tracking</a>: blobs with ids that stay, from a camera, with <a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a>.
 </li>
+<li><a href="#mapping-without-camera">Mapping without a camera</a>: corners, mesh warp, soft edges and masks by eye, with <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> and <a class="ref" href="#tex.shapes"><code>tex.shapes</code></a>.
+</li>
 <li><a href="#scanning">Scanning</a>: structured light: which camera pixel each projector pixel lands on, the objects in front of a wall, blend weights, content on objects across projectors.
 </li>
 <li><a href="#navigation">Looking around in 3D</a>: the viewer's free view, steering a camera, the 3D mouse.
 </li>
-<li><a href="#shaders">Shaders</a>: writing a <a class="ref" href="#tex.shader"><code>tex.shader</code></a> in WGSL.
+<li><a href="#shaders">Shaders</a>: writing a <a class="ref" href="#tex.shader"><code>tex.shader</code></a> in WGSL, porting from Shadertoy, a shader in a feedback loop that follows the music.
 </li>
 <li><a href="#scripts">Scripts</a>: writing a <a class="ref" href="#script.python"><code>script.python</code></a> node.
 </li>
@@ -116,7 +120,7 @@ details.target { outline: 2px solid var(--accent); }
 </ul>
 </section>
 <nav class="toc">
-<p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
+<p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-component-ports">Component ports</a></p>
 <p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
@@ -163,7 +167,7 @@ details.target { outline: 2px solid var(--accent); }
 <p>The window opens where it was last time, with its size, maximised or not (kept in <code>%LOCALAPPDATA%\penumbra\window.json</code>), so a setup that shares the screen with other windows, a terminal beside it, say, stays arranged across restarts. The first time, or when that spot is no longer on any display (one was unplugged), it opens maximised. <a class="ref" href="#ui.window"><code>ui.window</code></a> reads and moves it.</p>
 <h3 id="getting-started-a-first-network">A first network</h3>
 <ol>
-<li><strong>Add a node:</strong> press Tab, or double-click on empty canvas. The add dialog has a tab per family (Tab cycles them); type to narrow the list, Enter takes the first match, a click takes any. Try <code>tex</code> &gt; <code>noise</code>. The everyday types come first in each tab. Live inputs (cameras, NDI, OSC, the keyboard and the like) stand apart under &quot;in&quot;, the scan's own nodes under &quot;scan and shapes&quot; at the end of <code>tex</code>. Ready-made effects are in the <code>library</code> tab.
+<li><strong>Add a node:</strong> press Tab, or double-click on empty canvas. The add dialog has a tab per family; small families share one: <code>rendering</code> holds the 3D ones, <code>system</code> the scripts, outputs and components. Tab cycles the tabs. Typing greys out the types that do not match, Enter takes the first match, a click takes any. Try <code>tex</code> &gt; <code>noise</code>. The everyday types come first in each tab. Live inputs (cameras, NDI, OSC, the keyboard and the like) stand apart under &quot;in&quot;, the scan's own nodes under &quot;scan and shapes&quot; at the end of <code>tex</code>. Ready-made effects are in the <code>library</code> tab.
 </li>
 <li><strong>Add a second one fed from the first:</strong> with exactly one node selected, a new node is wired to it and placed to its right. Select the noise, add <code>tex</code> &gt; <code>level</code>.
 </li>
@@ -173,7 +177,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong>Make it move:</strong> add <code>chan</code> &gt; <code>lfo</code>, then drag a wire from its output onto the level's <code>brightness</code> row. The param is now bound: it follows the channel and shows the live value (see <a href="#concepts-bindings">bindings</a>).
 </li>
-<li><strong>Show it on a projector:</strong> add <code>out</code> &gt; <code>projector</code>, wire the level into it and pick a <code>display</code> (the <a href="#helpers-outputs">Helpers window</a> lists them). With <code>active</code> on, a fullscreen window opens on that display. For projection mapping, put a <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> between the content and the projector: its corners and mesh are dragged in the viewer.
+<li><strong>Show it on a projector:</strong> add <code>system</code> &gt; <code>projector</code>, wire the level into it and pick a <code>display</code> (the <a href="#helpers-outputs">Helpers window</a> lists them). With <code>active</code> on, a fullscreen window opens on that display. For projection mapping, put a <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> between the content and the projector: its corners and mesh are dragged in the viewer (see <a href="#mapping-without-camera">Mapping without a camera</a>).
 </li>
 </ol>
 <p>Everything is written to the project directory a second after each change; there is no save command. Close the app (or open another project) and come back to it, and the network is back.</p>
@@ -232,6 +236,57 @@ details.target { outline: 2px solid var(--accent); }
 </div></details>
 <details class="entry guide" id="concepts"><summary><span class="name">Concepts</span></summary>
 <div class="body">
+<h3 id="concepts-how-the-network-runs">How the network runs</h3>
+<p>This section says when a node does its work, in what order, and what decides it. For someone reading the code, <a href="../ARCHITECTURE.md">ARCHITECTURE.md</a> has the same from the inside. Words used here are also in the <a href="#glossary">glossary</a>.</p>
+<p><strong>Cooking.</strong> A node <em>cooks</em> when it computes its outputs. penumbra runs one cook pass per show frame, 60 a second. A pass starts from what is wanted: every node without outputs (projectors, recorders, senders such as <a class="ref" href="#out.ndi"><code>out.ndi</code></a> or <a class="ref" href="#chan.osc_out"><code>chan.osc_out</code></a>), the node in the viewer, and the visible thumbnails while there is time left. From there it pulls: before a wanted node cooks, the nodes feeding it cook, and the nodes feeding those. A node nothing wants does not cook and costs nothing. The editor marks it &quot;not cooked&quot;.</p>
+<p><strong>When a node cooks again.</strong> Only when something it depends on changed:</p>
+<ul>
+<li>one of its params changed, by hand, from the control channel or through a binding;
+</li>
+<li>a node feeding it made a new result;
+</li>
+<li>it follows the clock (a noise that moves, a video, a shader that reads <code>pn_time</code>) and the clock moved;
+</li>
+<li>a slow job of its own finished (a file loaded, a frame decoded).
+</li>
+</ul>
+<p>Otherwise its last result is reused. So a still picture behind a heavy filter costs that filter once, not every frame. The reference says for each node type whether it follows the clock.</p>
+<p><strong>When a node fails,</strong> it keeps putting out its last good result and shows the error. A typo in a shader during a show leaves the projector on the last working picture.</p>
+<h4 id="concepts-wires-bindings-and-node-references">Wires, bindings and node references</h4>
+<p>Three ways a node can use another, each with its own line in the editor:</p>
+<table>
+<thead><tr><th></th><th>what it carries</th><th>drawn as</th><th>across a component's edge</th></tr></thead>
+<tbody>
+<tr><td><strong>wire</strong></td><td>a whole output (picture, channels, table, 3D) into an input of the same kind</td><td>a solid line in the kind's colour</td><td>only through its <a href="#concepts-components">ports</a></td></tr>
+<tr><td><strong>binding</strong></td><td>one channel's value into one param</td><td>a dashed green line into the node's top</td><td>anywhere</td></tr>
+<tr><td><strong>node reference</strong></td><td>a node named in a param (<a class="ref" href="#tex.select"><code>tex.select</code></a>'s <code>node</code>)</td><td>a dashed line</td><td>anywhere</td></tr>
+</tbody>
+</table>
+<p>All three make the source cook first. A bound param recooks its node only when the value it takes changes. Wires may not form a loop, except into a feedback input (below). Bindings are explained <a href="#concepts-bindings">below</a>, references under <a href="#concepts-paths">Paths</a>.</p>
+<h4 id="concepts-inputs-and-nodes-that-cook-differently">Inputs and nodes that cook differently</h4>
+<ul>
+<li><strong>Feedback (<code>previous</code>).</strong> A <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>'s <code>previous</code> input sees what its source made in the frame before. The wire into it may run backwards and close a loop; it is drawn dashed. This is the only way to build a loop.
+</li>
+<li><strong>Inputs a node skips.</strong> <a class="ref" href="#tex.switch"><code>tex.switch</code></a> with <code>inactive: skip</code> and <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> cook only the inputs they show. The chains behind the others stand still and cost nothing until they are shown again. A feedback loop, cache or time machine there carries on from where it stopped.
+</li>
+<li><strong>Steering inputs.</strong> <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a>'s <code>sequence</code> input decides which inputs are needed. So it cooks first, before the inputs, whichever piece is shown.
+</li>
+<li><strong>Every frame (eager).</strong> <a class="ref" href="#chan.clock"><code>chan.clock</code></a> and <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> cook in every pass, wanted or not. So a clock sees its <code>run</code> turn off and on while the piece it drives is skipped. The reference marks such nodes &quot;Cooks in every frame&quot;.
+</li>
+<li><strong>Outputs made on demand (lazy).</strong> Some outputs are made only while something reads them: <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a>'s <code>meters</code>, <a class="ref" href="#tex.ndi_in"><code>tex.ndi_in</code></a>'s <code>audio</code>, <a class="ref" href="#tex.fluid"><code>tex.fluid</code></a>'s <code>velocity</code>. Wire one up, show it in the viewer or reference it, and the node makes it from then on.
+</li>
+</ul>
+<h4 id="concepts-time">Time</h4>
+<ul>
+<li><strong>The show clock</strong> counts frames at 60 a second and starts at 0 when a project opens. Every node that follows the clock reads the same time in a pass. It is paced by a projector's display, or by a timer when no output runs (see <a href="#helpers-outputs">Helpers</a>).
+</li>
+<li><strong>Late frames are skipped.</strong> When a pass takes longer than a frame, the clock jumps ahead to where it should be. Animations stay in step with the wall clock and with the music.
+</li>
+<li><strong>Pause</strong> (the status bar, or <a class="ref" href="#cook.play"><code>cook.play</code></a>) stops the clock. Everything that follows it stands still. Edits, cameras and incoming OSC still show.
+</li>
+<li><strong>Cues and restarts.</strong> penumbra has no cue list of its own. A piece or a clip starts over when a channel turns on: a <a class="ref" href="#chan.clock"><code>chan.clock</code></a>'s or <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a>'s <code>run</code>, a <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a>'s <code>restart</code>. Bind that channel to a key, an OSC message or a show step (see <a href="#concepts-a-clock-per-piece">A clock per piece</a>, <a href="#concepts-shows">Shows</a>, <a href="#concepts-video-clips-on-cue">Video clips on cue</a>). Feedback loops, caches and other nodes that keep state start over with R, the reset button or <a class="ref" href="#node.reset"><code>node.reset</code></a>.
+</li>
+</ul>
 <h3 id="concepts-nodes-families-and-data-kinds">Nodes, families and data kinds</h3>
 <p>A project is a network of nodes. Each node has a kind, written <code>family.name</code> (<a class="ref" href="#tex.noise"><code>tex.noise</code></a>, <a class="ref" href="#chan.lfo"><code>chan.lfo</code></a>), inputs, outputs and params. An output connects only to an input of the same data kind, and the wire takes that kind's colour:</p>
 <table>
@@ -264,7 +319,7 @@ details.target { outline: 2px solid var(--accent); }
 <li><strong><code>comp</code></strong>: components, nodes that hold nodes (see <a href="#concepts-components">Components</a>).
 </li>
 </ul>
-<p>Every type, with every param, is in the <a href="#nodes">node reference</a>. Nodes cook only when something needs them (an output, the viewer, a visible thumbnail) and only when something they depend on changed. A node may need only some of its inputs: <a class="ref" href="#tex.switch"><code>tex.switch</code></a> with <code>inactive: skip</code> cooks only the chain it shows, and the others stand still (their state pauses, their thumbnails cook only as thumbnails) until it switches to them; <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> does the same for a show. A few cheap nodes cook in every frame whether anything shows them or not (<a class="ref" href="#chan.clock"><code>chan.clock</code></a>, <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a>; the reference says so), so they see every change of their params.</p>
+<p>Every type, with every param, is in the <a href="#nodes">node reference</a>. When each node cooks is under <a href="#concepts-how-the-network-runs">How the network runs</a>.</p>
 <h3 id="concepts-params">Params</h3>
 <p>Params are numbers, vectors, colours, choices, text, files or <a href="#concepts-palettes">palettes</a>. Number params have a slider and a field: the slider covers the usual range, a typed value may go beyond it (the reference says &quot;soft&quot; for such a range); a hard range clamps. Colours are linear and may go above 1. File params are relative to the project directory and reload when the file changes.</p>
 <ul>
@@ -340,7 +395,7 @@ water      15
 </li>
 </ul>
 <p>The clip shows its first frame at once when the player holds it decoded: always for a clip with <code>loop</code> off, and for a looping clip whose <code>start</code> is 0. Otherwise the first frame takes a seek, a few frames on H.264, none on HAP. With <code>play</code> off, the clip jumps to <code>start</code> and holds there.</p>
-<p><strong>A cue from QLab or a lighting desk.</strong> Add a <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> and send it <code>/scene &lt;number&gt;</code> from the desk. Bind a <a class="ref" href="#tex.switch"><code>tex.switch</code></a>'s <code>index</code> to the <code>scene</code> channel, set <code>inactive: skip</code> and turn on <code>restart_on_show</code> on each clip. A GO then cuts to the clip's scene and the clip plays from its start. For a fade, turn on the switch's <code>blend</code> and bind <code>index</code> through a <a class="ref" href="#chan.filter"><code>chan.filter</code></a>; the incoming clip starts with the fade. To start the clip on screen over, send <code>/restart 1</code> and then <code>/restart 0</code>, and bind the clip's <code>restart</code> to the <code>restart</code> channel. In a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> show, bind <code>restart</code> to the piece's <code>run_&lt;name&gt;</code>, so a clip shown in two steps in a row starts over in each.</p>
+<p><strong>A cue from QLab or a lighting desk.</strong> Add a <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> and send it <code>/scene &lt;number&gt;</code> from the desk. When the desk is another machine, turn on the node's <code>lan</code>. Bind a <a class="ref" href="#tex.switch"><code>tex.switch</code></a>'s <code>index</code> to the <code>scene</code> channel, set <code>inactive: skip</code> and turn on <code>restart_on_show</code> on each clip. A GO then cuts to the clip's scene and the clip plays from its start. For a fade, turn on the switch's <code>blend</code> and bind <code>index</code> through a <a class="ref" href="#chan.filter"><code>chan.filter</code></a>; the incoming clip starts with the fade. To start the clip on screen over, send <code>/restart 1</code> and then <code>/restart 0</code>, and bind the clip's <code>restart</code> to the <code>restart</code> channel. In a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> show, bind <code>restart</code> to the piece's <code>run_&lt;name&gt;</code>, so a clip shown in two steps in a row starts over in each.</p>
 <p>A saved component could hold the same nodes, but the show itself (the steps, the row of entries, the gates) is the native node; a component around a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> and its <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> nodes is only worth it to reuse a whole show setup.</p>
 <h3 id="concepts-paths">Paths</h3>
 <p>Every node has a path: <code>/noise1</code> at the top level, <code>/scene/noise1</code> inside the component <code>scene</code>. A param is addressed as <code>/scene/noise1.speed</code>, one component of a vector as <code>/t.translate.0</code>.</p>
@@ -402,6 +457,45 @@ water      15
 <p>A node kind that was renamed in a later build still loads. A file naming <code>chan.speed</code> opens with a <a class="ref" href="#chan.integrator"><code>chan.integrator</code></a> in its place, and the next save writes the new name. <a class="ref" href="#project.open"><code>project.open</code></a> and <a class="ref" href="#project.info"><code>project.info</code></a> (<code>renamed</code>) list the nodes this happened to. <a class="ref" href="#node.create"><code>node.create</code></a> and <a class="ref" href="#node.replace"><code>node.replace</code></a> take the old names too, with a note in the reply.</p>
 <p>A node whose line does not load (a kind this build does not know, an input its kind does not have, a param value its kind refuses) does not stop the rest: the project opens, and the node stays as a placeholder (<a class="ref" href="#node.broken"><code>node.broken</code></a>) that shows the reason as its error, in the bar at the top of the window and in <a class="ref" href="#project.info"><code>project.info</code></a> (<code>broken</code>). The placeholder does nothing; wires from it carry nothing. Saving writes its line back as it was, so nothing is lost by opening and saving. It can be renamed or deleted; to change it, fix its line in <code>project.ron</code>, and the fixed node takes its place.</p>
 <p>A file that does not parse at all, or has a format version this build does not read, is reported and left alone (autosave pauses) until it is fixed. <a class="ref" href="#project.save"><code>project.save</code></a> writes over it anyway; it first copies the file to <code>project.ron.bak</code> (also when nodes are kept as placeholders; one copy, the next such save replaces it).</p>
+</div></details>
+<details class="entry guide" id="glossary"><summary><span class="name">Glossary</span></summary>
+<div class="body">
+<p>The words a newcomer meets in the first hour, in alphabetical order. Each entry says first what the word means for you, then where to read on.</p>
+<p><strong>Binding.</strong> A param that follows a channel instead of its typed value: an LFO turning a brightness, a MIDI knob moving a position. Drag a wire from a <code>chan</code> output onto the param's row, or use the link button at the row's end. The typed value comes back when the binding is removed. See <a href="#concepts-bindings">Bindings</a>.</p>
+<p><strong>Blend.</strong> Where two projectors light the same spot, each gives part of the light, so the spot is not twice as bright and small misalignments do not double. With a camera, <a class="ref" href="#scan.blend"><code>scan.blend</code></a> measures the weights (<a href="#scanning-6-blend-scanblend">Scanning</a>). Without one, two <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> nodes fade into each other where their regions overlap (<a href="#mapping-without-camera-two-projectors-side-by-side-the-soft-edge">Mapping without a camera</a>). A composite's &quot;blend modes&quot; (<code>add</code>, <code>multiply</code>, ...) are a different thing: how two pictures are laid on top of each other.</p>
+<p><strong>Channel.</strong> A named number that changes over time, such as <code>level</code> from the audio analysis or <code>x</code> from the mouse. Channels flow along green wires, between <code>chan</code> nodes, and drive params through bindings. A channel can also hold many samples at once (a spectrum, a trail).</p>
+<p><strong>Component.</strong> A node that holds other nodes, to keep a network tidy or to reuse a piece of it. Select nodes and press Ctrl+G to make one; I goes in, U comes out. Saved to a file, it goes into the add dialog's <code>library</code> tab. See <a href="#concepts-components">Components</a>.</p>
+<p><strong>Content library.</strong> Ready-made effects for scanned objects, shipped with penumbra as components: water in a crate, a lamp going round a pumpkin, contour lines. They are in the add dialog's <code>library</code> tab, marked <code>penumbra</code>. See <a href="../library/README.md">its catalogue</a>.</p>
+<p><strong>Control channel.</strong> The way a script, a terminal or Claude drives the running app: JSON requests over a local network connection, port 9880. Everything the editor does is a command there too. <code>penumbra-cli ctl</code> sends one from the command line. See <a href="#control">Control</a>.</p>
+<p><strong>Cook.</strong> A node <em>cooks</em> when it computes its outputs. penumbra cooks only what an output, the viewer or a thumbnail needs, and only when something it depends on changed. A node that nothing needs shows &quot;not cooked&quot; and costs nothing. See <a href="#concepts-how-the-network-runs">How the network runs</a>.</p>
+<p><strong>Cue.</strong> A signal that starts something at a moment of the show: a key, an OSC message from QLab or a lighting desk, a step of a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a>. In penumbra a cue is a channel that turns on. A clock, a show or a clip bound to it starts over. See <a href="#concepts-video-clips-on-cue">Video clips on cue</a>.</p>
+<p><strong>Expose.</strong> Showing an inner param of a component on the component itself, so it can be set without going in. List it in the component's <code>expose</code> param, one per line: <code>speed = noise1.speed</code>. See <a href="#concepts-components">Components</a>.</p>
+<p><strong>Face.</strong> A flat part of a scanned scene: a crate's lid, a box's side, a wall. <a class="ref" href="#scan.scene"><code>scan.scene</code></a> finds the faces and numbers them, and content can be put on each one. Face numbers change with every scan; regions keep their names. See <a href="#scanning-5-faces-and-objects-scanscene">Scanning</a>.</p>
+<p><strong>Family.</strong> The first part of a node's kind: <code>tex</code> for pictures, <code>chan</code> for channels, <code>geo</code>, <code>mat</code>, <code>light</code> and <code>view</code> for 3D, <code>table</code> for text, <code>script</code> for Python, <code>out</code> for outputs, <code>comp</code> for components. Each node's header has its family's colour, and so does the family's block in the add dialog.</p>
+<p><strong>Feedback.</strong> A loop that hands each frame's picture back to the start of a chain, so the next frame builds on it: trails, echoes, patterns that grow. A <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> closes the loop through its <code>previous</code> input. See <a href="#tex.feedback">tex.feedback</a> and the <code>feedback</code> example.</p>
+<p><strong>Helpers window.</strong> The window for setting up a show: displays and projectors, test patterns, blend and colour match, resolution, saved state, OSC and audio. Right-click on empty canvas and choose <strong>Helpers</strong>. See <a href="#helpers">The Helpers window</a>.</p>
+<p><strong>Linear light.</strong> Picture values in penumbra are amounts of light: 0.5 is half the light of 1, and a fade to 0.5 takes away half the light. The eye sees about 0.2 as a mid grey, so numbers from a paint program or a Shadertoy shader look pale until they are converted (<a href="#shaders-from-shadertoy-and-glsl">Shaders</a>). Hex colours in palettes are converted for you. Values above 1 are allowed and stay brighter than white until the output.</p>
+<p><strong>Lock.</strong> A locked node holds its outputs and stops cooking, whatever happens upstream; its inputs may even be removed. Use it for calibration results and anything slow to make again. Locked outputs survive a restart. See <a href="#concepts-what-the-editor-shows">What the editor shows</a>.</p>
+<p><strong>Mapper.</strong> <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> puts the content onto one projector: four corners to drag, a mesh to bend, a soft edge where projectors overlap. Its output is that projector's picture. See <a href="#mapping-without-camera">Mapping without a camera</a>.</p>
+<p><strong>MCP.</strong> The Model Context Protocol, how Claude Code and other AI clients talk to tools. <code>penumbra-cli mcp</code> lets them drive penumbra and see its pictures. See <a href="#control-mcp-server">Control</a>.</p>
+<p><strong>Node reference.</strong> A param that names another node, such as <a class="ref" href="#tex.select"><code>tex.select</code></a>'s <code>node</code>: the node uses that node's output without a wire. It reaches across components, and it is drawn as a dashed line. See <a href="#concepts-paths">Paths</a>.</p>
+<p><strong>Object.</strong> In a scan, whatever is not flat: a pumpkin, a vase, a person. <a class="ref" href="#scan.scene"><code>scan.scene</code></a> and <a class="ref" href="#scan.objects"><code>scan.objects</code></a> find objects as masks, and content drawn in the camera's picture lands on them. See <a href="#scanning">Scanning</a>.</p>
+<p><strong>Param.</strong> A setting of a node, shown as a row in the param panel: a number, a colour, a choice, a file. The circled &quot;i&quot; before its name explains it. See <a href="#concepts-params">Params</a>.</p>
+<p><strong>Piece.</strong> One part of a show, such as the intro or a scene: a chain of nodes that makes one picture. A <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> plays pieces one after another, a <a class="ref" href="#tex.switch"><code>tex.switch</code></a> picks one by a key or a cue. See <a href="#concepts-shows">Shows</a>.</p>
+<p><strong>Port.</strong> One of the sockets of a component, as a node inside it: <a class="ref" href="#tex.in"><code>tex.in</code></a>, <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and so on for every kind. What is wired to the component outside comes out of its <code>in</code> node inside. See <a href="#family-component-ports">Component ports</a>.</p>
+<p><strong>Premultiplied alpha.</strong> penumbra stores a picture's colour already multiplied by its opacity: a half transparent white is <code>0.5, 0.5, 0.5, 0.5</code>. For you this matters in shaders: return <code>vec4f(colour * alpha, alpha)</code>. Colour params are the other way (straight alpha), as a colour picker shows them. Fully transparent pixels are black.</p>
+<p><strong>Projector.</strong> An <a class="ref" href="#out.projector"><code>out.projector</code></a> node: it shows its picture fullscreen on a display. Its <code>display</code> names which one. Each projector has colour correction and test patterns of its own. See <a href="#helpers-outputs">Helpers</a>.</p>
+<p><strong>Region.</strong> Faces of a scan grouped into one part of the scene, the way a person sees it: one crate front instead of its panels and rib strips. <a class="ref" href="#scan.regions"><code>scan.regions</code></a> makes them, and you can merge and name them by clicking in the viewer. Region names survive a rescan. See <a href="#scanning-51-regions-scanregions">Regions</a>.</p>
+<p><strong>RON.</strong> The text format of <code>project.ron</code> and component files (Rusty Object Notation). One node per line, sorted, so a project can be read, edited by hand and kept in git. The app picks up an edit to the file while it runs. See <a href="#concepts-the-project-directory">The project directory</a>.</p>
+<p><strong>Scan.</strong> A camera films each projector's stripe patterns, and penumbra learns which camera pixel each projector pixel lands on. From that it finds faces and objects, blends projectors and puts content on things. One scan takes about 20 seconds per projector in a dark room. See <a href="#scanning">Scanning</a>.</p>
+<p><strong>Scene.</strong> Two meanings. In scanning, the folder <a class="ref" href="#scan.scene"><code>scan.scene</code></a> writes: the faces and objects of one scan, which <a class="ref" href="#scan.regions"><code>scan.regions</code></a>, <a class="ref" href="#scan.face_template"><code>scan.face_template</code></a> and the content read. In 3D, the geometry, materials, lights and camera that a <a class="ref" href="#tex.render"><code>tex.render</code></a> draws.</p>
+<p><strong>Show clock.</strong> The time every animation reads: frames at 60 a second, starting at 0 when a project opens. The status bar pauses and runs it. See <a href="#concepts-time">Time</a>.</p>
+<p><strong>Show mode.</strong> A lock for a performance: no edits, no saving, no project switches, while OSC, DMX, keys and cameras keep driving the show. When the GPU or the editor fails, the app starts again by itself. The padlock in the status bar turns it on. See <a href="#getting-started-show-mode">Show mode</a>.</p>
+<p><strong>State.</strong> What a node builds up over time: a feedback loop's last frame, a cache's frames, a learned background. It is lost on restart unless <strong>keep node state across restarts</strong> is on in the Helpers window. R starts the selected nodes over. See <a href="#helpers-state">State</a>.</p>
+<p><strong>Surface.</strong> The picture that the <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> nodes fed by one node share between them. Each mapper shows a <code>region</code> of it, and mappers of one surface blend where their regions overlap. <a class="ref" href="#tex.shapes"><code>tex.shapes</code></a> draws its masks in the surface's coordinates.</p>
+<p><strong>Thumbnail.</strong> The small live picture in a node's body. Thumbnails cook with the time left in a frame, after the outputs. The editor's right-click menu sets them to always live, only when free or never, for a large network. See <a href="#concepts-what-the-editor-shows">What the editor shows</a>.</p>
+<p><strong>Viewer.</strong> The large picture at the right: the selected node's output, or the node pinned with <code>pin</code>. Some nodes are edited right there: a mapper's corners, a <a class="ref" href="#tex.shapes"><code>tex.shapes</code></a>' shapes, a scan's regions. See <a href="#getting-started-the-viewer">The viewer</a>.</p>
+<p><strong>Wire.</strong> A connection from one node's output to another's input of the same kind. It carries the whole output, and its colour is the kind's. Wires may not form a loop, except into a feedback input. See <a href="#concepts-nodes-families-and-data-kinds">Nodes, families and data kinds</a>.</p>
 </div></details>
 <details class="entry guide" id="helpers"><summary><span class="name">The Helpers window</span></summary>
 <div class="body">
@@ -539,6 +633,7 @@ water      15
 </li>
 </ul>
 <p>Not checked here, because it lives in the graphics driver: with G-Sync (or FreeSync) enabled for windowed mode, the monitor follows the frame rate of the focused window. The editor redraws at about 60 Hz while nothing moves, so a 240 Hz monitor drops to 60 Hz (the mouse pointer turns choppy) as long as penumbra has the focus. Enable G-Sync for fullscreen only, or set <strong>Monitor Technology</strong> to <strong>Fixed Refresh</strong> for <code>penumbra.exe</code> in the NVIDIA Control Panel. The output windows are not affected; they present at their display's fixed vsync.</p>
+<p>For the performance itself, <a href="#getting-started-show-mode">show mode</a> locks the project against edits and starts the app again after a crash.</p>
 </div></details>
 <details class="entry guide" id="audio"><summary><span class="name">Audio</span></summary>
 <div class="body">
@@ -613,7 +708,7 @@ water      15
 </div></details>
 <details class="entry guide" id="dmx"><summary><span class="name">DMX</span></summary>
 <div class="body">
-<p><a class="ref" href="#out.dmx"><code>out.dmx</code></a> (Tab &gt; outputs &gt; dmx) sends channels to lights: through an Enttec Open DMX USB on this machine, or over the network as Art-Net, sACN or DDP. <a class="ref" href="#chan.dmx_in"><code>chan.dmx_in</code></a> (Tab &gt; chan &gt; dmx_in) goes the other way: it receives Art-Net or sACN, from a lighting desk say, and makes the slots channels to bind params to. See <a href="#dmx-receiving">Receiving</a>.</p>
+<p><a class="ref" href="#out.dmx"><code>out.dmx</code></a> (Tab &gt; system &gt; dmx) sends channels to lights: through an Enttec Open DMX USB on this machine, or over the network as Art-Net, sACN or DDP. <a class="ref" href="#chan.dmx_in"><code>chan.dmx_in</code></a> (Tab &gt; chan &gt; dmx_in) goes the other way: it receives Art-Net or sACN, from a lighting desk say, and makes the slots channels to bind params to. See <a href="#dmx-receiving">Receiving</a>.</p>
 <h3 id="dmx-setting-up">Setting up</h3>
 <ol>
 <li><p>Add an <a class="ref" href="#out.dmx"><code>out.dmx</code></a> and connect channels to it. The first channel goes to slot <code>address</code>, the next to the one after, and so on, in the order of the channels. A <a class="ref" href="#chan.merge"><code>chan.merge</code></a> puts several sources into one list; <a class="ref" href="#chan.select"><code>chan.select</code></a> and <a class="ref" href="#chan.rename"><code>chan.rename</code></a> pick and order them.</p>
@@ -667,7 +762,7 @@ water      15
 </div></details>
 <details class="entry guide" id="recording"><summary><span class="name">Recording</span></summary>
 <div class="body">
-<p><a class="ref" href="#out.video"><code>out.video</code></a> (Tab &gt; outputs &gt; video) records its input to a movie file: the show as it runs, for documentation, for an edit, or to play back later with <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a>.</p>
+<p><a class="ref" href="#out.video"><code>out.video</code></a> (Tab &gt; system &gt; video) records its input to a movie file: the show as it runs, for documentation, for an edit, or to play back later with <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a>.</p>
 <h3 id="recording-recording-1">Recording</h3>
 <ol>
 <li>Add an <a class="ref" href="#out.video"><code>out.video</code></a> and connect the picture to record, usually what feeds the projector.
@@ -756,7 +851,7 @@ water      15
 <p>Spout shares pictures between programs on the same Windows machine, directly on the graphics card: no copy through the CPU, no compression, practically no delay. TouchDesigner, Resolume, OBS (with its Spout plugin), Unity, Unreal, vvvv, Notch and MadMapper speak it. Use it to send penumbra's picture into OBS for streaming, to take clips from Resolume into a penumbra mapping, or to run two penumbra instances side by side.</p>
 <p>Spout is Windows only, and both programs must run on the same graphics card (see <a href="#spout-laptops-with-two-graphics-chips">Laptops</a>). Between machines, use <a href="#ndi">NDI</a>.</p>
 <h3 id="spout-sending-outspout">Sending: <a class="ref" href="#out.spout"><code>out.spout</code></a></h3>
-<p>Add an <a class="ref" href="#out.spout"><code>out.spout</code></a> (Tab &gt; outputs &gt; spout) and connect the picture. From its first cook it is listed as a sender; other programs find it by its name.</p>
+<p>Add an <a class="ref" href="#out.spout"><code>out.spout</code></a> (Tab &gt; system &gt; spout) and connect the picture. From its first cook it is listed as a sender; other programs find it by its name.</p>
 <ul>
 <li><code>name</code>: what receivers see. Empty: <code>penumbra</code> and the node's name, such as <code>penumbra spout1</code>. ASCII only (Spout names are not Unicode). If another program already sends under that name, the node sends as <code>name_1</code> and warns.
 </li>
@@ -785,7 +880,7 @@ water      15
 <p>NDI is not part of penumbra. Install <strong>NDI Tools</strong> (<a href="https://ndi.video/tools/">ndi.video/tools</a>) or only the <strong>NDI Runtime</strong> (<a href="http://ndi.link/NDIRedistV6">ndi.link/NDIRedistV6</a>) on every machine that sends or receives. penumbra finds it through the <code>NDI_RUNTIME_DIR_V6</code> variable the installer sets (or in NDI's usual folders); without it the two NDI nodes fail with a message saying where to get it, and everything else works as before. <a class="ref" href="#ndi.sources"><code>ndi.sources</code></a> on the control channel reports the runtime it uses.</p>
 <p>The machines must reach each other on the network. The first time a node sends or receives, Windows may ask whether penumbra may use the network: allow it for private networks. Sources are found by mDNS on the local network; a discovery server, if your network uses one, is set up with NDI Access Manager and used by penumbra as well.</p>
 <h3 id="ndi-sending-outndi">Sending: <a class="ref" href="#out.ndi"><code>out.ndi</code></a></h3>
-<p>Add an <a class="ref" href="#out.ndi"><code>out.ndi</code></a> (Tab &gt; outputs &gt; ndi) and connect the picture. From its first cook it is a source on the network; other programs list it as <code>MACHINE (name)</code>.</p>
+<p>Add an <a class="ref" href="#out.ndi"><code>out.ndi</code></a> (Tab &gt; system &gt; ndi) and connect the picture. From its first cook it is a source on the network; other programs list it as <code>MACHINE (name)</code>.</p>
 <ul>
 <li><code>name</code>: what receivers see after the machine's name. Empty: <code>penumbra</code> and the node's name, such as <code>penumbra ndi1</code>.
 </li>
@@ -923,10 +1018,81 @@ water      15
 <h3 id="tracking-not-there-yet">Not there yet</h3>
 <p>Classifying spots by colour, masking out the projector's own light, and mapping camera positions onto the surface (camera calibration) come later. The learned background does not survive a restart.</p>
 </div></details>
+<details class="entry guide" id="mapping-without-camera"><summary><span class="name">Mapping without a camera</span></summary>
+<div class="body">
+<p>With projectors and no camera, you place the picture by eye. You drag corners and mesh points in the viewer while you watch the wall, and the projector follows every move at once. <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> does the work. <a href="#scanning">Scanning</a> does the same from a camera's pictures, per pixel and without dragging; this page is for everything before that, or instead of it.</p>
+<p><img src="../assets/mapper.png" alt="A tex.mapper selected: its corners moved, a 5 x 5 mesh bent, the alignment grid on. A second mapper beside it shares the content, with a soft edge on its left"></p>
+<h3 id="mapping-without-camera-before-you-start">Before you start</h3>
+<ul>
+<li><strong>The projector.</strong> Turn on its test pattern: <code>test</code> on the <a class="ref" href="#out.projector"><code>out.projector</code></a>, or <strong>Align</strong> in the <a href="#helpers-test-patterns">Helpers window</a>. Set focus and zoom on the projector first, and aim it with its lens shift as far as that goes. Each correction in the mapper resamples the picture and softens it a little.
+</li>
+<li><strong>The network.</strong> Content into a <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a>, the mapper into the <a class="ref" href="#out.projector"><code>out.projector</code></a>. The mapper's <code>width</code> and <code>height</code> are the projector's resolution. <strong>Optimize</strong> in the Helpers window's <a href="#helpers-resolution">Resolution</a> section sets them for you.
+</li>
+</ul>
+<h3 id="mapping-without-camera-corners-a-flat-surface">Corners: a flat surface</h3>
+<ol>
+<li>Select the mapper. The viewer shows its picture, as the projector shows it, with a handle on each corner.
+</li>
+<li>Turn on <strong>grid</strong> in the viewer's header (the <code>pattern</code> param). The projector then shows an alignment grid of the content's area instead of the content.
+</li>
+<li>Drag each corner handle until that corner of the grid sits on the corner of the surface. Shift while dragging moves a tenth as far. A click selects a handle; the arrow keys then move it by one pixel, with Shift by ten.
+</li>
+<li>Turn <strong>grid</strong> off.
+</li>
+</ol>
+<p>The mouse wheel zooms the viewer, the right or middle button pans it. So a corner dragged past the edge of the picture stays in reach. <strong>reset</strong> puts the corners back and flattens the mesh. Every drag is one undo step.</p>
+<p>The corners are params (<code>corner_tl</code>, <code>corner_tr</code>, <code>corner_br</code>, <code>corner_bl</code>, under <em>warp</em>), in picture sizes: 0.1 moves a corner by a tenth of the projector's width or height. <code>region</code> picks the part of the content this projector shows, <code>fit</code> how that part sits in the picture before the corners move.</p>
+<h3 id="mapping-without-camera-mesh-warp-a-surface-that-bends">Mesh warp: a surface that bends</h3>
+<p>A column, a curved screen or a wall that is not quite flat needs more than four corners. The menu in the viewer's header (<strong>no mesh</strong>, <strong>mesh 3x3</strong> up to <strong>mesh 17x17</strong>) lays a grid of points over the picture. Drag a point and the picture bends smoothly through it and its neighbours.</p>
+<ul>
+<li><strong>Start coarse.</strong> Get the corners right, then a 3 x 3 mesh, then a finer one. Picking a finer size keeps the bends you made, resampled onto the new points.
+</li>
+<li><strong>Corners first.</strong> The mesh moves the picture after the corners. A changed corner moves the whole mesh with it.
+</li>
+<li><strong>The text.</strong> The mesh is stored in <code>warp</code>: one line per row of points, <code>dx,dy</code> per point, in picture sizes. Typed in, it may have up to 33 points per side.
+</li>
+</ul>
+<h3 id="mapping-without-camera-two-projectors-side-by-side-the-soft-edge">Two projectors side by side: the soft edge</h3>
+<p>Two mappers fed from the same node show one surface between them. Give each its part with <code>region</code> (x, y, width, height, in shares of the content) and let the parts overlap:</p>
+<table>
+<thead><tr><th>mapper</th><th><code>region</code></th></tr></thead>
+<tbody>
+<tr><td>left projector</td><td><code>0, 0, 0.55, 1</code></td></tr>
+<tr><td>right projector</td><td><code>0.45, 0, 0.55, 1</code></td></tr>
+</tbody>
+</table>
+<p>Where the regions overlap, each mapper fades out towards its region's edge, and the two add up to full brightness. The fade is on by default (<code>blend</code>). A wider overlap hides small errors better and costs width.</p>
+<ol>
+<li>Turn on <strong>grid</strong> on both mappers. Each draws its grid in its own colour: red and cyan for the first two, so lines that meet add up to white.
+</li>
+<li>Map the first projector by its corners. Then drag the second one's corners until its grid lines lie on the first one's in the overlap.
+</li>
+<li>Turn <strong>grid</strong> off and look at the overlap. A band brighter than the rest: raise <code>blend_gamma</code> (under <em>more</em>) a little. Darker: lower it.
+</li>
+</ol>
+<p><strong>Brightness.</strong> One projector is usually brighter. Lower its <code>gain</code> on the <a class="ref" href="#out.projector"><code>out.projector</code></a> (section <em>colour</em>) until the two halves match by eye. <a class="ref" href="#projector.match"><code>projector.match</code></a> does this from a camera and also matches colour.</p>
+<p><strong>Black.</strong> In the overlap two projectors add their black, so on a dark picture the overlap shows as a grey band. Without a camera this stays. With one, <a class="ref" href="#projector.flatfield"><code>projector.flatfield</code></a> lifts the black around the overlap to match (<a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">Helpers</a>).</p>
+<p><strong>Stacked projectors</strong> on the same area, for twice the light: give both the full <code>region</code> and turn <code>blend</code> off.</p>
+<h3 id="mapping-without-camera-masks-light-only-part-of-the-surface">Masks: light only part of the surface</h3>
+<p><a class="ref" href="#tex.shapes"><code>tex.shapes</code></a> draws masks: rectangles, ellipses and polygons. Select it, and its tools are in the viewer's header: <strong>rect</strong> and <strong>ellipse</strong> (drag a box), <strong>poly</strong> (click the points; a double click, Enter or a click on the first point closes it), <strong>select</strong> (move a shape, drag its handles). Each shape has a tag, and <code>tag</code> picks which tags make up the mask.</p>
+<p>The mask goes into a <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with <code>op</code> multiply: the content as <code>in0</code>, the shapes' <code>mask</code> as <code>in1</code>. Black around the shapes stays dark on the wall. Where the mask goes decides what it follows:</p>
+<ul>
+<li><strong>Before the mapper:</strong> the mask lies on the content and moves with the corners and the mesh. Draw it once, and it stays on the windows of a facade while you correct the mapping. The shapes' <code>width</code> and <code>height</code> are the content's size.
+</li>
+<li><strong>After the mapper:</strong> the mask stays put in the projector's pixels, whatever the mapping does. For a fixed spot to keep dark: a stage edge, a door, a row of seats. The shapes' <code>width</code> and <code>height</code> are the projector's resolution.
+</li>
+</ul>
+<p>Shape coordinates are shares of the picture, 0 to 1 from the top left. A <a class="ref" href="#tex.blur"><code>tex.blur</code></a> on the mask softens its edge. <a class="ref" href="#tex.shape_content"><code>tex.shape_content</code></a> fills, pulses, chases or ripples each shape on its own (the shapes' <code>id</code> output into its <code>id</code> input).</p>
+<h3 id="mapping-without-camera-from-the-control-channel">From the control channel</h3>
+<p>The handles only set params, so the same works with <a class="ref" href="#node.set"><code>node.set</code></a>:</p>
+<p>penumbra-cli ctl node.set '{&quot;path&quot;: &quot;/map_a&quot;, &quot;params&quot;: {&quot;region&quot;: [0, 0, 0.55, 1], &quot;corner_tl&quot;: [0.02, -0.01]}}'</p>
+<p><a class="ref" href="#projector.test"><code>projector.test {on, pattern}</code></a> switches the test pattern of every projector, <a class="ref" href="#res.optimize"><code>res.optimize</code></a> sets the sizes. A camera added later can line the mappers up for you: name each mapper in its <a class="ref" href="#tex.scan"><code>tex.scan</code></a> (<a href="#scanning-the-scan-button-texscan">Scanning</a>). A mesh made by hand stays and moves the aligned picture.</p>
+</div></details>
 <details class="entry guide" id="scanning"><summary><span class="name">Scanning: projecting onto objects</span></summary>
 <div class="body">
 <p>A camera films the projectors' structured light patterns; from those pictures penumbra learns which camera pixel each projector pixel lands on. That is enough to find objects standing in front of a wall, to give each projector a mask and a blend weight for them, and to draw content once, in the camera's picture, so it lands on every object the same way in every projector.</p>
 <p>A mostly flat object (a relief panel) needs no reference scan: <a class="ref" href="#scan.relief"><code>scan.relief</code></a> turns one scan per projector into height maps and light masks. Nor does a scene of flat faces with objects among them (boxes, a floor, a wall, a pumpkin on a crate): <a class="ref" href="#scan.scene"><code>scan.scene</code></a> finds every face and every object in one scan per projector, and rectifies any face of known aspect; <a class="ref" href="#scan.regions"><code>scan.regions</code></a> groups its faces into one region per crate front, side or lid and switches the floor off. Content delivered per face (a clip per crate front) gets a template per face from <a class="ref" href="#scan.face_template"><code>scan.face_template</code></a> and lands on its face through <a class="ref" href="#tex.face_content"><code>tex.face_content</code></a>.</p>
+<p>Without a camera, corners and a mesh dragged by eye do the job on flat and gently curved surfaces: <a href="#mapping-without-camera">Mapping without a camera</a>.</p>
 <p>Everything here is a command (see <a href="#control">Control</a>); the results are plain files in the project, read by <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a>. Nothing of it runs per frame: during the show what remains is a <a class="ref" href="#tex.remap"><code>tex.remap</code></a> lookup and a multiply per projector.</p>
 <p>Paths in the commands are relative to the project directory. The last section walks through the whole chain once, from an empty project to a relief lit by two projectors, along the example projection-onto-objects.</p>
 <h3 id="scanning-the-scan-button-texscan">The scan button: <a class="ref" href="#tex.scan"><code>tex.scan</code></a></h3>
@@ -1091,6 +1257,23 @@ water      15
 </tbody>
 </table>
 <p>Content made for <code>planes_camera.png</code> takes <code>regions_camera.png</code> as it is: the same 8-bit labels, one per crate front instead of one per strip. The region numbers change when the grouping does (they are counted top of the picture first), so content that picks single regions should pick them by name or seed from the reply, not by number.</p>
+<h4 id="scanning-52-things-that-are-not-flat">5.2 Things that are not flat</h4>
+<p><a class="ref" href="#scan.scene"><code>scan.scene</code></a> sorts a scene into flat faces and everything else. A pumpkin, a hanging cloth or a crumpled sheet of paper fit no plane, so they come out as objects, or as many small faces.</p>
+<p><strong>What works anyway.</strong> The scan measures every pixel, flat or not. Content drawn in the camera's picture and remapped through <code>proj_to_cam_smooth_N.exr</code> (<a href="#scanning-7-the-network">section 7</a>) lands on the folds of a cloth or the ribs of a pumpkin as it lands on a crate. <code>objects_camera.png</code> and <code>labels_N.png</code> cut it to the object's outline. The library's effects <a href="../library/README.md">for round objects</a> (relight, contours, a lamp going round) work this way.</p>
+<p><strong>What to expect.</strong></p>
+<ul>
+<li><strong>No true proportions.</strong> Rectified coordinates and undistorted templates need a face with four edges. A curved thing gets neither. A template made for it shows it as the camera sees it.
+</li>
+<li><strong>Heights against the face below.</strong> <code>height_N.exr</code> measures an object against the support, the face right below it in the camera's picture. For a pumpkin on a crate that is its height above the lid. For a cloth hanging in front of a wall it is measured against the floor, and means little. With no face below the objects at all there are no heights, and the reply warns.
+</li>
+<li><strong>Strips along folds.</strong> A cloth with vertical folds can fall apart into a row of narrow faces: along a fold it is straight, and the test for curved patches looks along a patch's longest extent. Merge the strips into one region in the region editor (<a href="#scanning-51-regions-scanregions">5.1</a>): click one, Shift+click the others, M.
+</li>
+<li><strong>The shape at scan time.</strong> The maps hold for the scene as it was scanned. A cloth that sways in a draught or is hung again needs a new scan, and so does a pumpkin that was turned.
+</li>
+<li><strong>Hidden folds.</strong> Parts the camera does not see are not decoded, parts no projector reaches stay dark. A second projector from another side reaches some of them.
+</li>
+</ul>
+<p><strong>What to do instead.</strong> For a cloth that fills most of a projector's frame, try <a class="ref" href="#scan.relief"><code>scan.relief</code></a> (<a href="#scanning-4-relief-scanrelief">section 4</a>): it takes the cloth as one surface and its folds as heights, with no wall or floor needed below it. For content per piece of cloth, a region of merged strips works with <a class="ref" href="#tex.face_content"><code>tex.face_content</code></a> (<a href="#scanning-8-content-delivered-per-face">section 8</a>), framed as the camera sees it.</p>
 <h3 id="scanning-6-blend-scanblend">6. Blend: <a class="ref" href="#scan.blend"><code>scan.blend</code></a></h3>
 <p>Where two projectors light the same spot it is twice as bright, and any misregistration doubles. <a class="ref" href="#scan.blend"><code>scan.blend</code></a> gives each projector a weight: where another projector also lands on the same camera pixel (inside its mask), the weight falls towards the projector's own frame edge, <code>d_self / (d_self + d_other)</code> with <code>d</code> the distance to the frame edge capped at <code>ramp</code> (projector pixels, 200); elsewhere 1; blurred by <code>blur</code> (3), 0 outside the mask. The weights of all projectors at one camera pixel add up to 1; the reply says how closely.</p>
 <p>penumbra-cli ctl scan.blend '{&quot;scans&quot;: [&quot;scan/proj_a&quot;, &quot;scan/proj_b&quot;], &quot;masks&quot;: [&quot;objects/labels_0.png&quot;, &quot;objects/labels_1.png&quot;]}'</p>
@@ -1313,6 +1496,98 @@ fn pn_band(p: PnPalette, t: f32) -&gt; vec4f     // 0..1 in equal bands, one per
 <p>A shader that reads <code>pn_time</code> cooks every frame; one that does not cooks only when its inputs or params change.</p>
 <h3 id="shaders-size">Size</h3>
 <p>The node's <code>resolution</code> param: <code>input</code> takes the size of <code>in0</code> (<code>width</code> and <code>height</code> while <code>in0</code> is unconnected), <code>custom</code> always uses <code>width</code> and <code>height</code>.</p>
+<h3 id="shaders-from-shadertoy-and-glsl">From Shadertoy and GLSL</h3>
+<p>A Shadertoy shader ports line by line. Shadertoy's template for a new shader, and the same in penumbra:</p>
+<pre><code class="lang-glsl">void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = 0.5 + 0.5 * cos(iTime + uv.xyx + vec3(0, 2, 4));
+    fragColor = vec4(col, 1.0);
+}
+</code></pre>
+<pre><code class="lang-wgsl">@fragment
+fn main(v: PnVertex) -&gt; @location(0) vec4f {
+    let fragCoord = vec2f(v.pos.x, pn.resolution.y - v.pos.y);
+    let uv = fragCoord / pn.resolution;
+    let col = 0.5 + 0.5 * cos(pn_time.seconds + uv.xyx + vec3f(0.0, 2.0, 4.0));
+    return vec4f(pow(col, vec3f(2.2)), 1.0);
+}
+</code></pre>
+<p>Three differences matter in every port:</p>
+<ul>
+<li><strong>Pixels count from the top.</strong> <code>v.pos.xy</code> is the pixel position with 0 at the top left. Shadertoy's <code>fragCoord</code> has 0 at the bottom left. The first line above flips it, so the rest of the code stays as it was.
+</li>
+<li><strong>Colours are linear.</strong> Shadertoy writes its numbers straight to the screen. penumbra takes them as light and encodes them for the display, so a ported shader looks pale. <code>pow(col, vec3f(2.2))</code> at the end brings back the look it had on Shadertoy.
+</li>
+<li><strong>Alpha is premultiplied.</strong> For a transparent part, multiply the colour by the alpha: <code>vec4f(col * a, a)</code>. A shader whose alpha stays 1 needs nothing.
+</li>
+</ul>
+<p>The names:</p>
+<table>
+<thead><tr><th>Shadertoy</th><th>penumbra</th></tr></thead>
+<tbody>
+<tr><td><code>iTime</code></td><td><code>pn_time.seconds</code>: show time, stands still while the clock is paused</td></tr>
+<tr><td><code>iFrame</code></td><td><code>pn_time.frame</code> (an <code>f32</code>)</td></tr>
+<tr><td><code>iResolution.xy</code></td><td><code>pn.resolution</code> (a <code>vec2f</code>)</td></tr>
+<tr><td><code>fragCoord</code></td><td><code>vec2f(v.pos.x, pn.resolution.y - v.pos.y)</code></td></tr>
+<tr><td><code>fragCoord / iResolution.xy</code></td><td><code>vec2f(v.uv.x, 1.0 - v.uv.y)</code>; <code>v.uv</code> itself runs from the top left</td></tr>
+<tr><td><code>iMouse.xy</code></td><td><code>params.mouse * pn.resolution</code>, with <code>// @param mouse vec2</code> bound to a <a class="ref" href="#chan.mouse_in"><code>chan.mouse_in</code></a>'s <code>x</code> and <code>y</code> (they count from the bottom left, as Shadertoy does)</td></tr>
+<tr><td><code>iChannel0</code> to <code>iChannel3</code></td><td><code>in0</code> to <code>in3</code>, wired into the node</td></tr>
+<tr><td><code>texture(iChannel0, uv)</code></td><td><code>textureSampleLevel(in0, pn_repeat, uv, 0.0)</code>, with <code>uv</code> from the top left; <code>pn_clamp</code> and <code>pn_mirror</code> for the other edge modes</td></tr>
+<tr><td><code>iChannelResolution[0].xy</code></td><td><code>vec2f(textureDimensions(in0))</code></td></tr>
+<tr><td><code>fragColor = c;</code></td><td><code>return c;</code></td></tr>
+<tr><td>Buffer A to D</td><td>one <a class="ref" href="#tex.shader"><code>tex.shader</code></a> per buffer, wired into the next; a buffer that reads itself goes into a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a> loop (below)</td></tr>
+</tbody>
+</table>
+<p>The language:</p>
+<table>
+<thead><tr><th>GLSL</th><th>WGSL</th></tr></thead>
+<tbody>
+<tr><td><code>float</code>, <code>int</code>, <code>vec2</code>, <code>vec3</code>, <code>vec4</code>, <code>ivec2</code>, <code>mat2</code></td><td><code>f32</code>, <code>i32</code>, <code>vec2f</code>, <code>vec3f</code>, <code>vec4f</code>, <code>vec2i</code>, <code>mat2x2f</code></td></tr>
+<tr><td><code>float x = 1.0;</code></td><td><code>let x = 1.0;</code> when it never changes, <code>var x = 1.0;</code> when it does</td></tr>
+<tr><td><code>#define PI 3.14159</code>, <code>const float PI = ...</code></td><td><code>const PI = 3.14159;</code></td></tr>
+<tr><td><code>float f(vec2 p) { ... }</code></td><td><code>fn f(p: vec2f) -&gt; f32 { ... }</code></td></tr>
+<tr><td><code>for (int i = 0; i &lt; 8; i++)</code></td><td><code>for (var i = 0; i &lt; 8; i++)</code></td></tr>
+<tr><td><code>float(i)</code></td><td><code>f32(i)</code>: an <code>i32</code> never turns into an <code>f32</code> by itself</td></tr>
+<tr><td><code>c ? a : b</code></td><td><code>select(b, a, c)</code>: the false value comes first</td></tr>
+<tr><td><code>mod(x, y)</code></td><td><code>x - y * floor(x / y)</code>. WGSL's <code>x % y</code> keeps the sign of <code>x</code> and differs below 0</td></tr>
+<tr><td><code>atan(y, x)</code></td><td><code>atan2(y, x)</code></td></tr>
+<tr><td><code>dFdx</code>, <code>dFdy</code></td><td><code>dpdx</code>, <code>dpdy</code></td></tr>
+<tr><td><code>col.rg = vec2(1.0);</code></td><td>one component at a time (<code>col.x = 1.0;</code>), or build the vector anew</td></tr>
+<tr><td><code>out</code> and <code>inout</code> params</td><td>return the value, or a struct of several</td></tr>
+</tbody>
+</table>
+<p>The same in both: swizzles that read (<code>p.xy</code>, <code>col.bgr</code>, <code>uv.xyx</code>), <code>fract</code>, <code>floor</code>, <code>mix</code>, <code>clamp</code>, <code>step</code>, <code>smoothstep</code>, <code>length</code>, <code>normalize</code>, <code>dot</code>, <code>cross</code>, <code>sin</code>, <code>cos</code>, <code>pow</code>, <code>abs</code>, <code>min</code> and <code>max</code>. Numbers and vectors mix as in GLSL: <code>0.5 + 0.5 * v</code> works.</p>
+<h3 id="shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">From a snippet to a loop that moves with the music</h3>
+<p>Three steps, each a few minutes, from a shader to a picture that reacts to sound.</p>
+<p><strong>1. The shader.</strong> Save this as <code>ring.wgsl</code> in the project folder. Add a <a class="ref" href="#tex.shader"><code>tex.shader</code></a> and set its <code>file</code> to <code>ring.wgsl</code>. Select the node: the viewer shows a ring, and the row <code>energy</code> appears under &quot;from the shader&quot;.</p>
+<pre><code class="lang-wgsl">// A ring in the template's colours, transparent around it.
+// @param energy float = 0 0..1 -- how far the ring opens; bind it to the music
+@fragment
+fn main(v: PnVertex) -&gt; @location(0) vec4f {
+    let p = (v.uv - 0.5) * vec2f(pn.resolution.x / pn.resolution.y, 1.0);
+    let radius = 0.1 + 0.3 * params.energy;
+    let ring = 1.0 - smoothstep(0.0, 0.01, abs(length(p) - radius));
+    let col = 0.5 + 0.5 * cos(pn_time.seconds + p.xyx + vec3f(0.0, 2.0, 4.0));
+    return vec4f(pow(col, vec3f(2.2)) * ring, ring);
+}
+</code></pre>
+<p><strong>2. Feedback.</strong> Each frame builds on the one before, so the ring leaves trails:</p>
+<ul>
+<li>a <a class="ref" href="#tex.constant"><code>tex.constant</code></a> (black) into the <code>initial</code> input of a <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>;
+</li>
+<li>the feedback into a <a class="ref" href="#tex.transform"><code>tex.transform</code></a> with <code>scale</code> 1.01 and <code>rotate</code> 0.5: the trails drift outwards and turn;
+</li>
+<li>into a <a class="ref" href="#tex.level"><code>tex.level</code></a> with <code>brightness</code> 0.95: the trails fade within a second or two;
+</li>
+<li>into <code>in0</code> of a <a class="ref" href="#tex.composite"><code>tex.composite</code></a>, the shader into its <code>in1</code>;
+</li>
+<li>the composite back into the feedback's <code>previous</code>. That wire is drawn dashed.
+</li>
+</ul>
+<p>The composite is the picture. <a href="#tex.feedback">tex.feedback</a> and the <code>feedback</code> example show more of what a loop can do.</p>
+<p><strong>3. Sound.</strong> Add a <a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a> and wire it into a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> (see <a href="#audio">Audio</a>). Wire the analysis into a <a class="ref" href="#chan.filter"><code>chan.filter</code></a>, which smooths the jumps. Then bind <code>energy</code>: the link button at the end of its row offers the filter's channels, pick <code>low</code>. The ring now opens with every bass note. Without a microphone, a <a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> with <code>offset</code> 0.5 and <code>amplitude</code> 0.5 stands in.</p>
+<p>The whole spectrum fits into a shader too: <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a>'s <code>spectrum</code> output into a <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a>, that into <code>in1</code>. Then <code>textureSampleLevel(in1, pn_clamp, vec2f(x, 0.5), 0.0).r</code> is the loudness at <code>x</code>, low frequencies at 0.</p>
+<p>To show it on a wall, wire the composite into an <a class="ref" href="#out.projector"><code>out.projector</code></a>, or through a <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> first (<a href="#mapping-without-camera">Mapping without a camera</a>).</p>
 </div></details>
 <details class="entry guide" id="scripts"><summary><span class="name">Scripts</span></summary>
 <div class="body">
@@ -1541,6 +1816,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>extend</code></td><td>hold | zero | repeat | mirror</td><td><code>&quot;hold&quot;</code></td><td></td><td>What the blur reads beyond the input's edges; hold keeps the edges from darkening<ul><li><code>hold</code>: the edge pixels continue outwards</li><li><code>zero</code>: transparent black</li><li><code>repeat</code>: the input again, tiled</li><li><code>mirror</code>: the input again, mirrored, so the copies meet at the edges</li></ul></td></tr>
 </tbody>
 </table>
+<p class="mentions">Mentioned in: <a href="#mapping-without-camera-masks-light-only-part-of-the-surface">Mapping without a camera › Masks: light only part of the surface</a></p>
 </div></details>
 <details class="entry node" id="tex.cache"><summary><code class="name">tex.cache</code><span class="sum">Keeps the last frames of its input and shows one from a few frames back: a delay, or a moment held</span></summary>
 <div class="body">
@@ -1641,7 +1917,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>swap</code></td><td>bool</td><td><code>false</code></td><td></td><td>Swap the order of each step: the picture below onto the layer (TouchDesigner's Swap Operation Order)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#mapping-without-camera-masks-light-only-part-of-the-surface">Mapping without a camera › Masks: light only part of the surface</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.constant"><summary><code class="name">tex.constant</code><span class="sum">A picture in one colour: a background, a fill, a black to start from</span></summary>
 <div class="body">
@@ -1663,7 +1939,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a></p>
+<p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.contour"><summary><code class="name">tex.contour</code><span class="sum">Contour lines as on a map: a line wherever a channel (a height map, say) crosses a step of <code>interval</code></span></summary>
 <div class="body">
@@ -1812,7 +2088,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>aspect</code></td><td>float</td><td><code>0</code> (template)</td><td>0 to 100</td><td>The face's width over its height, for contain and cover: template, as the face's template says<ul><li>0: template</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#scanning">Scanning</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
+<p class="mentions">Mentioned in: <a href="#scanning">Scanning</a>, <a href="#scanning-52-things-that-are-not-flat">Scanning › 5.2 Things that are not flat</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
 </div></details>
 <details class="entry node" id="tex.feedback"><summary><code class="name">tex.feedback</code><span class="sum">Feeds a chain's result back into it the next frame: trails, echoes, patterns that grow. Wire the end of the chain into <code>previous</code></span></summary>
 <div class="body">
@@ -1855,7 +2131,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="tex.feedback-example">Example</h5>
 <p>The <code>feedback</code> example project: text drawn over a loop that zooms, turns, dims and shifts the hue of the last frame a little, so the text leaves trails that drift outwards and change colour.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#helpers-state">The Helpers window › State</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-state">The Helpers window › State</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.fit"><summary><code class="name">tex.fit</code><span class="sum">Fits a picture into a frame of another size or shape: whole with bars, cropped to fill, or stretched</span></summary>
 <div class="body">
@@ -1961,6 +2237,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </li>
 </ul>
 </div>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a></p>
 </div></details>
 <details class="entry node" id="tex.from_chan"><summary><code class="name">tex.from_chan</code><span class="sum">Turns channels into a picture: a row per channel, a pixel per sample. Numbers for shaders and geo.tex_instance</span></summary>
 <div class="body">
@@ -1982,7 +2259,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>high</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Channel value that becomes white (1); higher values go above 1</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.hsv"><summary><code class="name">tex.hsv</code><span class="sum">Turns the colours round the colour wheel and makes them more vivid or paler, brighter or darker</span></summary>
 <div class="body">
@@ -2092,6 +2369,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>opacity</code></td><td>float</td><td><code>1</code></td><td>0 to 1 (soft)</td><td>Multiplies alpha: 0 transparent, 1 as the input; fades a layer in a composite</td></tr>
 </tbody>
 </table>
+<p class="mentions">Mentioned in: <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.limit"><summary><code class="name">tex.limit</code><span class="sum">Keeps values within a range: clips them, or wraps or mirrors them back in (a ramp becomes repeating stripes)</span></summary>
 <div class="body">
@@ -2171,7 +2449,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>warp</code></td><td>text</td><td></td><td></td><td>Mesh warp: one line per grid row, <code>dx,dy</code> offsets in picture sizes; empty is none (edit it in the viewer)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-a-first-network">Getting started › A first network</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-2-line-projectors-up-scanalign">Scanning › 2. Line projectors up: scan.align</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-a-first-network">Getting started › A first network</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#mapping-without-camera">Mapping without a camera</a>, <a href="#mapping-without-camera-before-you-start">Mapping without a camera › Before you start</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-2-line-projectors-up-scanalign">Scanning › 2. Line projectors up: scan.align</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.matte"><summary><code class="name">tex.matte</code><span class="sum">Shows one picture where a mask is white and another where it is black</span></summary>
 <div class="body">
@@ -2234,7 +2512,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>alpha</code></td><td>straight | premultiplied | opaque</td><td><code>&quot;straight&quot;</code></td><td></td><td>How the source's transparency is taken (NDI's alpha is straight)<ul><li><code>straight</code>: colour and alpha apart, as most programs take it</li><li><code>premultiplied</code>: colour multiplied by alpha</li><li><code>opaque</code>: no transparency: sent over black, or a received alpha ignored</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
 </div></details>
 <details class="entry node" id="tex.noise"><summary><code class="name">tex.noise</code><span class="sum">Cloudy random patterns, still or slowly changing: textures, masks, organic motion for a displacement</span></summary>
 <div class="body">
@@ -2428,7 +2706,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>ao_strength</code></td><td>float</td><td><code>1</code></td><td>0 to 3 (soft)</td><td>How much of the hidden ambient light is taken away: 1 as estimated, 0.3 at most 30 %, above 1 darker</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-resolution">The Helpers window › Resolution</a>, <a href="#navigation">Looking around in 3D</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a></p>
 </div></details>
 <details class="entry node" id="tex.resolution"><summary><code class="name">tex.resolution</code><span class="sum">Scales a picture to another size, smaller to save work, say; shrinking stays smooth, without aliasing</span></summary>
 <div class="body">
@@ -2481,7 +2759,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>fill</code></td><td>int</td><td><code>32</code></td><td>0 to 128 (soft)</td><td>Projector pixels the decode fills in from measured neighbours</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#helpers-blend-and-match">The Helpers window › Blend and match</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#helpers-blend-and-match">The Helpers window › Blend and match</a>, <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
 <details class="entry node" id="tex.scan_pattern"><summary><code class="name">tex.scan_pattern</code><span class="sum">The striped pictures of a structured light scan (Gray code), one per <code>pattern</code>: for scanning with another camera by hand</span></summary>
 <div class="body">
@@ -2541,7 +2819,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p><code>output</code> picks which output of that node, counted from 0, for nodes with more than one: <a class="ref" href="#tex.render"><code>tex.render</code></a>'s <code>data</code> is 1.</p>
 <p>A select that points at a <a class="ref" href="#tex.null"><code>tex.null</code></a> at the end of a chain stays valid however that chain changes.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-paths">Concepts › Paths</a>, <a href="#concepts-components">Concepts › Components</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-wires-bindings-and-node-references">Concepts › Wires, bindings and node references</a>, <a href="#concepts-paths">Concepts › Paths</a>, <a href="#concepts-components">Concepts › Components</a>, <a href="#glossary">Glossary</a></p>
 </div></details>
 <details class="entry node" id="tex.sequence"><summary><code class="name">tex.sequence</code><span class="sum">The picture of a timed show: plays the pieces a chan.sequence lists, with cuts and fades. Only the piece on screen runs</span></summary>
 <div class="body">
@@ -2566,7 +2844,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>64 to 2160 (soft)</td><td>Height of the black or white made while no picture is shown to take the size from</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#concepts-shows">Concepts › Shows</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#concepts-shows">Concepts › Shows</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a></p>
 </div></details>
 <details class="entry node" id="tex.shader"><summary><code class="name">tex.shader</code><span class="sum">An effect or generator of your own, written as a WGSL shader in a file; reloads when saved, its <code>// @param</code> lines become params</span></summary>
 <div class="body">
@@ -2595,7 +2873,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#shaders">Shaders</a></p>
+<p class="mentions">Mentioned in: <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#shaders">Shaders</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.shape_content"><summary><code class="name">tex.shape_content</code><span class="sum">Animates the shapes of a tex.shapes one by one: pulses, light running along the outlines, ripples</span></summary>
 <div class="body">
@@ -2628,7 +2906,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>softness</code></td><td>float</td><td><code>0.3</code></td><td>0 to 1 (soft)</td><td>Chase and ripple: how soft the ends of segments and rings are; 0 hard</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
+<p class="mentions">Mentioned in: <a href="#mapping-without-camera-masks-light-only-part-of-the-surface">Mapping without a camera › Masks: light only part of the surface</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
 </div></details>
 <details class="entry node" id="tex.shapes"><summary><code class="name">tex.shapes</code><span class="sum">Shapes drawn on the surface (rectangles, ellipses, polygons) with tags: masks and outlines to light parts of a facade or object on their own</span></summary>
 <div class="body">
@@ -2650,9 +2928,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the surface in pixels (the mappers' input); shape coordinates are in these pixels</td></tr>
-<tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the surface in pixels; shape coordinates are in these pixels</td></tr>
-<tr><td><code>shapes</code></td><td>text</td><td></td><td></td><td>One per line: <code>tag rect x,y w,h</code>, <code>tag ellipse x,y w,h</code> or <code>tag poly x,y x,y ...</code>, optionally <code>repeat CxR dx,dy</code>; surface coordinates (draw them in the viewer)</td></tr>
+<tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the surface in pixels (the mappers' input); shape coordinates are shares of it, 0 to 1 across</td></tr>
+<tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the surface in pixels; shape coordinates are shares of it, 0 to 1 down</td></tr>
+<tr><td><code>shapes</code></td><td>text</td><td></td><td></td><td>One per line: <code>tag rect x,y w,h</code>, <code>tag ellipse x,y w,h</code> or <code>tag poly x,y x,y ...</code>, optionally <code>repeat CxR dx,dy</code>; surface coordinates, 0 to 1 from the top left (draw them in the viewer)</td></tr>
 <tr><td><code>tag</code></td><td>text</td><td></td><td></td><td>Tags in the mask and the distance field, separated by spaces; empty: all</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
@@ -2667,7 +2945,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>trace_min_area</code></td><td>float</td><td><code>64</code></td><td>0 to 10000 (soft)</td><td>Regions of fewer pixels of the picture are specks and dropped; holes in regions are filled</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#glossary">Glossary</a>, <a href="#mapping-without-camera-masks-light-only-part-of-the-surface">Mapping without a camera › Masks: light only part of the surface</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
 </div></details>
 <details class="entry node" id="tex.slope"><summary><code class="name">tex.slope</code><span class="sum">How steeply a height map or picture rises, left to right in red and top to bottom in green: relief, or a map for tex.displace</span></summary>
 <div class="body">
@@ -2743,7 +3021,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="tex.switch-example">Example</h5>
 <p>Scenes on the number keys: wire four scenes into <code>in0</code> to <code>in3</code>, add a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a> (its <code>keys</code> are <code>1 2 3 4</code> by default) and bind <code>index</code> to its <code>last</code> channel. Key 1 shows <code>in0</code>, key 2 <code>in1</code>, and so on. With <code>inactive: skip</code>, only the scene on screen costs anything.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#glossary">Glossary</a></p>
 </div></details>
 <details class="entry node" id="tex.text"><summary><code class="name">tex.text</code><span class="sum">Writes text into a picture, in an installed font or a bundled one</span></summary>
 <div class="body">
@@ -2870,6 +3148,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>pivot</code></td><td>vec2</td><td><code>[0.5, 0.5]</code></td><td>0 to 1 (soft)</td><td>The point rotate and scale turn and grow around, in image sizes: 0, 0 is the top left, 0.5, 0.5 the centre</td></tr>
 </tbody>
 </table>
+<p class="mentions">Mentioned in: <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.video_file"><summary><code class="name">tex.video_file</code><span class="sum">Plays a video file or animated GIF, looping without a gap</span></summary>
 <div class="body">
@@ -2896,7 +3175,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>start</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where playback begins when the file is loaded and where a restart goes</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#recording">Recording</a>, <a href="#recording-colour">Recording › Colour</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#recording">Recording</a>, <a href="#recording-colour">Recording › Colour</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
 </div></details>
 <details class="entry node" id="tex.video_in"><summary><code class="name">tex.video_in</code><span class="sum">A live camera or capture card</span></summary>
 <div class="body">
@@ -2961,7 +3240,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves the width and height of the meters output alone</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="chan.audio_in"><summary><code class="name">chan.audio_in</code><span class="sum">Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel</span></summary>
 <div class="body">
@@ -2979,7 +3258,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the input's name (Helpers &gt; Audio lists them), e.g. <code>Focusrite</code>; empty: the system's default input</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="chan.clock"><summary><code class="name">chan.clock</code><span class="sum">A stopwatch: counts seconds from when <code>run</code> turns on, once, looping or on and on. Gives each piece of a show a clock that starts with it</span></summary>
 <div class="body">
@@ -3001,7 +3280,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>mode</code></td><td>once | loop | free</td><td><code>&quot;once&quot;</code></td><td></td><td>What the clock does once <code>length</code> has passed<ul><li><code>once</code>: it stops at the end and holds there</li><li><code>loop</code>: it starts over from 0, round after round</li><li><code>free</code>: it runs on: seconds grow without end, fraction past 1</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
 </div></details>
 <details class="entry node" id="chan.constant"><summary><code class="name">chan.constant</code><span class="sum">Numbers set by hand, each a named channel: values to bind params to, one setting that drives several things</span></summary>
 <div class="body">
@@ -3132,7 +3411,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="chan.filter-timing">Timing</h5>
 <p>A channel with one value per frame steps by the time since the last cook. Frames in which nothing asked for the node still count. A channel with many samples is filtered sample by sample at its own rate. The first value of a channel passes unchanged. Switching <code>type</code> or <code>order</code> carries on from the last output. A seek back in time, <a class="ref" href="#node.reset"><code>node.reset</code></a> or R start the node over.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#audio-tips">Audio › Tips</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#audio-tips">Audio › Tips</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="chan.from_table"><summary><code class="name">chan.from_table</code><span class="sum">Turns a table of numbers into channels, so its cells can drive params through bindings</span></summary>
 <div class="body">
@@ -3259,7 +3538,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>phase</code></td><td>float</td><td><code>0</code></td><td>0 to 1 (soft)</td><td>Shift along the wave, in waves: 0.25 is a quarter wave ahead. Sets lfos of one rate apart</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="chan.math"><summary><code class="name">chan.math</code><span class="sum">Calculates with channels: adds, multiplies or compares two inputs, or one input and a number</span></summary>
 <div class="body">
@@ -3343,7 +3622,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>display</code></td><td>text</td><td></td><td></td><td>The display <code>x</code> and <code>y</code> are shares of, named as an output's <code>display</code> (or <code>\\.\DISPLAY2</code>); empty: the display the pointer is on</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-mouse-and-3d-mouse">Concepts › Mouse and 3D mouse</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-mouse-and-3d-mouse">Concepts › Mouse and 3D mouse</a>, <a href="#shaders-from-shadertoy-and-glsl">Shaders › From Shadertoy and GLSL</a></p>
 </div></details>
 <details class="entry node" id="chan.noise"><summary><code class="name">chan.noise</code><span class="sum">A number that wanders smoothly at random: organic motion that never repeats</span></summary>
 <div class="body">
@@ -3428,7 +3707,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>bundle</code></td><td>bool</td><td><code>true</code></td><td></td><td>Several messages per packet as a bundle; off sends one packet per message</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-osc">The Helpers window › OSC</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-how-the-network-runs">Concepts › How the network runs</a>, <a href="#helpers-osc">The Helpers window › OSC</a></p>
 </div></details>
 <details class="entry node" id="chan.rename"><summary><code class="name">chan.rename</code><span class="sum">Renames channels by <code>from=to</code> pairs, so they match what other nodes and bindings expect</span></summary>
 <div class="body">
@@ -3493,7 +3772,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>mode</code></td><td>once | loop</td><td><code>&quot;once&quot;</code></td><td></td><td>What the show does after its last step<ul><li><code>once</code>: it ends in black and stays there</li><li><code>loop</code>: it starts over from its lead-in, round after round</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#concepts-shows">Concepts › Shows</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#concepts-shows">Concepts › Shows</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#glossary">Glossary</a></p>
 </div></details>
 <details class="entry node" id="chan.spacemouse_in"><summary><code class="name">chan.spacemouse_in</code><span class="sum">The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show</span></summary>
 <div class="body">
@@ -4128,7 +4407,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>alpha</code></td><td>straight | premultiplied | opaque</td><td><code>&quot;opaque&quot;</code></td><td></td><td>How transparency travels to the receivers. With alpha, NDI sends an extra plane, which costs about twice the CPU and some latency<ul><li><code>straight</code>: colour and alpha apart, as most programs take it</li><li><code>premultiplied</code>: colour multiplied by alpha</li><li><code>opaque</code>: no transparency: sent over black, or a received alpha ignored</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#ndi-sending-outndi">NDI › Sending: out.ndi</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-how-the-network-runs">Concepts › How the network runs</a>, <a href="#ndi-sending-outndi">NDI › Sending: out.ndi</a></p>
 </div></details>
 <details class="entry node" id="out.projector"><summary><code class="name">out.projector</code><span class="sum">Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors</span></summary>
 <div class="body">
@@ -4163,7 +4442,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>lift</code></td><td>float</td><td><code>1</code></td><td>0 to 4</td><td>Scales the black lift at the <code>black</code> input: 1 as measured, 0 none. Raise it where the camera underrated the black (black outside an overlap still darker than inside). projector.flatfield measures the lift</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#helpers-outputs">The Helpers window › Outputs</a>, <a href="#helpers-test-patterns">The Helpers window › Test patterns</a>, <a href="#helpers-matching-projectors">The Helpers window › Matching projectors</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#glossary">Glossary</a>, <a href="#helpers-outputs">The Helpers window › Outputs</a>, <a href="#helpers-test-patterns">The Helpers window › Test patterns</a>, <a href="#helpers-matching-projectors">The Helpers window › Matching projectors</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#mapping-without-camera-before-you-start">Mapping without a camera › Before you start</a>, <a href="#mapping-without-camera-two-projectors-side-by-side-the-soft-edge">Mapping without a camera › Two projectors side by side: the soft edge</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="out.spout"><summary><code class="name">out.spout</code><span class="sum">Shares a picture with other programs on this machine through Spout (Windows)</span></summary>
 <div class="body">
@@ -4318,7 +4597,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><code>out</code> <span class="kind">tex</span></li>
 </ul>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#glossary">Glossary</a></p>
 </div></details>
 <details class="entry node" id="tex.out"><summary><code class="name">tex.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
 <div class="body">
@@ -4332,7 +4611,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><code>out</code> <span class="kind">tex</span></li>
 </ul>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#glossary">Glossary</a></p>
 </div></details>
 <details class="entry node" id="chan.in"><summary><code class="name">chan.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
 <div class="body">
@@ -4346,7 +4625,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><code>out</code> <span class="kind">chan</span></li>
 </ul>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#glossary">Glossary</a></p>
 </div></details>
 <details class="entry node" id="chan.out"><summary><code class="name">chan.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
 <div class="body">
@@ -4589,7 +4868,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="cook.play"><summary><code class="name">cook.play</code><span class="sum">Run or stop the show clock</span></summary>
 <div class="body">
 <p>Run or stop the show clock; {playing?} (default true)</p>
-<p class="mentions">Mentioned in: <a href="#control-taking-turns">Control › Taking turns</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-time">Concepts › Time</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 <details class="entry command" id="cook.stats"><summary><code class="name">cook.stats</code><span class="sum">Cook pass timings since the last reset: passes, slowest pass, longest gap, late frames, stalls</span></summary>
 <div class="body">
@@ -4819,11 +5098,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="node.reset"><summary><code class="name">node.reset</code><span class="sum">Start stateful nodes over (feedback, cache, time machine, tracker, filter...). A component resets the stateful nodes inside; locked nodes keep their outputs</span></summary>
 <div class="body">
 <p>Start stateful nodes over (feedback, cache, time machine, tracker, filter...). A component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path}</p>
-<p class="mentions">Mentioned in: <a href="#helpers-state">The Helpers window › State</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-time">Concepts › Time</a>, <a href="#helpers-state">The Helpers window › State</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a></p>
 </div></details>
 <details class="entry command" id="node.set"><summary><code class="name">node.set</code><span class="sum">Set params, null resets to the default</span></summary>
 <div class="body">
 <p>Set params, null resets to the default; {path, params: {name: value}}</p>
+<p class="mentions">Mentioned in: <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a></p>
 </div></details>
 <details class="entry command" id="node.snapshot"><summary><code class="name">node.snapshot</code><span class="sum">Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB)</span></summary>
 <div class="body">
@@ -4941,17 +5221,17 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="projector.flatfield"><summary><code class="name">projector.flatfield</code><span class="sum">Measure with a camera how brightness and colour vary across each projector's picture (hot spot, a colour cast towards an edge), and the brighter black where projectors overlap. Writes per projector a gain map and a black lift (gain_NAME.png, black_NAME.png) and connects them to out.projector's gain and black inputs. Blocks for about 20 s per projector</span></summary>
 <div class="body">
 <p>Measure with a camera how brightness and colour vary across each projector's picture (hot spot, a colour cast towards an edge), and the brighter black where projectors overlap. Writes per projector a gain map and a black lift (gain_NAME.png, black_NAME.png) and connects them to out.projector's gain and black inputs. Blocks for about 20 s per projector; {camera (tex.video_in path), projectors (out.projector paths), scans (one scan folder per projector, with cam_to_proj.exr and proj_to_cam.exr, relative to the project; they must fit the current setup), even? (all: brightness and colour, measured on a flat evenly coloured surface | colour: the colour cast only, which a relief's shading does not change), levels? (drive levels per primary, 5), low? (lowest level, sRGB-encoded drive, 0.6), frames? (camera frames averaged per picture, 4), settle? (s, 0.5), timeout? (s, 5), degree? (of the smooth surface fitted over the projector, 3), trim? (share of samples the fit may ignore, the surface's own pattern, 0.25), floor? (share of the picture allowed to stay dimmer than the target, 0.02), cover? (share of a projector's brightest that counts as lit for the black, 0.1), blur? (of the black lift, projector px, 6), contrast? (projector contrast, black = white / contrast, where the camera cannot read the black), out? (folder in the project, flatfield), apply? (true: connect the maps, one undo step), pictures? (false: also keep the camera's pictures, 16-bit sRGB PNGs, in out/pictures), wait? (false: start and answer at once; job.status follows it; true)}</p>
-<p class="mentions">Mentioned in: <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#mapping-without-camera-two-projectors-side-by-side-the-soft-edge">Mapping without a camera › Two projectors side by side: the soft edge</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
 <details class="entry command" id="projector.match"><summary><code class="name">projector.match</code><span class="sum">Measure the projectors with a camera (each alone: black, white, red, green and blue ramps) and write their colour correction (matrix, curves) so they look alike. Blocks for about half a minute per projector</span></summary>
 <div class="body">
 <p>Measure the projectors with a camera (each alone: black, white, red, green and blue ramps) and write their colour correction (matrix, curves) so they look alike. Blocks for about half a minute per projector; {camera (tex.video_in path), projectors? (paths, default every active out.projector), levels? (8), settle? (s, 0.5), samples? (curve samples, 17), area? ([x, y, w, h] of the camera picture, 0..1), timeout? (s, 5), target? (reference: the others respond like the reference projector, the reference keeps straight curves, works through any camera | srgb: every projector follows the sRGB curve, only with a camera known to be linear), refine? (rounds of closed-loop correction against the reference, the matrix on white, then the curves on greys; 5; 0 off), grey_levels? (greys the curves are refined on, evenly spaced; 3), save? (folder, relative to the project: also measures a grey ramp and writes each projector's measurement as NAME.json with NAME the node name, to match from later), note? (text saved with them: settings, lamp hours), apply? (true: write the params as one undo step), wait? (false: start and answer at once; job.status follows it and keeps the reply; true)}. Without the camera: {from (folder of NAME.json, or {projector path: file}), projectors?, samples?, apply?, wait?} matches from stored measurements; each camera channel follows the projector dimmest there, so the common white lies between the white points when no projector is the dimmest in every channel</p>
-<p class="mentions">Mentioned in: <a href="#helpers-matching-projectors">The Helpers window › Matching projectors</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-matching-projectors">The Helpers window › Matching projectors</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#mapping-without-camera-two-projectors-side-by-side-the-soft-edge">Mapping without a camera › Two projectors side by side: the soft edge</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a></p>
 </div></details>
 <details class="entry command" id="projector.test"><summary><code class="name">projector.test</code><span class="sum">Switch the test pattern of every out.projector at once (its <code>test</code> and <code>test_pattern</code> params, one undo step): {on (true: the pattern instead of the input, false: the input again), pattern? (align: cells, centre cross, circle and edge, for keystone and alignment | focus: one-pixel checkers and lines at the corners and the centre | motion: bars and a frame strip moving on each presented frame, with the frame and late counts, for stutter and dropped frames after the GPU | fields: full white, red, green, blue, black, projectors in turn, for dead pixels; unchanged when left out), projectors? (paths, default all)}. One projector showing a pattern draws it white; several draw in colours that keep overlapping ones apart</span></summary>
 <div class="body">
 <p>Switch the test pattern of every out.projector at once (its <code>test</code> and <code>test_pattern</code> params, one undo step): {on (true: the pattern instead of the input, false: the input again), pattern? (align: cells, centre cross, circle and edge, for keystone and alignment | focus: one-pixel checkers and lines at the corners and the centre | motion: bars and a frame strip moving on each presented frame, with the frame and late counts, for stutter and dropped frames after the GPU | fields: full white, red, green, blue, black, projectors in turn, for dead pixels; unchanged when left out), projectors? (paths, default all)}. One projector showing a pattern draws it white; several draw in colours that keep overlapping ones apart</p>
-<p class="mentions">Mentioned in: <a href="#helpers-test-patterns">The Helpers window › Test patterns</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-test-patterns">The Helpers window › Test patterns</a>, <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a></p>
 </div></details>
 </div>
 <div class="group" id="group-render">
@@ -4971,7 +5251,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="res.optimize"><summary><code class="name">res.optimize</code><span class="sum">Give the nodes the suggested sizes, one undoable entry</span></summary>
 <div class="body">
 <p>Give the nodes the suggested sizes, one undoable entry; {paths?, dry_run?} (paths: only these)</p>
-<p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a></p>
+<p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a></p>
 </div></details>
 <details class="entry command" id="res.overlay"><summary><code class="name">res.overlay</code><span class="sum">Colour the mappers' and render nodes' pictures by resolution (green 1:1, red coarse, blue wasted)</span></summary>
 <div class="body">
@@ -4988,7 +5268,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="scan.blend"><summary><code class="name">scan.blend</code><span class="sum">Blend weights for projectors lighting the same surface, from their scans (folders scan.decode wrote). Writes weight_N.png (16-bit, sRGB-encoded so tex.image_file gives the weight; multiply the projector's picture by it), detail_N.png (1 where this projector is the sharpest of those lighting a spot, for tex.blend_weight's detail mode) and proj_to_cam_smooth_N.exr (the map smoothed, for tex.remap)</span></summary>
 <div class="body">
 <p>Blend weights for projectors lighting the same surface, from their scans (folders scan.decode wrote). Writes weight_N.png (16-bit, sRGB-encoded so tex.image_file gives the weight; multiply the projector's picture by it), detail_N.png (1 where this projector is the sharpest of those lighting a spot, for tex.blend_weight's detail mode) and proj_to_cam_smooth_N.exr (the map smoothed, for tex.remap); {scans: [folder, ...], masks? ([file or null, ...], e.g. scan.objects' labels_N.png), out? (folder, objects), ramp? (projector px, 200), blur? (projector px, 3), reach? (camera px, 6), sigma? (projector px, 6), into_scans? (write weight.png, detail.png and proj_to_cam_smooth.exr into each scan's folder, where tex.scan reads them, false), wait? (false: start and answer at once, job.status follows it; true)}</p>
-<p class="mentions">Mentioned in: <a href="#helpers-blend-and-match">The Helpers window › Blend and match</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a></p>
+<p class="mentions">Mentioned in: <a href="#glossary">Glossary</a>, <a href="#helpers-blend-and-match">The Helpers window › Blend and match</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a></p>
 </div></details>
 <details class="entry command" id="scan.cancel"><summary><code class="name">scan.cancel</code><span class="sum">Stop the scan going on (scan.run) before its next picture. The projectors show their pictures again; the files of earlier scans stay</span></summary>
 <div class="body">
@@ -5008,7 +5288,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="scan.face_template"><summary><code class="name">scan.face_template</code><span class="sum">Writes per face of a scene a folder (scene/faces/&lt;face&gt;) with a template for content delivered for that face and the maps tex.face_content puts it on the face with. A face that is a quadrilateral is rectified (u and v along its edges): its corners given to scan.scene, the straight corners scan.regions found, or four edges fitted to its border; its aspect given, else estimated from the perspective of the corners. Any other face is framed by its bounding box in the camera's picture. Files: template.png (the face rectified at the template's size: the camera's photo of it, outside dimmed, the face's edge and a grid in true squares), mask.png (white the face, grey an object in front of it, black not the face), uv.png (camera size, 16-bit: red u, green v, blue 1 on the face, for previewing a delivery on the camera's photo), uv_camera.exr and uv_N.exr per projector (as scan.scene's uv files), face.json (name, size, aspect, corners); faces.json lists all written. {scene? (folder, scene), faces? ([name or number, or {face, aspect? [width, height], corners? [[x, y] x 4] camera px, far left first, clockwise}, ...]; all regions when the scene has any, else all faces, leaving out those under min_pixels), size? (template's longer side, px, 1920), photo? (the camera's picture of the scene; the first scan's photo.png or frames/00.png), min_pixels? (camera px, a thousandth of the picture), focal? (the camera's focal length in pixels of its picture,          for the aspects; else told by the faces' corners where the camera sees them in perspective, or          assumed 1.5 times the picture's width)}</span></summary>
 <div class="body">
 <p>Writes per face of a scene a folder (scene/faces/&lt;face&gt;) with a template for content delivered for that face and the maps tex.face_content puts it on the face with. A face that is a quadrilateral is rectified (u and v along its edges): its corners given to scan.scene, the straight corners scan.regions found, or four edges fitted to its border; its aspect given, else estimated from the perspective of the corners. Any other face is framed by its bounding box in the camera's picture. Files: template.png (the face rectified at the template's size: the camera's photo of it, outside dimmed, the face's edge and a grid in true squares), mask.png (white the face, grey an object in front of it, black not the face), uv.png (camera size, 16-bit: red u, green v, blue 1 on the face, for previewing a delivery on the camera's photo), uv_camera.exr and uv_N.exr per projector (as scan.scene's uv files), face.json (name, size, aspect, corners); faces.json lists all written. {scene? (folder, scene), faces? ([name or number, or {face, aspect? [width, height], corners? [[x, y] x 4] camera px, far left first, clockwise}, ...]; all regions when the scene has any, else all faces, leaving out those under min_pixels), size? (template's longer side, px, 1920), photo? (the camera's picture of the scene; the first scan's photo.png or frames/00.png), min_pixels? (camera px, a thousandth of the picture), focal? (the camera's focal length in pixels of its picture,          for the aspects; else told by the faces' corners where the camera sees them in perspective, or          assumed 1.5 times the picture's width)}</p>
-<p class="mentions">Mentioned in: <a href="#scanning">Scanning</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
+<p class="mentions">Mentioned in: <a href="#glossary">Glossary</a>, <a href="#scanning">Scanning</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
 </div></details>
 <details class="entry command" id="scan.faces"><summary><code class="name">scan.faces</code><span class="sum">The faces of a scene, by the names tex.face_content and scan.face_template take: every region of scan.regions (by its name, else <code>region N</code>) and every face of scan.scene (<code>face N</code>), with its size in camera pixels and whether its template exists. {scene? (folder scan.scene wrote, scene)}</span></summary>
 <div class="body">
@@ -5023,7 +5303,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="scan.objects"><summary><code class="name">scan.objects</code><span class="sum">Find the objects in front of a surface by parallax, per projector, between a scan of the empty scene (reference) and a scan with the objects (folders scan.decode wrote). The objects are numbered alike in every projector, top of the camera picture first. Writes per projector labels_N.png (8-bit, 0 background, k the object) and parts_N.png, plus objects_camera.png (the same labels in camera space, for shapes.trace with labels) and objects_camera_view.png</span></summary>
 <div class="body">
 <p>Find the objects in front of a surface by parallax, per projector, between a scan of the empty scene (reference) and a scan with the objects (folders scan.decode wrote). The objects are numbered alike in every projector, top of the camera picture first. Writes per projector labels_N.png (8-bit, 0 background, k the object) and parts_N.png, plus objects_camera.png (the same labels in camera space, for shapes.trace with labels) and objects_camera_view.png; {projectors: [{reference, scan}, ...], out? (folder, objects), threshold? (camera px, 25), split? (camera px per projector px, 2), min_area? (projector px, 1/256 of the projector), erode? (projector px, 2), unmeasured? (projector px, 4), rim? (projector px, 25)}</p>
-<p class="mentions">Mentioned in: <a href="#scanning-3-objects-scanobjects">Scanning › 3. Objects: scan.objects</a>, <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a></p>
+<p class="mentions">Mentioned in: <a href="#glossary">Glossary</a>, <a href="#scanning-3-objects-scanobjects">Scanning › 3. Objects: scan.objects</a>, <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a></p>
 </div></details>
 <details class="entry command" id="scan.patterns"><summary><code class="name">scan.patterns</code><span class="sum">The pictures of a structured light scan in the order tex.scan_pattern shows them</span></summary>
 <div class="body">
@@ -5033,12 +5313,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="scan.regions"><summary><code class="name">scan.regions</code><span class="sum">The faces scan.scene found grouped into regions, one per part of the scene content treats as one (a crate's front with its rib strips and rims, a lid, a side), cleaned up (seams between a region's faces closed, holes filled, the ragged edge smoothed, four straight edges where the region is a quadrilateral, else straight borders where a line fits, as in scan.scene) and the floor switched off. The grouping is a list of regions, each a set of seed pixels in the camera picture (the face under each seed, or the nearest one within reach, belongs to it), an optional name and an optional enabled flag; faces under no seed are regions of their own; a region is enabled unless it says otherwise or lies mostly on the floor (found from the faces' planes against the support). It is kept in a file (regions.json in the scene folder) that <code>regions</code> replaces and <code>edit</code> changes: [{op: merge, at: [[x, y], ...], name?} (the faces under the points, and the regions they are in, become one region), {op: split, at: [x, y]} (the face under it leaves its region), {op: disable | enable | auto, at} (its region off, on, or back to the default), {op: name, at, name}, {op: clear}]. Writes regions_camera.png and regions_N.png per projector (8-bit, 0 none or disabled, enabled regions numbered top of the camera picture first; drop-in replacements for planes_camera.png and planes_N.png), regions_view.png (regions in colour, disabled faces striped grey, seeds as dots) and regions_reply.json (the reply: per region its faces, seeds, kind floor/level/upright, size, straight corners and per projector its plane; the faces with a pixel inside each to address them by; suggestions: thin faces lying on the plane of a large one they touch, rib strips next to their panel). {scene? (folder scan.scene wrote, scene), file? (the grouping, scene/regions.json), regions? ([{name?, seeds: [[x, y], ...], enabled?}, ...], replaces the file's), edit? ([op, ...], applied to the file's), out? (folder, the scene folder), seam? (camera px, 10), smooth? (camera px, 2.5), straight? (true), reach? (camera px, 12)}</span></summary>
 <div class="body">
 <p>The faces scan.scene found grouped into regions, one per part of the scene content treats as one (a crate's front with its rib strips and rims, a lid, a side), cleaned up (seams between a region's faces closed, holes filled, the ragged edge smoothed, four straight edges where the region is a quadrilateral, else straight borders where a line fits, as in scan.scene) and the floor switched off. The grouping is a list of regions, each a set of seed pixels in the camera picture (the face under each seed, or the nearest one within reach, belongs to it), an optional name and an optional enabled flag; faces under no seed are regions of their own; a region is enabled unless it says otherwise or lies mostly on the floor (found from the faces' planes against the support). It is kept in a file (regions.json in the scene folder) that <code>regions</code> replaces and <code>edit</code> changes: [{op: merge, at: [[x, y], ...], name?} (the faces under the points, and the regions they are in, become one region), {op: split, at: [x, y]} (the face under it leaves its region), {op: disable | enable | auto, at} (its region off, on, or back to the default), {op: name, at, name}, {op: clear}]. Writes regions_camera.png and regions_N.png per projector (8-bit, 0 none or disabled, enabled regions numbered top of the camera picture first; drop-in replacements for planes_camera.png and planes_N.png), regions_view.png (regions in colour, disabled faces striped grey, seeds as dots) and regions_reply.json (the reply: per region its faces, seeds, kind floor/level/upright, size, straight corners and per projector its plane; the faces with a pixel inside each to address them by; suggestions: thin faces lying on the plane of a large one they touch, rib strips next to their panel). {scene? (folder scan.scene wrote, scene), file? (the grouping, scene/regions.json), regions? ([{name?, seeds: [[x, y], ...], enabled?}, ...], replaces the file's), edit? ([op, ...], applied to the file's), out? (folder, the scene folder), seam? (camera px, 10), smooth? (camera px, 2.5), straight? (true), reach? (camera px, 12)}</p>
-<p class="mentions">Mentioned in: <a href="#scanning">Scanning</a>, <a href="#scanning-51-regions-scanregions">Scanning › 5.1 Regions: scan.regions</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
+<p class="mentions">Mentioned in: <a href="#glossary">Glossary</a>, <a href="#scanning">Scanning</a>, <a href="#scanning-51-regions-scanregions">Scanning › 5.1 Regions: scan.regions</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
 </div></details>
 <details class="entry command" id="scan.relief"><summary><code class="name">scan.relief</code><span class="sum">Height maps of a mostly flat object (a relief panel) from its scans (folders scan.capture or scan.decode wrote), no reference scan needed. Per projector: a robust plane projector -&gt; camera, the residual along its main direction as the height, the panel cut out at jumps, holes filled. Every projector is brought to the first one's units over the camera pixels both light (symmetric fit). Writes height_N.exr (0 to 1 over the heights' 1st to 99.5th percentile, for tex.lookup), mask_N.png (the light mask, for tex.image_file or scan.blend's masks), height_camera.exr and relief_view.png (the same in camera space, to look at)</span></summary>
 <div class="body">
 <p>Height maps of a mostly flat object (a relief panel) from its scans (folders scan.capture or scan.decode wrote), no reference scan needed. Per projector: a robust plane projector -&gt; camera, the residual along its main direction as the height, the panel cut out at jumps, holes filled. Every projector is brought to the first one's units over the camera pixels both light (symmetric fit). Writes height_N.exr (0 to 1 over the heights' 1st to 99.5th percentile, for tex.lookup), mask_N.png (the light mask, for tex.image_file or scan.blend's masks), height_camera.exr and relief_view.png (the same in camera space, to look at); {scans: [folder, ...], out? (folder, relief), sign? (&quot;auto&quot; | 1 | -1: the first projector's sign, the others follow it by the overlap; auto is a heuristic, the wall around the panel taken as behind it; 1 and -1 are fixed to the camera's axes; the reply's sign.as_param pins what a run found), scale? (&quot;symmetric&quot; | &quot;least_squares&quot;), jump? (camera px per projector px, 4), erode? (projector px, 4), reach? (projector px, 60: notches in the measured panel's outline up to twice this wide are lit, nothing past it)}</p>
-<p class="mentions">Mentioned in: <a href="#scanning">Scanning</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a></p>
+<p class="mentions">Mentioned in: <a href="#scanning">Scanning</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#scanning-52-things-that-are-not-flat">Scanning › 5.2 Things that are not flat</a></p>
 </div></details>
 <details class="entry command" id="scan.run"><summary><code class="name">scan.run</code><span class="sum">The scan button of tex.scan nodes. Scans their projectors one after another with their camera (scan.capture, each into the node's folder), lines them up if every node names its mapper (scan.align, one undo step) and writes blend weights and smoothed maps into the scan folders (scan.blend); the nodes then show them. Runs in the background (scan.status, scan.cancel)</span></summary>
 <div class="body">
@@ -5048,7 +5328,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="scan.scene"><summary><code class="name">scan.scene</code><span class="sum">Flat faces and the objects among them from one scan per projector (folders scan.capture or scan.decode wrote), no reference scan needed: every flat face (floor, wall, each face of each box) fits a homography of its own; they are found one fit after the other by RANSAC until no fit holds a face of min_plane, coplanar faces that do not touch (the tops of two boxes side by side) split into faces of their own, patches of curved surfaces dropped. What fits no face is an object; the face right below the objects is the support. Any face that is a rectangle of known aspect can be rectified: its four edges in the camera picture, completed where hidden, give the homography to its u and v. Borders between faces are straight where the measured one is a line (two faces meeting at a crease on the line their planes cross in, where every projector agrees and the measured border lies on it; else a fitted line with corners); where no line fits (curved or ragged borders) and along objects they stay as measured. Writes per projector planes_N.png and labels_N.png (8-bit, 0 none, k the face or object, numbered alike in every projector; labels_N.png as scan.objects writes it), scene_N.png (faces in colour, objects white), uv_K_N.exr per rectified face K (red and green its u along the outline's first edge and v along its last, 0 to 1; blue 1 on the face, also where nothing was measured, 0.5 on an object, 0.25 on another face; -1 outside the outline), height_N.exr and mask_N.png (the objects' height over the support, as scan.relief writes them); in camera space planes_camera.png, objects_camera.png, uv_K_camera.exr, height_camera.exr and scene_view.png (with the rectified faces' outlines and a grid in true squares); scene.json (the reply). {scans: [folder, ...], out? (folder, scene), rectify? ([{plane?, aspect: [width, depth], corners? ([[x, y] x 4] camera px, instead of finding them; without plane they give the face: the plane most pixels inside lie on, taken from the faces and objects it was split into, also where it sags a little)}, ...], else the support at 60:40), support? (plane number, or &quot;rectified&quot; for the first face in rectify; else the one below the objects), sign?, scale? (as scan.relief), tolerance? (camera px a pixel may lie off its face, 2), min_plane? (share of the measured pixels, 0.002), max_planes? (most faces kept, 255), min_object? (projector px, 1/256 of the projector), erode? (projector px the light mask shrinks, 2), straight? (straight borders in planes_camera.png and planes_N.png, true; planes_camera_measured.png keeps the measured ones), straight_tolerance? (camera px nine tenths of a measured border may lie off its line, 2), straight_length? (shortest straight border, px, 16)}</span></summary>
 <div class="body">
 <p>Flat faces and the objects among them from one scan per projector (folders scan.capture or scan.decode wrote), no reference scan needed: every flat face (floor, wall, each face of each box) fits a homography of its own; they are found one fit after the other by RANSAC until no fit holds a face of min_plane, coplanar faces that do not touch (the tops of two boxes side by side) split into faces of their own, patches of curved surfaces dropped. What fits no face is an object; the face right below the objects is the support. Any face that is a rectangle of known aspect can be rectified: its four edges in the camera picture, completed where hidden, give the homography to its u and v. Borders between faces are straight where the measured one is a line (two faces meeting at a crease on the line their planes cross in, where every projector agrees and the measured border lies on it; else a fitted line with corners); where no line fits (curved or ragged borders) and along objects they stay as measured. Writes per projector planes_N.png and labels_N.png (8-bit, 0 none, k the face or object, numbered alike in every projector; labels_N.png as scan.objects writes it), scene_N.png (faces in colour, objects white), uv_K_N.exr per rectified face K (red and green its u along the outline's first edge and v along its last, 0 to 1; blue 1 on the face, also where nothing was measured, 0.5 on an object, 0.25 on another face; -1 outside the outline), height_N.exr and mask_N.png (the objects' height over the support, as scan.relief writes them); in camera space planes_camera.png, objects_camera.png, uv_K_camera.exr, height_camera.exr and scene_view.png (with the rectified faces' outlines and a grid in true squares); scene.json (the reply). {scans: [folder, ...], out? (folder, scene), rectify? ([{plane?, aspect: [width, depth], corners? ([[x, y] x 4] camera px, instead of finding them; without plane they give the face: the plane most pixels inside lie on, taken from the faces and objects it was split into, also where it sags a little)}, ...], else the support at 60:40), support? (plane number, or &quot;rectified&quot; for the first face in rectify; else the one below the objects), sign?, scale? (as scan.relief), tolerance? (camera px a pixel may lie off its face, 2), min_plane? (share of the measured pixels, 0.002), max_planes? (most faces kept, 255), min_object? (projector px, 1/256 of the projector), erode? (projector px the light mask shrinks, 2), straight? (straight borders in planes_camera.png and planes_N.png, true; planes_camera_measured.png keeps the measured ones), straight_tolerance? (camera px nine tenths of a measured border may lie off its line, 2), straight_length? (shortest straight border, px, 16)}</p>
-<p class="mentions">Mentioned in: <a href="#scanning">Scanning</a>, <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#scanning-51-regions-scanregions">Scanning › 5.1 Regions: scan.regions</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
+<p class="mentions">Mentioned in: <a href="#glossary">Glossary</a>, <a href="#scanning">Scanning</a>, <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#scanning-51-regions-scanregions">Scanning › 5.1 Regions: scan.regions</a>, <a href="#scanning-52-things-that-are-not-flat">Scanning › 5.2 Things that are not flat</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
 </div></details>
 <details class="entry command" id="scan.status"><summary><code class="name">scan.status</code><span class="sum">How the scans of the tex.scan nodes stand: running, progress (0 to 1), step, the last run's error and warnings</span></summary>
 <div class="body">

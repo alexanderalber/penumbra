@@ -93,8 +93,9 @@ it.
 ## A first network
 
 1. **Add a node:** press Tab, or double-click on empty canvas. The add dialog has a tab per
-   family (Tab cycles them); type to narrow the list, Enter takes the first match, a click
-   takes any. Try `tex` > `noise`. The everyday types come first in each tab. Live inputs
+   family; small families share one: `rendering` holds the 3D ones, `system` the scripts,
+   outputs and components. Tab cycles the tabs. Typing greys out the types that do not match,
+   Enter takes the first match, a click takes any. Try `tex` > `noise`. The everyday types come first in each tab. Live inputs
    (cameras, NDI, OSC, the keyboard and the like) stand apart under "in", the scan's own
    nodes under "scan and shapes" at the end of `tex`. Ready-made effects are in the `library`
    tab.
@@ -108,10 +109,11 @@ it.
 5. **Make it move:** add `chan` > `lfo`, then drag a wire from its output onto the level's
    `brightness` row. The param is now bound: it follows the channel and shows the live value
    (see [bindings](concepts.md#bindings)).
-6. **Show it on a projector:** add `out` > `projector`, wire the level into it and pick a
+6. **Show it on a projector:** add `system` > `projector`, wire the level into it and pick a
    `display` (the [Helpers window](helpers.md#outputs) lists them). With `active` on, a
    fullscreen window opens on that display. For projection mapping, put a `tex.mapper`
-   between the content and the projector: its corners and mesh are dragged in the viewer.
+   between the content and the projector: its corners and mesh are dragged in the viewer (see
+   [Mapping without a camera](mapping-without-camera.md)).
 
 Everything is written to the project directory a second after each change; there is no save
 command. Close the app (or open another project) and come back to it, and the network is back.

@@ -67,6 +67,13 @@ version), time-dependent and the clock moved, a finished job, or a lazy output t
 read. A failing node keeps its last good outputs, so the projectors keep showing the last
 working frame; a panicking operator is caught and replaced.
 
+Three declarations on a node type change the pull. An input marked `previous` reads what its
+source made the pass before: it is no dependency, so a wire into it may close a loop
+(`tex.feedback`). A node with an input chooser (`tex.switch`, `tex.sequence`) names the inputs
+it needs before they cook; its steering inputs (`steers`) cook first, so the choice can read
+them. An `eager` node (`chan.clock`, `chan.sequence`) cooks in every pass, wanted or not. The
+user-facing version is in [Concepts](docs/concepts.md#how-the-network-runs).
+
 Time is integer ticks derived from the frame number, not wall-clock deltas, so a show is
 deterministic and does not drift against audio.
 

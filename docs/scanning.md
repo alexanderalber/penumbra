@@ -13,6 +13,9 @@ groups its faces into one region per crate front, side or lid and switches the f
 Content delivered per face (a clip per crate front) gets a template per face from
 `scan.face_template` and lands on its face through `tex.face_content`.
 
+Without a camera, corners and a mesh dragged by eye do the job on flat and gently curved
+surfaces: [Mapping without a camera](mapping-without-camera.md).
+
 Everything here is a command (see [Control](control.md)); the results are plain files in the
 project, read by `tex.image_file`. Nothing of it runs per frame: during the show what remains is a
 `tex.remap` lookup and a multiply per projector.
@@ -553,6 +556,41 @@ Content made for `planes_camera.png` takes `regions_camera.png` as it is: the sa
 labels, one per crate front instead of one per strip. The region numbers change when the
 grouping does (they are counted top of the picture first), so content that picks single regions
 should pick them by name or seed from the reply, not by number.
+
+### 5.2 Things that are not flat
+
+`scan.scene` sorts a scene into flat faces and everything else. A pumpkin, a hanging cloth or a
+crumpled sheet of paper fit no plane, so they come out as objects, or as many small faces.
+
+**What works anyway.** The scan measures every pixel, flat or not. Content drawn in the camera's
+picture and remapped through `proj_to_cam_smooth_N.exr` ([section 7](#7-the-network)) lands on
+the folds of a cloth or the ribs of a pumpkin as it lands on a crate. `objects_camera.png` and
+`labels_N.png` cut it to the object's outline. The library's effects [for round
+objects](../library/README.md#on-a-round-object) (relight, contours, a lamp going round) work
+this way.
+
+**What to expect.**
+
+- **No true proportions.** Rectified coordinates and undistorted templates need a face with four
+  edges. A curved thing gets neither. A template made for it shows it as the camera sees it.
+- **Heights against the face below.** `height_N.exr` measures an object against the support,
+  the face right below it in the camera's picture. For a pumpkin on a crate that is its height
+  above the lid. For a cloth hanging in front of a wall it is measured against the floor, and
+  means little. With no face below the objects at all there are no heights, and the reply warns.
+- **Strips along folds.** A cloth with vertical folds can fall apart into a row of narrow
+  faces: along a fold it is straight, and the test for curved patches looks along a patch's
+  longest extent. Merge the strips into one region in the region editor ([5.1](#51-regions-scanregions)):
+  click one, Shift+click the others, M.
+- **The shape at scan time.** The maps hold for the scene as it was scanned. A cloth that sways
+  in a draught or is hung again needs a new scan, and so does a pumpkin that was turned.
+- **Hidden folds.** Parts the camera does not see are not decoded, parts no projector reaches stay
+  dark. A second projector from another side reaches some of them.
+
+**What to do instead.** For a cloth that fills most of a projector's frame, try `scan.relief`
+([section 4](#4-relief-scanrelief)): it takes the cloth as one surface and its folds as
+heights, with no wall or floor needed below it. For content per piece of cloth, a region of
+merged strips works with `tex.face_content` ([section 8](#8-content-delivered-per-face)),
+framed as the camera sees it.
 
 ## 6. Blend: `scan.blend`
 

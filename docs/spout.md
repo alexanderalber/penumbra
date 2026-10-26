@@ -11,7 +11,7 @@ Spout is Windows only, and both programs must run on the same graphics card (see
 
 ## Sending: `out.spout`
 
-Add an `out.spout` (Tab > outputs > spout) and connect the picture. From its first cook it is
+Add an `out.spout` (Tab > system > spout) and connect the picture. From its first cook it is
 listed as a sender; other programs find it by its name.
 
 - `name`: what receivers see. Empty: `penumbra` and the node's name, such as `penumbra spout1`.

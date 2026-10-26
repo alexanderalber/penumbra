@@ -44,7 +44,8 @@ lists every one.
   picture onto a 3D model of the room, to try a mapping before going on site.
 - **Projectors:** one output per display or per part of a display (for 4K splitters), found
   again after a replug by model and serial number (or connector). Corner pin, mesh warp,
-  soft-edge blending, drawn masks. Test patterns on every projector at once (alignment, focus,
+  soft-edge blending, drawn masks, all by eye when there is no camera
+  ([mapping without a camera](docs/mapping-without-camera.md)). Test patterns on every projector at once (alignment, focus,
   frame drops, dead pixels). Projectors of different models matched in colour and brightness
   from camera measurements, and evened out across each picture.
 - **Scanned objects:** structured light from each projector, filmed by a camera
@@ -61,7 +62,7 @@ lists every one.
   with ids that stay with a blob.
 - **Sound:** input from any audio device, levels, bands, onsets, a spectrum and a beat tracker
   (see [below](#beat-tracking)).
-- **Channels:** LFO, noise, math, filter, speed, trail, merge, select. Mouse, keyboard and 3D
+- **Channels:** LFO, noise, math, filter, integrator, derivative, trail, merge, select. Mouse, keyboard and 3D
   mouse as inputs. Any parameter can be bound to a channel by dragging a wire onto it. OSC
   addresses can be learned.
 - **Shows:** a show as a list of steps (`chan.sequence`): which piece, how long, which
@@ -77,7 +78,8 @@ lists every one.
   by design). Feedback loops and caches survive a restart. Nodes that sit idle give their video
   memory back. The app checks for Windows settings that interfere with a show (Game Bar,
   notification banners), fixes them and restores them afterwards. A cook-time meter shows GPU
-  load, memory and temperature. The app recovers after the GPU device is lost.
+  load, memory and temperature. The app recovers after the GPU device is lost. Show mode locks
+  the project against edits during a performance and starts the app again after a crash.
 - **Files out:** a recording of the show (`out.video`), any table as CSV or TSV (`out.table`),
   any geometry as OBJ, STL or GLB with its transforms and instances baked in (`out.mesh`); each
   writes when its input changes or on command, into the project's `export/` folder by default.
@@ -299,7 +301,8 @@ code is put together is in [ARCHITECTURE.md](ARCHITECTURE.md).
 ## Documentation
 
 The [documentation](docs/README.md) starts with [getting started](docs/getting-started.md) and
-has a reference of every [node](docs/reference/nodes.md) and [command](docs/reference/commands.md).
+a [glossary](docs/glossary.md), and has a reference of every [node](docs/reference/nodes.md) and
+[command](docs/reference/commands.md).
 All of it is also one page, [docs/penumbra.html](docs/penumbra.html), which the `?` on every node
 opens.
 

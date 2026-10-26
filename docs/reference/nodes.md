@@ -881,10 +881,10 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `width` | int | `1920` | 1 to 16384 px | Width of the surface in pixels (the mappers' input); shape coordinates are in these pixels |
-| `height` | int | `1080` | 1 to 16384 px | Height of the surface in pixels; shape coordinates are in these pixels |
+| `width` | int | `1920` | 1 to 16384 px | Width of the surface in pixels (the mappers' input); shape coordinates are shares of it, 0 to 1 across |
+| `height` | int | `1080` | 1 to 16384 px | Height of the surface in pixels; shape coordinates are shares of it, 0 to 1 down |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
-| `shapes` | text |  |  | One per line: `tag rect x,y w,h`, `tag ellipse x,y w,h` or `tag poly x,y x,y ...`, optionally `repeat CxR dx,dy`; surface coordinates (draw them in the viewer) |
+| `shapes` | text |  |  | One per line: `tag rect x,y w,h`, `tag ellipse x,y w,h` or `tag poly x,y x,y ...`, optionally `repeat CxR dx,dy`; surface coordinates, 0 to 1 from the top left (draw them in the viewer) |
 | `tag` | text |  |  | Tags in the mask and the distance field, separated by spaces; empty: all |
 | `outline` *(more)* | float | `2` | 0.5 to 8 px (soft) | Width of the lines in the outline output, in surface pixels |
 | `trace_tag` *(trace)* | text | `"trace"` |  | Tag of the shapes traced from the `trace` input (one word: letters, digits, `_`) |
