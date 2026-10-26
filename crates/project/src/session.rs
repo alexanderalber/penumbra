@@ -23,10 +23,16 @@
 //!   that makes no history entry, and the document counts as unsaved, so autosave writes them
 //!   into the file.
 //!
+//! - **Locked for a show** ([`Session::set_locked`]): edits, undo and redo are refused with
+//!   [`LOCKED`], the file is neither read nor written, and `project.save` is refused. Param
+//!   values from OSC ([`Session::edit_live`]) still arrive. Unlocking picks up whatever changed
+//!   on disk meanwhile at the next poll, as an external edit.
+//!
 //! File IO happens outside the state lock, so a slow disk never stalls an edit from the UI.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -42,6 +48,10 @@ use crate::gate::{Gate, GateStatus};
 /// not load or merge, or that holds nodes that did not load. One only; the next such save
 /// replaces it.
 pub const BACKUP_NAME: &str = "project.ron.bak";
+
+/// Why an edit is refused while the session is locked for a show.
+pub const LOCKED: &str =
+    "show mode is on: the project is locked against edits and is not written; show.unlock ends it";
 
 /// Delay between the first unsaved change and writing the file.
 pub const AUTOSAVE_DELAY: Duration = Duration::from_secs(1);
@@ -75,6 +85,8 @@ pub struct SessionStatus {
     pub can_undo: bool,
     pub can_redo: bool,
     pub edit: GateStatus,
+    /// Locked for a show ([`Session::set_locked`]).
+    pub locked: bool,
 }
 
 struct State {
@@ -99,6 +111,8 @@ pub struct Session {
     /// Held for a whole poll or save, so file reads and writes never interleave.
     io: Mutex<()>,
     state: Mutex<State>,
+    /// Show mode ([`Session::set_locked`]).
+    locked: AtomicBool,
 }
 
 /// The network with `content`, built from scratch, as a project opens: params that open at
@@ -230,6 +244,7 @@ impl Session {
             file,
             doc,
             io: Mutex::new(()),
+            locked: AtomicBool::new(false),
             state: Mutex::new(State {
                 gate: Gate::new(),
                 base,
@@ -259,6 +274,22 @@ impl Session {
         self.doc.types()
     }
 
+    /// Locks the project for a show, or unlocks it: while locked, every edit, undo and redo is
+    /// refused with [`LOCKED`], and the file is neither read, merged nor written.
+    pub fn set_locked(&self, locked: bool) {
+        // Taken with the io lock, so a poll that is reading or writing finishes first.
+        let _io = lock(&self.io);
+        self.locked.store(locked, Ordering::Release);
+    }
+
+    pub fn locked(&self) -> bool {
+        self.locked.load(Ordering::Acquire)
+    }
+
+    fn refuse_if_locked(&self) -> Result<(), Error> {
+        if self.locked() { Err(Error::new(LOCKED)) } else { Ok(()) }
+    }
+
     /// Applies `ops` as one batch, if the gate lets `actor` edit now. `group` matters for the user
     /// and OSC learn only (one per parameter drag; `None` for a one-off edit); Claude's edits are
     /// grouped by its claim.
@@ -270,6 +301,7 @@ impl Session {
         label: &str,
         now: Instant,
     ) -> Result<EditOutcome, Error> {
+        self.refuse_if_locked()?;
         let mut state = lock(&self.state);
         let (source, group) = match actor {
             Actor::User => {
@@ -316,6 +348,7 @@ impl Session {
     }
 
     fn history_step(&self, actor: Actor, now: Instant, back: bool) -> Result<Option<String>, Error> {
+        self.refuse_if_locked()?;
         let mut state = lock(&self.state);
         match actor {
             Actor::User | Actor::Osc => state.gate.user_edit(now)?,
@@ -328,6 +361,7 @@ impl Session {
 
     /// `edit.begin`.
     pub fn begin(&self, label: &str, now: Instant) -> Result<GroupId, Error> {
+        self.refuse_if_locked()?;
         let group = self.doc.new_group();
         lock(&self.state).gate.begin(now, label, group)
     }
@@ -357,6 +391,7 @@ impl Session {
             can_undo,
             can_redo,
             edit: state.gate.status(now),
+            locked: self.locked(),
         }
     }
 
@@ -364,6 +399,9 @@ impl Session {
     /// file, merges them when the gate allows, and autosaves.
     pub fn poll(&self, now: Instant) {
         let _io = lock(&self.io);
+        if self.locked() {
+            return;
+        }
         self.look_at_file();
         self.merge_waiting(now);
         self.autosave(now);
@@ -374,6 +412,9 @@ impl Session {
     /// or failed) is left alone, as autosave would.
     pub fn flush(&self, now: Instant) {
         let _io = lock(&self.io);
+        if self.locked() {
+            return;
+        }
         self.look_at_file();
         self.merge_waiting(now);
         let paused = {
@@ -391,6 +432,7 @@ impl Session {
     /// changed.
     pub fn save(&self) -> Result<bool, Error> {
         let _io = lock(&self.io);
+        self.refuse_if_locked()?;
         let failed = lock(&self.state).file_error.is_some();
         if failed || !broken_nodes(&self.doc.snapshot()).is_empty() {
             self.backup()?;
@@ -587,6 +629,40 @@ mod tests {
         let net = s.doc().snapshot();
         let r = net.node(net.resolve(&"/r".parse::<NodePath>().unwrap()).unwrap()).unwrap().clone();
         assert_eq!(r.params.get("armed"), Some(&Value::Float(3.0)));
+    }
+
+    #[test]
+    fn a_locked_session_refuses_edits_and_leaves_the_file_alone() {
+        let dir = ScratchDir::unborn("test-locked");
+        let s = open(&dir);
+        let t0 = Instant::now();
+        s.edit(Actor::User, &[set(2.0)], None, "", t0).unwrap();
+        s.set_locked(true);
+        assert!(s.status(t0).locked);
+        for actor in [Actor::User, Actor::Claude, Actor::Osc] {
+            let e = s.edit(actor, &[set(3.0)], None, "", t0).unwrap_err();
+            assert_eq!(e.0, LOCKED);
+        }
+        assert_eq!(s.undo(Actor::User, t0).unwrap_err().0, LOCKED);
+        assert_eq!(s.redo(Actor::Claude, t0).unwrap_err().0, LOCKED);
+        assert_eq!(s.begin("x", t0).unwrap_err().0, LOCKED);
+        assert_eq!(s.save().unwrap_err().0, LOCKED);
+        // The unsaved edit from before is not written, and an edit of the file is not read.
+        s.poll(t0 + 2 * S);
+        s.flush(t0 + 2 * S);
+        assert!(!file(&s).contains("2.0"), "{}", file(&s));
+        let text = file(&s).replace(r#""/a""#, r#""/b": (kind: "test.const"), "/a""#);
+        std::fs::write(s.file(), &text).unwrap();
+        s.poll(t0 + 3 * S);
+        assert_eq!(s.doc().snapshot().len(), 1);
+        assert_eq!(file(&s), text);
+        // Unlocked: the file edit merges, then both are written.
+        s.set_locked(false);
+        s.edit(Actor::User, &[set(4.0)], None, "", t0 + 4 * S).unwrap();
+        s.poll(t0 + 8 * S);
+        assert_eq!(s.doc().snapshot().len(), 2);
+        s.poll(t0 + 10 * S);
+        assert!(file(&s).contains("4.0") && file(&s).contains(r#""/b""#), "{}", file(&s));
     }
 
     #[test]

@@ -91,6 +91,10 @@ editing](concepts.md#who-is-editing)):
 Commands that only look (`node.info`, `node.snapshot`, `chan.read`, `ui.screenshot`, ...) work
 at any time.
 
+In [show mode](getting-started.md#show-mode) (`show.lock`) every editing command is refused
+until `show.unlock`, and so are commands that write into the project folder or switch projects.
+Commands that only look, `cook.play` and OSC/DMX keep working.
+
 ## Looking at results
 
 - `node.snapshot {path, file?}` cooks a `tex` node (or the picture of a `geo` node) and writes

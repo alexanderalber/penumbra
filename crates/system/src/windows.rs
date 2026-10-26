@@ -614,3 +614,22 @@ pub fn monitors() -> Vec<crate::pointer::Monitor> {
     }
     list
 }
+
+/// [`crate::process::wait_for_exit`].
+pub fn wait_for_exit(pid: u32, timeout: std::time::Duration) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject};
+
+    // SAFETY: no handle inheritance; a null handle (no such process, or no access) is checked.
+    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        // Gone already (an id nobody uses, or one of a process that ended).
+        return true;
+    }
+    let ms = u32::try_from(timeout.as_millis()).unwrap_or(u32::MAX - 1);
+    // SAFETY: a process handle opened above with SYNCHRONIZE access.
+    let waited = unsafe { WaitForSingleObject(handle, ms) };
+    // SAFETY: the handle opened above, closed once.
+    unsafe { CloseHandle(handle) };
+    waited == WAIT_OBJECT_0
+}

@@ -23,10 +23,11 @@ pub enum Icon {
     Bind,
     Folder,
     Info,
+    Lock,
 }
 
 impl Icon {
-    pub const ALL: [Icon; 10] = [
+    pub const ALL: [Icon; 11] = [
         Icon::Play,
         Icon::Pause,
         Icon::Remove,
@@ -37,6 +38,7 @@ impl Icon {
         Icon::Bind,
         Icon::Folder,
         Icon::Info,
+        Icon::Lock,
     ];
 
     /// The `d` attributes of the icon's paths.
@@ -60,6 +62,8 @@ impl Icon {
             Icon::Folder => &["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
             // A circled "i": what a param means.
             Icon::Info => &["M2 12a10 10 0 1 0 20 0a10 10 0 1 0-20 0", "M12 16v-4", "M12 8h.01"],
+            // A padlock: show mode.
+            Icon::Lock => &["M5 11h14v10H5z", "M8 11V7a4 4 0 0 1 8 0v4"],
         }
     }
 }

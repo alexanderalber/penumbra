@@ -46,9 +46,13 @@ pub trait Command: Send + Sync {
 }
 
 /// All commands of a process, by id.
+/// Asked before every command: an error message refuses it ([`Registry::set_guard`]).
+type Guard = dyn Fn(&str) -> Option<String> + Send + Sync;
+
 #[derive(Default)]
 pub struct Registry {
     commands: BTreeMap<&'static str, Box<dyn Command>>,
+    guard: Option<Box<Guard>>,
 }
 
 impl Registry {
@@ -59,6 +63,12 @@ impl Registry {
     /// Add a command. A later command with the same id replaces the earlier one.
     pub fn register(&mut self, command: impl Command + 'static) {
         self.commands.insert(command.id(), Box::new(command));
+    }
+
+    /// Sets the check every command passes before it runs; a message refuses the command with
+    /// it (show mode refuses commands that would change the project).
+    pub fn set_guard(&mut self, guard: impl Fn(&str) -> Option<String> + Send + Sync + 'static) {
+        self.guard = Some(Box::new(guard));
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &'static str> + '_ {
@@ -87,6 +97,9 @@ impl Registry {
         };
         if !params.is_object() {
             return json!({"ok": false, "error": "`params` must be a JSON object"});
+        }
+        if let Some(refused) = self.guard.as_ref().and_then(|g| g(method)) {
+            return json!({"ok": false, "error": refused});
         }
         match command.run(params) {
             Ok(result) => json!({"ok": true, "result": result}),

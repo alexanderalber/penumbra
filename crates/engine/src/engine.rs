@@ -611,6 +611,10 @@ pub struct Engine {
     /// A message the UI keeps showing until the clock runs again (why the project opened
     /// paused).
     notice: Mutex<Option<String>>,
+    /// Show mode ([`Engine::set_show`]).
+    show: AtomicBool,
+    /// Where show mode is kept across restarts; `None` keeps it in memory only (headless, tests).
+    show_file: Mutex<Option<std::path::PathBuf>>,
     state: Arc<StateShared>,
     /// OSC, audio, DMX, cameras, recordings, scans, the 3D mouse.
     hubs: Arc<Hubs>,
@@ -687,6 +691,8 @@ impl Engine {
             clipboard: Mutex::new(None),
             crash_marker: Mutex::new(None),
             notice: Mutex::new(None),
+            show: AtomicBool::new(false),
+            show_file: Mutex::new(None),
             state: Arc::new(StateShared::default()),
             hubs: Arc::new(Hubs::new()),
             ticker: Arc::new(Ticker::default()),
@@ -843,6 +849,9 @@ impl Engine {
         if self.shut.load(Ordering::Acquire) {
             return Err(Error::new("the app is closing"));
         }
+        if self.show_on() {
+            return Err(Error::new(crate::show::SWITCH_REFUSED));
+        }
         let pass_base = self.view().pass.max(self.output().pass);
         for hub in self.hubs.all() {
             hub.project_closing();
@@ -967,10 +976,60 @@ impl Engine {
         let file = lock(&self.crash_marker).clone();
         let Some(file) = file else { return };
         let project = self.session().dir().to_path_buf();
-        match crate::crash::write(&file, &project, reason) {
+        let time = self.output().time.or(self.view().time);
+        match crate::crash::write(&file, &project, reason, time.map(|t| t.frame)) {
             Ok(()) => log::info!("recorded how this run ended in {}", file.display()),
             Err(e) => log::error!("cannot record how this run ended: {e}"),
         }
+    }
+
+    /// Whether show mode is on: the project is locked against edits and not written, the
+    /// project cannot be switched ([`crate::show`]).
+    pub fn show_on(&self) -> bool {
+        self.show.load(Ordering::Acquire)
+    }
+
+    /// Where show mode is kept across restarts. Reads it: when the file says show mode is on,
+    /// it is on from now (the project locked). Returns whether it is.
+    pub fn set_show_file(&self, file: Option<std::path::PathBuf>) -> bool {
+        let on = file.as_deref().is_some_and(|f| crate::show::read(f).on);
+        *lock(&self.show_file) = file;
+        if on {
+            self.show.store(true, Ordering::Release);
+            self.session().set_locked(true);
+        }
+        on
+    }
+
+    /// The file show mode is kept in, if any.
+    pub fn show_file(&self) -> Option<std::path::PathBuf> {
+        lock(&self.show_file).clone()
+    }
+
+    /// Turns show mode on or off and keeps it in the show file. Turning it on locks the open
+    /// project ([`Session::set_locked`]); off unlocks it, and the next poll reads whatever
+    /// changed on disk meanwhile.
+    pub fn set_show(&self, on: bool) -> Result<(), Error> {
+        let _switch = lock(&self.switching);
+        let session = self.session();
+        if let Some(file) = self.show_file() {
+            let mut kept = crate::show::read(&file);
+            if kept.on != on {
+                kept.since = crate::show::now_ms();
+            }
+            kept.on = on;
+            kept.project = session.dir().display().to_string();
+            crate::show::write(&file, &kept)?;
+        }
+        session.set_locked(on);
+        self.show.store(on, Ordering::Release);
+        log::info!("show mode {}", if on { "on" } else { "off" });
+        Ok(())
+    }
+
+    /// Moves the show clock to `frame`, without waiting for the cook thread.
+    pub fn seek(&self, frame: i64) {
+        self.post_cook(move |st| st.clock.seek(frame));
     }
 
     /// The message shown until the clock runs again, if any ([`Engine::set_notice`]).

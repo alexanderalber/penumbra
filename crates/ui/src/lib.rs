@@ -60,6 +60,8 @@ pub enum Action {
     /// Pin the viewer to a node, or follow the selection with `None`.
     Pin(Option<NodeId>),
     Play(bool),
+    /// Show mode on or off (`show.lock`, `show.unlock`).
+    Show(bool),
 
     /// Open the Helpers window.
     OpenHelpers,

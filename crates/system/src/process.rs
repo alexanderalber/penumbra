@@ -60,6 +60,23 @@ pub fn raise_thread_priority() -> bool {
     }
 }
 
+/// Waits until the process `pid` has ended, at most `timeout`. Returns whether it ended (or was
+/// gone already). A restarted app waits so for the one it replaces: that one still holds the
+/// control channel's port and the output windows until it exits. Outside Windows it only waits
+/// out `timeout` (no such restart there yet) and says false.
+pub fn wait_for_exit(pid: u32, timeout: std::time::Duration) -> bool {
+    #[cfg(windows)]
+    {
+        crate::windows::wait_for_exit(pid, timeout)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        std::thread::sleep(timeout);
+        false
+    }
+}
+
 /// Whether this process has a console window to itself, which is what a double-click on a
 /// console program gives it: the window closes the moment the process exits. False when started
 /// from a terminal, with no console at all, and outside Windows.
@@ -103,5 +120,16 @@ mod tests {
         let s = super::stats().unwrap();
         assert!(s.working_set > 1 << 20, "{s:?}");
         assert!(s.private_bytes > 0 && s.handles > 0 && s.threads >= 1, "{s:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn waiting_for_a_process_that_ended() {
+        let mut child = std::process::Command::new("cmd").args(["/C", "exit 0"]).spawn().unwrap();
+        let pid = child.id();
+        child.wait().unwrap();
+        assert!(super::wait_for_exit(pid, std::time::Duration::from_secs(5)));
+        // This process does not end within the wait.
+        assert!(!super::wait_for_exit(std::process::id(), std::time::Duration::from_millis(50)));
     }
 }

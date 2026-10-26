@@ -118,7 +118,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -212,7 +212,23 @@ details.target { outline: 2px solid var(--accent); }
 <p>Channels are drawn as curves with a value axis and, along the bottom, seconds before now (the last 240 frames of a channel with one value, all samples of one with many; a spectrum or a picture's row is counted by sample instead). A <a class="ref" href="#chan.trail"><code>chan.trail</code></a> that is still filling spans its full <code>length</code> and grows in from the right. The <code>scale</code> button switches between one shared scale for all channels, a lane per channel with its own scale, and auto, which takes lanes when a channel that moves would be flat on the shared scale (<code>bpm</code> next to levels of 0 to 1). The choice is kept with the project (<a class="ref" href="#ui.options"><code>ui.options {chan_scale}</code></a>). A <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> shows its meters instead (see <a href="#audio-the-meters-in-the-viewer">Audio</a>); <code>view: meters</code> in the header switches to the plot and back, kept with the project as well (<a class="ref" href="#ui.options"><code>ui.options {audio_view}</code></a>).</p>
 <p>Some nodes are edited right in the viewer: a mapper's corners and mesh, a <a class="ref" href="#tex.shapes"><code>tex.shapes</code></a>' shapes, and a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> showing a scanned scene's <code>regions_camera.png</code>, whose faces are grouped into regions there (<a href="#scanning-51-regions-scanregions">Scanning</a>).</p>
 <h3 id="getting-started-when-the-gpu-gives-up">When the GPU gives up</h3>
-<p>penumbra stops creating GPU memory at 90 % of what Windows grants it, so a node asking for too much gets an error (or, for <a class="ref" href="#tex.time_machine"><code>tex.time_machine</code></a>, fewer frames and a warning) instead of taking the driver down. Should the GPU device still be lost (a driver reset, another program filling the GPU), penumbra saves the project file but no state, shows a message and exits with code 3. The next start opens the project with the show clock stopped and says why in the status bar; press play once the cause is fixed. The record of that lives in <code>%LOCALAPPDATA%\penumbra\gpu-lost.json</code> until the next start reads it.</p>
+<p>penumbra stops creating GPU memory at 90 % of what Windows grants it, so a node asking for too much gets an error (or, for <a class="ref" href="#tex.time_machine"><code>tex.time_machine</code></a>, fewer frames and a warning) instead of taking the driver down. Should the GPU device still be lost (a driver reset, another program filling the GPU), penumbra saves the project file but no state, shows a message and exits with code 3. The next start opens the project with the show clock stopped and says why in the status bar; press play once the cause is fixed. The record of that lives in <code>%LOCALAPPDATA%\penumbra\gpu-lost.json</code> until the next start reads it. In show mode the app starts again by itself instead, see below.</p>
+<h3 id="getting-started-show-mode">Show mode</h3>
+<p>Show mode keeps penumbra from touching a project during a performance. Switch it on with the padlock in the status bar, or with <a class="ref" href="#show.lock"><code>show.lock</code></a> over the control channel (<code>penumbra-cli ctl show.lock</code>). <a class="ref" href="#show.unlock"><code>show.unlock</code></a>, or <strong>Unlock</strong> clicked twice, ends it.</p>
+<p>While show mode is on:</p>
+<ul>
+<li><strong>Locked:</strong> edits, node moves, undo and redo are refused, from the editor and the control channel alike, with a message that names <a class="ref" href="#show.unlock"><code>show.unlock</code></a>. So are saving, switching projects, scans, palettes, components and OSC learn.
+</li>
+<li><strong>Nothing written:</strong> <code>project.ron</code> and the editor's <code>layout.ron</code> stay as they are, and an edit of <code>project.ron</code> on disk is not loaded. After <a class="ref" href="#show.unlock"><code>show.unlock</code></a> the next look at the file loads it. Node state (the <code>state</code> folder) is still saved.
+</li>
+<li><strong>Live:</strong> OSC and DMX values, the control channel's other commands, keys, mouse, audio and cameras keep driving the show.
+</li>
+<li><strong>The editor:</strong> shows a plain screen instead of the network. Without thumbnails and viewer the cook pass gets shorter.
+</li>
+<li><strong>After a crash:</strong> when the GPU device is lost or the editor fails (exit code 3), penumbra starts again at once, without a message, and the clock runs on where it would be. After 3 restarts within 10 minutes it stops trying and ends as usual.
+</li>
+</ul>
+<p>A copied or tagged project folder plus show mode is then the frozen state for a performance. Show mode survives a restart; it is kept in <code>%LOCALAPPDATA%\penumbra\show-mode.json</code>. <a class="ref" href="#show.status"><code>show.status</code></a> says whether it is on and how many restarts are left.</p>
 </div></details>
 <details class="entry guide" id="concepts"><summary><span class="name">Concepts</span></summary>
 <div class="body">
@@ -1351,6 +1367,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </li>
 </ul>
 <p>Commands that only look (<a class="ref" href="#node.info"><code>node.info</code></a>, <a class="ref" href="#node.snapshot"><code>node.snapshot</code></a>, <a class="ref" href="#chan.read"><code>chan.read</code></a>, <a class="ref" href="#ui.screenshot"><code>ui.screenshot</code></a>, ...) work at any time.</p>
+<p>In <a href="#getting-started-show-mode">show mode</a> (<a class="ref" href="#show.lock"><code>show.lock</code></a>) every editing command is refused until <a class="ref" href="#show.unlock"><code>show.unlock</code></a>, and so are commands that write into the project folder or switch projects. Commands that only look, <a class="ref" href="#cook.play"><code>cook.play</code></a> and OSC/DMX keep working.</p>
 <h3 id="control-looking-at-results">Looking at results</h3>
 <ul>
 <li><a class="ref" href="#node.snapshot"><code>node.snapshot {path, file?}</code></a> cooks a <code>tex</code> node (or the picture of a <code>geo</code> node) and writes a PNG.
@@ -4386,6 +4403,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="cook.play"><summary><code class="name">cook.play</code><span class="sum">Run or stop the show clock</span></summary>
 <div class="body">
 <p>Run or stop the show clock; {playing?} (default true)</p>
+<p class="mentions">Mentioned in: <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 <details class="entry command" id="cook.stats"><summary><code class="name">cook.stats</code><span class="sum">Cook pass timings since the last reset: passes, slowest pass, longest gap, late frames, stalls</span></summary>
 <div class="body">
@@ -4845,6 +4863,24 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>Trace the outlines of a mask or label texture as poly lines into a tex.shapes (one undo step). Replaces the lines of that tag; {path, from (node: path or name beside path), output?, tag? (trace), channel? (auto | red | green | blue | alpha | luma), threshold? (0.5), invert? (inside is below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?, live? (instead: connect <code>from</code> to the node's trace input and set its trace_* params, so it traces by itself whenever the picture changes or the project opens; options not given are reset)}</p>
 <p class="mentions">Mentioned in: <a href="#scanning-5-faces-and-objects-scanscene">Scanning › 5. Faces and objects: scan.scene</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
+</div></details>
+</div>
+<div class="group" id="group-show">
+<h3>show</h3>
+<details class="entry command" id="show.lock"><summary><code class="name">show.lock</code><span class="sum">Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live; after a crash (exit code 3) the app starts again with the clock running. Kept across restarts</span></summary>
+<div class="body">
+<p>Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live; after a crash (exit code 3) the app starts again with the clock running. Kept across restarts</p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
+</div></details>
+<details class="entry command" id="show.status"><summary><code class="name">show.status</code><span class="sum">Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes</span></summary>
+<div class="body">
+<p>Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes</p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a></p>
+</div></details>
+<details class="entry command" id="show.unlock"><summary><code class="name">show.unlock</code><span class="sum">Show mode off: editing, saving and reloading as usual</span></summary>
+<div class="body">
+<p>Show mode off: editing, saving and reloading as usual</p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 </div>
 <div class="group" id="group-spacenav">

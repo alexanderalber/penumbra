@@ -247,6 +247,14 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `shapes.trace` | Trace the outlines of a mask or label texture as poly lines into a tex.shapes (one undo step). Replaces the lines of that tag; {path, from (node: path or name beside path), output?, tag? (trace), channel? (auto \| red \| green \| blue \| alpha \| luma), threshold? (0.5), invert? (inside is below it), labels? (every value its own shape), tolerance? (px, 1), min_area? (px, 64), append?, live? (instead: connect `from` to the node's trace input and set its trace_* params, so it traces by itself whenever the picture changes or the project opens; options not given are reset)} |
 
+## show
+
+| command | |
+|---|---|
+| `show.lock` | Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live; after a crash (exit code 3) the app starts again with the clock running. Kept across restarts |
+| `show.status` | Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes |
+| `show.unlock` | Show mode off: editing, saving and reloading as usual |
+
 ## spacenav
 
 | command | |

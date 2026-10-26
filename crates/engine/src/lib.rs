@@ -39,6 +39,7 @@ pub mod scan_run;
 pub mod scan_scene;
 pub mod scan_synthetic;
 pub mod shapes;
+pub mod show;
 pub mod spout;
 pub mod state;
 pub mod state_commands;
@@ -101,5 +102,6 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     flatfield::register(&mut registry, engine);
     projects::register(&mut registry, engine);
     navigation::register(&mut registry, engine);
+    show::register(&mut registry, engine);
     registry
 }

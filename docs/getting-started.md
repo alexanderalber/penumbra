@@ -192,3 +192,30 @@ the GPU), penumbra saves the project file but no state, shows a message and exit
 The next start opens the project with the show clock stopped and says why in the status bar;
 press play once the cause is fixed. The record of that lives in
 `%LOCALAPPDATA%\penumbra\gpu-lost.json` until the next start reads it.
+In show mode the app starts again by itself instead, see below.
+
+## Show mode
+
+Show mode keeps penumbra from touching a project during a performance. Switch it on with the
+padlock in the status bar, or with `show.lock` over the control channel
+(`penumbra-cli ctl show.lock`). `show.unlock`, or **Unlock** clicked twice, ends it.
+
+While show mode is on:
+
+- **Locked:** edits, node moves, undo and redo are refused, from the editor and the control
+  channel alike, with a message that names `show.unlock`. So are saving, switching projects,
+  scans, palettes, components and OSC learn.
+- **Nothing written:** `project.ron` and the editor's `layout.ron` stay as they are, and an
+  edit of `project.ron` on disk is not loaded. After `show.unlock` the next look at the file
+  loads it. Node state (the `state` folder) is still saved.
+- **Live:** OSC and DMX values, the control channel's other commands, keys, mouse, audio and
+  cameras keep driving the show.
+- **The editor:** shows a plain screen instead of the network. Without thumbnails and viewer
+  the cook pass gets shorter.
+- **After a crash:** when the GPU device is lost or the editor fails (exit code 3), penumbra
+  starts again at once, without a message, and the clock runs on where it would be. After 3
+  restarts within 10 minutes it stops trying and ends as usual.
+
+A copied or tagged project folder plus show mode is then the frozen state for a performance.
+Show mode survives a restart; it is kept in `%LOCALAPPDATA%\penumbra\show-mode.json`.
+`show.status` says whether it is on and how many restarts are left.

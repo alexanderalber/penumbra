@@ -31,6 +31,8 @@ mod commands;
 const SHOT_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long an edit error stays in the status bar.
 const MESSAGE_SECONDS: u64 = 8;
+/// How long the show screen's Unlock waits for its second click.
+const UNLOCK_CONFIRM: Duration = Duration::from_secs(5);
 /// Resizes [`PenumbraApp::heal_surface`] tries within [`HEAL_WINDOW`] before it gives up. A GPU
 /// kept busy or full by another program (ComfyUI, for one) fails every reconfigure, and each
 /// nudge caused the next failure: a resize about once a minute for as long as it lasted.
@@ -128,6 +130,9 @@ pub struct PenumbraApp {
     /// What this run copied last, and text waiting to go to the system clipboard.
     copied: Option<crate::clipboard::Copied>,
     to_clipboard: Option<String>,
+    /// When the show screen's Unlock was clicked once; a second click within
+    /// [`UNLOCK_CONFIRM`] ends show mode.
+    unlock_armed: Option<Instant>,
     /// The folder button with the project menu.
     projects: crate::projects::ProjectMenu,
     /// The project shown, and the engine's generation it belongs to: when another project
@@ -228,6 +233,7 @@ impl PenumbraApp {
             copied: None,
             to_clipboard: None,
             projects: crate::projects::ProjectMenu::default(),
+            unlock_armed: None,
             shown: (engine.generation(), engine.session()),
             flown: Instant::now(),
             starts_fresh: penumbra_engine::projects::starts_fresh(engine.session().dir()),
@@ -259,9 +265,12 @@ impl PenumbraApp {
         self.title.clear();
     }
 
-    /// Writes the layout now; for runs that end without `on_exit` (headless).
+    /// Writes the layout now; for runs that end without `on_exit` (headless). Not in show
+    /// mode: the layout file lies in the project folder, which show mode leaves alone.
     pub fn close(&mut self) {
-        self.layout.save_if_due(Instant::now(), true);
+        if !self.engine.show_on() {
+            self.layout.save_if_due(Instant::now(), true);
+        }
     }
 
     /// Synthetic input queued by `ui.click` and friends, one pointer event per frame. The
@@ -311,6 +320,14 @@ impl PenumbraApp {
                     self.engine.play(playing);
                     Ok(())
                 }
+                Action::Show(on) => self.engine.set_show(on).map(|()| {
+                    let text = if on {
+                        "show mode is on: the project is locked and not written"
+                    } else {
+                        "show mode is off: editing as usual"
+                    };
+                    self.message = Some((text.to_string(), now));
+                }),
                 Action::OpenHelpers => {
                     self.helpers.open();
                     Ok(())
@@ -525,7 +542,9 @@ impl PenumbraApp {
     /// (a whole line for "You are editing" was too much). A hold from Claude's one-off
     /// commands gets the title and the blue, not the bar: any edit of the user's ends it.
     fn top_bar(&mut self, ui: &mut Ui, status: &SessionStatus, actions: &mut Vec<Action>) {
-        let mode = if status.edit.mode == "claude" {
+        let mode = if status.locked {
+            "show mode".to_string()
+        } else if status.edit.mode == "claude" {
             let label = status.edit.label.as_deref().filter(|l| !l.is_empty()).unwrap_or("working");
             format!("Claude is editing: {label}")
         } else {
@@ -606,6 +625,52 @@ impl PenumbraApp {
         });
     }
 
+    /// What the editor shows in show mode instead of the network: what is locked, what stays
+    /// live, and Unlock (two clicks, so a stray one on the show machine does not end it).
+    fn show_screen(
+        &mut self,
+        ui: &mut Ui,
+        session: &penumbra_project::Session,
+        now: Instant,
+        actions: &mut Vec<Action>,
+    ) {
+        if self.unlock_armed.is_some_and(|t| now.saturating_duration_since(t) > UNLOCK_CONFIRM) {
+            self.unlock_armed = None;
+        }
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.add_space(ui.available_height() * 0.25);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("Show mode").size(32.0).strong().color(theme::WARNING));
+                ui.add_space(8.0);
+                ui.label(RichText::new(session.dir().display().to_string()).monospace());
+                ui.add_space(12.0);
+                for line in [
+                    "The project is locked: no edits and no node moves.",
+                    "Nothing is written to the project folder, and changes on disk are not loaded.",
+                    "OSC, DMX and the control channel stay live, and so do the inputs the project reads.",
+                    "After a crash the app starts again by itself with the clock running.",
+                ] {
+                    ui.label(RichText::new(line).color(theme::TEXT_WEAK));
+                }
+                ui.add_space(16.0);
+                let text = if self.unlock_armed.is_some() { "Click again to unlock" } else { "Unlock" };
+                let r = icons::button(ui, Icon::Lock, text)
+                    .on_hover_text("Ends show mode: editing, saving and reloading as usual. Two clicks.");
+                self.auto.add("button.show_unlock", r.rect, "Unlock");
+                if r.clicked() {
+                    if self.unlock_armed.take().is_some() {
+                        actions.push(Action::Show(false));
+                    } else {
+                        self.unlock_armed = Some(now);
+                    }
+                }
+            });
+        });
+        if self.unlock_armed.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
+        }
+    }
+
     fn status_bar(
         &mut self,
         ui: &mut Ui,
@@ -619,8 +684,21 @@ impl PenumbraApp {
             ui.horizontal(|ui| {
                 let layout = &mut self.layout;
                 let save_layout = || layout.save_if_due(now, true);
-                if let Some(m) = self.projects.show(ui, &self.engine, &mut self.auto, save_layout) {
+                let projects = ui.add_enabled_ui(!status.locked, |ui| {
+                    self.projects.show(ui, &self.engine, &mut self.auto, save_layout)
+                });
+                if let Some(m) = projects.inner {
                     self.message = Some((m, now));
+                }
+                if !status.locked {
+                    let r = icons::button(ui, Icon::Lock, "").on_hover_text(
+                        "Show mode: lock the project against edits, stop writing and reloading it, \
+                         start again by itself after a crash",
+                    );
+                    self.auto.add("button.show", r.rect, "Show mode");
+                    if r.clicked() {
+                        actions.push(Action::Show(true));
+                    }
                 }
                 let playing = view.playing;
                 let r = if playing {
@@ -649,9 +727,14 @@ impl PenumbraApp {
                 ui.separator();
                 ui.label(RichText::new(&self.adapter).color(theme::TEXT_WEAK));
                 ui.separator();
-                ui.label(
-                    RichText::new(if status.unsaved { "unsaved" } else { "saved" }).color(theme::TEXT_WEAK),
-                );
+                let saved = if status.locked {
+                    "locked"
+                } else if status.unsaved {
+                    "unsaved"
+                } else {
+                    "saved"
+                };
+                ui.label(RichText::new(saved).color(theme::TEXT_WEAK));
                 if self.starts_fresh {
                     ui.label(RichText::new("until reopened").color(theme::TEXT_WEAK)).on_hover_text(
                         "The demo and the examples start fresh on every open. To keep your changes, \
@@ -695,7 +778,7 @@ impl PenumbraApp {
         // Blue while Claude has the turn; editing widgets off only for a claim, since the
         // user's own edit ends a hold.
         let claude = status.edit.mode == "claude";
-        let can_edit = !claude || status.edit.hold;
+        let can_edit = (!claude || status.edit.hold) && !status.locked;
         // The blue fades in and out instead of switching at once.
         let fade = |id: &str, on: bool| {
             ctx.animate_bool_with_time_and_easing(
@@ -714,11 +797,25 @@ impl PenumbraApp {
         self.changes.refresh(session.doc());
         let recent = self.changes.recent(now);
         let mut actions = Vec::new();
-        self.global_keys(&ctx, &mut actions);
+        if !status.locked {
+            self.global_keys(&ctx, &mut actions);
+        }
         let window = ui.max_rect();
 
         self.top_bar(ui, &status, &mut actions);
         self.status_bar(ui, &status, &view, &board, &mut actions, now);
+
+        if status.locked {
+            // Show mode: no network, no viewer, no thumbnails, so the editor asks the cook
+            // thread for nothing and draws little next to the outputs.
+            self.show_screen(ui, &session, now, &mut actions);
+            self.apply(actions, now);
+            self.engine.set_view(ViewRequest::default());
+            let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+            ui.painter().hline(window.x_range(), window.top() + stroke.width / 2.0, stroke);
+            return;
+        }
+        self.unlock_armed = None;
 
         let selected = self.selected();
         let detail =

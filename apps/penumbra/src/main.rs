@@ -19,7 +19,9 @@
 //! When the GPU device is lost or the editor window fails, the app records it in
 //! `gpu-lost.json` in its data directory, shows a message box (not with
 //! `PENUMBRA_NO_CRASH_DIALOG` set) and exits with code 3; the next start opens the project with
-//! the clock stopped and says why (see `host`).
+//! the clock stopped and says why (see `host`). In show mode (`show.lock`, kept in
+//! `show-mode.json` there) it starts itself again instead, with `--after-crash-of PID`: the new
+//! process waits for the old one to end and opens the project with the clock running.
 
 mod host;
 
@@ -73,10 +75,19 @@ struct Args {
     software: bool,
     size: Option<[f32; 2]>,
     fresh: bool,
+    /// Started again by show mode after this process crashed (`--after-crash-of PID`).
+    after_crash_of: Option<u32>,
 }
 
 fn run() -> Result<(), String> {
     let args = parse_args(std::env::args().skip(1))?;
+    if let Some(pid) = args.after_crash_of {
+        // The crashed process still holds the port and the output windows until it is gone.
+        log::info!("started again by show mode; waiting for process {pid} to end");
+        if !penumbra_system::process::wait_for_exit(pid, AFTER_CRASH_WAIT) {
+            log::warn!("process {pid} has not ended after {} s; starting anyway", AFTER_CRASH_WAIT.as_secs());
+        }
+    }
     let types = Arc::new(penumbra_ops::builtin_types().map_err(|e| e.to_string())?);
     let mut scratch = None;
     let session = match (&args.project, &args.headless) {
@@ -121,7 +132,15 @@ fn run() -> Result<(), String> {
         Ok(file) => engine.set_recent_file(Some(file)),
         Err(e) => log::warn!("no list of recent projects: {e}"),
     }
-    after_crash(&engine);
+    match penumbra_engine::show::default_file() {
+        Ok(file) => {
+            if engine.set_show_file(Some(file)) {
+                log::info!("show mode is on: the project is locked");
+            }
+        }
+        Err(e) => log::warn!("show mode is not kept across restarts: {e}"),
+    }
+    after_crash(&engine, args.after_crash_of.is_some());
     engine.remember(&dir);
 
     let (bridge, requests) = Bridge::new();
@@ -168,10 +187,15 @@ fn run() -> Result<(), String> {
     result
 }
 
+/// How long a process started again by show mode waits for the crashed one to end.
+const AFTER_CRASH_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Arms the crash marker for this run and, when the last run left one (a lost GPU device, a
 /// failed editor window), stops the show clock before the first frame and says why: the
 /// project file still holds whatever caused the crash, and running it at once would repeat it.
-fn after_crash(engine: &Engine) {
+/// Started again by show mode (`restarted`), the clock runs on instead, at the frame it would
+/// have reached without the crash; show mode's restart count is what stops a crash that repeats.
+fn after_crash(engine: &Engine, restarted: bool) {
     let file = match penumbra_engine::crash::default_file() {
         Ok(file) => file,
         Err(e) => {
@@ -179,7 +203,21 @@ fn after_crash(engine: &Engine) {
             return;
         }
     };
-    if let Some(marker) = penumbra_engine::crash::take(&file) {
+    let marker = penumbra_engine::crash::take(&file);
+    if let Some(marker) = &marker
+        && restarted
+        && engine.show_on()
+    {
+        log::warn!("the last run ended abnormally ({}); show mode runs on", marker.reason);
+        let fps = engine.view().time.map_or(60.0, |t| t.rate.as_f64());
+        if let Some(frame) =
+            penumbra_engine::crash::resume_frame(marker, penumbra_engine::show::now_ms(), fps)
+        {
+            engine.seek(frame);
+        }
+        engine.play(true);
+        engine.set_notice(Some(penumbra_engine::crash::show_notice(marker)));
+    } else if let Some(marker) = marker {
         log::warn!("the last run ended abnormally ({}); starting paused", marker.reason);
         engine.play(false);
         engine.set_notice(Some(penumbra_engine::crash::notice(&marker)));
@@ -241,10 +279,26 @@ fn run_window(
         }),
         &event_loop,
     );
-    let mut host = host::Host::new(eframe_app, Arc::clone(engine), instance);
+    // Show mode starts the app again after a crash with these.
+    let restart_args = restart_args(std::env::args().skip(1));
+    let mut host = host::Host::new(eframe_app, Arc::clone(engine), instance, restart_args);
     let result = event_loop.run_app(&mut host).map_err(|e| format!("the window failed: {e}"));
     host.outputs.shutdown();
     result
+}
+
+/// The arguments this run was started with, without `--after-crash-of` (the restart adds its
+/// own).
+fn restart_args(mut args: impl Iterator<Item = String>) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Some(arg) = args.next() {
+        if arg == "--after-crash-of" {
+            args.next();
+            continue;
+        }
+        out.push(arg);
+    }
+    out
 }
 
 fn headless(engine: &Arc<Engine>, script: &Path, args: &Args) -> Result<(), String> {
@@ -272,8 +326,15 @@ fn parse_size(text: &str) -> Result<[f32; 2], String> {
 
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut port = None;
-    let mut parsed =
-        Args { port: 0, project: None, headless: None, software: false, size: None, fresh: false };
+    let mut parsed = Args {
+        port: 0,
+        project: None,
+        headless: None,
+        software: false,
+        size: None,
+        fresh: false,
+        after_crash_of: None,
+    };
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--port" => {
@@ -288,6 +349,14 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             }
             "--software" => parsed.software = true,
             "--fresh" => parsed.fresh = true,
+            "--after-crash-of" => {
+                let value = args.next().ok_or("--after-crash-of needs a process id")?;
+                parsed.after_crash_of = Some(
+                    value
+                        .parse()
+                        .map_err(|_| format!("--after-crash-of wants a process id, not `{value}`"))?,
+                );
+            }
             "--size" => parsed.size = Some(parse_size(&args.next().ok_or("--size needs WIDTHxHEIGHT")?)?),
             other => {
                 return Err(format!(
@@ -328,6 +397,12 @@ mod tests {
         assert_eq!(h.size, Some([800.0, 600.0]));
         assert!(parse_args(args(&["--size", "huge"])).is_err());
         assert!(parse_args(args(&["--size", "10x10"])).is_err());
+        assert_eq!(parse_args(args(&["--after-crash-of", "42"])).unwrap().after_crash_of, Some(42));
+        assert!(parse_args(args(&["--after-crash-of", "x"])).is_err());
+        assert_eq!(
+            restart_args(args(&["--project", "d", "--after-crash-of", "42", "--port", "1"])),
+            ["--project", "d", "--port", "1"]
+        );
     }
 
     #[test]

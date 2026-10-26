@@ -2059,3 +2059,52 @@ fn palettes_are_listed_set_and_removed() {
     f.call("palette.set", json!({"name": "noon", "colours": "ffffff"}));
     assert!(std::fs::read_to_string(&file).unwrap().contains("not a palette\nnoon: #ffffff\n"));
 }
+
+#[test]
+fn show_mode_locks_the_project_and_is_kept_in_its_file() {
+    let f = Fixture::new("show");
+    let kept = f._dir.join("data").join(crate::show::FILE);
+    assert!(!f.engine.set_show_file(Some(kept.clone())));
+    f.call("node.create", json!({"path": "/c", "kind": "chan.constant"}));
+    eventually("autosave", || f.file().contains("\"/c\""));
+    let status = f.call("show.lock", json!({}));
+    assert_eq!(status["on"], true, "{status}");
+    assert_eq!(f.call("project.info", json!({}))["locked"], true);
+
+    // Edits and moves are refused with a message that says how to end it.
+    let e = f.fail("node.set", json!({"path": "/c", "params": {"value0": 0.5}}));
+    assert!(e.contains("show mode is on") && e.contains("show.unlock"), "{e}");
+    f.fail("node.place", json!({"nodes": {"/c": [100.0, 100.0]}}));
+    f.fail("node.create", json!({"path": "/d", "kind": "chan.constant"}));
+    f.fail("history.undo", json!({}));
+    for m in ["project.save", "edit.begin", "palette.set", "project.demo"] {
+        let e = f.fail(m, json!({}));
+        assert!(e.contains("show mode is on"), "{m}: {e}");
+    }
+    // Reading and the clock still work.
+    f.call("node.info", json!({"path": "/c"}));
+    f.call("cook.play", json!({"playing": true}));
+
+    // The file is not reloaded while locked.
+    let before = f.file();
+    let edited = before.replace("\"/c\"", "\"/e\": (kind: \"chan.constant\"),\n        \"/c\"");
+    std::fs::write(f.engine.session().file(), &edited).unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    f.fail("node.info", json!({"path": "/e"}));
+    assert_eq!(f.file(), edited, "and not written over");
+
+    // Kept across a restart: a new engine reading the file starts locked.
+    assert!(crate::show::read(&kept).on);
+    let g = Fixture::new("show-again");
+    assert!(g.engine.set_show_file(Some(kept.clone())));
+    assert!(g.engine.session().locked());
+    drop(g);
+
+    let status = f.call("show.unlock", json!({}));
+    assert_eq!(status["on"], false, "{status}");
+    assert!(!crate::show::read(&kept).on);
+    eventually("the file edit merges after unlocking", || {
+        f.registry.dispatch("node.info", &json!({"path": "/e"}))["ok"] == true
+    });
+    f.call("node.set", json!({"path": "/c", "params": {"value0": 0.5}}));
+}
