@@ -51,6 +51,14 @@ pub fn test_types() -> NodeTypes {
     );
     register(
         &mut t,
+        NodeDesc::new("test.merge", "Any number of inputs, once called a and b")
+            .input_run("in", DataKind::Chan, 2, "")
+            .renamed_input("a", "in0")
+            .renamed_input("b", "in1")
+            .output("out", DataKind::Chan),
+    );
+    register(
+        &mut t,
         NodeDesc::new("test.ref", "Names another node")
             .param(ParamSpec::node("node"))
             .output("out", DataKind::Chan),

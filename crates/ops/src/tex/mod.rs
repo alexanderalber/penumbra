@@ -342,7 +342,7 @@ fn core_builtins() -> Vec<Builtin> {
         Builtin {
             desc: NodeDesc::new(
                 "tex.composite",
-                "Lays up to four pictures on top of each other: over, add, multiply, screen and other blend modes",
+                "Lays pictures on top of each other: over, add, multiply, screen and other blend modes",
             )
             .param(ParamSpec::choice(
                 "op",
@@ -364,7 +364,7 @@ fn core_builtins() -> Vec<Builtin> {
                     "luminosity",
                 ],
             )
-            .doc("How each layer goes onto what lies below it: layer2 onto layer1, then layer3 onto that, ...")
+            .doc("How each layer goes onto what lies below it: in1 onto in0, then in2 onto that, ...")
             .choice_doc("over", "the layer in front, covering by its alpha")
             .choice_doc("add", "both summed: brighter, black adds nothing")
             .choice_doc("multiply", "both multiplied: darker, white changes nothing")
@@ -387,11 +387,16 @@ fn core_builtins() -> Vec<Builtin> {
                 ParamSpec::bool("swap", false)
                     .doc("Swap the order of each step: the picture below onto the layer (TouchDesigner's Swap Operation Order)"),
             )
-            .input("layer1", DataKind::Tex)
-            .input("layer2", DataKind::Tex)
-            .input("layer3", DataKind::Tex)
-            .input("layer4", DataKind::Tex)
-            .describe_input("layer1", "The bottom layer. The output has the size of the first connected layer")
+            .input_run(
+                "in",
+                DataKind::Tex,
+                2,
+                "The layers, in0 at the bottom. The output has the size of the first connected layer",
+            )
+            .renamed_input("layer1", "in0")
+            .renamed_input("layer2", "in1")
+            .renamed_input("layer3", "in2")
+            .renamed_input("layer4", "in3")
             .output("out", DataKind::Tex),
             source: include_str!("composite.wgsl"),
             size: Size::Input,

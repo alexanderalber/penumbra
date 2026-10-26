@@ -265,12 +265,11 @@ fn check_own<'t>(
         return Err(Error::new(format!("{path} is locked, but `{}` has no outputs to lock", d.kind)));
     }
     for name in node.inputs.keys() {
-        if !d.inputs.iter().any(|i| i.name == name.as_str()) {
-            let known: Vec<&str> = d.inputs.iter().map(|i| i.name.as_str()).collect();
+        if d.input_index(name.as_str()).is_none() {
             return Err(Error::new(format!(
                 "{path} input `{name}`: `{}` has no such input; inputs: {}",
                 d.kind,
-                known.join(", ")
+                d.input_names()
             )));
         }
     }
@@ -301,9 +300,8 @@ fn load_node(
     let mut inputs = vec![None; d.inputs.len()];
     for (name, source) in &node.inputs {
         let ctx = || format!("{path} input `{name}`");
-        let index = d.inputs.iter().position(|i| i.name == name.as_str()).ok_or_else(|| {
-            let known: Vec<&str> = d.inputs.iter().map(|i| i.name.as_str()).collect();
-            Error::new(format!("{}: `{}` has no such input; inputs: {}", ctx(), d.kind, known.join(", ")))
+        let index = d.input_index(name.as_str()).ok_or_else(|| {
+            Error::new(format!("{}: `{}` has no such input; inputs: {}", ctx(), d.kind, d.input_names()))
         })?;
         let (port, kind) = parse_source(&level, source, nodes, failed, outputs, types, outside)
             .map_err(|e| e.context(ctx()))?;
@@ -679,6 +677,21 @@ mod tests {
         assert_eq!(c.nodes[&"/a".parse::<NodePath>().unwrap()].params["value"], Value::Int(2));
         assert_eq!(c.nodes[&"/v".parse::<NodePath>().unwrap()].params["value"], Value::Vec2([1.0, 2.0]));
         assert!(parse("(version: 1)", &types).unwrap().nodes.is_empty());
+    }
+
+    #[test]
+    fn renamed_inputs_load_and_are_written_by_their_new_names() {
+        let types = test_types();
+        let text = r#"(version: 1, nodes: {
+            "/a": (kind: "test.const"),
+            "/m": (kind: "test.merge", inputs: {"a": "a", "b": "a", "in40": "a"}),
+        })"#;
+        let c = parse(text, &types).unwrap();
+        let m = &c.nodes[&"/m".parse::<NodePath>().unwrap()];
+        let a = Some(PortRef { node: "/a".parse().unwrap(), output: 0 });
+        assert_eq!((&m.inputs[0], &m.inputs[1], &m.inputs[40]), (&a, &a, &a));
+        let written = print(&c, &types).unwrap();
+        assert!(written.contains(r#"inputs: {"in0": "a", "in1": "a", "in40": "a"}"#), "{written}");
     }
 
     #[test]

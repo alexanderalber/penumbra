@@ -10,7 +10,7 @@
         "/pulse/faces": (kind: "tex.shader", params: {"file": "library/pulse/faces_only.wgsl"}, inputs: {"in0": "labels"}),
         "/pulse/gate": (kind: "tex.in"),
         "/pulse/labels": (kind: "tex.in"),
-        "/pulse/masked": (kind: "tex.composite", params: {"op": "multiply"}, inputs: {"layer1": "beat", "layer2": "faces"}),
+        "/pulse/masked": (kind: "tex.composite", params: {"op": "multiply"}, inputs: {"in0": "beat", "in1": "faces"}),
         "/pulse/out": (kind: "tex.out", inputs: {"in": "dim"}),
         "/pulse/shapes": (kind: "tex.shapes", params: {"width": 1920, "height": 1080, "keep_size": true, "trace_channel": "red", "trace_labels": true, "trace_min_area": 400.0, "trace_tolerance": 2.5}, inputs: {"trace": "labels"}),
     },

@@ -125,10 +125,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("light.merge", "Combines several lights for one render")
-            .input("in0", DataKind::Light)
-            .input("in1", DataKind::Light)
-            .input("in2", DataKind::Light)
-            .input("in3", DataKind::Light)
+            .input_run("in", DataKind::Light, 2, "The lights")
             .output("out", DataKind::Light),
         || Box::new(Merge) as Box<dyn Operator>,
     ))?;

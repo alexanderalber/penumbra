@@ -22,7 +22,7 @@ on. R, the reset button or `node.reset` clear the loop the same way.
 Every step repeats every frame, so small values matter: a `tex.level` with `brightness` 0.96
 lets a trail die out within a few seconds, at 1 nothing ever fades and the picture fills up. A
 `tex.transform` with `scale` 1.01 zooms the trails slowly outwards. Mix new content in near the
-end of the chain (a `tex.composite` with the content as `layer2`), or the loop has nothing to
+end of the chain (a `tex.composite` with the content as `in1`), or the loop has nothing to
 work on but `initial`.
 
 With `persist` on (the default), the loop's last frame goes into the state snapshots, so a

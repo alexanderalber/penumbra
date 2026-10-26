@@ -16,7 +16,7 @@ use penumbra_graph::{
 use super::{gpu, waiting};
 
 /// Inputs of a switch.
-pub const SWITCH_INPUTS: usize = 8;
+pub const SWITCH_INPUTS: usize = penumbra_graph::MAX_RUN;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -26,13 +26,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Null) as Box<dyn Operator>,
     ))?;
 
-    let mut switch = NodeDesc::new(
+    let switch = NodeDesc::new(
         "tex.switch",
-        "Chooses which of up to eight pictures goes out: cut between scenes or looks, or crossfade",
+        "Chooses which of its pictures goes out: cut between scenes or looks, or crossfade",
     )
         .param(
             ParamSpec::float("index", 0.0)
-                .range(0.0, (SWITCH_INPUTS - 1) as f64)
+                .range(0.0, 7.0)
                 .doc("Which input goes out: the wired inputs counted from 0, gaps skipped. Past the last: the last"),
         )
         .param(ParamSpec::bool("blend", false).doc("Crossfade: a fractional index mixes the inputs either side (1.25: a quarter of the next). Off: it rounds down"))
@@ -49,9 +49,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                      connected as soon as it is wired",
                 ),
         );
-    for i in 0..SWITCH_INPUTS {
-        switch = switch.input(&format!("in{i}"), DataKind::Tex);
-    }
+    let switch = switch.input_run("in", DataKind::Tex, 2, "The pictures to choose from");
     types.register(
         FnNodeType::new(switch.output("out", DataKind::Tex), || {
             Box::new(Switch { ring: TexRing::new(), cross: None }) as Box<dyn Operator>

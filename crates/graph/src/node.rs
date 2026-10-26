@@ -122,6 +122,46 @@ impl OutputSpec {
     }
 }
 
+/// Most inputs a run may have ([`NodeDesc::input_run`]).
+pub const MAX_RUN: usize = 64;
+
+/// A run of inputs of one kind, `prefix0`, `prefix1`, ... ([`NodeDesc::input_run`]): a node that
+/// takes any number of them, such as the layers of a composite. Every slot is declared, so names
+/// and indices work as for any input; only what is shown follows the wiring
+/// ([`NodeDesc::shown_inputs`]).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct InputRun {
+    pub prefix: String,
+    pub kind: DataKind,
+    /// The index of `prefix0` among the node's inputs.
+    pub first: usize,
+    pub len: usize,
+    /// Slots shown on a node with nothing wired into the run.
+    pub shown: usize,
+}
+
+impl InputRun {
+    pub fn contains(&self, index: usize) -> bool {
+        (self.first..self.first + self.len).contains(&index)
+    }
+}
+
+/// One line of a node type's input list as the reference and `node.kinds` show it: a run is one
+/// line.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ListedInput {
+    /// The input's name, or for a run its first and last name (`in0 .. in63`).
+    pub name: String,
+    pub kind: DataKind,
+    pub doc: String,
+    /// For a run: how many slots it has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<usize>,
+    /// [`InputSpec::previous`].
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub previous: bool,
+}
+
 /// What a node does at the edge of a component: an input node is fed from outside the component and
 /// shows as an input of it; an output node is read from outside and shows as an output of it. Both
 /// pass their one input on.
@@ -167,6 +207,13 @@ pub struct NodeDesc {
     /// on must see `run` turn off while its picture is not shown. Only for cheap nodes; what
     /// its bindings and inputs need cooks with it.
     pub eager: bool,
+    /// The runs among `inputs` ([`InputRun`]).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub runs: Vec<InputRun>,
+    /// Inputs that had another name: (old, new). Files written before the rename still load
+    /// ([`NodeDesc::input_index`]); they are written with the new name.
+    #[serde(skip)]
+    pub renamed_inputs: Vec<(String, String)>,
 }
 
 impl NodeDesc {
@@ -184,6 +231,8 @@ impl NodeDesc {
             stateful: false,
             sampled: false,
             eager: false,
+            runs: Vec::new(),
+            renamed_inputs: Vec::new(),
         }
     }
 
@@ -195,6 +244,119 @@ impl NodeDesc {
     pub fn input(mut self, name: &str, kind: DataKind) -> Self {
         self.inputs.push(InputSpec::new(name, kind));
         self
+    }
+
+    /// A run of [`MAX_RUN`] inputs of `kind` called `prefix0`, `prefix1`, ..., of which a node
+    /// shows the wired ones and one free slot, at least `shown` ([`InputRun`]). `doc` describes
+    /// the run as a whole.
+    pub fn input_run(mut self, prefix: &str, kind: DataKind, shown: usize, doc: &str) -> Self {
+        let first = self.inputs.len();
+        for i in 0..MAX_RUN {
+            let spec = InputSpec { doc: doc.to_string(), ..InputSpec::new(&format!("{prefix}{i}"), kind) };
+            self.inputs.push(spec);
+        }
+        self.runs.push(InputRun {
+            prefix: prefix.to_string(),
+            kind,
+            first,
+            len: MAX_RUN,
+            shown: shown.clamp(1, MAX_RUN),
+        });
+        self
+    }
+
+    /// Files that name input `old` mean `new`, declared before.
+    pub fn renamed_input(mut self, old: &str, new: &str) -> Self {
+        self.renamed_inputs.push((old.to_string(), new.to_string()));
+        self
+    }
+
+    /// The index of the input called `name`, or of the input it was renamed to.
+    pub fn input_index(&self, name: &str) -> Option<usize> {
+        let find = |n: &str| self.inputs.iter().position(|i| i.name == n);
+        find(name).or_else(|| {
+            let (_, new) = self.renamed_inputs.iter().find(|(old, _)| old == name)?;
+            find(new)
+        })
+    }
+
+    /// The run input `index` belongs to.
+    pub fn run_of(&self, index: usize) -> Option<&InputRun> {
+        self.runs.iter().find(|r| r.contains(index))
+    }
+
+    /// The inputs a node of this type shows, given which are wired: every input outside a run;
+    /// of a run its slots up to the last wired one and one free slot after it, at least the
+    /// run's `shown`. A gap stays shown, since the order of a run counts (a composite's layers,
+    /// a switch's index).
+    pub fn shown_inputs(&self, wired: impl Fn(usize) -> bool) -> Vec<usize> {
+        let mut shown = Vec::with_capacity(self.inputs.len().min(16));
+        let mut i = 0;
+        while i < self.inputs.len() {
+            match self.run_of(i) {
+                Some(run) => {
+                    let used = (0..run.len).rev().find(|k| wired(run.first + k)).map_or(0, |k| k + 2);
+                    let n = used.max(run.shown).min(run.len);
+                    shown.extend(run.first..run.first + n);
+                    i = run.first + run.len;
+                }
+                None => {
+                    shown.push(i);
+                    i += 1;
+                }
+            }
+        }
+        shown
+    }
+
+    /// The input a wire of `kind` goes to when no input is named: the first of that kind, or
+    /// when that is wired and part of a run, the first free slot of the run.
+    pub fn free_input(&self, kind: DataKind, wired: impl Fn(usize) -> bool) -> Option<usize> {
+        let first = self.inputs.iter().position(|i| i.kind == kind)?;
+        if !wired(first) {
+            return Some(first);
+        }
+        match self.run_of(first) {
+            Some(run) => (run.first..run.first + run.len).find(|i| !wired(*i)).or(Some(first)),
+            None => Some(first),
+        }
+    }
+
+    /// The input list with each run as one line ([`ListedInput`]).
+    pub fn listed_inputs(&self) -> Vec<ListedInput> {
+        let mut list = Vec::new();
+        let mut i = 0;
+        while let Some(spec) = self.inputs.get(i) {
+            match self.run_of(i) {
+                Some(run) => {
+                    let last = self.inputs.get(run.first + run.len - 1).map_or("", |s| s.name.as_str());
+                    list.push(ListedInput {
+                        name: format!("{} .. {last}", spec.name),
+                        kind: run.kind,
+                        doc: spec.doc.clone(),
+                        run: Some(run.len),
+                        previous: false,
+                    });
+                    i = run.first + run.len;
+                }
+                None => {
+                    list.push(ListedInput {
+                        name: spec.name.clone(),
+                        kind: spec.kind,
+                        doc: spec.doc.clone(),
+                        run: None,
+                        previous: spec.previous,
+                    });
+                    i += 1;
+                }
+            }
+        }
+        list
+    }
+
+    /// The input names for an error message, a run as its first and last name.
+    pub fn input_names(&self) -> String {
+        self.listed_inputs().into_iter().map(|l| l.name).collect::<Vec<_>>().join(", ")
     }
 
     /// A `chan` input the choice of inputs reads ([`InputSpec::steers`]).
@@ -324,6 +486,12 @@ impl NodeDesc {
                 if names.iter().take(i).any(|m| m == n) {
                     return Err(Error::new(format!("{what} `{n}` declared twice")).context(ctx()));
                 }
+            }
+        }
+        for (old, new) in &self.renamed_inputs {
+            if self.inputs.iter().any(|i| i.name == *old) || !self.inputs.iter().any(|i| i.name == *new) {
+                return Err(Error::new(format!("input rename `{old}` -> `{new}` does not fit the inputs"))
+                    .context(ctx()));
             }
         }
         Ok(())
@@ -613,6 +781,54 @@ impl<F: Fn() -> Box<dyn Operator> + Send + Sync> NodeType for FnNodeType<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn runs() -> NodeDesc {
+        NodeDesc::new("test.runs", "")
+            .input("mask", DataKind::Tex)
+            .input_run("in", DataKind::Tex, 2, "layers")
+            .input_run("chan", DataKind::Chan, 1, "")
+            .renamed_input("layer1", "in0")
+    }
+
+    #[test]
+    fn a_run_shows_its_wired_slots_and_one_free_one() {
+        let d = runs();
+        d.validate().unwrap();
+        let chan0 = 1 + MAX_RUN;
+        assert_eq!(d.inputs.len(), 1 + 2 * MAX_RUN);
+        // Nothing wired: the run's minimum.
+        assert_eq!(d.shown_inputs(|_| false), vec![0, 1, 2, chan0]);
+        // in3 wired, in0 to in2 free: the gap stays, in4 is the free slot.
+        assert_eq!(d.shown_inputs(|i| i == 4), vec![0, 1, 2, 3, 4, 5, chan0]);
+        assert_eq!(d.shown_inputs(|i| i == chan0), vec![0, 1, 2, chan0, chan0 + 1]);
+        // All wired: no free slot past the last.
+        assert_eq!(d.shown_inputs(|_| true).len(), 1 + 2 * MAX_RUN);
+    }
+
+    #[test]
+    fn a_wire_without_an_input_takes_the_next_free_slot_of_a_run() {
+        let d = runs();
+        assert_eq!(d.free_input(DataKind::Tex, |_| false), Some(0));
+        // `mask` is no run: a second wire replaces it.
+        assert_eq!(d.free_input(DataKind::Tex, |i| i == 0), Some(0));
+        assert_eq!(d.free_input(DataKind::Chan, |i| i == 1 + MAX_RUN), Some(2 + MAX_RUN));
+        assert_eq!(d.free_input(DataKind::Geo, |_| false), None);
+    }
+
+    #[test]
+    fn old_input_names_find_the_new_ones() {
+        let d = runs();
+        assert_eq!(d.input_index("layer1"), Some(1));
+        assert_eq!(d.input_index("in63"), Some(MAX_RUN));
+        assert_eq!(d.input_index("in64"), None);
+        assert_eq!(d.input_names(), "mask, in0 .. in63, chan0 .. chan63");
+        let listed = d.listed_inputs();
+        assert_eq!(listed[1].run, Some(MAX_RUN));
+        assert_eq!(listed[1].doc, "layers");
+        // A rename onto nothing, or from a name still declared, is refused.
+        assert!(runs().renamed_input("x", "nope").validate().is_err());
+        assert!(runs().renamed_input("mask", "in1").validate().is_err());
+    }
 
     #[test]
     fn density_demand_follows_scale_rotation_and_transpose() {

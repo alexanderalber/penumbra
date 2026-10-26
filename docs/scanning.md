@@ -622,7 +622,7 @@ Content is made once, in the camera's picture, and each projector takes its shar
 4. `tex.blend_weight`: the remap as `in`, a `tex.image_file` of `objects/weight_N.png` as
    `weight`. For content with thin lines, outlines or text, `mode` detail and a
    `tex.image_file` of `objects/detail_N.png` as `detail` (see "Small features from one
-   projector" above). A `tex.composite` multiply with the weight as layer2 does the same as
+   projector" above). A `tex.composite` multiply with the weight as in1 does the same as
    `smooth` mode.
 5. Into that projector's `out.projector`.
 
@@ -712,10 +712,10 @@ displays are set. In an empty project the base, for projector A (B the same with
     penumbra-cli ctl node.connect '{"from": "/height_a", "to": "/land_a", "input": "in"}'
     penumbra-cli ctl node.connect '{"from": "/land_keys", "to": "/land_a", "input": "lut"}'
     penumbra-cli ctl node.connect '{"from": "/height_a", "to": "/contour_a"}'
-    penumbra-cli ctl node.connect '{"from": "/land_a", "to": "/map_a", "input": "layer1"}'
-    penumbra-cli ctl node.connect '{"from": "/contour_a", "to": "/map_a", "input": "layer2"}'
-    penumbra-cli ctl node.connect '{"from": "/map_a", "to": "/out_a", "input": "layer1"}'
-    penumbra-cli ctl node.connect '{"from": "/weight_a", "to": "/out_a", "input": "layer2"}'
+    penumbra-cli ctl node.connect '{"from": "/land_a", "to": "/map_a", "input": "in0"}'
+    penumbra-cli ctl node.connect '{"from": "/contour_a", "to": "/map_a", "input": "in1"}'
+    penumbra-cli ctl node.connect '{"from": "/map_a", "to": "/out_a", "input": "in0"}'
+    penumbra-cli ctl node.connect '{"from": "/weight_a", "to": "/out_a", "input": "in1"}'
     penumbra-cli ctl node.connect '{"from": "/out_a", "to": "/proj_a", "input": "in"}'
 
 The moving layers of the example (sun, tide, snow line; its README says how they are made) are

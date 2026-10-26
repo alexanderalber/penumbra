@@ -1132,7 +1132,7 @@ fn composite_lays_further_layers_on_in_turn() {
         create("/gap", "tex.composite", &[("op", "add".into())]),
         connect("/a", "/gap", 0),
         connect("/b", "/gap", 1),
-        // layer3 left out.
+        // in2 left out.
         connect("/d", "/gap", 3),
         create("/over", "tex.composite", &[]),
         connect("/a", "/over", 0),
@@ -1141,8 +1141,19 @@ fn composite_lays_further_layers_on_in_turn() {
     let mut rig = Rig::new(gpu, None, &ops);
     assert!((red(&mut rig, "/sum") - 1.0).abs() < 0.01, "0.1 + 0.2 + 0.3 + 0.4");
     assert!((red(&mut rig, "/gap") - 0.7).abs() < 0.01, "0.1 + 0.2 + 0.4");
-    // Without layer2, layer3 goes onto layer1; opaque, it covers it.
+    // Without in1, in2 goes onto in0; opaque, it covers it.
     assert!((red(&mut rig, "/over") - 0.3).abs() < 0.01);
+}
+
+#[test]
+fn composite_takes_more_layers_than_it_shows() {
+    let Some(gpu) = gpu() else { return };
+    let mut ops = vec![constant("/a", 0.05), create("/sum", "tex.composite", &[("op", "add".into())])];
+    for i in 0..12 {
+        ops.push(connect("/a", "/sum", i));
+    }
+    let mut rig = Rig::new(gpu, None, &ops);
+    assert!((red(&mut rig, "/sum") - 0.6).abs() < 0.01, "twelve layers of 0.05");
 }
 
 #[test]

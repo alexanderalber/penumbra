@@ -159,6 +159,33 @@ fn replace_a_node_keeping_what_fits() {
 }
 
 #[test]
+fn a_run_of_inputs_grows_as_wires_come_in() {
+    let f = Fixture::new("runs");
+    for p in ["/a", "/b", "/c"] {
+        f.call("node.create", json!({"path": p, "kind": "chan.lfo"}));
+    }
+    f.call("node.create", json!({"path": "/m", "kind": "chan.merge"}));
+    let names = |info: &Json| -> Vec<String> {
+        info["inputs"].as_array().unwrap().iter().map(|i| i["name"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(names(&f.call("node.info", json!({"path": "/m"}))), ["in0", "in1"]);
+    // Without an input named, each wire takes the next free slot.
+    f.call("node.connect", json!({"from": "/a", "to": "/m"}));
+    f.call("node.connect", json!({"from": "/b", "to": "/m"}));
+    // The name chan.merge's inputs had before the run still finds it.
+    f.call("node.connect", json!({"from": "/c", "to": "/m", "input": "d"}));
+    let info = f.call("node.info", json!({"path": "/m"}));
+    assert_eq!(names(&info), ["in0", "in1", "in2", "in3", "in4"]);
+    let from: Vec<&Json> = info["inputs"].as_array().unwrap().iter().map(|i| &i["from"]).collect();
+    assert_eq!(from, [&json!("/a"), &json!("/b"), &Json::Null, &json!("/c"), &Json::Null]);
+    assert!(
+        f.fail("node.connect", json!({"from": "/a", "to": "/m", "input": "in64"})).contains("in0 .. in63")
+    );
+    let kinds = f.call("node.kinds", json!({"kind": "chan.merge"}));
+    assert_eq!(kinds["kinds"][0]["inputs"].as_array().unwrap().len(), 1, "{kinds}");
+}
+
+#[test]
 fn errors_say_what_is_wrong() {
     let f = Fixture::new("errors");
     assert!(f.fail("node.create", json!({"path": "/x", "kind": "chan.nope"})).contains("chan.lfo"));
@@ -780,8 +807,8 @@ fn feedback_and_locked_textures_survive_a_restart() {
         ok(&r, "node.create", json!({"path": "/fb", "kind": "tex.feedback"}));
         ok(&r, "node.create", json!({"path": "/add", "kind": "tex.composite", "params": {"op": "add"}}));
         ok(&r, "node.connect", json!({"from": "/black", "to": "/fb", "input": "initial"}));
-        ok(&r, "node.connect", json!({"from": "/fb", "to": "/add", "input": "layer1"}));
-        ok(&r, "node.connect", json!({"from": "/step", "to": "/add", "input": "layer2"}));
+        ok(&r, "node.connect", json!({"from": "/fb", "to": "/add", "input": "in0"}));
+        ok(&r, "node.connect", json!({"from": "/step", "to": "/add", "input": "in1"}));
         ok(&r, "node.connect", json!({"from": "/add", "to": "/fb", "input": "previous"}));
         ok(&r, "node.watch", json!({"path": "/add"}));
         // The startup restore found nothing; saving is allowed from then on.
@@ -914,8 +941,8 @@ fn node_reset_starts_a_loop_over_and_leaves_locked_nodes_alone() {
     ok(&r, "node.create", json!({"path": "/fb", "kind": "tex.feedback"}));
     ok(&r, "node.create", json!({"path": "/add", "kind": "tex.composite", "params": {"op": "add"}}));
     ok(&r, "node.connect", json!({"from": "/black", "to": "/fb", "input": "initial"}));
-    ok(&r, "node.connect", json!({"from": "/fb", "to": "/add", "input": "layer1"}));
-    ok(&r, "node.connect", json!({"from": "/step", "to": "/add", "input": "layer2"}));
+    ok(&r, "node.connect", json!({"from": "/fb", "to": "/add", "input": "in0"}));
+    ok(&r, "node.connect", json!({"from": "/step", "to": "/add", "input": "in1"}));
     ok(&r, "node.connect", json!({"from": "/add", "to": "/fb", "input": "previous"}));
     ok(&r, "node.watch", json!({"path": "/add"}));
     eventually("a few frames of the loop", || {

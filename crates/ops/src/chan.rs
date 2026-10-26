@@ -323,11 +323,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Trail::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new("chan.merge", "Puts the channels of up to four inputs together into one")
-            .input("a", DataKind::Chan)
-            .input("b", DataKind::Chan)
-            .input("c", DataKind::Chan)
-            .input("d", DataKind::Chan)
+        NodeDesc::new("chan.merge", "Puts the channels of its inputs together into one")
+            .input_run("in", DataKind::Chan, 2, "The channels to put together, in0's first")
+            .renamed_input("a", "in0")
+            .renamed_input("b", "in1")
+            .renamed_input("c", "in2")
+            .renamed_input("d", "in3")
             .output("out", DataKind::Chan),
         || Box::new(Merge) as Box<dyn Operator>,
     ))?;
@@ -1051,7 +1052,8 @@ struct Merge;
 
 impl Operator for Merge {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let inputs: Vec<&Chans> = (0..4).filter_map(|i| cx.input_as::<Chans>(i)).collect();
+        let inputs: Vec<&Chans> =
+            (0..cx.def().inputs.len()).filter_map(|i| cx.input_as::<Chans>(i)).collect();
         let Some(first) = inputs.first() else {
             return out(Chans::empty(cx.rate().as_f64())?);
         };

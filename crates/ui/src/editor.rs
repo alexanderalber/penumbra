@@ -256,10 +256,10 @@ fn to_graph(canvas: Rect, view: View, p: Pos2) -> Pos2 {
 
 /// Body height of a node in graph units: a 16:9 picture for textures and for the plot of a node
 /// with many samples per channel ([`NodeDesc::sampled`]), a value line otherwise, tall enough for
-/// its ports (`ports`: the most on one side, for components).
+/// its ports (`ports`: the most shown on one side; a run of inputs shows only some).
 fn body_height(desc: Option<&NodeDesc>, ports: usize) -> f32 {
     let Some(d) = desc else { return 28.0 };
-    let ports = d.inputs.len().max(d.outputs.len()).max(ports) as f32;
+    let ports = d.outputs.len().max(ports) as f32;
     let content = if d.sampled
         || d.outputs.first().is_some_and(|o| matches!(o.kind, DataKind::Tex | DataKind::Geo | DataKind::Mat))
     {
@@ -362,11 +362,14 @@ fn ports_of(
         };
         return (side(ins), side(outs));
     }
+    // Of a run of inputs, the wired slots and one free slot after them.
     let ins = d
-        .inputs
-        .iter()
-        .enumerate()
-        .map(|(i, s)| port(Pos2::ZERO, s.kind, (node.id, i as u32), &s.name, &s.doc, s.previous))
+        .shown_inputs(|i| node.inputs.get(i).is_some_and(Option::is_some))
+        .into_iter()
+        .filter_map(|i| {
+            let s = d.inputs.get(i)?;
+            Some(port(Pos2::ZERO, s.kind, (node.id, i as u32), &s.name, &s.doc, s.previous))
+        })
         .collect();
     let outs = d
         .outputs

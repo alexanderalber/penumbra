@@ -138,20 +138,17 @@ Outputs: `out` (tex).
 
 ### tex.composite
 
-Lays up to four pictures on top of each other: over, add, multiply, screen and other blend modes
+Lays pictures on top of each other: over, add, multiply, screen and other blend modes
 
 Inputs:
 
-- `layer1` (tex): The bottom layer. The output has the size of the first connected layer
-- `layer2` (tex)
-- `layer3` (tex)
-- `layer4` (tex)
+- `in0 .. in63` (tex): The layers, in0 at the bottom. The output has the size of the first connected layer. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average \| inside \| outside \| atop \| overlay \| color \| luminosity | `"over"` |  | How each layer goes onto what lies below it: layer2 onto layer1, then layer3 onto that, ...; over: the layer in front, covering by its alpha; add: both summed: brighter, black adds nothing; multiply: both multiplied: darker, white changes nothing; screen: the opposite of multiply: lighter, black changes nothing; subtract: the picture below minus the layer's colour; difference: how far the colours differ, per channel; maximum: the brighter of both, per channel; minimum: the darker of both, per channel; average: half of each; inside: the layer only where the picture below is (its alpha); outside: the layer only where the picture below is not; atop: the layer over the picture below, only where that is; overlay: darkens the dark and brightens the bright parts of the picture below by the layer; color: the layer's hue and saturation at the brightness below (tinting a grey picture); luminosity: the layer's brightness with the hue and saturation below |
+| `op` | over \| add \| multiply \| screen \| subtract \| difference \| maximum \| minimum \| average \| inside \| outside \| atop \| overlay \| color \| luminosity | `"over"` |  | How each layer goes onto what lies below it: in1 onto in0, then in2 onto that, ...; over: the layer in front, covering by its alpha; add: both summed: brighter, black adds nothing; multiply: both multiplied: darker, white changes nothing; screen: the opposite of multiply: lighter, black changes nothing; subtract: the picture below minus the layer's colour; difference: how far the colours differ, per channel; maximum: the brighter of both, per channel; minimum: the darker of both, per channel; average: half of each; inside: the layer only where the picture below is (its alpha); outside: the layer only where the picture below is not; atop: the layer over the picture below, only where that is; overlay: darkens the dark and brightens the bright parts of the picture below by the layer; color: the layer's hue and saturation at the brightness below (tinting a grey picture); luminosity: the layer's brightness with the hue and saturation below |
 | `swap` | bool | `false` |  | Swap the order of each step: the picture below onto the layer (TouchDesigner's Swap Operation Order) |
 
 ### tex.constant
@@ -806,30 +803,7 @@ Inputs:
 - `sequence` (chan): A chan.sequence: its from, to and mix pick the inputs (piece k is in<k>, -1 black, -2 white)
 - `black` (tex)
 - `white` (tex)
-- `in0` (tex)
-- `in1` (tex)
-- `in2` (tex)
-- `in3` (tex)
-- `in4` (tex)
-- `in5` (tex)
-- `in6` (tex)
-- `in7` (tex)
-- `in8` (tex)
-- `in9` (tex)
-- `in10` (tex)
-- `in11` (tex)
-- `in12` (tex)
-- `in13` (tex)
-- `in14` (tex)
-- `in15` (tex)
-- `in16` (tex)
-- `in17` (tex)
-- `in18` (tex)
-- `in19` (tex)
-- `in20` (tex)
-- `in21` (tex)
-- `in22` (tex)
-- `in23` (tex)
+- `in0 .. in63` (tex): The pieces: piece k is in<k>. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs: `out` (tex).
 
@@ -953,18 +927,11 @@ Outputs:
 
 ### tex.switch
 
-Chooses which of up to eight pictures goes out: cut between scenes or looks, or crossfade
+Chooses which of its pictures goes out: cut between scenes or looks, or crossfade
 
 Inputs:
 
-- `in0` (tex)
-- `in1` (tex)
-- `in2` (tex)
-- `in3` (tex)
-- `in4` (tex)
-- `in5` (tex)
-- `in6` (tex)
-- `in7` (tex)
+- `in0 .. in63` (tex): The pictures to choose from. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs: `out` (tex).
 
@@ -1370,14 +1337,11 @@ Outputs: `out` (chan).
 
 ### chan.merge
 
-Puts the channels of up to four inputs together into one
+Puts the channels of its inputs together into one
 
 Inputs:
 
-- `a` (chan)
-- `b` (chan)
-- `c` (chan)
-- `d` (chan)
+- `in0 .. in63` (chan): The channels to put together, in0's first. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs: `out` (chan).
 
@@ -1678,14 +1642,7 @@ Combines several pieces of geometry into one, to render them together
 
 Inputs:
 
-- `in0` (geo)
-- `in1` (geo)
-- `in2` (geo)
-- `in3` (geo)
-- `in4` (geo)
-- `in5` (geo)
-- `in6` (geo)
-- `in7` (geo)
+- `in0 .. in63` (geo): The pieces of geometry. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs:
 
@@ -1877,10 +1834,7 @@ Combines several lights for one render
 
 Inputs:
 
-- `in0` (light)
-- `in1` (light)
-- `in2` (light)
-- `in3` (light)
+- `in0 .. in63` (light): The lights. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs: `out` (light).
 

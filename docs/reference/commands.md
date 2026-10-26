@@ -136,7 +136,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `node.batch` | Apply ops as one all-or-nothing batch; {ops: [{op, ...}], label?} |
 | `node.bind` | Drive a param (or one component, /t.translate.0) with a channel; {param, from, channel?} |
-| `node.connect` | Connect an output to an input; {from, output?, to, input?} |
+| `node.connect` | Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers); {from, output?, to, input?} |
 | `node.copy` | Copy side-by-side nodes with everything inside them; returns the text; {paths} |
 | `node.create` | Create a node; {path, kind, params?} |
 | `node.cut` | Copy side-by-side nodes, then delete them (one undo step); {paths} |

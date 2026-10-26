@@ -16,7 +16,7 @@ use super::gpu;
 use crate::sequence::{Entry, shown};
 
 /// Picture inputs of a `tex.sequence`, one per piece.
-pub const SEQUENCE_PIECES: usize = 24;
+pub const SEQUENCE_PIECES: usize = penumbra_graph::MAX_RUN;
 /// The inputs before the pieces: the channels, black, white.
 const SEQ: usize = 0;
 const BLACK: usize = 1;
@@ -27,7 +27,7 @@ const BLACK_RGBA: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 const WHITE_RGBA: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    let mut desc = NodeDesc::new(
+    let desc = NodeDesc::new(
         "tex.sequence",
         "The picture of a timed show: plays the pieces a chan.sequence lists, with cuts and fades. Only the piece on screen runs",
     )
@@ -47,10 +47,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     )
     .input_steering("sequence")
     .input("black", DataKind::Tex)
-    .input("white", DataKind::Tex);
-    for k in 0..SEQUENCE_PIECES {
-        desc = desc.input(&format!("in{k}"), DataKind::Tex);
-    }
+    .input("white", DataKind::Tex)
+    .input_run("in", DataKind::Tex, 1, "The pieces: piece k is in<k>");
     let desc = desc.output("out", DataKind::Tex).describe_input(
         "sequence",
         "A chan.sequence: its from, to and mix pick the inputs (piece k is in<k>, -1 black, -2 white)",

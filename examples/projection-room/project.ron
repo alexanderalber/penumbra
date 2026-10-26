@@ -11,7 +11,7 @@
         "/ball_lit": (kind: "geo.assign_material", inputs: {"in": "ball_at", "mat": "chrome"}, pos: [400.0, 755.0]),
         "/beamer": (kind: "view.camera", params: {"fov": 38.0, "position": [-0.6, -4.4, 2.0], "target": [-0.4, 2.0, 1.2]}, pos: [400.0, 1494.0]),
         "/chrome": (kind: "mat.pbr", params: {"color": [0.95, 0.95, 0.95, 1.0], "metallic": 1.0, "roughness": 0.05}, pos: [200.0, 820.0]),
-        "/content": (kind: "tex.composite", inputs: {"layer1": "content_look", "layer2": "content_title"}, pos: [400.0, 1566.0]),
+        "/content": (kind: "tex.composite", inputs: {"in0": "content_look", "in1": "content_title"}, pos: [400.0, 1566.0]),
         "/content_bg": (kind: "tex.noise", params: {"amplitude": 1.0, "frequency": 3.0, "height": 720, "speed": 0.15, "width": 1280}, pos: [0.0, 1471.0]),
         "/content_look": (kind: "tex.lookup", params: {"palette": "magma"}, inputs: {"in": "content_bg"}, pos: [200.0, 1485.0]),
         "/content_title": (kind: "tex.text", params: {"height": 720, "position": [0.5, 0.3], "size": 180.0, "style": "Bold", "text": "penumbra", "width": 1280}, pos: [200.0, 1613.0]),

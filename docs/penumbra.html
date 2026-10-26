@@ -230,6 +230,7 @@ details.target { outline: 2px solid var(--accent); }
 <tr><td><code>view</code></td><td>silver</td><td>one camera</td><td><code>view</code></td></tr>
 </tbody>
 </table>
+<p>Some nodes take any number of inputs of one kind: <a class="ref" href="#tex.composite"><code>tex.composite</code></a>, <a class="ref" href="#tex.switch"><code>tex.switch</code></a>, <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a>, <a class="ref" href="#chan.merge"><code>chan.merge</code></a>, <a class="ref" href="#geo.merge"><code>geo.merge</code></a> and <a class="ref" href="#light.merge"><code>light.merge</code></a>. Their inputs are numbered from 0 (<code>in0</code>, <code>in1</code>, ...). The node shows the wired ones and one free input below the last; wire into the free one and the next appears. An input left empty in between stays, because the order counts: the composite's layers, the switch's index. <a class="ref" href="#node.connect"><code>node.connect</code></a> without <code>input</code> takes the next free one. Up to 64 fit.</p>
 <p>The families:</p>
 <ul>
 <li><strong><code>tex</code></strong>: pictures. Generators (noise, constant, text, image, video, a PSD layer), filters (level, blur, transform, ...), compositing, a shader node for anything else, <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> for projection mapping, <a class="ref" href="#tex.render"><code>tex.render</code></a> for 3D.
@@ -1079,7 +1080,7 @@ water      15
 </li>
 <li>Per projector: <a class="ref" href="#tex.remap"><code>tex.remap</code></a> with the content as <code>in</code> and a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> of <code>objects/proj_to_cam_smooth_N.exr</code> as <code>map</code>, <code>extend</code> zero.
 </li>
-<li><a class="ref" href="#tex.blend_weight"><code>tex.blend_weight</code></a>: the remap as <code>in</code>, a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> of <code>objects/weight_N.png</code> as <code>weight</code>. For content with thin lines, outlines or text, <code>mode</code> detail and a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> of <code>objects/detail_N.png</code> as <code>detail</code> (see &quot;Small features from one projector&quot; above). A <a class="ref" href="#tex.composite"><code>tex.composite</code></a> multiply with the weight as layer2 does the same as <code>smooth</code> mode.
+<li><a class="ref" href="#tex.blend_weight"><code>tex.blend_weight</code></a>: the remap as <code>in</code>, a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> of <code>objects/weight_N.png</code> as <code>weight</code>. For content with thin lines, outlines or text, <code>mode</code> detail and a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> of <code>objects/detail_N.png</code> as <code>detail</code> (see &quot;Small features from one projector&quot; above). A <a class="ref" href="#tex.composite"><code>tex.composite</code></a> multiply with the weight as in1 does the same as <code>smooth</code> mode.
 </li>
 <li>Into that projector's <a class="ref" href="#out.projector"><code>out.projector</code></a>.
 </li>
@@ -1108,7 +1109,7 @@ water      15
 <p>penumbra-cli ctl projector.match '{&quot;camera&quot;: &quot;/cam&quot;, &quot;projectors&quot;: [&quot;/proj_a&quot;, &quot;/proj_b&quot;]}' penumbra-cli ctl projector.flatfield '{&quot;camera&quot;: &quot;/cam&quot;, &quot;projectors&quot;: [&quot;/proj_a&quot;, &quot;/proj_b&quot;], &quot;scans&quot;: [&quot;scan/proj_a&quot;, &quot;scan/proj_b&quot;], &quot;even&quot;: &quot;colour&quot;}'</p>
 <p><a class="ref" href="#projector.flatfield"><code>projector.flatfield</code></a> connects a gain map and a black lift to each <a class="ref" href="#out.projector"><code>out.projector</code></a>.</p>
 <p><strong>6. Content.</strong> In the example it is there already: the projectors show it as soon as their displays are set. In an empty project the base, for projector A (B the same with <code>_b</code>, <code>height_1</code>, <code>weight_1</code>):</p>
-<p>penumbra-cli ctl node.batch '{&quot;ops&quot;: [ {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/land_keys&quot;, &quot;kind&quot;: &quot;tex.ramp&quot;, &quot;params&quot;: {&quot;width&quot;: 256, &quot;height&quot;: 1, &quot;keep_size&quot;: true, &quot;keys&quot;: &quot;0 0.02 0.16 0.03\n0.3 0.188 0.402 0.061\n0.55 0.578 0.456 0.102\n0.75 0.305 0.127 0.045\n0.9 0.42 0.4 0.38\n1 0.6 0.6 0.6&quot;}}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/height_a&quot;, &quot;kind&quot;: &quot;tex.image_file&quot;, &quot;params&quot;: {&quot;file&quot;: &quot;relief/height_0.exr&quot;}}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/weight_a&quot;, &quot;kind&quot;: &quot;tex.image_file&quot;, &quot;params&quot;: {&quot;file&quot;: &quot;relief/weight_0.png&quot;}}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/land_a&quot;, &quot;kind&quot;: &quot;tex.lookup&quot;}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/contour_a&quot;, &quot;kind&quot;: &quot;tex.contour&quot;, &quot;params&quot;: {&quot;mode&quot;: &quot;alpha&quot;, &quot;color&quot;: [0, 0, 0, 0.6]}}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/map_a&quot;, &quot;kind&quot;: &quot;tex.composite&quot;}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/out_a&quot;, &quot;kind&quot;: &quot;tex.composite&quot;, &quot;params&quot;: {&quot;op&quot;: &quot;multiply&quot;}}]}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/height_a&quot;, &quot;to&quot;: &quot;/land_a&quot;, &quot;input&quot;: &quot;in&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/land_keys&quot;, &quot;to&quot;: &quot;/land_a&quot;, &quot;input&quot;: &quot;lut&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/height_a&quot;, &quot;to&quot;: &quot;/contour_a&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/land_a&quot;, &quot;to&quot;: &quot;/map_a&quot;, &quot;input&quot;: &quot;layer1&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/contour_a&quot;, &quot;to&quot;: &quot;/map_a&quot;, &quot;input&quot;: &quot;layer2&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/map_a&quot;, &quot;to&quot;: &quot;/out_a&quot;, &quot;input&quot;: &quot;layer1&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/weight_a&quot;, &quot;to&quot;: &quot;/out_a&quot;, &quot;input&quot;: &quot;layer2&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/out_a&quot;, &quot;to&quot;: &quot;/proj_a&quot;, &quot;input&quot;: &quot;in&quot;}'</p>
+<p>penumbra-cli ctl node.batch '{&quot;ops&quot;: [ {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/land_keys&quot;, &quot;kind&quot;: &quot;tex.ramp&quot;, &quot;params&quot;: {&quot;width&quot;: 256, &quot;height&quot;: 1, &quot;keep_size&quot;: true, &quot;keys&quot;: &quot;0 0.02 0.16 0.03\n0.3 0.188 0.402 0.061\n0.55 0.578 0.456 0.102\n0.75 0.305 0.127 0.045\n0.9 0.42 0.4 0.38\n1 0.6 0.6 0.6&quot;}}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/height_a&quot;, &quot;kind&quot;: &quot;tex.image_file&quot;, &quot;params&quot;: {&quot;file&quot;: &quot;relief/height_0.exr&quot;}}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/weight_a&quot;, &quot;kind&quot;: &quot;tex.image_file&quot;, &quot;params&quot;: {&quot;file&quot;: &quot;relief/weight_0.png&quot;}}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/land_a&quot;, &quot;kind&quot;: &quot;tex.lookup&quot;}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/contour_a&quot;, &quot;kind&quot;: &quot;tex.contour&quot;, &quot;params&quot;: {&quot;mode&quot;: &quot;alpha&quot;, &quot;color&quot;: [0, 0, 0, 0.6]}}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/map_a&quot;, &quot;kind&quot;: &quot;tex.composite&quot;}, {&quot;op&quot;: &quot;create&quot;, &quot;path&quot;: &quot;/out_a&quot;, &quot;kind&quot;: &quot;tex.composite&quot;, &quot;params&quot;: {&quot;op&quot;: &quot;multiply&quot;}}]}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/height_a&quot;, &quot;to&quot;: &quot;/land_a&quot;, &quot;input&quot;: &quot;in&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/land_keys&quot;, &quot;to&quot;: &quot;/land_a&quot;, &quot;input&quot;: &quot;lut&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/height_a&quot;, &quot;to&quot;: &quot;/contour_a&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/land_a&quot;, &quot;to&quot;: &quot;/map_a&quot;, &quot;input&quot;: &quot;in0&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/contour_a&quot;, &quot;to&quot;: &quot;/map_a&quot;, &quot;input&quot;: &quot;in1&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/map_a&quot;, &quot;to&quot;: &quot;/out_a&quot;, &quot;input&quot;: &quot;in0&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/weight_a&quot;, &quot;to&quot;: &quot;/out_a&quot;, &quot;input&quot;: &quot;in1&quot;}' penumbra-cli ctl node.connect '{&quot;from&quot;: &quot;/out_a&quot;, &quot;to&quot;: &quot;/proj_a&quot;, &quot;input&quot;: &quot;in&quot;}'</p>
 <p>The moving layers of the example (sun, tide, snow line; its README says how they are made) are copied over with copy and paste in the editor, or by opening the example's <code>project.ron</code> beside your own.</p>
 <p><strong>Looking without the room.</strong> The example's <code>/view</code> puts both projectors' pictures into the camera's picture (<a class="ref" href="#tex.remap"><code>tex.remap</code></a> through each scan's <code>cam_to_proj</code>) and multiplies them by a photo of the relief lit white by each projector. For your own scan, point <code>/cam_to_proj_a</code> and <code>/cam_to_proj_b</code> at <code>scan/proj_a/cam_to_proj.exr</code> and <code>scan/proj_b/cam_to_proj.exr</code>; the photos are the first camera picture of a scan with <code>&quot;frames&quot;: true</code> (<a class="ref" href="#scan.capture"><code>scan.capture</code></a>). <code>/upright</code> turns the camera's picture by a quarter (the example's camera stood on its side); set its <code>flop</code>, <code>flip_x</code> and <code>flip_y</code> for yours. At the object itself, look at the object.</p>
 </div></details>
@@ -1555,15 +1556,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 </div></details>
-<details class="entry node" id="tex.composite"><summary><code class="name">tex.composite</code><span class="sum">Lays up to four pictures on top of each other: over, add, multiply, screen and other blend modes</span></summary>
+<details class="entry node" id="tex.composite"><summary><code class="name">tex.composite</code><span class="sum">Lays pictures on top of each other: over, add, multiply, screen and other blend modes</span></summary>
 <div class="body">
-<p>Lays up to four pictures on top of each other: over, add, multiply, screen and other blend modes</p>
+<p>Lays pictures on top of each other: over, add, multiply, screen and other blend modes</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>layer1</code> <span class="kind">tex</span>: The bottom layer. The output has the size of the first connected layer</li>
-<li><code>layer2</code> <span class="kind">tex</span></li>
-<li><code>layer3</code> <span class="kind">tex</span></li>
-<li><code>layer4</code> <span class="kind">tex</span></li>
+<li><code>in0 .. in63</code> <span class="kind">tex</span>: The layers, in0 at the bottom. The output has the size of the first connected layer Any number, up to 64: each one wired adds a free slot below it.</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -1573,11 +1571,11 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>op</code></td><td>over | add | multiply | screen | subtract | difference | maximum | minimum | average | inside | outside | atop | overlay | color | luminosity</td><td><code>&quot;over&quot;</code></td><td></td><td>How each layer goes onto what lies below it: layer2 onto layer1, then layer3 onto that, ...<ul><li><code>over</code>: the layer in front, covering by its alpha</li><li><code>add</code>: both summed: brighter, black adds nothing</li><li><code>multiply</code>: both multiplied: darker, white changes nothing</li><li><code>screen</code>: the opposite of multiply: lighter, black changes nothing</li><li><code>subtract</code>: the picture below minus the layer's colour</li><li><code>difference</code>: how far the colours differ, per channel</li><li><code>maximum</code>: the brighter of both, per channel</li><li><code>minimum</code>: the darker of both, per channel</li><li><code>average</code>: half of each</li><li><code>inside</code>: the layer only where the picture below is (its alpha)</li><li><code>outside</code>: the layer only where the picture below is not</li><li><code>atop</code>: the layer over the picture below, only where that is</li><li><code>overlay</code>: darkens the dark and brightens the bright parts of the picture below by the layer</li><li><code>color</code>: the layer's hue and saturation at the brightness below (tinting a grey picture)</li><li><code>luminosity</code>: the layer's brightness with the hue and saturation below</li></ul></td></tr>
+<tr><td><code>op</code></td><td>over | add | multiply | screen | subtract | difference | maximum | minimum | average | inside | outside | atop | overlay | color | luminosity</td><td><code>&quot;over&quot;</code></td><td></td><td>How each layer goes onto what lies below it: in1 onto in0, then in2 onto that, ...<ul><li><code>over</code>: the layer in front, covering by its alpha</li><li><code>add</code>: both summed: brighter, black adds nothing</li><li><code>multiply</code>: both multiplied: darker, white changes nothing</li><li><code>screen</code>: the opposite of multiply: lighter, black changes nothing</li><li><code>subtract</code>: the picture below minus the layer's colour</li><li><code>difference</code>: how far the colours differ, per channel</li><li><code>maximum</code>: the brighter of both, per channel</li><li><code>minimum</code>: the darker of both, per channel</li><li><code>average</code>: half of each</li><li><code>inside</code>: the layer only where the picture below is (its alpha)</li><li><code>outside</code>: the layer only where the picture below is not</li><li><code>atop</code>: the layer over the picture below, only where that is</li><li><code>overlay</code>: darkens the dark and brightens the bright parts of the picture below by the layer</li><li><code>color</code>: the layer's hue and saturation at the brightness below (tinting a grey picture)</li><li><code>luminosity</code>: the layer's brightness with the hue and saturation below</li></ul></td></tr>
 <tr><td><code>swap</code></td><td>bool</td><td><code>false</code></td><td></td><td>Swap the order of each step: the picture below onto the layer (TouchDesigner's Swap Operation Order)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a></p>
 </div></details>
 <details class="entry node" id="tex.constant"><summary><code class="name">tex.constant</code><span class="sum">A picture in one colour: a background, a fill, a black to start from</span></summary>
 <div class="body">
@@ -1760,7 +1758,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ol>
 <p>Until the end of the chain has made a first frame, and while <code>reset</code> is on, <code>initial</code> is passed on. R, the reset button or <a class="ref" href="#node.reset"><code>node.reset</code></a> clear the loop the same way.</p>
 <h5 id="tex.feedback-keeping-it-in-check">Keeping it in check</h5>
-<p>Every step repeats every frame, so small values matter: a <a class="ref" href="#tex.level"><code>tex.level</code></a> with <code>brightness</code> 0.96 lets a trail die out within a few seconds, at 1 nothing ever fades and the picture fills up. A <a class="ref" href="#tex.transform"><code>tex.transform</code></a> with <code>scale</code> 1.01 zooms the trails slowly outwards. Mix new content in near the end of the chain (a <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with the content as <code>layer2</code>), or the loop has nothing to work on but <code>initial</code>.</p>
+<p>Every step repeats every frame, so small values matter: a <a class="ref" href="#tex.level"><code>tex.level</code></a> with <code>brightness</code> 0.96 lets a trail die out within a few seconds, at 1 nothing ever fades and the picture fills up. A <a class="ref" href="#tex.transform"><code>tex.transform</code></a> with <code>scale</code> 1.01 zooms the trails slowly outwards. Mix new content in near the end of the chain (a <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with the content as <code>in1</code>), or the loop has nothing to work on but <code>initial</code>.</p>
 <p>With <code>persist</code> on (the default), the loop's last frame goes into the state snapshots, so a restart carries on from where it stopped.</p>
 <h5 id="tex.feedback-example">Example</h5>
 <p>The <code>feedback</code> example project: text drawn over a loop that zooms, turns, dims and shifts the hue of the last frame a little, so the text leaves trails that drift outwards and change colour.</p>
@@ -2489,30 +2487,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <li><code>sequence</code> <span class="kind">chan</span>: A chan.sequence: its from, to and mix pick the inputs (piece k is in&lt;k&gt;, -1 black, -2 white)</li>
 <li><code>black</code> <span class="kind">tex</span></li>
 <li><code>white</code> <span class="kind">tex</span></li>
-<li><code>in0</code> <span class="kind">tex</span></li>
-<li><code>in1</code> <span class="kind">tex</span></li>
-<li><code>in2</code> <span class="kind">tex</span></li>
-<li><code>in3</code> <span class="kind">tex</span></li>
-<li><code>in4</code> <span class="kind">tex</span></li>
-<li><code>in5</code> <span class="kind">tex</span></li>
-<li><code>in6</code> <span class="kind">tex</span></li>
-<li><code>in7</code> <span class="kind">tex</span></li>
-<li><code>in8</code> <span class="kind">tex</span></li>
-<li><code>in9</code> <span class="kind">tex</span></li>
-<li><code>in10</code> <span class="kind">tex</span></li>
-<li><code>in11</code> <span class="kind">tex</span></li>
-<li><code>in12</code> <span class="kind">tex</span></li>
-<li><code>in13</code> <span class="kind">tex</span></li>
-<li><code>in14</code> <span class="kind">tex</span></li>
-<li><code>in15</code> <span class="kind">tex</span></li>
-<li><code>in16</code> <span class="kind">tex</span></li>
-<li><code>in17</code> <span class="kind">tex</span></li>
-<li><code>in18</code> <span class="kind">tex</span></li>
-<li><code>in19</code> <span class="kind">tex</span></li>
-<li><code>in20</code> <span class="kind">tex</span></li>
-<li><code>in21</code> <span class="kind">tex</span></li>
-<li><code>in22</code> <span class="kind">tex</span></li>
-<li><code>in23</code> <span class="kind">tex</span></li>
+<li><code>in0 .. in63</code> <span class="kind">tex</span>: The pieces: piece k is in&lt;k&gt; Any number, up to 64: each one wired adds a free slot below it.</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -2670,19 +2645,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#spout-receiving-texspout_in">Spout › Receiving: tex.spout_in</a></p>
 </div></details>
-<details class="entry node" id="tex.switch"><summary><code class="name">tex.switch</code><span class="sum">Chooses which of up to eight pictures goes out: cut between scenes or looks, or crossfade</span></summary>
+<details class="entry node" id="tex.switch"><summary><code class="name">tex.switch</code><span class="sum">Chooses which of its pictures goes out: cut between scenes or looks, or crossfade</span></summary>
 <div class="body">
-<p>Chooses which of up to eight pictures goes out: cut between scenes or looks, or crossfade</p>
+<p>Chooses which of its pictures goes out: cut between scenes or looks, or crossfade</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>in0</code> <span class="kind">tex</span></li>
-<li><code>in1</code> <span class="kind">tex</span></li>
-<li><code>in2</code> <span class="kind">tex</span></li>
-<li><code>in3</code> <span class="kind">tex</span></li>
-<li><code>in4</code> <span class="kind">tex</span></li>
-<li><code>in5</code> <span class="kind">tex</span></li>
-<li><code>in6</code> <span class="kind">tex</span></li>
-<li><code>in7</code> <span class="kind">tex</span></li>
+<li><code>in0 .. in63</code> <span class="kind">tex</span>: The pictures to choose from Any number, up to 64: each one wired adds a free slot below it.</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -2699,7 +2667,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <div class="more">
 <h5 id="tex.switch-what-it-is-for">What it is for</h5>
-<p>A switch decides which picture goes on. Wire up to eight chains into <code>in0</code> to <code>in7</code>, say the scenes of a show, the looks of a projection or a test pattern beside the real content, and <code>index</code> picks the one that comes out. Turn <code>index</code> by hand, or bind it to whatever should change the picture during the show: a key, an OSC or MIDI control, a timer.</p>
+<p>A switch decides which picture goes on. Wire chains into <code>in0</code>, <code>in1</code> and on (each one wired adds a free input below it), say the scenes of a show, the looks of a projection or a test pattern beside the real content, and <code>index</code> picks the one that comes out. Turn <code>index</code> by hand, or bind it to whatever should change the picture during the show: a key, an OSC or MIDI control, a timer.</p>
 <h5 id="tex.switch-which-input">Which input</h5>
 <p><code>index</code> counts the wired inputs from 0, in order, and skips the gaps: with <code>in0</code>, <code>in1</code> and <code>in4</code> wired, 2 is <code>in4</code>. An index past the last input shows the last one.</p>
 <h5 id="tex.switch-cut-or-crossfade">Cut or crossfade</h5>
@@ -3294,21 +3262,18 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
-<details class="entry node" id="chan.merge"><summary><code class="name">chan.merge</code><span class="sum">Puts the channels of up to four inputs together into one</span></summary>
+<details class="entry node" id="chan.merge"><summary><code class="name">chan.merge</code><span class="sum">Puts the channels of its inputs together into one</span></summary>
 <div class="body">
-<p>Puts the channels of up to four inputs together into one</p>
+<p>Puts the channels of its inputs together into one</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>a</code> <span class="kind">chan</span></li>
-<li><code>b</code> <span class="kind">chan</span></li>
-<li><code>c</code> <span class="kind">chan</span></li>
-<li><code>d</code> <span class="kind">chan</span></li>
+<li><code>in0 .. in63</code> <span class="kind">chan</span>: The channels to put together, in0's first Any number, up to 64: each one wired adds a free slot below it.</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">chan</span></li>
 </ul>
-<p class="mentions">Mentioned in: <a href="#dmx-setting-up">DMX › Setting up</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#dmx-setting-up">DMX › Setting up</a></p>
 </div></details>
 <details class="entry node" id="chan.mouse_in"><summary><code class="name">chan.mouse_in</code><span class="sum">The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</span></summary>
 <div class="body">
@@ -3665,19 +3630,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Combines several pieces of geometry into one, to render them together</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>in0</code> <span class="kind">geo</span></li>
-<li><code>in1</code> <span class="kind">geo</span></li>
-<li><code>in2</code> <span class="kind">geo</span></li>
-<li><code>in3</code> <span class="kind">geo</span></li>
-<li><code>in4</code> <span class="kind">geo</span></li>
-<li><code>in5</code> <span class="kind">geo</span></li>
-<li><code>in6</code> <span class="kind">geo</span></li>
-<li><code>in7</code> <span class="kind">geo</span></li>
+<li><code>in0 .. in63</code> <span class="kind">geo</span>: The pieces of geometry Any number, up to 64: each one wired adds a free slot below it.</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">geo</span>: All inputs as one; part ids continue from input to input</li>
 </ul>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="geo.primitive"><summary><code class="name">geo.primitive</code><span class="sum">A simple shape: a box, a sphere or a plane, centred on the origin</span></summary>
 <div class="body">
@@ -3945,15 +3904,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Combines several lights for one render</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>in0</code> <span class="kind">light</span></li>
-<li><code>in1</code> <span class="kind">light</span></li>
-<li><code>in2</code> <span class="kind">light</span></li>
-<li><code>in3</code> <span class="kind">light</span></li>
+<li><code>in0 .. in63</code> <span class="kind">light</span>: The lights Any number, up to 64: each one wired adds a free slot below it.</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">light</span></li>
 </ul>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="light.point"><summary><code class="name">light.point</code><span class="sum">Light from a point in every direction, like a bare bulb</span></summary>
 <div class="body">
@@ -4579,9 +4536,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>Drive a param (or one component, /t.translate.0) with a channel; {param, from, channel?}</p>
 </div></details>
-<details class="entry command" id="node.connect"><summary><code class="name">node.connect</code><span class="sum">Connect an output to an input</span></summary>
+<details class="entry command" id="node.connect"><summary><code class="name">node.connect</code><span class="sum">Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers)</span></summary>
 <div class="body">
-<p>Connect an output to an input; {from, output?, to, input?}</p>
+<p>Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers); {from, output?, to, input?}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry command" id="node.copy"><summary><code class="name">node.copy</code><span class="sum">Copy side-by-side nodes with everything inside them; returns the text</span></summary>
 <div class="body">

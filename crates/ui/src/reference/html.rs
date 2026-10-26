@@ -349,9 +349,13 @@ fn node_entry(
         out.push_str("<p>none</p>\n");
     } else {
         out.push_str("<ul>\n");
-        for i in &desc.inputs {
-            let extra = if i.previous { " Sees the previous frame, so it may close a loop." } else { "" };
-            let _ = writeln!(out, "{}", port(&i.name, i.kind, &i.doc, extra));
+        for i in desc.listed_inputs() {
+            let extra = match (i.previous, i.run) {
+                (true, _) => " Sees the previous frame, so it may close a loop.".to_string(),
+                (false, Some(len)) => format!(" {}.", super::run_note(len)),
+                (false, None) => String::new(),
+            };
+            let _ = writeln!(out, "{}", port(&i.name, i.kind, &i.doc, &extra));
         }
         out.push_str("</ul>\n");
     }

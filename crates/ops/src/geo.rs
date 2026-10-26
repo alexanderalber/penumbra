@@ -142,14 +142,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("geo.merge", "Combines several pieces of geometry into one, to render them together")
-            .input("in0", DataKind::Geo)
-            .input("in1", DataKind::Geo)
-            .input("in2", DataKind::Geo)
-            .input("in3", DataKind::Geo)
-            .input("in4", DataKind::Geo)
-            .input("in5", DataKind::Geo)
-            .input("in6", DataKind::Geo)
-            .input("in7", DataKind::Geo)
+            .input_run("in", DataKind::Geo, 2, "The pieces of geometry")
             .output("out", DataKind::Geo)
             .describe_output("out", "All inputs as one; part ids continue from input to input"),
         || Box::new(Merge) as Box<dyn Operator>,

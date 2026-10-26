@@ -97,6 +97,11 @@ fn node_notes(desc: &NodeDesc) -> Vec<String> {
     notes
 }
 
+/// What the reference says about a run of `len` inputs ([`penumbra_graph::InputRun`]).
+pub(crate) fn run_note(len: usize) -> String {
+    format!("Any number, up to {len}: each one wired adds a free slot below it")
+}
+
 fn node_section(out: &mut String, desc: &NodeDesc) {
     let _ = writeln!(out, "### {}\n\n{}\n", desc.kind, desc.summary);
     let notes = node_notes(desc);
@@ -107,9 +112,15 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
         let _ = writeln!(out, "Inputs: none.\n");
     } else {
         let _ = writeln!(out, "Inputs:\n");
-        for i in &desc.inputs {
+        for i in desc.listed_inputs() {
             let previous = if i.previous { " Sees the previous frame, so it may close a loop." } else { "" };
-            let doc = if i.doc.is_empty() { String::new() } else { format!(": {}", i.doc) };
+            let run = i.run.map_or(String::new(), run_note);
+            let doc = match (i.doc.is_empty(), run.is_empty()) {
+                (true, true) => String::new(),
+                (true, false) => format!(": {run}"),
+                (false, true) => format!(": {}", i.doc),
+                (false, false) => format!(": {}. {run}", i.doc.trim_end_matches('.')),
+            };
             let _ = writeln!(out, "- `{}` ({}){doc}{previous}", i.name, kind_name(i.kind));
         }
         out.push('\n');

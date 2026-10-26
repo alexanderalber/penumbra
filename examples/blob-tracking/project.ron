@@ -4,11 +4,11 @@
     version: 2,
     nodes: {
         "/first": (kind: "tex.text", params: {"color": [0.02, 0.02, 0.06, 1.0], "height": 720, "size": 60.0, "style": "Bold", "text": "1", "width": 1280}, binds: {"position.0": "slots:x1", "position.1": "slots:y1"}, pos: [600.0, 0.0]),
-        "/labels": (kind: "tex.composite", inputs: {"layer1": "first", "layer2": "second"}, pos: [800.0, 0.0]),
+        "/labels": (kind: "tex.composite", inputs: {"in0": "first", "in1": "second"}, pos: [800.0, 0.0]),
         "/second": (kind: "tex.text", params: {"color": [0.02, 0.02, 0.06, 1.0], "height": 720, "size": 60.0, "style": "Bold", "text": "2", "width": 1280}, binds: {"position.0": "slots:x2", "position.1": "slots:y2"}, pos: [600.0, 142.0]),
         "/slots": (kind: "chan.null", inputs: {"in": "track:chans"}, pos: [400.0, 0.0]),
         "/spots": (kind: "tex.shader", params: {"file": "spots.wgsl", "height": 720, "width": 1280}, pos: [0.0, 0.0]),
         "/track": (kind: "tex.blob_track", params: {"detect": "bright", "threshold": 0.5}, inputs: {"in": "spots"}, pos: [200.0, 0.0]),
-        "/view": (kind: "tex.composite", inputs: {"layer1": "spots", "layer2": "labels"}, pos: [200.0, 142.0]),
+        "/view": (kind: "tex.composite", inputs: {"in0": "spots", "in1": "labels"}, pos: [200.0, 142.0]),
     },
 )

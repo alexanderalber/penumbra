@@ -85,7 +85,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add("node.rename", "Rename a node; {path, name}", node_rename);
     add("node.set", "Set params, null resets to the default; {path, params: {name: value}}", node_set);
-    add("node.connect", "Connect an output to an input; {from, output?, to, input?}", node_connect);
+    add(
+        "node.connect",
+        "Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers); {from, output?, to, input?}",
+        node_connect,
+    );
     add("node.disconnect", "Clear an input; {to, input}", node_disconnect);
     add("node.lock", "Lock (hold outputs) or unlock a node; {path, locked?}", node_lock);
     add(
@@ -354,7 +358,17 @@ fn node_kinds(e: &Engine, p: &Json) -> Result<Json> {
         Some(k) => vec![types.desc(k).ok_or_else(|| format!("unknown node kind `{k}`"))?],
         None => types.kinds().filter_map(|k| types.desc(k)).collect(),
     };
-    Ok(json!({"kinds": to_json(&descs)?}))
+    let mut kinds = to_json(&descs)?;
+    // A run of inputs is one entry, not 64.
+    if let Some(list) = kinds.as_array_mut() {
+        for (v, d) in list.iter_mut().zip(&descs) {
+            if let Some(o) = v.as_object_mut() {
+                o.insert("inputs".into(), to_json(&d.listed_inputs())?);
+                o.remove("runs");
+            }
+        }
+    }
+    Ok(json!({"kinds": kinds}))
 }
 
 fn node_list(e: &Engine, p: &Json) -> Result<Json> {
@@ -431,13 +445,14 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             json!({"param": part.to_string(), "from": from})
         })
         .collect();
+    // Of a run of inputs, the wired slots and the next free one, as the editor shows them.
     let inputs: Vec<Json> = desc
-        .inputs
-        .iter()
-        .enumerate()
-        .map(|(i, spec)| {
+        .shown_inputs(|i| node.inputs.get(i).is_some_and(Option::is_some))
+        .into_iter()
+        .filter_map(|i| {
+            let spec = desc.inputs.get(i)?;
             let from = node.inputs.get(i).copied().flatten().and_then(|port| source_name(e, &net, port));
-            json!({"name": spec.name, "kind": spec.kind, "from": from})
+            Some(json!({"name": spec.name, "kind": spec.kind, "from": from}))
         })
         .collect();
     let outputs: Vec<Json> = desc
@@ -692,8 +707,13 @@ pub(crate) fn kind_at<'e>(e: &'e Engine, net: &Network, path: &NodePath) -> Resu
 
 fn input_index(e: &Engine, net: &Network, path: &NodePath, slot: &Slot) -> Result<u32> {
     let d = kind_at(e, net, path)?;
-    let names: Vec<&str> = d.inputs.iter().map(|i| i.name.as_str()).collect();
-    slot_index(slot, &names, "input", path)
+    match slot {
+        Slot::Index(i) => Ok(*i),
+        Slot::Name(n) => d
+            .input_index(n)
+            .and_then(|i| u32::try_from(i).ok())
+            .ok_or_else(|| CommandError(format!("{path} has no input `{n}`; inputs: {}", d.input_names()))),
+    }
 }
 
 fn node_connect(e: &Engine, p: &Json) -> Result<Json> {
@@ -704,8 +724,7 @@ fn node_connect(e: &Engine, p: &Json) -> Result<Json> {
         #[serde(default)]
         output: Slot,
         to: NodePath,
-        #[serde(default)]
-        input: Slot,
+        input: Option<Slot>,
     }
     let mut a: A = args(p)?;
     let net = e.session().doc().snapshot();
@@ -713,13 +732,26 @@ fn node_connect(e: &Engine, p: &Json) -> Result<Json> {
     if let Some(port) = crate::components::port_node(e, &net, &a.from, &a.output.json(), PortRole::Out)? {
         (a.from, a.output) = (port, Slot::Index(0));
     }
-    if let Some(port) = crate::components::port_node(e, &net, &a.to, &a.input.json(), PortRole::In)? {
-        (a.to, a.input) = (port, Slot::Index(0));
+    let mut named = a.input.is_some();
+    let mut slot = a.input.take().unwrap_or_default();
+    if let Some(port) = crate::components::port_node(e, &net, &a.to, &slot.json(), PortRole::In)? {
+        (a.to, slot, named) = (port, Slot::Index(0), true);
     }
     let d = kind_at(e, &net, &a.from)?;
     let names: Vec<&str> = d.outputs.iter().map(|o| o.name.as_str()).collect();
     let output = slot_index(&a.output, &names, "output", &a.from)?;
-    let input = input_index(e, &net, &a.to, &a.input)?;
+    let input = if named {
+        input_index(e, &net, &a.to, &slot)?
+    } else {
+        // No input named: the first of the output's kind, or the next free slot of a run.
+        let kind = d.outputs.get(output as usize).map(|o| o.kind);
+        let reader = require(&net, &a.to)?;
+        let slots = net.node(reader).map(|n| n.inputs.clone()).unwrap_or_default();
+        let to = kind_at(e, &net, &a.to)?;
+        kind.and_then(|k| to.free_input(k, |i| slots.get(i).is_some_and(Option::is_some)))
+            .and_then(|i| u32::try_from(i).ok())
+            .unwrap_or(0)
+    };
     Ok(outcome(&edit(e, &[Op::Connect { from: a.from, output, to: a.to, input }], "")?))
 }
 

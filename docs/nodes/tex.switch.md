@@ -1,6 +1,6 @@
 ## What it is for
 
-A switch decides which picture goes on. Wire up to eight chains into `in0` to `in7`, say the
+A switch decides which picture goes on. Wire chains into `in0`, `in1` and on (each one wired adds a free input below it), say the
 scenes of a show, the looks of a projection or a test pattern beside the real content, and
 `index` picks the one that comes out. Turn `index` by hand, or bind it to whatever should change
 the picture during the show: a key, an OSC or MIDI control, a timer.

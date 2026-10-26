@@ -16,6 +16,13 @@ kind, and the wire takes that kind's colour:
 | `light` | yellow | one or more lights | `light` |
 | `view` | silver | one camera | `view` |
 
+Some nodes take any number of inputs of one kind: `tex.composite`, `tex.switch`,
+`tex.sequence`, `chan.merge`, `geo.merge` and `light.merge`. Their inputs are numbered from 0
+(`in0`, `in1`, ...). The node shows the wired ones and one free input below the last; wire into
+the free one and the next appears. An input left empty in between stays, because the order counts:
+the composite's layers, the switch's index. `node.connect` without `input` takes the next free one.
+Up to 64 fit.
+
 The families:
 
 - **`tex`**: pictures. Generators (noise, constant, text, image, video, a PSD layer), filters
