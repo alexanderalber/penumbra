@@ -99,11 +99,10 @@ pub struct PenumbraApp {
     shots: Vec<Shot>,
     next_token: u64,
     message: Option<(String, Instant)>,
-    /// The editing mode the visuals were last set for (`true`: Claude's blue).
-    themed: Option<bool>,
-    /// The editing mode the native title bar was last coloured for, and the window title last
-    /// sent.
-    title_bar: Option<bool>,
+    /// How far the visuals were last turned towards Claude's blue (0 to 1, fading between).
+    themed: Option<f32>,
+    /// How blue the native title bar was last coloured, and the window title last sent.
+    title_bar: Option<f32>,
     title: String,
     gpu: Option<penumbra_gpu::Gpu>,
     /// Surface reconfigure failures already answered, and the resize in progress.
@@ -190,7 +189,7 @@ impl PenumbraApp {
             engine.spacenav().start();
         }
         let layout = Layout::load(Some(engine.session().dir()));
-        cc.egui_ctx.set_visuals(theme::visuals(false));
+        cc.egui_ctx.set_visuals(theme::visuals(0.0));
         Self {
             control: options.control,
             adapter,
@@ -689,9 +688,20 @@ impl PenumbraApp {
         // user's own edit ends a hold.
         let claude = status.edit.mode == "claude";
         let can_edit = !claude || status.edit.hold;
-        if self.themed != Some(claude) {
-            self.themed = Some(claude);
-            ctx.set_visuals(theme::visuals(claude));
+        // The blue fades in and out instead of switching at once.
+        let fade = |id: &str, on: bool| {
+            ctx.animate_bool_with_time_and_easing(
+                egui::Id::new(id),
+                on,
+                theme::FADE_SECONDS,
+                egui::emath::easing::cubic_in_out,
+            )
+        };
+        let tint = fade("theme.claude", claude);
+        let picture = theme::picture_bg(fade("theme.claimed", !can_edit));
+        if self.themed != Some(tint) {
+            self.themed = Some(tint);
+            ctx.set_visuals(theme::visuals(tint));
         }
         self.changes.refresh(session.doc());
         let recent = self.changes.recent(now);
@@ -872,7 +882,7 @@ impl PenumbraApp {
                             target,
                             outputs,
                             view.time,
-                            theme::picture_bg(!can_edit),
+                            picture,
                             &mut self.textures,
                             map.as_ref(),
                             shapes.as_ref(),
@@ -951,7 +961,7 @@ impl PenumbraApp {
             self.library = (crate::components::library_names(&self.engine), Some(now));
         }
         let period = view.time.map_or(1.0 / 60.0, |t| t.rate.period().as_secs_f64());
-        let background = if claude { theme::BG_CLAUDE } else { theme::BG_USER };
+        let background = theme::editor_bg(tint);
         let (thumbnails, passive) = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
@@ -1004,7 +1014,7 @@ impl PenumbraApp {
             can_edit,
         };
         self.helpers.show(&ctx, &helpers, &mut self.auto, &mut actions);
-        self.viewer_window(&ctx, &net, &view, can_edit, &mut actions);
+        self.viewer_window(&ctx, &net, &view, can_edit, picture, &mut actions);
         self.fly(&ctx, &net, &view, can_edit, now, &mut actions);
         let scale = self.layout.options.chan_scale;
         if let Some(changed) =
@@ -1070,6 +1080,7 @@ impl PenumbraApp {
         net: &penumbra_graph::Network,
         view: &penumbra_engine::ViewFrame,
         can_edit: bool,
+        background: Color32,
         actions: &mut Vec<Action>,
     ) {
         let opening = !std::mem::replace(&mut self.window_viewer_shown, false);
@@ -1087,7 +1098,6 @@ impl PenumbraApp {
             egui::ViewportBuilder::default().with_title(title.clone()).with_inner_size([1280.0, 800.0]);
         let (window, textures, auto) = (&mut self.window_viewer, &mut self.textures, &mut self.auto);
         let mut close = false;
-        let background = theme::picture_bg(!can_edit);
         let frame = view.time;
         let mut content = |ui: &mut Ui| {
             let (map, shapes, names) =
@@ -1574,10 +1584,10 @@ impl eframe::App for PenumbraApp {
         self.keep_place(ui.ctx());
         // The native title bar follows the theme (Windows 11; elsewhere nothing happens).
         if self.title_bar != self.themed
-            && let Some(claude) = self.themed
+            && let Some(tint) = self.themed
         {
-            self.title_bar = Some(claude);
-            let v = theme::visuals(claude);
+            self.title_bar = Some(tint);
+            let v = theme::visuals(tint);
             if !crate::titlebar::set_colors(frame, v.panel_fill, v.text_color()) {
                 log::debug!("the title bar colour cannot be set on this system");
             }

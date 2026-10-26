@@ -18,19 +18,29 @@ pub const NEGATIVE: Color32 = Color32::from_rgb(225, 95, 85);
 pub const BG_USER: Color32 = Color32::from_gray(28);
 pub const BG_CLAUDE: Color32 = Color32::from_rgb(18, 30, 58);
 
-/// The whole window's look: egui's dark theme while the user edits, the same turned dark blue
-/// while Claude edits, so the mode reads as a global theme switch (every panel, not only the
-/// editor). Widgets stay usable to look at; editing ones are disabled by the panels.
-pub fn visuals(claude: bool) -> egui::Visuals {
+/// How long the window takes to turn blue when Claude takes the turn, and back when it ends.
+pub const FADE_SECONDS: f32 = 0.5;
+
+/// `a` at 0, `b` at 1, in between on the way.
+pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+    a.lerp_to_gamma(b, t.clamp(0.0, 1.0))
+}
+
+/// The whole window's look: egui's dark theme while the user edits (`claude` 0), the same turned
+/// dark blue while Claude edits (`claude` 1), so the mode reads as a global theme switch (every
+/// panel, not only the editor). Values in between are the fade from one to the other. Widgets
+/// stay usable to look at; editing ones are disabled by the panels.
+pub fn visuals(claude: f32) -> egui::Visuals {
     let mut v = egui::Visuals::dark();
-    if !claude {
+    if claude <= 0.0 {
         return v;
     }
     // Every grey of the dark theme moved towards blue, keeping its brightness order.
     let blue = |g: Color32| {
         let l = f32::from(g.r());
         let c = |k: f32| (l * k).round().clamp(0.0, 255.0) as u8;
-        Color32::from_rgba_premultiplied(c(0.62), c(0.95), c(1.75).max(g.r()), g.a())
+        let full = Color32::from_rgba_premultiplied(c(0.62), c(0.95), c(1.75).max(g.r()), g.a());
+        mix(g, full, claude)
     };
     v.panel_fill = blue(v.panel_fill);
     v.window_fill = blue(v.window_fill);
@@ -52,9 +62,14 @@ pub fn visuals(claude: bool) -> egui::Visuals {
     v
 }
 
-/// Background of picture areas (viewer) and of the canvas in the current mode.
-pub fn picture_bg(claude: bool) -> Color32 {
-    if claude { Color32::from_rgb(10, 16, 32) } else { Color32::from_gray(16) }
+/// Background of picture areas (viewer) and of the canvas, from the user's (0) to Claude's (1).
+pub fn picture_bg(claude: f32) -> Color32 {
+    mix(Color32::from_gray(16), Color32::from_rgb(10, 16, 32), claude)
+}
+
+/// The editor's background, from the user's (0) to Claude's (1).
+pub fn editor_bg(claude: f32) -> Color32 {
+    mix(BG_USER, BG_CLAUDE, claude)
 }
 
 /// How long nodes touched by Claude or the file stay outlined.
