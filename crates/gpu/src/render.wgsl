@@ -654,16 +654,22 @@ fn fs_shadow(v: VOut) {
 // it along the ray (the blending), and its clip depth in alpha (blended to the nearest). With
 // alpha a and straight colour c it passes (1 - a) of the light, tinted towards c, fully from
 // alpha one half: (1 - a) * mix(1, c, min(2a, 1)). Opaque passes nothing, invisible passes
-// all, and a cut-out's colourless clear texels tint nothing.
+// all, and a cut-out's colourless clear texels tint nothing. The opaque parts of a see-through
+// surface go in as black too, though the shadow map holds them: this map has its own, coarser
+// texels, and without them a seam of untinted light would show where opaque meets see-through.
 @fragment
 fn fs_tint(v: VOut) -> @location(0) vec4f {
     let c = surface(texel(v), lines(v));
-    if c.a >= OPAQUE || c.a < 0.002 {
+    if c.a < 0.002 {
         discard;
+    }
+    let depth = (frame.clip * vec4f(v.world, 1.0)).z;
+    if c.a >= OPAQUE {
+        return vec4f(0.0, 0.0, 0.0, depth);
     }
     let straight = clamp(c.rgb / c.a, vec3f(0.0), vec3f(1.0));
     let through = (1.0 - c.a) * mix(vec3f(1.0), straight, min(2.0 * c.a, 1.0));
-    return vec4f(through, (frame.clip * vec4f(v.world, 1.0)).z);
+    return vec4f(through, depth);
 }
 
 // The measuring and data passes: an occluder writes nothing (as the cleared target) but hides
