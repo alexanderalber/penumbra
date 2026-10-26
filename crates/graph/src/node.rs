@@ -685,10 +685,12 @@ impl Density {
     }
 }
 
-/// All node types known to a process, by kind.
+/// All node types known to a process, by kind, and the kinds they were known by before.
 #[derive(Default, Clone)]
 pub struct NodeTypes {
     types: BTreeMap<String, Arc<dyn NodeType>>,
+    /// Old kind -> the kind it is now ([`NodeTypes::renamed_kind`]).
+    renamed: BTreeMap<String, String>,
 }
 
 impl NodeTypes {
@@ -703,8 +705,39 @@ impl NodeTypes {
         if self.types.contains_key(&desc.kind) {
             return Err(Error::new(format!("node type `{}` registered twice", desc.kind)));
         }
+        if let Some(new) = self.renamed.get(&desc.kind) {
+            return Err(Error::new(format!("`{}` is the old name of `{new}`", desc.kind)));
+        }
         self.types.insert(desc.kind.clone(), Arc::new(node_type));
         Ok(())
+    }
+
+    /// Says that nodes of kind `old` are of kind `new` now. Readers of node kinds as text (the
+    /// project file, component files, copied nodes, commands) take `old` as `new`
+    /// ([`NodeTypes::current_kind`]), so files written before the rename keep loading. `new`
+    /// must be registered and `old` must not be, and an old kind is renamed only once.
+    pub fn renamed_kind(&mut self, old: &str, new: &str) -> Result<(), Error> {
+        if !self.types.contains_key(new) {
+            return Err(Error::new(format!("`{old}` is renamed to `{new}`, which is not registered")));
+        }
+        if self.types.contains_key(old) {
+            return Err(Error::new(format!("`{old}` is renamed to `{new}`, but is registered itself")));
+        }
+        if let Some(before) = self.renamed.get(old) {
+            return Err(Error::new(format!("`{old}` is renamed twice, to `{before}` and to `{new}`")));
+        }
+        self.renamed.insert(old.to_string(), new.to_string());
+        Ok(())
+    }
+
+    /// The kind `kind` is known by now, when it is an old name ([`NodeTypes::renamed_kind`]).
+    pub fn current_kind(&self, kind: &str) -> Option<&str> {
+        self.renamed.get(kind).map(String::as_str)
+    }
+
+    /// Every old kind with the kind it is now.
+    pub fn renamed_kinds(&self) -> impl Iterator<Item = (&str, &str)> + '_ {
+        self.renamed.iter().map(|(o, n)| (o.as_str(), n.as_str()))
     }
 
     pub fn get(&self, kind: &str) -> Option<&Arc<dyn NodeType>> {
@@ -876,6 +909,21 @@ mod tests {
         let bad_param = NodeDesc::new("chan.z", "").param(ParamSpec::float("x", 9.0).clamp(0.0, 1.0));
         assert!(types.register(ty(bad_param)).is_err());
         assert_eq!(types.kinds().collect::<Vec<_>>(), ["chan.lfo"]);
+    }
+
+    #[test]
+    fn kind_renames_are_validated() {
+        let mut types = NodeTypes::new();
+        types.register(ty(NodeDesc::new("chan.lfo", "LFO"))).unwrap();
+        types.register(ty(NodeDesc::new("chan.wave", "Wave"))).unwrap();
+        assert!(types.renamed_kind("chan.osc", "chan.nope").is_err(), "the new kind is not registered");
+        assert!(types.renamed_kind("chan.wave", "chan.lfo").is_err(), "the old kind is still registered");
+        types.renamed_kind("chan.osc", "chan.lfo").unwrap();
+        assert!(types.renamed_kind("chan.osc", "chan.wave").is_err(), "renamed twice");
+        assert!(types.register(ty(NodeDesc::new("chan.osc", "again"))).is_err(), "an old name is taken");
+        assert_eq!(types.current_kind("chan.osc"), Some("chan.lfo"));
+        assert_eq!(types.current_kind("chan.lfo"), None);
+        assert!(types.desc("chan.osc").is_none(), "an old name is no kind of its own");
     }
 
     #[test]

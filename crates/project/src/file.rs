@@ -124,7 +124,7 @@ fn desc<'t>(types: &'t NodeTypes, path: &NodePath, kind: &str) -> Result<&'t Nod
 /// whole text (component files, the demo). Checks the syntax, the version, the node kinds and
 /// the connections; param values are checked when the content is applied to a network.
 pub fn parse(text: &str, types: &NodeTypes) -> Result<Content, Error> {
-    read(text, types, FILE_NAME, false, false)
+    Ok(read(text, types, FILE_NAME, false, false)?.0)
 }
 
 /// Reads the text of a project file as a project opens or merges it: a node that does not load
@@ -133,6 +133,12 @@ pub fn parse(text: &str, types: &NodeTypes) -> Result<Content, Error> {
 /// value) fails as a whole; so do the few problems between nodes (a loop, a node inside one
 /// that cannot hold nodes), which the network refuses when the content is applied.
 pub fn load(text: &str, types: &NodeTypes) -> Result<Content, Error> {
+    Ok(read(text, types, FILE_NAME, false, true)?.0)
+}
+
+/// [`load`], and the nodes whose kind the text names by an old name
+/// ([`NodeTypes::renamed_kind`]). The content has them by their new kind already.
+pub fn load_renaming(text: &str, types: &NodeTypes) -> Result<(Content, Vec<RenamedNode>), Error> {
     read(text, types, FILE_NAME, false, true)
 }
 
@@ -140,11 +146,51 @@ pub fn load(text: &str, types: &NodeTypes) -> Result<Content, Error> {
 /// nodes that are not in the text (copied nodes: [`crate::clipboard`]); an input from such a
 /// node gives its output by index, since its kind is not known here.
 pub(crate) fn parse_as(text: &str, types: &NodeTypes, what: &str, outside: bool) -> Result<Content, Error> {
-    read(text, types, what, outside, false)
+    Ok(read(text, types, what, outside, false)?.0)
 }
 
-fn read(text: &str, types: &NodeTypes, what: &str, outside: bool, tolerant: bool) -> Result<Content, Error> {
-    let repr: FileRepr = ron::from_str(text).map_err(|e| Error::new(format!("{what}: {e}")))?;
+/// A node whose kind a file names by its old name ([`NodeTypes::renamed_kind`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct RenamedNode {
+    pub path: String,
+    /// The kind as the file names it.
+    pub from: String,
+    /// The kind it loaded as.
+    pub to: String,
+}
+
+/// Gives the nodes of `nodes` that name an old kind their new kind, and says which they were.
+fn rename_kinds(nodes: &mut BTreeMap<NodePath, NodeRepr>, types: &NodeTypes, what: &str) -> Vec<RenamedNode> {
+    let mut renamed = Vec::new();
+    for (path, node) in nodes.iter_mut() {
+        if let Some(new) = types.current_kind(&node.kind) {
+            let from = std::mem::replace(&mut node.kind, new.to_string());
+            renamed.push(RenamedNode { path: path.to_string(), from, to: new.to_string() });
+        }
+    }
+    if !renamed.is_empty() {
+        let mut by_kind: BTreeMap<(&str, &str), Vec<&str>> = BTreeMap::new();
+        for r in &renamed {
+            by_kind.entry((&r.from, &r.to)).or_default().push(&r.path);
+        }
+        let list: Vec<String> = by_kind
+            .iter()
+            .map(|((from, to), paths)| format!("{from} -> {to} ({})", paths.join(", ")))
+            .collect();
+        log::info!("{what}: nodes of renamed kinds load as the new kind: {}", list.join("; "));
+    }
+    renamed
+}
+
+fn read(
+    text: &str,
+    types: &NodeTypes,
+    what: &str,
+    outside: bool,
+    tolerant: bool,
+) -> Result<(Content, Vec<RenamedNode>), Error> {
+    let mut repr: FileRepr = ron::from_str(text).map_err(|e| Error::new(format!("{what}: {e}")))?;
+    let renamed = rename_kinds(&mut repr.nodes, types, what);
     if repr.version == 0 || repr.version > FORMAT_VERSION {
         return Err(Error::new(format!(
             "{what}: format version {} is not supported; this build reads version {FORMAT_VERSION}",
@@ -230,7 +276,7 @@ fn read(text: &str, types: &NodeTypes, what: &str, outside: bool, tolerant: bool
             },
         );
     }
-    Ok(Content { nodes, settings })
+    Ok((Content { nodes, settings }, renamed))
 }
 
 /// A node's position as read, dropped (with a warning) when it is no place: a position is
@@ -692,6 +738,27 @@ mod tests {
         assert_eq!((&m.inputs[0], &m.inputs[1], &m.inputs[40]), (&a, &a, &a));
         let written = print(&c, &types).unwrap();
         assert!(written.contains(r#"inputs: {"in0": "a", "in1": "a", "in40": "a"}"#), "{written}");
+    }
+
+    #[test]
+    fn old_kinds_load_as_the_new_kind_and_are_written_by_the_new_name() {
+        let types = test_types();
+        let text = r#"(version: 1, nodes: {
+            "/a": (kind: "test.const"),
+            "/s": (kind: "test.sum", inputs: {"a": "a"}),
+            "/t": (kind: "test.sum", inputs: {"a": "s:neg"}),
+        })"#;
+        let (c, renamed) = load_renaming(text, &types).unwrap();
+        let t = &c.nodes[&"/t".parse::<NodePath>().unwrap()];
+        assert_eq!(t.kind, "test.add");
+        assert_eq!(t.inputs[0], Some(PortRef { node: "/s".parse().unwrap(), output: 1 }), "outputs by name");
+        let paths: Vec<(&str, &str, &str)> =
+            renamed.iter().map(|r| (r.path.as_str(), r.from.as_str(), r.to.as_str())).collect();
+        assert_eq!(paths, [("/s", "test.sum", "test.add"), ("/t", "test.sum", "test.add")]);
+        let written = print(&c, &types).unwrap();
+        assert!(!written.contains("test.sum") && written.contains(r#""/s": (kind: "test.add""#), "{written}");
+        // Component files and copied nodes go through the same reader.
+        assert_eq!(parse(text, &types).unwrap(), c);
     }
 
     #[test]

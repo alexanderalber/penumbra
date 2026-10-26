@@ -1137,6 +1137,35 @@ fn another_project_opens_while_the_engine_keeps_running() {
 }
 
 #[test]
+fn a_project_with_an_old_kind_opens_with_the_new_one_and_saves_it() {
+    let f = Fixture::new("renamed-kind");
+    let old = ScratchDir::unborn("engine-renamed-kind-old");
+    std::fs::create_dir_all(old.path()).unwrap();
+    let file = old.path().join(penumbra_project::FILE_NAME);
+    let text = r#"(version: 2, nodes: {
+        "/lfo": (kind: "chan.lfo"),
+        "/i": (kind: "chan.speed", inputs: {"in": "lfo"}),
+    })"#;
+    std::fs::write(&file, text).unwrap();
+    let r = f.call("project.open", json!({"dir": old.path()}));
+    assert_eq!(r["renamed"], json!([{"path": "/i", "from": "chan.speed", "to": "chan.integrator"}]), "{r}");
+    assert!(r["note"].as_str().unwrap().contains("new name"));
+    let info = f.call("project.info", json!({}));
+    assert_eq!(info["broken"], json!([]));
+    assert_eq!(info["unsaved"], true, "the file still names the old kind");
+    assert_eq!(f.call("node.info", json!({"path": "/i"}))["kind"], "chan.integrator");
+    eventually("autosave to write the new name", || {
+        std::fs::read_to_string(&file).unwrap().contains(r#""/i": (kind: "chan.integrator""#)
+    });
+    eventually("the project to count as saved", || f.call("project.info", json!({}))["unsaved"] == false);
+
+    // Commands take the old name too, and say so.
+    let r = f.call("node.create", json!({"path": "/j", "kind": "chan.speed"}));
+    assert!(r["note"].as_str().unwrap().contains("chan.integrator"), "{r}");
+    assert_eq!(f.call("node.info", json!({"path": "/j"}))["kind"], "chan.integrator");
+}
+
+#[test]
 fn vsyncs_that_pile_up_during_a_slow_pass_cook_once() {
     let f = Fixture::new("vsync-backlog");
     let before = f.engine.on_cook(|st| st.last.pass).unwrap();

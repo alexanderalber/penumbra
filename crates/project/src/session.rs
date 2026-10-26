@@ -18,6 +18,11 @@
 //!   overwritten. The next change to the file is tried again; `project.save` overwrites it on
 //!   purpose, after copying it to [`BACKUP_NAME`].
 //!
+//! - **Renamed kinds:** a node whose kind the file names by an old name
+//!   ([`NodeTypes::renamed_kind`]) loads as the new kind; the nodes are listed in
+//!   [`SessionStatus::renamed`] and the document counts as unsaved, so autosave writes the new
+//!   names.
+//!
 //! - **From an older build:** node positions and the thumbnail mode, which older builds kept in
 //!   the editor's `layout.ron`, are taken from there as the project opens ([`crate::legacy`]);
 //!   that makes no history entry, and the document counts as unsaved, so autosave writes them
@@ -41,7 +46,7 @@ use penumbra_graph::{Document, EditOutcome, Network, NodeTypes, Op, Params, Sour
 use serde::Serialize;
 
 use crate::content::{Content, diff};
-use crate::file::{BrokenNode, FILE_NAME, MAX_FILE_BYTES, broken_nodes, load, print};
+use crate::file::{BrokenNode, FILE_NAME, MAX_FILE_BYTES, RenamedNode, broken_nodes, load_renaming, print};
 use crate::gate::{Gate, GateStatus};
 
 /// The copy of the project file that `project.save` makes before it writes over a file that did
@@ -82,6 +87,9 @@ pub struct SessionStatus {
     pub write_error: Option<String>,
     /// Nodes that did not load and are kept as placeholders, with the reason.
     pub broken: Vec<BrokenNode>,
+    /// Nodes the file names by an old kind, loaded as the new kind, as the project opened or
+    /// the file last merged. The next save writes the new names.
+    pub renamed: Vec<RenamedNode>,
     pub can_undo: bool,
     pub can_redo: bool,
     pub edit: GateStatus,
@@ -102,6 +110,11 @@ struct State {
     file_error: Option<String>,
     write_error: Option<String>,
     dirty_since: Option<Instant>,
+    /// Nodes of the file read last that name an old kind ([`SessionStatus::renamed`]).
+    renamed: Vec<RenamedNode>,
+    /// The file names old kinds: it is written again even though the document is the one it
+    /// holds.
+    rewrite: bool,
 }
 
 pub struct Session {
@@ -194,13 +207,17 @@ impl Session {
         let loaded = read_text(&file).and_then(|text| match text {
             None => Ok(None),
             Some(text) => {
-                let content = load(&text, &types)?;
+                let (content, renamed) = load_renaming(&text, &types)?;
                 let net = build(&content, &types)?;
-                Ok(Some((text, content, net)))
+                Ok(Some((text, content, net, renamed)))
             }
         });
+        let mut renamed = Vec::new();
         let (net, base, file_text, file_error) = match loaded {
-            Ok(Some((text, content, net))) => (net, content, Some(text), None),
+            Ok(Some((text, content, net, r))) => {
+                renamed = r;
+                (net, content, Some(text), None)
+            }
             Ok(None) => {
                 let net = build(template, &types).map_err(|e| e.context("the project template"))?;
                 let content = Content::from_network(&net)?;
@@ -254,6 +271,8 @@ impl Session {
                 file_error,
                 write_error: None,
                 dirty_since: None,
+                rewrite: !renamed.is_empty(),
+                renamed,
             }),
         })
     }
@@ -383,11 +402,12 @@ impl Session {
         SessionStatus {
             dir: self.dir.display().to_string(),
             nodes: current.len(),
-            unsaved: state.file_text.is_none() || !Network::same(&current, &state.written),
+            unsaved: state.file_text.is_none() || state.rewrite || !Network::same(&current, &state.written),
             merge_waiting: state.waiting.is_some(),
             file_error: state.file_error.clone(),
             write_error: state.write_error.clone(),
             broken: broken_nodes(&current),
+            renamed: state.renamed.clone(),
             can_undo,
             can_redo,
             edit: state.gate.status(now),
@@ -488,7 +508,7 @@ impl Session {
         }
         let Some(text) = state.waiting.take() else { return };
         let types = self.doc.types();
-        let merged = load(&text, types).and_then(|theirs| {
+        let merged = load_renaming(&text, types).and_then(|(theirs, renamed)| {
             let ops = diff(&state.base, &theirs);
             if !ops.is_empty() {
                 self.doc.edit(
@@ -498,10 +518,12 @@ impl Session {
                     &format!("edit of {FILE_NAME}"),
                 )?;
             }
-            Ok(theirs)
+            Ok((theirs, renamed))
         });
         match merged {
-            Ok(theirs) => {
+            Ok((theirs, renamed)) => {
+                state.rewrite = !renamed.is_empty();
+                state.renamed = renamed;
                 if state.file_error.take().is_some() {
                     log::info!("{} loads again", self.file.display());
                 }
@@ -520,7 +542,9 @@ impl Session {
             if state.waiting.is_some() || state.file_error.is_some() {
                 return;
             }
-            let dirty = state.file_text.is_none() || !Network::same(&self.doc.snapshot(), &state.written);
+            let dirty = state.file_text.is_none()
+                || state.rewrite
+                || !Network::same(&self.doc.snapshot(), &state.written);
             if !dirty {
                 state.dirty_since = None;
                 return;
@@ -564,6 +588,7 @@ impl Session {
         state.base = content;
         state.dirty_since = None;
         state.write_error = None;
+        state.rewrite = false;
         Ok(changed)
     }
 }

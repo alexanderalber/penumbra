@@ -53,8 +53,39 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     table::register(types)?;
     tex::register(types)?;
     view::register(types)?;
+    for (old, new) in RENAMED_KINDS {
+        types.renamed_kind(old, new)?;
+    }
     Ok(())
 }
+
+/// Kinds that were renamed, old name first. A project, component or copied node that still
+/// names the old kind loads as the new one, and the next save writes the new name. A row stays
+/// as long as files with the old name may be around; a further rename of a kind updates its
+/// rows here.
+pub const RENAMED_KINDS: &[(&str, &str)] = &[
+    // Compound names got an underscore.
+    ("chan.audioanalysis", "chan.audio_analysis"),
+    ("chan.audioin", "chan.audio_in"),
+    ("chan.fromtex", "chan.from_tex"),
+    ("chan.oscin", "chan.osc_in"),
+    ("chan.oscout", "chan.osc_out"),
+    ("geo.texinstance", "geo.tex_instance"),
+    ("tex.blobtrack", "tex.blob_track"),
+    ("tex.channelmix", "tex.channel_mix"),
+    ("tex.chromakey", "tex.chroma_key"),
+    ("tex.fromchan", "tex.from_chan"),
+    ("tex.lensdistort", "tex.lens_distort"),
+    ("tex.opticalflow", "tex.optical_flow"),
+    ("tex.timemachine", "tex.time_machine"),
+    ("tex.videoin", "tex.video_in"),
+    // Names that say what the node does.
+    ("geo.material", "geo.assign_material"),
+    ("chan.speed", "chan.integrator"),
+    // Files, set apart from the live sources.
+    ("tex.image", "tex.image_file"),
+    ("tex.video", "tex.video_file"),
+];
 
 /// The error of a node whose input has nothing (yet): still pending while one is wired,
 /// otherwise a hint to wire one.

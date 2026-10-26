@@ -339,8 +339,14 @@ fn node_kinds(e: &Engine, p: &Json) -> Result<Json> {
         kind: Option<String>,
         param: Option<String>,
     }
-    let a: A = args(p)?;
+    let mut a: A = args(p)?;
     let types = e.types();
+    let mut note = None;
+    if let Some(kind) = a.kind.take() {
+        let (kind, n) = current_kind(e, kind);
+        a.kind = Some(kind);
+        note = n;
+    }
     if let Some(param) = &a.param {
         let kind = a.kind.as_deref().ok_or("`param` needs `kind`")?;
         let desc = types.desc(kind).ok_or_else(|| format!("unknown node kind `{kind}`"))?;
@@ -352,7 +358,7 @@ fn node_kinds(e: &Engine, p: &Json) -> Result<Json> {
             };
             format!("{kind} has no param `{param}`{hint}")
         })?;
-        return Ok(json!({"kind": kind, "param": to_json(&spec.help())?}));
+        return Ok(with_note(json!({"kind": kind, "param": to_json(&spec.help())?}), note));
     }
     let descs: Vec<&NodeDesc> = match &a.kind {
         Some(k) => vec![types.desc(k).ok_or_else(|| format!("unknown node kind `{k}`"))?],
@@ -368,7 +374,7 @@ fn node_kinds(e: &Engine, p: &Json) -> Result<Json> {
             }
         }
     }
-    Ok(json!({"kinds": kinds}))
+    Ok(with_note(json!({"kinds": kinds}), note))
 }
 
 fn node_list(e: &Engine, p: &Json) -> Result<Json> {
@@ -598,6 +604,26 @@ pub fn outcome(out: &EditOutcome) -> Json {
     json!({"history": recorded, "created": created})
 }
 
+/// `kind`, or the kind it is now when it is an old name ([`penumbra_graph::NodeTypes::renamed_kind`]),
+/// with a note for the reply then.
+fn current_kind(e: &Engine, kind: String) -> (String, Option<String>) {
+    match e.types().current_kind(&kind) {
+        Some(new) => {
+            let note = format!("`{kind}` is the old name of `{new}`; the node is a {new}");
+            (new.to_string(), Some(note))
+        }
+        None => (kind, None),
+    }
+}
+
+/// `out` with `note` added, when there is one.
+fn with_note(mut out: Json, note: Option<String>) -> Json {
+    if let (Some(note), Some(map)) = (note, out.as_object_mut()) {
+        map.insert("note".into(), json!(note));
+    }
+    out
+}
+
 fn node_create(e: &Engine, p: &Json) -> Result<Json> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -608,7 +634,8 @@ fn node_create(e: &Engine, p: &Json) -> Result<Json> {
         params: BTreeMap<Name, Value>,
     }
     let a: A = args(p)?;
-    Ok(outcome(&edit(e, &[Op::Create { path: a.path, kind: a.kind, params: a.params }], "")?))
+    let (kind, note) = current_kind(e, a.kind);
+    Ok(with_note(outcome(&edit(e, &[Op::Create { path: a.path, kind, params: a.params }], "")?), note))
 }
 
 fn node_delete(e: &Engine, p: &Json) -> Result<Json> {
@@ -624,14 +651,15 @@ fn node_replace(e: &Engine, p: &Json) -> Result<Json> {
         kind: String,
     }
     let a: A = args(p)?;
+    let (kind, note) = current_kind(e, a.kind);
     let net = e.session().doc().snapshot();
-    let r = penumbra_graph::replace(&net, e.types(), &a.path, &a.kind)?;
-    let label = format!("replace {} with {}", a.path, a.kind);
+    let r = penumbra_graph::replace(&net, e.types(), &a.path, &kind)?;
+    let label = format!("replace {} with {kind}", a.path);
     let mut out = outcome(&edit(e, &r.ops, &label)?);
     if let Some(map) = out.as_object_mut() {
         map.insert("lost".into(), json!(r.lost));
     }
-    Ok(out)
+    Ok(with_note(out, note))
 }
 
 fn node_rename(e: &Engine, p: &Json) -> Result<Json> {

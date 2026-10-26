@@ -474,9 +474,24 @@ struct DirArg {
     dir: PathBuf,
 }
 
-fn reply(r: Result<Opened, Error>) -> Result<Json, CommandError> {
+/// The reply of the commands that open a project; with the nodes that loaded under a new kind
+/// name, when there are any.
+fn reply(e: &Engine, r: Result<Opened, Error>) -> Result<Json, CommandError> {
     let opened = r?;
-    Ok(json!({"dir": opened.dir, "switched": opened.switched}))
+    let mut out = json!({"dir": opened.dir, "switched": opened.switched});
+    let renamed = e.session().status(std::time::Instant::now()).renamed;
+    if !renamed.is_empty()
+        && let Some(obj) = out.as_object_mut()
+    {
+        obj.insert("renamed".into(), json!(renamed));
+        obj.insert(
+            "note".into(),
+            json!(
+                "these nodes name an old kind and loaded as the new one; the next save writes the new name"
+            ),
+        );
+    }
+    Ok(out)
 }
 
 /// Registers `project.open`, `project.new`, `project.save_as`, `project.demo`,
@@ -486,19 +501,19 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     registry.register(FnCommand::new(
         "project.open",
         "Close this project (state saved, changes written) and open the one in dir; {dir}",
-        move |p| reply(open(&e, &args::<DirArg>(p)?.dir)),
+        move |p| reply(&e, open(&e, &args::<DirArg>(p)?.dir)),
     ));
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "project.new",
         "Make an empty project in dir (created if missing, must hold no project.ron) and open it; {dir}",
-        move |p| reply(create(&e, &args::<DirArg>(p)?.dir)),
+        move |p| reply(&e, create(&e, &args::<DirArg>(p)?.dir)),
     ));
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "project.save_as",
         "Copy the open project (its files and the latest state snapshot) into dir (new or empty) and open the copy, a project of its own; {dir}",
-        move |p| reply(save_copy(&e, &args::<DirArg>(p)?.dir)),
+        move |p| reply(&e, save_copy(&e, &args::<DirArg>(p)?.dir)),
     ));
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
@@ -506,7 +521,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Open the demo project, made afresh: changes, state and layout from before are gone",
         move |p| {
             args::<crate::commands::Empty>(p)?;
-            reply(open_demo(&e))
+            reply(&e, open_demo(&e))
         },
     ));
     registry.register(FnCommand::new(
@@ -524,7 +539,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "project.example",
         "Open a shipped example from a fresh copy in the user's data folder (the shipped one stays \
          as it is). Changes last until the example is opened again; project.save_as keeps them; {name}",
-        move |p| reply(open_example(&e, &args::<NameArg>(p)?.name)),
+        move |p| reply(&e, open_example(&e, &args::<NameArg>(p)?.name)),
     ));
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(

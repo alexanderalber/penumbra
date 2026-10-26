@@ -390,6 +390,11 @@ without one the editor places it and the next save writes where. Projects from b
 kept positions and the thumbnail mode in `layout.ron` (format version 1) take them from there
 once as they open.
 
+A node kind that was renamed in a later build still loads. A file naming `chan.speed` opens
+with a `chan.integrator` in its place, and the next save writes the new name. `project.open`
+and `project.info` (`renamed`) list the nodes this happened to. `node.create` and
+`node.replace` take the old names too, with a note in the reply.
+
 A node whose line does not load (a kind this build does not know, an input its kind does not
 have, a param value its kind refuses) does not stop the rest: the project opens, and the node
 stays as a placeholder (`node.broken`) that shows the reason as its error, in the bar at

@@ -79,6 +79,7 @@ pub fn test_types() -> NodeTypes {
                 .port(role),
         );
     }
+    t.renamed_kind("test.sum", "test.add").unwrap();
     t
 }
 

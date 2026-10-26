@@ -397,6 +397,7 @@ water      15
 </tbody>
 </table>
 <p><code>project.ron</code> is plain text, meant to be read and edited. The app notices a change to it and merges only what differs, as one undoable entry, keeping your unsaved work. A project keeps working under git: one node per line, sorted. A node's <code>pos</code> is where it sits in the editor; without one the editor places it and the next save writes where. Projects from builds that kept positions and the thumbnail mode in <code>layout.ron</code> (format version 1) take them from there once as they open.</p>
+<p>A node kind that was renamed in a later build still loads. A file naming <code>chan.speed</code> opens with a <a class="ref" href="#chan.integrator"><code>chan.integrator</code></a> in its place, and the next save writes the new name. <a class="ref" href="#project.open"><code>project.open</code></a> and <a class="ref" href="#project.info"><code>project.info</code></a> (<code>renamed</code>) list the nodes this happened to. <a class="ref" href="#node.create"><code>node.create</code></a> and <a class="ref" href="#node.replace"><code>node.replace</code></a> take the old names too, with a note in the reply.</p>
 <p>A node whose line does not load (a kind this build does not know, an input its kind does not have, a param value its kind refuses) does not stop the rest: the project opens, and the node stays as a placeholder (<a class="ref" href="#node.broken"><code>node.broken</code></a>) that shows the reason as its error, in the bar at the top of the window and in <a class="ref" href="#project.info"><code>project.info</code></a> (<code>broken</code>). The placeholder does nothing; wires from it carry nothing. Saving writes its line back as it was, so nothing is lost by opening and saving. It can be renamed or deleted; to change it, fix its line in <code>project.ron</code>, and the fixed node takes its place.</p>
 <p>A file that does not parse at all, or has a format version this build does not read, is reported and left alone (autosave pauses) until it is fixed. <a class="ref" href="#project.save"><code>project.save</code></a> writes over it anyway; it first copies the file to <code>project.ron.bak</code> (also when nodes are kept as placeholders; one copy, the next such save replaces it).</p>
 </div></details>
@@ -3201,6 +3202,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="chan.integrator-example">Example</h5>
 <p>Spin something at a speed the music sets: a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> level through <a class="ref" href="#chan.math"><code>chan.math</code></a> (scale it to degrees per second) into <a class="ref" href="#chan.integrator"><code>chan.integrator</code></a> with <code>limit: loop</code>, <code>min</code> 0, <code>max</code> 360, and bind a rotation param to the output.</p>
 </div>
+<p class="mentions">Mentioned in: <a href="#concepts-the-project-directory">Concepts › The project directory</a></p>
 </div></details>
 <details class="entry node" id="chan.keyboard_in"><summary><code class="name">chan.keyboard_in</code><span class="sum">Keys of the keyboard as channels, to switch scenes or trigger things by hand during a show (while a penumbra window has the focus)</span></summary>
 <div class="body">
@@ -4597,7 +4599,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="node.create"><summary><code class="name">node.create</code><span class="sum">Create a node</span></summary>
 <div class="body">
 <p>Create a node; {path, kind, params?}</p>
-<p class="mentions">Mentioned in: <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-the-project-directory">Concepts › The project directory</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
 <details class="entry command" id="node.cut"><summary><code class="name">node.cut</code><span class="sum">Copy side-by-side nodes, then delete them (one undo step)</span></summary>
 <div class="body">
@@ -4645,6 +4647,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="node.replace"><summary><code class="name">node.replace</code><span class="sum">Replace a node with one of another kind under the same name (one undo step). Keeps the params, wires and bindings that fit and lists what was not kept</span></summary>
 <div class="body">
 <p>Replace a node with one of another kind under the same name (one undo step). Keeps the params, wires and bindings that fit and lists what was not kept; {path, kind}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-the-project-directory">Concepts › The project directory</a></p>
 </div></details>
 <details class="entry command" id="node.reset"><summary><code class="name">node.reset</code><span class="sum">Start stateful nodes over (feedback, cache, time machine, tracker, filter...). A component resets the stateful nodes inside; locked nodes keep their outputs</span></summary>
 <div class="body">
@@ -4744,7 +4747,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="project.open"><summary><code class="name">project.open</code><span class="sum">Close this project (state saved, changes written) and open the one in dir</span></summary>
 <div class="body">
 <p>Close this project (state saved, changes written) and open the one in dir; {dir}</p>
-<p class="mentions">Mentioned in: <a href="#getting-started-running">Getting started › Running</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-running">Getting started › Running</a>, <a href="#concepts-the-project-directory">Concepts › The project directory</a></p>
 </div></details>
 <details class="entry command" id="project.recent"><summary><code class="name">project.recent</code><span class="sum">Recently opened projects, newest first (the demo is not listed), and the open one</span></summary>
 <div class="body">
