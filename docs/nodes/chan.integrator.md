@@ -21,5 +21,5 @@ its nearest end). `reset` holds it there while on; a seek back in time, `node.re
 ## Example
 
 Spin something at a speed the music sets: a `chan.audio_analysis` level through `chan.math` (scale
-it to degrees per second) into `chan.speed` with `limit: loop`, `min` 0, `max` 360, and bind a
+it to degrees per second) into `chan.integrator` with `limit: loop`, `min` 0, `max` 360, and bind a
 rotation param to the output.

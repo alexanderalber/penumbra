@@ -154,17 +154,15 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong>Parameters</strong> (top right): the selected node's name, kind, a one-line summary, the lock, its cook time, and its params. Params that belong together sit in folded sections, the rarely used ones under &quot;more&quot;. The <code>?</code> beside the kind opens the node's documentation in the browser, as the <code>?</code> at the right end of every node's header in the editor does (see <a href="#getting-started-the-documentation-page">the documentation page</a>).
 </li>
-<li><strong>Viewer</strong> (middle right): the selected node's output, or the node pinned with <code>pin</code>.
+<li><strong>Viewer</strong> (middle right): the selected node's output, or the node pinned with <code>pin</code>. <code>window</code> shows it in a window of its own (on a second monitor, say). Its picture area stays 16:9 as the column grows and shrinks; drag its top edge for another shape, which is kept with the project, and double-click the edge to go back to 16:9 (<a class="ref" href="#ui.options"><code>ui.options {viewer_aspect}</code></a>). When the window is too low, the viewer gets shorter so the parameters keep some room. A node with several outputs gets a button per output. For geometry and renders it can also look around in the scene (<a href="#navigation">Looking around in 3D</a>). Channels are drawn as curves with a value axis and, along the bottom, seconds before now (the last 240 frames of a channel with one value, all samples of one with many; a spectrum or a picture's row is counted by sample instead). A <a class="ref" href="#chan.trail"><code>chan.trail</code></a> that is still filling spans its full <code>length</code> and grows in from the right. The <code>scale</code> button switches between one shared scale for all channels, a lane per channel with its own scale, and auto, which takes lanes when a channel that moves would be flat on the shared scale (<code>bpm</code> next to levels of 0 to 1). The choice is kept with the project (<a class="ref" href="#ui.options"><code>ui.options {chan_scale}</code></a>). A <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> shows its meters instead (see <a href="#audio-the-meters-in-the-viewer">Audio</a>); <code>view: meters</code> in the header switches to the plot and back, kept with the project as well (<a class="ref" href="#ui.options"><code>ui.options {audio_view}</code></a>). Some nodes are edited right in the viewer: a mapper's corners and mesh, a <a class="ref" href="#tex.shapes"><code>tex.shapes</code></a>' shapes, and a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> showing a scanned scene's <code>regions_camera.png</code>, whose faces are grouped into regions there (<a href="#scanning-51-regions-scanregions">Scanning</a>).
 </li>
-</ul>
-<p>The window opens where it was last time, with its size, maximised or not (kept in <code>%LOCALAPPDATA%\penumbra\window.json</code>), so a setup that shares the screen with other windows, a terminal beside it, say, stays arranged across restarts. The first time, or when that spot is no longer on any display (one was unplugged), it opens maximised. <a class="ref" href="#ui.window"><code>ui.window</code></a> reads and moves it. <code>window</code> shows it in a window of its own (on a second monitor, say). Its picture area stays 16:9 as the column grows and shrinks; drag its top edge for another shape, which is kept with the project, and double-click the edge to go back to 16:9 (<a class="ref" href="#ui.options"><code>ui.options {viewer_aspect}</code></a>). When the window is too low, the viewer gets shorter so the parameters keep some room. A node with several outputs gets a button per output. For geometry and renders it can also look around in the scene (<a href="#navigation">Looking around in 3D</a>). Channels are drawn as curves with a value axis and, along the bottom, seconds before now (the last 240 frames of a channel with one value, all samples of one with many; a spectrum or a picture's row is counted by sample instead). A <a class="ref" href="#chan.trail"><code>chan.trail</code></a> that is still filling spans its full <code>length</code> and grows in from the right. The <code>scale</code> button switches between one shared scale for all channels, a lane per channel with its own scale, and auto, which takes lanes when a channel that moves would be flat on the shared scale (<code>bpm</code> next to levels of 0 to 1). The choice is kept with the project (<a class="ref" href="#ui.options"><code>ui.options {chan_scale}</code></a>). A <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> shows its meters instead (see <a href="#audio-the-meters-in-the-viewer">Audio</a>); <code>view: meters</code> in the header switches to the plot and back, kept with the project as well (<a class="ref" href="#ui.options"><code>ui.options {audio_view}</code></a>). Some nodes are edited right in the viewer: a mapper's corners and mesh, a <a class="ref" href="#tex.shapes"><code>tex.shapes</code></a>' shapes, and a <a class="ref" href="#tex.image_file"><code>tex.image_file</code></a> showing a scanned scene's <code>regions_camera.png</code>, whose faces are grouped into regions there (<a href="#scanning-51-regions-scanregions">Scanning</a>).</p>
-<ul>
 <li><strong>Changes</strong> (bottom right): every edit, newest first, with who made it (you, Claude, the project file). Hover an entry to outline the nodes it touched, click it to select them. Undo and Redo sit in its header.
 </li>
 <li><strong>The status bar</strong>: the project menu (the folder), play and pause of the show clock, the frame and the time, how long the last cook pass took (click it for the last seconds as a plot, the CPU and GPU load and, on NVIDIA GPUs, power draw, temperature, clock and what holds the clock back), the outputs (hover for details), the control channel's port, the GPU, and whether <code>project.ron</code> is written yet.
 </li>
 </ul>
 <p>Each section of the right column folds by its header; the open state is kept with the project. The column keeps its share of the window's width when the window is resized; drag its edge to change the share (also kept with the project).</p>
+<p>The window opens where it was last time, with its size, maximised or not (kept in <code>%LOCALAPPDATA%\penumbra\window.json</code>), so a setup that shares the screen with other windows, a terminal beside it, say, stays arranged across restarts. The first time, or when that spot is no longer on any display (one was unplugged), it opens maximised. <a class="ref" href="#ui.window"><code>ui.window</code></a> reads and moves it.</p>
 <h3 id="getting-started-a-first-network">A first network</h3>
 <ol>
 <li><strong>Add a node:</strong> press Tab, or double-click on empty canvas. The add dialog has a tab per family (Tab cycles them); type to narrow the list, Enter takes the first match, a click takes any. Try <code>tex</code> &gt; <code>noise</code>.
@@ -2875,7 +2873,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_in">chan.audio_in</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.in">chan.in</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.out">chan.out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.speed">chan.speed</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_in">chan.audio_in</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.in">chan.in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.out">chan.out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_analysis"><summary><code class="name">chan.audio_analysis</code><span class="sum">Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</span></summary>
 <div class="body">
 <p>Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</p>
@@ -2977,6 +2975,36 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-keys">Concepts › Keys</a>, <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a></p>
 </div></details>
+<details class="entry node" id="chan.derivative"><summary><code class="name">chan.derivative</code><span class="sum">How fast each channel changes: a position in, a speed out, for reacting to movement or to a rising level</span></summary>
+<div class="body">
+<p>How fast each channel changes: a position in, a speed out, for reacting to movement or to a rising level</p>
+<p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">chan</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>per</code></td><td>second | frame</td><td><code>&quot;second&quot;</code></td><td></td><td>What the change is counted over<ul><li><code>second</code>: change per second, the same at any frame rate</li><li><code>frame</code>: change per show frame (per sample for a channel with many samples)</li></ul></td></tr>
+<tr><td><code>limit</code></td><td>none | clamp</td><td><code>&quot;none&quot;</code></td><td></td><td>Whether the output is kept within min and max<ul><li><code>none</code>: a jump in the input gives a large spike</li><li><code>clamp</code>: the output stops at min and max</li></ul></td></tr>
+<tr><td><code>min</code></td><td>float</td><td><code>-1</code></td><td>-10 to 10 (soft)</td><td>Lowest output (limit clamp)</td></tr>
+<tr><td><code>max</code></td><td>float</td><td><code>1</code></td><td>-10 to 10 (soft)</td><td>Highest output (limit clamp)</td></tr>
+</tbody>
+</table>
+<div class="more">
+<h5 id="chan.derivative-what-it-counts">What it counts</h5>
+<p>Each output channel is how fast the input channel of the same name changes: a position in, a speed out. A channel that rises by 2 every second gives 2 with <code>per: second</code>, and 2/60 with <code>per: frame</code> at 60 frames per second. <a class="ref" href="#chan.integrator"><code>chan.integrator</code></a> does the opposite.</p>
+<p>A channel with one value per frame is compared with its value at the last cook, over the time between. A channel with many samples is compared sample by sample; <code>per: frame</code> then counts per sample. The first value gives 0.</p>
+<h5 id="chan.derivative-spikes">Spikes</h5>
+<p>A jump in the input, such as a scene switch or a tracker losing its blob, gives one large value. <code>limit: clamp</code> keeps the output within <code>min</code> and <code>max</code>. A <a class="ref" href="#chan.filter"><code>chan.filter</code></a> before this node calms a jittery input, which otherwise turns into a jittery speed.</p>
+</div>
+</div></details>
 <details class="entry node" id="chan.dmx_in"><summary><code class="name">chan.dmx_in</code><span class="sum">DMX from a lighting desk over the network (Art-Net or sACN): each slot a channel to drive content with</span></summary>
 <div class="body">
 <p>DMX from a lighting desk over the network (Art-Net or sACN): each slot a channel to drive content with</p>
@@ -3002,9 +3030,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#dmx">DMX</a>, <a href="#dmx-receiving">DMX › Receiving</a></p>
 </div></details>
-<details class="entry node" id="chan.filter"><summary><code class="name">chan.filter</code><span class="sum">Smooths jumpy numbers over time, at their own pace up and down: calms a sensor, softens a jump</span></summary>
+<details class="entry node" id="chan.filter"><summary><code class="name">chan.filter</code><span class="sum">Smooths jumpy numbers over time: calms a sensor, softens a jump. From a plain lag to steeper filters, averages, a speed limit and an adaptive filter for tracking</span></summary>
 <div class="body">
-<p>Smooths jumpy numbers over time, at their own pace up and down: calms a sensor, softens a jump</p>
+<p>Smooths jumpy numbers over time: calms a sensor, softens a jump. From a plain lag to steeper filters, averages, a speed limit and an adaptive filter for tracking</p>
 <p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
@@ -3018,10 +3046,42 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>rise</code></td><td>float</td><td><code>0.2</code></td><td>0 to 5 s (soft)</td><td>Time to cover 63 % of a step up; 0 follows at once</td></tr>
+<tr><td><code>type</code></td><td>first_order | critical | bessel | butterworth | gaussian | box | slew | one_euro</td><td><code>&quot;first_order&quot;</code></td><td></td><td>How it smooths<ul><li><code>first_order</code>: a lag with its own times up and down: 63 % of a step after <code>rise</code> or <code>fall</code></li><li><code>critical</code>: starts and stops softer than first_order and never overshoots; a higher <code>order</code> is softer</li><li><code>bessel</code>: keeps the shape of a movement best and overshoots by less than 1 %</li><li><code>butterworth</code>: removes fast wiggle most cleanly and overshoots a step: 4 % at order 2, 11 % at order 4</li><li><code>gaussian</code>: average over the last <code>window</code> seconds, the newest values count most; lags about a quarter of <code>window</code></li><li><code>box</code>: plain average over the last <code>window</code> seconds; lags half of <code>window</code>, and a wobble that repeats every <code>window</code> seconds vanishes</li><li><code>slew</code>: moves at most <code>up</code> per second upwards and <code>down</code> per second downwards</li><li><code>one_euro</code>: smooths strongly while the input rests and follows fast moves with little lag: for tracked positions. <code>rise</code> sets the smoothing at rest, <code>beta</code> how fast it follows</li></ul></td></tr>
+<tr><td><code>order</code></td><td>int</td><td><code>2</code></td><td>2 to 4 (soft)</td><td>Steepness of critical, bessel and butterworth: a higher order lets less wiggle through and starts slower</td></tr>
+<tr><td><code>rise</code></td><td>float</td><td><code>0.2</code></td><td>0 to 5 s (soft)</td><td>Time to cover 63 % of a step up (first_order) or of any step (critical, bessel, butterworth); 0 follows at once. For one_euro the smoothing at rest</td></tr>
 <tr><td><code>fall</code></td><td>float</td><td><code>0.2</code></td><td>0 to 5 s (soft)</td><td>Time to cover 63 % of a step down</td></tr>
+<tr><td><code>window</code></td><td>float</td><td><code>0.5</code></td><td>0 to 5 s (soft)</td><td>How far back the average reaches; 0 follows at once</td></tr>
+<tr><td><code>up</code></td><td>float</td><td><code>1</code></td><td>0 to 10 (soft)</td><td>Fastest rise, in units per second<ul><li>0: no limit</li></ul></td></tr>
+<tr><td><code>down</code></td><td>float</td><td><code>1</code></td><td>0 to 10 (soft)</td><td>Fastest fall, in units per second<ul><li>0: no limit</li></ul></td></tr>
+<tr><td><code>beta</code></td><td>float</td><td><code>1</code></td><td>0 to 10 (soft)</td><td>How much a fast move loosens the smoothing: 0 smooths like first_order, higher follows fast moves more closely. Depends on the units of the input</td></tr>
 </tbody>
 </table>
+<div class="more">
+<h5 id="chan.filter-which-type-for-what">Which type for what</h5>
+<table>
+<thead><tr><th>to ...</th><th><code>type</code></th><th>params</th></tr></thead>
+<tbody>
+<tr><td>soften a jump, fade in fast and out slowly</td><td><code>first_order</code></td><td><code>rise</code>, <code>fall</code></td></tr>
+<tr><td>soften a jump with a smoother start and stop, never overshooting</td><td><code>critical</code></td><td><code>rise</code>, <code>order</code></td></tr>
+<tr><td>calm a wobbly sensor and keep the shape of its movement</td><td><code>bessel</code></td><td><code>rise</code>, <code>order</code></td></tr>
+<tr><td>remove fast wiggle as cleanly as possible; a small overshoot is fine</td><td><code>butterworth</code></td><td><code>rise</code>, <code>order</code></td></tr>
+<tr><td>average the last moment, newest values counting most</td><td><code>gaussian</code></td><td><code>window</code></td></tr>
+<tr><td>average the last moment evenly; cancels a wobble of exactly that period</td><td><code>box</code></td><td><code>window</code></td></tr>
+<tr><td>cap how fast a value may change</td><td><code>slew</code></td><td><code>up</code>, <code>down</code></td></tr>
+<tr><td>steady a tracked position at rest and follow it closely in motion</td><td><code>one_euro</code></td><td><code>rise</code>, <code>beta</code></td></tr>
+</tbody>
+</table>
+<p>Params the chosen type does not use are greyed out in the panel.</p>
+<h5 id="chan.filter-same-speed-across-types">Same speed across types</h5>
+<p><code>rise</code> means the same for <code>first_order</code>, <code>critical</code>, <code>bessel</code> and <code>butterworth</code>: after a step, the output has covered 63 % of it after <code>rise</code> seconds. Switching between these types keeps the felt speed; the curve around that point changes. A higher <code>order</code> starts later and then catches up faster. Overshoot after a step: <code>critical</code> none, <code>bessel</code> below 1 %, <code>butterworth</code> 4 % at order 2, 8 % at order 3, 11 % at order 4.</p>
+<p>Only <code>first_order</code> has a separate <code>fall</code>. The other linear types use <code>rise</code> both ways.</p>
+<h5 id="chan.filter-averages">Averages</h5>
+<p><code>box</code> and <code>gaussian</code> look at the last <code>window</code> seconds. <code>box</code> lags by half the window. <code>gaussian</code> weighs recent values more (a half bell curve, sigma a third of the window) and lags about a quarter of it. Channels with many samples per second (audio, a long trail) can need more history than the node keeps; the node then shortens the window and says so in a warning.</p>
+<h5 id="chan.filter-one_euro">one_euro</h5>
+<p><code>one_euro</code> (Casiez, Roussel and Vogel, 2012) changes its smoothing with the speed of the input. At rest it smooths like <code>first_order</code> with time constant <code>rise</code>. The faster the input moves, the less it smooths: <code>beta</code> sets how much. Start with <code>beta</code> 0, set <code>rise</code> until the jitter at rest is gone, then raise <code>beta</code> until fast moves no longer lag. <code>beta</code> depends on the input's units: a position from 0 to 1 needs a larger <code>beta</code> than one in pixels.</p>
+<h5 id="chan.filter-timing">Timing</h5>
+<p>A channel with one value per frame steps by the time since the last cook. Frames in which nothing asked for the node still count. A channel with many samples is filtered sample by sample at its own rate. The first value of a channel passes unchanged. Switching <code>type</code> or <code>order</code> carries on from the last output. A seek back in time, <a class="ref" href="#node.reset"><code>node.reset</code></a> or R start the node over.</p>
+</div>
 <p class="mentions">Mentioned in: <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
 <details class="entry node" id="chan.from_table"><summary><code class="name">chan.from_table</code><span class="sum">Turns a table of numbers into channels, so its cells can drive params through bindings</span></summary>
@@ -3080,6 +3140,46 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <li><code>out</code> <span class="kind">chan</span></li>
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+</div></details>
+<details class="entry node" id="chan.integrator"><summary><code class="name">chan.integrator</code><span class="sum">Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting</span></summary>
+<div class="body">
+<p>Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting</p>
+<p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">chan</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>limit</code></td><td>none | loop | clamp</td><td><code>&quot;none&quot;</code></td><td></td><td>Whether the sum is kept within min and max<ul><li><code>none</code>: the sum grows without end</li><li><code>loop</code>: past max it starts again from min (and the other way round): an angle, a scroll</li><li><code>clamp</code>: the sum stops at min and max</li></ul></td></tr>
+<tr><td><code>min</code></td><td>float</td><td><code>0</code></td><td>-10 to 10 (soft)</td><td>Lower end of the range the sum stays in (limit loop or clamp)</td></tr>
+<tr><td><code>max</code></td><td>float</td><td><code>1</code></td><td>-10 to 10 (soft)</td><td>Upper end of the range the sum stays in (limit loop or clamp)</td></tr>
+<tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Hold the sum at 0 (or min) while on</td></tr>
+</tbody>
+</table>
+<div class="more">
+<h5 id="chan.integrator-what-it-adds-up">What it adds up</h5>
+<p>Each input channel is a rate per second, and the output channel of the same name is its sum over time: a speed in, a position out. A constant 0.25 rises by a quarter per second; a channel that swings around 0 wanders back and forth.</p>
+<p>Every cook adds the input's current value times the time since the last cook, so frames in which nothing asked for the node still count, with the value it had when it cooked again. A channel that holds many samples (a trail, audio) is summed sample by sample at its own rate instead.</p>
+<h5 id="chan.integrator-limits">Limits</h5>
+<ul>
+<li><code>limit: loop</code> wraps from <code>max</code> back to <code>min</code> and the other way round: an angle (<code>min</code> 0, <code>max</code> 360) or a scroll position that never runs away.
+</li>
+<li><code>limit: clamp</code> stops at <code>min</code> and <code>max</code>.
+</li>
+<li><code>limit: none</code> keeps adding without end.
+</li>
+</ul>
+<p>The sum starts at 0, brought into the range by <code>limit</code> (with <code>clamp</code> and 0 outside the range, at its nearest end). <code>reset</code> holds it there while on; a seek back in time, <a class="ref" href="#node.reset"><code>node.reset</code></a> or R start it over as well.</p>
+<h5 id="chan.integrator-example">Example</h5>
+<p>Spin something at a speed the music sets: a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> level through <a class="ref" href="#chan.math"><code>chan.math</code></a> (scale it to degrees per second) into <a class="ref" href="#chan.integrator"><code>chan.integrator</code></a> with <code>limit: loop</code>, <code>min</code> 0, <code>max</code> 360, and bind a rotation param to the output.</p>
+</div>
 </div></details>
 <details class="entry node" id="chan.keyboard_in"><summary><code class="name">chan.keyboard_in</code><span class="sum">Keys of the keyboard as channels, to switch scenes or trigger things by hand during a show (while a penumbra window has the focus)</span></summary>
 <div class="body">
@@ -3385,46 +3485,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <li><code>out</code> <span class="kind">chan</span>: -1 to 1 each: <code>right</code> (slide the cap right), <code>up</code> (lift it), <code>forward</code> (push it away), <code>pitch</code> (tilt it, nose up), <code>yaw</code> (twist it clockwise), <code>roll</code> (tilt it sideways, to the right); <code>button_left</code>, <code>button_right</code>: 1 while held; <code>connected</code>: 1 while the device is there</li>
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-mouse-and-3d-mouse">Concepts › Mouse and 3D mouse</a>, <a href="#navigation-3d-mouse">Looking around in 3D › 3D mouse</a></p>
-</div></details>
-<details class="entry node" id="chan.speed"><summary><code class="name">chan.speed</code><span class="sum">Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting</span></summary>
-<div class="body">
-<p>Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting</p>
-<p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>in</code> <span class="kind">chan</span></li>
-</ul>
-<h4>Outputs</h4>
-<ul>
-<li><code>out</code> <span class="kind">chan</span></li>
-</ul>
-<h4>Params</h4>
-<table class="params">
-<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
-<tbody>
-<tr><td><code>limit</code></td><td>none | loop | clamp</td><td><code>&quot;none&quot;</code></td><td></td><td>Whether the sum is kept within min and max<ul><li><code>none</code>: the sum grows without end</li><li><code>loop</code>: past max it starts again from min (and the other way round): an angle, a scroll</li><li><code>clamp</code>: the sum stops at min and max</li></ul></td></tr>
-<tr><td><code>min</code></td><td>float</td><td><code>0</code></td><td>-10 to 10 (soft)</td><td>Lower end of the range the sum stays in (limit loop or clamp)</td></tr>
-<tr><td><code>max</code></td><td>float</td><td><code>1</code></td><td>-10 to 10 (soft)</td><td>Upper end of the range the sum stays in (limit loop or clamp)</td></tr>
-<tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Hold the sum at 0 (or min) while on</td></tr>
-</tbody>
-</table>
-<div class="more">
-<h5 id="chan.speed-what-it-adds-up">What it adds up</h5>
-<p>Each input channel is a rate per second, and the output channel of the same name is its sum over time: a speed in, a position out. A constant 0.25 rises by a quarter per second; a channel that swings around 0 wanders back and forth.</p>
-<p>Every cook adds the input's current value times the time since the last cook, so frames in which nothing asked for the node still count, with the value it had when it cooked again. A channel that holds many samples (a trail, audio) is summed sample by sample at its own rate instead.</p>
-<h5 id="chan.speed-limits">Limits</h5>
-<ul>
-<li><code>limit: loop</code> wraps from <code>max</code> back to <code>min</code> and the other way round: an angle (<code>min</code> 0, <code>max</code> 360) or a scroll position that never runs away.
-</li>
-<li><code>limit: clamp</code> stops at <code>min</code> and <code>max</code>.
-</li>
-<li><code>limit: none</code> keeps adding without end.
-</li>
-</ul>
-<p>The sum starts at 0, brought into the range by <code>limit</code> (with <code>clamp</code> and 0 outside the range, at its nearest end). <code>reset</code> holds it there while on; a seek back in time, <a class="ref" href="#node.reset"><code>node.reset</code></a> or R start it over as well.</p>
-<h5 id="chan.speed-example">Example</h5>
-<p>Spin something at a speed the music sets: a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> level through <a class="ref" href="#chan.math"><code>chan.math</code></a> (scale it to degrees per second) into <a class="ref" href="#chan.speed"><code>chan.speed</code></a> with <code>limit: loop</code>, <code>min</code> 0, <code>max</code> 360, and bind a rotation param to the output.</p>
-</div>
 </div></details>
 <details class="entry node" id="chan.trail"><summary><code class="name">chan.trail</code><span class="sum">Records the recent past of each channel: a graph over time to look at, or a history to work with</span></summary>
 <div class="body">

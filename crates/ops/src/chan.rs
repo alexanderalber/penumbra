@@ -14,6 +14,8 @@ use penumbra_graph::{
 
 use crate::{Null, waiting};
 
+mod filter;
+
 /// Registers the `chan` node types.
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -165,36 +167,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Chan),
         || Box::new(Math) as Box<dyn Operator>,
     ))?;
+    filter::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new(
-            "chan.filter",
-            "Smooths jumpy numbers over time, at their own pace up and down: calms a sensor, softens a jump",
-        )
-        .stateful()
-        .param(
-            ParamSpec::float("rise", 0.2)
-                .clamp(0.0, 3600.0)
-                .range(0.0, 5.0)
-                .curve(Curve::Power(2.0))
-                .unit(Unit::Seconds)
-                .doc("Time to cover 63 % of a step up; 0 follows at once"),
-        )
-        .param(
-            ParamSpec::float("fall", 0.2)
-                .clamp(0.0, 3600.0)
-                .range(0.0, 5.0)
-                .curve(Curve::Power(2.0))
-                .unit(Unit::Seconds)
-                .doc("Time to cover 63 % of a step down"),
-        )
-        .input("in", DataKind::Chan)
-        .output("out", DataKind::Chan)
-        .time_dependent(),
-        || Box::new(Filter::default()) as Box<dyn Operator>,
-    ))?;
-    types.register(FnNodeType::new(
-        NodeDesc::new(
-            "chan.speed",
+            "chan.integrator",
             "Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting",
         )
         .stateful()
@@ -222,8 +198,42 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .input("in", DataKind::Chan)
         .output("out", DataKind::Chan)
         .time_dependent(),
-        || Box::new(Speed::default()) as Box<dyn Operator>,
+        || Box::new(Integrator::default()) as Box<dyn Operator>,
     ))?;
+    types.register(
+        FnNodeType::new(
+            NodeDesc::new(
+                "chan.derivative",
+                "How fast each channel changes: a position in, a speed out, for reacting to movement or to a rising level",
+            )
+            .stateful()
+            .param(
+                ParamSpec::choice("per", &["second", "frame"])
+                    .doc("What the change is counted over")
+                    .choice_doc("second", "change per second, the same at any frame rate")
+                    .choice_doc(
+                        "frame",
+                        "change per show frame (per sample for a channel with many samples)",
+                    ),
+            )
+            .param(
+                ParamSpec::choice("limit", &["none", "clamp"])
+                    .doc("Whether the output is kept within min and max")
+                    .choice_doc("none", "a jump in the input gives a large spike")
+                    .choice_doc("clamp", "the output stops at min and max"),
+            )
+            .param(ParamSpec::float("min", -1.0).range(-10.0, 10.0).doc("Lowest output (limit clamp)"))
+            .param(ParamSpec::float("max", 1.0).range(-10.0, 10.0).doc("Highest output (limit clamp)"))
+            .input("in", DataKind::Chan)
+            .output("out", DataKind::Chan)
+            .time_dependent(),
+            || Box::new(Derivative::default()) as Box<dyn Operator>,
+        )
+        .inactive(|node, desc, name| {
+            let clamp = node.param(desc, "limit").and_then(Value::as_str) == Some("clamp");
+            (matches!(name, "min" | "max") && !clamp).then_some("Only counts with limit clamp")
+        }),
+    )?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             CLOCK,
@@ -730,65 +740,10 @@ fn sample(c: &Channel, i: usize) -> f64 {
     c.samples.get(i).or(c.samples.last()).copied().unwrap_or(0.0)
 }
 
-/// One-pole smoothing with separate rise and fall times. Per-frame channels advance by the time
-/// since the last cook, so skipped frames and an idle editor (nothing asked for the node) still
-/// give the right curve; channels with many samples advance by their sample period.
-#[derive(Default)]
-struct Filter {
-    state: BTreeMap<Name, f64>,
-    last: Option<Tick>,
-}
-
-impl Operator for Filter {
-    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let now = cx.time().tick;
-        let Some(input) = cx.input_as::<Chans>(0) else {
-            self.state.clear();
-            self.last = None;
-            return out(Chans::empty(cx.rate().as_f64())?);
-        };
-        let (rise, fall) = (cx.float("rise")?, cx.float("fall")?);
-        // Going back in time (a seek) starts over, like a new node.
-        let dt = match self.last {
-            Some(last) if now.0 >= last.0 => Tick(now.0 - last.0).seconds(),
-            _ => {
-                self.state.clear();
-                0.0
-            }
-        };
-        self.last = Some(now);
-        let per_sample = input.len() > 1;
-        let mut state = BTreeMap::new();
-        let mut channels = Vec::with_capacity(input.channels().len());
-        for ch in input.channels() {
-            let mut y = self.state.get(&ch.name).copied();
-            let mut samples = Vec::with_capacity(ch.samples.len());
-            for &x in &ch.samples {
-                let step = if per_sample { 1.0 / input.rate() } else { dt };
-                let v = match y {
-                    None => x,
-                    Some(prev) => {
-                        let tau = if x > prev { rise } else { fall };
-                        if tau <= 0.0 { x } else { prev + (x - prev) * (1.0 - (-step / tau).exp()) }
-                    }
-                };
-                y = Some(v);
-                samples.push(v);
-            }
-            if let Some(v) = y {
-                state.insert(ch.name.clone(), v);
-            }
-            channels.push(Channel { name: ch.name.clone(), samples });
-        }
-        self.state = state;
-        out(Chans::new(input.rate(), channels)?.shaped_like(input))
-    }
-}
-
 /// Integrates each channel: per-frame channels by the time since the last cook (like
-/// [`Filter`]), channels with many samples by their sample period.
+/// `chan.filter`), channels with many samples by their sample period.
 #[derive(Default)]
-struct Speed {
+struct Integrator {
     state: BTreeMap<Name, f64>,
     last: Option<Tick>,
 }
@@ -802,7 +757,7 @@ fn limited(v: f64, limit: &str, lo: f64, hi: f64) -> f64 {
     }
 }
 
-impl Operator for Speed {
+impl Operator for Integrator {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let now = cx.time().tick;
         let Some(input) = cx.input_as::<Chans>(0) else {
@@ -840,6 +795,71 @@ impl Operator for Speed {
                 samples.push(sum);
             }
             state.insert(ch.name.clone(), sum);
+            channels.push(Channel { name: ch.name.clone(), samples });
+        }
+        self.state = state;
+        out(Chans::new(input.rate(), channels)?.shaped_like(input))
+    }
+}
+
+/// The change of each channel: per-frame channels over the time since the last cook (like
+/// [`Integrator`]), channels with many samples from sample to sample. The first value of a
+/// channel gives 0; a cook at the same time as the last gives the last output again.
+#[derive(Default)]
+struct Derivative {
+    /// Last input and last output per channel.
+    state: BTreeMap<Name, (f64, f64)>,
+    last: Option<Tick>,
+}
+
+impl Operator for Derivative {
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        let now = cx.time().tick;
+        let Some(input) = cx.input_as::<Chans>(0) else {
+            self.state.clear();
+            self.last = None;
+            return out(Chans::empty(cx.rate().as_f64())?);
+        };
+        let per_frame = cx.text("per")? == "frame";
+        let clamp = cx.text("limit")? == "clamp";
+        let (lo, hi) = (cx.float("min")?, cx.float("max")?);
+        // Going back in time (a seek) starts over.
+        let dt = match self.last {
+            Some(last) if now.0 >= last.0 => Tick(now.0 - last.0).seconds(),
+            _ => {
+                self.state.clear();
+                0.0
+            }
+        };
+        self.last = Some(now);
+        let per_sample = input.len() > 1;
+        let step = if per_sample { 1.0 / input.rate() } else { dt };
+        // What one unit of the output counts over, in seconds.
+        let unit = match (per_frame, per_sample) {
+            (false, _) => 1.0,
+            (true, true) => 1.0 / input.rate(),
+            (true, false) => 1.0 / cx.rate().as_f64(),
+        };
+        let mut state = BTreeMap::new();
+        let mut channels = Vec::with_capacity(input.channels().len());
+        for ch in input.channels() {
+            let mut prev = self.state.get(&ch.name).copied();
+            let mut samples = Vec::with_capacity(ch.samples.len());
+            for &x in &ch.samples {
+                let y = match prev {
+                    None => 0.0,
+                    Some((_, y)) if step <= 0.0 => y,
+                    Some((p, _)) => {
+                        let d = (x - p) / step * unit;
+                        if clamp { d.clamp(lo.min(hi), hi.max(lo)) } else { d }
+                    }
+                };
+                prev = Some((x, y));
+                samples.push(y);
+            }
+            if let Some(p) = prev {
+                state.insert(ch.name.clone(), p);
+            }
             channels.push(Channel { name: ch.name.clone(), samples });
         }
         self.state = state;
@@ -1318,12 +1338,120 @@ mod tests {
         assert_eq!(f.value("/floor"), -4.0);
     }
 
+    impl F {
+        fn edit(&mut self, ops: &[Op]) {
+            self.net = Arc::new(self.net.apply(&builtin_types().unwrap(), ops).unwrap().network);
+        }
+
+        /// The filter `/f` behind constant `/c` (0), after `/c` steps to 1 and `seconds` pass,
+        /// once frame by frame and once in one jump.
+        fn step_response(ops: &[Op], seconds: f64) -> (f64, f64) {
+            let frames = (seconds * 60.0).round() as u64;
+            let mut both = [0.0; 2];
+            for (jump, v) in [false, true].into_iter().zip(&mut both) {
+                let mut base =
+                    vec![create("/c", "chan.constant"), create("/f", "chan.filter"), connect("/c", "/f", 0)];
+                base.extend_from_slice(ops);
+                let mut f = F::new(&base);
+                assert_eq!(f.value("/f"), 0.0);
+                f.edit(&[set("/c.value0", 1.0)]);
+                if jump {
+                    f.clock.advance(frames);
+                } else {
+                    for _ in 0..frames {
+                        f.clock.advance(1);
+                        f.value("/f");
+                    }
+                }
+                *v = f.value("/f");
+            }
+            (both[0], both[1])
+        }
+    }
+
     #[test]
-    fn speed_adds_up_loops_and_resets() {
+    fn filter_types_keep_their_time() {
+        let t63 = 1.0 - (-1.0f64).exp();
+        for kind in ["critical", "bessel", "butterworth"] {
+            for order in 2..=4_i64 {
+                let ops = [set("/f.type", kind), set("/f.order", order), set("/f.rise", 0.5)];
+                let (frames, jump) = F::step_response(&ops, 0.5);
+                assert!((frames - t63).abs() < 1e-9, "{kind} {order}: {frames}");
+                assert!((jump - t63).abs() < 1e-9, "{kind} {order}: {jump}");
+            }
+        }
+        // The steady wobble of the window's own period cancels in box; half the window is half way.
+        let (frames, _) = F::step_response(&[set("/f.type", "box"), set("/f.window", 1.0)], 0.5);
+        assert!((frames - 0.5).abs() < 1e-9, "{frames}");
+        let (frames, _) = F::step_response(&[set("/f.type", "box"), set("/f.window", 1.0)], 2.0);
+        assert!((frames - 1.0).abs() < 1e-9, "{frames}");
+        let (frames, _) = F::step_response(&[set("/f.type", "gaussian"), set("/f.window", 1.0)], 0.25);
+        assert!(frames > 0.3 && frames < 0.9, "{frames}");
+        // Slew: 2 per second for a quarter second.
+        let (frames, jump) = F::step_response(&[set("/f.type", "slew"), set("/f.up", 2.0)], 0.25);
+        assert!((frames - 0.5).abs() < 1e-9 && (jump - 0.5).abs() < 1e-9, "{frames} {jump}");
+        // one_euro without beta is a first-order lag with time constant rise.
+        let (frames, _) =
+            F::step_response(&[set("/f.type", "one_euro"), set("/f.beta", 0.0), set("/f.rise", 0.5)], 0.5);
+        assert!((frames - t63).abs() < 1e-9, "{frames}");
+        // And follows faster with beta.
+        let (fast, _) =
+            F::step_response(&[set("/f.type", "one_euro"), set("/f.beta", 5.0), set("/f.rise", 0.5)], 0.5);
+        assert!(fast > frames + 0.05, "{fast}");
+    }
+
+    #[test]
+    fn filter_switching_type_carries_on() {
+        let mut f = F::new(&[
+            create("/c", "chan.constant"),
+            create("/f", "chan.filter"),
+            set("/f.rise", 1.0),
+            // A step is a fast move to one_euro, which then catches up at once.
+            set("/f.beta", 0.0),
+            connect("/c", "/f", 0),
+        ]);
+        f.value("/f");
+        f.edit(&[set("/c.value0", 1.0)]);
+        f.clock.advance(30);
+        let before = f.value("/f");
+        for kind in ["butterworth", "box", "one_euro", "slew", "bessel", "first_order"] {
+            f.edit(&[set("/f.type", kind)]);
+            f.clock.advance(1);
+            let v = f.value("/f");
+            assert!((v - before).abs() < 0.1, "{kind}: {before} to {v}");
+            assert!(v >= before - 1e-9, "{kind} went back from {before} to {v}");
+        }
+    }
+
+    #[test]
+    fn derivative_counts_change_per_second_or_frame() {
+        let mut f = F::new(&[
+            create("/c", "chan.constant"),
+            set("/c.value0", 2.0),
+            create("/i", "chan.integrator"),
+            connect("/c", "/i", 0),
+            create("/d", "chan.derivative"),
+            connect("/i", "/d", 0),
+        ]);
+        assert_eq!(f.value("/d"), 0.0);
+        f.clock.advance(10);
+        assert!((f.value("/d") - 2.0).abs() < 1e-9);
+        // A second cook at the same time keeps the value.
+        assert!((f.value("/d") - 2.0).abs() < 1e-9);
+        f.edit(&[set("/d.per", "frame")]);
+        f.clock.advance(3);
+        assert!((f.value("/d") - 2.0 / 60.0).abs() < 1e-9);
+        f.edit(&[set("/d.per", "second"), set("/d.limit", "clamp"), set("/d.max", 1.5)]);
+        f.clock.advance(1);
+        assert_eq!(f.value("/d"), 1.5);
+    }
+
+    #[test]
+    fn integrator_adds_up_loops_and_resets() {
         let mut f = F::new(&[
             create("/c", "chan.constant"),
             set("/c.value0", 1.0),
-            create("/s", "chan.speed"),
+            create("/s", "chan.integrator"),
             set("/s.limit", "loop"),
             set("/s.max", 3.0),
             connect("/c", "/s", 0),

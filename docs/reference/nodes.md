@@ -1111,7 +1111,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.mouse_in](#chanmouse_in), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.spacemouse_in](#chanspacemouse_in), [chan.speed](#chanspeed), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.integrator](#chanintegrator), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.mouse_in](#chanmouse_in), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.spacemouse_in](#chanspacemouse_in), [chan.trail](#chantrail)
 
 ### chan.audio_analysis
 
@@ -1193,6 +1193,25 @@ Outputs: `out` (chan).
 | `name0` | text | `"chan0"` |  | Name of the channel this row makes, as other nodes and bindings see it |
 | `rows` *(more)* | int | `1` | 1 to 64 | How many rows; row k is the params `name<k>` and `value<k>`, counted from 0 |
 
+### chan.derivative
+
+How fast each channel changes: a position in, a speed out, for reacting to movement or to a rising level
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `in` (chan)
+
+Outputs: `out` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `per` | second \| frame | `"second"` |  | What the change is counted over; second: change per second, the same at any frame rate; frame: change per show frame (per sample for a channel with many samples) |
+| `limit` | none \| clamp | `"none"` |  | Whether the output is kept within min and max; none: a jump in the input gives a large spike; clamp: the output stops at min and max |
+| `min` | float | `-1` | -10 to 10 (soft) | Lowest output (limit clamp) |
+| `max` | float | `1` | -10 to 10 (soft) | Highest output (limit clamp) |
+
 ### chan.dmx_in
 
 DMX from a lighting desk over the network (Art-Net or sACN): each slot a channel to drive content with
@@ -1215,7 +1234,7 @@ Outputs:
 
 ### chan.filter
 
-Smooths jumpy numbers over time, at their own pace up and down: calms a sensor, softens a jump
+Smooths jumpy numbers over time: calms a sensor, softens a jump. From a plain lag to steeper filters, averages, a speed limit and an adaptive filter for tracking
 
 Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
 
@@ -1227,8 +1246,14 @@ Outputs: `out` (chan).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `rise` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step up; 0 follows at once |
+| `type` | first_order \| critical \| bessel \| butterworth \| gaussian \| box \| slew \| one_euro | `"first_order"` |  | How it smooths; first_order: a lag with its own times up and down: 63 % of a step after `rise` or `fall`; critical: starts and stops softer than first_order and never overshoots; a higher `order` is softer; bessel: keeps the shape of a movement best and overshoots by less than 1 %; butterworth: removes fast wiggle most cleanly and overshoots a step: 4 % at order 2, 11 % at order 4; gaussian: average over the last `window` seconds, the newest values count most; lags about a quarter of `window`; box: plain average over the last `window` seconds; lags half of `window`, and a wobble that repeats every `window` seconds vanishes; slew: moves at most `up` per second upwards and `down` per second downwards; one_euro: smooths strongly while the input rests and follows fast moves with little lag: for tracked positions. `rise` sets the smoothing at rest, `beta` how fast it follows |
+| `order` | int | `2` | 2 to 4 (soft) | Steepness of critical, bessel and butterworth: a higher order lets less wiggle through and starts slower |
+| `rise` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step up (first_order) or of any step (critical, bessel, butterworth); 0 follows at once. For one_euro the smoothing at rest |
 | `fall` | float | `0.2` | 0 to 5 s (soft) | Time to cover 63 % of a step down |
+| `window` | float | `0.5` | 0 to 5 s (soft) | How far back the average reaches; 0 follows at once |
+| `up` | float | `1` | 0 to 10 (soft) | Fastest rise, in units per second; 0: no limit |
+| `down` | float | `1` | 0 to 10 (soft) | Fastest fall, in units per second; 0: no limit |
+| `beta` | float | `1` | 0 to 10 (soft) | How much a fast move loosens the smoothing: 0 smooths like first_order, higher follows fast moves more closely. Depends on the units of the input |
 
 ### chan.from_table
 
@@ -1272,6 +1297,25 @@ Inputs:
 - `in` (chan)
 
 Outputs: `out` (chan).
+
+### chan.integrator
+
+Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `in` (chan)
+
+Outputs: `out` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `limit` | none \| loop \| clamp | `"none"` |  | Whether the sum is kept within min and max; none: the sum grows without end; loop: past max it starts again from min (and the other way round): an angle, a scroll; clamp: the sum stops at min and max |
+| `min` | float | `0` | -10 to 10 (soft) | Lower end of the range the sum stays in (limit loop or clamp) |
+| `max` | float | `1` | -10 to 10 (soft) | Upper end of the range the sum stays in (limit loop or clamp) |
+| `reset` | bool | `false` |  | Hold the sum at 0 (or min) while on |
 
 ### chan.keyboard_in
 
@@ -1494,25 +1538,6 @@ Inputs: none.
 Outputs:
 
 - `out` (chan): -1 to 1 each: `right` (slide the cap right), `up` (lift it), `forward` (push it away), `pitch` (tilt it, nose up), `yaw` (twist it clockwise), `roll` (tilt it sideways, to the right); `button_left`, `button_right`: 1 while held; `connected`: 1 while the device is there
-
-### chan.speed
-
-Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting
-
-Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
-
-Inputs:
-
-- `in` (chan)
-
-Outputs: `out` (chan).
-
-| param | type | default | range | meaning |
-|---|---|---|---|---|
-| `limit` | none \| loop \| clamp | `"none"` |  | Whether the sum is kept within min and max; none: the sum grows without end; loop: past max it starts again from min (and the other way round): an angle, a scroll; clamp: the sum stops at min and max |
-| `min` | float | `0` | -10 to 10 (soft) | Lower end of the range the sum stays in (limit loop or clamp) |
-| `max` | float | `1` | -10 to 10 (soft) | Upper end of the range the sum stays in (limit loop or clamp) |
-| `reset` | bool | `false` |  | Hold the sum at 0 (or min) while on |
 
 ### chan.trail
 
