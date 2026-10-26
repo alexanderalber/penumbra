@@ -487,24 +487,9 @@ pub fn transform(m: &Mat4, p: [f64; 3]) -> [f64; 3] {
     [dot(r0), dot(r1), dot(r2)]
 }
 
-/// The matrix for normals: the inverse transpose of the upper 3x3, up to scale (its
-/// cofactors, with the determinant's sign so mirrored models keep outward normals), scaled so
-/// its largest entry is 1. Unscaled, the cofactors of a 0.001 scale (millimetres to metres)
-/// are 1e-6, and the normals' squared length fell below the shader's "no normal" test in
-/// scattered pixels: grain all over the model.
-pub fn normal_matrix(m: &Mat4) -> [[f64; 3]; 3] {
-    let [[a, b, c, _], [d, e, f, _], [g, h, i, _], _] = *m;
-    let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
-    let s = if det < 0.0 { -1.0 } else { 1.0 };
-    let n = [
-        [e * i - f * h, f * g - d * i, d * h - e * g],
-        [c * h - b * i, a * i - c * g, b * g - a * h],
-        [b * f - c * e, c * d - a * f, a * e - b * d],
-    ];
-    let largest = n.iter().flatten().fold(0.0f64, |m, x| m.max(x.abs()));
-    let k = if largest > 0.0 && largest.is_finite() { s / largest } else { s };
-    n.map(|row| row.map(|x| x * k))
-}
+/// The matrix for normals; it lives in the mesh crate, which bakes matrices into meshes for
+/// writing them to files.
+pub use penumbra_mesh::normal_matrix;
 
 #[cfg(test)]
 mod tests {

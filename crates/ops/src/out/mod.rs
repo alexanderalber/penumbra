@@ -2,7 +2,8 @@
 //!
 //! `out.video` records its input to a movie file ([`video`]); `out.spout` shares it with other
 //! programs on this machine ([`spout`]), `out.ndi` with programs on the network ([`ndi`]).
-//! `out.table` writes a table to a CSV or TSV file ([`table`]).
+//! `out.table` writes a table to a CSV or TSV file ([`table`]), `out.mesh` geometry to an OBJ, STL
+//! or glb file ([`mesh`]); both share [`file`].
 //!
 //! `out.projector` is one projector: a viewport inside the fullscreen output window on one
 //! display. Usually a projector fills its display; a 4K signal into a hardware splitter is one
@@ -31,6 +32,8 @@
 //! of the black where another projector does not reach; `projector.flatfield` measures them.
 
 pub mod correct;
+pub mod file;
+pub mod mesh;
 pub mod ndi;
 pub mod place;
 pub mod spout;
@@ -306,6 +309,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ndi::register(types)?;
     spout::register(types)?;
     table::register(types)?;
+    mesh::register(types)?;
     video::register(types)
 }
 

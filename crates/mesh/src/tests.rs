@@ -457,3 +457,48 @@ fn more_rings_round_off_a_staircase() {
     assert!(one > 15.0, "one ring keeps the steps: {one}");
     assert!(six < one * 0.5, "six rings: {six}, one: {one}");
 }
+
+#[test]
+fn a_matrix_is_baked_into_positions_and_normals() {
+    let cube = prim::cuboid([2.0, 2.0, 2.0]).unwrap();
+    // Scale x by 2, turn 90 degrees about z (x to y), move up by 5.
+    let m = [[0.0, -1.0, 0.0, 0.0], [2.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 5.0], [0.0, 0.0, 0.0, 1.0]];
+    let moved = cube.transformed(&m);
+    moved.check().unwrap();
+    assert_eq!((moved.indices.clone(), moved.parts.clone()), (cube.indices.clone(), cube.parts.clone()));
+    for (a, b) in cube.vertices.iter().zip(&moved.vertices) {
+        let [x, y, z] = a.position;
+        assert!(close(b.position, [-y, 2.0 * x, z + 5.0]), "{a:?} -> {b:?}");
+        // Normals turn with the box and stay unit length; the scale does not tilt an axis normal.
+        let [nx, ny, nz] = a.normal;
+        assert!(close(b.normal, [-ny, nx, nz]), "{a:?} -> {b:?}");
+    }
+    // A slanted normal leans towards the squashed axis, as the inverse transpose says.
+    let mut slant = cube.clone();
+    slant.vertices[0].normal = normalize([1.0, 1.0, 0.0]);
+    let squash = [[0.5, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    assert!(close(slant.transformed(&squash).vertices[0].normal, normalize([2.0, 1.0, 0.0])));
+    // A mirror reverses the corners, so every face still points outwards.
+    let mirror = [[-1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    let mirrored = cube.transformed(&mirror);
+    for t in mirrored.indices.as_chunks::<3>().0 {
+        let p = t.map(|i| mirrored.vertices[i as usize].position);
+        let n = face_normal(p);
+        let c = [0, 1, 2].map(|k| (p[0][k] + p[1][k] + p[2][k]) / 3.0);
+        assert!(n[0] * c[0] + n[1] * c[1] + n[2] * c[2] > 0.0, "a face turned inwards: {p:?}");
+        assert!(close(mirrored.vertices[t[0] as usize].normal, n), "the normal follows the face");
+    }
+}
+
+#[test]
+fn append_renumbers_and_keeps_polygon_edges() {
+    let grid = prim::grid([1.0, 1.0], 2).unwrap();
+    let cube = prim::cuboid([1.0; 3]).unwrap();
+    let mut out = cube.clone();
+    out.append(&grid);
+    out.check().unwrap();
+    assert_eq!(out.triangle_count(), cube.triangle_count() + grid.triangle_count());
+    assert_eq!(out.parts.len(), cube.parts.len() + grid.parts.len());
+    assert_eq!(out.inner_edges.len(), out.triangle_count(), "padded for the cube's triangles");
+    assert_eq!(out.inner_edges[cube.triangle_count()..], grid.inner_edges[..]);
+}

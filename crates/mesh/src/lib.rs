@@ -330,6 +330,72 @@ impl Mesh {
         Bounds::of(self.vertices.iter().map(|v| v.position))
     }
 
+    /// The mesh moved by `m` (row-major, for column vectors, as the GPU side's matrices):
+    /// positions by `m`, normals by its inverse transpose ([`normal_matrix`]) and renormalised. A
+    /// mirroring `m` reverses every triangle's corners, so fronts stay counter-clockwise.
+    pub fn transformed(&self, m: &[[f64; 4]; 4]) -> Mesh {
+        let n = normal_matrix(m);
+        let row = |r: &[f64; 4], p: [f64; 3]| r[0] * p[0] + r[1] * p[1] + r[2] * p[2] + r[3];
+        let [r0, r1, r2, _] = m;
+        let vertices = self
+            .vertices
+            .iter()
+            .map(|v| {
+                let p = v.position.map(f64::from);
+                let w = v.normal.map(f64::from);
+                let turn = |r: &[f64; 3]| (r[0] * w[0] + r[1] * w[1] + r[2] * w[2]) as f32;
+                Vertex {
+                    position: [row(r0, p) as f32, row(r1, p) as f32, row(r2, p) as f32],
+                    normal: normalize([turn(&n[0]), turn(&n[1]), turn(&n[2])]),
+                    uv: v.uv,
+                }
+            })
+            .collect();
+        let mut out = Mesh { vertices, ..self.clone() };
+        if determinant(m) < 0.0 {
+            for t in out.indices.as_chunks_mut::<3>().0 {
+                t.swap(1, 2);
+            }
+            // Bit k marks the edge opposite corner k: corners 1 and 2 swapped, so do bits 1 and 2.
+            for e in &mut out.inner_edges {
+                *e = (*e & 1) | (*e & 2) << 1 | (*e & 4) >> 1;
+            }
+        }
+        out
+    }
+
+    /// Adds `other` after this mesh's own triangles, its parts, materials and images
+    /// renumbered after these.
+    pub fn append(&mut self, other: &Mesh) {
+        let v0 = self.vertices.len() as u32;
+        let i0 = self.indices.len() as u32;
+        let p0 = self.parts.len() as u32;
+        let m0 = self.materials.len() as u32;
+        let t0 = self.images.len() as u32;
+        if !self.inner_edges.is_empty() || !other.inner_edges.is_empty() {
+            self.inner_edges.resize(self.triangle_count(), 0);
+            let mut theirs = other.inner_edges.clone();
+            theirs.resize(other.triangle_count(), 0);
+            self.inner_edges.extend(theirs);
+        }
+        self.vertices.extend_from_slice(&other.vertices);
+        self.indices.extend(other.indices.iter().map(|i| i + v0));
+        self.ranges.extend(other.ranges.iter().map(|r| Range {
+            first: r.first + i0,
+            count: r.count,
+            part: r.part + p0,
+            material: r.material + m0,
+        }));
+        self.parts.extend_from_slice(&other.parts);
+        self.materials.extend(
+            other
+                .materials
+                .iter()
+                .map(|mat| Material { texture: mat.texture.map(|t| t + t0), ..mat.clone() }),
+        );
+        self.images.extend_from_slice(&other.images);
+    }
+
     /// Triangles and bounds per part.
     pub fn part_info(&self) -> Vec<PartInfo> {
         let mut info: Vec<PartInfo> = self
@@ -745,6 +811,29 @@ pub(crate) fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
 
 pub(crate) fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
+/// The matrix for normals: the inverse transpose of the upper 3x3 of `m`, up to scale (its
+/// cofactors, with the determinant's sign so mirrored models keep outward normals), scaled so
+/// its largest entry is 1. Unscaled, the cofactors of a 0.001 scale (millimetres to metres)
+/// are 1e-6, too small for a shader's "no normal" test.
+pub fn normal_matrix(m: &[[f64; 4]; 4]) -> [[f64; 3]; 3] {
+    let [[a, b, c, _], [d, e, f, _], [g, h, i, _], _] = *m;
+    let s = if determinant(m) < 0.0 { -1.0 } else { 1.0 };
+    let n = [
+        [e * i - f * h, f * g - d * i, d * h - e * g],
+        [c * h - b * i, a * i - c * g, b * g - a * h],
+        [b * f - c * e, c * d - a * f, a * e - b * d],
+    ];
+    let largest = n.iter().flatten().fold(0.0f64, |m, x| m.max(x.abs()));
+    let k = if largest > 0.0 && largest.is_finite() { s / largest } else { s };
+    n.map(|row| row.map(|x| x * k))
+}
+
+/// The determinant of the upper 3x3 of `m`: negative when `m` mirrors.
+pub fn determinant(m: &[[f64; 4]; 4]) -> f64 {
+    let [[a, b, c, _], [d, e, f, _], [g, h, i, _], _] = *m;
+    a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
 }
 
 /// Unit length, or zero for a zero or non-finite vector.

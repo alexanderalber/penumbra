@@ -194,26 +194,7 @@ fn y_up([x, y, z]: [f32; 3]) -> [f32; 3] {
 pub fn combine(meshes: &[Mesh]) -> Mesh {
     let mut out = Mesh::default();
     for m in meshes {
-        let v0 = out.vertices.len() as u32;
-        let i0 = out.indices.len() as u32;
-        let p0 = out.parts.len() as u32;
-        let m0 = out.materials.len() as u32;
-        let t0 = out.images.len() as u32;
-        out.vertices.extend_from_slice(&m.vertices);
-        out.indices.extend(m.indices.iter().map(|i| i + v0));
-        out.ranges.extend(m.ranges.iter().map(|r| crate::Range {
-            first: r.first + i0,
-            count: r.count,
-            part: r.part + p0,
-            material: r.material + m0,
-        }));
-        out.parts.extend_from_slice(&m.parts);
-        out.materials.extend(
-            m.materials
-                .iter()
-                .map(|mat| crate::Material { texture: mat.texture.map(|t| t + t0), ..mat.clone() }),
-        );
-        out.images.extend_from_slice(&m.images);
+        out.append(m);
     }
     out
 }

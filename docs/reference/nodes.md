@@ -1952,7 +1952,7 @@ Outputs:
 
 ## out
 
-[out.dmx](#outdmx), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
+[out.dmx](#outdmx), [out.mesh](#outmesh), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
 
 ### out.dmx
 
@@ -1973,6 +1973,24 @@ Outputs: none.
 | `address` | int | `1` | 1 to 512 (soft) | DMX address (slot, from 1) the first channel goes to; for DDP the byte, from 1 |
 | `values` | unit \| byte | `"unit"` |  | What the channel values mean; unit: 0 to 1, sent as 0 to 255; byte: 0 to 255, sent as they are (rounded) |
 | `rate` | float | `30` | 1 to 60 Hz (soft) | Frames per second, sent whether or not anything changed; the Open DMX USB manages about 35 |
+
+### out.mesh
+
+Writes its input geometry to an OBJ, STL or glb file
+
+Inputs:
+
+- `in` (geo): The geometry to write
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `file` | file (obj, stl, glb) |  |  | The file to write, relative to the project; empty writes export/<node name>.obj (.stl, .glb with that format). The node creates the export folder but no other |
+| `overwrite` | bool | `true` |  | On: every write replaces the file, for a program that keeps reading it. Off: every write makes a new file with the next free name (_2, _3, ...); in mode changes that is a new file per change |
+| `format` | auto \| obj \| stl \| glb | `"auto"` |  | The file format. Each is written so geo.file with up auto reads it back upright; auto: by extension, obj for any other; obj: text, y up, one object per part, no materials; stl: binary, z up, one solid without parts or materials; glb: binary glTF, y up, one node per part, material colours |
+| `mode` | changes \| manual | `"changes"` |  | When the node writes; changes: whenever the geometry differs from what was written; manual: only on the command mesh_out.write |
+| `instances` | expand \| skip | `"expand"` |  | What happens to copies from geo.tex_instance. At most 4194304 triangles and 65536 parts are written; expand: one copy per texel, read back from the GPU, each its own part. For copies that move every frame use mode manual; skip: each model once, where it stands without its copies |
 
 ### out.ndi
 

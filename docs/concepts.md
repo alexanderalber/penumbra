@@ -43,6 +43,14 @@ The families:
   camera; the camera is perspective, orthographic or calibrated). `light.projector` throws a
   picture through a camera onto the geometry: a virtual projector, for trying a mapping on a
   model of the room. Coordinates are metres, z up.
+  `out.mesh` writes geometry to an OBJ, STL or glb file, every model where it stands in the
+  scene. Each part stays a part: an OBJ object or a glTF node. Only glb keeps material colours;
+  textures are not written. File, `overwrite` and the modes `changes` and `manual` work as for
+  `out.table`; the command is `mesh_out.write`. Copies from `geo.tex_instance` are read back
+  from the GPU and written one by one (`instances` on `expand`). For copies that move every
+  frame, use mode `manual`: in mode `changes` such an input is written every frame. With
+  `instances` on `skip` each model is written once, without its copies. A file holds at most
+  4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
 - **`script`**: Python that turns channels and tables into channels and a table (see
   [Scripts](scripts.md)).
 - **`out`**: sinks. `out.projector` shows a picture fullscreen on a display.

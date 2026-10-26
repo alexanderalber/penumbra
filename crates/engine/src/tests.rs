@@ -1005,6 +1005,9 @@ mod video_out_tests;
 #[path = "table_out_tests.rs"]
 mod table_out_tests;
 
+#[path = "mesh_out_tests.rs"]
+mod mesh_out_tests;
+
 #[path = "projector_tests.rs"]
 mod projector_tests;
 

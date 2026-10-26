@@ -110,6 +110,13 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `keyboard.press` | Press a key as if typed in a penumbra window, for chan.keyboard_in: {key, down?}; without `down` a tap, `down: true` holds it until `down: false` |
 | `keyboard.status` | Keys held now (and by which window), the key pressed last, presses so far |
 
+## mesh_out
+
+| command | |
+|---|---|
+| `mesh_out.status` | Mesh files: node, file, format, mode, written_seconds_ago, triangles, parts, copies, bytes, writing, error; {path?} |
+| `mesh_out.write` | Write an out.mesh's input to its file now, in either mode; {path}; answers with the status once written, fails with the node's error |
+
 ## mouse
 
 | command | |
