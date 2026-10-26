@@ -81,6 +81,9 @@ lists every one.
   memory back. The app checks for Windows settings that interfere with a show (Game Bar,
   notification banners), fixes them and restores them afterwards. A cook-time meter shows GPU
   load, memory and temperature. The app recovers after the GPU device is lost.
+- **Files out:** a recording of the show (`out.video`), any table as CSV or TSV (`out.table`),
+  any geometry as OBJ, STL or GLB with its transforms and instances baked in (`out.mesh`); each
+  writes when its input changes or on command, into the project's `export/` folder by default.
 - **Automation:** headless runs execute a script of commands and save pictures of any node or
   of the whole window. Every picture in this README was made that way
   (`python tools/gallery.py`).
