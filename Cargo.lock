@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "eframe",
  "egui",
@@ -3167,7 +3167,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-audio"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cpal",
  "log",
@@ -3177,7 +3177,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-calib"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "nalgebra",
  "penumbra-core",
@@ -3187,7 +3187,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-camera"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
  "penumbra-core",
@@ -3197,7 +3197,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-cli"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "penumbra-core",
  "penumbra-engine",
@@ -3211,7 +3211,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3219,7 +3219,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-dmx"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
  "penumbra-core",
@@ -3229,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-engine"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "half",
  "log",
@@ -3257,7 +3257,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-gpu"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bytemuck",
  "half",
@@ -3274,7 +3274,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-graph"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "arc-swap",
  "log",
@@ -3285,7 +3285,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-mesh"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "penumbra-core",
  "serde_json",
@@ -3293,7 +3293,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-ndi"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "half",
  "libloading",
@@ -3305,7 +3305,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-ops"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "effectcraft-text",
  "half",
@@ -3336,7 +3336,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-osc"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
  "penumbra-core",
@@ -3345,7 +3345,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-output"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
  "penumbra-core",
@@ -3360,7 +3360,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-project"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "log",
  "penumbra-core",
@@ -3372,14 +3372,14 @@ dependencies = [
 
 [[package]]
 name = "penumbra-pyhost"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "pyo3",
 ]
 
 [[package]]
 name = "penumbra-record"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "filmcraft-h264enc",
  "filmcraft-isobmff",
@@ -3394,7 +3394,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-script"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "libloading",
  "log",
@@ -3407,7 +3407,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-spacenav"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hidapi",
  "log",
@@ -3417,7 +3417,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-spout"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "half",
  "log",
@@ -3429,7 +3429,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-system"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "libloading",
  "log",
@@ -3441,11 +3441,11 @@ dependencies = [
 
 [[package]]
 name = "penumbra-track"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "penumbra-ui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "eframe",
  "egui",
@@ -3477,7 +3477,7 @@ dependencies = [
 
 [[package]]
 name = "penumbra-video"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "filmcraft-codecs",
  "filmcraft-color",
@@ -5765,7 +5765,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "zbus"
