@@ -21,9 +21,10 @@ menu's "Dissolve" undoes the grouping.
 
 ## Ports
 
-Wires enter and leave a component only through ports, which are nodes inside it: `tex.in`,
-`chan.in` and `table.in` are its inputs, `tex.out`, `chan.out` and `table.out` its outputs.
-What is wired to an input outside comes out of the matching `.in` node inside; what is wired
+Wires enter and leave a component only through ports, which are nodes inside it. Each data kind
+has a pair: `tex.in` and `tex.out`, `chan.in` and `chan.out`, and the same for `table`, `geo`,
+`mat`, `light` and `view`. The `.in` nodes are the component's inputs, the `.out` nodes its
+outputs. What is wired to an input outside comes out of the matching `.in` node inside; what is wired
 into a `.out` node inside comes out of the component. Bindings and `tex.select` are not wires:
 they may reach in and out of components by path.
 

@@ -114,17 +114,30 @@ fn cells(types: &NodeTypes, group: &[String], library: &[Offered]) -> Vec<Cell> 
     out
 }
 
-/// The kinds of `family`, sorted by their short name; for `comp`, `base` first, then a gap
-/// ([`GAP`]) and the component files on offer as `@name`.
+/// The kinds of `family`, sorted by their short name, its component ports (`tex.in`,
+/// `tex.out`) last after a gap ([`GAP`]), so they do not read as a source and a sink; for
+/// `comp`, `base` first, then a gap and the component files on offer as `@name`.
 fn kinds_of(types: &NodeTypes, family: &str, library: &[Offered]) -> Vec<String> {
+    let in_family = |k: &&str| k.split_once('.').is_some_and(|(f, _)| f == family);
+    let is_port = |k: &str| types.desc(k).is_some_and(|d| d.port.is_some());
     let mut kinds: Vec<String> = types
         .kinds()
-        .filter(|k| k.split_once('.').is_some_and(|(f, _)| f == family))
+        .filter(in_family)
         // Only loading a project makes a placeholder of a node that did not load.
         .filter(|k| *k != penumbra_graph::broken::BROKEN_KIND)
+        .filter(|k| !is_port(k))
         .map(str::to_string)
         .collect();
     kinds.sort_by_key(|k| (*k != penumbra_ops::comp::COMP_KIND, short(k).to_lowercase()));
+    let mut ports: Vec<String> =
+        types.kinds().filter(in_family).filter(|k| is_port(k)).map(str::to_string).collect();
+    ports.sort_by_key(|k| short(k).to_lowercase());
+    if !ports.is_empty() {
+        if !kinds.is_empty() {
+            kinds.push(GAP.to_string());
+        }
+        kinds.extend(ports);
+    }
     if family == "comp" && !library.is_empty() {
         kinds.push(GAP.to_string());
         kinds.extend(library.iter().map(|o| format!("{LIBRARY_MARK}{}", o.name)));
@@ -140,8 +153,8 @@ pub struct Offered {
     pub place: &'static str,
 }
 
-/// The empty cell between the `comp` tab's built-in types and the component files: a line, not
-/// a choice. Once the family has more built-in types than `base`, or penumbra ships
+/// The empty cell before a family's component ports and between the `comp` tab's built-in types
+/// and the component files: a line, not a choice. Once the family has more built-in types than `base`, or penumbra ships
 /// components of its own, the tab gets a toggle between standard and user components instead.
 const GAP: &str = "";
 

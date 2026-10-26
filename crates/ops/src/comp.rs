@@ -1,6 +1,7 @@
-//! Components: `comp.base`, a node that holds nodes, and its input and output nodes per family
-//! (`tex.in`, `tex.out`, `chan.in`, ...), which pass their input on unchanged and are where wires
-//! cross the component's edge.
+//! Components: `comp.base`, a node that holds nodes, and its input and output nodes per data kind
+//! (`tex.in`, `tex.out`, `chan.in`, `geo.out`, ...), which pass their input on unchanged and are
+//! where wires cross the component's edge. Every data kind has its pair, so grouping nodes never
+//! fails on the kind of a wire that crosses the new edge.
 
 use penumbra_core::{Error, ParamSpec};
 use penumbra_graph::{
@@ -9,6 +10,17 @@ use penumbra_graph::{
 
 /// The kind of a component.
 pub const COMP_KIND: &str = "comp.base";
+
+/// The families with component ports, one per data kind.
+const PORT_FAMILIES: [(&str, DataKind); 7] = [
+    ("tex", DataKind::Tex),
+    ("chan", DataKind::Chan),
+    ("table", DataKind::Table),
+    ("geo", DataKind::Geo),
+    ("mat", DataKind::Mat),
+    ("light", DataKind::Light),
+    ("view", DataKind::View),
+];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -19,17 +31,17 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .container(),
         || Box::new(Holder) as Box<dyn Operator>,
     ))?;
-    for (family, kind) in [("tex", DataKind::Tex), ("chan", DataKind::Chan), ("table", DataKind::Table)] {
+    for (family, kind) in PORT_FAMILIES {
         for (role, name, summary) in [
             (
                 PortRole::In,
                 "in",
-                "An input port of the component this node sits in: what is wired to that port outside comes out here",
+                "Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes",
             ),
             (
                 PortRole::Out,
                 "out",
-                "An output port of the component this node sits in: what is wired into this node comes out of that port outside",
+                "Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes",
             ),
         ] {
             types.register(FnNodeType::new(

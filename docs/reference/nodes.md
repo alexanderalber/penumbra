@@ -4,11 +4,11 @@
 
 Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range limits only the slider; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
 
-Families: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp), [node](#node)
+Sections: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp), [node](#node), [Component ports](#component-ports)
 
 ## tex
 
-[tex.blend_weight](#texblend_weight), [tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.in](#texin), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.out](#texout), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file), [tex.video_in](#texvideo_in)
+[tex.blend_weight](#texblend_weight), [tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.ndi_in](#texndi_in), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes), [tex.slope](#texslope), [tex.spout_in](#texspout_in), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file), [tex.video_in](#texvideo_in)
 
 ### tex.blend_weight
 
@@ -394,18 +394,6 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `file` | file (png, jpg, jpeg, tif, tiff, exr, hdr, webp, bmp, tga, gif, qoi, pfm, ppm, pgm) |  |  | The picture file, relative to the project directory; saving it again reloads the node |
 
-### tex.in
-
-An input port of the component this node sits in: what is wired to that port outside comes out here
-
-Inside a component: one of its inputs.
-
-Inputs:
-
-- `in` (tex)
-
-Outputs: `out` (tex).
-
 ### tex.layer
 
 One layer of a Photoshop file (PSD/PSB) or of a folder of images, or the whole picture; updates when the file changes
@@ -629,18 +617,6 @@ Outputs: `out` (tex).
 | `levels` *(more)* | int | `4` | 1 to 6 (soft) | Pyramid levels, each half the size of the one before; each one doubles the fastest motion followed |
 | `iterations` *(more)* | int | `3` | 1 to 6 (soft) | Refining steps per level; more is more exact and costs more |
 | `window` *(more)* | int | `3` | 1 to 6 px (soft) | Radius of the neighbourhood each pixel's motion is judged from; more is smoother and steadier, less keeps small moving things apart |
-
-### tex.out
-
-An output port of the component this node sits in: what is wired into this node comes out of that port outside
-
-Inside a component: one of its outputs.
-
-Inputs:
-
-- `in` (tex)
-
-Outputs: `out` (tex).
 
 ### tex.quantize
 
@@ -1080,7 +1056,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.in](#chanin), [chan.integrator](#chanintegrator), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.mouse_in](#chanmouse_in), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.out](#chanout), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.spacemouse_in](#chanspacemouse_in), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_in](#chanaudio_in), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.dmx_in](#chandmx_in), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.keyboard_in](#chankeyboard_in), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.mouse_in](#chanmouse_in), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_in](#chanosc_in), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.spacemouse_in](#chanspacemouse_in), [chan.trail](#chantrail)
 
 ### chan.audio_analysis
 
@@ -1255,18 +1231,6 @@ Outputs: `out` (chan).
 | `rows` | int | `1` | 1 to 64 (soft) | Rows the picture is averaged down to. With more than one row, the channels are numbered by row from the top (r0, r1, ...) |
 | `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives; values are linear and premultiplied, as the picture holds them; rgba: r, g, b and a; rgb: r, g and b; red: r only; luminance: lum, the brightness as the eye weighs it (Rec. 709) |
 
-### chan.in
-
-An input port of the component this node sits in: what is wired to that port outside comes out here
-
-Inside a component: one of its inputs.
-
-Inputs:
-
-- `in` (chan)
-
-Outputs: `out` (chan).
-
 ### chan.integrator
 
 Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting
@@ -1431,18 +1395,6 @@ Outputs: none.
 | `prefix` | text |  |  | Put before every channel's address: `/show` sends /show/x |
 | `bundle` *(more)* | bool | `true` |  | Several messages per packet as a bundle; off sends one packet per message |
 
-### chan.out
-
-An output port of the component this node sits in: what is wired into this node comes out of that port outside
-
-Inside a component: one of its outputs.
-
-Inputs:
-
-- `in` (chan)
-
-Outputs: `out` (chan).
-
 ### chan.rename
 
 Renames channels by `from=to` pairs, so they match what other nodes and bindings expect
@@ -1527,7 +1479,7 @@ Outputs:
 
 ## table
 
-[table.file](#tablefile), [table.in](#tablein), [table.null](#tablenull), [table.out](#tableout), [table.text](#tabletext)
+[table.file](#tablefile), [table.null](#tablenull), [table.text](#tabletext)
 
 ### table.file
 
@@ -1542,33 +1494,9 @@ Outputs: `out` (table).
 | `file` | file (csv, tsv, tab, txt) |  |  | The text file, relative to the project directory; saving it again reloads the node |
 | `format` | auto \| lines \| tsv \| csv | `"auto"` |  | How a line of the file is split into cells; auto: by extension: csv, tsv (or tab), else lines; lines: not at all: one cell per row; tsv: at tabs; csv: at commas; "a, b" in quotes is one cell, "" a quote |
 
-### table.in
-
-An input port of the component this node sits in: what is wired to that port outside comes out here
-
-Inside a component: one of its inputs.
-
-Inputs:
-
-- `in` (table)
-
-Outputs: `out` (table).
-
 ### table.null
 
 Passes its input on unchanged: a fixed point to refer to while the chain before it changes
-
-Inputs:
-
-- `in` (table)
-
-Outputs: `out` (table).
-
-### table.out
-
-An output port of the component this node sits in: what is wired into this node comes out of that port outside
-
-Inside a component: one of its outputs.
 
 Inputs:
 
@@ -2128,4 +2056,178 @@ Outputs: none.
 | `entry` | text |  |  | The node's entry from the project file, written back unchanged on every save |
 | `error` | text |  |  | Why the entry did not load as a node |
 | `outputs` | text |  |  | Names of the outputs other nodes read from this one, one per line |
+
+## Component ports
+
+The input and output sockets of a component, one pair per data kind. They sit inside a `comp.base`. Whatever is wired to the component's socket outside comes out of its `in` node inside. Whatever is wired into an `out` node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.
+
+[tex.in](#texin), [tex.out](#texout), [chan.in](#chanin), [chan.out](#chanout), [table.in](#tablein), [table.out](#tableout), [geo.in](#geoin), [geo.out](#geoout), [mat.in](#matin), [mat.out](#matout), [light.in](#lightin), [light.out](#lightout), [view.in](#viewin), [view.out](#viewout)
+
+### tex.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (tex)
+
+Outputs: `out` (tex).
+
+### tex.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (tex)
+
+Outputs: `out` (tex).
+
+### chan.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (chan)
+
+Outputs: `out` (chan).
+
+### chan.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (chan)
+
+Outputs: `out` (chan).
+
+### table.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (table)
+
+Outputs: `out` (table).
+
+### table.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (table)
+
+Outputs: `out` (table).
+
+### geo.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (geo)
+
+Outputs: `out` (geo).
+
+### geo.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (geo)
+
+Outputs: `out` (geo).
+
+### mat.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (mat)
+
+Outputs: `out` (mat).
+
+### mat.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (mat)
+
+Outputs: `out` (mat).
+
+### light.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (light)
+
+Outputs: `out` (light).
+
+### light.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (light)
+
+Outputs: `out` (light).
+
+### view.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (view)
+
+Outputs: `out` (view).
+
+### view.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (view)
+
+Outputs: `out` (view).
 

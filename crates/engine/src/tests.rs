@@ -650,6 +650,74 @@ fn components_group_save_load_and_dissolve() {
 }
 
 #[test]
+fn grouping_across_geo_mat_light_and_view_wires() {
+    let f = Fixture::new("comp-render");
+    let gpu = match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        Ok(g) => g,
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(_) => return,
+    };
+    f.engine.attach_gpu(gpu).unwrap();
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/box", "kind": "geo.primitive", "params": {"size": [2, 1, 1]}},
+            {"op": "create", "path": "/shiny", "kind": "mat.phong"},
+            {"op": "create", "path": "/paint", "kind": "geo.assign_material"},
+            {"op": "create", "path": "/sun", "kind": "light.directional"},
+            {"op": "create", "path": "/cam", "kind": "view.camera", "params": {"position": [3, -4, 2]}},
+            {"op": "create", "path": "/r", "kind": "tex.render", "params": {"width": 64, "height": 36}},
+            {"op": "connect", "from": "/box", "to": "/paint", "input": 0},
+            {"op": "connect", "from": "/shiny", "to": "/paint", "input": 1},
+            {"op": "connect", "from": "/paint", "to": "/r", "input": 0},
+            {"op": "connect", "from": "/sun", "to": "/r", "input": 2},
+            {"op": "connect", "from": "/cam", "to": "/r", "input": 3},
+        ]}),
+    );
+    f.call("render.frame", json!({"path": "/r"}));
+    let shot = |path: &str, name: &str| {
+        let file = f.engine.session().dir().join("shots").join(format!("{name}.png"));
+        let r = f.call("node.snapshot", json!({"path": path, "file": file}));
+        (std::fs::read(&file).unwrap(), r["stats"].clone())
+    };
+    let (before, stats) = shot("/r", "before");
+    let (lo, hi) = (stats["min"][0].as_f64().unwrap(), stats["max"][0].as_f64().unwrap());
+    assert!(hi - lo > 0.1, "the lit box is in the picture: {stats}");
+
+    // The sources into a component: one output port per kind.
+    let r = f.call("comp.collapse", json!({"paths": ["/box", "/shiny", "/sun", "/cam"], "name": "src"}));
+    assert_eq!(r["path"], "/src", "{r}");
+    let kinds = |comp: &str| {
+        let doc = f.call("node.list", json!({"path": comp}));
+        let mut k: Vec<String> = doc["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n["kind"].as_str().unwrap().to_string())
+            .collect();
+        k.sort();
+        k
+    };
+    let ports = kinds("/src");
+    for port in ["geo.out", "mat.out", "light.out", "view.out"] {
+        assert!(ports.iter().any(|k| k == port), "{port} in {ports:?}");
+    }
+    assert_eq!(shot("/r", "sources").0, before, "the same picture through output ports");
+    f.call("comp.expand", json!({"path": "/src"}));
+    assert_eq!(shot("/r", "expanded").0, before);
+
+    // The readers into a component: one input port per kind.
+    f.call("comp.collapse", json!({"paths": ["/paint", "/r"], "name": "scene"}));
+    let ports = kinds("/scene");
+    for port in ["geo.in", "mat.in", "light.in", "view.in"] {
+        assert!(ports.iter().any(|k| k == port), "{port} in {ports:?}");
+    }
+    assert_eq!(shot("/scene/r", "readers").0, before, "the same picture through input ports");
+    f.call("comp.expand", json!({"path": "/scene"}));
+    assert_eq!(shot("/r", "back").0, before);
+}
+
+#[test]
 fn geometry_through_commands() {
     let f = Fixture::new("geo");
     let gpu = match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
@@ -685,7 +753,7 @@ fn geometry_through_commands() {
         "node.create",
         json!({"path": "/cam", "kind": "view.camera", "params": {"position": [0, -50, 0]}}),
     );
-    f.call("node.connect", json!({"from": "/cam", "to": "/r", "input": "camera"}));
+    f.call("node.connect", json!({"from": "/cam", "to": "/r", "input": 3}));
     let framed = f.call("render.frame", json!({"path": "/r"}));
     assert_eq!(framed["camera"], "/cam", "{framed}");
     assert_eq!(framed["target"], json!([0.0, 0.0, 0.5]));

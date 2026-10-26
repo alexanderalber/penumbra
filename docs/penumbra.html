@@ -117,7 +117,7 @@ details.target { outline: 2px solid var(--accent); }
 </section>
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
-<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a></p>
+<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-component-ports">Component ports</a></p>
 <p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
@@ -346,7 +346,7 @@ water      15
 <p>Every node has a path: <code>/noise1</code> at the top level, <code>/scene/noise1</code> inside the component <code>scene</code>. A param is addressed as <code>/scene/noise1.speed</code>, one component of a vector as <code>/t.translate.0</code>.</p>
 <p>Where a path refers to another node (a wire's source in the project file, a binding, the <code>node</code> param of <a class="ref" href="#tex.select"><code>tex.select</code></a>), it is read from the level of the node it belongs to: <code>/a/b</code> is absolute, <code>x</code> is the node <code>x</code> beside it, <code>sub/x</code> is below that, <code>../x</code> one level up. So a component's inside refers to its own nodes by name and keeps working when the component is moved or saved to a file.</p>
 <h3 id="concepts-components">Components</h3>
-<p>A <a class="ref" href="#comp.base"><code>comp.base</code></a> holds nodes. Its inputs and outputs are port nodes inside it (<a class="ref" href="#tex.in"><code>tex.in</code></a>, <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a>, ...): what is wired to the component outside comes out of its <a class="ref" href="#tex.in"><code>tex.in</code></a> inside. Wires cross a component's edge only through ports; bindings and node references may reach anywhere.</p>
+<p>A <a class="ref" href="#comp.base"><code>comp.base</code></a> holds nodes. Its input and output sockets are port nodes inside it, one pair per data kind: <a class="ref" href="#tex.in"><code>tex.in</code></a> and <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#chan.out"><code>chan.out</code></a>, and so on for <code>table</code>, <code>geo</code>, <code>mat</code>, <code>light</code> and <code>view</code> (<a href="#family-component-ports">Component ports</a>). What is wired to the component outside comes out of its <a class="ref" href="#tex.in"><code>tex.in</code></a> inside. The port nodes read or write no files or devices: that is the job of the <code>out</code> nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may reach anywhere.</p>
 <ul>
 <li><strong>Group:</strong> select nodes and press Ctrl+G. Ports are added where wires cross.
 </li>
@@ -1418,10 +1418,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </section>
 <section id="nodes">
 <h2>Node reference</h2>
-<p>Every built-in node kind with its inputs, outputs and params, by family. A param under a heading such as <i>more</i> sits in that folded section of the param panel. A soft range limits only the slider; typed values outside it are kept.</p>
+<p>Every built-in node kind with its inputs, outputs and params, by family, and the component ports of all families in a section of their own. A param under a heading such as <i>more</i> sits in that folded section of the param panel. A soft range limits only the slider; typed values outside it are kept.</p>
 <div class="group" id="family-tex">
 <h3>tex</h3>
-<p class="kinds"><a href="#tex.blend_weight">tex.blend_weight</a> <a href="#tex.blob_track">tex.blob_track</a> <a href="#tex.blur">tex.blur</a> <a href="#tex.cache">tex.cache</a> <a href="#tex.channel_mix">tex.channel_mix</a> <a href="#tex.chroma_key">tex.chroma_key</a> <a href="#tex.composite">tex.composite</a> <a href="#tex.constant">tex.constant</a> <a href="#tex.contour">tex.contour</a> <a href="#tex.cross">tex.cross</a> <a href="#tex.denoise">tex.denoise</a> <a href="#tex.displace">tex.displace</a> <a href="#tex.edge">tex.edge</a> <a href="#tex.feedback">tex.feedback</a> <a href="#tex.fit">tex.fit</a> <a href="#tex.flip">tex.flip</a> <a href="#tex.fluid">tex.fluid</a> <a href="#tex.from_chan">tex.from_chan</a> <a href="#tex.hsv">tex.hsv</a> <a href="#tex.image_file">tex.image_file</a> <a href="#tex.in">tex.in</a> <a href="#tex.layer">tex.layer</a> <a href="#tex.lens_distort">tex.lens_distort</a> <a href="#tex.level">tex.level</a> <a href="#tex.limit">tex.limit</a> <a href="#tex.lookup">tex.lookup</a> <a href="#tex.mapper">tex.mapper</a> <a href="#tex.matte">tex.matte</a> <a href="#tex.monochrome">tex.monochrome</a> <a href="#tex.ndi_in">tex.ndi_in</a> <a href="#tex.noise">tex.noise</a> <a href="#tex.null">tex.null</a> <a href="#tex.optical_flow">tex.optical_flow</a> <a href="#tex.out">tex.out</a> <a href="#tex.quantize">tex.quantize</a> <a href="#tex.ramp">tex.ramp</a> <a href="#tex.remap">tex.remap</a> <a href="#tex.render">tex.render</a> <a href="#tex.resolution">tex.resolution</a> <a href="#tex.scan">tex.scan</a> <a href="#tex.scan_pattern">tex.scan_pattern</a> <a href="#tex.select">tex.select</a> <a href="#tex.sequence">tex.sequence</a> <a href="#tex.shader">tex.shader</a> <a href="#tex.shape_content">tex.shape_content</a> <a href="#tex.shapes">tex.shapes</a> <a href="#tex.slope">tex.slope</a> <a href="#tex.spout_in">tex.spout_in</a> <a href="#tex.switch">tex.switch</a> <a href="#tex.text">tex.text</a> <a href="#tex.threshold">tex.threshold</a> <a href="#tex.tile">tex.tile</a> <a href="#tex.time_machine">tex.time_machine</a> <a href="#tex.transform">tex.transform</a> <a href="#tex.video_file">tex.video_file</a> <a href="#tex.video_in">tex.video_in</a></p>
+<p class="kinds"><a href="#tex.blend_weight">tex.blend_weight</a> <a href="#tex.blob_track">tex.blob_track</a> <a href="#tex.blur">tex.blur</a> <a href="#tex.cache">tex.cache</a> <a href="#tex.channel_mix">tex.channel_mix</a> <a href="#tex.chroma_key">tex.chroma_key</a> <a href="#tex.composite">tex.composite</a> <a href="#tex.constant">tex.constant</a> <a href="#tex.contour">tex.contour</a> <a href="#tex.cross">tex.cross</a> <a href="#tex.denoise">tex.denoise</a> <a href="#tex.displace">tex.displace</a> <a href="#tex.edge">tex.edge</a> <a href="#tex.feedback">tex.feedback</a> <a href="#tex.fit">tex.fit</a> <a href="#tex.flip">tex.flip</a> <a href="#tex.fluid">tex.fluid</a> <a href="#tex.from_chan">tex.from_chan</a> <a href="#tex.hsv">tex.hsv</a> <a href="#tex.image_file">tex.image_file</a> <a href="#tex.layer">tex.layer</a> <a href="#tex.lens_distort">tex.lens_distort</a> <a href="#tex.level">tex.level</a> <a href="#tex.limit">tex.limit</a> <a href="#tex.lookup">tex.lookup</a> <a href="#tex.mapper">tex.mapper</a> <a href="#tex.matte">tex.matte</a> <a href="#tex.monochrome">tex.monochrome</a> <a href="#tex.ndi_in">tex.ndi_in</a> <a href="#tex.noise">tex.noise</a> <a href="#tex.null">tex.null</a> <a href="#tex.optical_flow">tex.optical_flow</a> <a href="#tex.quantize">tex.quantize</a> <a href="#tex.ramp">tex.ramp</a> <a href="#tex.remap">tex.remap</a> <a href="#tex.render">tex.render</a> <a href="#tex.resolution">tex.resolution</a> <a href="#tex.scan">tex.scan</a> <a href="#tex.scan_pattern">tex.scan_pattern</a> <a href="#tex.select">tex.select</a> <a href="#tex.sequence">tex.sequence</a> <a href="#tex.shader">tex.shader</a> <a href="#tex.shape_content">tex.shape_content</a> <a href="#tex.shapes">tex.shapes</a> <a href="#tex.slope">tex.slope</a> <a href="#tex.spout_in">tex.spout_in</a> <a href="#tex.switch">tex.switch</a> <a href="#tex.text">tex.text</a> <a href="#tex.threshold">tex.threshold</a> <a href="#tex.tile">tex.tile</a> <a href="#tex.time_machine">tex.time_machine</a> <a href="#tex.transform">tex.transform</a> <a href="#tex.video_file">tex.video_file</a> <a href="#tex.video_in">tex.video_in</a></p>
 <details class="entry node" id="tex.blend_weight"><summary><code class="name">tex.blend_weight</code><span class="sum">A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only</span></summary>
 <div class="body">
 <p>A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only</p>
@@ -1969,20 +1969,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#helpers-even-light-across-a-projector-and-black-in-overlaps">The Helpers window › Even light across a projector, and black in overlaps</a>, <a href="#tracking-setting-up">Tracking › Setting up</a>, <a href="#scanning">Scanning</a>, <a href="#scanning-the-scan-button-texscan">Scanning › The scan button: tex.scan</a>, <a href="#scanning-1-scan-scancapture">Scanning › 1. Scan: scan.capture</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-51-regions-scanregions">Scanning › 5.1 Regions: scan.regions</a>, <a href="#scanning-6-blend-scanblend">Scanning › 6. Blend: scan.blend</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-example-a-relief-from-scan-to-picture">Scanning › Example: a relief from scan to picture</a></p>
 </div></details>
-<details class="entry node" id="tex.in"><summary><code class="name">tex.in</code><span class="sum">An input port of the component this node sits in: what is wired to that port outside comes out here</span></summary>
-<div class="body">
-<p>An input port of the component this node sits in: what is wired to that port outside comes out here</p>
-<p class="note">Inside a component: one of its inputs.</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>in</code> <span class="kind">tex</span></li>
-</ul>
-<h4>Outputs</h4>
-<ul>
-<li><code>out</code> <span class="kind">tex</span></li>
-</ul>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
-</div></details>
 <details class="entry node" id="tex.layer"><summary><code class="name">tex.layer</code><span class="sum">One layer of a Photoshop file (PSD/PSB) or of a folder of images, or the whole picture; updates when the file changes</span></summary>
 <div class="body">
 <p>One layer of a Photoshop file (PSD/PSB) or of a folder of images, or the whole picture; updates when the file changes</p>
@@ -2283,20 +2269,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#camera-motion">Camera › Motion</a></p>
-</div></details>
-<details class="entry node" id="tex.out"><summary><code class="name">tex.out</code><span class="sum">An output port of the component this node sits in: what is wired into this node comes out of that port outside</span></summary>
-<div class="body">
-<p>An output port of the component this node sits in: what is wired into this node comes out of that port outside</p>
-<p class="note">Inside a component: one of its outputs.</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>in</code> <span class="kind">tex</span></li>
-</ul>
-<h4>Outputs</h4>
-<ul>
-<li><code>out</code> <span class="kind">tex</span></li>
-</ul>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
 <details class="entry node" id="tex.quantize"><summary><code class="name">tex.quantize</code><span class="sum">Fewer colours and bigger pixels: posterised, banded or retro pixel looks</span></summary>
 <div class="body">
@@ -2897,7 +2869,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_in">chan.audio_in</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.in">chan.in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.out">chan.out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_in">chan.audio_in</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_analysis"><summary><code class="name">chan.audio_analysis</code><span class="sum">Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</span></summary>
 <div class="body">
 <p>Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</p>
@@ -3150,20 +3122,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
-</div></details>
-<details class="entry node" id="chan.in"><summary><code class="name">chan.in</code><span class="sum">An input port of the component this node sits in: what is wired to that port outside comes out here</span></summary>
-<div class="body">
-<p>An input port of the component this node sits in: what is wired to that port outside comes out here</p>
-<p class="note">Inside a component: one of its inputs.</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>in</code> <span class="kind">chan</span></li>
-</ul>
-<h4>Outputs</h4>
-<ul>
-<li><code>out</code> <span class="kind">chan</span></li>
-</ul>
-<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
 </div></details>
 <details class="entry node" id="chan.integrator"><summary><code class="name">chan.integrator</code><span class="sum">Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting</span></summary>
 <div class="body">
@@ -3418,19 +3376,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#helpers-osc">The Helpers window › OSC</a></p>
 </div></details>
-<details class="entry node" id="chan.out"><summary><code class="name">chan.out</code><span class="sum">An output port of the component this node sits in: what is wired into this node comes out of that port outside</span></summary>
-<div class="body">
-<p>An output port of the component this node sits in: what is wired into this node comes out of that port outside</p>
-<p class="note">Inside a component: one of its outputs.</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>in</code> <span class="kind">chan</span></li>
-</ul>
-<h4>Outputs</h4>
-<ul>
-<li><code>out</code> <span class="kind">chan</span></li>
-</ul>
-</div></details>
 <details class="entry node" id="chan.rename"><summary><code class="name">chan.rename</code><span class="sum">Renames channels by <code>from=to</code> pairs, so they match what other nodes and bindings expect</span></summary>
 <div class="body">
 <p>Renames channels by <code>from=to</code> pairs, so they match what other nodes and bindings expect</p>
@@ -3534,7 +3479,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-table">
 <h3>table</h3>
-<p class="kinds"><a href="#table.file">table.file</a> <a href="#table.in">table.in</a> <a href="#table.null">table.null</a> <a href="#table.out">table.out</a> <a href="#table.text">table.text</a></p>
+<p class="kinds"><a href="#table.file">table.file</a> <a href="#table.null">table.null</a> <a href="#table.text">table.text</a></p>
 <details class="entry node" id="table.file"><summary><code class="name">table.file</code><span class="sum">A table from a text, TSV or CSV file; updates when the file changes</span></summary>
 <div class="body">
 <p>A table from a text, TSV or CSV file; updates when the file changes</p>
@@ -3554,35 +3499,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
-<details class="entry node" id="table.in"><summary><code class="name">table.in</code><span class="sum">An input port of the component this node sits in: what is wired to that port outside comes out here</span></summary>
-<div class="body">
-<p>An input port of the component this node sits in: what is wired to that port outside comes out here</p>
-<p class="note">Inside a component: one of its inputs.</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>in</code> <span class="kind">table</span></li>
-</ul>
-<h4>Outputs</h4>
-<ul>
-<li><code>out</code> <span class="kind">table</span></li>
-</ul>
-</div></details>
 <details class="entry node" id="table.null"><summary><code class="name">table.null</code><span class="sum">Passes its input on unchanged: a fixed point to refer to while the chain before it changes</span></summary>
 <div class="body">
 <p>Passes its input on unchanged: a fixed point to refer to while the chain before it changes</p>
-<h4>Inputs</h4>
-<ul>
-<li><code>in</code> <span class="kind">table</span></li>
-</ul>
-<h4>Outputs</h4>
-<ul>
-<li><code>out</code> <span class="kind">table</span></li>
-</ul>
-</div></details>
-<details class="entry node" id="table.out"><summary><code class="name">table.out</code><span class="sum">An output port of the component this node sits in: what is wired into this node comes out of that port outside</span></summary>
-<div class="body">
-<p>An output port of the component this node sits in: what is wired into this node comes out of that port outside</p>
-<p class="note">Inside a component: one of its outputs.</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">table</span></li>
@@ -4299,7 +4218,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="comp.base-making-one">Making one</h5>
 <p>Select nodes and press Ctrl+G. penumbra puts them into a new component and adds a port wherever a wire crossed the edge of the selection. I or a double-click goes in, U goes back up. The node menu's &quot;Dissolve&quot; undoes the grouping.</p>
 <h5 id="comp.base-ports">Ports</h5>
-<p>Wires enter and leave a component only through ports, which are nodes inside it: <a class="ref" href="#tex.in"><code>tex.in</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#table.in"><code>table.in</code></a> are its inputs, <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.out"><code>chan.out</code></a> and <a class="ref" href="#table.out"><code>table.out</code></a> its outputs. What is wired to an input outside comes out of the matching <code>.in</code> node inside; what is wired into a <code>.out</code> node inside comes out of the component. Bindings and <a class="ref" href="#tex.select"><code>tex.select</code></a> are not wires: they may reach in and out of components by path.</p>
+<p>Wires enter and leave a component only through ports, which are nodes inside it. Each data kind has a pair: <a class="ref" href="#tex.in"><code>tex.in</code></a> and <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#chan.out"><code>chan.out</code></a>, and the same for <code>table</code>, <code>geo</code>, <code>mat</code>, <code>light</code> and <code>view</code>. The <code>.in</code> nodes are the component's inputs, the <code>.out</code> nodes its outputs. What is wired to an input outside comes out of the matching <code>.in</code> node inside; what is wired into a <code>.out</code> node inside comes out of the component. Bindings and <a class="ref" href="#tex.select"><code>tex.select</code></a> are not wires: they may reach in and out of components by path.</p>
 <h5 id="comp.base-exposed-params">Exposed params</h5>
 <p><code>expose</code> lists inner params to show on the component, one per line: <code>noise1.speed</code>, or with a name of its own, <code>speed = noise1.speed</code>. Changing the exposed param changes the inner one, and you can bind it like any param.</p>
 <p>More in the Components section of the concepts guide.</p>
@@ -4327,6 +4246,197 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-the-project-directory">Concepts › The project directory</a></p>
+</div></details>
+</div>
+<div class="group" id="family-component-ports">
+<h3>Component ports</h3>
+<p>The input and output sockets of a component, one pair per data kind. They sit inside a <a class="ref" href="#comp.base"><code>comp.base</code></a>. Whatever is wired to the component's socket outside comes out of its <code>in</code> node inside. Whatever is wired into an <code>out</code> node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.</p>
+<p class="kinds"><a href="#tex.in">tex.in</a> <a href="#tex.out">tex.out</a> <a href="#chan.in">chan.in</a> <a href="#chan.out">chan.out</a> <a href="#table.in">table.in</a> <a href="#table.out">table.out</a> <a href="#geo.in">geo.in</a> <a href="#geo.out">geo.out</a> <a href="#mat.in">mat.in</a> <a href="#mat.out">mat.out</a> <a href="#light.in">light.in</a> <a href="#light.out">light.out</a> <a href="#view.in">view.in</a> <a href="#view.out">view.out</a></p>
+<details class="entry node" id="tex.in"><summary><code class="name">tex.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">tex</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">tex</span></li>
+</ul>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+</div></details>
+<details class="entry node" id="tex.out"><summary><code class="name">tex.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">tex</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">tex</span></li>
+</ul>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+</div></details>
+<details class="entry node" id="chan.in"><summary><code class="name">chan.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">chan</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span></li>
+</ul>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+</div></details>
+<details class="entry node" id="chan.out"><summary><code class="name">chan.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">chan</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span></li>
+</ul>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+</div></details>
+<details class="entry node" id="table.in"><summary><code class="name">table.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">table</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">table</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="table.out"><summary><code class="name">table.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">table</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">table</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="geo.in"><summary><code class="name">geo.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">geo</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">geo</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="geo.out"><summary><code class="name">geo.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">geo</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">geo</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="mat.in"><summary><code class="name">mat.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">mat</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">mat</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="mat.out"><summary><code class="name">mat.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">mat</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">mat</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="light.in"><summary><code class="name">light.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">light</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">light</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="light.out"><summary><code class="name">light.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">light</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">light</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="view.in"><summary><code class="name">view.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">view</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">view</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="view.out"><summary><code class="name">view.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">view</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">view</span></li>
+</ul>
 </div></details>
 </div>
 </section>

@@ -38,6 +38,54 @@ fn families(types: &NodeTypes) -> Vec<String> {
     ordered
 }
 
+/// The id of the section that holds the component ports.
+const PORTS: &str = "component-ports";
+
+/// A section of the node reference: a family, or the component ports of every family together.
+struct Section<'a> {
+    /// The anchor: the family's name, or [`PORTS`].
+    id: String,
+    title: String,
+    /// The kinds, sorted.
+    descs: Vec<&'a NodeDesc>,
+}
+
+/// The sections of the node reference: the families in the add dialog's order without their
+/// component ports, then the ports of all families under one heading, so `tex.out` does not
+/// read as a sink beside `out.video`.
+fn sections(types: &NodeTypes) -> Vec<Section<'_>> {
+    let sorted = |keep: &dyn Fn(&NodeDesc) -> bool| {
+        let mut descs: Vec<&NodeDesc> =
+            types.kinds().filter_map(|k| types.desc(k)).filter(|d| keep(d)).collect();
+        descs.sort_by(|a, b| a.kind.cmp(&b.kind));
+        descs
+    };
+    let fams = families(types);
+    let mut out: Vec<Section<'_>> = fams
+        .iter()
+        .map(|fam| Section {
+            descs: sorted(&|d| family(&d.kind) == fam && d.port.is_none()),
+            title: fam.clone(),
+            id: fam.clone(),
+        })
+        .filter(|s| !s.descs.is_empty())
+        .collect();
+    let mut ports = sorted(&|d| d.port.is_some());
+    // By family in the order above, the input before the output.
+    let rank = |d: &NodeDesc| fams.iter().position(|f| f == family(&d.kind));
+    ports.sort_by_key(|d| (rank(d), d.port != Some(PortRole::In), d.kind.clone()));
+    if !ports.is_empty() {
+        out.push(Section { id: PORTS.into(), title: "Component ports".into(), descs: ports });
+    }
+    out
+}
+
+/// What the reference says above the component ports.
+const PORTS_INTRO: &str = "The input and output sockets of a component, one pair per data kind. They sit inside a \
+    `comp.base`. Whatever is wired to the component's socket outside comes out of its `in` node inside. Whatever is \
+    wired into an `out` node inside comes out of the component's socket. Grouping nodes into a component adds the \
+    ports where wires cross its edge.";
+
 /// Text for a markdown table cell: one line, single spaces, no stray column separators.
 fn cell(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ").replace('|', "\\|")
@@ -165,19 +213,38 @@ fn nodes_md(types: &NodeTypes) -> String {
          the slider; typed values outside it are kept. For what the families are for, see \
          [Concepts](../concepts.md).\n\n"
     );
-    let fams = families(types);
-    let links: Vec<String> = fams.iter().map(|f| format!("[{f}](#{f})")).collect();
-    let _ = writeln!(out, "Families: {}\n", links.join(", "));
-    for fam in &fams {
-        let _ = writeln!(out, "## {fam}\n");
-        let mut kinds: Vec<&str> = types.kinds().filter(|k| family(k) == fam).collect();
-        kinds.sort_unstable();
-        let list: Vec<String> = kinds.iter().map(|k| format!("[{k}](#{})", k.replace('.', ""))).collect();
-        let _ = writeln!(out, "{}\n", list.join(", "));
-        for k in kinds {
-            if let Some(desc) = types.desc(k) {
-                node_section(&mut out, desc);
-            }
+    let sections = sections(types);
+    let links: Vec<String> = sections.iter().map(|s| format!("[{}](#{})", s.title, s.id)).collect();
+    let _ = writeln!(
+        out,
+        "Sections: {}
+",
+        links.join(", ")
+    );
+    for section in &sections {
+        let _ = writeln!(
+            out,
+            "## {}
+",
+            section.title
+        );
+        if section.id == PORTS {
+            let _ = writeln!(
+                out,
+                "{PORTS_INTRO}
+"
+            );
+        }
+        let list: Vec<String> =
+            section.descs.iter().map(|d| format!("[{}](#{})", d.kind, d.kind.replace('.', ""))).collect();
+        let _ = writeln!(
+            out,
+            "{}
+",
+            list.join(", ")
+        );
+        for desc in &section.descs {
+            node_section(&mut out, desc);
         }
     }
     out

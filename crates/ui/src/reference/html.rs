@@ -127,14 +127,7 @@ fn title(guide: &Guide) -> (String, String) {
 
 /// The page, or why it cannot be made (two entries or headings with the same id).
 pub fn page(types: &NodeTypes, sources: &Sources<'_>) -> Result<String, String> {
-    let families = super::families(types);
-    let mut kinds_of: Vec<(String, Vec<&NodeDesc>)> = Vec::new();
-    for fam in &families {
-        let mut descs: Vec<&NodeDesc> =
-            types.kinds().filter(|k| super::family(k) == fam).filter_map(|k| types.desc(k)).collect();
-        descs.sort_by(|a, b| a.kind.cmp(&b.kind));
-        kinds_of.push((fam.clone(), descs));
-    }
+    let sections = super::sections(types);
     let mut entries: BTreeSet<String> = types.kinds().map(str::to_string).collect();
     entries.extend(sources.commands.iter().map(|(id, _)| id.clone()));
     let stems: BTreeSet<String> = sources.guides.iter().map(|g| g.stem.clone()).collect();
@@ -194,14 +187,23 @@ pub fn page(types: &NodeTypes, sources: &Sources<'_>) -> Result<String, String> 
     let inline_options = Options { id_prefix: "", shift: 0, entries: &entries, link: &plain_link };
     let inline = |text: &str| markdown::inline(text, &inline_options);
     let mut nodes_html = String::new();
-    for (fam, descs) in &kinds_of {
-        ids.push(family_id(fam));
-        let _ =
-            write!(nodes_html, "<div class=\"group\" id=\"{}\">\n<h3>{}</h3>\n", family_id(fam), escape(fam));
+    for section in &sections {
+        ids.push(family_id(&section.id));
+        let _ = write!(
+            nodes_html,
+            "<div class=\"group\" id=\"{}\">
+<h3>{}</h3>
+",
+            family_id(&section.id),
+            escape(&section.title)
+        );
+        if section.id == super::PORTS {
+            let _ = writeln!(nodes_html, "<p>{}</p>", inline(super::PORTS_INTRO));
+        }
         let list: Vec<String> =
-            descs.iter().map(|d| format!("<a href=\"#{k}\">{k}</a>", k = escape(&d.kind))).collect();
+            section.descs.iter().map(|d| format!("<a href=\"#{k}\">{k}</a>", k = escape(&d.kind))).collect();
         let _ = writeln!(nodes_html, "<p class=\"kinds\">{}</p>", list.join(" "));
-        for desc in descs {
+        for desc in &section.descs {
             ids.push(desc.kind.clone());
             let page = sources.node_pages.get(&desc.kind).map(|text| {
                 let prefix = format!("{}-", desc.kind);
@@ -263,8 +265,10 @@ pub fn page(types: &NodeTypes, sources: &Sources<'_>) -> Result<String, String> 
         return Err(format!("ids used twice in the page: {}", list.join(", ")));
     }
 
-    let toc_families: Vec<String> =
-        families.iter().map(|f| format!("<a href=\"#{}\">{}</a>", family_id(f), escape(f))).collect();
+    let toc_families: Vec<String> = sections
+        .iter()
+        .map(|s| format!("<a href=\"#{}\">{}</a>", family_id(&s.id), escape(&s.title)))
+        .collect();
     let mut out = String::new();
     out.push_str("<!DOCTYPE html>\n");
     out.push_str(
@@ -295,7 +299,7 @@ pub fn page(types: &NodeTypes, sources: &Sources<'_>) -> Result<String, String> 
     let _ = write!(
         out,
         "<section id=\"{NODES}\">\n<h2>Node reference</h2>\n<p>Every built-in node kind with its inputs, outputs and \
-         params, by family. A param under a heading such as <i>more</i> sits in that folded section of the param panel. \
+         params, by family, and the component ports of all families in a section of their own. A param under a heading such as <i>more</i> sits in that folded section of the param panel. \
          A soft range limits only the slider; typed values outside it are kept.</p>\n{nodes_html}</section>\n"
     );
     let _ = write!(

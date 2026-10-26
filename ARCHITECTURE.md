@@ -47,7 +47,7 @@ A node has a kind (`family.name`, for example `tex.blur`), params, inputs wired 
 nodes' outputs, and outputs of one data kind each: `tex` (a GPU texture), `chan` (channels of
 numbers, each with one or many samples), `table` (text), `geo`, `mat`, `light`, `view`. A
 param can also be bound to a channel. Components hold child nodes and expose some of their
-params; `tex.in`, `tex.out` and their `chan` and `table` siblings are their ports. Paths are
+params; `tex.in`, `tex.out` and their siblings for the other data kinds are their ports. Paths are
 `/name` and `/comp/name`, resolved relative to the node that holds them, so a component can be
 moved.
 

@@ -290,9 +290,11 @@ moved or saved to a file.
 
 ## Components
 
-A `comp.base` holds nodes. Its inputs and outputs are port nodes inside it (`tex.in`,
-`tex.out`, `chan.in`, ...): what is wired to the component outside comes out of its `tex.in`
-inside. Wires cross a component's edge only through ports; bindings and node references may
+A `comp.base` holds nodes. Its input and output sockets are port nodes inside it, one pair per
+data kind: `tex.in` and `tex.out`, `chan.in` and `chan.out`, and so on for `table`, `geo`,
+`mat`, `light` and `view` ([Component ports](reference/nodes.md#component-ports)). What is
+wired to the component outside comes out of its `tex.in` inside. The port nodes read or write
+no files or devices: that is the job of the `out` nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may
 reach anywhere.
 
 - **Group:** select nodes and press Ctrl+G. Ports are added where wires cross.
