@@ -22,6 +22,8 @@
 //! on bending the way that bowl does ([`continues`]): a flat face ends at a crease, a step or a
 //! rim instead. Last, where two faces meet, each pixel goes to the face nearby that fits it best
 //! (the face found first took the crease).
+//! Two faces side by side whose planes each fit the other's pixels are one flat face the decode
+//! bent a little, and are joined ([`join_coplanar`]).
 //!
 //! **Objects:** the measured pixels on no face, without the surface detail next to a face (rims,
 //! ribs, noise: within a few tolerances of its plane), closed, opened, holes filled (but not
@@ -144,6 +146,10 @@ const HAND_OVER_FINER: f32 = 1.2;
 const SAMPLING_WINDOW: usize = 9;
 const SAMPLING_SHARE: f64 = 0.12;
 const SAMPLING_STEP: usize = 4;
+/// [`join_coplanar`]: the shortest common border (pixel edges) and the fewest measured pixels
+/// of each face.
+const JOIN_BORDER: usize = 30;
+const JOIN_MIN: usize = 50;
 
 /// How [`analyse`] finds planes and objects.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -214,6 +220,8 @@ pub struct SceneParts {
     pub unexplained: usize,
     /// Faces found and dropped again as curved.
     pub dropped_planes: usize,
+    /// Faces joined into a neighbour they are flat with ([`join_coplanar`]).
+    pub joined_planes: usize,
 }
 
 /// A small deterministic generator: the same scan gives the same planes on every run.
@@ -395,7 +403,9 @@ pub fn analyse(map: &Map, camera: (usize, usize), o: &SceneOptions) -> Result<Sc
         }
         kept
     });
-    let mut labels = settle(w, h, &plane_labels(n, &found), &found, &pairs, &point_at, &near, tol);
+    let labels = settle(w, h, &plane_labels(n, &found), &found, &pairs, &point_at, &near, tol);
+    // One flat face the decode bent a little came out as two fits side by side.
+    let (found, mut labels, joined_planes) = join_coplanar(w, h, found, &labels, &pairs, tol);
 
     // The objects: pixels on no plane whose nearest measured pixel is on none either.
     let left: Vec<bool> = near
@@ -490,7 +500,161 @@ pub fn analyse(map: &Map, camera: (usize, usize), o: &SceneOptions) -> Result<Sc
         measured: pairs.idx.len(),
         unexplained,
         dropped_planes,
+        joined_planes,
     })
+}
+
+/// Faces next to each other that are one flat face: two fits side by side whose planes each put
+/// the other face's measured pixels, by the median, within `tol` of where the camera saw them,
+/// along a common border of at least [`JOIN_BORDER`] pixel edges. A crate's front the decode
+/// bends a little comes out as two such fits with a ragged border between them. Both ways must
+/// hold: a strip a projector sees edge on (a post beside the front) fits the front's plane, but
+/// its own plane, carried over the front, misses it. Joined faces take the first one's place,
+/// refitted on all their pixels; the labels follow. Returns the faces, the labels and how many
+/// faces were joined into others.
+fn join_coplanar(
+    w: usize,
+    h: usize,
+    found: Vec<(Face, usize)>,
+    labels: &[u16],
+    pairs: &Pairs,
+    tol: f64,
+) -> (Vec<(Face, usize)>, Vec<u16>, usize) {
+    let n = found.len();
+    if n < 2 {
+        return (found, labels.to_vec(), 0);
+    }
+    // Common border per pair of faces (labels 1..=n), counted over pixel edges.
+    let mut border = vec![0usize; (n + 1) * (n + 1)];
+    for y in 0..h {
+        for x in 0..w {
+            let Some(&a) = labels.get(y * w + x) else { continue };
+            if a == 0 {
+                continue;
+            }
+            let right = if x + 1 < w { labels.get(y * w + x + 1).copied() } else { None };
+            let below = labels.get((y + 1) * w + x).copied();
+            for b in [right, below].into_iter().flatten() {
+                if b != 0 && b != a {
+                    let (lo, hi) = (usize::from(a.min(b)), usize::from(a.max(b)));
+                    if let Some(c) = border.get_mut(lo * (n + 1) + hi) {
+                        *c += 1;
+                    }
+                }
+            }
+        }
+    }
+    // Per face its measured pairs as settled.
+    let mut members: Vec<Vec<usize>> = vec![Vec::new(); n + 1];
+    for (k, i) in pairs.idx.iter().enumerate() {
+        if let Some(&l) = labels.get(*i)
+            && let Some(m) = members.get_mut(usize::from(l))
+            && l > 0
+        {
+            m.push(k);
+        }
+    }
+    let median_error = |h: &Homography, ks: &[usize]| -> f64 {
+        let mut e: Vec<f64> = ks.iter().map(|k| pairs.error(h, *k)).collect();
+        e.sort_by(f64::total_cmp);
+        quantile(&e, 0.5)
+    };
+    let mut parent: Vec<usize> = (0..=n).collect();
+    fn root(parent: &[usize], mut i: usize) -> usize {
+        while let Some(&p) = parent.get(i) {
+            if p == i {
+                break;
+            }
+            i = p;
+        }
+        i
+    }
+    for a in 1..=n {
+        for b in a + 1..=n {
+            if border.get(a * (n + 1) + b).copied().unwrap_or(0) < JOIN_BORDER {
+                continue;
+            }
+            let (Some((fa, _)), Some((fb, _)), Some(ma), Some(mb)) =
+                (found.get(a - 1), found.get(b - 1), members.get(a), members.get(b))
+            else {
+                continue;
+            };
+            if ma.len() < JOIN_MIN || mb.len() < JOIN_MIN {
+                continue;
+            }
+            if median_error(&fa.homography, mb) <= tol && median_error(&fb.homography, ma) <= tol {
+                let (ra, rb) = (root(&parent, a), root(&parent, b));
+                if ra != rb
+                    && let Some(p) = parent.get_mut(ra.max(rb))
+                {
+                    *p = ra.min(rb);
+                }
+            }
+        }
+    }
+    // Each group's first face takes the others, refitted on all their pairs.
+    let mut roots: Vec<usize> = (0..=n).map(|i| root(&parent, i)).collect();
+    let mut faces: Vec<Option<(Face, usize)>> = found.into_iter().map(Some).collect();
+    let mut joined = 0usize;
+    for r in 1..=n {
+        let group: Vec<usize> = (r + 1..=n).filter(|i| roots.get(*i) == Some(&r)).collect();
+        if group.is_empty() {
+            continue;
+        }
+        let mut take: Vec<usize> = group
+            .iter()
+            .chain(std::iter::once(&r))
+            .flat_map(|i| members.get(*i).into_iter().flatten().copied())
+            .collect();
+        take.sort_unstable();
+        let mut chosen = vec![false; pairs.idx.len()];
+        for k in &take {
+            if let Some(c) = chosen.get_mut(*k) {
+                *c = true;
+            }
+        }
+        let fit = pairs.fit(|k| chosen.get(k) == Some(&true));
+        let (Some(fit), Some(true)) = (fit, faces.get(r - 1).map(Option::is_some)) else {
+            // No common fit: the faces stay apart.
+            for i in &group {
+                if let Some(x) = roots.get_mut(*i) {
+                    *x = *i;
+                }
+            }
+            continue;
+        };
+        let mut others: Vec<(Face, usize)> =
+            group.iter().filter_map(|i| faces.get_mut(i - 1)?.take()).collect();
+        let Some(Some((first, _))) = faces.get_mut(r - 1) else { continue };
+        // The bend of the largest part stands for the whole.
+        if let Some((largest, _)) = others.iter().max_by_key(|(f, _)| f.inliers.len())
+            && largest.inliers.len() > first.inliers.len()
+        {
+            first.bend = largest.bend;
+            first.bowl = largest.bowl;
+        }
+        for (f, _) in &mut others {
+            first.pixels.append(&mut f.pixels);
+            first.inliers.append(&mut f.inliers);
+        }
+        first.homography = fit;
+        joined += others.len();
+    }
+    // Labels renumbered in the order found, without the faces joined into others.
+    let mut number = vec![0u16; n + 1];
+    let mut next = 0u16;
+    for (i, f) in faces.iter().enumerate() {
+        if f.is_some() {
+            next += 1;
+            if let Some(s) = number.get_mut(i + 1) {
+                *s = next;
+            }
+        }
+    }
+    let relabel: Vec<u16> =
+        (0..=n).map(|i| number.get(roots.get(i).copied().unwrap_or(i)).copied().unwrap_or(0)).collect();
+    let labels = labels.iter().map(|l| relabel.get(usize::from(*l)).copied().unwrap_or(0)).collect();
+    (faces.into_iter().flatten().collect(), labels, joined)
 }
 
 /// `mask`'s parts grown by [`REGROW`] pixels into `into`, one pixel a round; a pixel two parts
@@ -2191,4 +2355,58 @@ fn beyond_face(
 pub struct Claim {
     pub plane: usize,
     pub camera: Vec<bool>,
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+
+    /// A `w` x `h` projector on a camera of the same size, each pixel seen where `at` puts it.
+    fn pairs(w: usize, h: usize, at: impl Fn(f64, f64) -> [f64; 2]) -> Pairs {
+        let rgba = (0..w * h)
+            .map(|i| {
+                let [x, y] = at((i % w) as f64 + 0.5, (i / w) as f64 + 0.5);
+                [(x / w as f64) as f32, (y / h as f64) as f32, 1.0, 1.0]
+            })
+            .collect();
+        Pairs::of(&Map::new(w, h, rgba).unwrap(), (w, h))
+    }
+
+    fn face(pairs: &Pairs, w: usize, inside: impl Fn(usize) -> bool) -> Face {
+        let inliers: Vec<usize> = (0..pairs.idx.len()).filter(|k| inside(pairs.idx[*k] % w)).collect();
+        let homography = pairs.fit(|k| inliers.contains(&k)).unwrap();
+        let pixels = inliers.iter().map(|k| pairs.idx[*k] as u32).collect();
+        Face { homography, pixels, inliers, bend: [0.0; 3], bowl: None }
+    }
+
+    #[test]
+    fn two_fits_of_one_plane_side_by_side_become_one_face() {
+        let (w, h) = (60, 30);
+        // One plane, its right part bent by a pixel at most: still within the tolerance.
+        let p = pairs(w, h, |x, y| [x + (x / 60.0).powi(2), y]);
+        let found = vec![(face(&p, w, |x| x < 30), 0), (face(&p, w, |x| x >= 30), 1)];
+        let labels: Vec<u16> = (0..w * h).map(|i| if i % w < 30 { 1 } else { 2 }).collect();
+        let (faces, labels, joined) = join_coplanar(w, h, found, &labels, &p, 2.0);
+        assert_eq!(joined, 1);
+        assert_eq!(faces.len(), 1);
+        assert_eq!(faces[0].0.inliers.len(), p.idx.len());
+        assert!(labels.iter().all(|l| *l == 1));
+    }
+
+    #[test]
+    fn a_crease_keeps_its_two_faces() {
+        let (w, h) = (60, 30);
+        // The right part turns away: a box's corner.
+        let p = pairs(
+            w,
+            h,
+            |x, y| if x < 30.0 { [x, y] } else { [30.0 + (x - 30.0) * 0.4, y + (x - 30.0) * 0.3] },
+        );
+        let found = vec![(face(&p, w, |x| x < 30), 0), (face(&p, w, |x| x >= 30), 1)];
+        let labels: Vec<u16> = (0..w * h).map(|i| if i % w < 30 { 1 } else { 2 }).collect();
+        let (faces, labels2, joined) = join_coplanar(w, h, found, &labels, &p, 2.0);
+        assert_eq!(joined, 0);
+        assert_eq!(faces.len(), 2);
+        assert_eq!(labels2, labels);
+    }
 }

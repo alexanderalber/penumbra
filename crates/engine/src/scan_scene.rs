@@ -702,6 +702,7 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             "measured": s.measured,
             "planes": own,
             "dropped_planes": s.dropped_planes,
+            "joined_planes": s.joined_planes,
             "objects_on_faces": objects_on_faces.get(p).copied().unwrap_or(0),
             "carved_px": carved.get(p).copied().unwrap_or(0),
             "handed_over_px": handed.get(p).copied().unwrap_or(0),

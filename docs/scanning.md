@@ -416,6 +416,14 @@ projector pixels or more). Both projectors then light the strip with the wall's 
 strip shows no seam where their pictures overlap. `handed_over_px` in the reply counts, per
 projector, the pixels that changed face.
 
+**One flat face found as two.** The decode bends a crate's front a little, so the search can
+fit it as two planes side by side, with a ragged border between them. Two faces next to each
+other are joined into one when each face's plane puts the other face's pixels, by the median,
+within the tolerance of where the camera saw them. Both ways must hold. A post the projector
+sees edge on fits the plane of the front beside it, but the post's own plane, carried over the
+front, misses the front, so the post stays a face of its own. `joined_planes` in the reply
+counts, per projector, the faces joined into others.
+
 **Straight borders.** The faces' borders as measured are as ragged as the decode along them.
 Where a border is a line, `planes_camera.png` and `planes_N.png` get the line instead: each
 border between two labels (cut where three meet) is fitted once for both sides, split into
