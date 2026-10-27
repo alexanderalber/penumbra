@@ -41,7 +41,7 @@
 //! where they run under the object; their crossings are the corners.
 
 use crate::homography::Homography;
-use crate::objects::{MAX_PARTS, Map, eroded_labels, keep_large};
+use crate::objects::{MAX_PARTS, Map, Parts, eroded_labels, keep_large};
 use crate::raster;
 use crate::relief::{Heuristic, Relief, fill, main_direction, quantile};
 
@@ -134,6 +134,16 @@ const LINE_SHARE: f64 = 0.04;
 const MIN_CORNER_DEG: f64 = 20.0;
 /// Border points this close to the picture's frame (camera pixels) are left out.
 const FRAME_MARGIN: usize = 2;
+/// [`hand_over_faces`]: fewest projector pixels in a piece handed over, and how much finer the
+/// other projector must sample it. On a real crate scan a wall's strip one projector grazed
+/// measured 1.3 times finer in the other; where both face a surface alike, 0.8 to 1.0.
+const HAND_OVER_MIN: usize = 200;
+const HAND_OVER_FINER: f32 = 1.2;
+/// [`sampling`]: the window (camera pixels, odd), the share of it that must be mapped, and how
+/// far apart (camera pixels) the windows lie whose positions give the slope.
+const SAMPLING_WINDOW: usize = 9;
+const SAMPLING_SHARE: f64 = 0.12;
+const SAMPLING_STEP: usize = 4;
 
 /// How [`analyse`] finds planes and objects.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -729,6 +739,208 @@ pub fn carve_disputed_objects(
         }
     }
     carved
+}
+
+/// Where two projectors light the same surface and see different faces there, the face of the
+/// one that samples it finer wins. A projector that grazes a wall at the edge of its picture
+/// spreads few of its pixels over it, so its plane fit there is loose and the strip it lights
+/// joins a face of its own or a neighbour's; the other projector, facing the wall, sees it as
+/// part of the wall's face. `faces[p]` holds projector `p`'s face labels (numbered alike in all
+/// projectors), `to_camera[p]` its `proj_to_cam` map, `from_camera[p]` its `cam_to_proj` map.
+///
+/// Per camera pixel each projector's face is the label of its pixel there, when that pixel lands
+/// back within `back_px`. A projector's face pixels where another one's face differs are
+/// grouped by the pair of faces into connected pieces; a piece of at least [`HAND_OVER_MIN`]
+/// pixels takes the other face when the other projector, by the median over the piece, has at
+/// least [`HAND_OVER_FINER`] times as many projector pixels per camera pixel there
+/// ([`sampling`]). Every decision is made on the labels as they came in. Returns per projector
+/// the pixels handed over.
+pub fn hand_over_faces(
+    faces: &mut [Parts],
+    to_camera: &[Map],
+    from_camera: &[Map],
+    camera: (usize, usize),
+    back_px: f32,
+) -> Vec<usize> {
+    let (cw, ch) = camera;
+    let n = faces.len();
+    let mut handed = vec![0usize; n];
+    if n < 2 || to_camera.len() != n || from_camera.len() != n || cw == 0 || ch == 0 {
+        return handed;
+    }
+    if from_camera.iter().any(|m| m.len() != cw * ch)
+        || faces
+            .iter()
+            .zip(to_camera)
+            .any(|(f, m)| f.labels.len() != f.width * f.height || m.len() != f.labels.len())
+    {
+        return handed;
+    }
+    let fine: Vec<Vec<f32>> =
+        from_camera.iter().zip(faces.iter()).map(|(m, f)| sampling(m, (f.width, f.height), camera)).collect();
+    // Per projector and camera pixel its face there (0: none).
+    let claims: Vec<Vec<u16>> = faces
+        .iter()
+        .zip(to_camera)
+        .zip(from_camera)
+        .map(|((f, t), m)| {
+            (0..cw * ch)
+                .map(|c| {
+                    let (x, y) = ((c % cw) as f32 + 0.5, (c / cw) as f32 + 0.5);
+                    let Some(j) = m.pixel_in(c, f.width, f.height) else { return 0 };
+                    let Some([u, v]) = t.uv(j) else { return 0 };
+                    if (u * cw as f32 - x).hypot(v * ch as f32 - y) > back_px {
+                        return 0;
+                    }
+                    f.labels.get(j).copied().unwrap_or(0)
+                })
+                .collect()
+        })
+        .collect();
+    let mut decided: Vec<Vec<(usize, u16)>> = Vec::with_capacity(n);
+    for (p, (f, t)) in faces.iter().zip(to_camera).enumerate() {
+        let (w, h) = (f.width, f.height);
+        // Per pixel the other face there (of the projector sampling finest) and how much finer.
+        let mut other = vec![0u16; w * h];
+        let mut ratio = vec![0f32; w * h];
+        for (j, l) in f.labels.iter().enumerate() {
+            if *l == 0 {
+                continue;
+            }
+            let Some(c) = t.pixel_in(j, cw, ch) else { continue };
+            let own = fine.get(p).and_then(|s| s.get(c)).copied().unwrap_or(0.0);
+            let best = (0..n)
+                .filter(|q| *q != p)
+                .filter_map(|q| {
+                    let lq = claims.get(q)?.get(c).copied()?;
+                    (lq > 0 && lq != *l)
+                        .then(|| (lq, fine.get(q).and_then(|s| s.get(c)).copied().unwrap_or(0.0)))
+                })
+                .max_by(|a, b| a.1.total_cmp(&b.1));
+            if let (Some((lq, s)), Some(o), Some(r)) = (best, other.get_mut(j), ratio.get_mut(j)) {
+                *o = lq;
+                *r = if own > 0.0 {
+                    s / own
+                } else if s > 0.0 {
+                    f32::INFINITY
+                } else {
+                    0.0
+                };
+            }
+        }
+        let mut seen = vec![false; w * h];
+        let mut stack = Vec::new();
+        let mut piece = Vec::new();
+        let mut take = Vec::new();
+        for start in 0..w * h {
+            let (Some(&o), Some(&l)) = (other.get(start), f.labels.get(start)) else { continue };
+            if o == 0 || seen.get(start) == Some(&true) {
+                continue;
+            }
+            piece.clear();
+            stack.push(start);
+            if let Some(s) = seen.get_mut(start) {
+                *s = true;
+            }
+            while let Some(i) = stack.pop() {
+                piece.push(i);
+                for k in raster::neighbours4(i, w, h).into_iter().flatten() {
+                    if other.get(k) == Some(&o)
+                        && f.labels.get(k) == Some(&l)
+                        && let Some(s) = seen.get_mut(k)
+                        && !*s
+                    {
+                        *s = true;
+                        stack.push(k);
+                    }
+                }
+            }
+            if piece.len() < HAND_OVER_MIN {
+                continue;
+            }
+            let mut r: Vec<f32> = piece.iter().filter_map(|i| ratio.get(*i).copied()).collect();
+            let mid = r.len() / 2;
+            let median = r.select_nth_unstable_by(mid, f32::total_cmp).1;
+            if *median >= HAND_OVER_FINER {
+                take.extend(piece.iter().map(|i| (*i, o)));
+            }
+        }
+        decided.push(take);
+    }
+    for ((f, take), count) in faces.iter_mut().zip(decided).zip(&mut handed) {
+        for (i, o) in take {
+            if let Some(l) = f.labels.get_mut(i) {
+                *l = o;
+                *count += 1;
+            }
+        }
+    }
+    handed
+}
+
+/// Per camera pixel, how many projector pixels the projector spreads over it (the area scale of
+/// `cam_to_proj`, over a window of [`SAMPLING_WINDOW`] pixels round it); 0 where too little of
+/// the window is mapped. A projector facing a surface has more of its pixels on each camera
+/// pixel there than one grazing it.
+pub fn sampling(cam_to_proj: &Map, projector: (usize, usize), camera: (usize, usize)) -> Vec<f32> {
+    let (cw, ch) = camera;
+    let (pw, ph) = (projector.0 as f64, projector.1 as f64);
+    let mut out = vec![0f32; cw * ch];
+    if cam_to_proj.len() != cw * ch || cw == 0 || ch == 0 {
+        return out;
+    }
+    // Summed-area tables of the count and the projector position, one row and column larger.
+    let (sw, sh) = (cw + 1, ch + 1);
+    let mut sums = vec![[0f64; 3]; sw * sh];
+    for y in 0..ch {
+        let mut row = [0f64; 3];
+        for x in 0..cw {
+            if let Some([u, v]) = cam_to_proj.uv(y * cw + x) {
+                row[0] += 1.0;
+                row[1] += f64::from(u) * pw;
+                row[2] += f64::from(v) * ph;
+            }
+            let above = sums.get(y * sw + x + 1).copied().unwrap_or([0.0; 3]);
+            if let Some(s) = sums.get_mut((y + 1) * sw + x + 1) {
+                *s = [above[0] + row[0], above[1] + row[1], above[2] + row[2]];
+            }
+        }
+    }
+    let r = SAMPLING_WINDOW / 2;
+    let least = (SAMPLING_WINDOW * SAMPLING_WINDOW) as f64 * SAMPLING_SHARE;
+    // The window's mean projector position at a camera pixel, when enough of it is mapped.
+    let mean = |x: isize, y: isize| -> Option<[f64; 2]> {
+        if x < 0 || y < 0 || x as usize >= cw || y as usize >= ch {
+            return None;
+        }
+        let (x, y) = (x as usize, y as usize);
+        let (x0, y0, x1, y1) =
+            (x.saturating_sub(r), y.saturating_sub(r), (x + r + 1).min(cw), (y + r + 1).min(ch));
+        let at = |x: usize, y: usize| sums.get(y * sw + x).copied().unwrap_or([0.0; 3]);
+        let (a, b, c, d) = (at(x1, y1), at(x0, y1), at(x1, y0), at(x0, y0));
+        let [count, u, v] = [0, 1, 2].map(|k: usize| {
+            let g = |s: [f64; 3]| s.get(k).copied().unwrap_or(0.0);
+            g(a) - g(b) - g(c) + g(d)
+        });
+        (count >= least).then(|| [u / count, v / count])
+    };
+    let d = SAMPLING_STEP as isize;
+    let step = 2.0 * SAMPLING_STEP as f64;
+    for (c, o) in out.iter_mut().enumerate() {
+        let (x, y) = ((c % cw) as isize, (c / cw) as isize);
+        let (Some(right), Some(left), Some(down), Some(up)) =
+            (mean(x + d, y), mean(x - d, y), mean(x, y + d), mean(x, y - d))
+        else {
+            continue;
+        };
+        let (ux, vx) = ((right[0] - left[0]) / step, (right[1] - left[1]) / step);
+        let (uy, vy) = ((down[0] - up[0]) / step, (down[1] - up[1]) / step);
+        let area = (ux * vy - uy * vx).abs();
+        if area.is_finite() {
+            *o = area as f32;
+        }
+    }
+    out
 }
 
 /// Per pixel the first face whose region holds it.

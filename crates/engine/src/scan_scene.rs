@@ -442,6 +442,8 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
         Some(found.get(p)?.planes.get(k)?.homography)
     };
 
+    // Where two projectors see different faces on one surface, the one sampling it finer wins.
+    let handed = scene::hand_over_faces(&mut plane_parts, &to_camera, &from_camera, camera, BACK_PX);
     let planes_measured =
         scene::fill_gaps(cw, ch, &camera_view_of(&to_camera, &from_camera, &plane_parts, camera), CAMERA_GAP);
     let objects_camera = objects::camera_labels(&object_parts, &scans, camera, NUMBER_ERODE)?;
@@ -702,6 +704,7 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             "dropped_planes": s.dropped_planes,
             "objects_on_faces": objects_on_faces.get(p).copied().unwrap_or(0),
             "carved_px": carved.get(p).copied().unwrap_or(0),
+            "handed_over_px": handed.get(p).copied().unwrap_or(0),
             "objects": op.labels.iter().copied().max().unwrap_or(0),
             "unexplained": s.unexplained,
             "files": {"planes": planes, "labels": labels, "picture": picture, "uv": uv},

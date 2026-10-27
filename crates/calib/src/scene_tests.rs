@@ -685,3 +685,63 @@ fn a_lid_sinking_round_the_pumpkins_foot_is_claimed_not_the_pumpkin() {
     assert!(after < 0.1, "{after}");
     assert!(pumpkin_on < 0.02, "{pumpkin_on}");
 }
+
+/// A map from a `w` x `h` picture that stretches it onto the other picture, whatever its size.
+fn stretch(w: usize, h: usize) -> crate::objects::Map {
+    let rgba = (0..w * h)
+        .map(|i| {
+            let (x, y) = ((i % w) as f32 + 0.5, (i / w) as f32 + 0.5);
+            [x / w as f32, y / h as f32, 1.0, 1.0]
+        })
+        .collect();
+    crate::objects::Map::new(w, h, rgba).unwrap()
+}
+
+fn parts(w: usize, h: usize, labels: Vec<u16>) -> crate::objects::Parts {
+    crate::objects::Parts {
+        width: w,
+        height: h,
+        labels,
+        cuts: vec![false; w * h],
+        dropped: vec![false; w * h],
+        count: 2,
+        silhouette: 0,
+        compared: 0,
+        over: 0,
+    }
+}
+
+#[test]
+fn sampling_is_projector_pixels_per_camera_pixel() {
+    let s = crate::scene::sampling(&stretch(60, 40), (120, 80), (60, 40));
+    let mid = s[20 * 60 + 30];
+    assert!((mid - 4.0).abs() < 0.01, "{mid}");
+    // Too close to the picture's edge for the window: 0.
+    assert_eq!(s[0], 0.0);
+}
+
+#[test]
+fn a_strip_the_coarser_projector_sees_as_its_own_face_joins_the_finer_ones() {
+    let (cw, ch) = (60, 40);
+    // A has one projector pixel per camera pixel and sees a strip at the right as face 2; B, with
+    // four per camera pixel, sees all of it as face 1.
+    let a = parts(cw, ch, (0..cw * ch).map(|i| if i % cw >= 40 { 2 } else { 1 }).collect());
+    let b = parts(120, 80, vec![1; 120 * 80]);
+    let mut faces = vec![a, b];
+    let to_camera = vec![stretch(cw, ch), stretch(120, 80)];
+    let from_camera = vec![stretch(cw, ch), stretch(cw, ch)];
+    let handed = crate::scene::hand_over_faces(&mut faces, &to_camera, &from_camera, (cw, ch), 4.0);
+    assert_eq!(handed, vec![20 * 40, 0]);
+    assert!(faces[0].labels.iter().all(|l| *l == 1));
+    assert!(faces[1].labels.iter().all(|l| *l == 1));
+
+    // The other way round, the finer projector keeps its strip.
+    let a = parts(120, 80, (0..120 * 80).map(|i| if i % 120 >= 80 { 2 } else { 1 }).collect());
+    let b = parts(cw, ch, vec![1; cw * ch]);
+    let mut faces = vec![a, b];
+    let to_camera = vec![stretch(120, 80), stretch(cw, ch)];
+    let from_camera = vec![stretch(cw, ch), stretch(cw, ch)];
+    let handed = crate::scene::hand_over_faces(&mut faces, &to_camera, &from_camera, (cw, ch), 4.0);
+    assert_eq!(handed, vec![0, 20 * 40]);
+    assert!(faces[1].labels.iter().enumerate().all(|(i, l)| *l == if i % cw >= 40 { 2 } else { 1 }));
+}

@@ -405,6 +405,17 @@ are left out (fewer than six of the object's pixels within 4 camera pixels): whe
 hides something, its edge pixels carry positions filled in between it and the background and
 would otherwise add a ragged fringe.
 
+**Faces where projectors disagree.** A projector that reaches a wall only with the edge of its
+picture often meets it at a grazing angle. Few of its pixels fall on the wall there, so it fits
+the strip it lights loosely: the strip becomes a face of its own, or joins a post or the floor
+next to it. The other projector, facing the wall, sees the strip as part of the wall. Where two
+projectors see different faces on the same camera pixels, the face of the projector that spreads
+more of its pixels over each camera pixel there wins: the other projector's pixels in that piece
+take its face, when it samples at least 1.2 times as finely over the piece (pieces of 200
+projector pixels or more). Both projectors then light the strip with the wall's content, and the
+strip shows no seam where their pictures overlap. `handed_over_px` in the reply counts, per
+projector, the pixels that changed face.
+
 **Straight borders.** The faces' borders as measured are as ragged as the decode along them.
 Where a border is a line, `planes_camera.png` and `planes_N.png` get the line instead: each
 border between two labels (cut where three meet) is fitted once for both sides, split into
