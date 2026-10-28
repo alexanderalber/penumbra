@@ -492,7 +492,7 @@ type Bucket = (i64, f32, (usize, f64), (usize, f64));
 /// The points of a curve through `samples` with at most two per pixel of `width`: a pixel that
 /// covers several samples gets their lowest and highest, in the order they came, so a dense
 /// signal (an audio block) keeps its swing instead of aliasing.
-fn envelope(
+pub(crate) fn envelope(
     samples: &[f64],
     width: f32,
     to_x: impl Fn(usize) -> f32,

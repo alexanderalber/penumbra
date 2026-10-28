@@ -673,7 +673,7 @@ fn fbm(t: f64, seed: i64, octaves: u32, roughness: f64) -> f64 {
 }
 
 /// PCG-style integer hash of a lattice point and a seed.
-fn hash(i: i64, seed: i64) -> u32 {
+pub(crate) fn hash(i: i64, seed: i64) -> u32 {
     // Truncating casts on purpose: only the bits matter.
     let mut x = (i as u64 ^ (seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)) as u32
         ^ ((i as u64 >> 32) as u32).wrapping_mul(0x85EB_CA6B);

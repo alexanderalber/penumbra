@@ -27,6 +27,30 @@ pub enum DataKind {
     Light,
     /// One camera: where it is, where it looks, its lens (`view.camera`).
     View,
+    /// Sound: a gapless stream of samples, carried as `penumbra_core::Chans` (named channels
+    /// sharing one sample rate). A `chan` output is read by its last sample, the value now; an
+    /// audio output is a block that continues the block before it, so every sample counts.
+    ///
+    /// The block contract:
+    ///
+    /// - A generator on the show clock (`audio.oscillator`) at `r` samples per second, cooked
+    ///   at show tick `now` after tick `prev`, outputs the samples from `round(prev * r)` up
+    ///   to, not including, `round(now * r)`, counted from tick 0 in integer arithmetic. So
+    ///   consecutive blocks join without a gap or an overlap, and the sum of their lengths
+    ///   never drifts from the elapsed time: 800 samples per frame at 48 kHz and 60 fps; a rate
+    ///   that does not divide evenly by the frame rate alternates the block lengths (735 and
+    ///   736 at 44.1 kHz and 60 fps).
+    /// - After skipped frames, a generator outputs one block for all the ticks that elapsed,
+    ///   up to half a second. After a longer gap, a seek backwards or its first cook, it outputs
+    ///   one frame's worth and starts over there.
+    /// - A recook at the same tick (a param changed while the show is paused) replaces that
+    ///   frame's block: the same samples counted, computed again. A consumer that queues blocks
+    ///   takes one per advance of the show tick.
+    /// - A source on a device clock (`audio.device_in`, an NDI source's audio) outputs what
+    ///   arrived since its last cook, whatever its length, and hands the same result on
+    ///   (`Data::same`) while nothing new came.
+    /// - Nodes combining audio refuse inputs at different sample rates; nothing resamples.
+    Audio,
 }
 
 /// One cooked output. The payload type belongs to the crate that implements the family (a GPU
@@ -281,19 +305,20 @@ impl NodeDesc {
     /// A run of [`MAX_RUN`] inputs of `kind` called `prefix0`, `prefix1`, ..., of which a node
     /// shows the wired ones and one free slot, at least `shown` ([`InputRun`]). `doc` describes
     /// the run as a whole.
-    pub fn input_run(mut self, prefix: &str, kind: DataKind, shown: usize, doc: &str) -> Self {
+    pub fn input_run(self, prefix: &str, kind: DataKind, shown: usize, doc: &str) -> Self {
+        self.input_run_of(prefix, kind, MAX_RUN, shown, doc)
+    }
+
+    /// [`NodeDesc::input_run`] of `len` slots (1 to [`MAX_RUN`]), for a node with a param per
+    /// slot, such as a mixer's gain per input.
+    pub fn input_run_of(mut self, prefix: &str, kind: DataKind, len: usize, shown: usize, doc: &str) -> Self {
+        let len = len.clamp(1, MAX_RUN);
         let first = self.inputs.len();
-        for i in 0..MAX_RUN {
+        for i in 0..len {
             let spec = InputSpec { doc: doc.to_string(), ..InputSpec::new(&format!("{prefix}{i}"), kind) };
             self.inputs.push(spec);
         }
-        self.runs.push(InputRun {
-            prefix: prefix.to_string(),
-            kind,
-            first,
-            len: MAX_RUN,
-            shown: shown.clamp(1, MAX_RUN),
-        });
+        self.runs.push(InputRun { prefix: prefix.to_string(), kind, first, len, shown: shown.clamp(1, len) });
         self
     }
 

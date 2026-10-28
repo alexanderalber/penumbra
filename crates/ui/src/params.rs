@@ -45,7 +45,7 @@ pub struct Inputs<'a> {
     pub chan_drag: Option<NodeId>,
     /// The engine's cameras, offered for a `tex.video_in`'s `device` and `mode`.
     pub cameras: &'a penumbra_camera::Hub,
-    /// The engine's audio inputs: a `chan.audio_in`'s `device` names the device it reads.
+    /// The engine's audio inputs: a `audio.device_in`'s `device` names the device it reads.
     pub audio: &'a penumbra_audio::Hub,
     /// The engine's recordings: an `out.video` shows its own and has start and stop.
     pub record: &'a penumbra_record::Hub,
@@ -65,7 +65,7 @@ pub struct ParamPanel {
     rename: Option<(NodeId, String)>,
     /// Files offered for a file param, listed when its menu opens.
     files: Option<(String, Vec<String>)>,
-    /// Audio inputs offered for a `chan.audio_in`'s `device`, listed when its menu opens
+    /// Audio inputs offered for a `audio.device_in`'s `device`, listed when its menu opens
     /// (listing takes some milliseconds, too long for every frame).
     audio_inputs: Option<(String, Result<Vec<penumbra_audio::DeviceInfo>, String>)>,
     /// Cameras offered for a `tex.video_in`'s `device` or `mode`, listed when the menu opens
@@ -1012,7 +1012,7 @@ impl ParamPanel {
         }
     }
 
-    /// The audio inputs of this machine for a `chan.audio_in`'s `device`
+    /// The audio inputs of this machine for a `audio.device_in`'s `device`
     /// (`param.<path>.device.menu`, entries `device.default` and `device.<i>`).
     fn device_menu(
         &mut self,
@@ -1276,7 +1276,7 @@ fn camera_for<'l>(
 /// `add` in a layout as wide as `ui` offers and as high as the param's widget: one line, or the
 /// box of a text of several lines. A row's grid cell centres what it is given in the row's
 /// height, so a cell claiming less than it draws would sink a little lower every frame.
-/// A `chan.audio_in`'s `device` box. It names the device actually read: greyed inside the box
+/// A `audio.device_in`'s `device` box. It names the device actually read: greyed inside the box
 /// while `device` is empty (the system's default input), on hover otherwise. The name comes from
 /// the stream already open, so nothing is listed per frame.
 fn audio_device_box(

@@ -12,9 +12,10 @@ use penumbra_graph::{
 pub const COMP_KIND: &str = "comp.base";
 
 /// The families with component ports, one per data kind.
-const PORT_FAMILIES: [(&str, DataKind); 7] = [
+const PORT_FAMILIES: [(&str, DataKind); 8] = [
     ("tex", DataKind::Tex),
     ("chan", DataKind::Chan),
+    ("audio", DataKind::Audio),
     ("table", DataKind::Table),
     ("geo", DataKind::Geo),
     ("mat", DataKind::Mat),

@@ -1,10 +1,15 @@
-//! Audio nodes.
+//! Audio nodes: the `audio` family (sound as a gapless stream of blocks, see
+//! [`DataKind::Audio`]) and the analysis that turns sound into channels.
 //!
-//! - **`chan.audio_in`** reads an input device (by part of its name; empty is the system's
+//! - **`audio.device_in`** reads an input device (by part of its name; empty is the system's
 //!   default input) and outputs what arrived since its last cook, one channel per device
 //!   channel (`ch1`, `ch2`, ...) at the device's sample rate. It recooks when samples arrive,
 //!   not on the show clock, so it keeps listening while the show is paused.
-//! - **`chan.audio_analysis`** turns such audio into channels to bind: levels (`level`, `low`,
+//! - **`audio.oscillator`** ([`oscillator`]) makes a test tone or noise on the show clock,
+//!   **`audio.mix`** ([`mix`]) adds sounds by a gain each. [`block`] says which samples a
+//!   generator owes per cook.
+//! - **`chan.audio_analysis`** turns sound into channels to bind, the bridge from `audio` to
+//!   `chan`: levels (`level`, `low`,
 //!   `mid`, `high`), events (`onset`, `kick`, `tick` are 1 in the frame they happen), the
 //!   tempo (`bpm`, `confidence`) and the phases (`beat`, `bar` rising from 0 to 1, `bar_beat`
 //!   counting). Its second output is a spectrum: one channel whose samples are log-spaced bands
@@ -14,6 +19,12 @@
 //!
 //! The device streams belong to the engine's [`Hub`], which opens what [`wants`] lists after
 //! every change of the network.
+
+pub mod block;
+pub mod mix;
+pub mod oscillator;
+#[cfg(test)]
+mod tests;
 
 use penumbra_audio::{Analyzer, Cursor, Hub, Settings, Watch};
 use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, SampleAxis, Unit};
@@ -27,12 +38,12 @@ use crate::tex::meters_picture::{self, MetersPicture};
 use std::sync::Arc;
 
 /// Kind of the audio input node.
-pub const AUDIO_IN: &str = "chan.audio_in";
+pub const AUDIO_IN: &str = "audio.device_in";
 /// Kind of the analysis node.
 pub const AUDIO_ANALYSIS: &str = "chan.audio_analysis";
 /// The index of the analysis' `meters` output.
 const METERS: usize = 2;
-/// Most seconds of audio one cook of `chan.audio_in` hands on (after a long pause, the rest is
+/// Most seconds of audio one cook of `audio.device_in` hands on (after a long pause, the rest is
 /// dropped).
 pub const MAX_BLOCK_SECONDS: f64 = 0.5;
 
@@ -63,14 +74,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             AUDIO_IN,
-            "Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel",
-        ).block(penumbra_graph::Block::In)
+            "Sound from a microphone or audio interface: one channel per input channel, at the device's rate",
+        )
+        .block(penumbra_graph::Block::In)
         .sampled()
         .param(ParamSpec::text("device", "").doc(
             "Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's \
                  default input",
         ))
-        .output("out", DataKind::Chan),
+        .output("out", DataKind::Audio),
         || Box::new(AudioIn::default()) as Box<dyn Operator>,
     ))?;
     let [width, height, keep_size] = meters_picture::params();
@@ -147,7 +159,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(width)
         .param(height)
         .param(keep_size)
-        .input("audio", DataKind::Chan)
+        .input("audio", DataKind::Audio)
+        .describe_input("audio", "The sound to listen to, e.g. from an audio.device_in")
         .output("out", DataKind::Chan)
         .output("spectrum", DataKind::Chan)
         .output("meters", DataKind::Tex)
@@ -164,10 +177,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Analysis::default()) as Box<dyn Operator>,
     )
     .warm_up(on_gpu(meters_picture::warm_up)))?;
+    oscillator::register(types)?;
+    mix::register(types)?;
     Ok(())
 }
 
-/// The devices the network's `chan.audio_in` nodes want (stored params).
+/// The devices the network's `audio.device_in` nodes want (stored params).
 pub fn wants(net: &Network, types: &NodeTypes) -> Vec<String> {
     let Some(desc) = types.desc(AUDIO_IN) else { return Vec::new() };
     let mut keys: Vec<String> = net
@@ -242,7 +257,7 @@ impl Operator for AudioIn {
             })
             .collect();
         let chans = Chans::new(f64::from(block.rate), channels)?;
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, chans)]))
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Audio, chans)]))
     }
 }
 

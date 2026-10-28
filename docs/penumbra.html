@@ -121,7 +121,7 @@ details.target { outline: 2px solid var(--accent); }
 </section>
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
-<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-component-ports">Component ports</a></p>
+<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-component-ports">Component ports</a></p>
 <p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
@@ -152,7 +152,7 @@ details.target { outline: 2px solid var(--accent); }
 <h3 id="getting-started-the-window">The window</h3>
 <p><img src="../assets/screenshot.png" alt="The window: the node editor on the left, parameters, viewer and change log on the right, the status bar at the bottom"></p>
 <ul>
-<li><strong>The node editor</strong> (left) shows the network: nodes with live thumbnails, wired output to input. The colour of a node's header is its family, the colour of a wire the kind of data it carries (see <a href="#concepts">Concepts</a>). A channel node shows its values (with a bar, when the editor's &quot;channel bars&quot; are on); one whose channels hold many samples (<a class="ref" href="#chan.trail"><code>chan.trail</code></a>, <a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a>, a spectrum) shows them as a small plot instead, the newest at the right and the first channel's value at the top left. <a class="ref" href="#chan.trail"><code>chan.trail</code></a> and <a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a> get a taller body for it, as tall as a picture's.
+<li><strong>The node editor</strong> (left) shows the network: nodes with live thumbnails, wired output to input. The colour of a node's header is its family, the colour of a wire the kind of data it carries (see <a href="#concepts">Concepts</a>). A channel node shows its values (with a bar, when the editor's &quot;channel bars&quot; are on); one whose channels hold many samples (<a class="ref" href="#chan.trail"><code>chan.trail</code></a>, a spectrum) shows them as a small plot instead, the newest at the right and the first channel's value at the top left. <a class="ref" href="#chan.trail"><code>chan.trail</code></a> and the sound nodes (<code>audio</code>) get a taller body for it, as tall as a picture's.
 </li>
 <li><strong>Parameters</strong> (top right): the selected node's name, kind, a one-line summary, the lock, its cook time, and its params. Params that belong together sit in folded sections, the rarely used ones under &quot;more&quot;. The <code>?</code> beside the kind opens the node's documentation in the browser, as the <code>?</code> at the right end of every node's header in the editor does (see <a href="#getting-started-the-documentation-page">the documentation page</a>).
 </li>
@@ -294,6 +294,7 @@ details.target { outline: 2px solid var(--accent); }
 <tbody>
 <tr><td><code>tex</code></td><td>purple</td><td>2D pictures on the GPU, linear light, premultiplied alpha, values above 1 allowed</td><td><code>tex</code></td></tr>
 <tr><td><code>chan</code></td><td>green</td><td>named channels of numbers; the last sample is the value now</td><td><code>chan</code>, <code>script</code></td></tr>
+<tr><td><code>audio</code></td><td>cyan</td><td>sound: a gapless stream of sample blocks at a sample rate</td><td><code>audio</code>, <code>tex</code> (<code>ndi_in</code>)</td></tr>
 <tr><td><code>table</code></td><td>blue</td><td>rows of text cells</td><td><code>table</code>, <code>script</code></td></tr>
 <tr><td><code>geo</code></td><td>orange</td><td>meshes with parts, materials and transforms</td><td><code>geo</code></td></tr>
 <tr><td><code>mat</code></td><td>pink</td><td>a material</td><td><code>mat</code></td></tr>
@@ -307,6 +308,8 @@ details.target { outline: 2px solid var(--accent); }
 <li><strong><code>tex</code></strong>: pictures. Generators (noise, constant, text, image, video, a PSD layer), filters (level, blur, transform, ...), compositing, a shader node for anything else, <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> for projection mapping, <a class="ref" href="#tex.render"><code>tex.render</code></a> for 3D.
 </li>
 <li><strong><code>chan</code></strong>: numbers that change over time. Generators (<code>lfo</code>, <code>noise</code>, <code>constant</code>), <code>math</code>, <code>filter</code>, <code>trail</code> (the last seconds of a channel as samples, to plot or to feed on; it starts empty and fills up), and OSC in and out. Channels drive params through <a href="#concepts-bindings">bindings</a>. A channel holds one or many samples, so a set of channels is a small grid of numbers: <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> turns it into a picture (a row per channel, a pixel per sample) for shaders to look values up in, and <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> averages a picture down to a few pixels and turns them into channels (at 1 x 1, its mean colour). Channels named <code>r</code>, <code>g</code>, <code>b</code> (and <code>a</code>), as <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> makes them, come back from <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> as a colour.
+</li>
+<li><strong><code>audio</code></strong>: sound. A device input, a test tone and a mix so far. <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> turns sound into channels (see <a href="#audio">Audio</a>).
 </li>
 <li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
 </li>
@@ -619,9 +622,9 @@ water      15
 <ul>
 <li><strong>listen</strong> off closes every audio input for this run; the nodes stay.
 </li>
-<li>Per input a <a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a> opened: the device, its sample rate and channels, glitches the system reported, an error if the device is missing or failed, and a level meter per channel (red near clipping).
+<li>Per input an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> opened: the device, its sample rate and channels, glitches the system reported, an error if the device is missing or failed, and a level meter per channel (red near clipping).
 </li>
-<li><strong>inputs on this machine</strong> lists the input devices with their format; <strong>list again</strong> after plugging one in. Part of a name goes into a <a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a>'s <code>device</code>.
+<li><strong>inputs on this machine</strong> lists the input devices with their format; <strong>list again</strong> after plugging one in. Part of a name goes into an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a>'s <code>device</code>.
 </li>
 </ul>
 <h3 id="helpers-show-machine">Show machine</h3>
@@ -637,17 +640,33 @@ water      15
 </div></details>
 <details class="entry guide" id="audio"><summary><span class="name">Audio</span></summary>
 <div class="body">
-<p>Two nodes make a show react to sound: <a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a> reads an input device, and <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> turns what it hears into channels that params can be bound to.</p>
+<p>Two nodes make a show react to sound: <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> reads an input device, and <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> turns what it hears into channels that params can be bound to.</p>
+<h3 id="audio-sound-is-its-own-family">Sound is its own family</h3>
+<p>Sound travels on cyan wires of its own kind, <code>audio</code>. A <code>chan</code> wire carries values: its last sample is the value now. An <code>audio</code> wire carries a stream: each frame's block of samples continues the block before, so every sample counts. The two kinds do not connect. <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> is the bridge from sound to channels that params can be bound to.</p>
+<ul>
+<li><a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> reads a microphone or an audio interface.
+</li>
+<li><a class="ref" href="#audio.oscillator"><code>audio.oscillator</code></a> makes a test tone. <code>shape</code> is sine, saw, square, triangle or noise. The params <code>frequency</code> and <code>amplitude</code> can be bound; a change glides across one frame, so it does not click. <code>rate</code> is the sample rate, 48000 by default.
+</li>
+<li><a class="ref" href="#audio.mix"><code>audio.mix</code></a> adds up to eight sounds. Each input has its own gain (<code>gain0</code> to <code>gain7</code>), and <code>gain</code> sets the whole. All inputs need the same sample rate; two rates are an error, since the mix does not convert between them.
+</li>
+<li><a class="ref" href="#chan.read"><code>chan.read</code></a> reads an audio node too: the rate, the block's length, <code>peak</code> and <code>rms</code> per channel, and with <code>samples: true</code> the whole block.
+</li>
+</ul>
+<p>The viewer shows sound as the last 50 ms of its waveform and a peak meter per channel in dBFS. The waveform starts at a rising zero crossing, so a steady tone stands still.</p>
+<p>A tone generator makes exactly the samples of one frame. At 48 kHz and 60 fps that is 800 samples. At 44.1 kHz it alternates between 735 and 736, so the sound stays in step with the picture for hours. After skipped frames, the next block covers them all, up to half a second. After a longer pause or a jump in time, the sound starts over.</p>
+<p>Sound cannot be played yet. Output to a device is the next step.</p>
 <h3 id="audio-setting-up">Setting up</h3>
 <ol>
-<li>Add a <a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a> (Tab &gt; chan &gt; audio_in). With <code>device</code> empty it reads the system's default input; the empty <code>device</code> box names that device in grey (hover the box for the device a typed name picked). <a class="ref" href="#audio.status"><code>audio.status</code></a> names it too. The <code>...</code> menu beside <code>device</code> lists the inputs of this machine; part of a name typed in works too, e.g. <code>Focusrite</code>. The <a href="#helpers-audio">Helpers window</a> shows a level meter per channel. The device is opened in shared mode, so other programs can use it too.
+<li>Add an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> (Tab &gt; audio &gt; device_in). With <code>device</code> empty it reads the system's default input; the empty <code>device</code> box names that device in grey (hover the box for the device a typed name picked). <a class="ref" href="#audio.status"><code>audio.status</code></a> names it too. The <code>...</code> menu beside <code>device</code> lists the inputs of this machine; part of a name typed in works too, e.g. <code>Focusrite</code>. The <a href="#helpers-audio">Helpers window</a> shows a level meter per channel. The device is opened in shared mode, so other programs can use it too.
 </li>
 <li>Connect it to a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a>.
 </li>
 <li>Bind params to the analysis' channels, as to any channel (see <a href="#concepts-bindings">bindings</a>): drag a wire from its output onto a param row, or pick the channel in the param's link menu.
 </li>
 </ol>
-<p><a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a> outputs the samples that arrived since its last cook, one channel per device channel (<code>ch1</code>, <code>ch2</code>, ...) at the device's sample rate. It keeps listening while the show is paused. If the device goes away (a pulled cable), the node shows an error and the input is opened again every two seconds until it is back.</p>
+<p><a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> outputs the samples that arrived since its last cook, one channel per device channel (<code>ch1</code>, <code>ch2</code>, ...) at the device's sample rate. It keeps listening while the show is paused. If the device goes away (a pulled cable), the node shows an error and the input is opened again every two seconds until it is back.</p>
+<p>Projects saved before <code>audio</code> was a family name the node <code>chan.audio_in</code>. They open with the new name. A wire from it, or from an NDI source's sound, into a chan node other than the analysis is left out on opening, and so is a binding to it; the log names each. Put a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> in between and bind to the analysis.</p>
 <h3 id="audio-what-the-analysis-gives">What the analysis gives</h3>
 <p>All values are channels of the <code>out</code> output, in this order:</p>
 <table>
@@ -897,7 +916,7 @@ water      15
 </li>
 </ul>
 <p>The picture stays live while the show is paused, like a camera's.</p>
-<p>The second output, <code>audio</code>, carries the source's sound: one channel per source channel (<code>ch1</code>, <code>ch2</code>, ...) at its sample rate, what arrived since the last cook, as <a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a> delivers a sound card's. Feed it into a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> to react to a DJ's NDI feed. Sound is only kept while something reads the output.</p>
+<p>The second output, <code>audio</code>, carries the source's sound on an <code>audio</code> wire: one channel per source channel (<code>ch1</code>, <code>ch2</code>, ...) at its sample rate, what arrived since the last cook, as <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> delivers a sound card's. Feed it into a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> to react to a DJ's NDI feed. Sound is only kept while something reads the output.</p>
 <p><a class="ref" href="#ndi.sources"><code>ndi.sources</code></a> on the control channel lists the sources (name and address), penumbra's own included.</p>
 <h3 id="ndi-colour">Colour</h3>
 <p>penumbra works in linear light with premultiplied alpha; NDI carries display-ready colour as Y'CbCr 4:2:2 (video range, BT.601 for SD, BT.709 for HD, BT.2020 above 1080p) and straight alpha. Both nodes convert on the GPU, so a picture looks the same on both sides.</p>
@@ -1587,7 +1606,7 @@ fn main(v: PnVertex) -&gt; @location(0) vec4f {
 </li>
 </ul>
 <p>The composite is the picture. <a href="#tex.feedback">tex.feedback</a> and the <code>feedback</code> example show more of what a loop can do.</p>
-<p><strong>3. Sound.</strong> Add a <a class="ref" href="#chan.audio_in"><code>chan.audio_in</code></a> and wire it into a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> (see <a href="#audio">Audio</a>). Wire the analysis into a <a class="ref" href="#chan.filter"><code>chan.filter</code></a>, which smooths the jumps. Then bind <code>energy</code>: the link button at the end of its row offers the filter's channels, pick <code>low</code>. The ring now opens with every bass note. Without a microphone, a <a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> with <code>offset</code> 0.5 and <code>amplitude</code> 0.5 stands in.</p>
+<p><strong>3. Sound.</strong> Add an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> and wire it into a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> (see <a href="#audio">Audio</a>). Wire the analysis into a <a class="ref" href="#chan.filter"><code>chan.filter</code></a>, which smooths the jumps. Then bind <code>energy</code>: the link button at the end of its row offers the filter's channels, pick <code>low</code>. The ring now opens with every bass note. Without a microphone, a <a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> with <code>offset</code> 0.5 and <code>amplitude</code> 0.5 stands in.</p>
 <p>The whole spectrum fits into a shader too: <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a>'s <code>spectrum</code> output into a <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a>, that into <code>in1</code>. Then <code>textureSampleLevel(in1, pn_clamp, vec2f(x, 0.5), 0.0).r</code> is the loudness at <code>x</code>, low frequencies at 0.</p>
 <p>To show it on a wall, wire the composite into an <a class="ref" href="#out.projector"><code>out.projector</code></a>, or through a <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> first (<a href="#mapping-without-camera">Mapping without a camera</a>).</p>
 </div></details>
@@ -2503,7 +2522,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">tex</span>: The source's picture, at its size</li>
-<li><code>audio</code> <span class="kind">chan</span>: The source's audio since the last cook: ch1, ch2, ... at its sample rate</li>
+<li><code>audio</code> <span class="kind">audio</span>: The source's audio since the last cook: ch1, ch2, ... at its sample rate</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -3204,14 +3223,14 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_in">chan.audio_in</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_analysis"><summary><code class="name">chan.audio_analysis</code><span class="sum">Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</span></summary>
 <div class="body">
 <p>Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</p>
 <p class="note">Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>audio</code> <span class="kind">chan</span></li>
+<li><code>audio</code> <span class="kind">audio</span>: The sound to listen to, e.g. from an audio.device_in</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -3242,25 +3261,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves the width and height of the meters output alone</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
-</div></details>
-<details class="entry node" id="chan.audio_in"><summary><code class="name">chan.audio_in</code><span class="sum">Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel</span></summary>
-<div class="body">
-<p>Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel</p>
-<h4>Inputs</h4>
-<p>none</p>
-<h4>Outputs</h4>
-<ul>
-<li><code>out</code> <span class="kind">chan</span></li>
-</ul>
-<h4>Params</h4>
-<table class="params">
-<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
-<tbody>
-<tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the input's name (Helpers &gt; Audio lists them), e.g. <code>Focusrite</code>; empty: the system's default input</td></tr>
-</tbody>
-</table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="chan.clock"><summary><code class="name">chan.clock</code><span class="sum">A stopwatch: counts seconds from when <code>run</code> turns on, once, looping or on and on. Gives each piece of a show a clock that starts with it</span></summary>
 <div class="body">
@@ -3810,6 +3811,82 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#getting-started-the-window">Getting started › The window</a>, <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#audio-tips">Audio › Tips</a></p>
+</div></details>
+</div>
+<div class="group" id="family-audio">
+<h3>audio</h3>
+<p class="kinds"><a href="#audio.device_in">audio.device_in</a> <a href="#audio.mix">audio.mix</a> <a href="#audio.oscillator">audio.oscillator</a></p>
+<details class="entry node" id="audio.device_in"><summary><code class="name">audio.device_in</code><span class="sum">Sound from a microphone or audio interface: one channel per input channel, at the device's rate</span></summary>
+<div class="body">
+<p>Sound from a microphone or audio interface: one channel per input channel, at the device's rate</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">audio</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the input's name (Helpers &gt; Audio lists them), e.g. <code>Focusrite</code>; empty: the system's default input</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+</div></details>
+<details class="entry node" id="audio.mix"><summary><code class="name">audio.mix</code><span class="sum">Adds sounds together, each by its own gain</span></summary>
+<div class="body">
+<p>Adds sounds together, each by its own gain</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in0 .. in7</code> <span class="kind">audio</span>: The sounds to add, all at one sample rate. The output has the channels of the first wired one Any number, up to 8: each one wired adds a free slot below it.</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">audio</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>gain</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies the sum of all inputs: the level of the whole mix</td></tr>
+<tr><td><code>gain0</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in0 before it is added; 0 mutes it</td></tr>
+<tr><td><code>gain1</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in1 before it is added; 0 mutes it</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>gain2</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in2 before it is added; 0 mutes it</td></tr>
+<tr><td><code>gain3</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in3 before it is added; 0 mutes it</td></tr>
+<tr><td><code>gain4</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in4 before it is added; 0 mutes it</td></tr>
+<tr><td><code>gain5</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in5 before it is added; 0 mutes it</td></tr>
+<tr><td><code>gain6</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in6 before it is added; 0 mutes it</td></tr>
+<tr><td><code>gain7</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in7 before it is added; 0 mutes it</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a></p>
+</div></details>
+<details class="entry node" id="audio.oscillator"><summary><code class="name">audio.oscillator</code><span class="sum">A test tone or noise as sound: sine, saw, square, triangle, noise</span></summary>
+<div class="body">
+<p>A test tone or noise as sound: sine, saw, square, triangle, noise</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">audio</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>shape</code></td><td>sine | saw | square | triangle | noise</td><td><code>&quot;sine&quot;</code></td><td></td><td>The form of the wave, from -1 to 1 before amplitude<ul><li><code>sine</code>: a pure tone</li><li><code>saw</code>: rising evenly from -1 to 1, then jumping back: bright and buzzing</li><li><code>square</code>: 1 for the first half of each wave, -1 for the second: hollow</li><li><code>triangle</code>: straight up and straight down: softer than the square</li><li><code>noise</code>: white noise, the same for one seed on every machine; frequency does nothing</li></ul></td></tr>
+<tr><td><code>frequency</code></td><td>float</td><td><code>440</code></td><td>20 to 20000 Hz (soft)</td><td>Waves per second: 440 Hz is the A above middle C. A change glides across one frame</td></tr>
+<tr><td><code>amplitude</code></td><td>float</td><td><code>0.25</code></td><td>0 to 1 (soft)</td><td>The peak of the wave; 1 is full scale. A change glides across one frame</td></tr>
+<tr><td><code>name</code></td><td>text</td><td><code>&quot;ch1&quot;</code></td><td></td><td>Name of the channel it makes, as other nodes see it</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made; nodes that mix sound need the same rate on all inputs</td></tr>
+<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft)</td><td>Picks another noise of the same character (shape noise only)</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a></p>
 </div></details>
 </div>
 <div class="group" id="family-table">
@@ -4586,7 +4663,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="group" id="family-component-ports">
 <h3>Component ports</h3>
 <p>The input and output sockets of a component, one pair per data kind. They sit inside a <a class="ref" href="#comp.base"><code>comp.base</code></a>. Whatever is wired to the component's socket outside comes out of its <code>in</code> node inside. Whatever is wired into an <code>out</code> node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.</p>
-<p class="kinds"><a href="#tex.in">tex.in</a> <a href="#tex.out">tex.out</a> <a href="#chan.in">chan.in</a> <a href="#chan.out">chan.out</a> <a href="#table.in">table.in</a> <a href="#table.out">table.out</a> <a href="#geo.in">geo.in</a> <a href="#geo.out">geo.out</a> <a href="#mat.in">mat.in</a> <a href="#mat.out">mat.out</a> <a href="#light.in">light.in</a> <a href="#light.out">light.out</a> <a href="#view.in">view.in</a> <a href="#view.out">view.out</a></p>
+<p class="kinds"><a href="#tex.in">tex.in</a> <a href="#tex.out">tex.out</a> <a href="#chan.in">chan.in</a> <a href="#chan.out">chan.out</a> <a href="#audio.in">audio.in</a> <a href="#audio.out">audio.out</a> <a href="#table.in">table.in</a> <a href="#table.out">table.out</a> <a href="#geo.in">geo.in</a> <a href="#geo.out">geo.out</a> <a href="#mat.in">mat.in</a> <a href="#mat.out">mat.out</a> <a href="#light.in">light.in</a> <a href="#light.out">light.out</a> <a href="#view.in">view.in</a> <a href="#view.out">view.out</a></p>
 <details class="entry node" id="tex.in"><summary><code class="name">tex.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
 <div class="body">
 <p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
@@ -4642,6 +4719,32 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <li><code>out</code> <span class="kind">chan</span></li>
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a></p>
+</div></details>
+<details class="entry node" id="audio.in"><summary><code class="name">audio.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">audio</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">audio</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="audio.out"><summary><code class="name">audio.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">audio</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">audio</span></li>
+</ul>
 </div></details>
 <details class="entry node" id="table.in"><summary><code class="name">table.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
 <div class="body">
@@ -4827,10 +4930,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="group-chan">
 <h3>chan</h3>
-<details class="entry command" id="chan.read"><summary><code class="name">chan.read</code><span class="sum">Cook a chan node and read its channels (values now</span></summary>
+<details class="entry command" id="chan.read"><summary><code class="name">chan.read</code><span class="sum">Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block</span></summary>
 <div class="body">
-<p>Cook a chan node and read its channels (values now; {samples: true} for all); {path, output?, samples?}</p>
-<p class="mentions">Mentioned in: <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
+<p>Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block; {samples: true} for all); {path, output?, samples?}</p>
+<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 </div>
 <div class="group" id="group-comp">

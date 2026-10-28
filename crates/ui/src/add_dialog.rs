@@ -31,8 +31,14 @@ use crate::{automation, theme};
 
 /// Families always offered, by tab and in this order, even before they have node types; others
 /// found in the registry follow alphabetically, one tab each.
-const GROUPS: [&[&str]; 5] =
-    [&["tex"], &["chan"], &["table"], &["geo", "mat", "light", "view"], &["script", "out", "comp"]];
+const GROUPS: [&[&str]; 6] = [
+    &["tex"],
+    &["chan"],
+    &["audio"],
+    &["table"],
+    &["geo", "mat", "light", "view"],
+    &["script", "out", "comp"],
+];
 /// The tab of the component files on offer: penumbra's library, the user's and the project's
 /// `components/`. Not a family of node types; it takes the colour of `comp`.
 pub const LIBRARY: &str = "library";
@@ -647,7 +653,10 @@ mod tests {
             ]
         );
         let chan = sections_of(&types, "chan", &[]);
-        assert!(chan[1].1.contains(&"chan.audio_in".to_string()));
+        assert!(chan[1].1.contains(&"chan.osc_in".to_string()));
+        let audio = sections_of(&types, "audio", &[]);
+        assert_eq!(audio[1].1, ["audio.device_in"], "the device is a live input");
+        assert!(audio[0].1.contains(&"audio.oscillator".to_string()));
         assert!(chan[0].1.contains(&"chan.osc_out".to_string()), "an output is a common type");
     }
 

@@ -13,7 +13,7 @@
         "/kick_fade": (kind: "chan.filter", params: {"fall": 0.25, "rise": 0.0}, inputs: {"in": "kick"}, pos: [600.0, 284.0]),
         "/label": (kind: "tex.text", params: {"color": [1.0, 1.0, 1.0, 0.8], "position": [0.5, 0.88], "size": 64.0, "style": "Light", "text": "make some noise"}, pos: [1600.0, 142.0]),
         "/meters": (kind: "tex.null", inputs: {"in": "analysis:meters"}, pos: [400.0, 426.0]),
-        "/mic": (kind: "chan.audio_in", pos: [0.0, 0.0]),
+        "/mic": (kind: "audio.device_in", pos: [0.0, 0.0]),
         "/pump": (kind: "tex.transform", params: {"extend": "mirror"}, inputs: {"in": "colour"}, binds: {"scale.0": "zoom:low", "scale.1": "zoom:low"}, pos: [1200.0, 0.0]),
         "/punch": (kind: "chan.math", params: {"b": 0.6}, inputs: {"a": "kick_fade"}, pos: [800.0, 284.0]),
         "/show": (kind: "tex.composite", inputs: {"in0": "bright", "in1": "label"}, pos: [1800.0, 0.0]),

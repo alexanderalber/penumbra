@@ -59,8 +59,8 @@ else runs without it.
   input. The colour of a node's header is its family, the colour of a wire the kind of data it
   carries (see [Concepts](concepts.md)). A channel node shows its values (with a bar, when the
   editor's "channel bars" are on); one whose channels hold many samples (`chan.trail`,
-  `chan.audio_in`, a spectrum) shows them as a small plot instead, the newest at the right and
-  the first channel's value at the top left. `chan.trail` and `chan.audio_in` get a taller body
+  a spectrum) shows them as a small plot instead, the newest at the right and
+  the first channel's value at the top left. `chan.trail` and the sound nodes (`audio`) get a taller body
   for it, as tall as a picture's.
 - **Parameters** (top right): the selected node's name, kind, a one-line summary, the lock, its
   cook time, and its params. Params that belong together sit in folded sections, the rarely

@@ -227,7 +227,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
 The composite is the picture. [tex.feedback](reference/nodes.md#texfeedback) and the `feedback`
 example show more of what a loop can do.
 
-**3. Sound.** Add a `chan.audio_in` and wire it into a `chan.audio_analysis` (see
+**3. Sound.** Add an `audio.device_in` and wire it into a `chan.audio_analysis` (see
 [Audio](audio.md)). Wire the analysis into a `chan.filter`, which smooths the jumps. Then bind
 `energy`: the link button at the end of its row offers the filter's channels, pick `low`. The
 ring now opens with every bass note. Without a microphone, a `chan.lfo` with `offset` 0.5

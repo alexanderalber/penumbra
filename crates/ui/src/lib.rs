@@ -28,6 +28,7 @@ pub mod params;
 pub mod plot;
 pub mod projects;
 mod regions;
+mod scope;
 mod shapes;
 pub mod textures;
 pub mod theme;

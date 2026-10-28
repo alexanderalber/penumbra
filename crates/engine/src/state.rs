@@ -1006,6 +1006,7 @@ fn items_of<'a>(list: &[Source<'a>], limits: &StateLimits) -> Result<Vec<(ItemEn
                     (ItemEntry::Table { len: b.len() as u64 }, Item::Blob(b))
                 }
                 DataKind::Geo => return Err("geometry is not kept (it comes from its file again)".into()),
+                DataKind::Audio => return Err("audio is not kept (it streams, the next block is new)".into()),
                 DataKind::Mat | DataKind::Light | DataKind::View => {
                     return Err(
                         "materials, lights and cameras are not kept (they come from their params again)"

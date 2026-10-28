@@ -221,9 +221,17 @@ fn read(
                 continue;
             }
             let mut outputs = BTreeMap::new();
-            if let Err(e) =
-                load_node(path, node, &repr.nodes, &failed, &mut outputs, types, outside, tolerant)
-            {
+            if let Err(e) = load_node(
+                path,
+                node,
+                &repr.nodes,
+                &failed,
+                &mut outputs,
+                types,
+                outside,
+                tolerant,
+                &mut Vec::new(),
+            ) {
                 failed.insert(path, e);
                 more = true;
             }
@@ -238,14 +246,19 @@ fn read(
     let mut nodes = BTreeMap::new();
     // Per placeholder, the output names its readers use ([`broken::OUTPUTS`]).
     let mut outputs: BTreeMap<NodePath, Vec<String>> = BTreeMap::new();
+    let mut dropped = Vec::new();
     for (path, node) in &repr.nodes {
         if failed.contains_key(path) {
             continue;
         }
-        let mut content = load_node(path, node, &repr.nodes, &failed, &mut outputs, types, outside, tolerant)
-            .map_err(|e| e.context(format!("{what}: {path} loaded once, then not")))?;
+        let mut content =
+            load_node(path, node, &repr.nodes, &failed, &mut outputs, types, outside, tolerant, &mut dropped)
+                .map_err(|e| e.context(format!("{what}: {path} loaded once, then not")))?;
         content.pos = position(path, node.pos);
         nodes.insert(path.clone(), content);
+    }
+    for d in &dropped {
+        log::warn!("{what}: {d}");
     }
     for (path, error) in failed {
         let node = repr.nodes.get(path).ok_or_else(|| Error::new("lost a node"))?;
@@ -340,6 +353,7 @@ fn load_node(
     types: &NodeTypes,
     outside: bool,
     check_params: bool,
+    dropped: &mut Vec<String>,
 ) -> Result<NodeContent, Error> {
     let d = check_own(path, node, types, check_params)?;
     let level = path.parent().unwrap_or_else(NodePath::root);
@@ -354,6 +368,14 @@ fn load_node(
         if let (Some(kind), Some(spec)) = (kind, d.inputs.get(index))
             && kind != spec.kind
         {
+            if split_from_chan(kind, spec.kind) {
+                dropped.push(format!(
+                    "{}: {source} gives {kind:?}, the input wants {:?}; the wire is left out (sound                      became a family of its own: chan.audio_analysis turns it into channels)",
+                    ctx(),
+                    spec.kind
+                ));
+                continue;
+            }
             return Err(Error::new(format!(
                 "{}: {source} gives {kind:?}, the input wants {:?}",
                 ctx(),
@@ -369,8 +391,17 @@ fn load_node(
         let ctx = || format!("{path} bind `{part}`");
         let src = parse_bind(&level, source, nodes, outside).map_err(|e| e.context(ctx()))?;
         if let Some(from) = nodes.get(&src.node).filter(|_| !failed.contains_key(&src.node))
-            && !types.desc(&from.kind).is_some_and(|f| f.outputs.iter().any(|o| o.kind == DataKind::Chan))
+            && let from = types.desc(&from.kind)
+            && !from.is_some_and(|f| f.outputs.iter().any(|o| o.kind == DataKind::Chan))
         {
+            if from.is_some_and(|f| f.outputs.iter().any(|o| o.kind == DataKind::Audio)) {
+                dropped.push(format!(
+                    "{}: {} gives sound, not channels; the binding is left out (bind to a                      chan.audio_analysis of it instead)",
+                    ctx(),
+                    src.node
+                ));
+                continue;
+            }
             return Err(Error::new(format!("{}: {} has no chan output to bind to", ctx(), src.node)));
         }
         binds.insert(part.clone(), src);
@@ -383,6 +414,14 @@ fn load_node(
         locked: node.locked,
         pos: None,
     })
+}
+
+/// Whether a wire from `from` into `to` is one that sound's own family broke: outputs that were
+/// channels (`chan.audio_in`, an NDI source's audio) give `audio` now. Such a wire cannot be
+/// made right by the user's hand in the file, so it is left out with a warning rather than
+/// making its reader a placeholder.
+fn split_from_chan(from: DataKind, to: DataKind) -> bool {
+    matches!((from, to), (DataKind::Audio, DataKind::Chan) | (DataKind::Chan, DataKind::Audio))
 }
 
 /// `"path"` or `"path:channel"`, read on `level`.

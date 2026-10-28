@@ -529,7 +529,7 @@ fn every_builtin_cooks_without_warnings() {
         create("/mat_feed", "mat.constant", &[]),
         create("/light_feed", "light.ambient", &[]),
         create("/view_feed", "view.camera", &[]),
-        create("/audio_feed", "chan.audio_in", &[("device", "test".into())]),
+        create("/audio_feed", "audio.device_in", &[("device", "test".into())]),
     ];
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
     std::fs::write(dir.join("box.obj"), penumbra_mesh::write::to_obj(&cube, None)).unwrap();
@@ -583,7 +583,7 @@ fn every_builtin_cooks_without_warnings() {
             // Any free port, so the test never collides with something listening on 8000.
             "chan.osc_in" => params.push(("port", Value::Int(0))),
             "light.environment" => params.push(("size", Value::Int(64))),
-            "chan.audio_in" => params.push(("device", "test".into())),
+            "audio.device_in" => params.push(("device", "test".into())),
             "out.dmx" => params.extend([("protocol", "art_net".into()), ("host", dmx_host.as_str().into())]),
             "chan.dmx_in" => params.extend([
                 ("interface", "127.0.0.1".into()),
@@ -608,7 +608,7 @@ fn every_builtin_cooks_without_warnings() {
                 penumbra_graph::DataKind::Light => Some("/light_feed"),
                 penumbra_graph::DataKind::View => Some("/view_feed"),
                 // Component ports and nulls pass on what they get and complain about nothing wired.
-                penumbra_graph::DataKind::Chan if kind == "chan.audio_analysis" => Some("/audio_feed"),
+                penumbra_graph::DataKind::Audio => Some("/audio_feed"),
                 penumbra_graph::DataKind::Chan
                     if desc.port.is_some()
                         || passes_on(kind)
@@ -2508,7 +2508,7 @@ fn peak_line_high(px: &Pixels) -> bool {
 /// own (no normalising), so a block of 0.9 reads as level 0.9.
 fn analysis_rig(gpu: Gpu, more: &[Op]) -> Rig {
     let mut ops = vec![
-        create("/in", "chan.audio_in", &[("device", "test".into())]),
+        create("/in", "audio.device_in", &[("device", "test".into())]),
         create(
             "/a",
             "chan.audio_analysis",

@@ -85,6 +85,7 @@ pub fn kind_name(kind: DataKind) -> &'static str {
         DataKind::Mat => "mat",
         DataKind::Light => "light",
         DataKind::View => "view",
+        DataKind::Audio => "audio",
     }
 }
 
@@ -97,6 +98,9 @@ pub fn kind_color(kind: DataKind) -> Color32 {
         DataKind::Mat => Color32::from_rgb(230, 110, 160),
         DataKind::Light => Color32::from_rgb(235, 215, 120),
         DataKind::View => Color32::from_rgb(200, 200, 220),
+        // Cyan: between table's blue and the components' turquoise, away from chan's green, since
+        // audio and channels sit side by side most.
+        DataKind::Audio => Color32::from_rgb(70, 215, 240),
     }
 }
 
@@ -135,6 +139,7 @@ pub fn family_color(family: &str) -> Color32 {
         "mat" => kind_color(DataKind::Mat),
         "light" => kind_color(DataKind::Light),
         "view" => kind_color(DataKind::View),
+        "audio" => kind_color(DataKind::Audio),
         // Scripts output channels and tables: neither family's colour, Python's yellow.
         "script" => Color32::from_rgb(225, 205, 80),
         // Components hold nodes of every family: a colour of their own, turquoise, away from

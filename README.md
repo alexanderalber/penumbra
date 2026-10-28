@@ -97,7 +97,7 @@ lists every one.
 | Image files | yes | snapshots | `tex.image_file`, `tex.layer` | PNG, JPEG, TIFF, EXR, HDR, WebP and more; PSD/PSB layers. `node.snapshot` saves any node as PNG |
 | 3D files | yes | yes | `geo.file`, `out.mesh` | in: OBJ (with MTL), STL, glTF/GLB. Out: OBJ, STL, GLB |
 | Text tables | yes | yes | `table.file`, `out.table` | in: CSV, TSV, plain lines. Out: CSV, TSV |
-| Audio | yes | | `chan.audio_in` | any input device (WASAPI, shared mode). No audio output, no audio files |
+| Audio | yes | | `audio.device_in` | any input device (WASAPI, shared mode). No audio output, no audio files |
 | Spout | yes | yes | `tex.spout_in`, `out.spout` | textures shared with other programs on the same machine |
 | NDI® | video and audio | video | `tex.ndi_in`, `out.ndi` | needs the NDI runtime installed |
 | DMX over USB | | yes | `out.dmx` | Enttec Open DMX USB, one universe |

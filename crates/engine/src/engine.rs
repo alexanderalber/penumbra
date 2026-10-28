@@ -57,7 +57,7 @@
 //! and ends learns.
 //!
 //! **Audio:** likewise, the cook thread tells the audio [`AudioHub`] which input devices the
-//! network's `chan.audio_in` nodes want; the hub keeps a stream thread per device, and the
+//! network's `audio.device_in` nodes want; the hub keeps a stream thread per device, and the
 //! nodes read what arrived. **Cameras** the same way: the [`CameraHub`] opens what the
 //! `tex.video_in` nodes want, a capture thread per camera, and keeps each one's newest frame.
 //! **DMX** the other way round: the [`DmxHub`] is a resource the `out.dmx` nodes put their slots

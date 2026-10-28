@@ -37,7 +37,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `chan.read` | Cook a chan node and read its channels (values now; {samples: true} for all); {path, output?, samples?} |
+| `chan.read` | Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block; {samples: true} for all); {path, output?, samples?} |
 
 ## comp
 

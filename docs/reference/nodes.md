@@ -4,7 +4,7 @@
 
 Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range limits only the slider; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
 
-Sections: [tex](#tex), [chan](#chan), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp), [node](#node), [Component ports](#component-ports)
+Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp), [node](#node), [Component ports](#component-ports)
 
 ## tex
 
@@ -576,7 +576,7 @@ Inputs: none.
 Outputs:
 
 - `out` (tex): The source's picture, at its size
-- `audio` (chan): The source's audio since the last cook: ch1, ch2, ... at its sample rate
+- `audio` (audio): The source's audio since the last cook: ch1, ch2, ... at its sample rate
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -1083,7 +1083,7 @@ Outputs:
 
 [chan.audio_analysis](#chanaudio_analysis), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.trail](#chantrail)
 
-*in:* [chan.audio_in](#chanaudio_in), [chan.dmx_in](#chandmx_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
+*in:* [chan.dmx_in](#chandmx_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
 ### chan.audio_analysis
 
@@ -1093,7 +1093,7 @@ Keeps state from frame to frame. `node.reset`, the reset button or R starts the 
 
 Inputs:
 
-- `audio` (chan)
+- `audio` (audio): The sound to listen to, e.g. from an audio.device_in
 
 Outputs:
 
@@ -1117,18 +1117,6 @@ Outputs:
 | `width` *(meters)* | int | `1920` | 1 to 16384 px | Width of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(meters)* | int | `1080` | 1 to 16384 px | Height of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(meters)* | bool | `false` |  | res.optimize leaves the width and height of the meters output alone |
-
-### chan.audio_in
-
-Sound from a microphone or audio interface, for chan.audio_analysis: one channel per input channel
-
-Inputs: none.
-
-Outputs: `out` (chan).
-
-| param | type | default | range | meaning |
-|---|---|---|---|---|
-| `device` | text |  |  | Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's default input |
 
 ### chan.clock
 
@@ -1503,6 +1491,65 @@ Outputs:
 | `length` | float | `5` | 0.1 to 60 s (soft) | How far back the trail reaches once it is full; older values drop off its start |
 | `rate` | float | `60` | 1 to 240 Hz (soft) | Samples taken per second of show time, whatever the frame rate; length times rate is the number of samples of a full trail |
 | `active` | bool | `true` |  | Records while on. Off holds the trail as it is; recording resumes from the moment active is on again |
+
+## audio
+
+[audio.mix](#audiomix), [audio.oscillator](#audiooscillator)
+
+*in:* [audio.device_in](#audiodevice_in)
+
+### audio.device_in
+
+Sound from a microphone or audio interface: one channel per input channel, at the device's rate
+
+Inputs: none.
+
+Outputs: `out` (audio).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `device` | text |  |  | Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's default input |
+
+### audio.mix
+
+Adds sounds together, each by its own gain
+
+Inputs:
+
+- `in0 .. in7` (audio): The sounds to add, all at one sample rate. The output has the channels of the first wired one. Any number, up to 8: each one wired adds a free slot below it
+
+Outputs: `out` (audio).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `gain` | float | `1` | 0 to 2 (soft) | Multiplies the sum of all inputs: the level of the whole mix |
+| `gain0` | float | `1` | 0 to 2 (soft) | Multiplies input in0 before it is added; 0 mutes it |
+| `gain1` | float | `1` | 0 to 2 (soft) | Multiplies input in1 before it is added; 0 mutes it |
+| `gain2` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in2 before it is added; 0 mutes it |
+| `gain3` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in3 before it is added; 0 mutes it |
+| `gain4` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in4 before it is added; 0 mutes it |
+| `gain5` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in5 before it is added; 0 mutes it |
+| `gain6` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in6 before it is added; 0 mutes it |
+| `gain7` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in7 before it is added; 0 mutes it |
+
+### audio.oscillator
+
+A test tone or noise as sound: sine, saw, square, triangle, noise
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs: none.
+
+Outputs: `out` (audio).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `shape` | sine \| saw \| square \| triangle \| noise | `"sine"` |  | The form of the wave, from -1 to 1 before amplitude; sine: a pure tone; saw: rising evenly from -1 to 1, then jumping back: bright and buzzing; square: 1 for the first half of each wave, -1 for the second: hollow; triangle: straight up and straight down: softer than the square; noise: white noise, the same for one seed on every machine; frequency does nothing |
+| `frequency` | float | `440` | 20 to 20000 Hz (soft) | Waves per second: 440 Hz is the A above middle C. A change glides across one frame |
+| `amplitude` | float | `0.25` | 0 to 1 (soft) | The peak of the wave; 1 is full scale. A change glides across one frame |
+| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made; nodes that mix sound need the same rate on all inputs |
+| `seed` *(more)* | int | `0` | 0 to 100 (soft) | Picks another noise of the same character (shape noise only) |
+| `name` | text | `"ch1"` |  | Name of the channel it makes, as other nodes see it |
 
 ## table
 
@@ -2088,7 +2135,7 @@ Outputs: none.
 
 The input and output sockets of a component, one pair per data kind. They sit inside a `comp.base`. Whatever is wired to the component's socket outside comes out of its `in` node inside. Whatever is wired into an `out` node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.
 
-[tex.in](#texin), [tex.out](#texout), [chan.in](#chanin), [chan.out](#chanout), [table.in](#tablein), [table.out](#tableout), [geo.in](#geoin), [geo.out](#geoout), [mat.in](#matin), [mat.out](#matout), [light.in](#lightin), [light.out](#lightout), [view.in](#viewin), [view.out](#viewout)
+[tex.in](#texin), [tex.out](#texout), [chan.in](#chanin), [chan.out](#chanout), [audio.in](#audioin), [audio.out](#audioout), [table.in](#tablein), [table.out](#tableout), [geo.in](#geoin), [geo.out](#geoout), [mat.in](#matin), [mat.out](#matout), [light.in](#lightin), [light.out](#lightout), [view.in](#viewin), [view.out](#viewout)
 
 ### tex.in
 
@@ -2137,6 +2184,30 @@ Inputs:
 - `in` (chan)
 
 Outputs: `out` (chan).
+
+### audio.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (audio)
+
+Outputs: `out` (audio).
+
+### audio.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (audio)
+
+Outputs: `out` (audio).
 
 ### table.in
 

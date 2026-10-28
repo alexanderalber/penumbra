@@ -6,7 +6,7 @@
 //! picture stays live while the show is paused, as a camera's does. A picture that arrives
 //! while the node is not wanted is replaced by the next one. Audio is kept only while the
 //! `audio` output is read; it carries what arrived since the last cook, one channel per source
-//! channel (`ch1`, `ch2`, ...) at the source's sample rate, as `chan.audio_in` does, and is
+//! channel (`ch1`, `ch2`, ...) at the source's sample rate, as `audio.device_in` does, and is
 //! handed on unchanged when only a picture came (and the picture when only audio came), so
 //! readers of the one do not recook for the other. Needs the NDI runtime (NDI Tools or the
 //! NDI Runtime installer).
@@ -47,7 +47,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(alpha_param("How the source's transparency is taken (NDI's alpha is straight)"))
         .output("out", DataKind::Tex)
-        .output("audio", DataKind::Chan)
+        .output("audio", DataKind::Audio)
         .lazy_output("audio")
         .describe_output("out", "The source's picture, at its size")
         .describe_output("audio", "The source's audio since the last cook: ch1, ch2, ... at its sample rate"),
@@ -150,11 +150,11 @@ impl NdiIn {
                         samples: samples.into_iter().map(f64::from).collect(),
                     })
                     .collect();
-                self.audio = Some(Data::new(DataKind::Chan, Chans::new(f64::from(audio.rate), channels)?));
+                self.audio = Some(Data::new(DataKind::Audio, Chans::new(f64::from(audio.rate), channels)?));
                 changed = true;
             }
         } else if self.audio.as_ref().is_none_or(|d| !d.is_skipped()) {
-            self.audio = Some(Data::skipped(DataKind::Chan));
+            self.audio = Some(Data::skipped(DataKind::Audio));
             changed = self.out.is_some();
         }
         let status = receiver.status();
@@ -179,7 +179,7 @@ impl NdiIn {
             Some(a) => a.clone(),
             // Wanted, but nothing came yet: no channels.
             None => {
-                let empty = Data::new(DataKind::Chan, Chans::new(48000.0, Vec::new())?);
+                let empty = Data::new(DataKind::Audio, Chans::new(48000.0, Vec::new())?);
                 self.audio = Some(empty.clone());
                 empty
             }

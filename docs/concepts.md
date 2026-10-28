@@ -84,6 +84,7 @@ kind, and the wire takes that kind's colour:
 |---|---|---|---|
 | `tex` | purple | 2D pictures on the GPU, linear light, premultiplied alpha, values above 1 allowed | `tex` |
 | `chan` | green | named channels of numbers; the last sample is the value now | `chan`, `script` |
+| `audio` | cyan | sound: a gapless stream of sample blocks at a sample rate | `audio`, `tex` (`ndi_in`) |
 | `table` | blue | rows of text cells | `table`, `script` |
 | `geo` | orange | meshes with parts, materials and transforms | `geo` |
 | `mat` | pink | a material | `mat` |
@@ -111,6 +112,8 @@ The families:
   look values up in, and `chan.from_tex` averages a picture down to a few pixels and turns them
   into channels (at 1 x 1, its mean colour). Channels named `r`, `g`, `b` (and `a`), as
   `chan.from_tex` makes them, come back from `tex.from_chan` as a colour.
+- **`audio`**: sound. A device input, a test tone and a mix so far. `chan.audio_analysis`
+  turns sound into channels (see [Audio](audio.md)).
 - **`table`**: text tables, typed in or read from a file, for scripts and OSC.
   `table.file` reads a CSV, TSV or text file and reloads it when the file changes.
   `chan.from_table` turns a table of numbers into channels, a channel per column (or row), named

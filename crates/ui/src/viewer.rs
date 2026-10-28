@@ -2,7 +2,8 @@
 //! the panel; channels show their values and a short history (or all samples when a channel
 //! carries many) on labelled axes, on one scale or a lane each ([`crate::plot`]); tables show
 //! their first rows; geometry and materials their pictures, lights a line each. An audio
-//! analysis shows its meters ([`crate::meters`]) unless the plot is chosen.
+//! analysis shows its meters ([`crate::meters`]) unless the plot is chosen; sound shows as a
+//! waveform with peak meters ([`crate::scope`]).
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -62,6 +63,8 @@ pub struct Viewer {
     /// below does not).
     audio: Option<AudioNode>,
     meters: AudioMeters,
+    /// The recent blocks of a sound shown.
+    scope: crate::scope::Scope,
 }
 
 /// What the viewer needs to look around in a 3D node.
@@ -204,6 +207,9 @@ impl Viewer {
                         format!("{n} ch @ {rate} Hz")
                     }
                 }),
+                Some(d) if d.kind() == DataKind::Audio => {
+                    d.get::<Chans>().map(|c| format!("{} ch @ {} Hz", c.channels().len(), c.rate()))
+                }
                 Some(d) if d.kind() == DataKind::Table => {
                     d.get::<Table>().map(|t| format!("{} x {}", t.num_rows(), t.num_cols()))
                 }
@@ -390,6 +396,11 @@ impl Viewer {
                 } else if let Some(chans) = data.get::<Chans>() {
                     self.channels(&painter, rect, id, chans, time);
                 }
+            }
+            DataKind::Audio => {
+                let now = ui.input(|i| i.time);
+                self.scope.feed(id, self.output, data, now);
+                self.scope.draw(&painter, rect);
             }
             DataKind::Table => {
                 if let Some(table) = data.get::<Table>() {

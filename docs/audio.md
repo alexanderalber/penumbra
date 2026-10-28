@@ -1,11 +1,38 @@
 # Audio
 
-Two nodes make a show react to sound: `chan.audio_in` reads an input device, and
+Two nodes make a show react to sound: `audio.device_in` reads an input device, and
 `chan.audio_analysis` turns what it hears into channels that params can be bound to.
+
+## Sound is its own family
+
+Sound travels on cyan wires of its own kind, `audio`. A `chan` wire carries values: its last
+sample is the value now. An `audio` wire carries a stream: each frame's block of samples
+continues the block before, so every sample counts. The two kinds do not connect.
+`chan.audio_analysis` is the bridge from sound to channels that params can be bound to.
+
+- `audio.device_in` reads a microphone or an audio interface.
+- `audio.oscillator` makes a test tone. `shape` is sine, saw, square, triangle or noise. The
+  params `frequency` and `amplitude` can be bound; a change glides across one frame, so it
+  does not click. `rate` is the sample rate, 48000 by default.
+- `audio.mix` adds up to eight sounds. Each input has its own gain (`gain0` to `gain7`), and
+  `gain` sets the whole. All inputs need the same sample rate; two rates are an error, since
+  the mix does not convert between them.
+- `chan.read` reads an audio node too: the rate, the block's length, `peak` and `rms` per
+  channel, and with `samples: true` the whole block.
+
+The viewer shows sound as the last 50 ms of its waveform and a peak meter per channel in
+dBFS. The waveform starts at a rising zero crossing, so a steady tone stands still.
+
+A tone generator makes exactly the samples of one frame. At 48 kHz and 60 fps that is 800
+samples. At 44.1 kHz it alternates between 735 and 736, so the sound stays in step with the
+picture for hours. After skipped frames, the next block covers them all, up to half a second.
+After a longer pause or a jump in time, the sound starts over.
+
+Sound cannot be played yet. Output to a device is the next step.
 
 ## Setting up
 
-1. Add a `chan.audio_in` (Tab > chan > audio_in). With `device` empty it reads the system's
+1. Add an `audio.device_in` (Tab > audio > device_in). With `device` empty it reads the system's
    default input; the empty `device` box names that device in grey (hover the box for the device
    a typed name picked). `audio.status` names it too. The `...` menu beside `device` lists the inputs of this machine; part of a
    name typed in works too, e.g. `Focusrite`. The [Helpers window](helpers.md#audio) shows a
@@ -15,10 +42,15 @@ Two nodes make a show react to sound: `chan.audio_in` reads an input device, and
    [bindings](concepts.md#bindings)): drag a wire from its output onto a param row, or pick the
    channel in the param's link menu.
 
-`chan.audio_in` outputs the samples that arrived since its last cook, one channel per device
+`audio.device_in` outputs the samples that arrived since its last cook, one channel per device
 channel (`ch1`, `ch2`, ...) at the device's sample rate. It keeps listening while the show is
 paused. If the device goes away (a pulled cable), the node shows an error and the input is
 opened again every two seconds until it is back.
+
+Projects saved before `audio` was a family name the node `chan.audio_in`. They open with
+the new name. A wire from it, or from an NDI source's sound, into a chan node other than the
+analysis is left out on opening, and so is a binding to it; the log names each. Put a
+`chan.audio_analysis` in between and bind to the analysis.
 
 ## What the analysis gives
 

@@ -524,7 +524,9 @@ impl Helpers {
         }
         let streams = hub.status();
         if streams.is_empty() {
-            ui.label(RichText::new("Nothing listens: add a chan.audio_in node (Tab > chan).").color(weak));
+            ui.label(
+                RichText::new("Nothing listens: add an audio.device_in node (Tab > audio).").color(weak),
+            );
         }
         for s in &streams {
             let asked =
@@ -575,7 +577,7 @@ impl Helpers {
                         text.push_str("   (default)");
                     }
                     ui.label(RichText::new(text).monospace().color(weak))
-                        .on_hover_text("Put part of this name into a chan.audio_in's device");
+                        .on_hover_text("Put part of this name into an audio.device_in's device");
                 }
             }
             Some(Err(e)) => {

@@ -53,8 +53,8 @@ texture has the source's size and follows it when it changes.
 
 The picture stays live while the show is paused, like a camera's.
 
-The second output, `audio`, carries the source's sound: one channel per source channel (`ch1`,
-`ch2`, ...) at its sample rate, what arrived since the last cook, as `chan.audio_in` delivers a
+The second output, `audio`, carries the source's sound on an `audio` wire: one channel per source channel (`ch1`,
+`ch2`, ...) at its sample rate, what arrived since the last cook, as `audio.device_in` delivers a
 sound card's. Feed it into a `chan.audio_analysis` to react to a DJ's NDI feed. Sound is only
 kept while something reads the output.
 

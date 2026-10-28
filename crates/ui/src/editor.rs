@@ -1386,6 +1386,15 @@ impl Editor {
                         }
                     }
                 }
+                DataKind::Audio => {
+                    // The newest block as a curve.
+                    if let Some(chans) = first.get::<penumbra_core::Chans>()
+                        && zoom > 0.4
+                    {
+                        let after_labels = input_labels_width(painter, g, zoom);
+                        crate::plot::body(painter, body_rect, chans, zoom, after_labels);
+                    }
+                }
                 DataKind::Table => {
                     if let Some(table) = first.get::<penumbra_core::Table>()
                         && zoom > 0.4

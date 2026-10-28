@@ -121,7 +121,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "chan.read",
-        "Cook a chan node and read its channels (values now; {samples: true} for all); {path, output?, samples?}",
+        "Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block; {samples: true} for all); {path, output?, samples?}",
         chan_read,
     );
     add(
@@ -1121,22 +1121,42 @@ fn chan_read(e: &Engine, p: &Json) -> Result<Json> {
         samples: bool,
     }
     let a: A = args(p)?;
-    let (data, status) = read_output(e, &a.path, a.output.as_ref(), penumbra_graph::DataKind::Chan)?;
+    use penumbra_graph::DataKind;
+    // Without an output named, the first chan output, else the first audio one.
+    let net = e.session().doc().snapshot();
+    let kind = match a.output {
+        Some(_) => DataKind::Chan,
+        None => {
+            let desc = kind_at(e, &net, &a.path)?;
+            let has = |k: DataKind| desc.outputs.iter().any(|o| o.kind == k);
+            if has(DataKind::Audio) && !has(DataKind::Chan) { DataKind::Audio } else { DataKind::Chan }
+        }
+    };
+    let (data, status) = read_output(e, &a.path, a.output.as_ref(), kind)?;
     let chans = data.get::<Chans>().ok_or_else(|| format!("{} output is not channels", a.path))?;
+    let audio = data.kind() == DataKind::Audio;
     let channels: Vec<Json> = chans
         .channels()
         .iter()
         .map(|c| {
             let mut v = json!({"name": c.name, "value": c.value()});
-            if a.samples
-                && let Some(o) = v.as_object_mut()
-            {
-                o.insert("samples".into(), json!(c.samples));
+            if let Some(o) = v.as_object_mut() {
+                if audio {
+                    let peak = c.samples.iter().fold(0.0_f64, |m, s| m.max(s.abs()));
+                    let rms =
+                        (c.samples.iter().map(|s| s * s).sum::<f64>() / c.samples.len().max(1) as f64).sqrt();
+                    o.insert("peak".into(), json!(peak));
+                    o.insert("rms".into(), json!(rms));
+                }
+                if a.samples {
+                    o.insert("samples".into(), json!(c.samples));
+                }
             }
             v
         })
         .collect();
     Ok(json!({
+        "kind": data.kind(),
         "rate": chans.rate(),
         "length": chans.len(),
         "channels": channels,

@@ -1,4 +1,4 @@
-//! Built-in node types: `chan` and `table` nodes on the CPU, `tex` nodes on the GPU, the projector
+//! Built-in node types: `chan`, `audio` and `table` nodes on the CPU, `tex` nodes on the GPU, the projector
 //! DMX and movie outputs and the Python script node.
 
 pub mod audio;
@@ -66,7 +66,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 pub const RENAMED_KINDS: &[(&str, &str)] = &[
     // Compound names got an underscore.
     ("chan.audioanalysis", "chan.audio_analysis"),
-    ("chan.audioin", "chan.audio_in"),
+    ("chan.audioin", "audio.device_in"),
     ("chan.fromtex", "chan.from_tex"),
     ("chan.oscin", "chan.osc_in"),
     ("chan.oscout", "chan.osc_out"),
@@ -82,6 +82,8 @@ pub const RENAMED_KINDS: &[(&str, &str)] = &[
     // Names that say what the node does.
     ("geo.material", "geo.assign_material"),
     ("chan.speed", "chan.integrator"),
+    // Sound got a family of its own.
+    ("chan.audio_in", "audio.device_in"),
     // Files, set apart from the live sources.
     ("tex.image", "tex.image_file"),
     ("tex.video", "tex.video_file"),
