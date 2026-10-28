@@ -8,7 +8,6 @@
   and beat strips are full);
 - assets/gallery/relief.jpg: the projection-onto-objects example's camera photo of the relief
   beside the picture penumbra lights it with;
-- assets/gallery/library.jpg: six of the content library's previews;
 - assets/gallery/palettes.png: the built-in palettes and colormaps.
 
 The photos in assets/photos/ come from a real setup, not from this script.
@@ -64,11 +63,6 @@ ARRANGE_LABELS = ("before: as the nodes were first placed", "after: one press of
 # The relief picture: the example, the node shot, seconds of show time, and the part of the
 # camera photo that holds the relief (left, top, right, bottom in the photo's pixels).
 RELIEF = (EXAMPLES / "projection-onto-objects", "/view", 20, (500, 0, 920, 480))
-
-# The library montage: the components shown, in reading order, and the columns.
-LIBRARY = ROOT / "library"
-LIBRARY_PICKS = ["scan_labels", "breathe", "edges", "lantern", "candle", "water"]
-LIBRARY_COLUMNS = 3
 
 # The meters animation: size, frames, frames per second, seconds before the first frame (for
 # the tempo to lock on).
@@ -310,24 +304,6 @@ def relief(work: Path) -> None:
     print("relief: assets/gallery/relief.jpg")
 
 
-def library(work: Path) -> None:
-    font = label_font(26)
-    images = [Image.open(LIBRARY / name / "preview.png").convert("RGB") for name in LIBRARY_PICKS]
-    width, height = images[0].size
-    label, gap = 44, 16
-    rows = -(-len(images) // LIBRARY_COLUMNS)
-    sheet = Image.new("RGB", (LIBRARY_COLUMNS * (width + gap) + gap, rows * (height + label + gap) + gap),
-                      (27, 27, 27))
-    draw = ImageDraw.Draw(sheet)
-    for i, (image, name) in enumerate(zip(images, LIBRARY_PICKS)):
-        x = gap + (i % LIBRARY_COLUMNS) * (width + gap)
-        y = gap + (i // LIBRARY_COLUMNS) * (height + label + gap)
-        draw.text((x, y + 4), name, fill=(200, 200, 200), font=font)
-        sheet.paste(image.resize((width, height)), (x, y + label))
-    save_jpg(sheet, OUT / "library.jpg")
-    print("library: assets/gallery/library.jpg")
-
-
 def palettes(work: Path) -> None:
     replies = run([call("palette.list")], work, "palettes")
     line = next(line for line in replies.splitlines() if line.startswith("palette.list:"))
@@ -355,7 +331,7 @@ def palettes(work: Path) -> None:
 def main() -> int:
     jobs = {entry[0]: (lambda work, entry=entry: showcase(*entry, work)) for entry in SHOWCASE}
     jobs.update({"window": window, "arrange": arrange, "audio-meters": meters, "relief": relief,
-                 "library": library, "palettes": palettes})
+                 "palettes": palettes})
     wanted = sys.argv[1:] or list(jobs)
     unknown = [name for name in wanted if name not in jobs]
     if unknown:

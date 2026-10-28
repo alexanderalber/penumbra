@@ -159,20 +159,18 @@ every object, with straight borders where the faces have them. `scan.regions` gr
 into regions, one per crate front, side or lid, and switches the floor off. Here a corner of
 crates with a pumpkin, lit by two projectors:
 
-![Four pictures of the same corner of crates with a pumpkin. Top left: the test patterns of both projectors, blue and orange grids and circles. Top right: vertical stripes from one projector. Bottom left: the regions found, each crate face a colour, the pumpkin white, the floor striped grey. Bottom right: the crates lit with a colour per region](assets/photos/scan.jpg)
+![Two photos of the same corner of crates with a pumpkin. Left: vertical stripes from one projector, bent by the pumpkin. Right: a cyan grid projected on every crate face, each following its own face, and an orange grid wrapped around the pumpkin](assets/photos/scan.jpg)
 
 Without projectors, `scan.synthetic` ray casts a made-up scene of the same kind, for trying
 the chain at the desk.
 
 The [content library](library/README.md) has effects that fit any scanned scene: colours per
-region, outlines, light from inside an object, a carved face, water. Its previews show the
-same crates and pumpkin:
-
-![Six effects on the same scanned crates: colours per face, palette colours, glowing outlines, a carved pumpkin face, candle light around the pumpkin, water in a crate](assets/gallery/library.jpg)
+region, outlines, light from inside an object, a carved face, water. Each has a preview on the
+same crates and pumpkin.
 
 What a show on such a scan looks like in the room:
 
-![Left: glowing lines wrapped around the pumpkin, the crates in dim blue. Right: blood running down the crate fronts and pooling in red along their feet](assets/photos/show.jpg)
+![Left: glowing lines wrapped around the pumpkin, seen close up. Right: blood running down the crate fronts and pooling in red along their feet](assets/photos/show.jpg)
 
 The whole chain is in [Scanning](docs/scanning.md). The repository also holds a
 [Claude Code skill](.claude/skills/projection-mapping/SKILL.md) that walks a session through
