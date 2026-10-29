@@ -17,6 +17,7 @@ continues the block before, so every sample counts. The two kinds do not connect
 - `audio.mix` adds up to eight sounds. Each input has its own gain (`gain0` to `gain7`), and
   `gain` sets the whole. All inputs need the same sample rate; two rates are an error, since
   the mix does not convert between them.
+- `audio.filter` shapes a sound by frequency. See [Filter](#filter).
 - `audio.instrument` and `audio.ambience` are ready-made sounds in a key and scale, played by
   channels. See [Instruments and ambience](#instruments-and-ambience).
 - `chan.read` reads an audio node too: the rate, the block's length, `peak` and `rms` per
@@ -53,6 +54,26 @@ by default. The device adds its own buffer, about 30 to 50 ms in Windows' shared
 gap. `audio.status` shows the delay and counts the gaps. `audio.measure_latency` plays quiet
 clicks and finds them again on an input. The input `loopback:Speakers` records what the output
 named Speakers plays, without a cable.
+
+## Filter
+
+`audio.filter` filters any sound, every channel on its own, at any sample rate. Wire a sound
+into `in`; the output has the same channels and rate.
+
+**Types.** `lowpass` removes the highs above `cutoff`, `highpass` the lows below it.
+`bandpass` keeps only a band around `cutoff`, `notch` cuts a narrow band out, e.g. a hum.
+`peak` turns a band around `cutoff` up or down by `gain` (dB). `low_shelf` turns everything
+below `cutoff` up or down by `gain`, e.g. to tame a room's boom. `high_shelf` does the same
+above `cutoff`.
+
+**Resonance.** `resonance` 0.2 is a plain filter without a bump (Q 0.7). Higher adds a ringing
+peak at `cutoff` for lowpass and highpass, and narrows the band of bandpass, notch and peak.
+At 1 (Q 20) a lowpass nearly whistles. `slope` 24 removes twice as much per octave as 12, for
+lowpass and highpass.
+
+**Moving it.** `cutoff`, `resonance`, `gain` and even `type` glide to a new value in about
+15 ms. Bind `cutoff` to tracking or an lfo: a sweep never clicks or zippers. `mix` (under
+more) blends the filtered sound with the input.
 
 ## Instruments and ambience
 

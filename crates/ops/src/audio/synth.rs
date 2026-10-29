@@ -32,6 +32,12 @@ pub struct SvfCoef {
 impl SvfCoef {
     pub fn new(cutoff: f64, k: f64, rate: f64) -> Self {
         let g = (PI * cutoff.clamp(10.0, TOP * rate) / rate).tan();
+        Self::of_g(g, k)
+    }
+
+    /// The coefficients for a prewarped cutoff `g` (`tan(pi * cutoff / rate)`) and a damping
+    /// `k`, both above 0.
+    pub fn of_g(g: f64, k: f64) -> Self {
         let a1 = 1.0 / (1.0 + g * (g + k));
         let a2 = g * a1;
         Self { k, a1, a2, a3: g * a2 }
@@ -47,6 +53,11 @@ impl Svf {
         self.ic1 = 2.0 * v1 - self.ic1;
         self.ic2 = 2.0 * v2 - self.ic2;
         (v2, v1, x - c.k * v1 - v2)
+    }
+
+    /// Whether the state holds only finite numbers.
+    pub fn is_finite(&self) -> bool {
+        self.ic1.is_finite() && self.ic2.is_finite()
     }
 }
 

@@ -1494,7 +1494,7 @@ Outputs:
 
 ## audio
 
-[audio.ambience](#audioambience), [audio.instrument](#audioinstrument), [audio.mix](#audiomix), [audio.oscillator](#audiooscillator)
+[audio.ambience](#audioambience), [audio.filter](#audiofilter), [audio.instrument](#audioinstrument), [audio.mix](#audiomix), [audio.oscillator](#audiooscillator)
 
 *in:* [audio.device_in](#audiodevice_in)
 
@@ -1541,6 +1541,27 @@ Outputs: `out` (audio).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `device` | text |  |  | Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's default input |
+
+### audio.filter
+
+Shapes a sound by frequency: removes the highs or the lows, picks out or cuts a band, or turns a range up or down. Every channel is filtered on its own
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `in` (audio): The sound to filter, at any sample rate and with any channels
+
+Outputs: `out` (audio).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `type` | lowpass \| highpass \| bandpass \| notch \| peak \| low_shelf \| high_shelf | `"lowpass"` |  | What the filter does around cutoff. A change glides over 15 ms; lowpass: lets through what is below cutoff and removes the highs: makes a sound duller or further away; highpass: lets through what is above cutoff and removes the lows: makes a sound thinner, removes rumble; bandpass: keeps only a band around cutoff: a telephone or radio sound; more resonance narrows the band; notch: cuts out a narrow band around cutoff, e.g. a hum or a ringing tone; more resonance narrows the cut; peak: turns a band around cutoff up or down by gain, e.g. brings out a voice; more resonance narrows the band; low_shelf: turns everything below cutoff up or down by gain, e.g. tames a room's boom; high_shelf: turns everything above cutoff up or down by gain, e.g. adds air or softens hiss |
+| `cutoff` | float | `1000` | 20 to 20000 Hz | The frequency where the filter acts, in Hz. Stays below 45% of the sample rate. Follows the param smoothly, so bind it to tracking or sweep it |
+| `resonance` | float | `0.2` | 0 to 1 | How sharply the filter acts at cutoff. 0.2 is a plain filter without a bump; higher adds a ringing peak at cutoff (lowpass, highpass) or narrows the band (bandpass, notch, peak); 1 nearly whistles |
+| `slope` | 12 \| 24 | `"12"` |  | How steeply the sound falls off beyond cutoff, in dB per octave. 24 removes more of what lies beyond cutoff; 12: a gentle slope: one filter stage; 24: a steep slope: two filter stages in a row. Does something only with type lowpass or highpass. |
+| `gain` | float | `0` | -24 to 24 dB | How much peak or shelf turns its range up (above 0) or down (below 0), in dB. Does something only with type peak, low_shelf or high_shelf. |
+| `mix` *(more)* | float | `1` | 0 to 1 | 1 is only the filtered sound, 0 only the input; between blends the two |
 
 ### audio.instrument
 

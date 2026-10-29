@@ -6,8 +6,8 @@
 //!   channel (`ch1`, `ch2`, ...) at the device's sample rate. It recooks when samples arrive,
 //!   not on the show clock, so it keeps listening while the show is paused.
 //! - **`audio.oscillator`** ([`oscillator`]) makes a test tone or noise on the show clock,
-//!   **`audio.mix`** ([`mix`]) adds sounds by a gain each. [`block`] says which samples a
-//!   generator owes per cook.
+//!   **`audio.mix`** ([`mix`]) adds sounds by a gain each, **`audio.filter`** ([`filter`])
+//!   shapes a sound by frequency. [`block`] says which samples a generator owes per cook.
 //! - **`audio.instrument`** ([`instrument`]) plays ready-made one-shot sounds (pluck, mallet,
 //!   bell, kick, hat, sweep), **`audio.ambience`** ([`ambience`]) sustained ones (drone, pad,
 //!   noise, water, rain), both in a key and scale ([`pitch`]). Their inputs are the bridge from `chan` to
@@ -29,6 +29,9 @@ pub mod ambience;
 #[cfg(test)]
 mod ambience_tests;
 pub mod block;
+pub mod filter;
+#[cfg(test)]
+mod filter_tests;
 pub mod instrument;
 #[cfg(test)]
 mod instrument_tests;
@@ -193,6 +196,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     .warm_up(on_gpu(meters_picture::warm_up)))?;
     oscillator::register(types)?;
     mix::register(types)?;
+    filter::register(types)?;
     instrument::register(types)?;
     ambience::register(types)?;
     Ok(())
