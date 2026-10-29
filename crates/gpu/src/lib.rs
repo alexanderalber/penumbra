@@ -151,6 +151,9 @@ struct Inner {
     submit_lock: RwLock<()>,
     /// Until when submissions and presents wait (see [`Gpu::hold`]).
     held_until: Mutex<Option<Instant>>,
+    /// The threads inside [`Gpu::quiet`]; submissions and presents from other threads wait
+    /// while there is one.
+    quiet: Mutex<Vec<std::thread::ThreadId>>,
 }
 
 /// Whether the device is lost, why, and who wants to know (see [`Gpu::on_lost`]). Shared with
@@ -183,6 +186,35 @@ impl Lost {
 
 /// The longest [`Gpu::hold`] keeps one submission waiting, however often it is renewed.
 const MAX_HOLD: Duration = Duration::from_millis(400);
+
+/// The longest [`Gpu::quiet`] keeps one submission waiting. Longer than [`MAX_HOLD`]: under a
+/// heavy load wgpu's wait for an idle GPU can take that long, and a submission going on before
+/// the call ends fails the configure. Only a safety net; the call normally ends long before.
+const MAX_QUIET: Duration = Duration::from_secs(2);
+
+/// How often a submission held back by [`Gpu::quiet`] looks whether it may go on.
+const QUIET_POLL: Duration = Duration::from_millis(1);
+
+/// Notes the calling thread as inside [`Gpu::quiet`] for as long as it lives, also when the
+/// call unwinds.
+struct QuietGuard<'a>(&'a Mutex<Vec<std::thread::ThreadId>>);
+
+impl<'a> QuietGuard<'a> {
+    fn new(threads: &'a Mutex<Vec<std::thread::ThreadId>>) -> Self {
+        lock(threads).push(std::thread::current().id());
+        Self(threads)
+    }
+}
+
+impl Drop for QuietGuard<'_> {
+    fn drop(&mut self) {
+        let me = std::thread::current().id();
+        let mut threads = lock(self.0);
+        if let Some(i) = threads.iter().position(|t| *t == me) {
+            threads.swap_remove(i);
+        }
+    }
+}
 
 /// The device and queue plus what every pass needs. Cheap to clone; safe to use from any thread
 /// (wgpu's device and queue are).
@@ -239,6 +271,7 @@ impl Gpu {
                 lost,
                 submit_lock: RwLock::new(()),
                 held_until: Mutex::new(None),
+                quiet: Mutex::new(Vec::new()),
             }),
         }
     }
@@ -396,45 +429,55 @@ impl Gpu {
         }
     }
 
-    /// Holds submissions back like [`Gpu::hold`] and waits for those under way to finish, so
-    /// that nothing of penumbra's reaches the queue until `until` (or [`MAX_HOLD`]). For a
-    /// surface configure we cannot take the lock around, because the code doing it (eframe
-    /// handling a resize) may itself run a frame that submits through this `Gpu`.
-    pub fn quiesce(&self, until: Instant) {
-        self.hold(until);
+    /// Runs `f` while penumbra's submissions and presents are held back, after those under way
+    /// have finished: for a surface configure we cannot take the lock around, because the code
+    /// doing it (eframe handling a resize) may itself run a frame that submits through this
+    /// `Gpu`. The hold ends when `f` returns, so the cook thread waits only as long as the
+    /// window work takes; a fixed hold after the event kept it from cooking (and the sound from
+    /// being fed) for a quarter of a second each time a window opened. Submissions from other
+    /// threads wait at most [`MAX_QUIET`]; those `f` makes itself go on at once.
+    pub fn quiet<T>(&self, f: impl FnOnce() -> T) -> T {
+        let _quiet = QuietGuard::new(&self.inner.quiet);
         drop(self.inner.submit_lock.write().unwrap_or_else(PoisonError::into_inner));
+        f()
     }
 
     /// The shared side of the submit lock, taken once no hold is in force. The hold is looked
     /// at again under the lock: a submission that passed the wait just before
-    /// [`Gpu::quiesce`] set the hold would otherwise slip through after it.
+    /// [`Gpu::quiet`] began would otherwise slip through after it.
     fn shared(&self) -> RwLockReadGuard<'_, ()> {
         let start = Instant::now();
         loop {
-            self.wait_for_hold();
+            self.wait_for_hold(start);
             let shared = self.inner.submit_lock.read().unwrap_or_else(PoisonError::into_inner);
-            if !self.held() || start.elapsed() >= MAX_HOLD {
-                return shared;
+            match self.hold_left(Instant::now()) {
+                Some((_, cap)) if start.elapsed() < cap => {}
+                _ => return shared,
             }
         }
     }
 
-    fn held(&self) -> bool {
-        let until = *lock(&self.inner.held_until);
-        until.is_some_and(|u| u > Instant::now())
+    /// How long a submission should sleep before it looks at the holds again, and the longest
+    /// the hold in force may keep it waiting; `None` when none is in force.
+    fn hold_left(&self, now: Instant) -> Option<(Duration, Duration)> {
+        let me = std::thread::current().id();
+        if lock(&self.inner.quiet).iter().any(|t| *t != me) {
+            return Some((QUIET_POLL, MAX_QUIET));
+        }
+        let until = (*lock(&self.inner.held_until))?;
+        (until > now).then(|| (until.saturating_duration_since(now), MAX_HOLD))
     }
 
-    fn wait_for_hold(&self) {
-        let start = Instant::now();
+    /// Sleeps while a hold is in force, until the hold's longest wait since `start` is up.
+    fn wait_for_hold(&self, start: Instant) {
         loop {
-            let until = *lock(&self.inner.held_until);
             let now = Instant::now();
-            let Some(until) = until.filter(|u| *u > now) else { return };
-            let left = MAX_HOLD.saturating_sub(now.saturating_duration_since(start));
+            let Some((wait, cap)) = self.hold_left(now) else { return };
+            let left = cap.saturating_sub(now.saturating_duration_since(start));
             if left.is_zero() {
                 return;
             }
-            std::thread::sleep(until.saturating_duration_since(now).min(left).min(Duration::from_millis(10)));
+            std::thread::sleep(wait.min(left).min(Duration::from_millis(10)));
         }
     }
 
@@ -676,6 +719,43 @@ pub(crate) mod testing {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_quiet_call_holds_other_threads_submissions_only_while_it_runs() {
+        use std::time::{Duration, Instant};
+        // A device of its own: the hold must not slow the other tests' device.
+        let Ok(gpu) = super::Gpu::headless(super::AdapterChoice::Software) else { return };
+        let work = Duration::from_millis(120);
+        let (started, began) = std::sync::mpsc::channel();
+        let submitter = {
+            let gpu = gpu.clone();
+            std::thread::spawn(move || {
+                let _ = began.recv();
+                gpu.submit([]);
+                Instant::now()
+            })
+        };
+        let mut ended = Instant::now();
+        gpu.quiet(|| {
+            let _ = started.send(());
+            std::thread::sleep(work);
+            ended = Instant::now();
+        });
+        let submitted = submitter.join().unwrap();
+        // Held while the window work ran, and let go soon after it, not a fixed hold later.
+        assert!(submitted >= ended, "the submission did not wait");
+        let late = submitted.duration_since(ended);
+        assert!(late < Duration::from_millis(60), "{late:?}");
+        // Nothing of the hold is left once the call has returned.
+        let t = Instant::now();
+        gpu.submit([]);
+        assert!(t.elapsed() < Duration::from_millis(60), "{:?}", t.elapsed());
+        assert!(gpu.hold_left(Instant::now()).is_none());
+        // What the window work submits itself goes on at once.
+        let t = Instant::now();
+        gpu.quiet(|| gpu.submit([]));
+        assert!(t.elapsed() < Duration::from_millis(60), "{:?}", t.elapsed());
+    }
+
     #[test]
     fn the_surface_wait_failure_is_recognised() {
         // As wgpu 30 formats it (after snapping the window with Win+Left).

@@ -1244,6 +1244,11 @@ impl PenumbraApp {
         actions: &mut Vec<Action>,
     ) {
         let opening = !std::mem::replace(&mut self.window_viewer_shown, false);
+        // A window opened again is a new window, not a resize of the last one.
+        let closed = self.viewer.window.is_none_or(|id| net.node(id).is_none());
+        if closed && let Some(last) = self.sizes.get_mut(1) {
+            *last = None;
+        }
         let Some(id) = self.viewer.window else { return };
         if net.node(id).is_none() {
             self.viewer.window = None;
@@ -1476,7 +1481,7 @@ impl PenumbraApp {
     fn note_size(&mut self, id: egui::ViewportId, size: Option<egui::Vec2>) {
         let slot = usize::from(id == viewer_viewport());
         let Some(last) = self.sizes.get_mut(slot) else { return };
-        if size.is_none() || *last == size {
+        if size.is_none() || same_size(*last, size) {
             return;
         }
         let first = last.is_none();
@@ -1763,6 +1768,16 @@ impl eframe::App for PenumbraApp {
     fn on_exit(&mut self) {
         self.close();
         self.engine.shutdown();
+    }
+}
+
+/// Whether two window sizes in points are the same. egui derives them from the pixel size
+/// and the scale factor, so the same window can read 800 one frame and 799.99994 the next;
+/// taking that for a resize held the GPU work back for nothing.
+fn same_size(a: Option<egui::Vec2>, b: Option<egui::Vec2>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => (a - b).abs().max_elem() < 0.25,
+        (a, b) => a == b,
     }
 }
 

@@ -18,7 +18,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use penumbra_core::lock;
 use penumbra_engine::Engine;
@@ -31,11 +31,6 @@ use winit::window::WindowId;
 /// Filled by the app creator once eframe has its device: the instance that created it, which
 /// the output windows need for their surfaces.
 pub type InstanceSlot = Arc<Mutex<Option<wgpu::Instance>>>;
-
-/// How long penumbra's submissions wait when an eframe window changes size. eframe configures
-/// the surface while it handles the event, and wgpu fails that configure (leaving the window
-/// black until the next resize) if another thread submits while it waits for an idle GPU.
-const RESIZE_QUIET: Duration = Duration::from_millis(250);
 
 /// The exit code after a lost GPU device or a failed editor window.
 pub const EXIT_CRASHED: i32 = 3;
@@ -235,14 +230,18 @@ impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
             return;
         }
         if !self.outputs.window_event(window_id, &event) {
-            if let WindowEvent::Resized(size) = &event
-                && size.width > 0
-                && size.height > 0
-                && let Some(gpu) = self.engine.gpu()
-            {
-                gpu.quiesce(Instant::now() + RESIZE_QUIET);
+            // eframe configures the surface while it handles a resize (a new window gets a few
+            // right after it opens), and wgpu fails that configure, leaving the window black
+            // until the next resize, if another thread submits while it waits for an idle GPU.
+            // So penumbra's submissions wait while eframe handles the event, and no longer.
+            let gpu = match &event {
+                WindowEvent::Resized(size) if size.width > 0 && size.height > 0 => self.engine.gpu().cloned(),
+                _ => None,
+            };
+            match gpu {
+                Some(gpu) => gpu.quiet(|| self.guard(|e| e.window_event(event_loop, window_id, event))),
+                None => self.guard(|e| e.window_event(event_loop, window_id, event)),
             }
-            self.guard(|e| e.window_event(event_loop, window_id, event));
         }
     }
 
