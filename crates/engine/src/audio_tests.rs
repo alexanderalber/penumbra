@@ -217,7 +217,7 @@ fn an_oscillator_plays_through_the_engine_gaplessly() {
         "node.batch",
         json!({"ops": [
             {"op": "create", "path": "/osc", "kind": "audio.oscillator", "params": {"frequency": 440.0, "amplitude": 0.1}},
-            {"op": "create", "path": "/out", "kind": "out.audio"},
+            {"op": "create", "path": "/out", "kind": "out.audio", "params": {"reverb": 0.0}},
             {"op": "connect", "from": "/osc", "to": "/out"},
         ]}),
     );
@@ -296,7 +296,8 @@ fn audio_play_presses_an_instrument() {
         "node.batch",
         json!({"ops": [
             {"op": "create", "path": "/i", "kind": "audio.instrument", "params": {"decay": 0.02}},
-            {"op": "create", "path": "/out", "kind": "out.audio"},
+            // Dry: the test listens for the end of each note.
+            {"op": "create", "path": "/out", "kind": "out.audio", "params": {"reverb": 0.0}},
             {"op": "connect", "from": "/i", "to": "/out"},
             {"op": "create", "path": "/o", "kind": "audio.oscillator"},
         ]}),

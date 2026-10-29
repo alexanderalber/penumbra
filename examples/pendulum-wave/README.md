@@ -20,7 +20,9 @@ the exact sample of the crossing, inside the frame.
 
 `/centre` picks ring 0 for `/kick`, a second instrument with preset `kick`. `/every_other` is
 an lfo at 0.625 Hz. It passes 0 on every other kick, and `/accent` adds a softer kick there.
-`/mix` adds the three; `/speakers` plays the mix. The mix peaks around -5 dBFS.
+`/mix` adds the three; `/speakers` plays the mix. The mix peaks around -5 dBFS. `/speakers`
+keeps its default room reverb (`reverb` 0.2, `room` 0.4), which gives the mono mix a little
+stereo width, as in the original clip.
 
 **Picture.** `/out` is a `tex.shader` (`pendulums.wgsl`) at 1080 x 1102. It computes every
 pendulum's angle from the show time, so any frame is exact and the picture stays in step with

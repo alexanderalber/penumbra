@@ -45,6 +45,15 @@ left and right. `device` is part of an output's name; the `...` menu lists them,
 the system's default output. `level` is the volume in dB, and `mute` silences the node. Both
 glide across one frame.
 
+**Room.** Every output plays its sound in a small room by default, so a synthesised sound does
+not come out bone dry. `reverb` sets how much room you hear: 0 plays the sound dry, 0.2 (the
+default) a small room you just notice, 1 only the room. At 0.2 the room's sound is about 11 dB
+below the direct sound. `room` sets how long the sound rings on: 0 dies away in 0.3 s, 0.4 (the
+default) in 0.85 s, 0.7 in 1.8 s and 1 in 4 s. `damping` (under more) makes high tones die away
+faster, for a warmer room. The room gives a mono sound stereo width; a mono speaker plays the
+mean of both sides. `mute` and a pause silence the room's tail too, and a seek clears it. Set `reverb` to
+0 when the output feeds a room that already rings, or another reverb.
+
 Every output ends in a limiter that keeps the sound below -1 dBFS. It is always on, because a
 sudden blast in a room full of people is the worst thing an installation can do. When the
 limiter has to work, the node warns how much it takes off. Turn `level` down until the warning

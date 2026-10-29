@@ -112,9 +112,11 @@ fn tone(path: &str, freq: f64, amp: f64) -> Vec<Op> {
     ]
 }
 
+/// An oscillator into `out.audio`, the reverb off (`extra` may turn it on).
 fn played(osc: &str, out: &str, extra: &[Op]) -> F {
     let mut ops = tone(osc, 440.0, 0.25);
     ops.push(create(out, AUDIO_OUT));
+    ops.push(set(&format!("{out}.reverb"), 0.0));
     ops.push(connect(osc, out, 0));
     ops.extend_from_slice(extra);
     F::new(&ops)
@@ -142,7 +144,7 @@ fn the_oscillator_plays_gaplessly_also_over_a_skipped_frame() {
     f.frames(60);
     assert_eq!(f.error("/out"), None);
     let pushed = f.pushed("");
-    // Mono stays mono; the player puts it on every speaker.
+    // Mono stays mono with the reverb off; the player puts it on every speaker.
     assert_eq!(pushed.len(), 1);
     let reference = reference(&f, "/osc");
     // 92 frames of 800 samples, one of them two frames long.
@@ -290,6 +292,8 @@ fn two_nodes_on_one_device_add_up_and_their_sum_is_limited() {
     ops.extend([
         create("/oa", AUDIO_OUT),
         create("/ob", AUDIO_OUT),
+        set("/oa.reverb", 0.0),
+        set("/ob.reverb", 0.0),
         connect("/a", "/oa", 0),
         connect("/b", "/ob", 0),
     ]);
@@ -436,4 +440,193 @@ fn hostile_params_and_blocks_do_not_break_it() {
     out.after_pass(true, true);
     let z = out.pushed("z");
     assert!(z.iter().flatten().all(|v| v.is_finite()));
+}
+
+fn correlation(a: &[f32], b: &[f32]) -> f64 {
+    let dot = |x: &[f32], y: &[f32]| x.iter().zip(y).map(|(p, q)| f64::from(*p) * f64::from(*q)).sum::<f64>();
+    dot(a, b) / (dot(a, a) * dot(b, b)).sqrt()
+}
+
+#[test]
+fn the_default_reverb_gives_a_mono_tone_a_stereo_room_and_off_it_stays_wide_until_a_jump() {
+    // The node as created: the reverb at its default.
+    let mut ops = tone("/osc", 440.0, 0.25);
+    ops.extend([set("/osc.shape", "saw"), create("/out", AUDIO_OUT), connect("/osc", "/out", 0)]);
+    let mut f = F::new(&ops);
+    f.frames(30);
+    // A short burst, then silence: the room rings on, differently left and right.
+    f.edit(&[set("/osc.amplitude", 0.0)]);
+    let before = f.pushed("")[0].len();
+    f.frames(30);
+    let pushed = f.pushed("");
+    assert_eq!(pushed.len(), 2, "the reverb makes mono stereo");
+    let (l, r) = (&pushed[0][before + 2000..], &pushed[1][before + 2000..]);
+    let tail = l.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+    assert!(tail > 1e-3, "a tail after the tone: {tail}");
+    let corr = correlation(l, r);
+    assert!(corr.abs() < 0.5, "left and right differ: {corr}");
+    assert_eq!(f.outputs.lane_status(f.id("/out")).unwrap().1.channels, 2);
+    // Off: the tail fades within a frame, the node stays stereo while it plays.
+    f.edit(&[set("/out.reverb", 0.0), set("/osc.amplitude", 0.25)]);
+    f.frames(5);
+    assert_eq!(f.outputs.lane_status(f.id("/out")).unwrap().1.channels, 2);
+    let pushed = f.pushed("");
+    let n = pushed[0].len();
+    assert_eq!(pushed[0][n - 800..], pushed[1][n - 800..], "dry: the same on both sides");
+    // A jump with the reverb off: mono again.
+    f.clock.seek(2);
+    f.pass();
+    f.frames(2);
+    assert_eq!(f.outputs.lane_status(f.id("/out")).unwrap().1.channels, 1);
+}
+
+#[test]
+fn a_seek_leaves_no_tail_and_mute_silences_the_tail_at_once() {
+    let big = [set("/out.reverb", 1.0), set("/out.room", 1.0), set("/osc.shape", "square")];
+    // Without a jump the large room rings on for seconds after the tone stops.
+    let mut f = played("/osc", "/out", &big);
+    f.frames(30);
+    f.edit(&[set("/osc.amplitude", 0.0)]);
+    f.frames(30);
+    let p = &f.pushed("")[0];
+    assert!(p[p.len() - 800..].iter().any(|v| v.abs() > 1e-3), "a tail");
+    // A seek empties the room: after the look-ahead nothing is left.
+    let mut f = played("/osc", "/out", &big);
+    f.frames(30);
+    f.edit(&[set("/osc.amplitude", 0.0)]);
+    let before = f.pushed("")[0].len();
+    f.clock.seek(2);
+    f.pass();
+    f.frames(5);
+    for c in f.pushed("") {
+        assert!(c[before + LA..].iter().all(|v| *v == 0.0), "a tail after the seek");
+    }
+    // Mute: the tail is gone after the frame it fades across.
+    let mut f = played("/osc", "/out", &big);
+    f.frames(30);
+    f.edit(&[set("/out.mute", true)]);
+    f.frames(2);
+    for c in f.pushed("") {
+        assert!(c[c.len() - 400..].iter().all(|v| *v == 0.0), "the tail is muted");
+    }
+}
+
+#[test]
+fn the_limiter_holds_the_ceiling_with_the_largest_room_on_a_loud_input() {
+    let mut f = played(
+        "/osc",
+        "/out",
+        &[
+            set("/osc.amplitude", 4.0),
+            set("/osc.shape", "saw"),
+            set("/out.reverb", 1.0),
+            set("/out.room", 1.0),
+        ],
+    );
+    f.frames(120);
+    f.edit(&[set("/out.reverb", 0.6), set("/out.room", 0.0), set("/out.damping", 1.0)]);
+    f.frames(60);
+    let ceiling = db_to_gain(CEILING_DB);
+    let pushed = f.pushed("");
+    assert_eq!(pushed.len(), 2);
+    let peak = pushed.iter().flatten().fold(0.0f32, |m, v| m.max(v.abs()));
+    assert!(pushed.iter().flatten().all(|v| v.is_finite()));
+    assert!(f64::from(peak) <= ceiling + 1e-6, "{peak}");
+    assert!(f.warning("/out").unwrap().contains("limiter"), "{:?}", f.warning("/out"));
+}
+
+#[test]
+fn a_mono_and_a_stereo_node_on_one_device_add_up_on_both_sides() {
+    let mut ops = tone("/a", 440.0, 0.2);
+    ops.extend(tone("/b", 660.0, 0.0));
+    // `/a` dry and mono, `/b` with the room (stereo) but silent.
+    ops.extend([
+        create("/oa", AUDIO_OUT),
+        create("/ob", AUDIO_OUT),
+        set("/oa.reverb", 0.0),
+        connect("/a", "/oa", 0),
+        connect("/b", "/ob", 0),
+    ]);
+    let mut f = F::new(&ops);
+    f.frames(30);
+    let bus = f.outputs.bus_status("").unwrap();
+    assert_eq!(bus.channels, 2);
+    let pushed = f.pushed("");
+    let a = reference(&f, "/a");
+    let delay = 2 * LA;
+    for c in &pushed {
+        for k in 2000..a.len() - delay {
+            assert!((f64::from(c[k + delay]) - a[k]).abs() < 1e-6, "sample {k}");
+        }
+    }
+}
+
+/// A 16-bit WAV at 48 kHz, one vector per channel.
+fn write_wav(path: &std::path::Path, channels: &[Vec<f32>]) {
+    let frames = channels.iter().map(Vec::len).min().unwrap_or(0);
+    let ch = channels.len() as u16;
+    let data_len = (frames * channels.len() * 2) as u32;
+    let mut b = Vec::new();
+    b.extend(b"RIFF");
+    b.extend((36 + data_len).to_le_bytes());
+    b.extend(b"WAVEfmt ");
+    b.extend(16u32.to_le_bytes());
+    b.extend(1u16.to_le_bytes());
+    b.extend(ch.to_le_bytes());
+    b.extend(48_000u32.to_le_bytes());
+    b.extend((48_000u32 * 2 * u32::from(ch)).to_le_bytes());
+    b.extend((2 * ch).to_le_bytes());
+    b.extend(16u16.to_le_bytes());
+    b.extend(b"data");
+    b.extend(data_len.to_le_bytes());
+    for k in 0..frames {
+        for c in channels {
+            b.extend(((c[k].clamp(-1.0, 1.0) * 32767.0).round() as i16).to_le_bytes());
+        }
+    }
+    std::fs::write(path, b).unwrap();
+}
+
+/// Writes `reverb_pluck.wav`: plucked notes dry, then with reverb 0.2 room 0.4, then reverb 0.5
+/// room 0.9, 6 s each. Run with `cargo test -p penumbra-ops reverb_pluck -- --ignored`; the
+/// file goes to `PENUMBRA_LISTEN_DIR`, else to the system's temp directory.
+#[test]
+#[ignore]
+fn write_reverb_pluck() {
+    let mut all: Vec<Vec<f32>> = vec![Vec::new(), Vec::new()];
+    for (mix, room) in [(0.0, 0.4), (0.2, 0.4), (0.5, 0.9)] {
+        let mut f = F::new(&[
+            create("/a", "chan.lfo"),
+            set("/a.rate", 0.75),
+            create("/b", "chan.lfo"),
+            set("/b.rate", 1.1),
+            create("/rings", "chan.merge"),
+            connect("/a", "/rings", 0),
+            connect("/b", "/rings", 1),
+            create("/pluck", "audio.instrument"),
+            set("/pluck.preset", "pluck"),
+            set("/pluck.trigger", "both"),
+            set("/pluck.key", "F"),
+            set("/pluck.octave", 3),
+            set("/pluck.spread", 3.0),
+            connect("/rings", "/pluck", 0),
+            create("/out", AUDIO_OUT),
+            set("/out.reverb", mix),
+            set("/out.room", room),
+            connect("/pluck", "/out", 0),
+        ]);
+        f.frames(6 * 60);
+        assert_eq!(f.error("/out"), None);
+        let pushed = f.pushed("");
+        for (k, a) in all.iter_mut().enumerate() {
+            // The dry part is mono: the same on both sides.
+            a.extend_from_slice(&pushed[k.min(pushed.len() - 1)]);
+            a.extend(std::iter::repeat_n(0.0, 24_000));
+        }
+    }
+    let dir =
+        std::env::var_os("PENUMBRA_LISTEN_DIR").map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    let file = dir.join("reverb_pluck.wav");
+    write_wav(&file, &all);
+    eprintln!("wrote {}", file.display());
 }

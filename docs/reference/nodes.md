@@ -2101,6 +2101,9 @@ Outputs: none.
 | `active` | bool | `true` |  | Off: plays nothing, and the device closes when no other node uses it |
 | `level` | float | `0` | -60 to 12 dB (soft) | The volume, in dB: 0 plays the sound as it comes, -6 at half the amplitude. A change glides across one frame. The limiter comes after it |
 | `mute` | bool | `false` |  | Silence, faded across one frame; the device stays open. audio.mute mutes every output at once |
+| `reverb` | float | `0.2` | 0 to 1 (soft) | How much room the sound gets: 0 plays it dry, 0.2 a small room you just notice, 1 only the room. A mono sound gets stereo width from it |
+| `room` | float | `0.4` | 0 to 1 (soft) | The size of the room: how long the sound rings on. 0 dies away in 0.3 s, 0.4 in 0.85 s, 0.7 in 1.8 s, 1 in 4 s |
+| `damping` *(more)* | float | `0.5` | 0 to 1 (soft) | How much faster high tones die away in the room: 0 as fast as low ones, 0.5 in about half the time, 1 in a tenth. More sounds warmer and duller |
 | `latency` *(more)* | float | `50` | 20 to 200 (soft) | Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns) |
 
 ### out.dmx

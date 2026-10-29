@@ -7,10 +7,19 @@
 //!   hands on the same result as before (a device source that got nothing new, `Data::same`).
 //!   So the show plays sound only while it runs; paused, the output fades out.
 //! - **A jump** (the first block, a seek, a gap of more than half a second) fades the new block
-//!   in over a few milliseconds, so it does not click.
-//! - **The chain:** non-numbers become silence, then `level` (dB) and `mute`, both ramped across
-//!   the block, then a look-ahead limiter at -1 dBFS ([`penumbra_audio::limiter`]), always on,
-//!   and a hard clip at the same ceiling. A sudden blast in a room full of people is the audio
+//!   in over a few milliseconds, so it does not click, and empties the reverb: no tail of the
+//!   sound from before the jump.
+//! - **The chain:** non-numbers become silence, then the room reverb
+//!   ([`penumbra_audio::reverb`], params `reverb`, `room`, `damping`), then `level` (dB) and
+//!   `mute`, both ramped across the block, then a look-ahead limiter at -1 dBFS
+//!   ([`penumbra_audio::limiter`]), always on, and a hard clip at the same ceiling. The reverb
+//!   comes before `level` and `mute`, so muting silences its tail at once and a level change
+//!   keeps the balance of dry and room. It comes before the limiter, so the ceiling holds for
+//!   the tail too.
+//! - **Reverb and channels:** with `reverb` above 0 a mono input leaves the reverb as stereo
+//!   (the room gives it width; a mono device plays the mean of both). Once wide, the node stays
+//!   wide until a jump, so turning `reverb` down to 0 does not change the channel count while
+//!   the sound plays. A node that starts with `reverb` 0 plays its input exactly as it comes. A sudden blast in a room full of people is the audio
 //!   equivalent of a crash; the limiter is not a param for that reason. What it takes off is
 //!   reported in the node's warning and in `audio.status`.
 //! - **Device:** part of an output's name, empty for the system's default output. The hub
@@ -19,6 +28,7 @@
 
 use penumbra_audio::limiter::{Limiter, db_to_gain};
 use penumbra_audio::playback::{MAX_CHANNELS, MAX_LATENCY_MS, MAX_RATE, MIN_LATENCY_MS, MIN_RATE, Settings};
+use penumbra_audio::reverb::{self, Reverb};
 use penumbra_audio::{Outputs, Want};
 use penumbra_core::{Chans, Error, ParamSpec, Unit, Value};
 use penumbra_graph::{
@@ -59,6 +69,25 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("The volume, in dB: 0 plays the sound as it comes, -6 at half the amplitude. A change glides across one frame. The limiter comes after it"),
         )
         .param(ParamSpec::bool("mute", false).doc("Silence, faded across one frame; the device stays open. audio.mute mutes every output at once"))
+        .param(
+            ParamSpec::float("reverb", reverb::DEFAULT_MIX)
+                .clamp(0.0, 1.0)
+                .range(0.0, 1.0)
+                .doc("How much room the sound gets: 0 plays it dry, 0.2 a small room you just notice, 1 only the room. A mono sound gets stereo width from it"),
+        )
+        .param(
+            ParamSpec::float("room", reverb::DEFAULT_ROOM)
+                .clamp(0.0, 1.0)
+                .range(0.0, 1.0)
+                .doc("The size of the room: how long the sound rings on. 0 dies away in 0.3 s, 0.4 in 0.85 s, 0.7 in 1.8 s, 1 in 4 s"),
+        )
+        .param(
+            ParamSpec::float("damping", reverb::DEFAULT_DAMPING)
+                .clamp(0.0, 1.0)
+                .range(0.0, 1.0)
+                .more()
+                .doc("How much faster high tones die away in the room: 0 as fast as low ones, 0.5 in about half the time, 1 in a tenth. More sounds warmer and duller"),
+        )
         .param(
             ParamSpec::float("latency", DEFAULT_LATENCY_MS)
                 .clamp(MIN_LATENCY_MS, MAX_LATENCY_MS)
@@ -110,9 +139,41 @@ struct AudioOut {
     /// The gain at the end of the last block.
     gain: Option<f64>,
     limiter: Option<Limiter>,
+    reverb: Option<Reverb>,
+    /// A mono input plays as stereo: the reverb was on since the last jump.
+    wide: bool,
 }
 
 impl AudioOut {
+    /// The block through the room reverb: unchanged while the reverb is off and has no tail
+    /// (a mono block doubled while the node is wide).
+    fn room(&mut self, block: Vec<Vec<f64>>, rate: u32, p: &reverb::Params) -> Vec<Vec<f64>> {
+        let on = p.mix.is_finite() && p.mix > 0.0;
+        let ringing = self.reverb.as_ref().is_some_and(|r| r.wet() > 0.0);
+        if !on && !ringing {
+            if let Some(r) = self.reverb.as_mut() {
+                // The tail must not come back when the reverb is turned up again.
+                r.reset();
+            }
+            if self.wide && block.len() == 1 {
+                let mono = block.into_iter().next().unwrap_or_default();
+                return vec![mono.clone(), mono];
+            }
+            return block;
+        }
+        let inputs = block.len();
+        let outputs = if inputs == 1 { 2 } else { inputs };
+        if self.reverb.as_ref().is_none_or(|r| r.rate() != rate || r.inputs() != inputs) {
+            self.reverb = Some(Reverb::new(rate, inputs, outputs));
+        }
+        let Some(r) = self.reverb.as_mut() else { return block };
+        self.wide |= inputs == 1;
+        let frames = block.iter().map(Vec::len).max().unwrap_or(0);
+        let mut out = vec![vec![0.0; frames]; outputs];
+        r.process(&block, &mut out, p);
+        out
+    }
+
     fn report(&self, cx: &CookContext<'_>, outputs: &Outputs, key: &str) {
         let Some(bus) = outputs.bus_status(key) else { return };
         if let Some(p) = &bus.player
@@ -202,9 +263,22 @@ impl Operator for AudioOut {
         for c in &mut block {
             c.resize(frames, 0.0);
         }
+        let jump = span.step == Step::Fresh;
+        let room = reverb::Params {
+            mix: cx.float("reverb")?,
+            room: cx.float("room")?,
+            damping: cx.float("damping")?,
+        };
+        if jump {
+            if let Some(r) = self.reverb.as_mut() {
+                r.reset();
+            }
+            self.wide = false;
+        }
+        let mut block = self.room(block, rate, &room);
+        let frames = block.iter().map(Vec::len).max().unwrap_or(0);
         let target = gain_of(cx.float("level")?, cx.bool("mute")?);
         let from = self.gain.unwrap_or(target);
-        let jump = span.step == Step::Fresh;
         // `as`: a few hundred samples.
         let fade = if jump { ((JUMP_FADE_SECONDS * rate_f) as usize).max(1) } else { 0 };
         for c in &mut block {
