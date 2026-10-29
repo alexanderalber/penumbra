@@ -113,6 +113,9 @@ pub struct StreamStatus {
     pub opens: u64,
     /// Overruns and other glitches the system reported.
     pub glitches: u64,
+    /// The device's own delay as the system reports it: from a buffer's first sample being
+    /// captured to the callback that hands it over, ms (smoothed).
+    pub device_ms: f64,
     /// Recent peak per channel, dBFS (falling slowly), -120 for silence.
     pub peak_db: Vec<f64>,
     /// Fed by [`Hub::feed`], not by a device.
@@ -590,11 +593,28 @@ fn find(host: &cpal::Host, pattern: &str) -> Result<cpal::Device, String> {
     }
 }
 
+/// The prefix of a key that records what an output plays (WASAPI loopback) instead of an
+/// input: `loopback:Speakers`, or `loopback:` for the default output.
+pub const LOOPBACK: &str = "loopback:";
+
 fn open(inner: &Weak<Inner>, s: &Arc<Stream>) -> Result<cpal::Stream, String> {
     let host = cpal::default_host();
-    let device = find(&host, &s.key)?;
-    let name = name_of(&device);
-    let config = device.default_input_config().map_err(|e| format!("cannot read the input format: {e}"))?;
+    let (device, config) = match s.key.strip_prefix(LOOPBACK) {
+        Some(output) => {
+            let device = crate::playback::find(&host, output.trim())?;
+            let config =
+                device.default_output_config().map_err(|e| format!("cannot read the output format: {e}"))?;
+            (device, config)
+        }
+        None => {
+            let device = find(&host, &s.key)?;
+            let config =
+                device.default_input_config().map_err(|e| format!("cannot read the input format: {e}"))?;
+            (device, config)
+        }
+    };
+    let name =
+        name_of(&device).map(|n| if s.key.starts_with(LOOPBACK) { format!("{LOOPBACK}{n}") } else { n });
     let channels = usize::from(config.channels());
     if channels == 0 || channels > MAX_CHANNELS {
         return Err(format!("the device has {channels} channels (at most {MAX_CHANNELS} are read)"));
@@ -612,7 +632,7 @@ fn open(inner: &Weak<Inner>, s: &Arc<Stream>) -> Result<cpal::Stream, String> {
     let data_stream = s.clone();
     let data_inner = inner.clone();
     let mut scratch: Vec<f32> = Vec::new();
-    let on_data = move |data: &cpal::Data, _: &cpal::InputCallbackInfo| {
+    let on_data = move |data: &cpal::Data, info: &cpal::InputCallbackInfo| {
         // A panic must not unwind into the system's audio thread.
         let _ = catch_unwind(AssertUnwindSafe(|| {
             scratch.clear();
@@ -626,6 +646,10 @@ fn open(inner: &Weak<Inner>, s: &Arc<Stream>) -> Result<cpal::Stream, String> {
                 let mut st = lock(&data_stream.status);
                 st.frames += (scratch.len() / channels) as u64;
                 st.callbacks += 1;
+                let ts = info.timestamp();
+                let ms = ts.callback.duration_since(ts.capture).as_secs_f64() * 1000.0;
+                st.device_ms =
+                    if st.device_ms == 0.0 { ms } else { st.device_ms + (ms - st.device_ms) * 0.05 };
             }
             data_stream.mark_data();
             if let Some(i) = data_inner.upgrade() {

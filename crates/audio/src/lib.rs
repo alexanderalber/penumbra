@@ -9,12 +9,21 @@
 //! - [`playback`]: a [`Player`] per output device takes one block per show frame and plays it
 //!   gaplessly: resampled to the device's rate, its latency held against clock drift, faded at
 //!   gaps and drops.
+//! - [`outputs`]: the [`Outputs`] hub, one bus per output device: sums what the `out.audio`
+//!   nodes on it played in a frame and pushes it to the device's player.
+//! - [`limiter`]: the look-ahead peak limiter every output ends in.
+//! - [`measure`]: measures the delay from a push to the sound arriving back at an input.
 
 pub mod analysis;
 pub mod capture;
 pub mod fft;
+pub mod limiter;
+pub mod measure;
+pub mod outputs;
 pub mod playback;
 
 pub use analysis::{Analyzer, Features, Settings};
 pub use capture::{Block, Cursor, DeviceInfo, Hub, StreamStatus, Watch};
+pub use limiter::Limiter;
+pub use outputs::{BusStatus, LaneStatus, Outputs, Want};
 pub use playback::{Engine, EngineStatus, Player, PlayerStatus, output_devices};

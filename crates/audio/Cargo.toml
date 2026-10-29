@@ -1,6 +1,6 @@
 [package]
 name = "penumbra-audio"
-description = "Audio input (cpal: WASAPI, ALSA) and its analysis: levels, bands, spectrum, onsets, tempo, beat and bar phase. No GPU, no UI."
+description = "Audio input and output (cpal: WASAPI, ALSA), the analysis of input (levels, bands, spectrum, onsets, tempo, beat and bar phase) and the output limiter. No GPU, no UI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

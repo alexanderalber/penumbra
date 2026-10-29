@@ -58,7 +58,10 @@
 //!
 //! **Audio:** likewise, the cook thread tells the audio [`AudioHub`] which input devices the
 //! network's `audio.device_in` nodes want; the hub keeps a stream thread per device, and the
-//! nodes read what arrived. **Cameras** the same way: the [`CameraHub`] opens what the
+//! nodes read what arrived. **Sound out** the other way: the `out.audio` nodes hand their blocks
+//! to the audio outputs ([`penumbra_audio::Outputs`]), one bus per device; after every pass the
+//! cook thread has each bus sum its blocks and push them to its device's player, or fade out
+//! while the show stands still. **Cameras** the same way: the [`CameraHub`] opens what the
 //! `tex.video_in` nodes want, a capture thread per camera, and keeps each one's newest frame.
 //! **DMX** the other way round: the [`DmxHub`] is a resource the `out.dmx` nodes put their slots
 //! into, with a sending thread per target; the [`DmxInputs`] one the `chan.dmx_in` nodes read
@@ -410,6 +413,9 @@ impl CookState {
         wanted.extend(request.viewers.iter().copied().filter(|id| net.node(*id).is_some()));
         let shown: Vec<Port> = request.shown.iter().copied().filter(|p| net.node(p.node).is_some()).collect();
         self.last = self.cooker.cook_showing(&net, self.clock.now(), &wanted, &request.thumbnails, &shown);
+        // The blocks the `out.audio` nodes played in this pass go to their devices now. Offline
+        // renders (every frame, slower than real time) do not play.
+        self.hubs.audio_out.after_pass(self.clock.is_playing(), self.clock.policy() == LatePolicy::Realtime);
         let output = OutputFrame {
             pass: self.pass_base + self.last.pass,
             time: Some(self.clock.now()),
@@ -1140,6 +1146,11 @@ impl Engine {
     /// The audio inputs.
     pub fn audio(&self) -> &AudioHub {
         &self.hubs.audio
+    }
+
+    /// The audio outputs (`out.audio`).
+    pub fn audio_out(&self) -> &penumbra_audio::Outputs {
+        &self.hubs.audio_out
     }
 
     /// The DMX outputs.

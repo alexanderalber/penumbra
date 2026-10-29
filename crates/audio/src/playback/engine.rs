@@ -16,6 +16,9 @@
 //!   then plays silence until the fill is back at the target, then fades in.
 //! - **Overrun:** when the fill runs far beyond the target, the output fades out, the oldest
 //!   frames are dropped down to the target, and it fades in again.
+//! - **Pause:** [`Engine::pause`] fades out on purpose (the show paused, nothing feeds it any
+//!   more); that is not an underrun. What is left queued is dropped, and the next push starts
+//!   over as the first one did.
 
 use serde::{Deserialize, Serialize};
 
@@ -58,11 +61,14 @@ pub struct Settings {
     /// How far ahead of the device the queued samples should run, in milliseconds (three show
     /// frames at 60 fps by default). The device's own buffer comes on top.
     pub latency_ms: f64,
+    /// The buffer asked of the device, in milliseconds; 0 leaves it to the system. Only the
+    /// device side reads it; a change reopens the device.
+    pub device_buffer_ms: f64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { latency_ms: 50.0 }
+        Self { latency_ms: 50.0, device_buffer_ms: 0.0 }
     }
 }
 
@@ -112,6 +118,8 @@ pub struct EngineStatus {
     pub underruns: u64,
     /// Drops: the fill ran far beyond the target and the oldest samples were dropped.
     pub overruns: u64,
+    /// Paused on purpose ([`Engine::pause`]): silent until the next push.
+    pub paused: bool,
     /// Source frames dropped (by overruns and by a full ring).
     pub dropped_frames: u64,
     /// Source frames pushed.
@@ -151,6 +159,8 @@ pub struct Engine {
     played: u64,
     /// Frames of the latest block pushed.
     last_block: usize,
+    /// Paused on purpose: fading out or silent, without counting an underrun.
+    paused: bool,
 }
 
 impl Default for Engine {
@@ -187,6 +197,7 @@ impl Engine {
             pushed: 0,
             played: 0,
             last_block: 0,
+            paused: false,
         }
     }
 
@@ -242,6 +253,36 @@ impl Engine {
         self.device_rate = 0;
         self.device_channels = 0;
         self.silence();
+    }
+
+    /// Fades out on purpose and stays silent until the next push, which starts over as the
+    /// first did (waits for the target, fades in). Not counted as an underrun; what is left
+    /// queued is dropped once the fade is done.
+    pub fn pause(&mut self) {
+        if self.paused {
+            return;
+        }
+        self.paused = true;
+        match self.state {
+            State::Playing | State::FadingIn => self.state = State::FadingOut,
+            State::Dropping => self.state = State::FadingOut,
+            State::Silent | State::FadingOut => {}
+        }
+        if self.state == State::Silent {
+            self.clear_paused();
+        }
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Drops what a pause left queued.
+    fn clear_paused(&mut self) {
+        self.head = 0;
+        self.len = 0;
+        self.frac = 0.0;
+        self.smoothed = None;
     }
 
     fn silence(&mut self) {
@@ -308,6 +349,14 @@ impl Engine {
             self.frac = 0.0;
             self.design();
             self.silence();
+        }
+        if self.paused {
+            self.paused = false;
+            if self.state != State::Silent {
+                // Still fading out from the pause: the rest of the old queue goes at once.
+                self.clear_paused();
+                self.silence();
+            }
         }
         self.pushed += frames as u64;
         self.last_block = frames;
@@ -402,6 +451,12 @@ impl Engine {
         let ch = self.channels;
         for frame in out.chunks_exact_mut(dc) {
             match self.state {
+                State::Silent if self.paused => {
+                    if self.len > 0 {
+                        self.clear_paused();
+                    }
+                    continue;
+                }
                 State::Silent => {
                     if self.len >= start {
                         // Far ahead after a gap (a stalled producer caught up): the excess
@@ -542,6 +597,7 @@ impl Engine {
             correction_ppm: self.correction * 1e6,
             underruns: self.underruns,
             overruns: self.overruns,
+            paused: self.paused,
             dropped_frames: self.dropped,
             pushed_frames: self.pushed,
             played_frames: self.played,

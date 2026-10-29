@@ -205,3 +205,53 @@ fn an_oscillator_is_read_by_command() {
     let kinds = f.call("node.kinds", json!({"kind": "audio.mix"}));
     assert!(kinds.to_string().contains("gain7"), "{kinds}");
 }
+
+/// An oscillator into `out.audio`, through the running cook thread into a bus without a
+/// device: the samples pushed are the oscillator's, gapless over many frames, a stall of the
+/// cook thread included.
+#[test]
+fn an_oscillator_plays_through_the_engine_gaplessly() {
+    let f = Fixture::new("audio_out");
+    let out = f.engine.audio_out().clone();
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/osc", "kind": "audio.oscillator", "params": {"frequency": 440.0, "amplitude": 0.1}},
+            {"op": "create", "path": "/out", "kind": "out.audio"},
+            {"op": "connect", "from": "/osc", "to": "/out"},
+        ]}),
+    );
+    eventually("the bus to get blocks", || out.pushed("").first().is_some_and(|c| c.len() > 48_000 / 4));
+    // A stall of the cook thread: the frames it skipped come as one block.
+    f.engine.on_cook(|_| std::thread::sleep(Duration::from_millis(60))).unwrap();
+    eventually("a second of sound", || out.pushed("").first().is_some_and(|c| c.len() > 48_000));
+    let pushed = out.pushed("");
+    let samples = &pushed[0];
+    // A steady sine of 440 Hz at 0.1 steps by at most 2 pi f A / rate per sample; a gap or an
+    // overlap between blocks would jump. The first block is faded in; skip it.
+    let max_step = std::f64::consts::TAU * 440.0 * 0.1 / 48_000.0;
+    for (k, w) in samples.windows(2).enumerate().skip(2000) {
+        let step = f64::from(w[1] - w[0]).abs();
+        assert!(step <= max_step * 1.01 + 1e-6, "a jump of {step} at sample {k}");
+    }
+    let peak = samples.iter().skip(2000).fold(0.0f32, |m, v| m.max(v.abs()));
+    assert!((f64::from(peak) - 0.1).abs() < 1e-3, "{peak}");
+
+    let status = f.call("audio.status", json!({}));
+    let bus = &status["outputs"][0];
+    assert_eq!(bus["key"], "", "{status}");
+    assert_eq!(bus["lanes"].as_array().unwrap().len(), 1, "{status}");
+    assert_eq!(bus["offline"]["underruns"], 0, "{status}");
+    assert_eq!(status["muted"], false);
+
+    // The panic button.
+    assert_eq!(f.call("audio.mute", json!({}))["muted"], true);
+    assert!(out.muted());
+    assert_eq!(f.call("audio.mute", json!({"mute": false}))["muted"], false);
+
+    // Paused, the bus fades out; deleted, the device closes.
+    f.call("cook.play", json!({"playing": false}));
+    eventually("the pause to reach the bus", || out.bus_status("").is_some_and(|b| b.paused));
+    f.call("node.delete", json!({"path": "/out"}));
+    eventually("the bus to close", || out.keys().is_empty());
+}

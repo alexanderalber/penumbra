@@ -1,6 +1,6 @@
 //! `out` nodes: sinks that leave the graph.
 //!
-//! `out.video` records its input to a movie file ([`video`]); `out.spout` shares it with other
+//! `out.audio` plays sound on a speaker ([`audio`]). `out.video` records its input to a movie file ([`video`]); `out.spout` shares it with other
 //! programs on this machine ([`spout`]), `out.ndi` with programs on the network ([`ndi`]).
 //! `out.table` writes a table to a CSV or TSV file ([`table`]), `out.mesh` geometry to an OBJ, STL
 //! or glb file ([`mesh`]); both share [`file`].
@@ -31,6 +31,9 @@
 //! factor per pixel and channel that evens out a hot spot and a colour cast, and `black`, a lift
 //! of the black where another projector does not reach; `projector.flatfield` measures them.
 
+pub mod audio;
+#[cfg(test)]
+mod audio_tests;
 pub mod correct;
 pub mod file;
 pub mod mesh;
@@ -306,6 +309,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         // (a display plugged in or out) every frame. Cooking it costs nothing.
         .time_dependent();
     types.register(FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>))?;
+    audio::register(types)?;
     ndi::register(types)?;
     spout::register(types)?;
     table::register(types)?;

@@ -348,7 +348,7 @@ fn a_big_block_after_a_stall_is_cut_to_the_target() {
 
 #[test]
 fn the_first_samples_wait_for_the_target_and_fade_in() {
-    let mut e = Engine::new(Settings { latency_ms: 20.0 });
+    let mut e = Engine::new(Settings { latency_ms: 20.0, ..Settings::default() });
     e.set_device(48_000, 1);
     let ones = vec![0.5f32; 480];
     let mut out = vec![0.0f32; 480];
@@ -457,7 +457,7 @@ fn hostile_input_is_refused_or_silenced() {
     }
     // Extreme rate pairs: no panic, finite output.
     for (src, dev) in [(MIN_RATE, 768_000), (MAX_RATE, 8_000), (MAX_RATE, 1)] {
-        let mut e = Engine::new(Settings { latency_ms: f64::NAN });
+        let mut e = Engine::new(Settings { latency_ms: f64::NAN, ..Settings::default() });
         e.set_device(dev, 2);
         let block = vec![0.5f32; 20_000];
         let mut out = vec![0.0f32; 2048];
@@ -476,7 +476,7 @@ fn hostile_input_is_refused_or_silenced() {
     assert!(st.dropped_frames > 0 && st.fill_now_ms < 2000.0, "{st:?}");
     // Odd settings.
     for ms in [f64::NAN, -5.0, 0.0, 1e12, f64::INFINITY] {
-        e.set_settings(Settings { latency_ms: ms });
+        e.set_settings(Settings { latency_ms: ms, ..Settings::default() });
         e.push(48_000, &[&huge[..4800]]).unwrap();
         let mut out = vec![0.0f32; 480];
         e.pull(&mut out);
@@ -563,4 +563,44 @@ fn plays_a_quiet_tone_on_the_default_output() {
     let st = p.status();
     println!("final: {st:?}");
     p.close();
+}
+
+#[test]
+fn a_pause_fades_out_without_an_underrun_and_starts_over() {
+    let mut e = Engine::new(Settings::default());
+    e.set_device(48_000, 1);
+    let block = vec![0.5f32; 800];
+    let mut out = vec![0.0f32; 480];
+    // A second of steady play, push and pull at the same pace.
+    let mut pulled = 0u64;
+    for frame in 1..=60u64 {
+        e.push(48_000, &[&block]).unwrap();
+        while pulled * 60 < frame * 100 {
+            e.pull(&mut out);
+            pulled += 1;
+        }
+    }
+    assert_eq!(e.status().state, State::Playing);
+    e.pause();
+    let mut last = Vec::new();
+    for _ in 0..20 {
+        e.pull(&mut out);
+        last.push(out.iter().fold(0.0f32, |m, v| m.max(v.abs())));
+    }
+    // 4 ms fade: the first pull of 10 ms ends silent, the rest are silent.
+    assert!(last[0] > 0.1, "{last:?}");
+    assert!(last[1..].iter().all(|v| *v == 0.0), "{last:?}");
+    let st = e.status();
+    assert_eq!((st.underruns, st.paused, st.state), (0, true, State::Silent));
+    assert!(st.fill_now_ms < 1.0, "what was queued is dropped: {}", st.fill_now_ms);
+    // Pushing again waits for the target and fades in, as at the start.
+    for frame in 1..=30u64 {
+        e.push(48_000, &[&block]).unwrap();
+        while pulled * 60 < (60 + frame) * 100 {
+            e.pull(&mut out);
+            pulled += 1;
+        }
+    }
+    let st = e.status();
+    assert_eq!((st.underruns, st.paused, st.state), (0, false, State::Playing));
 }

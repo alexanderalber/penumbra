@@ -28,7 +28,29 @@ samples. At 44.1 kHz it alternates between 735 and 736, so the sound stays in st
 picture for hours. After skipped frames, the next block covers them all, up to half a second.
 After a longer pause or a jump in time, the sound starts over.
 
-Sound cannot be played yet. Output to a device is the next step.
+## Playing sound
+
+`out.audio` plays its input on a speaker or headphones. Mono plays on every speaker, stereo on
+left and right. `device` is part of an output's name; the `...` menu lists them, and empty is
+the system's default output. `level` is the volume in dB, and `mute` silences the node. Both
+glide across one frame.
+
+Every output ends in a limiter that keeps the sound below -1 dBFS. It is always on, because a
+sudden blast in a room full of people is the worst thing an installation can do. When the
+limiter has to work, the node warns how much it takes off. Turn `level` down until the warning
+goes. Several `out.audio` nodes on one device are added together, and their sum is limited too.
+They must share one sample rate.
+
+Sound plays while the show runs. Pause the show and the output fades out; play it and the sound
+comes back. This holds for a microphone routed to `out.audio` too. `audio.mute` mutes every
+output at once: a panic button, also in Helpers > Audio.
+
+The delay from a frame to the speaker has two parts. `latency` is what penumbra queues, 50 ms
+by default. The device adds its own buffer, about 30 to 50 ms in Windows' shared mode. A smaller
+`latency` answers faster. 30 ms holds on a calm machine, but then a late frame is heard as a
+gap. `audio.status` shows the delay and counts the gaps. `audio.measure_latency` plays quiet
+clicks and finds them again on an input. The input `loopback:Speakers` records what the output
+named Speakers plays, without a cable.
 
 ## Setting up
 

@@ -3,10 +3,12 @@
 //! projectors (`crate::blend_match`),
 //! the resolution analysis with its overlay and optimise button, and the show-machine checks with a
 //! fix and a restore button each, the persistent state (when it was last saved, save now, restore)
-//! and OSC (listeners, senders, what arrived, learn). Opened from the status bar; the same things
+//! OSC (listeners, senders, what arrived, learn) and audio (inputs, outputs, the mute of every
+//! output). Opened from the status bar; the same things
 //! are `output.list`, `projector.test`, `res.analyze`, `res.overlay`, `res.optimize`, `system.check`, `system.fix`,
 //! `system.restore`, `state.info`, `state.save`, `state.restore`, `state.discard`, `state.config`,
-//! `project.settings`, `osc.status`, `osc.config` and `osc.learn` on the control channel.
+//! `project.settings`, `osc.status`, `osc.config`, `osc.learn`, `audio.status`, `audio.config`,
+//! `audio.mute`, `audio.devices` and `audio.outputs` on the control channel.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -49,6 +51,8 @@ pub struct Helpers {
     /// The audio inputs of this machine, listed on first view and on request (listing takes
     /// some milliseconds, too long for every frame).
     audio_inputs: Option<Result<Vec<penumbra_audio::DeviceInfo>, String>>,
+    /// The audio outputs of this machine, likewise.
+    audio_outputs: Option<Result<Vec<penumbra_audio::DeviceInfo>, String>>,
     /// The "Blend and match" section.
     blend_match: crate::blend_match::BlendMatch,
 }
@@ -522,6 +526,16 @@ impl Helpers {
         if r.changed() {
             hub.set_config(config);
         }
+        let out = engine.audio_out();
+        let mut muted = out.muted();
+        let r = ui.checkbox(&mut muted, "mute every output").on_hover_text(
+            "A panic button: every out.audio falls silent at once, faded across one frame; the devices stay \
+             open (audio.mute)",
+        );
+        auto.add("helpers.audio.mute", r.rect, "mute every output");
+        if r.changed() {
+            out.set_muted(muted);
+        }
         let streams = hub.status();
         if streams.is_empty() {
             ui.label(
@@ -555,6 +569,41 @@ impl Helpers {
                 }
             }
         }
+        let buses = out.status();
+        if buses.is_empty() {
+            ui.label(RichText::new("Nothing plays: add an out.audio node (Tab > out).").color(weak));
+        }
+        for b in &buses {
+            let asked =
+                if b.key.is_empty() { "the default output".to_string() } else { format!("`{}`", b.key) };
+            let Some(p) = &b.player else { continue };
+            let mut text = format!("out: {}", p.device.clone().unwrap_or_else(|| asked.clone()));
+            if p.open {
+                text.push_str(&format!(
+                    " \u{b7} {} Hz \u{b7} {:.0} ms ({:.0} queued + {:.0} device)",
+                    p.rate, p.latency_ms, p.engine.fill_ms, p.device_ms
+                ));
+            }
+            text.push_str(&format!(
+                " \u{b7} {} gaps \u{b7} {} drops \u{b7} {} glitches",
+                p.engine.underruns, p.engine.overruns, p.glitches
+            ));
+            if b.paused {
+                text.push_str(" \u{b7} paused");
+            }
+            let held = b.lanes.iter().map(|l| l.reduction_held_db).fold(b.reduction_db, f64::max);
+            text.push_str(&format!(" \u{b7} limiter -{held:.1} dB"));
+            let colour = if held >= 1.0 || p.engine.underruns > 0 { theme::WARNING } else { theme::TEXT };
+            ui.label(RichText::new(text).color(colour)).on_hover_text(format!(
+                "asked for: {asked}; {} nodes; opened {} times; gaps are underruns (a frame came late), drops \
+                 overruns; the limiter value is the most it took off in the last two seconds",
+                b.lanes.len(),
+                p.opens
+            ));
+            if let Some(e) = &p.error {
+                ui.colored_label(if p.open { weak } else { theme::WARNING }, e);
+            }
+        }
         ui.horizontal(|ui| {
             ui.label(RichText::new("inputs on this machine").color(weak));
             let r = ui.small_button("list again");
@@ -578,6 +627,36 @@ impl Helpers {
                     }
                     ui.label(RichText::new(text).monospace().color(weak))
                         .on_hover_text("Put part of this name into an audio.device_in's device");
+                }
+            }
+            Some(Err(e)) => {
+                ui.colored_label(theme::WARNING, e);
+            }
+            None => {}
+        }
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("outputs on this machine").color(weak));
+            let r = ui.small_button("list again");
+            auto.add("helpers.audio.list_outputs", r.rect, "list again");
+            if r.clicked() || self.audio_outputs.is_none() {
+                self.audio_outputs = Some(penumbra_audio::playback::output_devices());
+            }
+        });
+        match &self.audio_outputs {
+            Some(Ok(list)) if list.is_empty() => {
+                ui.label(RichText::new("none").color(weak));
+            }
+            Some(Ok(list)) => {
+                for d in list {
+                    let mut text = d.name.clone();
+                    if let (Some(r), Some(c)) = (d.rate, d.channels) {
+                        text.push_str(&format!("   {r} Hz, {c} ch"));
+                    }
+                    if d.default {
+                        text.push_str("   (default)");
+                    }
+                    ui.label(RichText::new(text).monospace().color(weak))
+                        .on_hover_text("Put part of this name into an out.audio's device");
                 }
             }
             Some(Err(e)) => {

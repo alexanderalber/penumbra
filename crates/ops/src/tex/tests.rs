@@ -122,6 +122,8 @@ impl Rig {
         let audio = penumbra_audio::Hub::new();
         audio.feed("test", 48_000, 2, &[0.0; 2]).unwrap();
         cooker.provide(audio.clone());
+        // Never a speaker in tests.
+        cooker.provide(penumbra_audio::Outputs::offline(48_000, 2));
         let camera = penumbra_camera::Hub::new();
         camera.feed(&penumbra_camera::Key::new("test", ""), camera_frame(126, 128, 128));
         cooker.provide(camera.clone());

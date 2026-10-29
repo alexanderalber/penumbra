@@ -47,6 +47,8 @@ pub struct Inputs<'a> {
     pub cameras: &'a penumbra_camera::Hub,
     /// The engine's audio inputs: a `audio.device_in`'s `device` names the device it reads.
     pub audio: &'a penumbra_audio::Hub,
+    /// The engine's audio outputs: an `out.audio` shows how its device plays.
+    pub audio_out: &'a penumbra_audio::Outputs,
     /// The engine's recordings: an `out.video` shows its own and has start and stop.
     pub record: &'a penumbra_record::Hub,
     /// The engine's scans: a `tex.scan` shows how its scan stands and has scan and cancel.
@@ -219,6 +221,9 @@ impl ParamPanel {
         }
         if node.kind == penumbra_ops::out::video::VIDEO_OUT {
             record_row(ui, input, node, auto, actions);
+        }
+        if node.kind == penumbra_ops::out::audio::AUDIO_OUT {
+            audio_out_row(ui, input, auto);
         }
         if node.kind == penumbra_ops::tex::scan::SCAN {
             scan_row(ui, input, node, auto, actions);
@@ -912,7 +917,10 @@ impl ParamPanel {
                         display_menu(ui, input.displays, key, auto, new);
                     }
                     if node.kind == penumbra_ops::audio::AUDIO_IN && spec.name == "device" {
-                        self.device_menu(ui, key, auto, new);
+                        self.device_menu(ui, key, false, auto, new);
+                    }
+                    if node.kind == penumbra_ops::out::audio::AUDIO_OUT && spec.name == "device" {
+                        self.device_menu(ui, key, true, auto, new);
                     }
                     if node.kind == penumbra_ops::tex::VIDEO_IN
                         && (spec.name == "device" || spec.name == "mode")
@@ -1012,28 +1020,36 @@ impl ParamPanel {
         }
     }
 
-    /// The audio inputs of this machine for a `audio.device_in`'s `device`
-    /// (`param.<path>.device.menu`, entries `device.default` and `device.<i>`).
+    /// The audio inputs of this machine for a `audio.device_in`'s `device`, or its outputs for
+    /// an `out.audio`'s (`param.<path>.device.menu`, entries `device.default` and `device.<i>`).
     fn device_menu(
         &mut self,
         ui: &mut Ui,
         key: &str,
+        outputs: bool,
         auto: &mut automation::Registry,
         new: &mut Option<Value>,
     ) {
         let r = ui.menu_button("\u{2026}", |ui| {
             if self.audio_inputs.as_ref().is_none_or(|(k, _)| k != key) {
-                self.audio_inputs = Some((key.to_string(), penumbra_audio::capture::devices()));
+                let list = if outputs {
+                    penumbra_audio::playback::output_devices()
+                } else {
+                    penumbra_audio::capture::devices()
+                };
+                self.audio_inputs = Some((key.to_string(), list));
             }
-            let r = ui.button("the system's default input").on_hover_text("Leaves `device` empty");
-            auto.add("device.default", r.rect, "default input");
+            let label = if outputs { "the system's default output" } else { "the system's default input" };
+            let r = ui.button(label).on_hover_text("Leaves `device` empty");
+            auto.add("device.default", r.rect, if outputs { "default output" } else { "default input" });
             if r.clicked() {
                 *new = Some(Value::Text(String::new()));
                 ui.close();
             }
             match self.audio_inputs.as_ref().map(|(_, l)| l) {
                 Some(Ok(list)) if list.is_empty() => {
-                    ui.label(RichText::new("no audio inputs found").color(theme::TEXT_WEAK));
+                    let text = if outputs { "no audio outputs found" } else { "no audio inputs found" };
+                    ui.label(RichText::new(text).color(theme::TEXT_WEAK));
                 }
                 Some(Ok(list)) => {
                     for (i, d) in list.iter().enumerate() {
@@ -1058,7 +1074,11 @@ impl ParamPanel {
                 None => {}
             }
         });
-        auto.add(format!("param.{key}.menu"), r.response.rect, "audio inputs");
+        auto.add(
+            format!("param.{key}.menu"),
+            r.response.rect,
+            if outputs { "audio outputs" } else { "audio inputs" },
+        );
         if r.inner.is_none() && self.audio_inputs.as_ref().is_some_and(|(k, _)| k == key) {
             self.audio_inputs = None;
         }
@@ -2368,6 +2388,74 @@ fn record_row(
             (text, theme::TEXT_WEAK)
         };
         ui.label(RichText::new(text).color(colour).small()).on_hover_text(&s.file);
+    });
+}
+
+/// How an `out.audio`'s device plays: device, rate, latency, gaps, what the limiter takes off;
+/// and the mute of every output (`audio.mute`), which is not an edit.
+fn audio_out_row(ui: &mut Ui, input: &Inputs<'_>, auto: &mut automation::Registry) {
+    let out = input.audio_out;
+    let lane = out.lane_status(input.node);
+    let bus = lane.as_ref().and_then(|(k, _)| out.bus_status(k));
+    ui.horizontal(|ui| {
+        let muted = out.muted();
+        let (label, tip) = if muted {
+            ("unmute all", "Every audio output is muted; this unmutes them (audio.mute false)")
+        } else {
+            ("mute all", "Mutes every audio output at once, a panic button (audio.mute)")
+        };
+        let r = ui.button(label).on_hover_text(tip);
+        auto.add("param.audio_mute", r.rect, label);
+        if r.clicked() {
+            out.set_muted(!muted);
+        }
+        let weak = theme::TEXT_WEAK;
+        let Some(bus) = bus else {
+            ui.label(RichText::new("not playing").color(weak).small());
+            return;
+        };
+        let mut text = String::new();
+        let mut colour = weak;
+        match &bus.player {
+            Some(p) if p.open => {
+                text.push_str(&format!(
+                    "{}  {} Hz  {:.0} ms ({:.0} queued + {:.0} device)",
+                    p.device.as_deref().unwrap_or("?"),
+                    p.rate,
+                    p.latency_ms,
+                    p.engine.fill_ms,
+                    p.device_ms
+                ));
+                if p.engine.underruns > 0 || p.glitches > 0 {
+                    text.push_str(&format!("  {} gaps  {} glitches", p.engine.underruns, p.glitches));
+                    colour = theme::WARNING;
+                }
+            }
+            Some(p) => {
+                // The node's warning has the whole error.
+                text.push_str(if p.error.is_some() {
+                    "the device does not open"
+                } else {
+                    "opening the device ..."
+                });
+                colour = theme::WARNING;
+            }
+            None => text.push_str("no device (offline)"),
+        }
+        if bus.paused {
+            text.push_str("  paused");
+        }
+        if let Some((_, l)) = &lane {
+            text.push_str(&format!("  limiter -{:.1} dB", l.reduction_held_db));
+            if l.reduction_held_db >= 1.0 {
+                colour = theme::WARNING;
+            }
+        }
+        // Truncated: a long line would widen the panel and push the rows' right ends out of view.
+        ui.add(egui::Label::new(RichText::new(text).color(colour).small()).truncate()).on_hover_text(
+            "The device, its rate, the delay from a frame to the speaker, and the most the limiter took off \
+             in the last two seconds (audio.status)",
+        );
     });
 }
 

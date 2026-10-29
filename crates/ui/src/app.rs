@@ -1078,6 +1078,7 @@ impl PenumbraApp {
                                 chan_drag,
                                 cameras: self.engine.camera(),
                                 audio: self.engine.audio(),
+                                audio_out: self.engine.audio_out(),
                                 record: self.engine.record(),
                                 scans: self.engine.scans(),
                                 show_rate: view.time.map(|t| t.rate.as_f64()),

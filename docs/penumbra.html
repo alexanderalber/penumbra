@@ -626,6 +626,12 @@ water      15
 </li>
 <li><strong>inputs on this machine</strong> lists the input devices with their format; <strong>list again</strong> after plugging one in. Part of a name goes into an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a>'s <code>device</code>.
 </li>
+<li><strong>mute every output</strong> silences every <a class="ref" href="#out.audio"><code>out.audio</code></a> at once (<a class="ref" href="#audio.mute"><code>audio.mute</code></a>).
+</li>
+<li>Per output device a line: the device, its rate, the delay (queued plus the device's own), gaps (a frame came late), drops, glitches, whether it is paused, and the most the limiter took off in the last two seconds.
+</li>
+<li><strong>outputs on this machine</strong> lists the names to put into an <a class="ref" href="#out.audio"><code>out.audio</code></a>'s <code>device</code>.
+</li>
 </ul>
 <h3 id="helpers-show-machine">Show machine</h3>
 <p>Windows settings that can ruin a show, each with a <strong>Fix</strong> and, after fixing, a <strong>Restore</strong> that puts back what the fix replaced:</p>
@@ -655,7 +661,11 @@ water      15
 </ul>
 <p>The viewer shows sound as the last 50 ms of its waveform and a peak meter per channel in dBFS. The waveform starts at a rising zero crossing, so a steady tone stands still.</p>
 <p>A tone generator makes exactly the samples of one frame. At 48 kHz and 60 fps that is 800 samples. At 44.1 kHz it alternates between 735 and 736, so the sound stays in step with the picture for hours. After skipped frames, the next block covers them all, up to half a second. After a longer pause or a jump in time, the sound starts over.</p>
-<p>Sound cannot be played yet. Output to a device is the next step.</p>
+<h3 id="audio-playing-sound">Playing sound</h3>
+<p><a class="ref" href="#out.audio"><code>out.audio</code></a> plays its input on a speaker or headphones. Mono plays on every speaker, stereo on left and right. <code>device</code> is part of an output's name; the <code>...</code> menu lists them, and empty is the system's default output. <code>level</code> is the volume in dB, and <code>mute</code> silences the node. Both glide across one frame.</p>
+<p>Every output ends in a limiter that keeps the sound below -1 dBFS. It is always on, because a sudden blast in a room full of people is the worst thing an installation can do. When the limiter has to work, the node warns how much it takes off. Turn <code>level</code> down until the warning goes. Several <a class="ref" href="#out.audio"><code>out.audio</code></a> nodes on one device are added together, and their sum is limited too. They must share one sample rate.</p>
+<p>Sound plays while the show runs. Pause the show and the output fades out; play it and the sound comes back. This holds for a microphone routed to <a class="ref" href="#out.audio"><code>out.audio</code></a> too. <a class="ref" href="#audio.mute"><code>audio.mute</code></a> mutes every output at once: a panic button, also in Helpers &gt; Audio.</p>
+<p>The delay from a frame to the speaker has two parts. <code>latency</code> is what penumbra queues, 50 ms by default. The device adds its own buffer, about 30 to 50 ms in Windows' shared mode. A smaller <code>latency</code> answers faster. 30 ms holds on a calm machine, but then a late frame is heard as a gap. <a class="ref" href="#audio.status"><code>audio.status</code></a> shows the delay and counts the gaps. <a class="ref" href="#audio.measure_latency"><code>audio.measure_latency</code></a> plays quiet clicks and finds them again on an input. The input <code>loopback:Speakers</code> records what the output named Speakers plays, without a cable.</p>
 <h3 id="audio-setting-up">Setting up</h3>
 <ol>
 <li>Add an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> (Tab &gt; audio &gt; device_in). With <code>device</code> empty it reads the system's default input; the empty <code>device</code> box names that device in grey (hover the box for the device a typed name picked). <a class="ref" href="#audio.status"><code>audio.status</code></a> names it too. The <code>...</code> menu beside <code>device</code> lists the inputs of this machine; part of a name typed in works too, e.g. <code>Focusrite</code>. The <a href="#helpers-audio">Helpers window</a> shows a level meter per channel. The device is opened in shared mode, so other programs can use it too.
@@ -4422,7 +4432,31 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-out">
 <h3>out</h3>
-<p class="kinds"><a href="#out.dmx">out.dmx</a> <a href="#out.mesh">out.mesh</a> <a href="#out.ndi">out.ndi</a> <a href="#out.projector">out.projector</a> <a href="#out.spout">out.spout</a> <a href="#out.table">out.table</a> <a href="#out.video">out.video</a></p>
+<p class="kinds"><a href="#out.audio">out.audio</a> <a href="#out.dmx">out.dmx</a> <a href="#out.mesh">out.mesh</a> <a href="#out.ndi">out.ndi</a> <a href="#out.projector">out.projector</a> <a href="#out.spout">out.spout</a> <a href="#out.table">out.table</a> <a href="#out.video">out.video</a></p>
+<details class="entry node" id="out.audio"><summary><code class="name">out.audio</code><span class="sum">Plays sound on a speaker or headphones, always through a limiter that keeps it below -1 dBFS</span></summary>
+<div class="body">
+<p>Plays sound on a speaker or headphones, always through a limiter that keeps it below -1 dBFS</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">audio</span>: The sound to play: mono plays on every speaker, stereo on left and right</li>
+</ul>
+<h4>Outputs</h4>
+<p>none</p>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the output's name (the menu beside it lists them), e.g. <code>Speakers</code>; empty: the system's default output. Several out.audio nodes on one device are added together</td></tr>
+<tr><td><code>active</code></td><td>bool</td><td><code>true</code></td><td></td><td>Off: plays nothing, and the device closes when no other node uses it</td></tr>
+<tr><td><code>level</code></td><td>float</td><td><code>0</code></td><td>-60 to 12 dB (soft)</td><td>The volume, in dB: 0 plays the sound as it comes, -6 at half the amplitude. A change glides across one frame. The limiter comes after it</td></tr>
+<tr><td><code>mute</code></td><td>bool</td><td><code>false</code></td><td></td><td>Silence, faded across one frame; the device stays open. audio.mute mutes every output at once</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>latency</code></td><td>float</td><td><code>50</code></td><td>20 to 200 (soft)</td><td>Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns)</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a></p>
+</div></details>
 <details class="entry node" id="out.dmx"><summary><code class="name">out.dmx</code><span class="sum">Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</span></summary>
 <div class="body">
 <p>Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</p>
@@ -4898,10 +4932,24 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>The audio inputs of this machine: name, default, rate, channels, format</p>
 </div></details>
-<details class="entry command" id="audio.status"><summary><code class="name">audio.status</code><span class="sum">Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS)</span></summary>
+<details class="entry command" id="audio.measure_latency"><summary><code class="name">audio.measure_latency</code><span class="sum">Plays quiet clicks (at most -20 dBFS) on an output and finds them on an input: {output?, input?,          channels?, clicks?, level?, latency?, buffer?}; input <code>loopback:&lt;output&gt;</code> records what the output plays.          Reports ms from push to arrival per channel, and an output estimate. Takes some seconds</span></summary>
 <div class="body">
-<p>Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS)</p>
-<p class="mentions">Mentioned in: <a href="#audio-setting-up">Audio › Setting up</a></p>
+<p>Plays quiet clicks (at most -20 dBFS) on an output and finds them on an input: {output?, input?,          channels?, clicks?, level?, latency?, buffer?}; input <code>loopback:&lt;output&gt;</code> records what the output plays.          Reports ms from push to arrival per channel, and an output estimate. Takes some seconds</p>
+<p class="mentions">Mentioned in: <a href="#audio-playing-sound">Audio › Playing sound</a></p>
+</div></details>
+<details class="entry command" id="audio.mute"><summary><code class="name">audio.mute</code><span class="sum">Mutes every audio output at once, a panic button: {mute?} (default true; false unmutes). For this run only</span></summary>
+<div class="body">
+<p>Mutes every audio output at once, a panic button: {mute?} (default true; false unmutes). For this run only</p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a></p>
+</div></details>
+<details class="entry command" id="audio.outputs"><summary><code class="name">audio.outputs</code><span class="sum">The audio outputs of this machine: name, default, rate, channels, format</span></summary>
+<div class="body">
+<p>The audio outputs of this machine: name, default, rate, channels, format</p>
+</div></details>
+<details class="entry command" id="audio.status"><summary><code class="name">audio.status</code><span class="sum">Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) and          output buses (device, open, error, rate, latency_ms with fill_ms and device_ms, underruns, overruns,          glitches, limiter reduction per node and of the sum, muted)</span></summary>
+<div class="body">
+<p>Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) and          output buses (device, open, error, rate, latency_ms with fill_ms and device_ms, underruns, overruns,          glitches, limiter reduction per node and of the sum, muted)</p>
+<p class="mentions">Mentioned in: <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-setting-up">Audio › Setting up</a></p>
 </div></details>
 </div>
 <div class="group" id="group-blob_track">

@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use penumbra_audio::Hub as AudioHub;
+use penumbra_audio::Outputs as AudioOutputs;
 use penumbra_camera::Hub as CameraHub;
 use penumbra_dmx::Hub as DmxHub;
 use penumbra_dmx::Inputs as DmxInputs;
@@ -44,6 +45,8 @@ pub trait DeviceHub: Send + Sync {
 pub struct Hubs {
     pub osc: Arc<OscShared>,
     pub audio: AudioHub,
+    /// The audio outputs: one bus per device the `out.audio` nodes play on.
+    pub audio_out: AudioOutputs,
     pub dmx: DmxHub,
     pub dmx_in: DmxInputs,
     pub camera: CameraHub,
@@ -66,6 +69,8 @@ impl Hubs {
         Hubs {
             osc: Arc::new(OscShared::new(penumbra_osc::Hub::new(), keyboard.clone(), spacenav.clone())),
             audio: AudioHub::new(),
+            // The engine's own tests play into buses without a device, never on a speaker.
+            audio_out: if cfg!(test) { AudioOutputs::offline(48_000, 2) } else { AudioOutputs::new() },
             dmx: DmxHub::new(),
             dmx_in: DmxInputs::new(),
             camera: CameraHub::new(),
@@ -80,10 +85,11 @@ impl Hubs {
     /// Every hub, in the order they shut down. Recordings come first: when the app closes, the
     /// cook thread has dropped its nodes and every recording is finishing its file, which the
     /// shutdown waits for.
-    pub fn all(&self) -> [&dyn DeviceHub; 10] {
+    pub fn all(&self) -> [&dyn DeviceHub; 11] {
         // Destructured so that a field missing here does not compile.
-        let Hubs { osc, audio, dmx, dmx_in, camera, record, scans, spacenav, keyboard, mouse } = self;
-        [record, osc.as_ref(), audio, dmx, dmx_in, camera, scans, spacenav, keyboard, mouse]
+        let Hubs { osc, audio, audio_out, dmx, dmx_in, camera, record, scans, spacenav, keyboard, mouse } =
+            self;
+        [record, osc.as_ref(), audio, audio_out, dmx, dmx_in, camera, scans, spacenav, keyboard, mouse]
     }
 }
 
@@ -118,6 +124,26 @@ impl DeviceHub for AudioHub {
 
     fn shutdown(&self) {
         AudioHub::shutdown(self);
+    }
+}
+
+impl DeviceHub for AudioOutputs {
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    /// Opens the devices the `out.audio` nodes want; the others fade out and close.
+    fn network_changed(&self, net: &Network, types: &NodeTypes) {
+        self.set_wanted(&penumbra_ops::out::audio::wants(net, types));
+    }
+
+    /// The next project's nodes play anew; what plays now fades out.
+    fn project_closing(&self) {
+        self.set_wanted(&[]);
+    }
+
+    fn shutdown(&self) {
+        AudioOutputs::shutdown(self);
     }
 }
 
@@ -240,6 +266,7 @@ mod tests {
         }
         assert!(cooker.resource::<penumbra_osc::Hub>().is_some());
         assert!(cooker.resource::<AudioHub>().is_some());
+        assert!(cooker.resource::<AudioOutputs>().is_some());
         assert!(cooker.resource::<DmxHub>().is_some());
         assert!(cooker.resource::<DmxInputs>().is_some());
         assert!(cooker.resource::<CameraHub>().is_some());

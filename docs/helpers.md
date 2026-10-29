@@ -338,6 +338,11 @@ What the [audio input](audio.md) is doing:
   (red near clipping).
 - **inputs on this machine** lists the input devices with their format; **list again** after
   plugging one in. Part of a name goes into an `audio.device_in`'s `device`.
+- **mute every output** silences every `out.audio` at once (`audio.mute`).
+- Per output device a line: the device, its rate, the delay (queued plus the device's own),
+  gaps (a frame came late), drops, glitches, whether it is paused, and the most the limiter
+  took off in the last two seconds.
+- **outputs on this machine** lists the names to put into an `out.audio`'s `device`.
 
 ## Show machine
 

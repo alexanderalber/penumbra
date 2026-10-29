@@ -85,6 +85,10 @@ pub struct PlayerStatus {
     pub format: Option<String>,
     /// The device's own buffer: from a callback to its samples reaching the converter, ms.
     pub device_ms: f64,
+    /// The buffer asked of the device (frames; 0: the system's default).
+    pub buffer_frames: u32,
+    /// Frames the device asked for in its last callback.
+    pub callback_frames: usize,
     /// Total delay from a push to the speaker: the queued fill plus the device's buffer, ms.
     pub latency_ms: f64,
     /// Callbacks from the system.
@@ -106,6 +110,8 @@ struct DeviceState {
     channels: u16,
     format: Option<String>,
     device_ms: f64,
+    buffer_frames: u32,
+    callback_frames: usize,
     callbacks: u64,
     opens: u64,
     glitches: u64,
@@ -192,8 +198,22 @@ impl Player {
         lock(&self.shared.engine).settings()
     }
 
+    /// A new latency takes effect at once; a new device buffer reopens the device.
     pub fn set_settings(&self, settings: Settings) {
-        lock(&self.shared.engine).set_settings(settings);
+        let old = {
+            let mut engine = lock(&self.shared.engine);
+            let old = engine.settings();
+            engine.set_settings(settings);
+            old
+        };
+        if old.device_buffer_ms.to_bits() != settings.device_buffer_ms.to_bits() {
+            *lock(&self.shared.failed) = Some("the device buffer changed".to_string());
+        }
+    }
+
+    /// Fades out and stays silent until the next push; not counted as an underrun.
+    pub fn pause(&self) {
+        lock(&self.shared.engine).pause();
     }
 
     pub fn status(&self) -> PlayerStatus {
@@ -208,6 +228,8 @@ impl Player {
             channels: d.channels,
             format: d.format.clone(),
             device_ms: d.device_ms,
+            buffer_frames: d.buffer_frames,
+            callback_frames: d.callback_frames,
             latency_ms: engine.fill_ms + if d.open { d.device_ms } else { 0.0 },
             callbacks: d.callbacks,
             opens: d.opens,
@@ -296,7 +318,7 @@ fn run(s: &Arc<Shared>) {
 
 /// The output device a pattern names: the default for an empty one, else an exact name, else
 /// the first name containing it (case ignored).
-fn find(host: &cpal::Host, pattern: &str) -> Result<cpal::Device, String> {
+pub(crate) fn find(host: &cpal::Host, pattern: &str) -> Result<cpal::Device, String> {
     if pattern.is_empty() {
         return host
             .default_output_device()
@@ -328,6 +350,17 @@ fn open(s: &Arc<Shared>) -> Result<cpal::Stream, String> {
     if !writable(format) {
         return Err(format!("the device wants samples as {format}, which cannot be written"));
     }
+    let mut stream_config = config.config();
+    let buffer_ms = lock(&s.engine).settings().device_buffer_ms;
+    let buffer_frames = if buffer_ms.is_finite() && buffer_ms > 0.0 {
+        // `as`: a few milliseconds of frames, well inside `u32`.
+        (f64::from(rate) * buffer_ms.min(MAX_LATENCY_MS) / 1000.0).round().max(16.0) as u32
+    } else {
+        0
+    };
+    if buffer_frames > 0 {
+        stream_config.buffer_size = cpal::BufferSize::Fixed(buffer_frames);
+    }
     lock(&s.engine).set_device(rate, channels);
     {
         let mut d = lock(&s.device);
@@ -336,6 +369,7 @@ fn open(s: &Arc<Shared>) -> Result<cpal::Stream, String> {
         d.channels = config.channels();
         d.format = Some(format.to_string());
         d.device_ms = 0.0;
+        d.buffer_frames = buffer_frames;
     }
     let data_shared = s.clone();
     let mut scratch = vec![0.0f32; CHUNK_FRAMES * channels];
@@ -351,6 +385,7 @@ fn open(s: &Arc<Shared>) -> Result<cpal::Stream, String> {
             {
                 let mut d = lock(&data_shared.device);
                 d.callbacks += 1;
+                d.callback_frames = data.len() / channels.max(1);
                 // Smoothed: the prediction jitters from callback to callback.
                 d.device_ms =
                     if d.device_ms == 0.0 { buffered } else { d.device_ms + (buffered - d.device_ms) * 0.05 };
@@ -373,7 +408,7 @@ fn open(s: &Arc<Shared>) -> Result<cpal::Stream, String> {
         _ => *lock(&err_shared.failed) = Some(e.to_string()),
     };
     let stream = device
-        .build_output_stream_raw(config.config(), format, on_data, on_error, Some(Duration::from_secs(5)))
+        .build_output_stream_raw(stream_config, format, on_data, on_error, Some(Duration::from_secs(5)))
         .map_err(|e| format!("cannot open the output: {e}"))?;
     stream.play().map_err(|e| format!("cannot start the output: {e}"))?;
     Ok(stream)

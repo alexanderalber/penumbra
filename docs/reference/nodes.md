@@ -1950,7 +1950,27 @@ Outputs:
 
 ## out
 
-[out.dmx](#outdmx), [out.mesh](#outmesh), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
+[out.audio](#outaudio), [out.dmx](#outdmx), [out.mesh](#outmesh), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
+
+### out.audio
+
+Plays sound on a speaker or headphones, always through a limiter that keeps it below -1 dBFS
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `in` (audio): The sound to play: mono plays on every speaker, stereo on left and right
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `device` | text |  |  | Part of the output's name (the menu beside it lists them), e.g. `Speakers`; empty: the system's default output. Several out.audio nodes on one device are added together |
+| `active` | bool | `true` |  | Off: plays nothing, and the device closes when no other node uses it |
+| `level` | float | `0` | -60 to 12 dB (soft) | The volume, in dB: 0 plays the sound as it comes, -6 at half the amplitude. A change glides across one frame. The limiter comes after it |
+| `mute` | bool | `false` |  | Silence, faded across one frame; the device stays open. audio.mute mutes every output at once |
+| `latency` *(more)* | float | `50` | 20 to 200 (soft) | Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns) |
 
 ### out.dmx
 
