@@ -16,6 +16,7 @@ saves into it.)
 | [curl-noise](curl-noise/README.md) | 65 536 sticks drifting through a flow field, simulated on the GPU and drawn instanced | `/out` | |
 | [feedback](feedback/README.md) | a loop that feeds each frame back into the next: trails, zoom, drifting colour | `/show` | |
 | [audio-reactive](audio-reactive/README.md) | sound turned into channels that move the picture: level, kick, bar | `/show` | a microphone |
+| [pendulum-wave](pendulum-wave/README.md) | 100 pendulums drifting apart and back into sync, each plucking a note as it passes the bottom, over a kick | `/out` | speakers or headphones |
 | [blob-tracking](blob-tracking/README.md) | finding and following spots of light, with ids that stay | `/view`, `/track` | |
 | [python-script](python-script/README.md) | a Python script that keeps state: a bouncing ball | `/view` | Python 3.12 or later |
 | [channels-and-pictures](channels-and-pictures/README.md) | a picture turned into channels and back | `/view` | |

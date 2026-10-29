@@ -1,0 +1,16 @@
+// penumbra editor layout: pan and zoom, open sections, editor options. Not part of the project content.
+(
+    version: 1,
+    view: Some((
+        pan: (-40.0, -536.0),
+        zoom: 0.5,
+    )),
+    sections: Some((
+        params: true,
+        viewer: true,
+        changes: true,
+    )),
+    options: Some((
+        chan_bars: true,
+    )),
+)
