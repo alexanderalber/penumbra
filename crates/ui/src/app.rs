@@ -399,6 +399,19 @@ impl PenumbraApp {
                         None => Err(penumbra_core::Error::new("the node is gone")),
                     }
                 }
+                Action::PlayInstrument(node) => {
+                    let net = self.engine.session().doc().snapshot();
+                    match net.path_of(node) {
+                        Some(path) => penumbra_engine::audio::play(&self.engine, &path, 0)
+                            .map(|played| {
+                                if !played {
+                                    self.message = Some((penumbra_engine::audio::PAUSED.to_string(), now));
+                                }
+                            })
+                            .map_err(|e| penumbra_core::Error::new(e.0)),
+                        None => Err(penumbra_core::Error::new("the node is gone")),
+                    }
+                }
                 Action::LearnBackground { node, delay } => {
                     let net = self.engine.session().doc().snapshot();
                     match net.path_of(node) {

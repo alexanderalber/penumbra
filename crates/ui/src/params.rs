@@ -219,6 +219,16 @@ impl ParamPanel {
                 actions.push(Action::RestartVideo(input.node));
             }
         }
+        if node.kind == penumbra_ops::audio::instrument::INSTRUMENT {
+            // A cue like restart, allowed while Claude edits.
+            let r = ui.button("play").on_hover_text(
+                "Plays one note now, as channel 0 of play would. Heard through an out.audio while the show plays (audio.play)",
+            );
+            auto.add("param.play", r.rect, "play");
+            if r.clicked() {
+                actions.push(Action::PlayInstrument(input.node));
+            }
+        }
         if node.kind == penumbra_ops::out::video::VIDEO_OUT {
             record_row(ui, input, node, auto, actions);
         }

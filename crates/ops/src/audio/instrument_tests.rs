@@ -1,11 +1,12 @@
 //! `audio.instrument`: pitch, timing inside the frame, gapless blocks, polyphony, every
-//! preset's level, hostile params; and an ignored test that writes listening files.
+//! preset's level, hostile params, presses from outside the cook; and an ignored test that
+//! writes listening files.
 
 use penumbra_core::{Rate, Value};
 use penumbra_graph::Op;
 
-use super::instrument::INSTRUMENT;
 use super::instrument::voice::PRESETS;
+use super::instrument::{INSTRUMENT, Presses};
 use super::synth::CEILING;
 use super::tests::{F, connect, create, set};
 
@@ -285,6 +286,63 @@ fn every_preset_is_finite_moderate_and_ends() {
         eprintln!("{preset}: 32 notes peak {:.2} dBFS at 0 dB", db(p));
         assert!(p <= CEILING && all.iter().all(|s| s.is_finite()), "{preset}: {p}");
     }
+}
+
+/// A press through [`Presses`] plays one note at the first sample of the next block, with
+/// nothing wired: silent before, the lane's pitch, the same block again on a recook, and
+/// presses of one lane before a block play one note.
+#[test]
+fn a_press_plays_one_note_at_the_next_block_start() {
+    let mut f = F::new(&[create("/i", INSTRUMENT), set("/i.brightness", 0.0), set("/i.decay", 2.0)]);
+    let presses = Presses::new();
+    f.cooker.provide(presses.clone());
+    let id = f.net.resolve(&"/i".parse().unwrap()).unwrap();
+    assert!(!presses.request(id, 0), "not cooked yet");
+    f.block("/i");
+    f.clock.advance(1);
+    assert!(f.block("/i").iter().all(|s| *s == 0.0), "silent before the press");
+    assert!(presses.request(id, 0));
+    // A recook at the same tick renders the block again: it does not take the press.
+    assert!(f.block("/i").iter().all(|s| *s == 0.0));
+    f.clock.advance(1);
+    let b = f.block("/i");
+    assert_eq!(b[0], 0.0);
+    assert!(b[1] != 0.0, "starts at sample 0 of the block");
+    // Again: the same block, the note included.
+    assert_eq!(f.block("/i"), b);
+    // Silence ahead, for the onset search.
+    let mut all = vec![0.0; 2000];
+    all.extend(&b);
+    run(&mut f, "/i", 30, &mut all);
+    assert_eq!(onsets(&all, 2000), [2000], "one note");
+    let c4 = 261.63;
+    assert!(cents(frequency(&all[4400..], c4 * 0.9, c4 * 1.1), c4).abs() < 3.0);
+
+    // Lane 2 plays the third note of C major pentatonic, E4; three presses of it play one note.
+    let mut f = F::new(&[create("/i", INSTRUMENT), set("/i.brightness", 0.0), set("/i.decay", 2.0)]);
+    f.cooker.provide(presses.clone());
+    let id = f.net.resolve(&"/i".parse().unwrap()).unwrap();
+    f.block("/i");
+    let single = {
+        for _ in 0..3 {
+            assert!(presses.request(id, 2));
+        }
+        let mut all = Vec::new();
+        run(&mut f, "/i", 30, &mut all);
+        all
+    };
+    let e4 = 329.63;
+    assert!(cents(frequency(&single[2400..], e4 * 0.9, e4 * 1.1), e4).abs() < 3.0);
+    assert!(peak(&single) < 0.5, "one note, not three stacked: {}", peak(&single));
+
+    // A lane far out of range: no note, no harm.
+    presses.request(id, usize::MAX);
+    let mut more = Vec::new();
+    run(&mut f, "/i", 3, &mut more);
+    assert!(more.iter().all(|s| s.is_finite() && s.abs() <= CEILING));
+    // Forgotten nodes take no presses.
+    presses.prune(|_| false);
+    assert!(!presses.request(id, 0));
 }
 
 /// Hostile params: extreme rates and pitches, a huge spread over 128 lanes, an empty name.

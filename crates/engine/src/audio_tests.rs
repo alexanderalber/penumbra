@@ -285,3 +285,53 @@ fn node_info_and_kinds_say_when_a_param_does_nothing() {
     let note = kinds["kinds"][0]["params"].as_array().unwrap().iter().find(|p| p["name"] == "note").unwrap();
     assert_eq!(note["applies"][0]["choice"]["param"], "preset", "{note}");
 }
+
+/// `audio.play`: an instrument with nothing wired plays one note through `out.audio` from the
+/// next block on; paused, the press is dropped and says so; hostile args are errors.
+#[test]
+fn audio_play_presses_an_instrument() {
+    let f = Fixture::new("audio_play");
+    let out = f.engine.audio_out().clone();
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/i", "kind": "audio.instrument", "params": {"decay": 0.02}},
+            {"op": "create", "path": "/out", "kind": "out.audio"},
+            {"op": "connect", "from": "/i", "to": "/out"},
+            {"op": "create", "path": "/o", "kind": "audio.oscillator"},
+        ]}),
+    );
+    let len = || out.pushed("").first().map_or(0, Vec::len);
+    eventually("the bus to get blocks", || len() > 48_000 / 10);
+    let before = len();
+    assert!(out.pushed("")[0].iter().all(|s| *s == 0.0), "silent before the press");
+    let r = f.call("audio.play", json!({"path": "/i"}));
+    assert_eq!((r["played"].as_bool(), r["lane"].as_u64()), (Some(true), Some(0)), "{r}");
+    eventually("the note", || out.pushed("")[0].iter().skip(before).any(|s| *s != 0.0));
+    let start = out.pushed("")[0].iter().position(|s| *s != 0.0).unwrap_or(0);
+    assert!(start >= before.saturating_sub(800), "the note starts after the press: {start} < {before}");
+    // Another lane and a lane far out of range are fine.
+    assert_eq!(f.call("audio.play", json!({"path": "/i", "lane": 3}))["played"], true);
+    assert_eq!(f.call("audio.play", json!({"path": "/i", "lane": 1_000_000_000_u64}))["played"], true);
+    // Let the notes die away (a short pluck rings about 0.1 s).
+    std::thread::sleep(Duration::from_millis(600));
+
+    // Paused: nothing is heard, and the press does not sound later.
+    f.call("cook.play", json!({"playing": false}));
+    let r = f.call("audio.play", json!({"path": "/i"}));
+    assert_eq!(r["played"], false, "{r}");
+    assert!(r["message"].as_str().unwrap_or_default().contains("paused"), "{r}");
+    let resumed = len();
+    f.call("cook.play", json!({"playing": true}));
+    eventually("half a second after resuming", || len() > resumed + 24_000);
+    let after = &out.pushed("")[0][resumed..];
+    assert!(after.iter().all(|s| *s == 0.0), "a press while paused is dropped");
+
+    // Wrong kind, no node, hostile args.
+    assert!(f.fail("audio.play", json!({"path": "/o"})).contains("not an audio.instrument"));
+    assert!(f.fail("audio.play", json!({"path": "/nope"})).contains("no node"));
+    f.fail("audio.play", json!({}));
+    f.fail("audio.play", json!({"path": "/i", "lane": -1}));
+    f.fail("audio.play", json!({"path": "/i", "lane": 1e300}));
+    f.fail("audio.play", json!({"path": "/i", "lane": "x", "extra": 1}));
+}

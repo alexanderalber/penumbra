@@ -113,6 +113,8 @@ pub enum Action {
     },
     /// A `tex.video_file` starts its clip over (`video_file.restart`).
     RestartVideo(NodeId),
+    /// An `audio.instrument` plays one note on lane 0 at its next frame (`audio.play`).
+    PlayInstrument(NodeId),
     /// The outlines of `from`'s picture (a path, or a name beside `node`) become `poly` lines
     /// in the `tex.shapes` `node` (`shapes.trace`).
     Trace {

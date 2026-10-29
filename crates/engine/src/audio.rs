@@ -3,18 +3,20 @@
 //! `out.audio` nodes ([`penumbra_ops::out::audio::wants`]).
 //!
 //! Commands: `audio.devices`, `audio.outputs`, `audio.status`, `audio.config`, `audio.mute`,
-//! `audio.measure_latency`.
+//! `audio.measure_latency`, `audio.play`.
 
 use std::sync::Arc;
 
 use penumbra_audio::capture::{self, Config};
 use penumbra_audio::measure;
 use penumbra_audio::playback::{self, Settings};
+use penumbra_core::NodePath;
+use penumbra_ops::audio::instrument::{INSTRUMENT, Presses};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, Registry, args};
-use crate::commands::engine_commands;
+use crate::commands::{engine_commands, require};
 use crate::engine::Engine;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
@@ -43,6 +45,12 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         audio_mute,
     );
     add(
+        "audio.play",
+        "An audio.instrument plays one note at its next frame, as if channel `lane` of play had crossed threshold \
+         there; wired or not:{path, lane? (default 0)}. While the show is paused nothing sounds and the press is dropped",
+        audio_play,
+    );
+    add(
         "audio.measure_latency",
         "Plays quiet clicks (at most -20 dBFS) on an output and finds them on an input: {output?, input?,          channels?, clicks?, level?, latency?, buffer?}; input `loopback:<output>` records what the output plays.          Reports ms from push to arrival per channel, and an output estimate. Takes some seconds",
         audio_measure_latency,
@@ -64,6 +72,44 @@ fn audio_mute(e: &Engine, p: &Json) -> CmdResult<Json> {
     let out = e.audio_out();
     out.set_muted(a.mute.unwrap_or(true));
     Ok(json!({ "muted": out.muted() }))
+}
+
+fn audio_play(e: &Engine, p: &Json) -> CmdResult<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        path: NodePath,
+        #[serde(default)]
+        lane: usize,
+    }
+    let a: A = args(p)?;
+    let played = play(e, &a.path, a.lane)?;
+    let message = (!played).then_some(PAUSED);
+    Ok(json!({"path": a.path.to_string(), "lane": a.lane, "played": played, "message": message}))
+}
+
+/// What `audio.play` says when the show is paused.
+pub const PAUSED: &str = "the show is paused, so nothing is heard: the press was dropped";
+
+/// `audio.play`: the `audio.instrument` at `path` plays one note on lane `lane` at the start
+/// of its next block. False when the show is paused: then the press is dropped, so it does not
+/// sound later when the show plays again.
+pub fn play(e: &Engine, path: &NodePath, lane: usize) -> CmdResult<bool> {
+    let net = e.session().doc().snapshot();
+    let id = require(&net, path)?;
+    let kind = net.node(id).map(|n| n.kind.clone()).unwrap_or_default();
+    if kind != INSTRUMENT {
+        return Err(CommandError(format!("{path} is a {kind}, not an {INSTRUMENT}")));
+    }
+    let asked = e.on_cook(move |st| {
+        if !st.clock.is_playing() {
+            return Some(false);
+        }
+        st.cooker.resource::<Presses>().is_some_and(|p| p.request(id, lane)).then_some(true)
+    })?;
+    asked.ok_or_else(|| {
+        CommandError(format!("{path} has not cooked yet: wire its out into an out.audio to hear it"))
+    })
 }
 
 fn audio_measure_latency(_e: &Engine, p: &Json) -> CmdResult<Json> {

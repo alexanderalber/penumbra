@@ -60,14 +60,17 @@ Two nodes make music from channels, with no sound design needed. Both play in a 
 `scale`, so any notes together sound fine. The default is C major pentatonic.
 
 **`audio.instrument`** plays one-shot sounds that fade by themselves: `pluck`, `mallet`,
-`bell`, `kick`, `hat` and `sweep` (a noise riser). Wire channels into `play`. Each channel is
+`bell`, `kick` and `hat`. Wire channels into `play`. Each channel is
 a lane that starts a note when its value crosses `threshold` (0). `trigger` picks the
 direction: `up` for pulses such as an onset or a key, `both` for a swinging value, which plays
 at every pass. The note starts at the exact sample of the crossing, interpolated between
 frames. A tracked position or an lfo lands within a fraction of a millisecond. A pulse that
 only knows its frame starts at the frame's first sample. `decay` sets how long a note rings,
 `brightness` how sharp it sounds. `voices` (32) limits the notes at once; one more fades out
-the oldest in 5 ms.
+the oldest in 5 ms. To try a sound without wiring anything, press `play` in the params, or run
+`audio.play {path, lane?}`. One note plays at the next frame, as lane 0 (or `lane`) would. The
+note is heard only through an `out.audio` while the show plays. A press while paused is
+dropped.
 
 **`audio.ambience`** holds a sound without notes: `drone`, `pad`, `noise` (like wind),
 `water` (a stream) or `rain`. Pitch, `brightness`, `swarm`, `density` and `level` follow their
@@ -95,7 +98,7 @@ loudness stays about the same across `swarm`.
 **Pitch.** `note` 0 plays the root in `octave` (4 holds middle C; A4 is 440 Hz), `note` 1
 plays `range` octaves higher (2). `note` is rounded to the nearest note of the scale. Lane `i`
 adds `i * spread` notes of the scale: with key F, octave 3 and spread 1, ten lanes play F3 G3
-A3 C4 D4 F4 G4 A4 C5 D5. Scale `off` gives free pitch for a theremin. `kick`, `hat`, `sweep`,
+A3 C4 D4 F4 G4 A4 C5 D5. Scale `off` gives free pitch for a theremin. `kick`, `hat`,
 `noise`, `water` and `rain` ignore pitch.
 
 **Level.** `level` is -12 dB by default. One note then peaks around -13 to -16 dBFS. A pile of

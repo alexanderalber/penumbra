@@ -8,6 +8,10 @@
 //! ([`super::pitch`]). Every note fades by itself; the voices are in [`voice`]. When more notes
 //! sound than `voices` allows, the oldest fades out in 5 ms. Nothing wired: silence.
 //!
+//! A press through [`Presses`] (`audio.play`, the panel's play button) plays a note as if its
+//! lane had crossed at the first sample of the next block, wired or not. Presses of the same
+//! lane before that block play one note.
+//!
 //! The block contract is the oscillator's: `Again` renders the same block again from the state
 //! at its start (voices and lane values), `Continue` goes on from the end, `Fresh` drops every
 //! voice and the lanes' history, so no note comes from a value seen before a seek or a gap.
@@ -15,8 +19,9 @@
 pub mod voice;
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
-use penumbra_core::{Channel, Chans, Error, Name, ParamSpec};
+use penumbra_core::{Channel, Chans, Error, Name, NodeId, ParamSpec, lock};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FnNodeType, NodeDesc, NodeTypes, Operator,
 };
@@ -31,6 +36,45 @@ use super::synth::{gain_of, soft_clip};
 pub const INSTRUMENT: &str = "audio.instrument";
 /// Most voices sounding at once.
 pub const MAX_VOICES: usize = 128;
+/// Most different lanes pressed before one block; more presses are dropped.
+const MAX_PRESSES: usize = 64;
+
+/// Presses from outside the cook (`audio.play`, the panel's play button), by node: the lanes
+/// that start a note at the node's next block. Provided by the engine as a cooker resource;
+/// cheap to clone.
+#[derive(Clone, Default)]
+pub struct Presses(Arc<Mutex<BTreeMap<NodeId, Vec<usize>>>>);
+
+impl Presses {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Lane `lane` of the node starts a note at the node's next block. False when the node has
+    /// not cooked yet.
+    pub fn request(&self, node: NodeId, lane: usize) -> bool {
+        let mut entries = lock(&self.0);
+        let Some(lanes) = entries.get_mut(&node) else { return false };
+        if !lanes.contains(&lane) && lanes.len() < MAX_PRESSES {
+            lanes.push(lane);
+        }
+        true
+    }
+
+    /// Forgets nodes not in `keep`.
+    pub fn prune(&self, keep: impl Fn(NodeId) -> bool) {
+        lock(&self.0).retain(|id, _| keep(*id));
+    }
+
+    /// Registers the node; with `take`, moves its pending presses to `out`.
+    fn check_in(&self, node: NodeId, take: bool, out: &mut Vec<usize>) {
+        let mut entries = lock(&self.0);
+        let lanes = entries.entry(node).or_default();
+        if take {
+            out.append(lanes);
+        }
+    }
+}
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let pitched: Vec<&str> = PRESETS.into_iter().filter(|p| Preset::parse(p).pitched()).collect();
@@ -123,6 +167,8 @@ struct Instrument {
     /// Scratch: the crossings of one lane, the note-ons of the block.
     crossings: Vec<Crossing>,
     events: Vec<Event>,
+    /// The lanes pressed at the start of the current block, kept for a render `Again`.
+    pressed: Vec<usize>,
 }
 
 impl Operator for Instrument {
@@ -151,6 +197,14 @@ impl Operator for Instrument {
         };
         self.start = st.clone();
         let n = span.len();
+        // A new block takes the presses made since the last; a block rendered again keeps its own.
+        let fresh_block = span.step != Step::Again;
+        if fresh_block {
+            self.pressed.clear();
+        }
+        if let Some(presses) = cx.resource::<Presses>() {
+            presses.check_in(cx.node(), fresh_block, &mut self.pressed);
+        }
         lanes::events(
             cx.input_as::<Chans>(0),
             &mut st.lanes,
@@ -162,6 +216,12 @@ impl Operator for Instrument {
             &mut self.crossings,
             &mut self.events,
         );
+        if !self.pressed.is_empty() {
+            for &lane in &self.pressed {
+                self.events.push(Event { sample: span.start, lane, rising: true });
+            }
+            self.events.sort();
+        }
 
         let mut out = vec![0.0; n];
         let mut at = 0usize;
