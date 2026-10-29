@@ -58,6 +58,7 @@ use std::sync::Arc;
 
 pub use command::{Command, CommandError, FnCommand, Registry};
 pub use engine::{CookState, Engine, OutputFrame, PassStats, ResetReport, ViewFrame, ViewRequest};
+pub use penumbra_audio::keep_off_devices;
 
 /// Version of this build, reported by `ping`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

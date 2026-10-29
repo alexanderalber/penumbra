@@ -14,7 +14,9 @@
 //! requests (see `penumbra_ui::headless`), prints each reply and exits; `ui.screenshot` in
 //! the script saves what the window would show. Without `--project` it works on a fresh copy
 //! of the demo in the temp directory, so the real demo project is left alone. `--software`
-//! renders on WARP instead of the GPU, `--size WxH` sets the window size in points.
+//! renders on WARP instead of the GPU, `--size WxH` sets the window size in points. A headless
+//! run plays no sound on a device (its frames come too slowly for a speaker); `--speakers` lets
+//! `out.audio` open its devices after all.
 //!
 //! When the GPU device is lost or the editor window fails, the app records it in
 //! `gpu-lost.json` in its data directory, shows a message box (not with
@@ -75,12 +77,18 @@ struct Args {
     software: bool,
     size: Option<[f32; 2]>,
     fresh: bool,
+    /// A headless run may play on the output devices.
+    speakers: bool,
     /// Started again by show mode after this process crashed (`--after-crash-of PID`).
     after_crash_of: Option<u32>,
 }
 
 fn run() -> Result<(), String> {
     let args = parse_args(std::env::args().skip(1))?;
+    if args.headless.is_some() && !args.speakers {
+        // Before the project opens, so no bus ever opens a device.
+        penumbra_engine::keep_off_devices();
+    }
     if let Some(pid) = args.after_crash_of {
         // The crashed process still holds the port and the output windows until it is gone.
         log::info!("started again by show mode; waiting for process {pid} to end");
@@ -333,6 +341,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
         software: false,
         size: None,
         fresh: false,
+        speakers: false,
         after_crash_of: None,
     };
     while let Some(arg) = args.next() {
@@ -349,6 +358,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             }
             "--software" => parsed.software = true,
             "--fresh" => parsed.fresh = true,
+            "--speakers" => parsed.speakers = true,
             "--after-crash-of" => {
                 let value = args.next().ok_or("--after-crash-of needs a process id")?;
                 parsed.after_crash_of = Some(
@@ -361,7 +371,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
             other => {
                 return Err(format!(
                     "unknown argument `{other}`; usage: penumbra [--project DIR] [--port N] [--fresh] \
-                     [--headless SCRIPT [--software] [--size WxH]]"
+                     [--headless SCRIPT [--software] [--size WxH] [--speakers]]"
                 ));
             }
         }

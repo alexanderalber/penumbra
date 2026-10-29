@@ -17,7 +17,8 @@
 //!   is dropped a little later, which closes the device on its own thread.
 //!
 //! [`Outputs::offline`] makes buses without a device, for tests: what each one was pushed is
-//! kept, and [`Outputs::pull`] plays it through the bus's [`Engine`].
+//! kept, and [`Outputs::pull`] plays it through the bus's [`Engine`]. [`keep_off_devices`] makes
+//! every bus of the process such a bus, for runs without a window that must not reach a speaker.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,6 +39,15 @@ pub const IDLE_PASSES: u32 = 2;
 const CLOSE_AFTER: Duration = Duration::from_millis(150);
 /// Passes without a block after which a lane is forgotten (a node that stopped).
 const STALE_PASSES: u64 = 60;
+/// Set by [`keep_off_devices`].
+static OFF_DEVICES: AtomicBool = AtomicBool::new(false);
+
+/// From now on every bus opened plays into nothing, as an offline bus at 48 kHz stereo, instead
+/// of a device. For runs without a window: their frames come slowly and irregularly, so a
+/// speaker would only stutter.
+pub fn keep_off_devices() {
+    OFF_DEVICES.store(true, Ordering::Relaxed);
+}
 /// Most samples of history an offline bus keeps per channel (tests).
 const HISTORY: usize = 48_000 * 120;
 
@@ -356,7 +366,9 @@ impl Outputs {
     }
 
     fn sink(&self, key: &str, settings: Settings) -> Sink {
-        match self.inner.offline {
+        let offline =
+            self.inner.offline.or_else(|| OFF_DEVICES.load(Ordering::Relaxed).then_some((48_000, 2)));
+        match offline {
             Some((rate, channels)) => {
                 let mut engine = Box::new(Engine::new(settings));
                 engine.set_device(rate, channels);

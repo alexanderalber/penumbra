@@ -109,7 +109,7 @@ Commands that only look, `cook.play` and OSC/DMX keep working.
 ## Headless runs
 
 ```
-cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH]
+cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--speakers]
 ```
 
 runs the real UI without a window and feeds it a script: one request per line
@@ -126,6 +126,8 @@ Each reply is printed.
 Without `--project` it works on a fresh copy of the demo in the temp directory, so no project
 is touched. `--software` renders on a software adapter (WARP on Windows): slow but the same on
 every machine. `--size` is the window size in points.
+A headless run plays no sound: `out.audio` plays into nothing, since frames without a window
+come too slowly and unevenly for a speaker. `--speakers` lets it open its devices after all.
 
 ## Environment variables
 
