@@ -32,7 +32,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .extra_params(),
         || Box::new(Constant { rows: CONSTANT_MAX_ROWS }) as Box<dyn Operator>,
     ))?;
-    generator(
+    phased(
         types,
         NodeDesc::new("chan.lfo", "A number that swings up and down by itself (sine, triangle, square, saw): regular motion, pulsing, blinking")
             .param(
@@ -65,9 +65,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 "Shift along the wave, in waves: 0.25 is a quarter wave ahead. Sets lfos of one rate apart",
             ))
             .time_dependent(),
-        |cx| {
-            let cycles = cx.time().seconds() * cx.float("rate")? + cx.float("phase")?;
-            let x = cycles.rem_euclid(1.0);
+        "rate",
+        |cx, cycles| {
+            let x = (cycles + cx.float("phase")?).rem_euclid(1.0);
             let wave = match cx.text("shape")? {
                 "triangle" => 1.0 - 4.0 * (x - 0.5).abs(),
                 "square" => {
@@ -83,7 +83,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             Ok(cx.float("offset")? + cx.float("amplitude")? * wave)
         },
     )?;
-    generator(
+    phased(
         types,
         NodeDesc::new(
             "chan.noise",
@@ -124,8 +124,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("Strength of each octave relative to the one before; higher is more jittery"),
         )
         .time_dependent(),
-        |cx| {
-            let t = cx.time().seconds() * cx.float("frequency")?;
+        "frequency",
+        |cx, t| {
             let octaves = u32::try_from(cx.int("octaves")?.clamp(1, 8)).unwrap_or(1);
             let n = fbm(t, cx.int("seed")?, octaves, cx.float("roughness")?);
             Ok(cx.float("offset")? + cx.float("amplitude")? * n)
@@ -622,24 +622,77 @@ fn out(chans: Chans) -> Result<Cooked, CookError> {
     Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, chans)]))
 }
 
-/// A stateless node computing one number per frame into channel `name`.
-struct Generator<F>(F);
+/// The longest step between two cooks that a [`Cycles`] runs across; a longer one (the node was
+/// not cooked for a while) starts over at the steady position.
+const MAX_CYCLES_STEP: f64 = 0.5;
 
-impl<F: Fn(&CookContext<'_>) -> Result<f64, CookError> + Send> Operator for Generator<F> {
+/// How far a generator has run along its wave, in waves (or noise cells), for a rate that may
+/// change while it runs. Each cook advances it by the rate times the time since the last cook,
+/// so a new rate bends the wave instead of jumping. It starts at `time * rate`, the position a
+/// steady rate gives: on the first cook, after a seek backwards, after a step of more than
+/// [`MAX_CYCLES_STEP`]. A recook at the same time (paused) keeps the position. For a steady rate it gives
+/// `time * rate`, so a render from the start matches a live run.
+#[derive(Default)]
+struct Cycles {
+    /// The time and rate of the last cook, and how far the position there was ahead of
+    /// `time * rate`. Kept as that offset, so a steady rate gives the formula exactly, without
+    /// the rounding a sum of steps would gather.
+    last: Option<(Tick, f64, f64)>,
+}
+
+impl Cycles {
+    fn advance(&mut self, now: Tick, rate: f64) -> f64 {
+        let offset = match self.last {
+            // Recooked at the same time (paused): the position stays where it was, whatever
+            // changed, so a paused edit does not jump.
+            Some((at, last_rate, offset)) if now.0 == at.0 => {
+                at.seconds() * last_rate + offset - now.seconds() * rate
+            }
+            Some((at, last_rate, offset))
+                if now.0 > at.0 && Tick(now.0 - at.0).seconds() <= MAX_CYCLES_STEP =>
+            {
+                if last_rate == rate {
+                    offset
+                } else {
+                    let then = at.seconds() * last_rate + offset;
+                    then + rate * Tick(now.0 - at.0).seconds() - now.seconds() * rate
+                }
+            }
+            _ => 0.0,
+        };
+        let offset = if offset.is_finite() { offset } else { 0.0 };
+        self.last = Some((now, rate, offset));
+        now.seconds() * rate + offset
+    }
+}
+
+/// A generator driven by a rate param: computes one number per frame from the position along
+/// its wave ([`Cycles`]) into channel `name`.
+struct Phased<F> {
+    rate: &'static str,
+    cycles: Cycles,
+    f: F,
+}
+
+impl<F: Fn(&CookContext<'_>, f64) -> Result<f64, CookError> + Send> Operator for Phased<F> {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let v = (self.0)(cx)?;
+        let cycles = self.cycles.advance(cx.time().tick, cx.float(self.rate)?);
+        let v = (self.f)(cx, cycles)?;
         let name = Name::new(cx.text("name")?).map_err(|e| e.context("`name`"))?;
         out(Chans::single(name, v, cx.rate().as_f64())?)
     }
 }
 
-fn generator<F>(types: &mut NodeTypes, desc: NodeDesc, f: F) -> Result<(), Error>
+/// Registers a [`Phased`] generator whose speed is the float param `rate`.
+fn phased<F>(types: &mut NodeTypes, desc: NodeDesc, rate: &'static str, f: F) -> Result<(), Error>
 where
-    F: Fn(&CookContext<'_>) -> Result<f64, CookError> + Clone + Send + Sync + 'static,
+    F: Fn(&CookContext<'_>, f64) -> Result<f64, CookError> + Clone + Send + Sync + 'static,
 {
     let mut desc = desc.output("out", DataKind::Chan);
     desc.params.push(name_param());
-    types.register(FnNodeType::new(desc, move || Box::new(Generator(f.clone())) as Box<dyn Operator>))
+    types.register(FnNodeType::new(desc, move || {
+        Box::new(Phased { rate, cycles: Cycles::default(), f: f.clone() }) as Box<dyn Operator>
+    }))
 }
 
 /// 1D gradient noise in about -1..1, integer hashes only (deterministic everywhere).
@@ -1147,6 +1200,61 @@ mod tests {
         let c = f.chans("/m");
         assert_eq!(c.names().map(|n| n.as_str()).collect::<Vec<_>>(), ["value"]);
         assert_eq!(c.rate(), 60.0);
+    }
+
+    #[test]
+    fn lfo_bends_on_a_rate_change_and_starts_over_on_a_seek() {
+        let types = builtin_types().unwrap();
+        let mut f = F::new(&[create("/lfo", "chan.lfo"), set("/lfo.shape", "saw"), set("/lfo.rate", 0.5)]);
+        // A steady rate gives the old formula: 0.5 Hz at frame k is k / 120 waves.
+        let saw = |cycles: f64| 2.0 * cycles.rem_euclid(1.0) - 1.0;
+        for k in 1..=30 {
+            f.clock.advance(1);
+            assert!((f.value("/lfo") - saw(k as f64 / 120.0)).abs() < 1e-9, "frame {k}");
+        }
+        // Four times the rate: the next step is four steps of the old rate, not a jump to the
+        // value that rate gives at this time.
+        let before = f.value("/lfo");
+        f.net = Arc::new(f.net.apply(&types, &[set("/lfo.rate", 2.0)]).unwrap().network);
+        f.clock.advance(1);
+        let after = f.value("/lfo");
+        let step = 2.0 * 2.0 / 60.0;
+        assert!((after - before - step).abs() < 1e-9, "{before} -> {after}");
+        // A seek back starts over at time * rate.
+        f.clock.seek(10);
+        assert!((f.value("/lfo") - saw(10.0 * 2.0 / 60.0)).abs() < 1e-9);
+        // A phase change shifts at once.
+        f.net = Arc::new(f.net.apply(&types, &[set("/lfo.phase", 0.25)]).unwrap().network);
+        f.clock.advance(1);
+        assert!((f.value("/lfo") - saw(11.0 * 2.0 / 60.0 + 0.25)).abs() < 1e-9);
+        // Paused, a recook at the same time keeps the value, whatever changed.
+        f.net = Arc::new(f.net.apply(&types, &[set("/lfo.rate", 1.0)]).unwrap().network);
+        assert!((f.value("/lfo") - saw(11.0 * 2.0 / 60.0 + 0.25)).abs() < 1e-9);
+        // Running on, it continues from there at the new rate.
+        f.clock.advance(1);
+        assert!((f.value("/lfo") - saw(11.0 * 2.0 / 60.0 + 1.0 / 60.0 + 0.25)).abs() < 1e-9);
+        // A jump of more than half a second forward starts over too.
+        f.clock.advance(60);
+        assert!((f.value("/lfo") - saw(72.0 / 60.0 + 0.25)).abs() < 1e-9);
+    }
+
+    #[test]
+    fn noise_frequency_change_keeps_the_value_continuous() {
+        let types = builtin_types().unwrap();
+        let mut f = F::new(&[create("/n", "chan.noise"), set("/n.frequency", 0.5)]);
+        let mut g = F::new(&[create("/n", "chan.noise"), set("/n.frequency", 0.5)]);
+        f.clock.advance(120);
+        f.value("/n");
+        f.clock.advance(1);
+        let before = f.value("/n");
+        f.net = Arc::new(f.net.apply(&types, &[set("/n.frequency", 20.0)]).unwrap().network);
+        f.clock.advance(1);
+        let after = f.value("/n");
+        // The position runs on by 20 Hz times one frame from where 0.5 Hz left it.
+        let want = super::fbm(121.0 / 60.0 * 0.5 + 20.0 / 60.0, 0, 2, 0.5);
+        assert!((after - want).abs() < 1e-9, "{before} -> {after}, want {want}");
+        g.clock.advance(121);
+        assert_eq!(g.value("/n"), before, "a steady frequency matches a fresh run");
     }
 
     #[test]
