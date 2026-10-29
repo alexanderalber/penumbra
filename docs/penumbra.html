@@ -648,9 +648,18 @@ water      15
 </div></details>
 <details class="entry guide" id="audio"><summary><span class="name">Audio</span></summary>
 <div class="body">
-<p>Two nodes make a show react to sound: <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> reads an input device, and <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> turns what it hears into channels that params can be bound to.</p>
+<p><a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> reads an input device. Three nodes turn what it hears into channels that params can be bound to:</p>
+<ul>
+<li><a class="ref" href="#chan.audio_envelope"><code>chan.audio_envelope</code></a> for loudness: one number per channel, how loud it is now.
+</li>
+<li><a class="ref" href="#chan.audio_spectrum"><code>chan.audio_spectrum</code></a> for frequency bands: the spectrum as numbers and as a texture.
+</li>
+<li><a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> for music: beat, bar and tempo, with levels and hits.
+</li>
+</ul>
+<p>The energy of one band is an <a class="ref" href="#audio.filter"><code>audio.filter</code></a> (<code>bandpass</code>) into a <a class="ref" href="#chan.audio_envelope"><code>chan.audio_envelope</code></a>.</p>
 <h3 id="audio-sound-is-its-own-family">Sound is its own family</h3>
-<p>Sound travels on cyan wires of its own kind, <code>audio</code>. A <code>chan</code> wire carries values: its last sample is the value now. An <code>audio</code> wire carries a stream: each frame's block of samples continues the block before, so every sample counts. The two kinds do not connect. <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> is the bridge from sound to channels that params can be bound to.</p>
+<p>Sound travels on cyan wires of its own kind, <code>audio</code>. A <code>chan</code> wire carries values: its last sample is the value now. An <code>audio</code> wire carries a stream: each frame's block of samples continues the block before, so every sample counts. The two kinds do not connect. <a class="ref" href="#chan.audio_envelope"><code>chan.audio_envelope</code></a>, <a class="ref" href="#chan.audio_spectrum"><code>chan.audio_spectrum</code></a> and <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> are the bridges from sound to channels that params can be bound to.</p>
 <ul>
 <li><a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> reads a microphone or an audio interface.
 </li>
@@ -686,6 +695,17 @@ water      15
 <p><strong>Swarm.</strong> <code>swarm</code> works with <code>drone</code> and <code>pad</code>. At 0 every tone sits on its note. Above 0 each tone becomes eight voices whose pitches wander slowly at random around the note. 0.2 sounds like a chorus. At 1 the voices roam up to half an octave either side, and the chord dissolves into a moving cloud. Turn <code>swarm</code> back to 0 and every voice glides onto its note. Bind <code>swarm</code> to movement: people moving make a cloud, and the chord comes back when they stand still. The loudness stays about the same across <code>swarm</code>.</p>
 <p><strong>Pitch.</strong> <code>note</code> 0 plays the root in <code>octave</code> (4 holds middle C; A4 is 440 Hz), <code>note</code> 1 plays <code>range</code> octaves higher (2). <code>note</code> is rounded to the nearest note of the scale. Lane <code>i</code> adds <code>i * spread</code> notes of the scale: with key F, octave 3 and spread 1, ten lanes play F3 G3 A3 C4 D4 F4 G4 A4 C5 D5. Scale <code>off</code> gives free pitch for a theremin. <code>kick</code>, <code>hat</code>, <code>noise</code>, <code>water</code> and <code>rain</code> ignore pitch.</p>
 <p><strong>Level.</strong> <code>level</code> is -12 dB by default. One note then peaks around -13 to -16 dBFS. A pile of notes bends softly below full scale instead of clipping. Every note has velocity 1.</p>
+<h3 id="audio-loudness">Loudness</h3>
+<p><a class="ref" href="#chan.audio_envelope"><code>chan.audio_envelope</code></a> gives one channel per sound channel, with the same names (<code>ch1</code>, <code>ch2</code>, ...). Its value is how loud that channel is now.</p>
+<p><strong>Detect.</strong> <code>rms</code> (the default) averages the power: loudness as heard. A sine at -20 dBFS reads -23 dB. <code>peak</code> follows the waveform's crests, as a peak meter: the same sine reads -20 dB.</p>
+<p><strong>Attack and release.</strong> <code>attack</code> (0.01 s) is how fast the value rises when the sound gets louder: about two thirds of the way in that time. <code>release</code> (0.2 s) is how slowly it falls: to about a third in that time. A long release holds each hit long enough for the eye.</p>
+<p><strong>Unit.</strong> <code>linear</code> (the default) is the amplitude: 1 is full scale, -20 dBFS is 0.1. <code>db</code> is dBFS. <code>level</code> maps <code>floor</code> to 0 and full scale to 1, ready to drive a param. Quieter than <code>floor</code> (-60 dB) counts as silence: 0 in <code>linear</code> and <code>level</code>, the floor itself in <code>db</code>. There is no normalising: a quiet microphone reads quiet. <a class="ref" href="#chan.math"><code>chan.math</code></a> scales the value.</p>
+<p>Every sample counts, at any sample rate. A device that delivered nothing for a frame does not count its last block twice.</p>
+<h3 id="audio-spectrum">Spectrum</h3>
+<p><a class="ref" href="#chan.audio_spectrum"><code>chan.audio_spectrum</code></a> measures how loud each frequency band is now. <code>bands</code> (32, from 4 to 512) run from <code>min</code> (30 Hz) to <code>max</code> (16 kHz). With <code>spacing</code> <code>log</code> (the default) each band is the same share of an octave, as the ear hears; <code>linear</code> gives each the same width in Hz. A <code>max</code> above half the sample rate ends there, with a warning. <code>channel</code> picks one channel; empty mixes all.</p>
+<p><strong>Values.</strong> <code>unit</code> is <code>level</code> by default: 0 at <code>floor</code> (-60 dB), 1 at full scale. <code>linear</code> and <code>db</code> are as for the envelope: a sine at -20 dBFS reads 0.1 or -20 dB in its band. A band rises over <code>attack</code> (0 s, at once) and falls over <code>release</code> (0.2 s).</p>
+<p><strong>Outputs.</strong> <code>out</code> is one channel, <code>spectrum</code>, whose samples are the bands, low to high. The viewer draws it as a curve over the band number. <code>texture</code> is the same numbers as a picture, <code>bands</code> pixels wide, in grey. <code>history</code> (1) sets its rows. With more rows, row 0 at the top is now, and every new block of sound moves the older rows down by one: a scrolling spectrogram. In a shader, <code>uv.x</code> is the frequency band and <code>uv.y</code> how long ago. The texture is made only while something reads it; its rows start empty when it is read again.</p>
+<p><strong>Resolution.</strong> Each frame looks at the newest 11 to 85 ms of sound (512 to 4096 samples at 48 kHz): more for narrow bands, less for wide ones. Bands below about 200 Hz are narrower than that resolution with 32 log bands. A tone there spreads into its neighbours, and with many bands neighbouring low bands repeat one value.</p>
 <h3 id="audio-setting-up">Setting up</h3>
 <ol>
 <li>Add an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> (Tab &gt; audio &gt; device_in). With <code>device</code> empty it reads the system's default input; the empty <code>device</code> box names that device in grey (hover the box for the device a typed name picked). <a class="ref" href="#audio.status"><code>audio.status</code></a> names it too. The <code>...</code> menu beside <code>device</code> lists the inputs of this machine; part of a name typed in works too, e.g. <code>Focusrite</code>. The <a href="#helpers-audio">Helpers window</a> shows a level meter per channel. The device is opened in shared mode, so other programs can use it too.
@@ -3253,7 +3273,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_analysis"><summary><code class="name">chan.audio_analysis</code><span class="sum">Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</span></summary>
 <div class="body">
 <p>Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</p>
@@ -3292,6 +3312,63 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+</div></details>
+<details class="entry node" id="chan.audio_envelope"><summary><code class="name">chan.audio_envelope</code><span class="sum">How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</span></summary>
+<div class="body">
+<p>How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</p>
+<p class="note">Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>audio</code> <span class="kind">audio</span>: The sound to measure, e.g. from an audio.device_in, at any sample rate and with any channels</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>detect</code></td><td>rms | peak</td><td><code>&quot;rms&quot;</code></td><td></td><td>What loudness means<ul><li><code>rms</code>: the power, averaged over about attack: loudness as heard. A sine at -20 dBFS reads -23 dB</li><li><code>peak</code>: the waveform's crests, as a peak meter: a sine at -20 dBFS reads -20 dB</li></ul></td></tr>
+<tr><td><code>attack</code></td><td>float</td><td><code>0.01</code></td><td>0.001 to 5 s (soft)</td><td>Seconds the value takes to get about two thirds of the way up when the sound gets louder. Shorter catches every hit</td></tr>
+<tr><td><code>release</code></td><td>float</td><td><code>0.2</code></td><td>0.001 to 5 s (soft)</td><td>Seconds the value takes to fall to about a third when the sound gets quieter. Longer holds hits for the eye</td></tr>
+<tr><td><code>unit</code></td><td>linear | db | level</td><td><code>&quot;linear&quot;</code></td><td></td><td>What number a channel gives<ul><li><code>linear</code>: the amplitude: 1 is full scale, a sine at -20 dBFS reads 0.1. 0 below floor</li><li><code>db</code>: dBFS: 0 is full scale, -20 a tenth of it. Never below floor</li><li><code>level</code>: 0 at floor to 1 at full scale, even in dB: ready to drive a param</li></ul></td></tr>
+<tr><td><code>floor</code></td><td>float</td><td><code>-60</code></td><td>-120 to -20 dB (soft)</td><td>Quieter than this counts as silence: 0 in linear and level, the floor itself in db</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-loudness">Audio › Loudness</a></p>
+</div></details>
+<details class="entry node" id="chan.audio_spectrum"><summary><code class="name">chan.audio_spectrum</code><span class="sum">The spectrum of a sound: how loud each frequency band is now, as numbers and as a texture for shaders</span></summary>
+<div class="body">
+<p>The spectrum of a sound: how loud each frequency band is now, as numbers and as a texture for shaders</p>
+<p class="note">Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>audio</code> <span class="kind">audio</span>: The sound to look at, e.g. from an audio.device_in</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: One channel, spectrum, whose samples are the bands, low to high</li>
+<li><code>texture</code> <span class="kind">tex</span>: The bands as a picture, bands pixels wide: the value in grey, the newest row at the top, older rows below. Made only while something reads this output</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>channel</code></td><td>text</td><td></td><td></td><td>The channel to listen to, e.g. <code>ch1</code>; empty: all mixed</td></tr>
+<tr><td><code>bands</code></td><td>int</td><td><code>32</code></td><td>4 to 128 (soft)</td><td>How many bands the spectrum has: samples of out, pixels across texture</td></tr>
+<tr><td><code>min</code></td><td>float</td><td><code>30</code></td><td>20 to 1000 Hz (soft)</td><td>Where the lowest band starts, in Hz</td></tr>
+<tr><td><code>max</code></td><td>float</td><td><code>16000</code></td><td>1000 to 20000 Hz (soft)</td><td>Where the highest band ends, in Hz. Above half the sample rate the spectrum ends there</td></tr>
+<tr><td><code>spacing</code></td><td>log | linear</td><td><code>&quot;log&quot;</code></td><td></td><td>How the bands share the range from min to max<ul><li><code>log</code>: every band the same share of an octave, as the ear hears: more bands for bass and mids</li><li><code>linear</code>: every band the same width in Hz: the highs take most of the bands</li></ul></td></tr>
+<tr><td><code>attack</code></td><td>float</td><td><code>0</code></td><td>0.001 to 5 s (soft)</td><td>Seconds a band takes to get about two thirds of the way up when it gets louder. 0 follows at once</td></tr>
+<tr><td><code>release</code></td><td>float</td><td><code>0.2</code></td><td>0.001 to 5 s (soft)</td><td>Seconds a band takes to fall to about a third when it gets quieter. Longer lets bars sink slowly</td></tr>
+<tr><td><code>unit</code></td><td>level | linear | db</td><td><code>&quot;level&quot;</code></td><td></td><td>What number a band gives<ul><li><code>level</code>: 0 at floor to 1 at full scale, even in dB: ready to drive a param</li><li><code>linear</code>: the amplitude: 1 is full scale, a sine at -20 dBFS reads 0.1. 0 below floor</li><li><code>db</code>: dBFS: 0 is full scale, -20 a tenth of it. Never below floor</li></ul></td></tr>
+<tr><td><code>floor</code></td><td>float</td><td><code>-60</code></td><td>-120 to -20 dB (soft)</td><td>Quieter than this counts as silence: 0 in linear and level, the floor itself in db</td></tr>
+<tr class="section"><th colspan="5">texture</th></tr>
+<tr><td><code>history</code></td><td>int</td><td><code>1</code></td><td>1 to 512 (soft)</td><td>Rows of texture: 1 is the spectrum now; more keep that many blocks of the past below it, newest at the top, as a scrolling spectrogram</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-spectrum">Audio › Spectrum</a></p>
 </div></details>
 <details class="entry node" id="chan.clock"><summary><code class="name">chan.clock</code><span class="sum">A stopwatch: counts seconds from when <code>run</code> turns on, once, looping or on and on. Gives each piece of a show a clock that starts with it</span></summary>
 <div class="body">
@@ -3623,7 +3700,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="chan.math-example">Example</h5>
 <p>A rotation that follows the music: a <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> level into <a class="ref" href="#chan.math"><code>chan.math</code></a> with <code>op</code> <code>multiply</code> and <code>b</code> 90, and bind a <a class="ref" href="#tex.transform"><code>tex.transform</code></a>'s <code>rotate</code> to the output. Loud passages turn the picture by up to 90 degrees.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#audio-tips">Audio › Tips</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-a-clock-per-piece">Concepts › A clock per piece</a>, <a href="#audio-loudness">Audio › Loudness</a>, <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
 <details class="entry node" id="chan.merge"><summary><code class="name">chan.merge</code><span class="sum">Puts the channels of its inputs together into one</span></summary>
 <div class="body">
@@ -3927,7 +4004,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>mix</code></td><td>float</td><td><code>1</code></td><td>0 to 1</td><td>1 is only the filtered sound, 0 only the input; between blends the two</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-filter">Audio › Filter</a></p>
+<p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-filter">Audio › Filter</a></p>
 </div></details>
 <details class="entry node" id="audio.instrument"><summary><code class="name">audio.instrument</code><span class="sum">Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat. Each channel wired into play plays its own note of a scale</span></summary>
 <div class="body">

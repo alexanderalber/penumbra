@@ -1,14 +1,21 @@
 # Audio
 
-Two nodes make a show react to sound: `audio.device_in` reads an input device, and
-`chan.audio_analysis` turns what it hears into channels that params can be bound to.
+`audio.device_in` reads an input device. Three nodes turn what it hears into channels that
+params can be bound to:
+
+- `chan.audio_envelope` for loudness: one number per channel, how loud it is now.
+- `chan.audio_spectrum` for frequency bands: the spectrum as numbers and as a texture.
+- `chan.audio_analysis` for music: beat, bar and tempo, with levels and hits.
+
+The energy of one band is an `audio.filter` (`bandpass`) into a `chan.audio_envelope`.
 
 ## Sound is its own family
 
 Sound travels on cyan wires of its own kind, `audio`. A `chan` wire carries values: its last
 sample is the value now. An `audio` wire carries a stream: each frame's block of samples
 continues the block before, so every sample counts. The two kinds do not connect.
-`chan.audio_analysis` is the bridge from sound to channels that params can be bound to.
+`chan.audio_envelope`, `chan.audio_spectrum` and `chan.audio_analysis` are the bridges from
+sound to channels that params can be bound to.
 
 - `audio.device_in` reads a microphone or an audio interface.
 - `audio.oscillator` makes a test tone. `shape` is sine, saw, square, triangle or noise. The
@@ -124,6 +131,50 @@ A3 C4 D4 F4 G4 A4 C5 D5. Scale `off` gives free pitch for a theremin. `kick`, `h
 
 **Level.** `level` is -12 dB by default. One note then peaks around -13 to -16 dBFS. A pile of
 notes bends softly below full scale instead of clipping. Every note has velocity 1.
+
+## Loudness
+
+`chan.audio_envelope` gives one channel per sound channel, with the same names (`ch1`,
+`ch2`, ...). Its value is how loud that channel is now.
+
+**Detect.** `rms` (the default) averages the power: loudness as heard. A sine at -20 dBFS reads
+-23 dB. `peak` follows the waveform's crests, as a peak meter: the same sine reads -20 dB.
+
+**Attack and release.** `attack` (0.01 s) is how fast the value rises when the sound gets
+louder: about two thirds of the way in that time. `release` (0.2 s) is how slowly it falls: to
+about a third in that time. A long release holds each hit long enough for the eye.
+
+**Unit.** `linear` (the default) is the amplitude: 1 is full scale, -20 dBFS is 0.1. `db` is
+dBFS. `level` maps `floor` to 0 and full scale to 1, ready to drive a param. Quieter than
+`floor` (-60 dB) counts as silence: 0 in `linear` and `level`, the floor itself in `db`. There
+is no normalising: a quiet microphone reads quiet. `chan.math` scales the value.
+
+Every sample counts, at any sample rate. A device that delivered nothing for a frame does not
+count its last block twice.
+
+## Spectrum
+
+`chan.audio_spectrum` measures how loud each frequency band is now. `bands` (32, from 4 to
+512) run from `min` (30 Hz) to `max` (16 kHz). With `spacing` `log` (the default) each band is
+the same share of an octave, as the ear hears; `linear` gives each the same width in Hz. A
+`max` above half the sample rate ends there, with a warning. `channel` picks one channel;
+empty mixes all.
+
+**Values.** `unit` is `level` by default: 0 at `floor` (-60 dB), 1 at full scale. `linear` and
+`db` are as for the envelope: a sine at -20 dBFS reads 0.1 or -20 dB in its band. A band rises
+over `attack` (0 s, at once) and falls over `release` (0.2 s).
+
+**Outputs.** `out` is one channel, `spectrum`, whose samples are the bands, low to high. The
+viewer draws it as a curve over the band number. `texture` is the same numbers as a picture,
+`bands` pixels wide, in grey. `history` (1) sets its rows. With more rows, row 0 at the top is
+now, and every new block of sound moves the older rows down by one: a scrolling spectrogram. In
+a shader, `uv.x` is the frequency band and `uv.y` how long ago. The texture is made only while
+something reads it; its rows start empty when it is read again.
+
+**Resolution.** Each frame looks at the newest 11 to 85 ms of sound (512 to 4096 samples at
+48 kHz): more for narrow bands, less for wide ones. Bands below about 200 Hz are narrower than
+that resolution with 32 log bands. A tone there spreads into its neighbours, and with many
+bands neighbouring low bands repeat one value.
 
 ## Setting up
 

@@ -2058,6 +2058,7 @@ fn resolution_analysis_walks_back_from_the_projectors() {
     assert!(!is_red(centre(&rig, "/m")) && !is_blue(centre(&rig, "/m")), "{:?}", centre(&rig, "/m"));
 }
 
+mod audio_spectrum;
 mod fluid;
 mod geo;
 mod layers;

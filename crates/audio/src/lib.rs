@@ -6,6 +6,9 @@
 //! - [`analysis`]: an [`Analyzer`] turns blocks of samples into levels, bands, a spectrum,
 //!   onsets, a tempo, and beat and bar phase.
 //! - [`fft`]: the transform the analysis uses.
+//! - [`spectrum`]: a [`Spectrum`] of the newest samples in bands, and the band code the
+//!   analysis shares.
+//! - [`envelope`]: an [`Envelope`] follows a signal's level with an attack and a release.
 //! - [`playback`]: a [`Player`] per output device takes one block per show frame and plays it
 //!   gaplessly: resampled to the device's rate, its latency held against clock drift, faded at
 //!   gaps and drops.
@@ -16,14 +19,18 @@
 
 pub mod analysis;
 pub mod capture;
+pub mod envelope;
 pub mod fft;
 pub mod limiter;
 pub mod measure;
 pub mod outputs;
 pub mod playback;
+pub mod spectrum;
 
 pub use analysis::{Analyzer, Features, Settings};
 pub use capture::{Block, Cursor, DeviceInfo, Hub, StreamStatus, Watch};
+pub use envelope::{Detect, Envelope};
 pub use limiter::Limiter;
 pub use outputs::{BusStatus, LaneStatus, Outputs, Want};
 pub use playback::{Engine, EngineStatus, Player, PlayerStatus, output_devices};
+pub use spectrum::Spectrum;

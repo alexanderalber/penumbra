@@ -30,6 +30,7 @@
 use std::collections::VecDeque;
 
 use crate::fft::{Complex, Fft};
+use crate::spectrum::{band_bins, band_power, bin_power, hann, magnitudes};
 
 /// Lowest and highest sample rates analysed.
 pub const MIN_RATE: f64 = 8000.0;
@@ -52,8 +53,6 @@ pub const SPECTRUM_HIGH: f64 = 16_000.0;
 const SPECTRUM_DB: f64 = 60.0;
 /// How fast the normalising peak falls, dB per second.
 const FALL_DB_PER_S: f64 = 1.5;
-/// Equivalent noise bandwidth of the Hann window, in bins.
-const HANN_ENBW: f32 = 1.5;
 /// Largest number of spectrum bands.
 pub const MAX_BANDS: usize = 512;
 
@@ -309,12 +308,7 @@ impl Analyzer {
         let hop = 1usize << ((rate / 93.75).log2().round().clamp(6.0, 13.0) as u32);
         let size = hop * 4;
         let fft = Fft::new(size)?;
-        let window = (0..size)
-            .map(|i| {
-                let x = std::f64::consts::TAU * i as f64 / size as f64;
-                (0.5 - 0.5 * x.cos()) as f32
-            })
-            .collect();
+        let window = hann(size);
         let fps = rate / hop as f64;
         let tempo_len = (TEMPO_SECONDS * fps).ceil() as usize;
         let picker_len = (0.3 * fps).ceil() as usize;
@@ -472,17 +466,7 @@ impl Analyzer {
 
     fn frame(&mut self, s: &Settings, bands: usize) -> Frame {
         let size = self.size();
-        for ((c, x), w) in
-            self.scratch.iter_mut().zip(self.ring.iter().cycle().skip(self.pos).take(size)).zip(&self.window)
-        {
-            *c = Complex { re: x * w, im: 0.0 };
-        }
-        self.fft.forward(&mut self.scratch);
-        // Scaled so a full-scale sine reads about 1 in its bin: the window sums to size / 2.
-        let scale = 4.0 / size as f32;
-        for (m, c) in self.magnitudes.iter_mut().zip(&self.scratch) {
-            *m = c.norm() * scale;
-        }
+        magnitudes(&self.fft, &self.ring, self.pos, &self.window, &mut self.scratch, &mut self.magnitudes);
         let hz = self.bin_hz();
         let bin = |f: f64| ((f / hz).round().max(0.0) as usize).min(size / 2);
         let (low_end, high_start) = (bin(s.low_hz.max(1.0)), bin(s.high_hz.max(s.low_hz.max(1.0))));
@@ -496,7 +480,7 @@ impl Analyzer {
         let mut flux_beat = 0.0f32;
         let beat_first = bin(40.0).max(1);
         for (k, (m, prev)) in self.magnitudes.iter().zip(self.prev_log.iter_mut()).enumerate() {
-            let power = f64::from(m * m / HANN_ENBW) / 2.0;
+            let power = bin_power(*m);
             if (first..=last).contains(&k) {
                 let band = if k < low_end {
                     0
@@ -548,32 +532,12 @@ impl Analyzer {
     fn spectrum_bands(&mut self, bands: usize, out: &mut [f64]) {
         let size = self.size();
         if self.edges.as_ref().is_none_or(|(b, e)| *b != bands || e.len() != bands) {
-            let hz = self.bin_hz();
             let high = SPECTRUM_HIGH.min(self.rate / 2.0);
-            let ratio = (high / SPECTRUM_LOW).max(1.0);
-            let edge = |i: usize| SPECTRUM_LOW * ratio.powf(i as f64 / bands as f64);
-            let edges = (0..bands)
-                .map(|i| {
-                    let (a, b) = (edge(i) / hz, edge(i + 1) / hz);
-                    let lo = (a.ceil() as usize).min(size / 2);
-                    let hi = (b.floor() as usize).min(size / 2);
-                    if hi >= lo {
-                        (lo, hi)
-                    } else {
-                        // Narrower than a bin: the bin nearest its middle.
-                        let mid = (((a + b) / 2.0).round() as usize).min(size / 2);
-                        (mid, mid)
-                    }
-                })
-                .collect();
+            let edges = band_bins(bands, SPECTRUM_LOW, high, true, self.bin_hz(), size / 2);
             self.edges = Some((bands, edges));
         }
         let Some((_, edges)) = &self.edges else { return };
-        for (o, &(lo, hi)) in out.iter_mut().zip(edges) {
-            let bins = self.magnitudes.get(lo..=hi).unwrap_or(&[]);
-            let sum: f64 = bins.iter().map(|m| f64::from(m * m / HANN_ENBW) / 2.0).sum();
-            *o = sum;
-        }
+        band_power(&self.magnitudes, edges, out);
     }
 
     /// Autocorrelates the onset strength and updates the tempo.

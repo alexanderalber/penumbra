@@ -1081,7 +1081,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.trail](#chantrail)
 
 *in:* [chan.dmx_in](#chandmx_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
@@ -1117,6 +1117,54 @@ Outputs:
 | `width` *(meters)* | int | `1920` | 1 to 16384 px | Width of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(meters)* | int | `1080` | 1 to 16384 px | Height of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(meters)* | bool | `false` |  | res.optimize leaves the width and height of the meters output alone |
+
+### chan.audio_envelope
+
+How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release
+
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `audio` (audio): The sound to measure, e.g. from an audio.device_in, at any sample rate and with any channels
+
+Outputs: `out` (chan).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `detect` | rms \| peak | `"rms"` |  | What loudness means; rms: the power, averaged over about attack: loudness as heard. A sine at -20 dBFS reads -23 dB; peak: the waveform's crests, as a peak meter: a sine at -20 dBFS reads -20 dB |
+| `attack` | float | `0.01` | 0.001 to 5 s (soft) | Seconds the value takes to get about two thirds of the way up when the sound gets louder. Shorter catches every hit |
+| `release` | float | `0.2` | 0.001 to 5 s (soft) | Seconds the value takes to fall to about a third when the sound gets quieter. Longer holds hits for the eye |
+| `unit` | linear \| db \| level | `"linear"` |  | What number a channel gives; linear: the amplitude: 1 is full scale, a sine at -20 dBFS reads 0.1. 0 below floor; db: dBFS: 0 is full scale, -20 a tenth of it. Never below floor; level: 0 at floor to 1 at full scale, even in dB: ready to drive a param |
+| `floor` | float | `-60` | -120 to -20 dB (soft) | Quieter than this counts as silence: 0 in linear and level, the floor itself in db |
+
+### chan.audio_spectrum
+
+The spectrum of a sound: how loud each frequency band is now, as numbers and as a texture for shaders
+
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `audio` (audio): The sound to look at, e.g. from an audio.device_in
+
+Outputs:
+
+- `out` (chan): One channel, spectrum, whose samples are the bands, low to high
+- `texture` (tex): The bands as a picture, bands pixels wide: the value in grey, the newest row at the top, older rows below. Made only while something reads this output
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `channel` | text |  |  | The channel to listen to, e.g. `ch1`; empty: all mixed |
+| `bands` | int | `32` | 4 to 128 (soft) | How many bands the spectrum has: samples of out, pixels across texture |
+| `min` | float | `30` | 20 to 1000 Hz (soft) | Where the lowest band starts, in Hz |
+| `max` | float | `16000` | 1000 to 20000 Hz (soft) | Where the highest band ends, in Hz. Above half the sample rate the spectrum ends there |
+| `spacing` | log \| linear | `"log"` |  | How the bands share the range from min to max; log: every band the same share of an octave, as the ear hears: more bands for bass and mids; linear: every band the same width in Hz: the highs take most of the bands |
+| `attack` | float | `0` | 0.001 to 5 s (soft) | Seconds a band takes to get about two thirds of the way up when it gets louder. 0 follows at once |
+| `release` | float | `0.2` | 0.001 to 5 s (soft) | Seconds a band takes to fall to about a third when it gets quieter. Longer lets bars sink slowly |
+| `unit` | level \| linear \| db | `"level"` |  | What number a band gives; level: 0 at floor to 1 at full scale, even in dB: ready to drive a param; linear: the amplitude: 1 is full scale, a sine at -20 dBFS reads 0.1. 0 below floor; db: dBFS: 0 is full scale, -20 a tenth of it. Never below floor |
+| `floor` | float | `-60` | -120 to -20 dB (soft) | Quieter than this counts as silence: 0 in linear and level, the floor itself in db |
+| `history` *(texture)* | int | `1` | 1 to 512 (soft) | Rows of texture: 1 is the spectrum now; more keep that many blocks of the past below it, newest at the top, as a scrolling spectrogram |
 
 ### chan.clock
 

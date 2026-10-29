@@ -21,6 +21,9 @@
 //!   from 30 Hz to 16 kHz. See `penumbra-audio`'s `analysis` module for how. Its third, `meters`,
 //!   is the viewer's meters as a texture ([`crate::tex::meters_picture`]), drawn only while
 //!   something reads it.
+//! - **`chan.audio_envelope`** ([`envelope`]) is the loudness of every channel now, with an
+//!   attack and a release; **`chan.audio_spectrum`** ([`spectrum`]) the spectrum in bands, as
+//!   one channel and as a texture (a row now, or a scrolling spectrogram).
 //!
 //! The device streams belong to the engine's [`Hub`], which opens what [`wants`] lists after
 //! every change of the network.
@@ -29,6 +32,9 @@ pub mod ambience;
 #[cfg(test)]
 mod ambience_tests;
 pub mod block;
+pub mod envelope;
+#[cfg(test)]
+mod envelope_tests;
 pub mod filter;
 #[cfg(test)]
 mod filter_tests;
@@ -39,6 +45,9 @@ pub mod lanes;
 pub mod mix;
 pub mod oscillator;
 pub mod pitch;
+pub mod spectrum;
+#[cfg(test)]
+mod spectrum_tests;
 pub mod synth;
 #[cfg(test)]
 mod tests;
@@ -199,6 +208,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     filter::register(types)?;
     instrument::register(types)?;
     ambience::register(types)?;
+    envelope::register(types)?;
+    spectrum::register(types)?;
     Ok(())
 }
 
@@ -279,6 +290,33 @@ impl Operator for AudioIn {
         let chans = Chans::new(f64::from(block.rate), channels)?;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Audio, chans)]))
     }
+}
+
+/// The channel `wanted` of `audio` (empty: all channels averaged) into `mono`, as f32 for the
+/// analyses.
+pub(crate) fn mono(audio: &Chans, wanted: &str, mono: &mut Vec<f32>) -> Result<(), CookError> {
+    let wanted = wanted.trim();
+    mono.clear();
+    if wanted.is_empty() {
+        let n = audio.channels().len().max(1) as f64;
+        mono.resize(audio.len(), 0.0);
+        for c in audio.channels() {
+            for (m, s) in mono.iter_mut().zip(&c.samples) {
+                // `as`: samples to f32 for the analysis.
+                *m += (s / n) as f32;
+            }
+        }
+    } else {
+        let Some(c) = audio.get(wanted) else {
+            let names: Vec<String> = audio.names().map(ToString::to_string).collect();
+            return Err(CookError::failed(format!(
+                "no channel `{wanted}`; the input has {}",
+                names.join(", ")
+            )));
+        };
+        mono.extend(c.samples.iter().map(|s| *s as f32));
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -363,27 +401,7 @@ impl Operator for Analysis {
         if self.analyzer.as_ref().is_none_or(|a| a.rate() != rate) {
             self.analyzer = Some(Analyzer::new(rate).map_err(CookError::failed)?);
         }
-        let wanted = cx.text("channel")?.trim();
-        self.mono.clear();
-        if wanted.is_empty() {
-            let n = audio.channels().len().max(1) as f64;
-            self.mono.resize(audio.len(), 0.0);
-            for c in audio.channels() {
-                for (m, s) in self.mono.iter_mut().zip(&c.samples) {
-                    // `as`: samples to f32 for the analysis.
-                    *m += (s / n) as f32;
-                }
-            }
-        } else {
-            let Some(c) = audio.get(wanted) else {
-                let names: Vec<String> = audio.names().map(ToString::to_string).collect();
-                return Err(CookError::failed(format!(
-                    "no channel `{wanted}`; the input has {}",
-                    names.join(", ")
-                )));
-            };
-            self.mono.extend(c.samples.iter().map(|s| *s as f32));
-        }
+        mono(audio, cx.text("channel")?, &mut self.mono)?;
         let Some(analyzer) = self.analyzer.as_mut() else { return Err(CookError::Pending) };
         let f = analyzer.process(&self.mono, &settings);
         if self.names.len() != FEATURES.len() {
