@@ -474,7 +474,8 @@ pub(super) fn builtins() -> Vec<Builtin> {
                             .clamp(0.001, 16.0)
                             .range(0.125, 4.0)
                             .curve(Curve::Log)
-                            .doc("Factor on the input's width and height (mode multiply): 0.5 halves both"),
+                            .doc("Factor on the input's width and height: 0.5 halves both")
+                            .applies_when("mode", &["multiply"]),
                     ),
                     true,
                     " (mode custom)",

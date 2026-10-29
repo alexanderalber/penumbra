@@ -2,20 +2,20 @@
 //!
 //! Every preset is a small fixed recipe. Pluck, mallet and bell are sums of sine partials, each
 //! a rotating phasor with its own exponential decay. The kick is a sine whose frequency falls
-//! exponentially towards 45 Hz. Hat and sweep are white noise (a hash of the sample number, so
+//! exponentially towards 45 Hz. The hat is white noise (a hash of the sample number, so
 //! renders repeat) through a state-variable filter.
 //!
 //! A voice starts with a short linear attack, so a note never starts with a step. It ends when
 //! its level has fallen 80 dB below its start, or after a fade when it is stolen. Nothing here
 //! allocates.
 
-use std::f64::consts::{PI, TAU};
+use std::f64::consts::TAU;
 
 use crate::audio::oscillator::noise;
 use crate::audio::synth::{Svf, SvfCoef, TOP, fall, tau_of};
 
 /// The presets, in the order of the `preset` choice.
-pub const PRESETS: [&str; 6] = ["pluck", "mallet", "bell", "kick", "hat", "sweep"];
+pub const PRESETS: [&str; 5] = ["pluck", "mallet", "bell", "kick", "hat"];
 
 /// A voice is done once its level is this far below its start (-80 dB).
 const SILENT: f64 = 1e-4;
@@ -31,7 +31,6 @@ pub enum Preset {
     Bell,
     Kick,
     Hat,
-    Sweep,
 }
 
 impl Preset {
@@ -41,14 +40,13 @@ impl Preset {
             "bell" => Self::Bell,
             "kick" => Self::Kick,
             "hat" => Self::Hat,
-            "sweep" => Self::Sweep,
             _ => Self::Pluck,
         }
     }
 
     /// Whether the note's pitch comes from key, scale and note.
     pub fn pitched(self) -> bool {
-        !matches!(self, Self::Kick | Self::Hat | Self::Sweep)
+        !matches!(self, Self::Kick | Self::Hat)
     }
 }
 
@@ -56,7 +54,7 @@ impl Preset {
 #[derive(Clone, Copy, Debug)]
 pub struct Play {
     pub preset: Preset,
-    /// Hz; ignored by kick, hat and sweep.
+    /// Hz; ignored by kick and hat.
     pub frequency: f64,
     /// 0..1.
     pub brightness: f64,
@@ -110,14 +108,6 @@ enum Body {
         coef: SvfCoef,
         amp: f64,
         fall: f64,
-    },
-    /// `age` samples into a riser of `length` samples, from `low` to `high` Hz.
-    Sweep {
-        svf: Svf,
-        age: f64,
-        length: f64,
-        low: f64,
-        high: f64,
     },
 }
 
@@ -226,17 +216,6 @@ impl Voice {
                     0.6,
                 )
             }
-            Preset::Sweep => {
-                let high = (1500.0 + 10_000.0 * b).min(TOP * r);
-                let body = Body::Sweep {
-                    svf: Svf::default(),
-                    age: 0.0,
-                    length: (decay * 10.0 * r).max(1.0),
-                    low: 150.0,
-                    high,
-                };
-                (body, 0.0, 1.0)
-            }
         };
         Some(Self {
             start,
@@ -301,23 +280,6 @@ impl Voice {
                     *amp *= *fall;
                     x
                 }
-                Body::Sweep { svf, age, length, low, high } => {
-                    let t = (*age / *length).min(1.0);
-                    let cutoff = *low * (*high / *low).powf(t);
-                    let k = 1.0 / 1.5;
-                    let coef = SvfCoef::new(cutoff, k, r);
-                    let (_, band, _) = svf.tick(noise(at + i as i64, self.seed), &coef);
-                    // Narrow noise is quieter at low cutoffs: make up for the bandwidth.
-                    let makeup = (0.5 * r * k / cutoff).sqrt().min(30.0);
-                    // Rising for 90% of the length, then a quick fade.
-                    let shape = if t < 0.9 {
-                        (0.5 * PI * t / 0.9).sin().powi(2)
-                    } else {
-                        (0.5 * PI * (t - 0.9) / 0.1).cos().powi(2)
-                    };
-                    *age += 1.0;
-                    0.43 * makeup * k * band * shape
-                }
             };
             *o += x * self.gain * self.ramp * self.fade;
             self.ramp = (self.ramp + self.attack).min(1.0);
@@ -346,7 +308,6 @@ impl Voice {
         match &self.body {
             Body::Partials { p, n, start } => p.iter().take(*n).all(|q| q.amp < SILENT * start),
             Body::Kick { amp, .. } | Body::Hat { amp, .. } => *amp < SILENT,
-            Body::Sweep { age, length, .. } => *age >= *length,
         }
     }
 }

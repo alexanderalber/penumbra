@@ -264,7 +264,7 @@ fn every_preset_is_finite_moderate_and_ends() {
         f.block("/i");
         f.edit(&[set("/c.value0", 1.0)]);
         let mut all = Vec::new();
-        // The bell rings about 2.4 s to -20 dB, the sweep lasts 3 s: 15 s is past all of them.
+        // The bell rings about 2.4 s to -20 dB, 15 s is past all of them.
         run(&mut f, "/i", 900, &mut all);
         assert!(all.iter().all(|s| s.is_finite()), "{preset}");
         let p = peak(&all);

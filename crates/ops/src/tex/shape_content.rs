@@ -28,53 +28,62 @@ pub(super) fn builtin() -> Builtin {
                 ParamSpec::float("speed", 0.5)
                     .range(-4.0, 4.0)
                     .unit(Unit::Hertz)
-                    .doc("Cycles per second: pulses, segments passing a point, rings starting; negative runs backwards"),
+                    .doc("Cycles per second: pulses, segments passing a point, rings starting; negative runs backwards")
+                    .applies_when("mode", &["pulse", "chase", "ripple"]),
             )
             .param(
                 ParamSpec::float("stagger", 0.0)
                     .range(0.0, 1.0)
-                    .doc("Phase added per shape id, in cycles: 0.1 makes shapes follow one another in table order"),
+                    .doc("Phase added per shape id, in cycles: 0.1 makes shapes follow one another in table order")
+                    .applies_when("mode", &["pulse", "chase", "ripple"]),
             )
             .param(
                 ParamSpec::float("scatter", 1.0)
                     .range(0.0, 1.0)
-                    .doc("Random phase per shape, in cycles: 0 all in step, 1 all out of step"),
+                    .doc("Random phase per shape, in cycles: 0 all in step, 1 all out of step")
+                    .applies_when("mode", &["pulse", "chase", "ripple"]),
             )
             .param(
                 ParamSpec::float("depth", 1.0)
                     .range(0.0, 1.0)
-                    .doc("Pulse: how far the shape fades; 0 not at all, 1 to nothing"),
+                    .doc("Pulse: how far the shape fades; 0 not at all, 1 to nothing")
+                    .applies_when("mode", &["pulse"]),
             )
             .param(
                 ParamSpec::float("segments", 2.0)
                     .clamp(0.0, 1000.0)
                     .range(1.0, 12.0)
-                    .doc("Chase: lit segments per outline"),
+                    .doc("Chase: lit segments per outline")
+                    .applies_when("mode", &["chase"]),
             )
             .param(
                 ParamSpec::float("line", 6.0)
                     .clamp(0.0, 1000.0)
                     .range(0.5, 32.0)
                     .unit(Unit::Pixels)
-                    .doc("Chase: width of the line on the edge, in pixels of the id input"),
+                    .doc("Chase: width of the line on the edge, in pixels of the id input")
+                    .applies_when("mode", &["chase"]),
             )
             .param(
                 ParamSpec::float("spacing", 24.0)
                     .clamp(0.01, 100000.0)
                     .range(2.0, 200.0)
                     .unit(Unit::Pixels)
-                    .doc("Ripple: distance between rings, in pixels of the id input"),
+                    .doc("Ripple: distance between rings, in pixels of the id input")
+                    .applies_when("mode", &["ripple"]),
             )
             .param(
                 ParamSpec::float("duty", 0.3)
                     .range(0.0, 1.0)
-                    .doc("Chase and ripple: lit part of each segment or ring"),
+                    .doc("Chase and ripple: lit part of each segment or ring")
+                    .applies_when("mode", &["chase", "ripple"]),
             )
             .param(
                 ParamSpec::float("softness", 0.3)
                     .range(0.0, 1.0)
                     .more()
-                    .doc("Chase and ripple: how soft the ends of segments and rings are; 0 hard"),
+                    .doc("Chase and ripple: how soft the ends of segments and rings are; 0 hard")
+                    .applies_when("mode", &["chase", "ripple"]),
             )
             .input("id", DataKind::Tex)
             .output("out", DataKind::Tex)

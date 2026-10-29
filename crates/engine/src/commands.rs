@@ -430,7 +430,7 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
     let id = require(&net, &a.path)?;
     let node = net.node(id).ok_or("node vanished")?.clone();
     let desc = desc_of(e, &node.kind)?;
-    let params: Vec<Json> = desc
+    let mut params: Vec<Json> = desc
         .params
         .iter()
         .map(|spec| {
@@ -493,6 +493,18 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
         (st.cooker.status(id), watched, st.clock.rate())
     })?;
     let (status, watched, rate) = status;
+    // A param that does nothing with the others as they are says so, as the panel greys it.
+    let kind_type = e.types().get(&node.kind);
+    for (v, spec) in params.iter_mut().zip(&desc.params) {
+        let bound = |p: &str| status.as_ref().and_then(|s| s.bound.get(p).cloned());
+        let why = desc
+            .inapplicable(&node, &spec.name, bound)
+            .or_else(|| kind_type.and_then(|t| t.inactive(&node, &spec.name)).map(str::to_string));
+        if let (Some(why), Some(o)) = (why, v.as_object_mut()) {
+            o.insert("applies".into(), json!(false));
+            o.insert("why".into(), json!(why));
+        }
+    }
     // Params the instance declares (a shader's header), with their values; explicit values
     // nobody declares are listed too, so a typo is visible.
     let mut instance: Vec<Json> = Vec::new();

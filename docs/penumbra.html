@@ -330,6 +330,8 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong>The circled &quot;i&quot;</strong> before each param's name opens its help beside the panel: what the param does, what each value of a choice does, its type, default, range and unit, and whether a channel can drive it. A click elsewhere or Escape closes it; hovering the name shows the text alone. <a class="ref" href="#node.kinds"><code>node.kinds {kind, param}</code></a> returns the same help over the control channel.
 </li>
+<li><strong>A greyed-out param</strong> does nothing with the node's other settings as they are: <code>key</code> of an <a class="ref" href="#audio.instrument"><code>audio.instrument</code></a> with preset <code>kick</code>, <code>threshold</code> while nothing is wired into <code>play</code>. It stays editable, so a value can be set ahead. Hovering its name says why; <a class="ref" href="#node.info"><code>node.info</code></a> reports it as <code>applies: false</code> with the reason. A param greyed in italics is locked as well, until the setting that replaces it changes (a camera's <code>fov</code> while <code>calibration</code> is set).
+</li>
 <li><strong>A reset button</strong> appears beside a param that is not at its default.
 </li>
 <li><strong>One drag is one undo step</strong>, however long it takes.
@@ -2763,7 +2765,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
 <tr><td><code>mode</code></td><td>multiply | custom</td><td><code>&quot;multiply&quot;</code></td><td></td><td>How the output size is set<ul><li><code>multiply</code>: the input's size times multiply</li><li><code>custom</code>: width and height (under more), whatever the input</li></ul></td></tr>
-<tr><td><code>multiply</code></td><td>float</td><td><code>0.5</code></td><td>0.125 to 4 (soft)</td><td>Factor on the input's width and height (mode multiply): 0.5 halves both</td></tr>
+<tr><td><code>multiply</code></td><td>float</td><td><code>0.5</code></td><td>0.125 to 4 (soft)</td><td>Factor on the input's width and height: 0.5 halves both</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
@@ -3888,9 +3890,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
-<details class="entry node" id="audio.instrument"><summary><code class="name">audio.instrument</code><span class="sum">Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat, sweep. Each channel wired into play plays its own note of a scale</span></summary>
+<details class="entry node" id="audio.instrument"><summary><code class="name">audio.instrument</code><span class="sum">Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat. Each channel wired into play plays its own note of a scale</span></summary>
 <div class="body">
-<p>Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat, sweep. Each channel wired into play plays its own note of a scale</p>
+<p>Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat. Each channel wired into play plays its own note of a scale</p>
 <p class="note">Follows the show clock: cooks again whenever time moves.</p>
 <h4>Inputs</h4>
 <ul>
@@ -3904,12 +3906,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>preset</code></td><td>pluck | mallet | bell | kick | hat | sweep</td><td><code>&quot;pluck&quot;</code></td><td></td><td>The sound. Changing it leaves notes already sounding as they are<ul><li><code>pluck</code>: a plucked string: a bright attack, faded to a tenth after decay seconds</li><li><code>mallet</code>: a marimba-like wooden bar: short and round</li><li><code>bell</code>: a struck bell: metallic overtones, rings about 8 times as long as decay</li><li><code>kick</code>: a bass drum: a sine falling from about 300 Hz to 45 Hz in 150 ms. Ignores key, scale and note</li><li><code>hat</code>: a hi-hat: a short burst of high noise, about a fifth of decay. Ignores key, scale and note</li><li><code>sweep</code>: a noise riser: rises in pitch and loudness over 10 times decay, then stops. Ignores key, scale and note</li></ul></td></tr>
+<tr><td><code>preset</code></td><td>pluck | mallet | bell | kick | hat</td><td><code>&quot;pluck&quot;</code></td><td></td><td>The sound. Changing it leaves notes already sounding as they are<ul><li><code>pluck</code>: a plucked string: a bright attack, faded to a tenth after decay seconds</li><li><code>mallet</code>: a marimba-like wooden bar: short and round</li><li><code>bell</code>: a struck bell: metallic overtones, rings about 8 times as long as decay</li><li><code>kick</code>: a bass drum: a sine falling from about 300 Hz to 45 Hz in 150 ms. Ignores key, scale and note</li><li><code>hat</code>: a hi-hat: a short burst of high noise, about a fifth of decay. Ignores key, scale and note</li></ul></td></tr>
 <tr><td><code>key</code></td><td>C | C# | D | D# | E | F | F# | G | G# | A | A# | B</td><td><code>&quot;C&quot;</code></td><td></td><td>The root note of the scale: note 0 plays it<ul><li><code>C</code>: the root is C, 261.6 Hz in octave 4</li><li><code>C#</code>: the root is C#, 277.2 Hz in octave 4</li><li><code>D</code>: the root is D, 293.7 Hz in octave 4</li><li><code>D#</code>: the root is D#, 311.1 Hz in octave 4</li><li><code>E</code>: the root is E, 329.6 Hz in octave 4</li><li><code>F</code>: the root is F, 349.2 Hz in octave 4</li><li><code>F#</code>: the root is F#, 370.0 Hz in octave 4</li><li><code>G</code>: the root is G, 392.0 Hz in octave 4</li><li><code>G#</code>: the root is G#, 415.3 Hz in octave 4</li><li><code>A</code>: the root is A, 440.0 Hz in octave 4</li><li><code>A#</code>: the root is A#, 466.2 Hz in octave 4</li><li><code>B</code>: the root is B, 493.9 Hz in octave 4</li></ul></td></tr>
 <tr><td><code>scale</code></td><td>major_pentatonic | minor_pentatonic | major | minor | chromatic | off</td><td><code>&quot;major_pentatonic&quot;</code></td><td></td><td>The notes that can be played. With a scale, every note fits with every other<ul><li><code>major_pentatonic</code>: five notes per octave (C D E G A in C): any notes together sound fine</li><li><code>minor_pentatonic</code>: five notes per octave (C Eb F G Bb in C): darker, bluesy</li><li><code>major</code>: seven notes per octave, the white keys from C in C</li><li><code>minor</code>: seven notes per octave, the white keys from A in A</li><li><code>chromatic</code>: all twelve semitones</li><li><code>off</code>: free pitch: note moves smoothly between the notes, as a theremin. spread counts semitones</li></ul></td></tr>
 <tr><td><code>octave</code></td><td>int</td><td><code>4</code></td><td>0 to 8 (soft)</td><td>The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz</td></tr>
 <tr><td><code>note</code></td><td>float</td><td><code>0</code></td><td>0 to 1 (soft)</td><td>Which note plays: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale. Read when a note starts</td></tr>
-<tr><td><code>brightness</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1</td><td>0 is dull and soft, 1 bright and sharp. For kick: how high the drop starts; for sweep: how high it rises. Read when a note starts</td></tr>
+<tr><td><code>brightness</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1</td><td>0 is dull and soft, 1 bright and sharp. For kick: how high the drop starts. Read when a note starts</td></tr>
 <tr><td><code>decay</code></td><td>float</td><td><code>0.3</code></td><td>0.005 to 20 s (soft)</td><td>How long a note rings: seconds until a pluck has faded to a tenth. Each preset scales it, see preset</td></tr>
 <tr><td><code>level</code></td><td>float</td><td><code>-12</code></td><td>-60 to 0 dB (soft)</td><td>The volume, in dB: at 0 one note peaks near full scale, -6 is half the amplitude. A change glides across one frame</td></tr>
 <tr><td><code>trigger</code></td><td>up | down | both</td><td><code>&quot;up&quot;</code></td><td></td><td>Which crossings of threshold by a play channel start a note<ul><li><code>up</code>: the value rises above threshold: a pulse from 0 to 1 plays once</li><li><code>down</code>: the value falls to threshold or below</li><li><code>both</code>: either way: a swinging value plays at every pass, as a pendulum at the bottom</li></ul></td></tr>
@@ -3922,7 +3924,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made; nodes that mix sound need the same rate on all inputs</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-params">Concepts › Params</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a></p>
 </div></details>
 <details class="entry node" id="audio.mix"><summary><code class="name">audio.mix</code><span class="sum">Adds sounds together, each by its own gain</span></summary>
 <div class="body">
@@ -3967,13 +3969,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>shape</code></td><td>sine | saw | square | triangle | noise</td><td><code>&quot;sine&quot;</code></td><td></td><td>The form of the wave, from -1 to 1 before amplitude<ul><li><code>sine</code>: a pure tone</li><li><code>saw</code>: rising evenly from -1 to 1, then jumping back: bright and buzzing</li><li><code>square</code>: 1 for the first half of each wave, -1 for the second: hollow</li><li><code>triangle</code>: straight up and straight down: softer than the square</li><li><code>noise</code>: white noise, the same for one seed on every machine; frequency does nothing</li></ul></td></tr>
+<tr><td><code>shape</code></td><td>sine | saw | square | triangle | noise</td><td><code>&quot;sine&quot;</code></td><td></td><td>The form of the wave, from -1 to 1 before amplitude<ul><li><code>sine</code>: a pure tone</li><li><code>saw</code>: rising evenly from -1 to 1, then jumping back: bright and buzzing</li><li><code>square</code>: 1 for the first half of each wave, -1 for the second: hollow</li><li><code>triangle</code>: straight up and straight down: softer than the square</li><li><code>noise</code>: white noise, the same for one seed on every machine</li></ul></td></tr>
 <tr><td><code>frequency</code></td><td>float</td><td><code>440</code></td><td>20 to 20000 Hz (soft)</td><td>Waves per second: 440 Hz is the A above middle C. A change glides across one frame</td></tr>
 <tr><td><code>amplitude</code></td><td>float</td><td><code>0.25</code></td><td>0 to 1 (soft)</td><td>The peak of the wave; 1 is full scale. A change glides across one frame</td></tr>
 <tr><td><code>name</code></td><td>text</td><td><code>&quot;ch1&quot;</code></td><td></td><td>Name of the channel it makes, as other nodes see it</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made; nodes that mix sound need the same rate on all inputs</td></tr>
-<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft)</td><td>Picks another noise of the same character (shape noise only)</td></tr>
+<tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft)</td><td>Picks another noise of the same character</td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a></p>
@@ -5294,7 +5296,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="node.info"><summary><code class="name">node.info</code><span class="sum">One node: params, connections, cook status</span></summary>
 <div class="body">
 <p>One node: params, connections, cook status; {path}</p>
-<p class="mentions">Mentioned in: <a href="#control-taking-turns">Control › Taking turns</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-params">Concepts › Params</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 <details class="entry command" id="node.kinds"><summary><code class="name">node.kinds</code><span class="sum">Node types with their params, inputs and outputs. With a param: its help (what it does, type, default, range, unit, what each choice does)</span></summary>
 <div class="body">

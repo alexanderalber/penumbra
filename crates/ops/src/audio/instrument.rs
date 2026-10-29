@@ -33,9 +33,10 @@ pub const INSTRUMENT: &str = "audio.instrument";
 pub const MAX_VOICES: usize = 128;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
+    let pitched: Vec<&str> = PRESETS.into_iter().filter(|p| Preset::parse(p).pitched()).collect();
     let mut desc = NodeDesc::new(
         INSTRUMENT,
-        "Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat, sweep. Each channel wired into play plays its own note of a scale",
+        "Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat. Each channel wired into play plays its own note of a scale",
     )
     .param(
         ParamSpec::choice("preset", &PRESETS)
@@ -44,20 +45,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .choice_doc("mallet", "a marimba-like wooden bar: short and round")
             .choice_doc("bell", "a struck bell: metallic overtones, rings about 8 times as long as decay")
             .choice_doc("kick", "a bass drum: a sine falling from about 300 Hz to 45 Hz in 150 ms. Ignores key, scale and note")
-            .choice_doc("hat", "a hi-hat: a short burst of high noise, about a fifth of decay. Ignores key, scale and note")
-            .choice_doc("sweep", "a noise riser: rises in pitch and loudness over 10 times decay, then stops. Ignores key, scale and note"),
+            .choice_doc("hat", "a hi-hat: a short burst of high noise, about a fifth of decay. Ignores key, scale and note"),
     );
     for p in lanes::pitch_params(
         "Which note plays: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale. Read when a note starts",
         "Notes of the scale between neighbouring play channels: with 1, channel 0 plays the root, channel 1 the next note up, and so on",
     ) {
-        desc = desc.param(p);
+        desc = desc.param(p.applies_when("preset", &pitched));
     }
     let desc = desc
         .param(
             ParamSpec::float("brightness", 0.5)
                 .clamp(0.0, 1.0)
-                .doc("0 is dull and soft, 1 bright and sharp. For kick: how high the drop starts; for sweep: how high it rises. Read when a note starts"),
+                .doc("0 is dull and soft, 1 bright and sharp. For kick: how high the drop starts. Read when a note starts"),
         )
         .param(lanes::seconds_param(
             "decay",
@@ -72,13 +72,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("Which crossings of threshold by a play channel start a note")
                 .choice_doc("up", "the value rises above threshold: a pulse from 0 to 1 plays once")
                 .choice_doc("down", "the value falls to threshold or below")
-                .choice_doc("both", "either way: a swinging value plays at every pass, as a pendulum at the bottom"),
+                .choice_doc("both", "either way: a swinging value plays at every pass, as a pendulum at the bottom")
+                .applies_when_wired("play"),
         )
         .param(
             ParamSpec::float("threshold", 0.0)
                 .range(-1.0, 1.0)
                 .more()
-                .doc("The value a play channel must cross to start a note. 0 suits pulses from 0 to 1 and waves around 0"),
+                .doc("The value a play channel must cross to start a note. 0 suits pulses from 0 to 1 and waves around 0")
+                .applies_when_wired("play"),
         )
         .param(
             ParamSpec::int("voices", 32)

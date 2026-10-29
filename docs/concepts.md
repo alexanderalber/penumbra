@@ -159,6 +159,11 @@ params are relative to the project directory and reload when the file changes.
   param does, what each value of a choice does, its type, default, range and unit, and whether
   a channel can drive it. A click elsewhere or Escape closes it; hovering the name shows the
   text alone. `node.kinds {kind, param}` returns the same help over the control channel.
+- **A greyed-out param** does nothing with the node's other settings as they are: `key` of an
+  `audio.instrument` with preset `kick`, `threshold` while nothing is wired into `play`. It
+  stays editable, so a value can be set ahead. Hovering its name says why; `node.info` reports
+  it as `applies: false` with the reason. A param greyed in italics is locked as well, until
+  the setting that replaces it changes (a camera's `fov` while `calibration` is set).
 - **A reset button** appears beside a param that is not at its default.
 - **One drag is one undo step**, however long it takes.
 - **Params from a file:** a shader's header and a script's `PARAMS` add their own rows, under

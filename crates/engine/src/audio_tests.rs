@@ -255,3 +255,33 @@ fn an_oscillator_plays_through_the_engine_gaplessly() {
     f.call("node.delete", json!({"path": "/out"}));
     eventually("the bus to close", || out.keys().is_empty());
 }
+
+#[test]
+fn node_info_and_kinds_say_when_a_param_does_nothing() {
+    let f = Fixture::new("audio-applies");
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/i", "kind": "audio.instrument", "params": {"preset": "kick"}},
+            {"op": "create", "path": "/c", "kind": "chan.constant"},
+        ]}),
+    );
+    let param = |info: &Json, name: &str| {
+        info["params"].as_array().unwrap().iter().find(|p| p["name"] == name).unwrap().clone()
+    };
+    let info = f.call("node.info", json!({"path": "/i"}));
+    assert_eq!(param(&info, "key")["applies"], false, "{info}");
+    assert_eq!(param(&info, "key")["why"], "Does nothing with preset kick");
+    assert_eq!(param(&info, "threshold")["why"], "Does something only while play is wired");
+    assert!(param(&info, "decay").get("applies").is_none(), "{info}");
+    f.call("node.connect", json!({"from": "/c", "to": "/i"}));
+    f.call("node.set", json!({"path": "/i", "params": {"preset": "bell"}}));
+    let info = f.call("node.info", json!({"path": "/i"}));
+    assert!(param(&info, "key").get("applies").is_none(), "{info}");
+    assert!(param(&info, "threshold").get("applies").is_none(), "{info}");
+    let help = f.call("node.kinds", json!({"kind": "audio.instrument", "param": "note"}));
+    assert_eq!(help["param"]["applies"], "only with preset pluck, mallet or bell", "{help}");
+    let kinds = f.call("node.kinds", json!({"kind": "audio.instrument"}));
+    let note = kinds["kinds"][0]["params"].as_array().unwrap().iter().find(|p| p["name"] == "note").unwrap();
+    assert_eq!(note["applies"][0]["choice"]["param"], "preset", "{note}");
+}

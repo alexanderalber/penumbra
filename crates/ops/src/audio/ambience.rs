@@ -80,7 +80,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         "Which note sounds: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale; a change glides there over glide. Bind it to a tracked position to play by moving",
         "Notes of the scale between neighbouring gate channels: with 1, channel 0 holds the root, channel 1 the next note up, and so on",
     ) {
-        desc = desc.param(p);
+        desc = desc.param(p.applies_when("preset", &["drone", "pad"]));
     }
     let desc = desc
         .param(
@@ -105,12 +105,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "release",
             0.5,
             "Seconds a tone takes to fade out when its gate closes. At least 5 ms",
-        ))
+        ).applies_when_wired("gate"))
         .param(
             ParamSpec::float("threshold", 0.0)
                 .range(-1.0, 1.0)
                 .more()
-                .doc("A gate channel above this value sounds its tone. 0 suits pulses from 0 to 1 and waves around 0"),
+                .doc("A gate channel above this value sounds its tone. 0 suits pulses from 0 to 1 and waves around 0")
+                .applies_when_wired("gate"),
         )
         .param(ParamSpec::int("rate", 48_000).clamp(f64::from(MIN_RATE), f64::from(MAX_RATE)).more().doc(
             "Samples per second of the sound made; nodes that mix sound need the same rate on all inputs",

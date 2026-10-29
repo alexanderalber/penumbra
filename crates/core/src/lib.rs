@@ -21,7 +21,8 @@ pub use chan::{Channel, Chans, SampleAxis};
 pub use error::Error;
 pub use id::{GroupId, NodeId};
 pub use param::{
-    ChoiceDoc, ChoiceHelp, Curve, MORE, ParamHelp, ParamKind, ParamSpec, Range, Resolves, Special, Unit,
+    ChoiceDoc, ChoiceHelp, Condition, Curve, MORE, ParamHelp, ParamKind, ParamSpec, Range, Resolves, Special,
+    Unit,
 };
 pub use path::{Name, NodePath, ParamPart, ParamPath};
 pub use sync::lock;

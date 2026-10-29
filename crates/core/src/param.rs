@@ -144,6 +144,41 @@ pub struct ParamSpec {
     /// starts it by itself.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub opens_at_default: bool,
+    /// When the param does something: all of these must hold ([`Condition`]). Empty: always.
+    /// The panel greys a param that does nothing at the moment and says why
+    /// ([`ParamSpec::inapplicable`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub applies: Vec<Condition>,
+}
+
+/// A condition under which a param does something, given the node's other params and wiring.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Condition {
+    /// The choice param `param` has one of `values`.
+    Choice { param: String, values: Vec<String> },
+    /// The input `input` is wired.
+    Wired { input: String },
+}
+
+impl Condition {
+    /// The condition in words, for the reference and `node.kinds`: `only with preset pluck,
+    /// mallet or bell`, `only while gate is wired`.
+    pub fn label(&self) -> String {
+        match self {
+            Condition::Choice { param, values } => format!("only with {param} {}", or_list(values)),
+            Condition::Wired { input } => format!("only while {input} is wired"),
+        }
+    }
+}
+
+/// `a`, `a or b`, `a, b or c`.
+fn or_list(words: &[String]) -> String {
+    match words {
+        [] => String::new(),
+        [one] => one.clone(),
+        [head @ .., last] => format!("{} or {last}", head.join(", ")),
+    }
 }
 
 /// A value of a number param that stands for something other than its number.
@@ -202,6 +237,9 @@ pub struct ParamHelp {
     /// Values of a number that stand for something else, as `0: show rate`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub specials: Vec<String>,
+    /// When it does something ([`ParamSpec::applies_label`]); empty when always.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub applies: String,
 }
 
 /// One value of a choice in [`ParamHelp`].
@@ -230,6 +268,7 @@ impl ParamSpec {
             choice_docs: Vec::new(),
             specials: Vec::new(),
             opens_at_default: false,
+            applies: Vec::new(),
         }
     }
 
@@ -356,6 +395,55 @@ impl ParamSpec {
         self
     }
 
+    /// Does something only while the choice param `param` has one of `values` ([`Condition`]).
+    pub fn applies_when(mut self, param: &str, values: &[&str]) -> Self {
+        let values = values.iter().map(|v| v.to_string()).collect();
+        self.applies.push(Condition::Choice { param: param.to_string(), values });
+        self
+    }
+
+    /// Does something only while the input `input` is wired ([`Condition`]).
+    pub fn applies_when_wired(mut self, input: &str) -> Self {
+        self.applies.push(Condition::Wired { input: input.to_string() });
+        self
+    }
+
+    /// When the param does something, in words: the [`Condition::label`]s joined by `and`;
+    /// empty when it always does.
+    pub fn applies_label(&self) -> String {
+        self.applies.iter().map(Condition::label).collect::<Vec<_>>().join(" and ")
+    }
+
+    /// Why the param does nothing at the moment, as a sentence for the panel's hover text;
+    /// `None` while it does something. `value` gives the current value of another param (a
+    /// bound one as bound), `wired` whether an input is wired.
+    pub fn inapplicable(
+        &self,
+        value: impl Fn(&str) -> Option<Value>,
+        wired: impl Fn(&str) -> bool,
+    ) -> Option<String> {
+        let why: Vec<String> = self
+            .applies
+            .iter()
+            .filter_map(|c| match c {
+                Condition::Choice { param, values } => {
+                    let now = value(param);
+                    let now = now.as_ref().and_then(Value::as_str);
+                    match now {
+                        Some(v) if values.iter().any(|w| w == v) => None,
+                        Some(v) => Some(format!("Does nothing with {param} {v}")),
+                        None => Some(format!("Does something only with {param} {}", or_list(values))),
+                    }
+                }
+                Condition::Wired { input } if !wired(input) => {
+                    Some(format!("Does something only while {input} is wired"))
+                }
+                Condition::Wired { .. } => None,
+            })
+            .collect();
+        if why.is_empty() { None } else { Some(why.join(". ")) }
+    }
+
     /// The special value `value` is, if it is one.
     pub fn special_of(&self, value: f64) -> Option<&Special> {
         self.specials.iter().find(|s| s.value == value)
@@ -480,6 +568,7 @@ impl ParamSpec {
             bindable: self.bind_components() > 0,
             choices,
             specials: self.special_lines(),
+            applies: self.applies_label(),
         }
     }
 

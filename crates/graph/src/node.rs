@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Arc;
 
-use penumbra_core::{Error, Name, ParamSpec};
+use penumbra_core::{Condition, Error, Name, ParamKind, ParamSpec, Value};
 use serde::{Deserialize, Serialize};
 
 use crate::cook::{CookContext, InputChoice};
@@ -510,6 +510,55 @@ impl NodeDesc {
         self.params.iter().find(|p| p.name == name)
     }
 
+    /// A condition of `p` names a choice param of this type with values it has, or an input of
+    /// it.
+    fn check_condition(&self, p: &ParamSpec, c: &Condition) -> Result<(), Error> {
+        match c {
+            Condition::Choice { param, values } => {
+                let Some(spec) = self.param_spec(param).filter(|s| s.name != p.name) else {
+                    return Err(Error::new(format!("applies with `{param}`, which is no other param")));
+                };
+                let ParamKind::Choice(choices) = &spec.kind else {
+                    return Err(Error::new(format!("applies with `{param}`, which is no choice")));
+                };
+                if values.is_empty() {
+                    return Err(Error::new(format!("applies with `{param}` but names no value")));
+                }
+                if let Some(v) = values.iter().find(|v| !choices.contains(v)) {
+                    return Err(Error::new(format!(
+                        "applies with `{param}` {v}, which is not one of its choices"
+                    )));
+                }
+            }
+            Condition::Wired { input } => {
+                if !self.inputs.iter().any(|i| i.name == *input) {
+                    return Err(Error::new(format!("applies while `{input}` is wired, which is no input")));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Why param `name` of `node` does nothing at the moment ([`ParamSpec::inapplicable`]): a
+    /// sentence for the panel's hover text, `None` while it does something or for a param the
+    /// type does not declare. `bound` gives the values bound params cook with; others come from
+    /// the node.
+    pub fn inapplicable(
+        &self,
+        node: &NodeDef,
+        name: &str,
+        bound: impl Fn(&str) -> Option<Value>,
+    ) -> Option<String> {
+        let spec = self.param_spec(name)?;
+        if spec.applies.is_empty() {
+            return None;
+        }
+        spec.inapplicable(
+            |p| bound(p).or_else(|| node.param(self, p).cloned()),
+            |input| self.input_index(input).and_then(|i| node.inputs.get(i)).is_some_and(Option::is_some),
+        )
+    }
+
     /// Kind syntax, unique valid names, valid param specs.
     pub fn validate(&self) -> Result<(), Error> {
         let ctx = || format!("node type `{}`", self.kind);
@@ -530,6 +579,12 @@ impl NodeDesc {
                 return Err(Error::new(format!("param `{}` declared twice", p.name)).context(ctx()));
             }
             seen.push(&p.name);
+        }
+        for p in &self.params {
+            for c in &p.applies {
+                self.check_condition(p, c)
+                    .map_err(|e| e.context(format!("param `{}`", p.name)).context(ctx()))?;
+            }
         }
         if self.port.is_some() {
             let one = |n: usize| n == 1;
@@ -924,6 +979,68 @@ mod tests {
         // A rename onto nothing, or from a name still declared, is refused.
         assert!(runs().renamed_input("x", "nope").validate().is_err());
         assert!(runs().renamed_input("mask", "in1").validate().is_err());
+    }
+
+    fn synth() -> NodeDesc {
+        NodeDesc::new("test.synth", "")
+            .param(ParamSpec::choice("preset", &["pluck", "kick"]))
+            .param(ParamSpec::float("note", 0.0).applies_when("preset", &["pluck"]))
+            .param(ParamSpec::float("threshold", 0.0).applies_when_wired("play"))
+            .param(
+                ParamSpec::float("both", 0.0).applies_when("preset", &["pluck"]).applies_when_wired("play"),
+            )
+            .input("play", DataKind::Chan)
+    }
+
+    #[test]
+    fn a_param_applies_by_choice_and_wiring() {
+        let d = synth();
+        d.validate().unwrap();
+        let mut node = NodeDef {
+            id: penumbra_core::NodeId(1),
+            name: Name::new("s").unwrap(),
+            parent: None,
+            kind: d.kind.clone(),
+            params: BTreeMap::new(),
+            inputs: vec![None],
+            previous: vec![false],
+            binds: BTreeMap::new(),
+            locked: false,
+            pos: None,
+        };
+        let none = |_: &str| None;
+        assert_eq!(d.inapplicable(&node, "note", none), None, "the default preset is pitched");
+        assert_eq!(
+            d.inapplicable(&node, "threshold", none).unwrap(),
+            "Does something only while play is wired"
+        );
+        assert_eq!(d.inapplicable(&node, "preset", none), None);
+        node.params.insert(Name::new("preset").unwrap(), Value::Text("kick".into()));
+        assert_eq!(d.inapplicable(&node, "note", none).unwrap(), "Does nothing with preset kick");
+        assert_eq!(
+            d.inapplicable(&node, "both", none).unwrap(),
+            "Does nothing with preset kick. Does something only while play is wired"
+        );
+        // A bound value counts over the stored one.
+        let pluck = |p: &str| (p == "preset").then(|| Value::Text("pluck".into()));
+        assert_eq!(d.inapplicable(&node, "note", pluck), None);
+        node.inputs[0] = Some(crate::Port { node: penumbra_core::NodeId(2), output: 0 });
+        assert_eq!(d.inapplicable(&node, "threshold", none), None);
+        assert_eq!(
+            d.param_spec("both").unwrap().applies_label(),
+            "only with preset pluck and only while play is wired"
+        );
+    }
+
+    #[test]
+    fn a_condition_must_name_what_the_type_declares() {
+        let bad = |p: ParamSpec| synth().param(p).validate().is_err();
+        assert!(bad(ParamSpec::float("x", 0.0).applies_when("nope", &["pluck"])));
+        assert!(bad(ParamSpec::float("x", 0.0).applies_when("note", &["pluck"])), "no choice");
+        assert!(bad(ParamSpec::float("x", 0.0).applies_when("preset", &["bell"])), "no such value");
+        assert!(bad(ParamSpec::float("x", 0.0).applies_when("preset", &[])));
+        assert!(bad(ParamSpec::float("x", 0.0).applies_when_wired("gate")));
+        assert!(!bad(ParamSpec::float("x", 0.0).applies_when("preset", &["kick"])));
     }
 
     #[test]

@@ -522,8 +522,19 @@ impl ParamPanel {
         let mut label = RichText::new(self.label.as_deref().unwrap_or(&spec.name));
         let inactive = input.types.get(&node.kind).and_then(|t| t.inactive(node, &spec.name));
         let replaced = inactive.is_some();
+        // Does nothing with the other params or the wiring as they are: drawn dimmed, still
+        // editable, so a value can be set ahead and the rows do not move when a preset changes.
+        let idle = if replaced {
+            None
+        } else {
+            input.types.desc(&node.kind).and_then(|d| {
+                d.inapplicable(node, &spec.name, |p| input.status.and_then(|s| s.bound.get(p).cloned()))
+            })
+        };
         if replaced {
             label = label.color(theme::TEXT_WEAK).italics();
+        } else if idle.is_some() {
+            label = label.color(theme::TEXT_IDLE);
         } else if !bound.is_empty() {
             label = label.color(theme::kind_color(DataKind::Chan));
         } else if explicit.is_none() {
@@ -548,7 +559,12 @@ impl ParamPanel {
                     }
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        help_button(ui, spec, &key, inactive, auto);
+                        let note = match (inactive, &idle) {
+                            (Some(why), _) => Some(format!("Not used now. {why}.")),
+                            (None, Some(why)) => Some(format!("{why}.")),
+                            (None, None) => None,
+                        };
+                        help_button(ui, spec, &key, note.as_deref(), auto);
                         match &name_edit {
                             Some(name_spec) => self.name_field(ui, input, node, name_spec, auto, actions),
                             None => {
@@ -562,6 +578,8 @@ impl ParamPanel {
             .inner;
         if let Some(l) = l {
             if let Some(why) = inactive {
+                l.on_hover_text(format!("{why}. {}", spec.full_doc()));
+            } else if let Some(why) = &idle {
                 l.on_hover_text(format!("{why}. {}", spec.full_doc()));
             } else if !spec.full_doc().is_empty() {
                 l.on_hover_text(spec.full_doc());
@@ -578,6 +596,8 @@ impl ParamPanel {
         let cell = |ui: &mut Ui| {
             if replaced {
                 ui.disable();
+            } else if idle.is_some() {
+                ui.multiply_opacity(IDLE_OPACITY);
             }
             if let Some(k) = removable {
                 let r = ui.small_button("-").on_hover_text("take this row away");
@@ -1325,7 +1345,7 @@ fn help_button(
     ui: &mut Ui,
     spec: &ParamSpec,
     key: &str,
-    inactive: Option<&str>,
+    note: Option<&str>,
     auto: &mut automation::Registry,
 ) {
     let popup_id = ui.make_persistent_id(("param_help", key));
@@ -1347,16 +1367,20 @@ fn help_button(
         .align_alternatives(&[egui::RectAlign::BOTTOM_START, egui::RectAlign::RIGHT_START])
         .gap(6.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| help_body(ui, &spec.help(), inactive));
+        .show(|ui| help_body(ui, &spec.help(), note));
     if let Some(shown) = shown {
         auto.add("param.info", shown.response.rect, format!("help on {}", spec.name));
     }
 }
 
+/// Opacity of the widgets of a param that does nothing at the moment: weaker, still readable.
+const IDLE_OPACITY: f32 = 0.55;
+
 /// Width of the help overlay's text, in points.
 const HELP_WIDTH: f32 = 300.0;
 
-fn help_body(ui: &mut Ui, help: &penumbra_core::ParamHelp, inactive: Option<&str>) {
+/// `note` says why the param does nothing at the moment, as a sentence.
+fn help_body(ui: &mut Ui, help: &penumbra_core::ParamHelp, note: Option<&str>) {
     ui.set_max_width(HELP_WIDTH);
     ui.horizontal(|ui| {
         ui.label(RichText::new(&help.name).strong().color(theme::TEXT));
@@ -1372,8 +1396,8 @@ fn help_body(ui: &mut Ui, help: &penumbra_core::ParamHelp, inactive: Option<&str
     } else if !help.doc.is_empty() {
         ui.add(egui::Label::new(&help.doc).wrap());
     }
-    if let Some(why) = inactive {
-        ui.add(egui::Label::new(RichText::new(format!("Not used now. {why}.")).color(theme::WARNING)).wrap());
+    if let Some(note) = note {
+        ui.add(egui::Label::new(RichText::new(note).color(theme::WARNING)).wrap());
     }
     if !help.choices.is_empty() {
         ui.add_space(4.0);
@@ -1429,6 +1453,9 @@ fn help_facts(help: &penumbra_core::ParamHelp) -> Vec<(&'static str, String)> {
         "log" => facts.push(("slider", "logarithmic: equal steps are equal ratios".to_string())),
         "power" => facts.push(("slider", "finer near the minimum".to_string())),
         _ => {}
+    }
+    if !help.applies.is_empty() {
+        facts.push(("applies", help.applies.clone()));
     }
     if help.bindable {
         facts.push((

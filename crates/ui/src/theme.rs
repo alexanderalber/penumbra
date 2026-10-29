@@ -5,6 +5,9 @@ use penumbra_graph::DataKind;
 
 pub const TEXT: Color32 = Color32::from_gray(220);
 pub const TEXT_WEAK: Color32 = Color32::from_gray(140);
+/// The label of a param that does nothing at the moment: dimmer than [`TEXT_WEAK`], still
+/// readable on the panel.
+pub const TEXT_IDLE: Color32 = Color32::from_gray(105);
 pub const ACCENT: Color32 = Color32::from_rgb(90, 160, 255);
 /// Claude's colour: the editing-mode tint, its change-log entries, nodes it just touched.
 pub const CLAUDE: Color32 = Color32::from_rgb(110, 170, 255);

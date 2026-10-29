@@ -29,10 +29,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .choice_doc("saw", "rising evenly from -1 to 1, then jumping back: bright and buzzing")
                     .choice_doc("square", "1 for the first half of each wave, -1 for the second: hollow")
                     .choice_doc("triangle", "straight up and straight down: softer than the square")
-                    .choice_doc(
-                        "noise",
-                        "white noise, the same for one seed on every machine; frequency does nothing",
-                    ),
+                    .choice_doc("noise", "white noise, the same for one seed on every machine"),
             )
             .param(
                 ParamSpec::float("frequency", 440.0)
@@ -40,9 +37,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .range(20.0, 20_000.0)
                     .curve(Curve::Log)
                     .unit(Unit::Hertz)
-                    .doc(
-                        "Waves per second: 440 Hz is the A above middle C. A change glides across one frame",
-                    ),
+                    .doc("Waves per second: 440 Hz is the A above middle C. A change glides across one frame")
+                    .applies_when("shape", &["sine", "saw", "square", "triangle"]),
             )
             .param(
                 ParamSpec::float("amplitude", 0.25)
@@ -56,7 +52,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 ParamSpec::int("seed", 0)
                     .range(0.0, 100.0)
                     .more()
-                    .doc("Picks another noise of the same character (shape noise only)"),
+                    .doc("Picks another noise of the same character")
+                    .applies_when("shape", &["noise"]),
             )
             .param(ParamSpec::text("name", "ch1").doc("Name of the channel it makes, as other nodes see it"))
             .output("out", DataKind::Audio)

@@ -201,16 +201,28 @@ fn node_section(out: &mut String, desc: &NodeDesc) {
             cell(&p.type_label()),
             cell(&param_default(p)),
             cell(&param_range(p)),
-            cell(&p.full_doc())
+            cell(&param_meaning(p))
         );
     }
     out.push('\n');
 }
 
+/// The doc with when the param does something after it, if not always.
+fn param_meaning(p: &ParamSpec) -> String {
+    let doc = p.full_doc();
+    if p.applies.is_empty() {
+        return doc;
+    }
+    let when = format!("Does something {}.", p.applies_label());
+    if doc.is_empty() { when } else { format!("{doc}. {when}") }
+}
+
 fn nodes_md(types: &NodeTypes) -> String {
     let mut out = format!(
         "{HEADER}\n\n# Node reference\n\nEvery built-in node type with its inputs, outputs and params, by family. \
-         A param marked with a group, like *(more)*, sits in that folded section of the param panel. A soft range limits only \
+         A param marked with a group, like *(more)*, sits in that folded section of the param panel. A param that does something only with some \
+         setting of another param, or only while an input is wired, says so; the panel greys it \
+         out while it does nothing. A soft range limits only \
          the slider; typed values outside it are kept. For what the families are for, see \
          [Concepts](../concepts.md).\n\n"
     );
