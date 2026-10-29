@@ -81,6 +81,112 @@ fn write_the_pendulum_wave_through_its_output() {
     eprintln!("wrote {}", file.display());
 }
 
+/// Renders a project with an `out.video` offline, picture and sound: every frame cooked in
+/// turn at 60 fps, each waiting for the encoder, so nothing is dropped; the buses play into
+/// nothing, as in a render slower than real time. The project is `PENUMBRA_RENDER_PROJECT` (a
+/// folder with `project.ron` and at least one `out.video`), the length `PENUMBRA_RENDER_SECONDS`
+/// (64 when not set). The file goes where the node's `file` says. Uses the GPU when there is
+/// one, else the software adapter.
+///
+/// `PENUMBRA_RENDER_PROJECT=<dir> cargo test --release -p penumbra-engine --test
+/// pendulum_wave_example render_a_project_offline -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn render_a_project_offline() {
+    use std::time::{Duration, Instant};
+
+    use penumbra_core::{ParamPath, Value};
+    use penumbra_gpu::{AdapterChoice, Gpu};
+    use penumbra_graph::Op;
+
+    let Some(dir) = std::env::var_os("PENUMBRA_RENDER_PROJECT").map(PathBuf::from) else {
+        eprintln!("PENUMBRA_RENDER_PROJECT is not set: nothing to render");
+        return;
+    };
+    let seconds: i64 =
+        std::env::var("PENUMBRA_RENDER_SECONDS").ok().and_then(|s| s.parse().ok()).unwrap_or(64);
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let text = std::fs::read_to_string(dir.join(FILE_NAME)).unwrap();
+    let content = penumbra_project::parse(&text, &types).unwrap();
+    let ops = penumbra_project::diff(&Content::default(), &content);
+    let mut net = Arc::new(Network::new().apply_with(&types, &ops, Params::Keep).unwrap().network);
+    let videos: Vec<_> = net.nodes().filter(|n| n.kind == "out.video").map(|n| n.id).collect();
+    assert!(!videos.is_empty(), "the project has no out.video");
+    let sinks: Vec<_> =
+        net.nodes().filter(|n| n.kind == "out.video" || n.kind == "out.audio").map(|n| n.id).collect();
+    let gpu =
+        Gpu::headless(AdapterChoice::Hardware).or_else(|_| Gpu::headless(AdapterChoice::Software)).unwrap();
+    let mut cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(4).unwrap()));
+    cooker.provide(gpu.clone());
+    cooker.set_base_dir(Some(dir.clone()));
+    let record = penumbra_record::Hub::with_planes_timeout(Duration::from_secs(60));
+    cooker.provide(record.clone());
+    let outputs = Outputs::offline(48_000, 2);
+    cooker.provide(outputs.clone());
+    cooker.provide(penumbra_ops::audio::instrument::Presses::new());
+    outputs.set_wanted(&penumbra_ops::out::audio::wants(&net, &types));
+    let switch = |net: &Arc<Network>, on: bool| {
+        let ops: Vec<Op> = videos
+            .iter()
+            .map(|id| Op::Set {
+                param: ParamPath::new(net.path_of(*id).unwrap(), "record".parse().unwrap()).unwrap(),
+                value: Value::Bool(on),
+            })
+            .collect();
+        Arc::new(net.apply(&types, &ops).unwrap().network)
+    };
+    let mut clock = ShowClock::new(Rate::FPS_60, LatePolicy::EveryFrame);
+    // Shaders and fonts load in the background: cook the first frame until every picture to
+    // record is there, then start.
+    let pictures: Vec<_> = videos
+        .iter()
+        .filter_map(|id| net.node(*id).and_then(|n| n.inputs.first().copied().flatten()))
+        .collect();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !pictures.iter().all(|p| cooker.output(*p).is_some()) {
+        assert!(Instant::now() < deadline, "the pictures to record did not come");
+        cooker.cook(&net, clock.now(), &sinks, &[]);
+        gpu.poll();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    net = switch(&net, true);
+    let started = Instant::now();
+    let frames = seconds * 60;
+    // Frame `frames` stops the recording; the one after hands it the sound of that pass.
+    for frame in 0..=frames + 1 {
+        if frame == frames {
+            net = switch(&net, false);
+        }
+        // Waits for the encoder, so no frame is dropped.
+        for id in &videos {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while record.status(*id).is_some_and(|s| s.queue > 0) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        cooker.cook(&net, clock.now(), &sinks, &[]);
+        for id in &sinks {
+            assert_eq!(cooker.status(*id).and_then(|s| s.error), None, "frame {frame}");
+        }
+        outputs.after_pass(true, false);
+        gpu.poll();
+        clock.advance(1);
+        if frame % 600 == 0 {
+            eprintln!("frame {frame} of {frames}, {:.0} s", started.elapsed().as_secs_f64());
+        }
+    }
+    for id in &videos {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !record.status(*id).is_some_and(|s| s.done) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let s = record.status(*id).unwrap();
+        eprintln!("{}", serde_json::to_string_pretty(&s).unwrap());
+        assert!(s.done && s.error.is_none(), "{s:?}");
+        assert_eq!(s.dropped, 0);
+    }
+}
+
 /// A 16-bit WAV at 48 kHz, one vector per channel.
 #[cfg(test)]
 fn write_wav(path: &Path, channels: &[Vec<f64>]) -> std::io::Result<()> {

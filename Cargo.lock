@@ -3381,6 +3381,7 @@ dependencies = [
 name = "penumbra-record"
 version = "0.6.0"
 dependencies = [
+ "filmcraft-aac",
  "filmcraft-h264enc",
  "filmcraft-isobmff",
  "filmcraft-prores",

@@ -42,6 +42,8 @@ pub mod place;
 pub mod spout;
 pub mod table;
 pub mod video;
+#[cfg(test)]
+mod video_audio_tests;
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};

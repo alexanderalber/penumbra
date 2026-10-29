@@ -35,7 +35,7 @@ pub use analysis::{Analyzer, Features, Settings};
 pub use capture::{Block, Cursor, DeviceInfo, Hub, StreamStatus, Watch};
 pub use envelope::{Detect, Envelope};
 pub use limiter::Limiter;
-pub use outputs::{BusStatus, LaneStatus, Outputs, Want, keep_off_devices};
+pub use outputs::{BusStatus, LaneStatus, Outputs, Tap, TapBlock, Want, keep_off_devices};
 pub use playback::{Engine, EngineStatus, Player, PlayerStatus, output_devices};
 pub use reverb::Reverb;
 pub use spectrum::Spectrum;

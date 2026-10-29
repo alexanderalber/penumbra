@@ -5,6 +5,8 @@
 //! - [`writer`]: one thread per recording that encodes the frames it is handed and writes them
 //!   into the file; the queue in front of it is bounded, and a frame that does not fit is
 //!   dropped (the caller counts it), so whoever records never waits for the encoder.
+//! - [`audio`]: the sound beside the picture: AAC in MP4, 24-bit PCM in MOV, each block put at
+//!   the sample of the file its show time falls on.
 //! - [`hub`]: the recordings of a process: their status, and finishing every file when the app
 //!   closes.
 //! - [`looping`]: a movie made from a recording that a player can repeat without a visible
@@ -15,10 +17,13 @@
 //! through the [`Planes`] trait, so this crate needs no GPU. No UI, no graph: the node type
 //! lives in `penumbra-ops`, the commands in `penumbra-engine`.
 
+pub mod audio;
 pub mod hub;
 pub mod looping;
 pub mod writer;
 
+#[cfg(test)]
+mod audio_tests;
 #[cfg(test)]
 mod tests;
 
@@ -26,6 +31,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+pub use audio::{AudioBlock, AudioCodec, AudioStatus};
 pub use hub::{Hub, Status};
 pub use writer::{Recording, Settings, Sink};
 

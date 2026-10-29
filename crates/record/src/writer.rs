@@ -6,6 +6,10 @@
 //! position in the file ([`Frame::index`]); a frame lasts until the next one, so dropped or
 //! missing frames make the one before longer and the file keeps time with the show.
 //!
+//! Sound comes beside the frames ([`Recording::push_audio`]) on a queue of its own: the thread
+//! writes it between the frames, so a dropped frame never costs sound. [`crate::audio`] says
+//! where each block goes and in which codec.
+//!
 //! Dropping the [`Recording`] stops it: the thread encodes what is queued, then finishes the
 //! file (writes its index, `moov`) and ends. A failure (the disk full, the folder not
 //! writable, the encoder failing) ends the recording early; the file is still finished as far
@@ -16,7 +20,9 @@ use std::io::BufWriter;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
+use std::sync::mpsc::{
+    Receiver, RecvTimeoutError, Sender, SyncSender, TryRecvError, TrySendError, channel, sync_channel,
+};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -24,6 +30,7 @@ use std::time::{Duration, Instant};
 use filmcraft_isobmff as iso;
 use penumbra_core::lock;
 
+use crate::audio::{AudioBlock, AudioCodec, AudioStatus};
 use crate::hub::Status;
 use crate::looping::{Job, Jobs, Spec};
 use crate::{Codec, Fps, Frame, H264Preset, Layout, Planes};
@@ -35,6 +42,8 @@ pub const PLANES_TIMEOUT: Duration = Duration::from_secs(5);
 const WRITE_BUFFER: usize = 8 << 20;
 /// How often a waiting thread looks at the stop flag.
 const NAP: Duration = Duration::from_millis(100);
+/// Most sound waiting for the recording thread, seconds; more is dropped and counted.
+pub const AUDIO_QUEUE_SECONDS: f64 = 60.0;
 
 /// What to record and how.
 #[derive(Clone, Debug)]
@@ -83,6 +92,22 @@ pub(crate) struct Shared {
     then: Mutex<Option<Spec>>,
     /// The loop being made of the file, or made.
     looping: Mutex<Option<Arc<Job>>>,
+    /// Samples per channel of sound waiting for the thread.
+    audio_queued: AtomicUsize,
+    /// What the caller says about the sound: `None` until it asks for sound.
+    audio: Mutex<Option<Heard>>,
+}
+
+/// What the caller of a recording knows about its sound.
+#[derive(Clone, Copy, Debug, Default)]
+struct Heard {
+    sources: usize,
+    /// Blocks lost before they reached the recording.
+    lost: u64,
+    /// Blocks refused before they reached the recording (another rate).
+    refused: u64,
+    /// Blocks dropped because the queue to the thread was full.
+    dropped: u64,
 }
 
 impl Shared {
@@ -96,6 +121,8 @@ impl Shared {
             due: AtomicI64::new(-1),
             then: Mutex::new(None),
             looping: Mutex::new(None),
+            audio_queued: AtomicUsize::new(0),
+            audio: Mutex::new(None),
         }
     }
 
@@ -105,6 +132,12 @@ impl Shared {
         s.dropped = self.dropped.load(Ordering::Acquire);
         s.skipped = self.skipped.load(Ordering::Acquire);
         s.looping = lock(&self.looping).as_ref().map(|j| j.status());
+        if let Some(h) = *lock(&self.audio) {
+            let a = s.audio.get_or_insert_with(AudioStatus::default);
+            a.sources = h.sources;
+            a.dropped += h.lost + h.dropped;
+            a.refused += h.refused;
+        }
         s
     }
 
@@ -117,6 +150,7 @@ impl Shared {
 /// (on the recording's own thread, so dropping never waits).
 pub struct Recording {
     tx: Option<SyncSender<Frame>>,
+    audio: Option<Sender<AudioBlock>>,
     shared: Arc<Shared>,
     layout: Layout,
     fps: Fps,
@@ -144,6 +178,34 @@ impl Recording {
                 Err(f)
             }
         }
+    }
+
+    /// Queues sound for the file without waiting ([`crate::audio`] says where it goes). Only
+    /// when more than [`AUDIO_QUEUE_SECONDS`] wait already is the block dropped and counted.
+    pub fn push_audio(&self, block: AudioBlock) {
+        let Some(tx) = &self.audio else { return };
+        let len = block.len();
+        // `as`: seconds to a sample count.
+        let most = (f64::from(block.rate) * AUDIO_QUEUE_SECONDS) as usize;
+        if self.shared.audio_queued.load(Ordering::Acquire) + len > most {
+            lock(&self.shared.audio).get_or_insert_with(Heard::default).dropped += 1;
+            return;
+        }
+        self.shared.audio_queued.fetch_add(len, Ordering::AcqRel);
+        if tx.send(block).is_err() {
+            self.shared.audio_queued.fetch_sub(len, Ordering::AcqRel);
+        }
+    }
+
+    /// Says the recording takes sound from `sources` outputs (0: the file gets no sound track
+    /// unless sound comes), and how many blocks were `lost` or `refused` before they reached
+    /// it since the start. The status shows it as `audio`.
+    pub fn sound(&self, sources: usize, lost: u64, refused: u64) {
+        let mut h = lock(&self.shared.audio);
+        let h = h.get_or_insert_with(Heard::default);
+        h.sources = sources;
+        h.lost = lost;
+        h.refused = refused;
     }
 
     /// Whether a frame would fit into the queue now (so the caller can skip the work of making
@@ -194,7 +256,8 @@ impl Drop for Recording {
                 s.finishing = true;
             }
         });
-        // Closing the channel tells the thread to finish.
+        // Closing the channels tells the thread to finish.
+        self.audio = None;
         self.tx = None;
     }
 }
@@ -226,17 +289,26 @@ pub(crate) fn start(
     };
     let shared = Arc::new(Shared::new(status));
     let (tx, rx) = sync_channel::<Frame>(s.queue.max(1));
+    let (audio_tx, audio_rx) = channel::<AudioBlock>();
     let fps = s.fps;
     let thread_shared = shared.clone();
     let handle = std::thread::Builder::new()
         .name("record".into())
-        .spawn(move || run(&s, &rx, &thread_shared, planes_timeout, &loops))
+        .spawn(move || run(&s, &rx, &audio_rx, &thread_shared, planes_timeout, &loops))
         .map_err(|e| format!("cannot start the recording thread: {e}"))?;
-    Ok((Recording { tx: Some(tx), shared: shared.clone(), layout, fps }, shared, handle))
+    let recording = Recording { tx: Some(tx), audio: Some(audio_tx), shared: shared.clone(), layout, fps };
+    Ok((recording, shared, handle))
 }
 
-fn run(s: &Settings, rx: &Receiver<Frame>, shared: &Shared, planes_timeout: Duration, loops: &Jobs) {
-    let outcome = catch_unwind(AssertUnwindSafe(|| record(s, rx, shared, planes_timeout)));
+fn run(
+    s: &Settings,
+    rx: &Receiver<Frame>,
+    audio: &Receiver<AudioBlock>,
+    shared: &Shared,
+    planes_timeout: Duration,
+    loops: &Jobs,
+) {
+    let outcome = catch_unwind(AssertUnwindSafe(|| record(s, rx, audio, shared, planes_timeout)));
     let error = match outcome {
         Ok(Ok(())) => None,
         Ok(Err(e)) => Some(e),
@@ -275,9 +347,30 @@ struct Packet {
     sync: bool,
 }
 
+/// Writes the sound waiting in `audio` into `sink`; says whether its sender is gone.
+fn drain_audio(sink: &mut Sink, audio: &Receiver<AudioBlock>, shared: &Shared) -> bool {
+    let mut wrote = false;
+    let gone = loop {
+        match audio.try_recv() {
+            Ok(block) => {
+                shared.audio_queued.fetch_sub(block.len(), Ordering::AcqRel);
+                sink.write_audio(&block);
+                wrote = true;
+            }
+            Err(TryRecvError::Empty) => break false,
+            Err(TryRecvError::Disconnected) => break true,
+        }
+    };
+    if wrote && let Some(a) = sink.audio_status() {
+        shared.update(|st| st.audio = Some(a));
+    }
+    gone
+}
+
 fn record(
     s: &Settings,
     rx: &Receiver<Frame>,
+    audio: &Receiver<AudioBlock>,
     shared: &Shared,
     planes_timeout: Duration,
 ) -> Result<(), String> {
@@ -291,6 +384,7 @@ fn record(
     let mut busy: Option<f64> = None;
     let mut failure: Option<String> = None;
     loop {
+        drain_audio(&mut sink, audio, shared);
         let mut frame = match rx.recv_timeout(NAP) {
             Ok(f) => f,
             Err(RecvTimeoutError::Timeout) if !shared.stop.load(Ordering::Acquire) => continue,
@@ -323,12 +417,24 @@ fn record(
         st.recording = false;
         st.finishing = true;
     });
+    if failure.is_none() {
+        // The rest of the sound: its sender went with the handle, or goes with it soon (the app
+        // closing stops the thread while the handle may still live).
+        let deadline = Instant::now() + NAP;
+        while !drain_audio(&mut sink, audio, shared) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
     let closed = sink.close(failure, shared.due.load(Ordering::Acquire));
+    let audio_status = closed.audio.clone();
     shared.update(|st| {
         st.frames = closed.frames;
         st.bytes = closed.bytes;
         if let Some(seconds) = closed.seconds {
             st.seconds = seconds;
+        }
+        if audio_status.is_some() {
+            st.audio = audio_status;
         }
     });
     closed.result
@@ -349,6 +455,12 @@ pub struct Sink {
     path: PathBuf,
     /// Index of the frame [`Sink::push`] writes next.
     next: i64,
+    /// What sound is encoded as.
+    audio_codec: AudioCodec,
+    /// The sound track, from the first block of sound on.
+    audio: Option<crate::audio::Track>,
+    /// The sound track stopped taking sound (see its `error`); the picture goes on.
+    audio_failed: Option<AudioStatus>,
 }
 
 /// What [`Sink::close`] reports.
@@ -357,6 +469,7 @@ struct Closed {
     bytes: u64,
     /// Length of the file, when a last frame was written.
     seconds: Option<f64>,
+    audio: Option<AudioStatus>,
     result: Result<(), String>,
 }
 
@@ -401,7 +514,46 @@ impl Sink {
             written: Written::default(),
             path,
             next: 0,
+            audio_codec: AudioCodec::for_brand(mp4),
+            audio: None,
+            audio_failed: None,
         })
+    }
+
+    /// Writes sound into the file's sound track, which the first block makes ([`crate::audio`]
+    /// says where it goes). A track that cannot be made or written stops taking sound and says
+    /// why in [`Sink::audio_status`]; the picture goes on.
+    pub fn write_audio(&mut self, block: &AudioBlock) {
+        if self.audio_failed.is_some() || block.is_empty() {
+            return;
+        }
+        if self.audio.is_none() {
+            match crate::audio::Track::add(&mut self.mux, self.audio_codec, block.rate) {
+                Ok(t) => self.audio = Some(t),
+                Err(e) => {
+                    log::warn!("recording {}: {e}", self.path.display());
+                    self.audio_failed = Some(AudioStatus {
+                        codec: self.audio_codec.name().to_string(),
+                        rate: block.rate,
+                        error: Some(e),
+                        ..AudioStatus::default()
+                    });
+                    return;
+                }
+            }
+        }
+        let Some(track) = self.audio.as_mut() else { return };
+        if let Err(e) = track.write(&mut self.mux, block) {
+            log::warn!("recording {}: {e}", self.path.display());
+            let mut status = track.status.clone();
+            status.error = Some(e);
+            self.audio_failed = Some(status);
+        }
+    }
+
+    /// The sound track as far as it got; `None` while no sound came.
+    pub fn audio_status(&self) -> Option<AudioStatus> {
+        self.audio_failed.clone().or_else(|| self.audio.as_ref().map(|t| t.status.clone()))
     }
 
     /// The file written.
@@ -468,6 +620,19 @@ impl Sink {
                 failure = Some(e);
             }
         }
+        if self.audio_failed.is_none()
+            && let Some(track) = self.audio.as_mut()
+        {
+            // The sound lasts as long as the picture. `as`: seconds to a sample count.
+            let end = seconds.map(|s| (s * f64::from(track.rate)).round() as u64);
+            if let Err(e) = track.finish(&mut self.mux, end) {
+                log::warn!("recording {}: {e}", self.path.display());
+                let mut status = track.status.clone();
+                status.error = Some(e);
+                self.audio_failed = Some(status);
+            }
+        }
+        let audio = self.audio_status();
         let finished = self.mux.finish().map_err(write_error).and_then(|w| {
             let file = w.into_inner().map_err(|e| format!("cannot write the file: {}", e.error()))?;
             file.sync_all().map_err(|e| format!("cannot write the file: {e}"))
@@ -478,7 +643,7 @@ impl Sink {
             (None, Err(e)) => Err(e),
             (None, Ok(())) => Ok(()),
         };
-        Closed { frames: self.written.frames, bytes: self.written.bytes, seconds, result }
+        Closed { frames: self.written.frames, bytes: self.written.bytes, seconds, audio, result }
     }
 }
 
@@ -741,6 +906,6 @@ fn unpack(
 }
 
 /// Runs foreign encoder code; a panic in it is an error, not the end of the app.
-fn guarded<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+pub(crate) fn guarded<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or_else(|_| Err("the encoder failed unexpectedly".into()))
 }

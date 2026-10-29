@@ -630,3 +630,87 @@ fn write_reverb_pluck() {
     write_wav(&file, &all);
     eprintln!("wrote {}", file.display());
 }
+
+/// Show sample `n` of a steady sine.
+fn sine_at(freq: f64, amp: f64, n: i64) -> f64 {
+    amp * (std::f64::consts::TAU * freq * n as f64 / 48_000.0).sin()
+}
+
+#[test]
+fn a_tap_hears_each_block_at_its_show_sample_with_the_delay_taken_off() {
+    let mut f = played("/osc", "/out", &[]);
+    f.frames(5);
+    let tap = f.outputs.tap();
+    f.frames(20);
+    let blocks = tap.take();
+    assert_eq!(blocks.len(), 20);
+    assert!(tap.take().is_empty(), "taken once");
+    for (i, b) in blocks.iter().enumerate() {
+        // Frame 6 + i: its block ends at that frame, delayed by the node's limiter.
+        let end = (6 + i as i64) * 800 - LA as i64;
+        assert_eq!((b.rate, b.first, b.len(), b.channels.len()), (48_000, end - 800, 800, 2));
+        for (k, v) in b.channels[0].iter().enumerate() {
+            let want = sine_at(440.0, 0.25, b.first + k as i64);
+            assert!((f64::from(*v) - want).abs() < 1e-6, "block {i} sample {k}");
+        }
+        assert_eq!(b.channels[0], b.channels[1], "mono on both sides");
+    }
+    assert_eq!((tap.dropped(), tap.refused(), tap.rate()), (0, 0, Some(48_000)));
+    // Dropped: the hub forgets it.
+    drop(tap);
+    f.frames(2);
+}
+
+#[test]
+fn a_tap_hears_the_sum_of_every_bus_also_offline_and_muted() {
+    let mut ops = tone("/a", 440.0, 0.2);
+    ops.extend(tone("/b", 660.0, 0.1));
+    ops.extend(tone("/c", 880.0, 0.1));
+    ops.extend([
+        create("/oa", AUDIO_OUT),
+        create("/ob", AUDIO_OUT),
+        create("/oc", AUDIO_OUT),
+        set("/oa.reverb", 0.0),
+        set("/ob.reverb", 0.0),
+        set("/oc.reverb", 0.0),
+        set("/oc.device", "Headphones"),
+        connect("/a", "/oa", 0),
+        connect("/b", "/ob", 0),
+        connect("/c", "/oc", 0),
+    ]);
+    let mut f = F::new(&ops);
+    f.frames(5);
+    let tap = f.outputs.tap();
+    f.outputs.set_muted(true);
+    // An offline render: the devices get nothing, the tap everything.
+    let before = f.pushed("")[0].len();
+    for _ in 0..10 {
+        f.clock.advance(1);
+        let sinks: Vec<NodeId> = f.net.nodes().filter(|n| n.kind == AUDIO_OUT).map(|n| n.id).collect();
+        f.cooker.cook(&f.net, f.clock.now(), &sinks, &[]);
+        f.outputs.after_pass(true, false);
+    }
+    assert_eq!(f.pushed("")[0].len(), before);
+    assert!(f.outputs.bus_status("").unwrap().paused);
+    let blocks = tap.take();
+    assert_eq!(blocks.len(), 10);
+    // The first block of the offline run ends at frame 6, two look-aheads back.
+    assert_eq!(blocks[0].first, 6 * 800 - 2 * LA as i64 - 800);
+    for (a, b) in blocks.iter().zip(blocks.iter().skip(1)) {
+        assert_eq!(a.first + 800, b.first, "the blocks join");
+    }
+    // Every sample is the sum of the three tones at its show time, muted or not. The
+    // headphones' bus has one lane and so one look-ahead less: its sound arrives a little
+    // earlier and waits for the default bus's.
+    for (i, b) in blocks.iter().enumerate() {
+        assert_eq!((b.len(), b.channels.len()), (800, 2));
+        for k in 0..800 {
+            let n = b.first + k as i64;
+            let want = sine_at(440.0, 0.2, n) + sine_at(660.0, 0.1, n) + sine_at(880.0, 0.1, n);
+            let got = f64::from(b.channels[0][k]);
+            if i > 0 {
+                assert!((got - want).abs() < 1e-5, "block {i} sample {k}: {got} vs {want}");
+            }
+        }
+    }
+}

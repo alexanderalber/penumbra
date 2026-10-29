@@ -56,6 +56,8 @@ pub struct Status {
     /// Frames waiting for the encoder.
     pub queue: usize,
     pub error: Option<String>,
+    /// The sound track: `None` when the recording takes no sound.
+    pub audio: Option<crate::audio::AudioStatus>,
     /// The loop made of the finished file, when one was asked for.
     #[serde(rename = "loop", skip_serializing_if = "Option::is_none")]
     pub looping: Option<LoopStatus>,

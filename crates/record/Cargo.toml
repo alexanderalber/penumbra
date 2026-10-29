@@ -1,6 +1,6 @@
 [package]
 name = "penumbra-record"
-description = "Movie recording: H.264 and ProRes encoding and MP4/MOV writing on threads of their own, a bounded queue that drops frames instead of blocking. No GPU, no UI."
+description = "Movie recording: H.264 and ProRes encoding, sound as AAC or PCM, and MP4/MOV writing on threads of their own, a bounded queue that drops frames instead of blocking. No GPU, no UI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -14,6 +14,8 @@ penumbra-video.workspace = true
 filmcraft-h264enc.workspace = true
 filmcraft-prores.workspace = true
 filmcraft-isobmff.workspace = true
+# The sound of MP4 recordings (AAC-LC).
+filmcraft-aac.workspace = true
 rayon.workspace = true
 log.workspace = true
 serde.workspace = true

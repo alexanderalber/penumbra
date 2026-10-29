@@ -51,6 +51,34 @@ fast depends on how busy the picture is far more than on anything else. Measured
 of the frames. The cook thread took about 0.4 ms more per frame while recording. So: `h264`
 for recording a busy show in real time, ProRes for calm pictures, smaller sizes or lower rates.
 
+## Sound
+
+With `audio` at `all` (the default), the file also gets the project's sound: what every
+`out.audio` plays, added up as the speakers get it. That is after each node's room, `level`,
+`mute` and limiter. `audio.mute` silences the room only; the file keeps the sound. A project
+without an `out.audio` records no sound track. `audio` off records none either.
+
+| `codec` | sound | why |
+|---|---|---|
+| `h264` (MP4) | AAC-LC, 320 kbit/s, stereo | every player opens it |
+| ProRes (MOV) | PCM, 24 bits, stereo, uncompressed | editing programs expect it beside ProRes |
+
+The sound is always two channels: a mono `out.audio` is on both, a third channel and up are left
+out. Its rate is the rate of the `out.audio` input, usually 48 000 Hz. AAC takes only the
+standard rates (44 100, 48 000 and others); at another rate an MP4 records no sound and the
+status says why, a MOV takes any rate.
+
+**Picture and sound stay together.** Each frame of sound goes into the file at its show time,
+counted from the same start as the pictures. Dropped frames cost no sound. A pause records
+neither. A jump back or more than a second ahead continues both without a gap. A jump forward
+of less than a second leaves the same time in both: the picture holds a frame, the sound gets
+silence (or the sound for the skipped time, for jumps up to half a second). An MP4's sound ends
+up to 21 ms after its last picture: AAC comes in blocks of 1024 samples.
+
+`video_out.status` shows the sound under `audio`: `codec`, `rate`, `sources` (the `out.audio`
+nodes playing; 0 records no sound), `seconds`, and the samples of silence put in or left out at
+jumps.
+
 ### H.264 presets
 
 `preset` trades the H.264 encoder's speed against size and quality:
@@ -90,7 +118,7 @@ smaller size (`size` fixed, `width` and `height`), or give the encoder more `thr
   file's frames per second. Frames follow the show clock: frame k is the picture k / rate
   seconds after the start. While the clock is paused nothing is recorded. When the show runs slower than `rate` (a heavy network),
   frames last longer (counted as **skipped**); a jump back in time or of more than a second
-  forward continues the file without a gap.
+  forward continues the file without a gap. The sound follows the same clock (see Sound).
 - `size` input records at the input's size when recording starts (rounded down to even sides);
   `fixed` scales the input to `width` x `height`, aspect not kept. The size of a running
   recording stays: an input that changes size is scaled to it.
@@ -126,6 +154,9 @@ more to choose from.
 player before the show. An H.264 file can only start playing at a keyframe: every loop starts
 with one and has one every 2 seconds. ProRes has a keyframe on every frame.
 
+**Sound:** a loop has no sound, even when the recording has. Cutting, fading or playing sound
+backward at the seam would be heard.
+
 **Time:** the loop runs in the background, on the CPU. A 10 s 1080p60 H.264 recording took 6
 to 18 s, depending on the method (pingpong writes twice the frames).
 
@@ -139,4 +170,5 @@ over black; ProRes 4444 keeps the alpha channel.
 
 ## Not yet
 
-Sound is not recorded. There is no hardware encoder (NVENC) yet.
+There is no hardware encoder (NVENC) yet. A recording takes the sum of every `out.audio`; it
+cannot pick one of them.

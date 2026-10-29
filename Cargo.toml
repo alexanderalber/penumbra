@@ -78,6 +78,8 @@ snap = "1"
 # rayon is the thread pool both encoders use (already in the tree through FilmCraft).
 filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
 filmcraft-prores = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+# The sound of MP4 recordings: FilmCraft's clean-room AAC-LC encoder (and its decoder in tests).
+filmcraft-aac = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
 rayon = "1"
 # The script node: embedded CPython through the stable ABI, so one pyhost library serves Python 3.12
 # and later. Only crates/pyhost uses it.
@@ -172,6 +174,11 @@ debug-assertions = false
 overflow-checks = false
 
 [profile.dev.package.filmcraft-prores]
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+
+[profile.dev.package.filmcraft-aac]
 opt-level = 3
 debug-assertions = false
 overflow-checks = false

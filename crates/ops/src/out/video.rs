@@ -18,18 +18,27 @@
 //! recording by itself. A recording that could not start or ended by itself (an error) is not
 //! tried again until `record` turns off and on.
 //!
+//! Sound: with `audio` at `all` the file also gets what every `out.audio` of the project plays,
+//! summed as their devices get it (after reverb, level and limiter, before `audio.mute`), through
+//! a tap of the [`Outputs`] hub. Each block goes where its show time falls in the file, by the
+//! same start the frames count from, so picture and sound stay together through dropped frames
+//! and jumps. Blocks of a pass reach the node at its next cook. An MP4 gets AAC, a MOV 24-bit
+//! PCM ([`penumbra_record::audio`]). Loops made of the file are silent.
+//!
 //! With `loop` set, a finished recording is made into a loop as well
 //! ([`penumbra_record::looping`]), on a thread of the record hub's; the node warns while it runs.
 //! The params count as they are when the recording stops.
 
+use penumbra_audio::{Outputs, Tap};
 use penumbra_core::{Error, NodeId, ParamSpec, Rate, Resolves, Tick, Unit, Value};
 use penumbra_gpu::{Gpu, MappedPlanes, PlaneLayout, Tex, YuvReader};
 use penumbra_graph::{
     CookContext, CookError, Cooked, DataKind, FnNodeType, NodeDef, NodeDesc, NodeTypes, Operator,
 };
 use penumbra_record::looping::{Method, Spec};
-use penumbra_record::{Codec, Fps, Frame, H264Preset, Hub, Layout, Planes, Recording, Settings};
+use penumbra_record::{AudioBlock, Codec, Fps, Frame, H264Preset, Hub, Layout, Planes, Recording, Settings};
 
+use crate::audio::block::sample_at;
 use crate::on_gpu;
 
 /// Kind of the movie recording node.
@@ -104,6 +113,17 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                  channel to start and stop from OSC or a button. A project always opens with record off",
             ))
             .param(codec)
+            .param(
+                ParamSpec::choice("audio", &["all", "off"])
+                    .doc("Whether the file gets sound, fixed when the recording starts")
+                    .choice_doc(
+                        "all",
+                        "what every out.audio of the project plays, added up as the speakers get it \
+                         (audio.mute silences the room, not the file); AAC in an MP4, 24-bit PCM in a MOV. \
+                         No out.audio: no sound",
+                    )
+                    .choice_doc("off", "no sound"),
+            )
             .param(preset)
             .param(ParamSpec::text("file", "").doc(
                 "The movie file, relative to the project; empty records to recordings/<node name>. A file that \
@@ -240,12 +260,17 @@ struct Take {
     start: Tick,
     /// The last frame index taken or dropped.
     last: i64,
+    /// Hears the project's sound, with `audio` all.
+    tap: Option<Tap>,
 }
 
 #[derive(Default)]
 struct VideoOut {
     hub: Option<(Hub, NodeId)>,
     take: Option<Take>,
+    /// A recording with sound that stopped at the last cook, kept for one more: the sound of
+    /// the pass that stopped it reaches the tap only after that pass.
+    closing: Option<Take>,
     /// A recording was started (or tried) since `record` last turned on: not again until it
     /// turns off.
     tried: bool,
@@ -325,6 +350,13 @@ impl VideoOut {
         let settings = Settings { path, codec, width: w, height: h, fps, threads, queue, h264 };
         let recording = hub.start(node, settings).map_err(CookError::failed)?;
         recording.then_loop(loop_spec(cx, codec)?);
+        let tap = match (cx.text("audio")?, cx.resource::<Outputs>()) {
+            ("all", Some(outputs)) => {
+                recording.sound(outputs.lanes(), 0, 0);
+                Some(outputs.tap())
+            }
+            _ => None,
+        };
         self.take = Some(Take {
             codec,
             planes: plane_layout(&recording.layout()),
@@ -333,12 +365,26 @@ impl VideoOut {
             queue,
             start: now,
             last: -1,
+            tap,
         });
         Ok(())
     }
 }
 
 impl Take {
+    /// Hands the sound heard since the last cook to the recording, each block at the file's
+    /// sample of its show time. Called before [`Take::frame`], which may move the start: the
+    /// blocks are from the pass before, when the start was still where it was.
+    fn listen(&self, outputs: Option<&Outputs>) {
+        let Some(tap) = &self.tap else { return };
+        for block in tap.take() {
+            let at = block.first.saturating_sub(sample_at(self.start, block.rate));
+            self.recording.push_audio(AudioBlock { at, rate: block.rate, channels: block.channels });
+        }
+        let sources = outputs.map_or(0, Outputs::lanes);
+        self.recording.sound(sources, tap.dropped(), tap.refused());
+    }
+
     /// Takes the frame due at `now`, if one is.
     fn frame(&mut self, gpu: &Gpu, tex: Option<&Tex>, now: Tick) -> Result<(), CookError> {
         let fps = self.recording.fps();
@@ -398,10 +444,21 @@ impl Operator for VideoOut {
             // Ended by itself (an error): its status says why.
             self.take = None;
         }
+        let outputs = cx.resource::<Outputs>();
+        if let Some(take) = self.closing.take() {
+            // Dropping it finishes the file.
+            take.listen(outputs);
+        }
+        if let Some(take) = &self.take {
+            take.listen(outputs);
+        }
         if !record {
             // The loop follows the params as they are when the recording stops.
             if let Some(take) = self.take.take() {
                 take.recording.then_loop(loop_spec(cx, take.codec).unwrap_or(None));
+                if take.tap.is_some() && outputs.is_some_and(|o| o.lanes() > 0) {
+                    self.closing = Some(take);
+                }
             }
             self.tried = false;
             self.failed = None;

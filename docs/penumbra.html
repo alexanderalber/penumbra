@@ -682,6 +682,7 @@ water      15
 <p>Every output ends in a limiter that keeps the sound below -1 dBFS. It is always on, because a sudden blast in a room full of people is the worst thing an installation can do. When the limiter has to work, the node warns how much it takes off. Turn <code>level</code> down until the warning goes. Several <a class="ref" href="#out.audio"><code>out.audio</code></a> nodes on one device are added together, and their sum is limited too. They must share one sample rate.</p>
 <p>Sound plays while the show runs. Pause the show and the output fades out; play it and the sound comes back. This holds for a microphone routed to <a class="ref" href="#out.audio"><code>out.audio</code></a> too. <a class="ref" href="#audio.mute"><code>audio.mute</code></a> mutes every output at once: a panic button, also in Helpers &gt; Audio.</p>
 <p>The delay from a frame to the speaker has two parts. <code>latency</code> is what penumbra queues, 50 ms by default. The device adds its own buffer, about 30 to 50 ms in Windows' shared mode. A smaller <code>latency</code> answers faster. 30 ms holds on a calm machine, but then a late frame is heard as a gap. <a class="ref" href="#audio.status"><code>audio.status</code></a> shows the delay and counts the gaps. <a class="ref" href="#audio.measure_latency"><code>audio.measure_latency</code></a> plays quiet clicks and finds them again on an input. The input <code>loopback:Speakers</code> records what the output named Speakers plays, without a cable.</p>
+<p><strong>Recording.</strong> <a class="ref" href="#out.video"><code>out.video</code></a> records the sound with the picture: the sum of every <a class="ref" href="#out.audio"><code>out.audio</code></a>, as the speakers get it, each frame of sound at its show time. This holds for a render slower than real time too, where nothing plays on the speakers. See <a href="#recording-sound">Recording</a>.</p>
 <h3 id="audio-filter">Filter</h3>
 <p><a class="ref" href="#audio.filter"><code>audio.filter</code></a> filters any sound, every channel on its own, at any sample rate. Wire a sound into <code>in</code>; the output has the same channels and rate.</p>
 <p><strong>Types.</strong> <code>lowpass</code> removes the highs above <code>cutoff</code>, <code>highpass</code> the lows below it. <code>bandpass</code> keeps only a band around <code>cutoff</code>, <code>notch</code> cuts a narrow band out, e.g. a hum. <code>peak</code> turns a band around <code>cutoff</code> up or down by <code>gain</code> (dB). <code>low_shelf</code> turns everything below <code>cutoff</code> up or down by <code>gain</code>, e.g. to tame a room's boom. <code>high_shelf</code> does the same above <code>cutoff</code>.</p>
@@ -865,6 +866,18 @@ water      15
 </tbody>
 </table>
 <p>(<code>h264</code> there with <code>preset</code> balanced.) Inside the running show the encoder shares the CPU: <code>prores_422_hq</code> managed about 39 frames per second of the curl-noise example and dropped 40 % of the frames. The cook thread took about 0.4 ms more per frame while recording. So: <code>h264</code> for recording a busy show in real time, ProRes for calm pictures, smaller sizes or lower rates.</p>
+<h3 id="recording-sound">Sound</h3>
+<p>With <code>audio</code> at <code>all</code> (the default), the file also gets the project's sound: what every <a class="ref" href="#out.audio"><code>out.audio</code></a> plays, added up as the speakers get it. That is after each node's room, <code>level</code>, <code>mute</code> and limiter. <a class="ref" href="#audio.mute"><code>audio.mute</code></a> silences the room only; the file keeps the sound. A project without an <a class="ref" href="#out.audio"><code>out.audio</code></a> records no sound track. <code>audio</code> off records none either.</p>
+<table>
+<thead><tr><th><code>codec</code></th><th>sound</th><th>why</th></tr></thead>
+<tbody>
+<tr><td><code>h264</code> (MP4)</td><td>AAC-LC, 320 kbit/s, stereo</td><td>every player opens it</td></tr>
+<tr><td>ProRes (MOV)</td><td>PCM, 24 bits, stereo, uncompressed</td><td>editing programs expect it beside ProRes</td></tr>
+</tbody>
+</table>
+<p>The sound is always two channels: a mono <a class="ref" href="#out.audio"><code>out.audio</code></a> is on both, a third channel and up are left out. Its rate is the rate of the <a class="ref" href="#out.audio"><code>out.audio</code></a> input, usually 48 000 Hz. AAC takes only the standard rates (44 100, 48 000 and others); at another rate an MP4 records no sound and the status says why, a MOV takes any rate.</p>
+<p><strong>Picture and sound stay together.</strong> Each frame of sound goes into the file at its show time, counted from the same start as the pictures. Dropped frames cost no sound. A pause records neither. A jump back or more than a second ahead continues both without a gap. A jump forward of less than a second leaves the same time in both: the picture holds a frame, the sound gets silence (or the sound for the skipped time, for jumps up to half a second). An MP4's sound ends up to 21 ms after its last picture: AAC comes in blocks of 1024 samples.</p>
+<p><a class="ref" href="#video_out.status"><code>video_out.status</code></a> shows the sound under <code>audio</code>: <code>codec</code>, <code>rate</code>, <code>sources</code> (the <a class="ref" href="#out.audio"><code>out.audio</code></a> nodes playing; 0 records no sound), <code>seconds</code>, and the samples of silence put in or left out at jumps.</p>
 <h4 id="recording-h264-presets">H.264 presets</h4>
 <p><code>preset</code> trades the H.264 encoder's speed against size and quality:</p>
 <ul>
@@ -890,7 +903,7 @@ water      15
 <p>Recording never makes the show wait. Each frame is converted on the GPU and read back without waiting; a few frames queue up for the encoder. When the encoder is slower than the frames come, the queue fills and frames are <strong>dropped</strong>: the status and the node's warning count them, and in the file the frame before lasts longer instead, so the recording keeps time with the show. To drop fewer, use <code>h264</code> with <code>preset</code> fast for busy pictures, record at a lower <code>rate</code> or a smaller size (<code>size</code> fixed, <code>width</code> and <code>height</code>), or give the encoder more <code>threads</code>.</p>
 <h3 id="recording-rate-time-and-size">Rate, time and size</h3>
 <ul>
-<li><code>rate</code> 0, shown as &quot;show rate (60 Hz)&quot;, records at the show's rate; any other value is the file's frames per second. Frames follow the show clock: frame k is the picture k / rate seconds after the start. While the clock is paused nothing is recorded. When the show runs slower than <code>rate</code> (a heavy network), frames last longer (counted as <strong>skipped</strong>); a jump back in time or of more than a second forward continues the file without a gap.
+<li><code>rate</code> 0, shown as &quot;show rate (60 Hz)&quot;, records at the show's rate; any other value is the file's frames per second. Frames follow the show clock: frame k is the picture k / rate seconds after the start. While the clock is paused nothing is recorded. When the show runs slower than <code>rate</code> (a heavy network), frames last longer (counted as <strong>skipped</strong>); a jump back in time or of more than a second forward continues the file without a gap. The sound follows the same clock (see Sound).
 </li>
 <li><code>size</code> input records at the input's size when recording starts (rounded down to even sides); <code>fixed</code> scales the input to <code>width</code> x <code>height</code>, aspect not kept. The size of a running recording stays: an input that changes size is scaled to it.
 </li>
@@ -910,11 +923,12 @@ water      15
 </table>
 <p><strong>What cut cannot do:</strong> content that drifts away and never returns has no good cut. The status gives the seam's <code>score</code> and the recording's <code>motion</code>, both as mean luma differences. A <code>score</code> no larger than <code>motion</code> makes a seam as smooth as any other frame change. A much larger <code>score</code> shows as a jump: use <code>fade</code> or <code>cut_fade</code>, or record longer, which gives <code>cut</code> more to choose from.</p>
 <p><strong>Players:</strong> many media players stutter at the loop point whatever the file holds. Try the player before the show. An H.264 file can only start playing at a keyframe: every loop starts with one and has one every 2 seconds. ProRes has a keyframe on every frame.</p>
+<p><strong>Sound:</strong> a loop has no sound, even when the recording has. Cutting, fading or playing sound backward at the seam would be heard.</p>
 <p><strong>Time:</strong> the loop runs in the background, on the CPU. A 10 s 1080p60 H.264 recording took 6 to 18 s, depending on the method (pingpong writes twice the frames).</p>
 <h3 id="recording-colour">Colour</h3>
 <p>Pictures in penumbra are linear light. The recording encodes them with the sRGB curve, the BT.709 matrix and video range, and tags the file BT.709, as players expect; <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a> reads such a file back with the same curve, so a recording played in penumbra looks as it did when recorded. Values above 1 are clipped. Without alpha (H.264, ProRes 422) the picture is taken over black; ProRes 4444 keeps the alpha channel.</p>
 <h3 id="recording-not-yet">Not yet</h3>
-<p>Sound is not recorded. There is no hardware encoder (NVENC) yet.</p>
+<p>There is no hardware encoder (NVENC) yet. A recording takes the sum of every <a class="ref" href="#out.audio"><code>out.audio</code></a>; it cannot pick one of them.</p>
 </div></details>
 <details class="entry guide" id="spout"><summary><span class="name">Spout</span></summary>
 <div class="body">
@@ -4657,7 +4671,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>latency</code></td><td>float</td><td><code>50</code></td><td>20 to 200 (soft)</td><td>Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a>, <a href="#control-headless-runs">Control › Headless runs</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a>, <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-not-yet">Recording › Not yet</a>, <a href="#control-headless-runs">Control › Headless runs</a></p>
 </div></details>
 <details class="entry node" id="out.dmx"><summary><code class="name">out.dmx</code><span class="sum">Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</span></summary>
 <div class="body">
@@ -4816,6 +4830,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tbody>
 <tr><td><code>record</code></td><td>bool</td><td><code>false</code></td><td></td><td>Recording while on: turning record on starts a new file, turning record off finishes the file. The record button above and video_out.start / .stop switch this param; bind it to a channel to start and stop from OSC or a button. A project always opens with record off</td></tr>
 <tr><td><code>codec</code></td><td>h264 | prores_422 | prores_422_hq | prores_4444</td><td><code>&quot;h264&quot;</code></td><td></td><td>What the picture is encoded as (the file's extension follows it)<ul><li><code>h264</code>: H.264 in MP4: small files any player opens; 4:2:0, 8 bits, high constant quality</li><li><code>prores_422</code>: Apple ProRes 422 in MOV: for editing, every frame a keyframe; about 37 MB/s at 1080p60</li><li><code>prores_422_hq</code>: Apple ProRes 422 HQ in MOV: as 422 at a higher rate, about 55 MB/s at 1080p60</li><li><code>prores_4444</code>: Apple ProRes 4444 in MOV with alpha: 4:4:4, 12 bits, the transparency kept; the largest files</li></ul></td></tr>
+<tr><td><code>audio</code></td><td>all | off</td><td><code>&quot;all&quot;</code></td><td></td><td>Whether the file gets sound, fixed when the recording starts<ul><li><code>all</code>: what every out.audio of the project plays, added up as the speakers get it (audio.mute silences the room, not the file); AAC in an MP4, 24-bit PCM in a MOV. No out.audio: no sound</li><li><code>off</code>: no sound</li></ul></td></tr>
 <tr><td><code>preset</code></td><td>fast | balanced | best</td><td><code>&quot;fast&quot;</code></td><td></td><td>How hard the H.264 encoder works per frame: faster drops fewer frames of a busy picture, slower keeps more fine detail<ul><li><code>fast</code>: the fastest: Baseline profile, constant quality 23; files no larger than balanced's, fine detail a little softer; 20 to 45 % faster than balanced on busy pictures</li><li><code>balanced</code>: High profile, constant quality 18, the encoder's quickest search</li><li><code>best</code>: High profile, quality 18, a wider search: slightly smaller files, a third slower than balanced; for calm pictures, smaller sizes or lower rates</li></ul></td></tr>
 <tr><td><code>file</code></td><td>text</td><td></td><td></td><td>The movie file, relative to the project; empty records to recordings/&lt;node name&gt;. A file that exists is never overwritten: the recording gets the next free name with _2, _3, ...</td></tr>
 <tr><td><code>rate</code></td><td>float</td><td><code>0</code> (show rate)</td><td>0 to 120 Hz (soft)</td><td>Frames per second of the file. Frames follow the show clock: a slower show makes frames last longer, a faster show leaves some out<ul><li>0: show rate</li></ul></td></tr>
@@ -4829,7 +4844,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>loop_fade</code></td><td>float</td><td><code>1</code></td><td>0.1 to 10 s (soft)</td><td>Length of the cross-fade at the seam. The loop gets this much shorter than the recording</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#recording">Recording</a>, <a href="#recording-recording-1">Recording › Recording</a>, <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
+<p class="mentions">Mentioned in: <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#recording">Recording</a>, <a href="#recording-recording-1">Recording › Recording</a>, <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
 </div></details>
 </div>
 <div class="group" id="family-comp">
@@ -5142,7 +5157,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="audio.mute"><summary><code class="name">audio.mute</code><span class="sum">Mutes every audio output at once, a panic button: {mute?} (default true; false unmutes). For this run only</span></summary>
 <div class="body">
 <p>Mutes every audio output at once, a panic button: {mute?} (default true; false unmutes). For this run only</p>
-<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#recording-sound">Recording › Sound</a></p>
 </div></details>
 <details class="entry command" id="audio.outputs"><summary><code class="name">audio.outputs</code><span class="sum">The audio outputs of this machine: name, default, rate, channels, format</span></summary>
 <div class="body">
@@ -5948,13 +5963,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h3>video_out</h3>
 <details class="entry command" id="video_out.start"><summary><code class="name">video_out.start</code><span class="sum">Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit)</span></summary>
 <div class="body">
-<p>Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit); {path}; answers with the status once recording</p>
+<p>Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit); {path}; answers with the status once recording, audio.sources saying how many out.audio nodes it takes sound from</p>
 <p class="mentions">Mentioned in: <a href="#recording-recording-1">Recording › Recording</a></p>
 </div></details>
-<details class="entry command" id="video_out.status"><summary><code class="name">video_out.status</code><span class="sum">Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, and loop (as video.loop_status) once a loop was asked for</span></summary>
+<details class="entry command" id="video_out.status"><summary><code class="name">video_out.status</code><span class="sum">Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, audio (codec, rate, channels, sources, seconds, samples, gap_samples, cut_samples, refused, dropped, error; null without sound), and loop (as video.loop_status) once a loop was asked for</span></summary>
 <div class="body">
-<p>Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, and loop (as video.loop_status) once a loop was asked for; {path?}</p>
-<p class="mentions">Mentioned in: <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
+<p>Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, audio (codec, rate, channels, sources, seconds, samples, gap_samples, cut_samples, refused, dropped, error; null without sound), and loop (as video.loop_status) once a loop was asked for; {path?}</p>
+<p class="mentions">Mentioned in: <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
 </div></details>
 <details class="entry command" id="video_out.stop"><summary><code class="name">video_out.stop</code><span class="sum">Stop an out.video's recording and finish the file: turns record off (an edit)</span></summary>
 <div class="body">

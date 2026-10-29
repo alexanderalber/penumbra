@@ -34,7 +34,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let mut add = engine_commands(registry, engine);
     add(
         "video_out.start",
-        "Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit); {path}; answers with the status once recording",
+        "Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit); {path}; answers with the status once recording, audio.sources saying how many out.audio nodes it takes sound from",
         start,
     );
     add(
@@ -44,7 +44,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "video_out.status",
-        "Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, and loop (as video.loop_status) once a loop was asked for; {path?}",
+        "Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, audio (codec, rate, channels, sources, seconds, samples, gap_samples, cut_samples, refused, dropped, error; null without sound), and loop (as video.loop_status) once a loop was asked for; {path?}",
         status,
     );
     add(

@@ -16,13 +16,20 @@
 //!   a bus for every device a node wants and closes the others: they fade out, and their player
 //!   is dropped a little later, which closes the device on its own thread.
 //!
+//! - **Taps for recordings** ([`Outputs::tap`]): after every pass that brought sound, each tap
+//!   gets the sum of every bus as one stereo block, as the buses would play it before
+//!   [`Outputs::set_muted`]. Every block carries the show's sample number of its first sample
+//!   (with the limiters' look-ahead taken off), so a recording can put it where the picture of
+//!   the same show time is. Taps get their blocks also while the buses play into nothing (an
+//!   offline render), since they come before the device.
+//!
 //! [`Outputs::offline`] makes buses without a device, for tests: what each one was pushed is
 //! kept, and [`Outputs::pull`] plays it through the bus's [`Engine`]. [`keep_off_devices`] makes
 //! every bus of the process such a bus, for runs without a window that must not reach a speaker.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use penumbra_core::{NodeId, lock};
@@ -50,6 +57,10 @@ pub fn keep_off_devices() {
 }
 /// Most samples of history an offline bus keeps per channel (tests).
 const HISTORY: usize = 48_000 * 120;
+/// Channels of a tap's blocks: a mono bus plays on both, a bus with more keeps its first two.
+pub const TAP_CHANNELS: usize = 2;
+/// Most a tap holds that nobody took, seconds; older blocks are dropped and counted.
+pub const TAP_SECONDS: f64 = 10.0;
 
 /// What a node wants of the hub: its device (part of a name, empty: the default output) and
 /// the settings of its player.
@@ -145,6 +156,9 @@ impl Sink {
 struct Lane {
     rate: u32,
     fifo: Vec<VecDeque<f64>>,
+    /// The show's sample number of the first sample in `fifo` (of the next one while it is
+    /// empty).
+    front: i64,
     /// Got a block in this pass.
     fresh: bool,
     last_pass: u64,
@@ -189,6 +203,8 @@ impl Bus {
             self.paused = true;
         }
         for lane in self.lanes.values_mut() {
+            let len = lane.fifo.first().map_or(0, VecDeque::len);
+            lane.front = lane.front.saturating_add(i64::try_from(len).unwrap_or(0));
             for c in &mut lane.fifo {
                 c.clear();
             }
@@ -198,11 +214,13 @@ impl Bus {
         }
     }
 
-    /// Sums the lanes into one block and pushes it; pauses when nothing came.
-    fn flush(&mut self, pass: u64, running: bool, muted: bool) {
+    /// Sums the lanes into one block and pushes it; pauses when nothing came. With `tap` set
+    /// and something come, returns the sum before the mute for the taps, also when not
+    /// `running` (an offline render), where nothing is pushed.
+    fn flush(&mut self, pass: u64, running: bool, muted: bool, tap: bool) -> Option<Mixed> {
         self.lanes.retain(|_, l| pass.saturating_sub(l.last_pass) <= STALE_PASSES);
         let fresh: Vec<&Lane> = self.lanes.values().filter(|l| l.fresh).collect();
-        if fresh.is_empty() || !running {
+        if fresh.is_empty() || (!running && !tap) {
             self.idle = self.idle.saturating_add(1);
             if !running || self.idle >= IDLE_PASSES {
                 self.pause();
@@ -210,9 +228,10 @@ impl Bus {
             for l in self.lanes.values_mut() {
                 l.fresh = false;
             }
-            return;
+            return None;
         }
         self.idle = 0;
+        let mut first = fresh.first().map_or(0, |l| l.front);
         let n = fresh.iter().map(|l| l.fifo.first().map_or(0, VecDeque::len)).min().unwrap_or(0);
         let channels = fresh.iter().map(|l| l.fifo.len()).max().unwrap_or(1).max(1);
         let settings = fresh.first().map(|l| l.settings).unwrap_or_default();
@@ -223,6 +242,7 @@ impl Bus {
         for lane in self.lanes.values_mut() {
             let lane_channels = lane.fifo.len();
             let take = lane.fifo.first().map_or(0, VecDeque::len).min(n);
+            let mut gone = take;
             for (ci, fifo) in lane.fifo.iter_mut().enumerate() {
                 let take = take.min(fifo.len());
                 if lane_channels == 1 {
@@ -244,8 +264,12 @@ impl Bus {
                 let excess = fifo.len().saturating_sub(keep);
                 if excess > 0 {
                     fifo.drain(..excess);
+                    if ci == 0 {
+                        gone += excess;
+                    }
                 }
             }
+            lane.front = lane.front.saturating_add(i64::try_from(gone).unwrap_or(0));
             lane.fresh = false;
         }
         if several {
@@ -254,6 +278,8 @@ impl Bus {
             }
             if let Some(l) = self.limiter.as_mut() {
                 l.process(&mut sum);
+                // The bus limiter delays the sum by its look-ahead as well.
+                first = first.saturating_sub(i64::try_from(l.lookahead()).unwrap_or(0));
                 let db = l.take_reduction();
                 if db >= self.reduction.0 || self.reduction.1.elapsed() > HOLD {
                     self.reduction = (db, Instant::now());
@@ -265,27 +291,40 @@ impl Bus {
                 self.reduction = (0.0, Instant::now());
             }
         }
-        let target = if muted { 0.0 } else { 1.0 };
         let ceiling = crate::limiter::db_to_gain(crate::limiter::CEILING_DB);
+        for c in &mut sum {
+            for v in c.iter_mut() {
+                *v = if v.is_finite() { v.clamp(-ceiling, ceiling) } else { 0.0 };
+            }
+        }
+        let mixed = (tap && n > 0).then(|| Mixed { rate: self.rate, first, channels: sum.clone() });
+        self.channels = channels;
+        if !running {
+            // Rendering offline: the taps hear it, the device does not.
+            if !self.paused {
+                self.sink.pause();
+                self.paused = true;
+            }
+            return mixed;
+        }
+        let target = if muted { 0.0 } else { 1.0 };
         for c in &mut sum {
             for (k, v) in c.iter_mut().enumerate() {
                 // `as`: positions in a block.
                 let t = (k + 1) as f64 / n.max(1) as f64;
-                let g = self.gain + (target - self.gain) * t;
-                let x = *v * g;
-                *v = if x.is_finite() { x.clamp(-ceiling, ceiling) } else { 0.0 };
+                *v *= self.gain + (target - self.gain) * t;
             }
         }
         self.gain = target;
-        self.channels = channels;
         if n == 0 {
-            return;
+            return mixed;
         }
         self.sink.set_settings(settings);
         match self.sink.push(self.rate, &sum) {
             Ok(_) => self.paused = false,
             Err(e) => log::warn!("audio output: {e}"),
         }
+        mixed
     }
 
     fn status(&self, key: &str, muted: bool) -> BusStatus {
@@ -321,6 +360,168 @@ impl Bus {
 /// How long a reduction is held for the status.
 const HOLD: Duration = Duration::from_secs(2);
 
+/// One bus's sum of a pass, before the mute.
+struct Mixed {
+    rate: u32,
+    first: i64,
+    channels: Vec<Vec<f64>>,
+}
+
+/// One block a tap hears: the sum of every bus over one pass.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TapBlock {
+    pub rate: u32,
+    /// The show's sample number of the first sample: `round(t * rate)` for show time `t`. The
+    /// limiters' look-ahead is taken off, so the number says when the sound was meant to be
+    /// heard.
+    pub first: i64,
+    /// [`TAP_CHANNELS`] channels of equal length.
+    pub channels: Vec<Vec<f32>>,
+}
+
+impl TapBlock {
+    /// Samples per channel.
+    pub fn len(&self) -> usize {
+        self.channels.first().map_or(0, Vec::len)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[derive(Default)]
+struct TapQueue {
+    blocks: VecDeque<TapBlock>,
+    /// Samples per channel in `blocks`.
+    queued: usize,
+    /// Blocks dropped because nobody took them in time.
+    dropped: u64,
+    /// Blocks left out: their buses play at another rate than the first block's.
+    refused: u64,
+    /// The rate of the first block.
+    rate: Option<u32>,
+}
+
+/// What a recording listens through: the sound of every bus, block by block, as the buses
+/// play it before the mute. Made by [`Outputs::tap`]; dropping it stops the blocks.
+pub struct Tap {
+    queue: Arc<Mutex<TapQueue>>,
+}
+
+impl Tap {
+    /// The blocks since the last call, oldest first.
+    pub fn take(&self) -> Vec<TapBlock> {
+        let mut q = lock(&self.queue);
+        q.queued = 0;
+        q.blocks.drain(..).collect()
+    }
+
+    /// Blocks dropped because they were not taken within [`TAP_SECONDS`].
+    pub fn dropped(&self) -> u64 {
+        lock(&self.queue).dropped
+    }
+
+    /// Blocks left out because they are at another rate than the first block.
+    pub fn refused(&self) -> u64 {
+        lock(&self.queue).refused
+    }
+
+    /// The rate of the blocks, once one came.
+    pub fn rate(&self) -> Option<u32> {
+        lock(&self.queue).rate
+    }
+}
+
+fn put(queue: &Mutex<TapQueue>, block: &TapBlock) {
+    let mut q = lock(queue);
+    match q.rate {
+        Some(r) if r != block.rate => {
+            q.refused += 1;
+            return;
+        }
+        None => q.rate = Some(block.rate),
+        Some(_) => {}
+    }
+    // `as`: samples per second to a count.
+    let most = (f64::from(block.rate) * TAP_SECONDS) as usize;
+    q.queued += block.len();
+    q.blocks.push_back(block.clone());
+    while q.queued > most {
+        let Some(old) = q.blocks.pop_front() else { break };
+        q.queued = q.queued.saturating_sub(old.len());
+        q.dropped += 1;
+    }
+}
+
+/// The buses' sums lined up by their show samples, for the taps. Buses can lie a few samples
+/// apart (a bus with two lanes has its own limiter's delay on top): a pass hands on what every
+/// bus that played has reached, and keeps the rest for the next pass.
+#[derive(Default)]
+struct TapMix {
+    rate: u32,
+    /// The show's sample number of `pending`'s first sample.
+    first: i64,
+    pending: Vec<VecDeque<f64>>,
+}
+
+impl TapMix {
+    /// Adds one pass's sums and hands on the stereo block every bus reached, at the first bus's
+    /// rate (a bus at another rate is left out), clipped at the ceiling.
+    fn mix(&mut self, mixed: &[Mixed]) -> Option<TapBlock> {
+        let head = mixed.first()?;
+        let rate = head.rate;
+        let len = |m: &Mixed| i64::try_from(m.channels.first().map_or(0, Vec::len)).unwrap_or(0);
+        let same: Vec<&Mixed> = mixed.iter().filter(|m| m.rate == rate).collect();
+        let lo = same.iter().map(|m| m.first).min().unwrap_or(head.first);
+        let held = i64::try_from(self.pending.first().map_or(0, VecDeque::len)).unwrap_or(0);
+        // A jump (a seek, a gap) or another rate starts over: what was kept is dropped. A gap
+        // stays a gap: the recording decides what goes there.
+        if self.pending.len() != TAP_CHANNELS
+            || self.rate != rate
+            || lo < self.first
+            || lo > self.first.saturating_add(held)
+        {
+            self.rate = rate;
+            self.first = lo;
+            self.pending = vec![VecDeque::new(); TAP_CHANNELS];
+        }
+        for m in &same {
+            let Ok(offset) = usize::try_from(m.first.saturating_sub(self.first)) else { continue };
+            let end = offset + usize::try_from(len(m)).unwrap_or(0);
+            for (ci, p) in self.pending.iter_mut().enumerate() {
+                if p.len() < end {
+                    p.resize(end, 0.0);
+                }
+                // Mono on both sides; a bus with more channels gives its first two.
+                let src = if m.channels.len() == 1 { m.channels.first() } else { m.channels.get(ci) };
+                let Some(src) = src else { continue };
+                for (k, v) in src.iter().enumerate() {
+                    if let Some(o) = p.get_mut(offset + k) {
+                        *o += v;
+                    }
+                }
+            }
+        }
+        let reached = same.iter().map(|m| m.first.saturating_add(len(m))).min().unwrap_or(self.first);
+        let n = usize::try_from(reached.saturating_sub(self.first)).unwrap_or(0);
+        let n = n.min(self.pending.first().map_or(0, VecDeque::len));
+        if n == 0 {
+            return None;
+        }
+        let ceiling = crate::limiter::db_to_gain(crate::limiter::CEILING_DB);
+        let channels = self
+            .pending
+            .iter_mut()
+            // `as`: samples to f32 as recordings keep them.
+            .map(|p| p.drain(..n).map(|v| v.clamp(-ceiling, ceiling) as f32).collect())
+            .collect();
+        let block = TapBlock { rate, first: self.first, channels };
+        self.first = self.first.saturating_add(i64::try_from(n).unwrap_or(0));
+        Some(block)
+    }
+}
+
 struct Inner {
     buses: Mutex<BTreeMap<String, Bus>>,
     closing: Mutex<Vec<(Instant, Sink)>>,
@@ -328,6 +529,8 @@ struct Inner {
     /// Device format of offline buses; `None`: real devices.
     offline: Option<(u32, usize)>,
     pass: Mutex<u64>,
+    taps: Mutex<Vec<Weak<Mutex<TapQueue>>>>,
+    tap_mix: Mutex<TapMix>,
 }
 
 /// The audio outputs (clones share them).
@@ -361,6 +564,8 @@ impl Outputs {
                 muted: AtomicBool::new(false),
                 offline,
                 pass: Mutex::new(0),
+                taps: Mutex::new(Vec::new()),
+                tap_mix: Mutex::new(TapMix::default()),
             }),
         }
     }
@@ -409,7 +614,8 @@ impl Outputs {
 
     /// Hands node `node`'s block (one slice per channel, at `rate`, already limited) to the bus
     /// of `key`, which pushes it after the pass. `reduction_db` is what its limiter took off.
-    /// Errors when another node plays on the same device at another rate.
+    /// Errors when another node plays on the same device at another rate. For the taps the
+    /// block continues the lane's last one; [`Outputs::submit_at`] says where it lies.
     pub fn submit(
         &self,
         node: NodeId,
@@ -418,6 +624,23 @@ impl Outputs {
         rate: u32,
         block: &[Vec<f64>],
         reduction_db: f64,
+    ) -> Result<(), String> {
+        self.submit_at(node, key, settings, rate, block, reduction_db, None)
+    }
+
+    /// [`Outputs::submit`] for a block whose first sample is the show's sample number `first`
+    /// (`round(t * rate)` for show time `t`, the node's own delay taken off): what the taps go
+    /// by.
+    #[allow(clippy::too_many_arguments)]
+    pub fn submit_at(
+        &self,
+        node: NodeId,
+        key: &str,
+        settings: Settings,
+        rate: u32,
+        block: &[Vec<f64>],
+        reduction_db: f64,
+        first: Option<i64>,
     ) -> Result<(), String> {
         if block.is_empty() || block.len() > crate::playback::MAX_CHANNELS {
             return Err(format!("{} channels cannot be played", block.len()));
@@ -453,6 +676,7 @@ impl Outputs {
         let lane = bus.lanes.entry(node).or_insert_with(|| Lane {
             rate,
             fifo: Vec::new(),
+            front: first.unwrap_or(0),
             fresh: false,
             last_pass: pass,
             settings,
@@ -464,6 +688,11 @@ impl Outputs {
             lane.fifo = vec![VecDeque::new(); block.len()];
         }
         let frames = block.iter().map(Vec::len).max().unwrap_or(0);
+        if let Some(first) = first
+            && lane.fifo.first().is_none_or(VecDeque::is_empty)
+        {
+            lane.front = first;
+        }
         for (fifo, c) in lane.fifo.iter_mut().zip(block) {
             fifo.extend(c.iter().map(|v| if v.is_finite() { *v } else { 0.0 }));
             // A ragged block is padded with silence, so the channels stay aligned.
@@ -490,11 +719,35 @@ impl Outputs {
             *p
         };
         let muted = self.muted();
+        let taps: Vec<Arc<Mutex<TapQueue>>> = {
+            let mut taps = lock(&self.inner.taps);
+            taps.retain(|t| t.strong_count() > 0);
+            taps.iter().filter_map(Weak::upgrade).collect()
+        };
+        let mut mixed = Vec::new();
         for bus in lock(&self.inner.buses).values_mut() {
-            bus.flush(pass, playing && realtime, muted);
+            mixed.extend(bus.flush(pass, playing && realtime, muted, !taps.is_empty()));
+        }
+        let block = if taps.is_empty() { None } else { lock(&self.inner.tap_mix).mix(&mixed) };
+        if let Some(block) = block {
+            for queue in &taps {
+                put(queue, &block);
+            }
         }
         let now = Instant::now();
         lock(&self.inner.closing).retain(|(at, _)| *at > now);
+    }
+
+    /// A tap that hears every bus from the next flush on (see [`Tap`]).
+    pub fn tap(&self) -> Tap {
+        let queue = Arc::new(Mutex::new(TapQueue::default()));
+        lock(&self.inner.taps).push(Arc::downgrade(&queue));
+        Tap { queue }
+    }
+
+    /// Lanes on every bus: the `out.audio` nodes that played lately.
+    pub fn lanes(&self) -> usize {
+        lock(&self.inner.buses).values().map(|b| b.lanes.len()).sum()
     }
 
     /// Mutes every output at once (a panic button), or unmutes them; ramped across one block.

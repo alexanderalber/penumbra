@@ -22,6 +22,9 @@
 //!   the sound plays. A node that starts with `reverb` 0 plays its input exactly as it comes. A sudden blast in a room full of people is the audio
 //!   equivalent of a crash; the limiter is not a param for that reason. What it takes off is
 //!   reported in the node's warning and in `audio.status`.
+//! - **Recordings:** each block goes to the hub with the show's sample number of its first
+//!   sample, the limiter's delay taken off, so `out.video` can put it at its show time
+//!   ([`Outputs::tap`]).
 //! - **Device:** part of an output's name, empty for the system's default output. The hub
 //!   opens the device when a node wants it (after every change of the network, [`wants`]) and
 //!   closes it, after a fade, when none does.
@@ -263,6 +266,8 @@ impl Operator for AudioOut {
         for c in &mut block {
             c.resize(frames, 0.0);
         }
+        // The show's sample number of the block's first sample: the block ends now.
+        let first = span.end.saturating_sub(i64::try_from(frames).unwrap_or(0));
         let jump = span.step == Step::Fresh;
         let room = reverb::Params {
             mix: cx.float("reverb")?,
@@ -300,16 +305,18 @@ impl Operator for AudioOut {
         } else if jump && let Some(l) = self.limiter.as_mut() {
             l.reset();
         }
-        let reduction = match self.limiter.as_mut() {
+        let (reduction, delay) = match self.limiter.as_mut() {
             Some(l) => {
                 l.process(&mut block);
-                l.take_reduction()
+                (l.take_reduction(), l.lookahead())
             }
-            None => 0.0,
+            None => (0.0, 0),
         };
         let latency = cx.float("latency")?;
+        // The limiter delays the sound: what leaves it now was meant to be heard `delay` earlier.
+        let first = first.saturating_sub(i64::try_from(delay).unwrap_or(0));
         outputs
-            .submit(cx.node(), &key, settings(latency), rate, &block, reduction)
+            .submit_at(cx.node(), &key, settings(latency), rate, &block, reduction, Some(first))
             .map_err(CookError::failed)?;
         self.report(cx, outputs, &key);
         Ok(Cooked::Outputs(Vec::new()))
