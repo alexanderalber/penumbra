@@ -10,7 +10,7 @@
 //!   generator owes per cook.
 //! - **`audio.instrument`** ([`instrument`]) plays ready-made one-shot sounds (pluck, mallet,
 //!   bell, kick, hat, sweep), **`audio.ambience`** ([`ambience`]) sustained ones (drone, pad,
-//!   noise), both in a key and scale ([`pitch`]). Their inputs are the bridge from `chan` to
+//!   noise, water, rain), both in a key and scale ([`pitch`]). Their inputs are the bridge from `chan` to
 //!   `audio`: a channel crossing a threshold starts a note or opens a gate at the sample the
 //!   crossing falls on ([`lanes`]). [`synth`] holds the filter and saw they share.
 //! - **`chan.audio_analysis`** turns sound into channels to bind, the bridge from `audio` to

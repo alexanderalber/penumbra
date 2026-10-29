@@ -1500,7 +1500,7 @@ Outputs:
 
 ### audio.ambience
 
-A sound that holds without notes: a steady tone, a pad or wind-like noise. Its pitch, brightness and level follow the params smoothly; each channel wired into gate switches its own tone on and off
+A sound that holds without notes: a steady tone, a pad, wind-like noise, running water or rain. Its pitch, brightness and level follow the params smoothly; each channel wired into gate switches its own tone on and off
 
 Follows the show clock: cooks again whenever time moves.
 
@@ -1512,7 +1512,7 @@ Outputs: `out` (audio).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `preset` | drone \| pad \| noise | `"drone"` |  | The sound. A change crossfades in 20 ms; drone: a steady soft tone: two sines that beat slowly and a quiet fifth; brightness adds the octave; pad: three slightly detuned saws through a gentle low-pass: warm and wide; brightness opens the filter; noise: rushing noise like wind; brightness moves it from a low rumble to a high hiss. Ignores key, scale and note |
+| `preset` | drone \| pad \| noise \| water \| rain | `"drone"` |  | The sound. A change crossfades in 20 ms; drone: a steady soft tone: two sines that beat slowly and a quiet fifth; brightness adds the octave; pad: three slightly detuned saws through a gentle low-pass: warm and wide; brightness opens the filter; noise: rushing noise like wind; brightness moves it from a low rumble to a high hiss. Ignores key, scale and note; water: running water: rumble, gurgle, splash and hiss that each swell at random, with small bubbles; brightness moves it from a deep river to a bright trickle. Ignores key, scale and note; rain: rain: a soft rush with droplets ticking in it; density goes from a few drops to a downpour, brightness from distant and dull to close and crisp. Ignores key, scale and note |
 | `key` | C \| C# \| D \| D# \| E \| F \| F# \| G \| G# \| A \| A# \| B | `"C"` |  | The root note of the scale: note 0 plays it; C: the root is C, 261.6 Hz in octave 4; C#: the root is C#, 277.2 Hz in octave 4; D: the root is D, 293.7 Hz in octave 4; D#: the root is D#, 311.1 Hz in octave 4; E: the root is E, 329.6 Hz in octave 4; F: the root is F, 349.2 Hz in octave 4; F#: the root is F#, 370.0 Hz in octave 4; G: the root is G, 392.0 Hz in octave 4; G#: the root is G#, 415.3 Hz in octave 4; A: the root is A, 440.0 Hz in octave 4; A#: the root is A#, 466.2 Hz in octave 4; B: the root is B, 493.9 Hz in octave 4. Does something only with preset drone or pad. |
 | `scale` | major_pentatonic \| minor_pentatonic \| major \| minor \| chromatic \| off | `"major_pentatonic"` |  | The notes that can be played. With a scale, every note fits with every other; major_pentatonic: five notes per octave (C D E G A in C): any notes together sound fine; minor_pentatonic: five notes per octave (C Eb F G Bb in C): darker, bluesy; major: seven notes per octave, the white keys from C in C; minor: seven notes per octave, the white keys from A in A; chromatic: all twelve semitones; off: free pitch: note moves smoothly between the notes, as a theremin. spread counts semitones. Does something only with preset drone or pad. |
 | `octave` | int | `4` | 0 to 8 (soft) | The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz. Does something only with preset drone or pad. |
@@ -1520,8 +1520,10 @@ Outputs: `out` (audio).
 | `range` *(more)* | float | `2` | 0 to 4 (soft) | Octaves that note 0 to 1 spans. Does something only with preset drone or pad. |
 | `spread` *(more)* | int | `1` | 0 to 7 (soft) | Notes of the scale between neighbouring gate channels: with 1, channel 0 holds the root, channel 1 the next note up, and so on. Does something only with preset drone or pad. |
 | `brightness` | float | `0.5` | 0 to 1 | 0 is dark and soft, 1 bright. Follows the param smoothly over glide |
+| `swarm` | float | `0` | 0 to 1 | 0 holds every tone on its note. Above 0 each tone becomes eight voices whose pitches wander slowly at random around the note: a chorus at 0.2, a moving cloud up to half an octave either side at 1. Back at 0 every voice glides onto its note. Follows the param smoothly over glide. Does something only with preset drone or pad. |
+| `density` | float | `0.5` | 0 to 1 | How hard it rains: 0 is a few drops a second, 0.5 about 90, 1 about 600 over a louder rush. Follows the param smoothly over glide. Does something only with preset rain. |
 | `level` | float | `-12` | -60 to 0 dB (soft) | The volume, in dB: at 0 one tone peaks near full scale, -6 is half the amplitude. Follows the param smoothly over glide |
-| `glide` *(more)* | float | `0.1` | 0.005 to 20 s (soft) | Seconds that pitch, brightness and level take to get 90% of the way to a new value. At least 5 ms |
+| `glide` *(more)* | float | `0.1` | 0.005 to 20 s (soft) | Seconds that pitch, brightness, swarm, density and level take to get 90% of the way to a new value. At least 5 ms |
 | `attack` | float | `0.1` | 0.005 to 20 s (soft) | Seconds a tone takes to fade in when its gate opens. At least 5 ms |
 | `release` | float | `0.5` | 0.005 to 20 s (soft) | Seconds a tone takes to fade out when its gate closes. At least 5 ms. Does something only while gate is wired. |
 | `threshold` *(more)* | float | `0` | -1 to 1 (soft) | A gate channel above this value sounds its tone. 0 suits pulses from 0 to 1 and waves around 0. Does something only while gate is wired. |

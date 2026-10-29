@@ -69,17 +69,34 @@ only knows its frame starts at the frame's first sample. `decay` sets how long a
 `brightness` how sharp it sounds. `voices` (32) limits the notes at once; one more fades out
 the oldest in 5 ms.
 
-**`audio.ambience`** holds a sound without notes: `drone`, `pad` or `noise` (like wind).
-Pitch, `brightness` and `level` follow their params smoothly over `glide` (0.1 s), so bind
-them to tracking. Nothing wired: one tone sounds all the time. With channels wired into
-`gate`, each channel holds its own tone while its value is above `threshold`. The tone fades
-in over `attack` and out over `release`.
+**`audio.ambience`** holds a sound without notes: `drone`, `pad`, `noise` (like wind),
+`water` (a stream) or `rain`. Pitch, `brightness`, `swarm`, `density` and `level` follow their
+params smoothly over `glide` (0.1 s), so bind them to tracking. Nothing wired: one tone sounds all the time. With
+channels wired into `gate`, each channel holds its own tone while its value is above
+`threshold`. The tone fades in over `attack` and out over `release`.
+
+**Water.** `water` sounds like running water: a low rumble, a gurgle between 200 and 600 Hz, a
+splash around 4 kHz and a hiss above 6 kHz. Each band swells and fades on its own, at random,
+from a fifth of a second to a few seconds. Small bubbles pop in the gurgle. `brightness` 0 is
+a deep river, 1 a bright trickle with more bubbles.
+
+**Rain.** `rain` is a soft rush with droplets ticking in it. `density` sets how hard it rains:
+0 is a drizzle of 3 drops a second over a faint rush, 0.5 about 90 drops a second, 1 a
+downpour of 600 over a loud rush. `brightness` 0 sounds distant and dull, 1 close and crisp.
+`density` does nothing with the other presets.
+
+**Swarm.** `swarm` works with `drone` and `pad`. At 0 every tone sits on its note. Above 0 each
+tone becomes eight voices whose pitches wander slowly at random around the note. 0.2 sounds
+like a chorus. At 1 the voices roam up to half an octave either side, and the chord dissolves
+into a moving cloud. Turn `swarm` back to 0 and every voice glides onto its note. Bind `swarm`
+to movement: people moving make a cloud, and the chord comes back when they stand still. The
+loudness stays about the same across `swarm`.
 
 **Pitch.** `note` 0 plays the root in `octave` (4 holds middle C; A4 is 440 Hz), `note` 1
 plays `range` octaves higher (2). `note` is rounded to the nearest note of the scale. Lane `i`
 adds `i * spread` notes of the scale: with key F, octave 3 and spread 1, ten lanes play F3 G3
-A3 C4 D4 F4 G4 A4 C5 D5. Scale `off` gives free pitch for a theremin. `kick`, `hat`, `sweep`
-and `noise` ignore pitch.
+A3 C4 D4 F4 G4 A4 C5 D5. Scale `off` gives free pitch for a theremin. `kick`, `hat`, `sweep`,
+`noise`, `water` and `rain` ignore pitch.
 
 **Level.** `level` is -12 dB by default. One note then peaks around -13 to -16 dBFS. A pile of
 notes bends softly below full scale instead of clipping. Every note has velocity 1.

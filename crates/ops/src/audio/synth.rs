@@ -21,7 +21,7 @@ pub struct Svf {
 }
 
 /// The coefficients of [`Svf`] for a cutoff and a damping `k` (1 / Q).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct SvfCoef {
     k: f64,
     a1: f64,

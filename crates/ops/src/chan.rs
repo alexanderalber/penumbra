@@ -696,8 +696,15 @@ where
 }
 
 /// 1D gradient noise in about -1..1, integer hashes only (deterministic everywhere).
-fn noise(t: f64, seed: i64) -> f64 {
-    let i = t.floor();
+pub(crate) fn noise(t: f64, seed: i64) -> f64 {
+    // `floor` by a cast where the cast is exact: without SSE4.1 `floor` is a library call, and
+    // the audio swarm runs this thousands of times per frame.
+    let i = if t.abs() < 4.5e15 {
+        let c = t as i64 as f64;
+        if c > t { c - 1.0 } else { c }
+    } else {
+        t.floor()
+    };
     let f = t - i;
     // Saturating `as`; time stays far below where this matters.
     let i = i as i64;
