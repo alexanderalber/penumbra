@@ -8,6 +8,11 @@
 //! - **`audio.oscillator`** ([`oscillator`]) makes a test tone or noise on the show clock,
 //!   **`audio.mix`** ([`mix`]) adds sounds by a gain each. [`block`] says which samples a
 //!   generator owes per cook.
+//! - **`audio.instrument`** ([`instrument`]) plays ready-made one-shot sounds (pluck, mallet,
+//!   bell, kick, hat, sweep), **`audio.ambience`** ([`ambience`]) sustained ones (drone, pad,
+//!   noise), both in a key and scale ([`pitch`]). Their inputs are the bridge from `chan` to
+//!   `audio`: a channel crossing a threshold starts a note or opens a gate at the sample the
+//!   crossing falls on ([`lanes`]). [`synth`] holds the filter and saw they share.
 //! - **`chan.audio_analysis`** turns sound into channels to bind, the bridge from `audio` to
 //!   `chan`: levels (`level`, `low`,
 //!   `mid`, `high`), events (`onset`, `kick`, `tick` are 1 in the frame they happen), the
@@ -20,9 +25,18 @@
 //! The device streams belong to the engine's [`Hub`], which opens what [`wants`] lists after
 //! every change of the network.
 
+pub mod ambience;
+#[cfg(test)]
+mod ambience_tests;
 pub mod block;
+pub mod instrument;
+#[cfg(test)]
+mod instrument_tests;
+pub mod lanes;
 pub mod mix;
 pub mod oscillator;
+pub mod pitch;
+pub mod synth;
 #[cfg(test)]
 mod tests;
 
@@ -179,6 +193,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     .warm_up(on_gpu(meters_picture::warm_up)))?;
     oscillator::register(types)?;
     mix::register(types)?;
+    instrument::register(types)?;
+    ambience::register(types)?;
     Ok(())
 }
 

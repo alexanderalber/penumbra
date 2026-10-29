@@ -7,30 +7,30 @@ use penumbra_graph::{Cooker, DataKind, JobPool, Network, Op, Port};
 
 use crate::builtin_types;
 
-struct F {
-    types: Arc<penumbra_graph::NodeTypes>,
-    net: Arc<Network>,
-    cooker: Cooker,
-    clock: ShowClock,
+pub(super) struct F {
+    pub(super) types: Arc<penumbra_graph::NodeTypes>,
+    pub(super) net: Arc<Network>,
+    pub(super) cooker: Cooker,
+    pub(super) clock: ShowClock,
 }
 
 impl F {
-    fn new(ops: &[Op]) -> Self {
+    pub(super) fn new(ops: &[Op]) -> Self {
         Self::at(Rate::FPS_60, ops)
     }
 
-    fn at(rate: Rate, ops: &[Op]) -> Self {
+    pub(super) fn at(rate: Rate, ops: &[Op]) -> Self {
         let types = Arc::new(builtin_types().unwrap());
         let net = Arc::new(Network::new().apply(&types, ops).unwrap().network);
         let cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
         Self { types, net, cooker, clock: ShowClock::new(rate, LatePolicy::Realtime) }
     }
 
-    fn edit(&mut self, ops: &[Op]) {
+    pub(super) fn edit(&mut self, ops: &[Op]) {
         self.net = Arc::new(self.net.apply(&self.types, ops).unwrap().network);
     }
 
-    fn cook(&mut self, path: &str) -> Result<Chans, String> {
+    pub(super) fn cook(&mut self, path: &str) -> Result<Chans, String> {
         let id = self.net.resolve(&path.parse().unwrap()).unwrap();
         self.cooker.cook(&self.net, self.clock.now(), &[id], &[]);
         if let Some(e) = self.cooker.status(id).and_then(|s| s.error) {
@@ -41,21 +41,21 @@ impl F {
         Ok(data.get::<Chans>().unwrap().clone())
     }
 
-    fn block(&mut self, path: &str) -> Vec<f64> {
+    pub(super) fn block(&mut self, path: &str) -> Vec<f64> {
         let c = self.cook(path).unwrap();
         c.channels()[0].samples.clone()
     }
 }
 
-fn create(path: &str, kind: &str) -> Op {
+pub(super) fn create(path: &str, kind: &str) -> Op {
     Op::Create { path: NodePath::parse(path).unwrap(), kind: kind.into(), params: Default::default() }
 }
 
-fn set(p: &str, v: impl Into<Value>) -> Op {
+pub(super) fn set(p: &str, v: impl Into<Value>) -> Op {
     Op::Set { param: ParamPath::parse(p).unwrap(), value: v.into() }
 }
 
-fn connect(from: &str, to: &str, input: u32) -> Op {
+pub(super) fn connect(from: &str, to: &str, input: u32) -> Op {
     Op::Connect { from: NodePath::parse(from).unwrap(), output: 0, to: NodePath::parse(to).unwrap(), input }
 }
 

@@ -112,8 +112,8 @@ The families:
   look values up in, and `chan.from_tex` averages a picture down to a few pixels and turns them
   into channels (at 1 x 1, its mean colour). Channels named `r`, `g`, `b` (and `a`), as
   `chan.from_tex` makes them, come back from `tex.from_chan` as a colour.
-- **`audio`**: sound. A device input, a test tone and a mix so far. `chan.audio_analysis`
-  turns sound into channels (see [Audio](audio.md)).
+- **`audio`**: sound. A device input, a test tone, a mix, ready-made instruments and drones.
+  `chan.audio_analysis` turns sound into channels (see [Audio](audio.md)).
 - **`table`**: text tables, typed in or read from a file, for scripts and OSC.
   `table.file` reads a CSV, TSV or text file and reloads it when the file changes.
   `chan.from_table` turns a table of numbers into channels, a channel per column (or row), named

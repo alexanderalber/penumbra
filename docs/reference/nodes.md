@@ -1494,9 +1494,39 @@ Outputs:
 
 ## audio
 
-[audio.mix](#audiomix), [audio.oscillator](#audiooscillator)
+[audio.ambience](#audioambience), [audio.instrument](#audioinstrument), [audio.mix](#audiomix), [audio.oscillator](#audiooscillator)
 
 *in:* [audio.device_in](#audiodevice_in)
+
+### audio.ambience
+
+A sound that holds without notes: a steady tone, a pad or wind-like noise. Its pitch, brightness and level follow the params smoothly; each channel wired into gate switches its own tone on and off
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `gate` (chan): Channels that switch tones on and off, one tone each: a channel above threshold sounds, from its exact time inside the frame. Nothing wired: one tone always sounds
+
+Outputs: `out` (audio).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `preset` | drone \| pad \| noise | `"drone"` |  | The sound. A change crossfades in 20 ms; drone: a steady soft tone: two sines that beat slowly and a quiet fifth; brightness adds the octave; pad: three slightly detuned saws through a gentle low-pass: warm and wide; brightness opens the filter; noise: rushing noise like wind; brightness moves it from a low rumble to a high hiss. Ignores key, scale and note |
+| `key` | C \| C# \| D \| D# \| E \| F \| F# \| G \| G# \| A \| A# \| B | `"C"` |  | The root note of the scale: note 0 plays it; C: the root is C, 261.6 Hz in octave 4; C#: the root is C#, 277.2 Hz in octave 4; D: the root is D, 293.7 Hz in octave 4; D#: the root is D#, 311.1 Hz in octave 4; E: the root is E, 329.6 Hz in octave 4; F: the root is F, 349.2 Hz in octave 4; F#: the root is F#, 370.0 Hz in octave 4; G: the root is G, 392.0 Hz in octave 4; G#: the root is G#, 415.3 Hz in octave 4; A: the root is A, 440.0 Hz in octave 4; A#: the root is A#, 466.2 Hz in octave 4; B: the root is B, 493.9 Hz in octave 4 |
+| `scale` | major_pentatonic \| minor_pentatonic \| major \| minor \| chromatic \| off | `"major_pentatonic"` |  | The notes that can be played. With a scale, every note fits with every other; major_pentatonic: five notes per octave (C D E G A in C): any notes together sound fine; minor_pentatonic: five notes per octave (C Eb F G Bb in C): darker, bluesy; major: seven notes per octave, the white keys from C in C; minor: seven notes per octave, the white keys from A in A; chromatic: all twelve semitones; off: free pitch: note moves smoothly between the notes, as a theremin. spread counts semitones |
+| `octave` | int | `4` | 0 to 8 (soft) | The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz |
+| `note` | float | `0` | 0 to 1 (soft) | Which note sounds: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale; a change glides there over glide. Bind it to a tracked position to play by moving |
+| `range` *(more)* | float | `2` | 0 to 4 (soft) | Octaves that note 0 to 1 spans |
+| `spread` *(more)* | int | `1` | 0 to 7 (soft) | Notes of the scale between neighbouring gate channels: with 1, channel 0 holds the root, channel 1 the next note up, and so on |
+| `brightness` | float | `0.5` | 0 to 1 | 0 is dark and soft, 1 bright. Follows the param smoothly over glide |
+| `level` | float | `-12` | -60 to 0 dB (soft) | The volume, in dB: at 0 one tone peaks near full scale, -6 is half the amplitude. Follows the param smoothly over glide |
+| `glide` *(more)* | float | `0.1` | 0.005 to 20 s (soft) | Seconds that pitch, brightness and level take to get 90% of the way to a new value. At least 5 ms |
+| `attack` | float | `0.1` | 0.005 to 20 s (soft) | Seconds a tone takes to fade in when its gate opens. At least 5 ms |
+| `release` | float | `0.5` | 0.005 to 20 s (soft) | Seconds a tone takes to fade out when its gate closes. At least 5 ms |
+| `threshold` *(more)* | float | `0` | -1 to 1 (soft) | A gate channel above this value sounds its tone. 0 suits pulses from 0 to 1 and waves around 0 |
+| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made; nodes that mix sound need the same rate on all inputs |
+| `name` | text | `"ch1"` |  | Name of the channel it makes, as other nodes see it |
 
 ### audio.device_in
 
@@ -1509,6 +1539,36 @@ Outputs: `out` (audio).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `device` | text |  |  | Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's default input |
+
+### audio.instrument
+
+Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat, sweep. Each channel wired into play plays its own note of a scale
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `play` (chan): Channels that play notes, each its own line of notes: a crossing of threshold starts a note, at its exact time inside the frame
+
+Outputs: `out` (audio).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `preset` | pluck \| mallet \| bell \| kick \| hat \| sweep | `"pluck"` |  | The sound. Changing it leaves notes already sounding as they are; pluck: a plucked string: a bright attack, faded to a tenth after decay seconds; mallet: a marimba-like wooden bar: short and round; bell: a struck bell: metallic overtones, rings about 8 times as long as decay; kick: a bass drum: a sine falling from about 300 Hz to 45 Hz in 150 ms. Ignores key, scale and note; hat: a hi-hat: a short burst of high noise, about a fifth of decay. Ignores key, scale and note; sweep: a noise riser: rises in pitch and loudness over 10 times decay, then stops. Ignores key, scale and note |
+| `key` | C \| C# \| D \| D# \| E \| F \| F# \| G \| G# \| A \| A# \| B | `"C"` |  | The root note of the scale: note 0 plays it; C: the root is C, 261.6 Hz in octave 4; C#: the root is C#, 277.2 Hz in octave 4; D: the root is D, 293.7 Hz in octave 4; D#: the root is D#, 311.1 Hz in octave 4; E: the root is E, 329.6 Hz in octave 4; F: the root is F, 349.2 Hz in octave 4; F#: the root is F#, 370.0 Hz in octave 4; G: the root is G, 392.0 Hz in octave 4; G#: the root is G#, 415.3 Hz in octave 4; A: the root is A, 440.0 Hz in octave 4; A#: the root is A#, 466.2 Hz in octave 4; B: the root is B, 493.9 Hz in octave 4 |
+| `scale` | major_pentatonic \| minor_pentatonic \| major \| minor \| chromatic \| off | `"major_pentatonic"` |  | The notes that can be played. With a scale, every note fits with every other; major_pentatonic: five notes per octave (C D E G A in C): any notes together sound fine; minor_pentatonic: five notes per octave (C Eb F G Bb in C): darker, bluesy; major: seven notes per octave, the white keys from C in C; minor: seven notes per octave, the white keys from A in A; chromatic: all twelve semitones; off: free pitch: note moves smoothly between the notes, as a theremin. spread counts semitones |
+| `octave` | int | `4` | 0 to 8 (soft) | The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz |
+| `note` | float | `0` | 0 to 1 (soft) | Which note plays: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale. Read when a note starts |
+| `range` *(more)* | float | `2` | 0 to 4 (soft) | Octaves that note 0 to 1 spans |
+| `spread` *(more)* | int | `1` | 0 to 7 (soft) | Notes of the scale between neighbouring play channels: with 1, channel 0 plays the root, channel 1 the next note up, and so on |
+| `brightness` | float | `0.5` | 0 to 1 | 0 is dull and soft, 1 bright and sharp. For kick: how high the drop starts; for sweep: how high it rises. Read when a note starts |
+| `decay` | float | `0.3` | 0.005 to 20 s (soft) | How long a note rings: seconds until a pluck has faded to a tenth. Each preset scales it, see preset |
+| `level` | float | `-12` | -60 to 0 dB (soft) | The volume, in dB: at 0 one note peaks near full scale, -6 is half the amplitude. A change glides across one frame |
+| `trigger` | up \| down \| both | `"up"` |  | Which crossings of threshold by a play channel start a note; up: the value rises above threshold: a pulse from 0 to 1 plays once; down: the value falls to threshold or below; both: either way: a swinging value plays at every pass, as a pendulum at the bottom |
+| `threshold` *(more)* | float | `0` | -1 to 1 (soft) | The value a play channel must cross to start a note. 0 suits pulses from 0 to 1 and waves around 0 |
+| `voices` *(more)* | int | `32` | 1 to 64 (soft) | Most notes sounding at once. One more fades out the oldest in 5 ms |
+| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made; nodes that mix sound need the same rate on all inputs |
+| `name` | text | `"ch1"` |  | Name of the channel it makes, as other nodes see it |
 
 ### audio.mix
 

@@ -17,6 +17,8 @@ continues the block before, so every sample counts. The two kinds do not connect
 - `audio.mix` adds up to eight sounds. Each input has its own gain (`gain0` to `gain7`), and
   `gain` sets the whole. All inputs need the same sample rate; two rates are an error, since
   the mix does not convert between them.
+- `audio.instrument` and `audio.ambience` are ready-made sounds in a key and scale, played by
+  channels. See [Instruments and ambience](#instruments-and-ambience).
 - `chan.read` reads an audio node too: the rate, the block's length, `peak` and `rms` per
   channel, and with `samples: true` the whole block.
 
@@ -51,6 +53,36 @@ by default. The device adds its own buffer, about 30 to 50 ms in Windows' shared
 gap. `audio.status` shows the delay and counts the gaps. `audio.measure_latency` plays quiet
 clicks and finds them again on an input. The input `loopback:Speakers` records what the output
 named Speakers plays, without a cable.
+
+## Instruments and ambience
+
+Two nodes make music from channels, with no sound design needed. Both play in a `key` and
+`scale`, so any notes together sound fine. The default is C major pentatonic.
+
+**`audio.instrument`** plays one-shot sounds that fade by themselves: `pluck`, `mallet`,
+`bell`, `kick`, `hat` and `sweep` (a noise riser). Wire channels into `play`. Each channel is
+a lane that starts a note when its value crosses `threshold` (0). `trigger` picks the
+direction: `up` for pulses such as an onset or a key, `both` for a swinging value, which plays
+at every pass. The note starts at the exact sample of the crossing, interpolated between
+frames. A tracked position or an lfo lands within a fraction of a millisecond. A pulse that
+only knows its frame starts at the frame's first sample. `decay` sets how long a note rings,
+`brightness` how sharp it sounds. `voices` (32) limits the notes at once; one more fades out
+the oldest in 5 ms.
+
+**`audio.ambience`** holds a sound without notes: `drone`, `pad` or `noise` (like wind).
+Pitch, `brightness` and `level` follow their params smoothly over `glide` (0.1 s), so bind
+them to tracking. Nothing wired: one tone sounds all the time. With channels wired into
+`gate`, each channel holds its own tone while its value is above `threshold`. The tone fades
+in over `attack` and out over `release`.
+
+**Pitch.** `note` 0 plays the root in `octave` (4 holds middle C; A4 is 440 Hz), `note` 1
+plays `range` octaves higher (2). `note` is rounded to the nearest note of the scale. Lane `i`
+adds `i * spread` notes of the scale: with key F, octave 3 and spread 1, ten lanes play F3 G3
+A3 C4 D4 F4 G4 A4 C5 D5. Scale `off` gives free pitch for a theremin. `kick`, `hat`, `sweep`
+and `noise` ignore pitch.
+
+**Level.** `level` is -12 dB by default. One note then peaks around -13 to -16 dBFS. A pile of
+notes bends softly below full scale instead of clipping. Every note has velocity 1.
 
 ## Setting up
 

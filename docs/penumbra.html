@@ -80,7 +80,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><a href="#helpers">The Helpers window</a>: outputs, resolution, show-machine checks, persistent state, OSC, audio.
 </li>
-<li><a href="#audio">Audio</a>: reacting to sound: levels, onsets, tempo, beat and bar.
+<li><a href="#audio">Audio</a>: reacting to sound (levels, onsets, tempo, beat and bar), and making it with ready-made instruments.
 </li>
 <li><a href="#dmx">DMX</a>: driving lights through the Enttec Open DMX USB, Art-Net, sACN or DDP, and receiving Art-Net or sACN from a lighting desk.
 </li>
@@ -309,7 +309,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>chan</code></strong>: numbers that change over time. Generators (<code>lfo</code>, <code>noise</code>, <code>constant</code>), <code>math</code>, <code>filter</code>, <code>trail</code> (the last seconds of a channel as samples, to plot or to feed on; it starts empty and fills up), and OSC in and out. Channels drive params through <a href="#concepts-bindings">bindings</a>. A channel holds one or many samples, so a set of channels is a small grid of numbers: <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> turns it into a picture (a row per channel, a pixel per sample) for shaders to look values up in, and <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> averages a picture down to a few pixels and turns them into channels (at 1 x 1, its mean colour). Channels named <code>r</code>, <code>g</code>, <code>b</code> (and <code>a</code>), as <a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a> makes them, come back from <a class="ref" href="#tex.from_chan"><code>tex.from_chan</code></a> as a colour.
 </li>
-<li><strong><code>audio</code></strong>: sound. A device input, a test tone and a mix so far. <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> turns sound into channels (see <a href="#audio">Audio</a>).
+<li><strong><code>audio</code></strong>: sound. A device input, a test tone, a mix, ready-made instruments and drones. <a class="ref" href="#chan.audio_analysis"><code>chan.audio_analysis</code></a> turns sound into channels (see <a href="#audio">Audio</a>).
 </li>
 <li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
 </li>
@@ -656,6 +656,8 @@ water      15
 </li>
 <li><a class="ref" href="#audio.mix"><code>audio.mix</code></a> adds up to eight sounds. Each input has its own gain (<code>gain0</code> to <code>gain7</code>), and <code>gain</code> sets the whole. All inputs need the same sample rate; two rates are an error, since the mix does not convert between them.
 </li>
+<li><a class="ref" href="#audio.instrument"><code>audio.instrument</code></a> and <a class="ref" href="#audio.ambience"><code>audio.ambience</code></a> are ready-made sounds in a key and scale, played by channels. See <a href="#audio-instruments-and-ambience">Instruments and ambience</a>.
+</li>
 <li><a class="ref" href="#chan.read"><code>chan.read</code></a> reads an audio node too: the rate, the block's length, <code>peak</code> and <code>rms</code> per channel, and with <code>samples: true</code> the whole block.
 </li>
 </ul>
@@ -666,6 +668,12 @@ water      15
 <p>Every output ends in a limiter that keeps the sound below -1 dBFS. It is always on, because a sudden blast in a room full of people is the worst thing an installation can do. When the limiter has to work, the node warns how much it takes off. Turn <code>level</code> down until the warning goes. Several <a class="ref" href="#out.audio"><code>out.audio</code></a> nodes on one device are added together, and their sum is limited too. They must share one sample rate.</p>
 <p>Sound plays while the show runs. Pause the show and the output fades out; play it and the sound comes back. This holds for a microphone routed to <a class="ref" href="#out.audio"><code>out.audio</code></a> too. <a class="ref" href="#audio.mute"><code>audio.mute</code></a> mutes every output at once: a panic button, also in Helpers &gt; Audio.</p>
 <p>The delay from a frame to the speaker has two parts. <code>latency</code> is what penumbra queues, 50 ms by default. The device adds its own buffer, about 30 to 50 ms in Windows' shared mode. A smaller <code>latency</code> answers faster. 30 ms holds on a calm machine, but then a late frame is heard as a gap. <a class="ref" href="#audio.status"><code>audio.status</code></a> shows the delay and counts the gaps. <a class="ref" href="#audio.measure_latency"><code>audio.measure_latency</code></a> plays quiet clicks and finds them again on an input. The input <code>loopback:Speakers</code> records what the output named Speakers plays, without a cable.</p>
+<h3 id="audio-instruments-and-ambience">Instruments and ambience</h3>
+<p>Two nodes make music from channels, with no sound design needed. Both play in a <code>key</code> and <code>scale</code>, so any notes together sound fine. The default is C major pentatonic.</p>
+<p><strong><a class="ref" href="#audio.instrument"><code>audio.instrument</code></a></strong> plays one-shot sounds that fade by themselves: <code>pluck</code>, <code>mallet</code>, <code>bell</code>, <code>kick</code>, <code>hat</code> and <code>sweep</code> (a noise riser). Wire channels into <code>play</code>. Each channel is a lane that starts a note when its value crosses <code>threshold</code> (0). <code>trigger</code> picks the direction: <code>up</code> for pulses such as an onset or a key, <code>both</code> for a swinging value, which plays at every pass. The note starts at the exact sample of the crossing, interpolated between frames. A tracked position or an lfo lands within a fraction of a millisecond. A pulse that only knows its frame starts at the frame's first sample. <code>decay</code> sets how long a note rings, <code>brightness</code> how sharp it sounds. <code>voices</code> (32) limits the notes at once; one more fades out the oldest in 5 ms.</p>
+<p><strong><a class="ref" href="#audio.ambience"><code>audio.ambience</code></a></strong> holds a sound without notes: <code>drone</code>, <code>pad</code> or <code>noise</code> (like wind). Pitch, <code>brightness</code> and <code>level</code> follow their params smoothly over <code>glide</code> (0.1 s), so bind them to tracking. Nothing wired: one tone sounds all the time. With channels wired into <code>gate</code>, each channel holds its own tone while its value is above <code>threshold</code>. The tone fades in over <code>attack</code> and out over <code>release</code>.</p>
+<p><strong>Pitch.</strong> <code>note</code> 0 plays the root in <code>octave</code> (4 holds middle C; A4 is 440 Hz), <code>note</code> 1 plays <code>range</code> octaves higher (2). <code>note</code> is rounded to the nearest note of the scale. Lane <code>i</code> adds <code>i * spread</code> notes of the scale: with key F, octave 3 and spread 1, ten lanes play F3 G3 A3 C4 D4 F4 G4 A4 C5 D5. Scale <code>off</code> gives free pitch for a theremin. <code>kick</code>, <code>hat</code>, <code>sweep</code> and <code>noise</code> ignore pitch.</p>
+<p><strong>Level.</strong> <code>level</code> is -12 dB by default. One note then peaks around -13 to -16 dBFS. A pile of notes bends softly below full scale instead of clipping. Every note has velocity 1.</p>
 <h3 id="audio-setting-up">Setting up</h3>
 <ol>
 <li>Add an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> (Tab &gt; audio &gt; device_in). With <code>device</code> empty it reads the system's default input; the empty <code>device</code> box names that device in grey (hover the box for the device a typed name picked). <a class="ref" href="#audio.status"><code>audio.status</code></a> names it too. The <code>...</code> menu beside <code>device</code> lists the inputs of this machine; part of a name typed in works too, e.g. <code>Focusrite</code>. The <a href="#helpers-audio">Helpers window</a> shows a level meter per channel. The device is opened in shared mode, so other programs can use it too.
@@ -3825,7 +3833,43 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-audio">
 <h3>audio</h3>
-<p class="kinds"><a href="#audio.device_in">audio.device_in</a> <a href="#audio.mix">audio.mix</a> <a href="#audio.oscillator">audio.oscillator</a></p>
+<p class="kinds"><a href="#audio.ambience">audio.ambience</a> <a href="#audio.device_in">audio.device_in</a> <a href="#audio.instrument">audio.instrument</a> <a href="#audio.mix">audio.mix</a> <a href="#audio.oscillator">audio.oscillator</a></p>
+<details class="entry node" id="audio.ambience"><summary><code class="name">audio.ambience</code><span class="sum">A sound that holds without notes: a steady tone, a pad or wind-like noise. Its pitch, brightness and level follow the params smoothly; each channel wired into gate switches its own tone on and off</span></summary>
+<div class="body">
+<p>A sound that holds without notes: a steady tone, a pad or wind-like noise. Its pitch, brightness and level follow the params smoothly; each channel wired into gate switches its own tone on and off</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>gate</code> <span class="kind">chan</span>: Channels that switch tones on and off, one tone each: a channel above threshold sounds, from its exact time inside the frame. Nothing wired: one tone always sounds</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">audio</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>preset</code></td><td>drone | pad | noise</td><td><code>&quot;drone&quot;</code></td><td></td><td>The sound. A change crossfades in 20 ms<ul><li><code>drone</code>: a steady soft tone: two sines that beat slowly and a quiet fifth; brightness adds the octave</li><li><code>pad</code>: three slightly detuned saws through a gentle low-pass: warm and wide; brightness opens the filter</li><li><code>noise</code>: rushing noise like wind; brightness moves it from a low rumble to a high hiss. Ignores key, scale and note</li></ul></td></tr>
+<tr><td><code>key</code></td><td>C | C# | D | D# | E | F | F# | G | G# | A | A# | B</td><td><code>&quot;C&quot;</code></td><td></td><td>The root note of the scale: note 0 plays it<ul><li><code>C</code>: the root is C, 261.6 Hz in octave 4</li><li><code>C#</code>: the root is C#, 277.2 Hz in octave 4</li><li><code>D</code>: the root is D, 293.7 Hz in octave 4</li><li><code>D#</code>: the root is D#, 311.1 Hz in octave 4</li><li><code>E</code>: the root is E, 329.6 Hz in octave 4</li><li><code>F</code>: the root is F, 349.2 Hz in octave 4</li><li><code>F#</code>: the root is F#, 370.0 Hz in octave 4</li><li><code>G</code>: the root is G, 392.0 Hz in octave 4</li><li><code>G#</code>: the root is G#, 415.3 Hz in octave 4</li><li><code>A</code>: the root is A, 440.0 Hz in octave 4</li><li><code>A#</code>: the root is A#, 466.2 Hz in octave 4</li><li><code>B</code>: the root is B, 493.9 Hz in octave 4</li></ul></td></tr>
+<tr><td><code>scale</code></td><td>major_pentatonic | minor_pentatonic | major | minor | chromatic | off</td><td><code>&quot;major_pentatonic&quot;</code></td><td></td><td>The notes that can be played. With a scale, every note fits with every other<ul><li><code>major_pentatonic</code>: five notes per octave (C D E G A in C): any notes together sound fine</li><li><code>minor_pentatonic</code>: five notes per octave (C Eb F G Bb in C): darker, bluesy</li><li><code>major</code>: seven notes per octave, the white keys from C in C</li><li><code>minor</code>: seven notes per octave, the white keys from A in A</li><li><code>chromatic</code>: all twelve semitones</li><li><code>off</code>: free pitch: note moves smoothly between the notes, as a theremin. spread counts semitones</li></ul></td></tr>
+<tr><td><code>octave</code></td><td>int</td><td><code>4</code></td><td>0 to 8 (soft)</td><td>The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz</td></tr>
+<tr><td><code>note</code></td><td>float</td><td><code>0</code></td><td>0 to 1 (soft)</td><td>Which note sounds: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale; a change glides there over glide. Bind it to a tracked position to play by moving</td></tr>
+<tr><td><code>brightness</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1</td><td>0 is dark and soft, 1 bright. Follows the param smoothly over glide</td></tr>
+<tr><td><code>level</code></td><td>float</td><td><code>-12</code></td><td>-60 to 0 dB (soft)</td><td>The volume, in dB: at 0 one tone peaks near full scale, -6 is half the amplitude. Follows the param smoothly over glide</td></tr>
+<tr><td><code>attack</code></td><td>float</td><td><code>0.1</code></td><td>0.005 to 20 s (soft)</td><td>Seconds a tone takes to fade in when its gate opens. At least 5 ms</td></tr>
+<tr><td><code>release</code></td><td>float</td><td><code>0.5</code></td><td>0.005 to 20 s (soft)</td><td>Seconds a tone takes to fade out when its gate closes. At least 5 ms</td></tr>
+<tr><td><code>name</code></td><td>text</td><td><code>&quot;ch1&quot;</code></td><td></td><td>Name of the channel it makes, as other nodes see it</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>range</code></td><td>float</td><td><code>2</code></td><td>0 to 4 (soft)</td><td>Octaves that note 0 to 1 spans</td></tr>
+<tr><td><code>spread</code></td><td>int</td><td><code>1</code></td><td>0 to 7 (soft)</td><td>Notes of the scale between neighbouring gate channels: with 1, channel 0 holds the root, channel 1 the next note up, and so on</td></tr>
+<tr><td><code>glide</code></td><td>float</td><td><code>0.1</code></td><td>0.005 to 20 s (soft)</td><td>Seconds that pitch, brightness and level take to get 90% of the way to a new value. At least 5 ms</td></tr>
+<tr><td><code>threshold</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>A gate channel above this value sounds its tone. 0 suits pulses from 0 to 1 and waves around 0</td></tr>
+<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made; nodes that mix sound need the same rate on all inputs</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a></p>
+</div></details>
 <details class="entry node" id="audio.device_in"><summary><code class="name">audio.device_in</code><span class="sum">Sound from a microphone or audio interface: one channel per input channel, at the device's rate</span></summary>
 <div class="body">
 <p>Sound from a microphone or audio interface: one channel per input channel, at the device's rate</p>
@@ -3843,6 +3887,42 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+</div></details>
+<details class="entry node" id="audio.instrument"><summary><code class="name">audio.instrument</code><span class="sum">Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat, sweep. Each channel wired into play plays its own note of a scale</span></summary>
+<div class="body">
+<p>Ready-made sounds that play on a trigger and fade by themselves: pluck, mallet, bell, kick, hat, sweep. Each channel wired into play plays its own note of a scale</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>play</code> <span class="kind">chan</span>: Channels that play notes, each its own line of notes: a crossing of threshold starts a note, at its exact time inside the frame</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">audio</span></li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>preset</code></td><td>pluck | mallet | bell | kick | hat | sweep</td><td><code>&quot;pluck&quot;</code></td><td></td><td>The sound. Changing it leaves notes already sounding as they are<ul><li><code>pluck</code>: a plucked string: a bright attack, faded to a tenth after decay seconds</li><li><code>mallet</code>: a marimba-like wooden bar: short and round</li><li><code>bell</code>: a struck bell: metallic overtones, rings about 8 times as long as decay</li><li><code>kick</code>: a bass drum: a sine falling from about 300 Hz to 45 Hz in 150 ms. Ignores key, scale and note</li><li><code>hat</code>: a hi-hat: a short burst of high noise, about a fifth of decay. Ignores key, scale and note</li><li><code>sweep</code>: a noise riser: rises in pitch and loudness over 10 times decay, then stops. Ignores key, scale and note</li></ul></td></tr>
+<tr><td><code>key</code></td><td>C | C# | D | D# | E | F | F# | G | G# | A | A# | B</td><td><code>&quot;C&quot;</code></td><td></td><td>The root note of the scale: note 0 plays it<ul><li><code>C</code>: the root is C, 261.6 Hz in octave 4</li><li><code>C#</code>: the root is C#, 277.2 Hz in octave 4</li><li><code>D</code>: the root is D, 293.7 Hz in octave 4</li><li><code>D#</code>: the root is D#, 311.1 Hz in octave 4</li><li><code>E</code>: the root is E, 329.6 Hz in octave 4</li><li><code>F</code>: the root is F, 349.2 Hz in octave 4</li><li><code>F#</code>: the root is F#, 370.0 Hz in octave 4</li><li><code>G</code>: the root is G, 392.0 Hz in octave 4</li><li><code>G#</code>: the root is G#, 415.3 Hz in octave 4</li><li><code>A</code>: the root is A, 440.0 Hz in octave 4</li><li><code>A#</code>: the root is A#, 466.2 Hz in octave 4</li><li><code>B</code>: the root is B, 493.9 Hz in octave 4</li></ul></td></tr>
+<tr><td><code>scale</code></td><td>major_pentatonic | minor_pentatonic | major | minor | chromatic | off</td><td><code>&quot;major_pentatonic&quot;</code></td><td></td><td>The notes that can be played. With a scale, every note fits with every other<ul><li><code>major_pentatonic</code>: five notes per octave (C D E G A in C): any notes together sound fine</li><li><code>minor_pentatonic</code>: five notes per octave (C Eb F G Bb in C): darker, bluesy</li><li><code>major</code>: seven notes per octave, the white keys from C in C</li><li><code>minor</code>: seven notes per octave, the white keys from A in A</li><li><code>chromatic</code>: all twelve semitones</li><li><code>off</code>: free pitch: note moves smoothly between the notes, as a theremin. spread counts semitones</li></ul></td></tr>
+<tr><td><code>octave</code></td><td>int</td><td><code>4</code></td><td>0 to 8 (soft)</td><td>The octave of the root that note 0 plays: 4 is the octave of middle C, where A is 440 Hz</td></tr>
+<tr><td><code>note</code></td><td>float</td><td><code>0</code></td><td>0 to 1 (soft)</td><td>Which note plays: 0 is the root, 1 is range octaves higher. Rounded to the nearest note of the scale. Read when a note starts</td></tr>
+<tr><td><code>brightness</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1</td><td>0 is dull and soft, 1 bright and sharp. For kick: how high the drop starts; for sweep: how high it rises. Read when a note starts</td></tr>
+<tr><td><code>decay</code></td><td>float</td><td><code>0.3</code></td><td>0.005 to 20 s (soft)</td><td>How long a note rings: seconds until a pluck has faded to a tenth. Each preset scales it, see preset</td></tr>
+<tr><td><code>level</code></td><td>float</td><td><code>-12</code></td><td>-60 to 0 dB (soft)</td><td>The volume, in dB: at 0 one note peaks near full scale, -6 is half the amplitude. A change glides across one frame</td></tr>
+<tr><td><code>trigger</code></td><td>up | down | both</td><td><code>&quot;up&quot;</code></td><td></td><td>Which crossings of threshold by a play channel start a note<ul><li><code>up</code>: the value rises above threshold: a pulse from 0 to 1 plays once</li><li><code>down</code>: the value falls to threshold or below</li><li><code>both</code>: either way: a swinging value plays at every pass, as a pendulum at the bottom</li></ul></td></tr>
+<tr><td><code>name</code></td><td>text</td><td><code>&quot;ch1&quot;</code></td><td></td><td>Name of the channel it makes, as other nodes see it</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>range</code></td><td>float</td><td><code>2</code></td><td>0 to 4 (soft)</td><td>Octaves that note 0 to 1 spans</td></tr>
+<tr><td><code>spread</code></td><td>int</td><td><code>1</code></td><td>0 to 7 (soft)</td><td>Notes of the scale between neighbouring play channels: with 1, channel 0 plays the root, channel 1 the next note up, and so on</td></tr>
+<tr><td><code>threshold</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>The value a play channel must cross to start a note. 0 suits pulses from 0 to 1 and waves around 0</td></tr>
+<tr><td><code>voices</code></td><td>int</td><td><code>32</code></td><td>1 to 64 (soft)</td><td>Most notes sounding at once. One more fades out the oldest in 5 ms</td></tr>
+<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made; nodes that mix sound need the same rate on all inputs</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a></p>
 </div></details>
 <details class="entry node" id="audio.mix"><summary><code class="name">audio.mix</code><span class="sum">Adds sounds together, each by its own gain</span></summary>
 <div class="body">

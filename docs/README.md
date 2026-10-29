@@ -12,7 +12,8 @@ offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
   alpha and show mode.
 - [The Helpers window](helpers.md): outputs, resolution, show-machine checks, persistent state,
   OSC, audio.
-- [Audio](audio.md): reacting to sound: levels, onsets, tempo, beat and bar.
+- [Audio](audio.md): reacting to sound (levels, onsets, tempo, beat and bar), and making it
+  with ready-made instruments.
 - [DMX](dmx.md): driving lights through the Enttec Open DMX USB, Art-Net, sACN or DDP, and
   receiving Art-Net or sACN from a lighting desk.
 - [Recording](recording.md): the show to a movie file with `out.video` (H.264 or ProRes).
