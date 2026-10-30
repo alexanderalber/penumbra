@@ -1,45 +1,47 @@
 # pendulum-wave
 
-A pendulum wave, picture and sound. 100 pendulums hang in a 10 x 10 grid, in 10 rings around
-the centre. Ring k swings 80 - k times in 64 s, so the centre ring is fastest. At 0 s every
-pendulum passes the bottom at once. Then the rings drift apart into waves and patterns, and at
-32 s they all meet again. After 64 s the loop starts over.
+A pendulum wave seen from above, picture and sound. 121 pendulums stand in an 11 x 11 grid.
+Each swings out from the centre and back. A pendulum's ring is its distance from the centre,
+rounded to whole grid steps, so there are 8 rings. Ring k swings 56 - k times in 48 s, so the
+centre is fastest. At 0 s every pendulum passes its rest point at once. Then the rings drift
+apart into spirals and ripples, and at 24 s they all meet again. After 48 s the loop starts
+over.
 
-Each pendulum plucks a note as it passes the bottom, so each ring plays its own line of notes.
-A kick drum follows the centre ring, every 0.4 s (150 BPM). The sound plays on the system's
-default output; `device` in `/speakers` picks another.
+Each pendulum strikes a note as it passes its rest point, so each ring plays its own line of
+notes. A hi-hat follows the centre pendulum and a kick drum falls on every other hi-hat. The
+sound plays on the system's default output; `device` in `/speakers` picks another.
+
+Inspired by a pendulum-wave clip by [The Lab (@the.lab67)](https://www.tiktok.com/@the.lab67), who
+makes physics and maths simulations.
 
 ## How it is built
 
-**Sound.** `/ring0` to `/ring9` are `chan.lfo` sines. Each swings at its ring's rate,
-(80 - k) / 64 Hz, so its value passes 0 exactly when that ring's pendulums pass the bottom.
-`/rings` merges them, ring 9 first. `/pluck` (an `audio.instrument`, preset `pluck`, key F,
-octave 3, `trigger` both) plays one note per lane at every pass of 0. Lane 0 is ring 9, so the
-outer ring plays F3 and the centre ring D5: F3 G3 A3 C4 D4 F4 G4 A4 C5 D5. Each note starts at
-the exact sample of the crossing, inside the frame.
+**Sound.** `/ring0` to `/ring7` are `chan.lfo` sines. Each swings at its ring's rate,
+(56 - k) / 48 Hz, so its value passes 0 exactly when that ring's pendulums pass their rest
+point. `/rings` merges them, ring 7 first. `/notes` (an `audio.instrument`, preset `mallet`,
+key A, octave 3, scale `minor_pentatonic`, `trigger` both) plays one note per lane at every
+pass of 0. Lane 0 is ring 7, so the corners play A3 and the centre D5: A3 C4 D4 E4 G4 A4 C5
+D5. Each note starts at the exact sample of the crossing, inside the frame.
 
-`/centre` picks ring 0 for `/kick`, a second instrument with preset `kick`. `/every_other` is
-an lfo at 0.625 Hz. It passes 0 on every other kick, and `/accent` adds a softer kick there.
-`/mix` adds the three; `/speakers` plays the mix. The mix peaks around -5 dBFS. `/speakers`
-keeps its default room reverb (`reverb` 0.2, `room` 0.4), which gives the mono mix a little
-stereo width, as in the original clip.
+`/centre` picks ring 0 for `/hat`, a second instrument with preset `hat`: a hit every 0.43 s
+(140 BPM). `/every_other` is an lfo at half that rate. It passes 0 on every other hat, and
+`/kick` plays there. `/mix` adds the three; `/speakers` plays the mix with its default room
+reverb.
 
-**Picture.** `/out` is a `tex.shader` (`pendulums.wgsl`) at 1080 x 1102. It computes every
-pendulum's angle from the show time, so any frame is exact and the picture stays in step with
-the sound. A bob glows orange for 0.12 s after it passes the bottom. Below the grid, the shader
-plots the sync R(t): 1 when all pendulums are at the bottom together, near 0 when they are
-spread out. The circle on the left has one dot per ring, at the angle of its phase. The text
-comes from the `tex.text` nodes, laid over each other in `/labels`.
-
-The ground is white for the first 8 s and turns navy by 12 s. Over the last 4 s of the loop it
-turns white again.
+**Picture.** `/out` is a `tex.shader` (`pendulums.wgsl`) at 1080 x 1080. It computes every
+pendulum's position from the show time, so any frame is exact and the picture stays in step
+with the sound. Each pendulum has a faint track; its bob flashes as it passes the middle of the
+track. A faint circle through each ring lights up at the same moment. The colours come from
+the `colors` palette: the centre at its end, the corners near its start.
 
 ## Try
 
-- `look` in `/out`: `light` or `dark` keeps one ground for the whole loop.
-- `key` or `scale` in `/pluck`: every ring changes with it. `spread` 2 plays every other note
+- `direction` in `/out`: `across` swings every pendulum left and right, which turns the
+  ripples into stripes.
+- `colors` in `/out`: any palette or colormap, for example `viridis`, `fire` or `sea`.
+- `key` or `scale` in `/notes`: every ring changes with it. `spread` 2 plays every other note
   of the scale and spans a wider range.
-- `preset` in `/pluck`: `mallet` sounds like a marimba, `bell` rings much longer.
-- `gain1` and `gain2` in `/mix` set the kick and the accent; 0 mutes them.
+- `preset` in `/notes`: `pluck` sounds like a string, `bell` rings much longer.
+- `gain1` and `gain2` in `/mix` set the kick and the hat; 0 mutes them.
 - Bind something to `swing` or `glow` in `/out`, for example a level from the
   audio-reactive example.
