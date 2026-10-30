@@ -67,7 +67,7 @@ impl Presses {
     }
 
     /// Registers the node; with `take`, moves its pending presses to `out`.
-    fn check_in(&self, node: NodeId, take: bool, out: &mut Vec<usize>) {
+    pub(crate) fn check_in(&self, node: NodeId, take: bool, out: &mut Vec<usize>) {
         let mut entries = lock(&self.0);
         let lanes = entries.entry(node).or_default();
         if take {

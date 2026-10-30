@@ -1,6 +1,6 @@
 [package]
 name = "penumbra-audio"
-description = "Audio input and output (cpal: WASAPI, ALSA), the analysis of input (levels, bands, spectrum, onsets, tempo, beat and bar phase) and the output limiter. No GPU, no UI."
+description = "Audio input and output (cpal: WASAPI, ALSA), the analysis of input (levels, bands, spectrum, onsets, tempo, beat and bar phase), the output limiter and the decoding of sound files. No GPU, no UI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,6 +12,7 @@ penumbra-core.workspace = true
 cpal.workspace = true
 log.workspace = true
 serde.workspace = true
+symphonia.workspace = true
 
 [lints]
 workspace = true

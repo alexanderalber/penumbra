@@ -1543,7 +1543,7 @@ Outputs:
 
 ## audio
 
-[audio.ambience](#audioambience), [audio.filter](#audiofilter), [audio.instrument](#audioinstrument), [audio.mix](#audiomix), [audio.oscillator](#audiooscillator)
+[audio.ambience](#audioambience), [audio.file](#audiofile), [audio.filter](#audiofilter), [audio.instrument](#audioinstrument), [audio.mix](#audiomix), [audio.oscillator](#audiooscillator)
 
 *in:* [audio.device_in](#audiodevice_in)
 
@@ -1590,6 +1590,31 @@ Outputs: `out` (audio).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `device` | text |  |  | Part of the input's name (Helpers > Audio lists them), e.g. `Focusrite`; empty: the system's default input |
+
+### audio.file
+
+Plays a sound file: music, an atmosphere or a sample, looped or once
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs: none.
+
+Outputs:
+
+- `out` (audio): The file's sound, channels ch1, ch2, ...
+- `info` (chan): Playback: position (s), progress (0 to 1), loops, duration (s), rate and channels of the file, gaps, seeks, restarts
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `file` | file (wav, wave, flac, mp3, ogg, oga, m4a, mp4, mov, aac) |  |  | WAV, FLAC, MP3, Ogg Vorbis, or the AAC sound of an MP4, MOV or M4A |
+| `play` | bool | `true` |  | Off fades the sound out and holds the place; on plays on from there |
+| `speed` | float | `1` | 0 to 4 (soft) | Playback rate, as on tape: 2 plays twice as fast and an octave higher, 0.5 half as fast and an octave lower |
+| `loop` | bool | `true` |  | Off plays the file once and then stays silent |
+| `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is loaded and where a restart goes |
+| `restart` | bool | `false` |  | Turning on starts the file over from `start`; bind a channel to cue it. The play button does the same |
+| `restart_on_show` | bool | `false` |  | Starts over whenever the sound comes back into use, such as a switch or sequence picking it |
+| `channels` *(more)* | file \| mono \| stereo | `"file"` |  | Which channels come out; file: as many as the file has: mono stays mono; mono: one, the mean of all the file's channels; stereo: two: a mono file on both, else the file's first two |
+| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made, whatever the file's rate. out.audio nodes on one device need the same rate; audio.mix converts between rates |
 
 ### audio.filter
 

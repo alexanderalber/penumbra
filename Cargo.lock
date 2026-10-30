@@ -3173,6 +3173,7 @@ dependencies = [
  "log",
  "penumbra-core",
  "serde",
+ "symphonia",
 ]
 
 [[package]]

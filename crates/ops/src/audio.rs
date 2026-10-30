@@ -8,6 +8,8 @@
 //! - **`audio.oscillator`** ([`oscillator`]) makes a test tone or noise on the show clock,
 //!   **`audio.mix`** ([`mix`]) adds sounds by a gain each, **`audio.filter`** ([`filter`])
 //!   shapes a sound by frequency. [`block`] says which samples a generator owes per cook.
+//! - **`audio.file`** ([`file`]) plays a sound file on the show clock, as `tex.video_file` plays
+//!   a video.
 //! - **`audio.instrument`** ([`instrument`]) plays ready-made one-shot sounds (pluck, mallet,
 //!   bell, kick, hat, sweep), **`audio.ambience`** ([`ambience`]) sustained ones (drone, pad,
 //!   noise, water, rain), both in a key and scale ([`pitch`]). Their inputs are the bridge from `chan` to
@@ -35,6 +37,9 @@ pub mod block;
 pub mod envelope;
 #[cfg(test)]
 mod envelope_tests;
+pub mod file;
+#[cfg(test)]
+mod file_tests;
 pub mod filter;
 #[cfg(test)]
 mod filter_tests;
@@ -218,6 +223,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     mix::register(types)?;
     filter::register(types)?;
     instrument::register(types)?;
+    file::register(types)?;
     ambience::register(types)?;
     envelope::register(types)?;
     spectrum::register(types)?;

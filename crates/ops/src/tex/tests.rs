@@ -514,6 +514,12 @@ fn every_builtin_cooks_without_warnings() {
     let dir = scratch("every");
     write_png16(&dir.join("ramp.png"));
     copy_fixture("bars.mp4", &dir);
+    let tone: Vec<f64> = (0..4800).map(|i| (i as f64 * 0.06).sin() * 0.25).collect();
+    std::fs::write(
+        dir.join("tone.wav"),
+        penumbra_audio::file::wav_bytes(48_000, 1, penumbra_audio::file::WavFormat::Pcm16, &tone),
+    )
+    .unwrap();
     std::fs::write(
         dir.join("rows.csv"),
         "a,b
@@ -576,6 +582,7 @@ fn every_builtin_cooks_without_warnings() {
             "tex.face_content" => params.push(("face", "1".into())),
             "tex.shader" => params.push(("file", "rings.wgsl".into())),
             "tex.video_file" => params.push(("file", "bars.mp4".into())),
+            "audio.file" => params.push(("file", "tone.wav".into())),
             "tex.noise" => params.push(("speed", Value::Float(0.5))),
             "tex.select" => params.push(("node", "/feed".into())),
             "out.projector" => params.push(("display", "test".into())),

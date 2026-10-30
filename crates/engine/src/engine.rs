@@ -434,6 +434,9 @@ impl CookState {
         if let Some(t) = self.cooker.resource::<penumbra_ops::audio::instrument::Presses>() {
             t.prune(|id| net.node(id).is_some());
         }
+        if let Some(t) = self.cooker.resource::<penumbra_ops::audio::file::SoundFiles>() {
+            t.prune(|id| net.node(id).is_some());
+        }
         if let Some(t) = self.cooker.resource::<penumbra_ops::out::table::TableOuts>() {
             t.prune(|id| net.node(id).is_some());
         }
@@ -1155,6 +1158,11 @@ impl Engine {
     /// The audio outputs (`out.audio`).
     pub fn audio_out(&self) -> &penumbra_audio::Outputs {
         &self.hubs.audio_out
+    }
+
+    /// How the `audio.file` nodes stand.
+    pub fn sound_files(&self) -> &penumbra_ops::audio::file::SoundFiles {
+        &self.hubs.sound_files
     }
 
     /// The DMX outputs.

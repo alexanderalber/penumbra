@@ -16,6 +16,7 @@ use penumbra_camera::Hub as CameraHub;
 use penumbra_dmx::Hub as DmxHub;
 use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_graph::{Cooker, Network, NodeTypes};
+use penumbra_ops::audio::file::SoundFiles;
 use penumbra_ops::keyboard::Keyboard;
 use penumbra_ops::mouse::Mouse;
 use penumbra_ops::tex::scan::Scans;
@@ -60,6 +61,8 @@ pub struct Hubs {
     pub keyboard: Keyboard,
     /// The wheel the output windows pass on, and a fake pointer, for `chan.mouse_in`.
     pub mouse: Mouse,
+    /// How the `audio.file` nodes stand: their files' codec, rate and length, their playheads.
+    pub sound_files: SoundFiles,
 }
 
 impl Hubs {
@@ -79,17 +82,43 @@ impl Hubs {
             spacenav,
             keyboard,
             mouse: Mouse::new(),
+            sound_files: SoundFiles::new(),
         }
     }
 
     /// Every hub, in the order they shut down. Recordings come first: when the app closes, the
     /// cook thread has dropped its nodes and every recording is finishing its file, which the
     /// shutdown waits for.
-    pub fn all(&self) -> [&dyn DeviceHub; 11] {
+    pub fn all(&self) -> [&dyn DeviceHub; 12] {
         // Destructured so that a field missing here does not compile.
-        let Hubs { osc, audio, audio_out, dmx, dmx_in, camera, record, scans, spacenav, keyboard, mouse } =
-            self;
-        [record, osc.as_ref(), audio, audio_out, dmx, dmx_in, camera, scans, spacenav, keyboard, mouse]
+        let Hubs {
+            osc,
+            audio,
+            audio_out,
+            dmx,
+            dmx_in,
+            camera,
+            record,
+            scans,
+            spacenav,
+            keyboard,
+            mouse,
+            sound_files,
+        } = self;
+        [
+            record,
+            osc.as_ref(),
+            audio,
+            audio_out,
+            dmx,
+            dmx_in,
+            camera,
+            scans,
+            spacenav,
+            keyboard,
+            mouse,
+            sound_files,
+        ]
     }
 }
 
@@ -144,6 +173,17 @@ impl DeviceHub for AudioOutputs {
 
     fn shutdown(&self) {
         AudioOutputs::shutdown(self);
+    }
+}
+
+impl DeviceHub for SoundFiles {
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    /// Node ids of the next project mean other nodes.
+    fn project_closing(&self) {
+        self.prune(|_| false);
     }
 }
 

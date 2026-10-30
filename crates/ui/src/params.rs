@@ -49,6 +49,8 @@ pub struct Inputs<'a> {
     pub audio: &'a penumbra_audio::Hub,
     /// The engine's audio outputs: an `out.audio` shows how its device plays.
     pub audio_out: &'a penumbra_audio::Outputs,
+    /// The engine's sound files: an `audio.file` shows what it plays.
+    pub sound_files: &'a penumbra_ops::audio::file::SoundFiles,
     /// The engine's recordings: an `out.video` or `out.audio_file` shows its own and has start
     /// and stop.
     pub record: &'a penumbra_record::Hub,
@@ -229,6 +231,9 @@ impl ParamPanel {
             if r.clicked() {
                 actions.push(Action::PlayInstrument(input.node));
             }
+        }
+        if node.kind == penumbra_ops::audio::file::FILE {
+            sound_file_row(ui, input, auto, actions);
         }
         if node.kind == penumbra_ops::out::video::VIDEO_OUT {
             record_row(ui, input, node, auto, actions);
@@ -2502,6 +2507,59 @@ fn record_row(
 
 /// How an `out.audio`'s device plays: device, rate, latency, gaps, what the limiter takes off;
 /// and the mute of every output (`audio.mute`), which is not an edit.
+/// An `audio.file`'s play button (a cue, allowed while Claude edits) and what it plays.
+fn sound_file_row(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    ui.horizontal(|ui| {
+        let r = ui.button("play").on_hover_text(
+            "Starts the file over from `start`, as a one-shot sample with loop off. Heard through an out.audio while the show plays (audio.play)",
+        );
+        auto.add("param.play", r.rect, "play");
+        if r.clicked() {
+            actions.push(Action::PlayInstrument(input.node));
+        }
+        let weak = theme::TEXT_WEAK;
+        let Some(s) = input.sound_files.get(input.node) else {
+            ui.label(RichText::new("not playing").color(weak).small());
+            return;
+        };
+        let (text, colour) = match (&s.decoder.error, &s.decoder.info) {
+            (Some(e), _) => (e.clone(), theme::WARNING),
+            (None, None) if s.file.is_empty() => ("no file".to_string(), weak),
+            (None, None) => ("opening ...".to_string(), weak),
+            (None, Some(i)) => {
+                let ch = match i.channels {
+                    1 => "mono".to_string(),
+                    2 => "stereo".to_string(),
+                    n => format!("{n} channels"),
+                };
+                let length = i.seconds().map_or_else(|| "?".to_string(), clock);
+                let how = if i.in_memory { "in memory" } else { "streamed" };
+                let mut text = format!("{}  {} kHz {ch}  {}  {how}", i.codec, f64::from(i.rate) / 1000.0, length);
+                let colour = if s.gaps > 0 {
+                    text.push_str(&format!("  {} gaps", s.gaps));
+                    theme::WARNING
+                } else {
+                    weak
+                };
+                (text, colour)
+            }
+        };
+        ui.label(RichText::new(text).color(colour).small());
+    });
+}
+
+/// Seconds as m:ss.s.
+fn clock(seconds: f64) -> String {
+    let s = seconds.max(0.0);
+    let m = (s / 60.0).floor();
+    format!("{m:.0}:{:04.1}", s - m * 60.0)
+}
+
 fn audio_out_row(ui: &mut Ui, input: &Inputs<'_>, auto: &mut automation::Registry) {
     let out = input.audio_out;
     let lane = out.lane_status(input.node);

@@ -9,6 +9,7 @@
 //! - [`spectrum`]: a [`Spectrum`] of the newest samples in bands, and the band code the
 //!   analysis shares.
 //! - [`envelope`]: an [`Envelope`] follows a signal's level with an attack and a release.
+//! - [`file`]: a [`SoundFile`] decodes a sound file on a thread of its own, whole or streamed.
 //! - [`playback`]: a [`Player`] per output device takes one block per show frame and plays it
 //!   gaplessly: resampled to the device's rate, its latency held against clock drift, faded at
 //!   gaps and drops.
@@ -24,6 +25,9 @@ pub mod analysis;
 pub mod capture;
 pub mod envelope;
 pub mod fft;
+pub mod file;
+#[cfg(test)]
+mod file_tests;
 pub mod limiter;
 pub mod measure;
 pub mod outputs;
@@ -39,6 +43,7 @@ pub mod spectrum;
 pub use analysis::{Analyzer, Features, Settings};
 pub use capture::{Block, Cursor, DeviceInfo, Hub, StreamStatus, Watch};
 pub use envelope::{Detect, Envelope};
+pub use file::SoundFile;
 pub use limiter::Limiter;
 pub use outputs::{BusStatus, LaneStatus, Outputs, Tap, TapBlock, Want, keep_off_devices};
 pub use playback::{Engine, EngineStatus, Player, PlayerStatus, output_devices};

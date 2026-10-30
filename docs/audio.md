@@ -24,6 +24,9 @@ sound to channels that params can be bound to.
 - `audio.mix` adds up to eight sounds. Each input has its own gain (`gain0` to `gain7`), and
   `gain` sets the whole. Inputs may have different sample rates. See
   [Mixing rates and devices](#mixing-rates-and-devices).
+- `audio.file` plays a sound file (WAV, FLAC, MP3, Ogg Vorbis, or the AAC sound of an MP4, MOV
+  or M4A), looped or once, at `rate` whatever the file's rate. See
+  [Playing sound files](#playing-sound-files).
 - `audio.filter` shapes a sound by frequency. See [Filter](#filter).
 - `audio.instrument` and `audio.ambience` are ready-made sounds in a key and scale, played by
   channels. See [Instruments and ambience](#instruments-and-ambience).
@@ -125,6 +128,34 @@ The file stays readable while it records: its header is brought up to date every
 crash loses at most the last second. A WAV file holds at most 4 GB, about 4 hours of stereo at
 48 kHz in `pcm24`. A recording that reaches it is finished there. `audio_file_out.status` shows
 the file, its length and what was dropped or left out.
+
+## Playing sound files
+
+`audio.file` plays a recorded sound: music, an atmosphere, a sample. Wire its `out` into an
+`out.audio` to hear it.
+
+Its playhead moves as a `tex.video_file`'s does. Playback begins at `start` and follows the
+show clock, times `speed`. So a video and its sound stay together when both nodes get the same
+file, `start` and `speed`. A node that nothing reads holds its place. After a pause of more
+than half a second it goes on where it was.
+
+`speed` works as on tape. At 2 the file plays twice as fast and an octave higher; at 0.5, half
+as fast and an octave lower. `play` off fades the sound out and holds the place.
+
+A restart plays the file again from `start`. You restart with the play button in the panel,
+with `audio.play {path}`, or by turning `restart` on (bind a channel to cue it). With `loop`
+off, a restart plays the file once, as a one-shot sample. `restart_on_show` restarts whenever
+a switch or sequence picks the sound again.
+
+Short files (up to about 87 s of 48 kHz stereo) are decoded into memory, so loops and restarts
+are instant. Longer files are decoded a few seconds ahead while they play. A jump far into a
+long file can leave a moment of silence; the node counts these gaps and warns. A file that is
+missing or cannot be read plays silence and warns. Ogg files with FLAC or Opus sound, and ALAC,
+MP1 or MP2 sound, are not played: convert them to FLAC or MP3.
+
+The sound comes out at `rate` (48000 by default), with as many channels as the file has.
+`channels` makes it mono or stereo. `audio.file_info {path}` tells the file's codec, rate,
+channels and length and where the playhead is.
 
 ## Filter
 

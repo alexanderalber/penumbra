@@ -3,7 +3,7 @@
 //! `out.audio` nodes ([`penumbra_ops::out::audio::wants`]).
 //!
 //! Commands: `audio.devices`, `audio.outputs`, `audio.status`, `audio.config`, `audio.mute`,
-//! `audio.measure_latency`, `audio.play`.
+//! `audio.measure_latency`, `audio.play`, `audio.file_info`.
 
 use std::sync::Arc;
 
@@ -11,6 +11,7 @@ use penumbra_audio::capture::{self, Config};
 use penumbra_audio::measure;
 use penumbra_audio::playback::{self, Settings};
 use penumbra_core::NodePath;
+use penumbra_ops::audio::file::{FILE, FileStatus};
 use penumbra_ops::audio::instrument::{INSTRUMENT, Presses};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
@@ -47,8 +48,15 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add(
         "audio.play",
         "An audio.instrument plays one note at its next frame, as if channel `lane` of play had crossed threshold \
-         there; wired or not:{path, lane? (default 0)}. While the show is paused nothing sounds and the press is dropped",
+         there; wired or not:{path, lane? (default 0)}. An audio.file starts over from its start (lane is ignored). \
+         While the show is paused nothing sounds and the press is dropped",
         audio_play,
+    );
+    add(
+        "audio.file_info",
+        "What an audio.file plays: {path} gives file, codec, rate, channels, duration (s), in_memory, ready, \
+         error, position (s), playing, gaps (silences while decoding caught up), seeks, restarts, bad_packets",
+        audio_file_info,
     );
     add(
         "audio.measure_latency",
@@ -92,14 +100,14 @@ fn audio_play(e: &Engine, p: &Json) -> CmdResult<Json> {
 pub const PAUSED: &str = "the show is paused, so nothing is heard: the press was dropped";
 
 /// `audio.play`: the `audio.instrument` at `path` plays one note on lane `lane` at the start
-/// of its next block. False when the show is paused: then the press is dropped, so it does not
+/// of its next block; an `audio.file` starts over from its `start`. False when the show is paused: then the press is dropped, so it does not
 /// sound later when the show plays again.
 pub fn play(e: &Engine, path: &NodePath, lane: usize) -> CmdResult<bool> {
     let net = e.session().doc().snapshot();
     let id = require(&net, path)?;
     let kind = net.node(id).map(|n| n.kind.clone()).unwrap_or_default();
-    if kind != INSTRUMENT {
-        return Err(CommandError(format!("{path} is a {kind}, not an {INSTRUMENT}")));
+    if kind != INSTRUMENT && kind != FILE {
+        return Err(CommandError(format!("{path} is a {kind}, not an {INSTRUMENT} or {FILE}")));
     }
     let asked = e.on_cook(move |st| {
         if !st.clock.is_playing() {
@@ -109,6 +117,50 @@ pub fn play(e: &Engine, path: &NodePath, lane: usize) -> CmdResult<bool> {
     })?;
     asked.ok_or_else(|| {
         CommandError(format!("{path} has not cooked yet: wire its out into an out.audio to hear it"))
+    })
+}
+
+fn audio_file_info(e: &Engine, p: &Json) -> CmdResult<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        path: NodePath,
+    }
+    let a: A = args(p)?;
+    let net = e.session().doc().snapshot();
+    let id = require(&net, &a.path)?;
+    let kind = net.node(id).map(|n| n.kind.clone()).unwrap_or_default();
+    if kind != FILE {
+        return Err(CommandError(format!("{} is a {kind}, not an {FILE}", a.path)));
+    }
+    let Some(s) = e.sound_files().get(id) else {
+        return Err(CommandError(format!(
+            "{} has not cooked yet: wire its out into an out.audio or look at it",
+            a.path
+        )));
+    };
+    Ok(file_info_json(&a.path, &s))
+}
+
+/// `audio.file_info`'s reply.
+pub fn file_info_json(path: &NodePath, s: &FileStatus) -> Json {
+    let info = s.decoder.info.as_ref();
+    json!({
+        "path": path.to_string(),
+        "file": s.file,
+        "codec": info.map(|i| i.codec.clone()),
+        "rate": info.map(|i| i.rate),
+        "channels": info.map(|i| i.channels),
+        "duration": info.and_then(|i| i.seconds()),
+        "in_memory": info.map(|i| i.in_memory),
+        "ready": s.decoder.ready,
+        "error": s.decoder.error,
+        "position": s.position,
+        "playing": s.playing,
+        "gaps": s.gaps,
+        "seeks": s.decoder.seeks,
+        "restarts": s.restarts,
+        "bad_packets": s.decoder.bad_packets,
     })
 }
 

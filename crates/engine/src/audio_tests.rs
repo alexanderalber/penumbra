@@ -337,3 +337,50 @@ fn audio_play_presses_an_instrument() {
     f.fail("audio.play", json!({"path": "/i", "lane": 1e300}));
     f.fail("audio.play", json!({"path": "/i", "lane": "x", "extra": 1}));
 }
+
+/// `audio.file` through `out.audio`: the file is heard, `audio.file_info` says what it is,
+/// `audio.play` starts it over (a one-shot with loop off), hostile args are errors.
+#[test]
+fn an_audio_file_plays_and_restarts_on_a_press() {
+    use penumbra_audio::file::{WavFormat, wav_bytes};
+    let f = Fixture::new("audio_file");
+    let out = f.engine.audio_out().clone();
+    let dir = std::env::temp_dir().join(format!("penumbra-engine-audio-file-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // 0.2 s of a 440 Hz tone at 44.1 kHz.
+    let tone: Vec<f64> =
+        (0..8820).map(|i| 0.5 * (i as f64 * std::f64::consts::TAU * 440.0 / 44_100.0).sin()).collect();
+    let path = dir.join("tone.wav");
+    std::fs::write(&path, wav_bytes(44_100, 1, WavFormat::Pcm16, &tone)).unwrap();
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/s", "kind": "audio.file",
+             "params": {"file": path.to_string_lossy(), "loop": false}},
+            {"op": "create", "path": "/out", "kind": "out.audio", "params": {"reverb": 0.0}},
+            {"op": "connect", "from": "/s", "to": "/out"},
+            {"op": "create", "path": "/o", "kind": "audio.oscillator"},
+        ]}),
+    );
+    let len = || out.pushed("").first().map_or(0, Vec::len);
+    eventually("the tone", || out.pushed("").first().is_some_and(|b| b.iter().any(|s| *s != 0.0)));
+    let info = f.call("audio.file_info", json!({"path": "/s"}));
+    assert_eq!((info["codec"].as_str(), info["rate"].as_u64()), (Some("pcm_s16le"), Some(44_100)), "{info}");
+    assert_eq!((info["channels"].as_u64(), info["in_memory"].as_bool()), (Some(1), Some(true)), "{info}");
+    assert!((info["duration"].as_f64().unwrap_or(0.0) - 0.2).abs() < 1e-9, "{info}");
+    // Played once: silent after its 0.2 s.
+    eventually("the end of the tone", || len() > 48_000 / 2);
+    let quiet = len();
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(out.pushed("")[0][quiet..].iter().all(|s| *s == 0.0), "played once");
+    let r = f.call("audio.play", json!({"path": "/s"}));
+    assert_eq!(r["played"], true, "{r}");
+    eventually("the tone again", || out.pushed("")[0].iter().skip(quiet).any(|s| *s != 0.0));
+    assert_eq!(f.call("audio.file_info", json!({"path": "/s"}))["restarts"], 1);
+
+    assert!(f.fail("audio.file_info", json!({"path": "/o"})).contains("not an audio.file"));
+    assert!(f.fail("audio.play", json!({"path": "/o"})).contains("not an audio.instrument or audio.file"));
+    f.fail("audio.file_info", json!({}));
+    f.fail("audio.file_info", json!({"path": "/s", "extra": 1}));
+    let _ = std::fs::remove_dir_all(&dir);
+}

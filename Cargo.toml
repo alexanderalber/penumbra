@@ -95,6 +95,9 @@ tiny-skia = { version = "0.12", default-features = false, features = ["std", "si
 winit = "=0.30.13"
 # Audio input: WASAPI on Windows, ALSA on Linux (crates/audio).
 cpal = "0.18.2"
+# Sound files for audio.file (crates/audio): WAV, FLAC, MP3, Ogg Vorbis and the AAC track of MP4/MOV.
+# Already in the tree through filmcraft-codecs; MPL-2.0.
+symphonia = { version = "0.5.5", default-features = false, features = ["wav", "pcm", "flac", "mp3", "ogg", "vorbis", "isomp4", "aac"] }
 # The window handle eframe hands out, and DWM for the title bar colour (crates/ui/src/titlebar.rs).
 raw-window-handle = "0.6"
 # The native folder dialog for opening and creating projects (as in the storytold apps). Without

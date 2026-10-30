@@ -17,10 +17,11 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `audio.config` | Audio settings for this run: {enabled?} |
 | `audio.devices` | The audio inputs of this machine: name, default, rate, channels, format |
+| `audio.file_info` | What an audio.file plays: {path} gives file, codec, rate, channels, duration (s), in_memory, ready, error, position (s), playing, gaps (silences while decoding caught up), seeks, restarts, bad_packets |
 | `audio.measure_latency` | Plays quiet clicks (at most -20 dBFS) on an output and finds them on an input: {output?, input?, channels?, clicks?, level?, latency?, buffer?}; input `loopback:<output>` records what the output plays. Reports ms from push to arrival per channel, and an output estimate. Takes some seconds |
 | `audio.mute` | Mutes every audio output at once, a panic button: {mute?} (default true; false unmutes). For this run only |
 | `audio.outputs` | The audio outputs of this machine: name, default, rate, channels, format |
-| `audio.play` | An audio.instrument plays one note at its next frame, as if channel `lane` of play had crossed threshold there; wired or not:{path, lane? (default 0)}. While the show is paused nothing sounds and the press is dropped |
+| `audio.play` | An audio.instrument plays one note at its next frame, as if channel `lane` of play had crossed threshold there; wired or not:{path, lane? (default 0)}. An audio.file starts over from its start (lane is ignored). While the show is paused nothing sounds and the press is dropped |
 | `audio.status` | Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) and output buses (device, open, error, rate, latency_ms with fill_ms and device_ms, underruns, overruns, glitches, limiter reduction per node and of the sum, muted) |
 
 ## audio_file_out

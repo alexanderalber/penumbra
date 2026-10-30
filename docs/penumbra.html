@@ -667,6 +667,8 @@ water      15
 </li>
 <li><a class="ref" href="#audio.mix"><code>audio.mix</code></a> adds up to eight sounds. Each input has its own gain (<code>gain0</code> to <code>gain7</code>), and <code>gain</code> sets the whole. Inputs may have different sample rates. See <a href="#audio-mixing-rates-and-devices">Mixing rates and devices</a>.
 </li>
+<li><a class="ref" href="#audio.file"><code>audio.file</code></a> plays a sound file (WAV, FLAC, MP3, Ogg Vorbis, or the AAC sound of an MP4, MOV or M4A), looped or once, at <code>rate</code> whatever the file's rate. See <a href="#audio-playing-sound-files">Playing sound files</a>.
+</li>
 <li><a class="ref" href="#audio.filter"><code>audio.filter</code></a> shapes a sound by frequency. See <a href="#audio-filter">Filter</a>.
 </li>
 <li><a class="ref" href="#audio.instrument"><code>audio.instrument</code></a> and <a class="ref" href="#audio.ambience"><code>audio.ambience</code></a> are ready-made sounds in a key and scale, played by channels. See <a href="#audio-instruments-and-ambience">Instruments and ambience</a>.
@@ -695,6 +697,13 @@ water      15
 <p>The file goes to <code>file</code>, relative to the project. Left empty, it goes to <code>recordings/&lt;node name&gt;.wav</code>. An existing file is never overwritten: the recording takes the next free name with <code>_2</code>, <code>_3</code>, ... The file appears with the first sound. A recording that got no sound writes no file.</p>
 <p>Each sample goes where its show time falls. A pause records nothing. A jump back, or more than a second ahead, continues the file without a gap. A shorter jump ahead leaves silence for the time skipped. When the input changes its rate or channel count, the new sound is left out and the node warns. Turn <code>record</code> off and on for a file in the new format.</p>
 <p>The file stays readable while it records: its header is brought up to date every second. A crash loses at most the last second. A WAV file holds at most 4 GB, about 4 hours of stereo at 48 kHz in <code>pcm24</code>. A recording that reaches it is finished there. <a class="ref" href="#audio_file_out.status"><code>audio_file_out.status</code></a> shows the file, its length and what was dropped or left out.</p>
+<h3 id="audio-playing-sound-files">Playing sound files</h3>
+<p><a class="ref" href="#audio.file"><code>audio.file</code></a> plays a recorded sound: music, an atmosphere, a sample. Wire its <code>out</code> into an <a class="ref" href="#out.audio"><code>out.audio</code></a> to hear it.</p>
+<p>Its playhead moves as a <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a>'s does. Playback begins at <code>start</code> and follows the show clock, times <code>speed</code>. So a video and its sound stay together when both nodes get the same file, <code>start</code> and <code>speed</code>. A node that nothing reads holds its place. After a pause of more than half a second it goes on where it was.</p>
+<p><code>speed</code> works as on tape. At 2 the file plays twice as fast and an octave higher; at 0.5, half as fast and an octave lower. <code>play</code> off fades the sound out and holds the place.</p>
+<p>A restart plays the file again from <code>start</code>. You restart with the play button in the panel, with <a class="ref" href="#audio.play"><code>audio.play {path}</code></a>, or by turning <code>restart</code> on (bind a channel to cue it). With <code>loop</code> off, a restart plays the file once, as a one-shot sample. <code>restart_on_show</code> restarts whenever a switch or sequence picks the sound again.</p>
+<p>Short files (up to about 87 s of 48 kHz stereo) are decoded into memory, so loops and restarts are instant. Longer files are decoded a few seconds ahead while they play. A jump far into a long file can leave a moment of silence; the node counts these gaps and warns. A file that is missing or cannot be read plays silence and warns. Ogg files with FLAC or Opus sound, and ALAC, MP1 or MP2 sound, are not played: convert them to FLAC or MP3.</p>
+<p>The sound comes out at <code>rate</code> (48000 by default), with as many channels as the file has. <code>channels</code> makes it mono or stereo. <a class="ref" href="#audio.file_info"><code>audio.file_info {path}</code></a> tells the file's codec, rate, channels and length and where the playhead is.</p>
 <h3 id="audio-filter">Filter</h3>
 <p><a class="ref" href="#audio.filter"><code>audio.filter</code></a> filters any sound, every channel on its own, at any sample rate. Wire a sound into <code>in</code>; the output has the same channels and rate.</p>
 <p><strong>Types.</strong> <code>lowpass</code> removes the highs above <code>cutoff</code>, <code>highpass</code> the lows below it. <code>bandpass</code> keeps only a band around <code>cutoff</code>, <code>notch</code> cuts a narrow band out, e.g. a hum. <code>peak</code> turns a band around <code>cutoff</code> up or down by <code>gain</code> (dB). <code>low_shelf</code> turns everything below <code>cutoff</code> up or down by <code>gain</code>, e.g. to tame a room's boom. <code>high_shelf</code> does the same above <code>cutoff</code>.</p>
@@ -3276,7 +3285,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>start</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where playback begins when the file is loaded and where a restart goes</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#recording">Recording</a>, <a href="#recording-colour">Recording › Colour</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#recording">Recording</a>, <a href="#recording-colour">Recording › Colour</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
 </div></details>
 <details class="entry node" id="tex.video_in"><summary><code class="name">tex.video_in</code><span class="sum">A live camera or capture card</span></summary>
 <div class="body">
@@ -3953,7 +3962,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-audio">
 <h3>audio</h3>
-<p class="kinds"><a href="#audio.ambience">audio.ambience</a> <a href="#audio.device_in">audio.device_in</a> <a href="#audio.filter">audio.filter</a> <a href="#audio.instrument">audio.instrument</a> <a href="#audio.mix">audio.mix</a> <a href="#audio.oscillator">audio.oscillator</a></p>
+<p class="kinds"><a href="#audio.ambience">audio.ambience</a> <a href="#audio.device_in">audio.device_in</a> <a href="#audio.file">audio.file</a> <a href="#audio.filter">audio.filter</a> <a href="#audio.instrument">audio.instrument</a> <a href="#audio.mix">audio.mix</a> <a href="#audio.oscillator">audio.oscillator</a></p>
 <details class="entry node" id="audio.ambience"><summary><code class="name">audio.ambience</code><span class="sum">A sound that holds without notes: a steady tone, a pad, wind-like noise, running water or rain. Its pitch, brightness and level follow the params smoothly; each channel wired into gate switches its own tone on and off</span></summary>
 <div class="body">
 <p>A sound that holds without notes: a steady tone, a pad, wind-like noise, running water or rain. Its pitch, brightness and level follow the params smoothly; each channel wired into gate switches its own tone on and off</p>
@@ -4009,6 +4018,35 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+</div></details>
+<details class="entry node" id="audio.file"><summary><code class="name">audio.file</code><span class="sum">Plays a sound file: music, an atmosphere or a sample, looped or once</span></summary>
+<div class="body">
+<p>Plays a sound file: music, an atmosphere or a sample, looped or once</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">audio</span>: The file's sound, channels ch1, ch2, ...</li>
+<li><code>info</code> <span class="kind">chan</span>: Playback: position (s), progress (0 to 1), loops, duration (s), rate and channels of the file, gaps, seeks, restarts</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>file</code></td><td>file (wav, wave, flac, mp3, ogg, oga, m4a, mp4, mov, aac)</td><td></td><td></td><td>WAV, FLAC, MP3, Ogg Vorbis, or the AAC sound of an MP4, MOV or M4A</td></tr>
+<tr><td><code>play</code></td><td>bool</td><td><code>true</code></td><td></td><td>Off fades the sound out and holds the place; on plays on from there</td></tr>
+<tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft)</td><td>Playback rate, as on tape: 2 plays twice as fast and an octave higher, 0.5 half as fast and an octave lower</td></tr>
+<tr><td><code>loop</code></td><td>bool</td><td><code>true</code></td><td></td><td>Off plays the file once and then stays silent</td></tr>
+<tr><td><code>restart</code></td><td>bool</td><td><code>false</code></td><td></td><td>Turning on starts the file over from <code>start</code>; bind a channel to cue it. The play button does the same</td></tr>
+<tr><td><code>restart_on_show</code></td><td>bool</td><td><code>false</code></td><td></td><td>Starts over whenever the sound comes back into use, such as a switch or sequence picking it</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>start</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where playback begins when the file is loaded and where a restart goes</td></tr>
+<tr><td><code>channels</code></td><td>file | mono | stereo</td><td><code>&quot;file&quot;</code></td><td></td><td>Which channels come out<ul><li><code>file</code>: as many as the file has: mono stays mono</li><li><code>mono</code>: one, the mean of all the file's channels</li><li><code>stereo</code>: two: a mono file on both, else the file's first two</li></ul></td></tr>
+<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made, whatever the file's rate. out.audio nodes on one device need the same rate; audio.mix converts between rates</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a></p>
 </div></details>
 <details class="entry node" id="audio.filter"><summary><code class="name">audio.filter</code><span class="sum">Shapes a sound by frequency: removes the highs or the lows, picks out or cuts a band, or turns a range up or down. Every channel is filtered on its own</span></summary>
 <div class="body">
@@ -4689,7 +4727,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>latency</code></td><td>float</td><td><code>50</code></td><td>20 to 200 (soft)</td><td>Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a>, <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-not-yet">Recording › Not yet</a>, <a href="#control-headless-runs">Control › Headless runs</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a>, <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-not-yet">Recording › Not yet</a>, <a href="#control-headless-runs">Control › Headless runs</a></p>
 </div></details>
 <details class="entry node" id="out.audio_file"><summary><code class="name">out.audio_file</code><span class="sum">Records sound to a WAV file: its input, or everything the out.audio nodes play</span></summary>
 <div class="body">
@@ -5189,6 +5227,11 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>The audio inputs of this machine: name, default, rate, channels, format</p>
 </div></details>
+<details class="entry command" id="audio.file_info"><summary><code class="name">audio.file_info</code><span class="sum">What an audio.file plays: {path} gives file, codec, rate, channels, duration (s), in_memory, ready, error, position (s), playing, gaps (silences while decoding caught up), seeks, restarts, bad_packets</span></summary>
+<div class="body">
+<p>What an audio.file plays: {path} gives file, codec, rate, channels, duration (s), in_memory, ready, error, position (s), playing, gaps (silences while decoding caught up), seeks, restarts, bad_packets</p>
+<p class="mentions">Mentioned in: <a href="#audio-playing-sound-files">Audio › Playing sound files</a></p>
+</div></details>
 <details class="entry command" id="audio.measure_latency"><summary><code class="name">audio.measure_latency</code><span class="sum">Plays quiet clicks (at most -20 dBFS) on an output and finds them on an input: {output?, input?,          channels?, clicks?, level?, latency?, buffer?}; input <code>loopback:&lt;output&gt;</code> records what the output plays.          Reports ms from push to arrival per channel, and an output estimate. Takes some seconds</span></summary>
 <div class="body">
 <p>Plays quiet clicks (at most -20 dBFS) on an output and finds them on an input: {output?, input?,          channels?, clicks?, level?, latency?, buffer?}; input <code>loopback:&lt;output&gt;</code> records what the output plays.          Reports ms from push to arrival per channel, and an output estimate. Takes some seconds</p>
@@ -5203,10 +5246,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>The audio outputs of this machine: name, default, rate, channels, format</p>
 </div></details>
-<details class="entry command" id="audio.play"><summary><code class="name">audio.play</code><span class="sum">An audio.instrument plays one note at its next frame, as if channel <code>lane</code> of play had crossed threshold there; wired or not:{path, lane? (default 0)}. While the show is paused nothing sounds and the press is dropped</span></summary>
+<details class="entry command" id="audio.play"><summary><code class="name">audio.play</code><span class="sum">An audio.instrument plays one note at its next frame, as if channel <code>lane</code> of play had crossed threshold there; wired or not:{path, lane? (default 0)}. An audio.file starts over from its start (lane is ignored). While the show is paused nothing sounds and the press is dropped</span></summary>
 <div class="body">
-<p>An audio.instrument plays one note at its next frame, as if channel <code>lane</code> of play had crossed threshold there; wired or not:{path, lane? (default 0)}. While the show is paused nothing sounds and the press is dropped</p>
-<p class="mentions">Mentioned in: <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a></p>
+<p>An audio.instrument plays one note at its next frame, as if channel <code>lane</code> of play had crossed threshold there; wired or not:{path, lane? (default 0)}. An audio.file starts over from its start (lane is ignored). While the show is paused nothing sounds and the press is dropped</p>
+<p class="mentions">Mentioned in: <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a></p>
 </div></details>
 <details class="entry command" id="audio.status"><summary><code class="name">audio.status</code><span class="sum">Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) and          output buses (device, open, error, rate, latency_ms with fill_ms and device_ms, underruns, overruns,          glitches, limiter reduction per node and of the sum, muted)</span></summary>
 <div class="body">
