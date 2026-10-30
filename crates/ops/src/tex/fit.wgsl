@@ -22,9 +22,9 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     }
     var sampled: vec4f;
     switch params.extend {
-        case extend_repeat: { sampled = pn_area(in0, pn_repeat, uv, 1.0 / s); }
-        case extend_mirror: { sampled = pn_area(in0, pn_mirror, uv, 1.0 / s); }
-        default: { sampled = pn_area(in0, pn_clamp, uv, 1.0 / s); }
+        case extend_repeat: { sampled = pn_resample(in0, pn_repeat, uv, 1.0 / s, params.sampling); }
+        case extend_mirror: { sampled = pn_resample(in0, pn_mirror, uv, 1.0 / s, params.sampling); }
+        default: { sampled = pn_resample(in0, pn_clamp, uv, 1.0 / s, params.sampling); }
     }
     return sampled;
 }

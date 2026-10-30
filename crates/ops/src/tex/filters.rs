@@ -6,7 +6,7 @@
 use penumbra_core::{Curve, ParamSpec, Unit, Value};
 use penumbra_graph::{CookContext, CookError, DataKind, Density, NodeDef, NodeDesc};
 
-use super::{Builtin, MAX_SIDE, Size, Sizes, extend, side};
+use super::{Builtin, MAX_SIDE, Size, Sizes, extend, sampling, side};
 
 /// Channels a filter can read one of.
 const CHANNEL: [&str; 5] = ["luminance", "red", "green", "blue", "alpha"];
@@ -288,7 +288,8 @@ pub(super) fn builtins() -> Vec<Builtin> {
                         .choice_doc("hold", "the input's edge pixels continue outwards")
                         .choice_doc("repeat", "the input again, tiled")
                         .choice_doc("mirror", "the input again, mirrored, so the copies meet at the edges"),
-                ),
+                )
+                .param(sampling()),
                 include_str!("fit.wgsl"),
             )
         },
@@ -476,7 +477,8 @@ pub(super) fn builtins() -> Vec<Builtin> {
                             .curve(Curve::Log)
                             .doc("Factor on the input's width and height: 0.5 halves both")
                             .applies_when("mode", &["multiply"]),
-                    ),
+                    )
+                    .param(sampling()),
                     true,
                     " (mode custom)",
                 ),

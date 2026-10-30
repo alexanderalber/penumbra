@@ -20,6 +20,8 @@
 //!                                               // 0 hold, 1 zero, 2 repeat, 3 mirror outside 0..1
 //! fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f
 //!                                               // mean over `footprint` source texels (downscaling)
+//! fn pn_resample(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, mode: i32) -> vec4f
+//!                                               // scaling: 0 linear, 1 cubic, 2 nearest
 //! struct PnPalette { count: i32, colours: array<vec4f, 32> }   // a palette param's field
 //! fn pn_palette(p: PnPalette, i: i32) -> vec4f  // colour i, wrapping (also below 0)
 //! fn pn_colormap(p: PnPalette, t: f32) -> vec4f // 0..1 along the colours, blended
@@ -157,8 +159,47 @@ fn pn_extend(t: texture_2d<f32>, uv: vec2f, mode: i32) -> vec4f {
 // Mean of the source over `footprint` texels around `uv`, so shrinking does not alias. Each
 // linear tap averages up to two texels per axis, so half as many taps as texels, at most 8 x 8.
 fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f {
+    return pn_box(t, s, uv, footprint, 8.0);
+}
+
+// The source at `uv` for an output pixel `footprint` source texels wide. `mode` 0 linear
+// (bilinear growing, the mean of the footprint shrinking, exact up to 64 texels per axis),
+// 1 cubic (Catmull-Rom, its kernel stretched over the footprint shrinking, up to 16 texels),
+// 2 nearest (the one texel under the pixel, hard edges, aliases when shrinking).
+fn pn_resample(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, mode: i32) -> vec4f {
+    let size = vec2f(textureDimensions(t));
+    switch mode {
+        case 1: {
+            let x = uv * size;
+            let n = vec2i(pn_cubic_count(footprint.x), pn_cubic_count(footprint.y));
+            var sum = vec4f(0.0);
+            var weight = 0.0;
+            for (var j = 0; j < n.y; j++) {
+                let ty = pn_cubic_tap(x.y, footprint.y, j);
+                for (var i = 0; i < n.x; i++) {
+                    let tx = pn_cubic_tap(x.x, footprint.x, i);
+                    let w = tx.y * ty.y;
+                    sum += w * textureSampleLevel(t, s, vec2f(tx.x, ty.x) / size, 0.0);
+                    weight += w;
+                }
+            }
+            sum /= weight;
+            // The kernel's negative lobes overshoot at hard edges: no negative light, alpha 0..1.
+            return vec4f(max(sum.rgb, vec3f(0.0)), clamp(sum.a, 0.0, 1.0));
+        }
+        case 2: {
+            // A texel's centre, where linear filtering returns that texel alone.
+            return textureSampleLevel(t, s, (floor(uv * size) + 0.5) / size, 0.0);
+        }
+        default: {
+            return pn_box(t, s, uv, footprint, 32.0);
+        }
+    }
+}
+
+fn pn_box(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, most: f32) -> vec4f {
     let texel = 1.0 / vec2f(textureDimensions(t));
-    let n = vec2i(clamp(ceil(footprint * 0.5), vec2f(1.0), vec2f(8.0)));
+    let n = vec2i(clamp(ceil(footprint * 0.5), vec2f(1.0), vec2f(most)));
     var sum = vec4f(0.0);
     for (var j = 0; j < n.y; j++) {
         for (var i = 0; i < n.x; i++) {
@@ -167,6 +208,39 @@ fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f
         }
     }
     return sum / f32(n.x * n.y);
+}
+
+// Catmull-Rom weight at distance `x`, in kernel units; 0 from 2 on.
+fn pn_catmull_rom(x: f32) -> f32 {
+    let a = abs(x);
+    if (a < 1.0) {
+        return (1.5 * a - 2.5) * a * a + 1.0;
+    }
+    if (a < 2.0) {
+        return ((-0.5 * a + 2.5) * a - 4.0) * a + 2.0;
+    }
+    return 0.0;
+}
+
+// Catmull-Rom taps along one axis for an output pixel `k` source texels wide. The kernel is 4
+// texels wide growing and stretched to 4k shrinking. Up to 8 texels per pixel a tap sits on
+// every texel's centre, beyond on every other texel's edge, where linear filtering averages two
+// texels equally: each texel counts once either way. At most 33 taps, so 16 texels per pixel.
+fn pn_cubic_count(k: f32) -> i32 {
+    return i32(min(ceil(4.0 * max(k, 1.0) / pn_cubic_step(k)), 32.0)) + 1;
+}
+
+fn pn_cubic_step(k: f32) -> f32 {
+    return select(1.0, 2.0, k > 8.0);
+}
+
+// Tap `i` at `x` (texels from the edge): its position in texels and its weight, not yet
+// normalised.
+fn pn_cubic_tap(x: f32, k: f32, i: i32) -> vec2f {
+    let unit = max(k, 1.0);
+    let step = pn_cubic_step(k);
+    let p = floor(x - 2.0 * unit) + step * 0.5 + step * f32(i);
+    return vec2f(p, pn_catmull_rom((p - x) / unit));
 }
 
 // A palette param: `count` colours, linear, straight alpha. The colours sit in a `var` before

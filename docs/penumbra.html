@@ -2263,6 +2263,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>fit</code></td><td>fit | fill | stretch | native</td><td><code>&quot;fit&quot;</code></td><td></td><td>How the input sits in the frame<ul><li><code>fit</code>: whole and as large as fits, aspect kept; bars where it does not fill</li><li><code>fill</code>: covering the frame, aspect kept; what sticks out is cropped</li><li><code>stretch</code>: covering the frame, distorted to its aspect</li><li><code>native</code>: pixel for pixel, unscaled</li></ul></td></tr>
 <tr><td><code>justify</code></td><td>vec2</td><td><code>[0.5, 0.5]</code></td><td>0 to 1 (soft)</td><td>Where the image sits in the frame: 0 left or top, 1 right or bottom</td></tr>
 <tr><td><code>extend</code></td><td>zero | hold | repeat | mirror</td><td><code>&quot;zero&quot;</code></td><td></td><td>What fills the frame where the input does not reach (the bars of fit or native)<ul><li><code>zero</code>: transparent black</li><li><code>hold</code>: the input's edge pixels continue outwards</li><li><code>repeat</code>: the input again, tiled</li><li><code>mirror</code>: the input again, mirrored, so the copies meet at the edges</li></ul></td></tr>
+<tr><td><code>sampling</code></td><td>linear | cubic | nearest</td><td><code>&quot;linear&quot;</code></td><td></td><td>How pixels are computed from the input when it is scaled<ul><li><code>linear</code>: soft and even: blends neighbours growing, averages shrinking</li><li><code>cubic</code>: sharper: edges stay crisp growing and shrinking, with a faint halo at hard ones</li><li><code>nearest</code>: each pixel takes one input pixel: blocky growing, flickers shrinking</li></ul></td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
 </tbody>
@@ -2835,6 +2836,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tbody>
 <tr><td><code>mode</code></td><td>multiply | custom</td><td><code>&quot;multiply&quot;</code></td><td></td><td>How the output size is set<ul><li><code>multiply</code>: the input's size times multiply</li><li><code>custom</code>: width and height (under more), whatever the input</li></ul></td></tr>
 <tr><td><code>multiply</code></td><td>float</td><td><code>0.5</code></td><td>0.125 to 4 (soft)</td><td>Factor on the input's width and height: 0.5 halves both</td></tr>
+<tr><td><code>sampling</code></td><td>linear | cubic | nearest</td><td><code>&quot;linear&quot;</code></td><td></td><td>How pixels are computed from the input when it is scaled<ul><li><code>linear</code>: soft and even: blends neighbours growing, averages shrinking</li><li><code>cubic</code>: sharper: edges stay crisp growing and shrinking, with a faint halo at hard ones</li><li><code>nearest</code>: each pixel takes one input pixel: blocky growing, flickers shrinking</li></ul></td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
@@ -3747,7 +3749,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Puts the channels of its inputs together into one</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>in0 .. in63</code> <span class="kind">chan</span>: The channels to put together, in0's first Any number, up to 64: each one wired adds a free slot below it.</li>
+<li><code>in0 .. in63</code> <span class="kind">chan</span>: The channels to put together, in0's first. A name an earlier input already has gets a number: the second <code>value</code> becomes <code>value1</code> Any number, up to 64: each one wired adds a free slot below it.</li>
 </ul>
 <h4>Outputs</h4>
 <ul>

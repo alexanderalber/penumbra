@@ -320,6 +320,7 @@ Outputs: `out` (tex).
 | `fit` | fit \| fill \| stretch \| native | `"fit"` |  | How the input sits in the frame; fit: whole and as large as fits, aspect kept; bars where it does not fill; fill: covering the frame, aspect kept; what sticks out is cropped; stretch: covering the frame, distorted to its aspect; native: pixel for pixel, unscaled |
 | `justify` | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Where the image sits in the frame: 0 left or top, 1 right or bottom |
 | `extend` | zero \| hold \| repeat \| mirror | `"zero"` |  | What fills the frame where the input does not reach (the bars of fit or native); zero: transparent black; hold: the input's edge pixels continue outwards; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
+| `sampling` | linear \| cubic \| nearest | `"linear"` |  | How pixels are computed from the input when it is scaled; linear: soft and even: blends neighbours growing, averages shrinking; cubic: sharper: edges stay crisp growing and shrinking, with a faint halo at hard ones; nearest: each pixel takes one input pixel: blocky growing, flickers shrinking |
 
 ### tex.flip
 
@@ -738,6 +739,7 @@ Outputs: `out` (tex).
 |---|---|---|---|---|
 | `mode` | multiply \| custom | `"multiply"` |  | How the output size is set; multiply: the input's size times multiply; custom: width and height (under more), whatever the input |
 | `multiply` | float | `0.5` | 0.125 to 4 (soft) | Factor on the input's width and height: 0.5 halves both. Does something only with mode multiply. |
+| `sampling` | linear \| cubic \| nearest | `"linear"` |  | How pixels are computed from the input when it is scaled; linear: soft and even: blends neighbours growing, averages shrinking; cubic: sharper: edges stay crisp growing and shrinking, with a faint halo at hard ones; nearest: each pixel takes one input pixel: blocky growing, flickers shrinking |
 | `width` *(more)* | int | `1920` | 1 to 16384 px | Width of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(more)* | int | `1080` | 1 to 16384 px | Height of the output in pixels (mode custom); res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
@@ -1369,7 +1371,7 @@ Puts the channels of its inputs together into one
 
 Inputs:
 
-- `in0 .. in63` (chan): The channels to put together, in0's first. Any number, up to 64: each one wired adds a free slot below it
+- `in0 .. in63` (chan): The channels to put together, in0's first. A name an earlier input already has gets a number: the second `value` becomes `value1`. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs: `out` (chan).
 

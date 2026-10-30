@@ -89,6 +89,18 @@ fn extend(default: &str) -> ParamSpec {
     spec
 }
 
+/// How a scaling node fetches the input, in the order `pn_resample` numbers its modes.
+fn sampling() -> ParamSpec {
+    ParamSpec::choice("sampling", &["linear", "cubic", "nearest"])
+        .doc("How pixels are computed from the input when it is scaled")
+        .choice_doc("linear", "soft and even: blends neighbours growing, averages shrinking")
+        .choice_doc(
+            "cubic",
+            "sharper: edges stay crisp growing and shrinking, with a faint halo at hard ones",
+        )
+        .choice_doc("nearest", "each pixel takes one input pixel: blocky growing, flickers shrinking")
+}
+
 /// A built-in pass node.
 struct Builtin {
     desc: NodeDesc,

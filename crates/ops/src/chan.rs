@@ -328,7 +328,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 "in",
                 DataKind::Chan,
                 2,
-                "The channels to put together, in0's first. A name an earlier input already has                  gets a number: the second `value` becomes `value1`",
+                "The channels to put together, in0's first. A name an earlier input already has gets a number: the second `value` becomes `value1`",
             )
             .renamed_input("a", "in0")
             .renamed_input("b", "in1")

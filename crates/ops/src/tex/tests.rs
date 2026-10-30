@@ -2083,6 +2083,7 @@ mod geo;
 mod layers;
 mod mesh_out;
 mod palettes;
+mod resample;
 
 /// A grey camera frame of 32 x 16 pixels, luma `y` give or take `noise` codes at random. One
 /// blue-difference sample follows the seed's parity, so consecutive seeds never make identical
