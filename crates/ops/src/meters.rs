@@ -240,7 +240,7 @@ impl Hit {
 }
 
 /// The values read from one `out` output of the analysis; channels that are missing read 0
-/// (the bar and the band edges their defaults).
+/// (the bar and the band edges their defaults, `locked` as locked).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Reading {
     pub meters: [f64; 4],
@@ -252,6 +252,8 @@ pub struct Reading {
     pub bar_beat: u32,
     pub bpm: f64,
     pub confidence: f64,
+    /// A beat is heard; beats flash only then. Missing, it counts as locked.
+    pub locked: bool,
     /// The bar's length in beats.
     pub beats_per_bar: u32,
     /// Where the low band ends and the high one starts, in Hz, for the spectrum's colours.
@@ -271,6 +273,7 @@ impl Default for Reading {
             bar_beat: 0,
             bpm: 0.0,
             confidence: 0.0,
+            locked: true,
             beats_per_bar: DEFAULT_BEATS_PER_BAR,
             low_hz: DEFAULT_LOW_HZ,
             high_hz: DEFAULT_HIGH_HZ,
@@ -293,6 +296,7 @@ impl Reading {
             bar_beat: v("bar_beat").round().clamp(0.0, 1000.0) as u32,
             bpm: v("bpm").max(0.0),
             confidence: v("confidence").clamp(0.0, 1.0),
+            locked: get("locked").is_none_or(|l| l > 0.5),
             beats_per_bar: get("beats_per_bar")
                 .map_or(DEFAULT_BEATS_PER_BAR, |b| b.round().clamp(1.0, 64.0) as u32),
             low_hz: get("low_hz").filter(|h| *h > 0.0).map_or(DEFAULT_LOW_HZ, |h| h.min(100_000.0)),
@@ -344,7 +348,7 @@ impl Meters {
             // A tick missed between two draws still shows: the phase has started over.
             let wrapped = self.beat_phase.is_some_and(|p| reading.beat + 0.3 < p);
             let recent = self.last_beat.is_some_and(|t| now - t < BEAT_DEBOUNCE && now >= t);
-            if (reading.tick || wrapped) && !recent && reading.bpm > 0.0 {
+            if (reading.tick || wrapped) && !recent && reading.bpm > 0.0 && reading.locked {
                 self.last_beat = Some(now);
                 self.last_beat_down = reading.bar_beat == 0;
                 self.hit(now, Hit::Beat, self.last_beat_down);
@@ -515,12 +519,13 @@ impl Draw<'_> {
                 radius,
                 width: (3.0 * s).max(2.0),
                 fraction: r.beat.clamp(0.0, 1.0) as f32,
-                color: fade(beat_color, 0.85),
+                color: fade(beat_color, if r.locked { 0.85 } else { 0.3 }),
             });
         }
         // The number, as large as fits left of the light.
         let text_w = (center[0] - radius - rect.min[0] - 6.0 * s).max(0.0);
-        let unsure = 0.3 + 0.7 * r.confidence as f32;
+        // Clean music has a confidence of about 0.5 and up.
+        let unsure = 0.3 + 0.7 * (r.confidence as f32 / 0.5).min(1.0);
         let (number, color) = if r.bpm > 0.0 {
             (format!("{:.0}", r.bpm), fade(p.text, unsure))
         } else {
@@ -542,7 +547,9 @@ impl Draw<'_> {
             [rect.min[0], number_at[1] + number_h],
             Anchor::LEFT_TOP,
             caption,
-            if r.bpm > 0.0 {
+            if r.bpm > 0.0 && !r.locked {
+                format!("bpm, no beat, {:.0} % sure", r.confidence * 100.0)
+            } else if r.bpm > 0.0 {
                 format!("bpm, {:.0} % sure", r.confidence * 100.0)
             } else {
                 "no tempo yet".to_string()
@@ -737,11 +744,11 @@ fn flash(at: Option<f64>, now: f64) -> f32 {
     }
 }
 
-/// Red when unsure, through amber to green when sure.
+/// Red when unsure (below what a beat needs to lock), through amber to green when sure.
 fn confidence_color(c: f64, p: &Palette) -> Color {
-    if c < 0.35 {
+    if c < 0.2 {
         fade(p.error, 0.8)
-    } else if c < 0.65 {
+    } else if c < 0.4 {
         fade(p.warning, 0.8)
     } else {
         p.channel(0)
@@ -793,6 +800,14 @@ mod tests {
         m.update(Some(&quiet), true, 1.0);
         assert_eq!(m.hit_count(), 0);
         assert!(m.highest_peak(1.0) <= 0.1 + 1e-9);
+        // Not locked, neither a tick nor the phase starting over is a beat.
+        let mut m = Meters::default();
+        let unlocked =
+            |beat: f64| out(&[("tick", 1.0), ("bpm", 120.0), ("beat", beat), ("locked", 0.0), ("kick", 1.0)]);
+        m.update(Some(&unlocked(0.9)), true, 30.0);
+        m.update(Some(&unlocked(0.01)), true, 30.5);
+        assert_eq!(m.hits.iter().filter(|(_, k, _)| *k == Hit::Beat).count(), 0);
+        assert_eq!(m.hits.iter().filter(|(_, k, _)| *k == Hit::Kick).count(), 2);
     }
 
     #[test]

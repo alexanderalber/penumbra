@@ -15,6 +15,20 @@
 //! BPM at 120. A new tempo replaces the current one only after it has won for 1.2 s; close
 //! estimates are blended in.
 //!
+//! **Confidence and lock:** the confidence is how far the winning period's score stands above
+//! the median score of all periods in range, as a share of the room above the median. Each
+//! score sums maxima over small windows of lags, so noise scores above 0 too; the median
+//! carries the same bias, and the difference does not. Noise, rain and speech stay below 0.15,
+//! clean music reaches 0.4 to 0.8. A beat is **locked** once the estimates have backed the
+//! tempo for a while: an estimate backs it when its confidence is at least 0.2, it agrees with
+//! the tempo within 4 % (or an octave or two from it), and the last 1.5 s hold onsets of their
+//! own. The share of backing estimates, averaged over 2.5 s, locks the beat above 0.6 and lets
+//! it go below 0.35: about 2.3 s of clear beat to lock, 2.6 s without one to let go. Ticks
+//! come only while locked. The phases keep running at the last tempo, so a visual that follows
+//! `beat` stays in time through a breakdown; tempo and phases read 0 until the first lock.
+//! Frames below the silence floor give no onset strength, so a quiet room's noise makes no
+//! beat.
+//!
 //! **Beat phase:** every hop, a comb with the beat period is laid over the recent onset
 //! strength at every offset; the best offset says where the last beat was. An oscillator
 //! running at the tempo is pulled towards it a little each hop (more when the estimate is
@@ -51,6 +65,18 @@ const TEMPO_EVERY: f64 = 0.2;
 const TEMPO_SWITCH: u32 = 6;
 /// Relative difference under which a tempo estimate counts as the same tempo.
 const TEMPO_SAME: f64 = 0.04;
+/// Confidence an estimate needs to count towards the lock, and to move the tempo.
+const LOCK_CONFIDENCE: f64 = 0.2;
+/// Seconds the lock's support averages over.
+const SUPPORT_SECONDS: f64 = 2.5;
+/// Support above which the beat locks, and below which it lets go.
+const LOCK_ABOVE: f64 = 0.6;
+const UNLOCK_BELOW: f64 = 0.35;
+/// Seconds of onset strength that must hold some of the window's onsets for an estimate to
+/// count: a beat that stopped is not supported by the seconds before it.
+const RECENT_SECONDS: f64 = 1.5;
+/// The share of the window's mean onset strength those seconds must reach.
+const RECENT_SHARE: f64 = 0.15;
 /// Periods laid over the onset strength to find the beat.
 const COMB_BEATS: usize = 6;
 /// Lowest spectrum frequency, Hz.
@@ -143,11 +169,13 @@ pub struct Features {
     pub kick: bool,
     /// 0 until a tempo was found.
     pub bpm: f64,
-    /// 0 to 1: how clearly the onsets repeat at that tempo.
+    /// 0 to 1: how far the onsets repeat at that tempo more than at the other tempos in range.
     pub confidence: f64,
-    /// 0 at a beat, rising to 1 at the next.
+    /// A beat is heard: the tempo has kept winning with some confidence for the last seconds.
+    pub locked: bool,
+    /// 0 at a beat, rising to 1 at the next; keeps running while not locked.
     pub beat: f64,
-    /// A beat started in the block.
+    /// A beat started in the block (only while locked).
     pub tick: bool,
     /// 0 at a downbeat, rising to 1 at the next.
     pub bar: f64,
@@ -315,6 +343,12 @@ impl Ranger {
     }
 }
 
+/// The level below which a frame is silence (linear).
+fn floor(s: &Settings) -> f64 {
+    let db = if s.floor_db.is_finite() { s.floor_db.clamp(-200.0, 0.0) } else { -60.0 };
+    10f64.powf(db / 20.0)
+}
+
 /// 0 to 1 from a value that is mostly within 0 to 1: linear up to [`KNEE`], then bending to an
 /// asymptote at 1 with no kink.
 fn knee(x: f64) -> f64 {
@@ -336,6 +370,36 @@ struct Tempo {
     /// A different period that keeps winning, and how often it has.
     pending: Option<(f64, u32)>,
     confidence: f64,
+    /// 0 to 1: how much of the last seconds the estimates agreed with the tempo, confidently.
+    support: f64,
+    /// Whether a beat is heard, from `support` with hysteresis.
+    locked: bool,
+    /// The beat has locked at least once: from then on tempo and phases are reported.
+    found: bool,
+}
+
+impl Tempo {
+    /// Takes one estimate into the support: whether it backs the tempo. `alpha` is the share
+    /// one estimate has in the average.
+    fn support(&mut self, backs: bool, alpha: f64) {
+        let target = if backs { 1.0 } else { 0.0 };
+        self.support += alpha * (target - self.support);
+        if self.locked && self.support < UNLOCK_BELOW {
+            self.locked = false;
+        } else if !self.locked && self.support > LOCK_ABOVE && self.period > 0.0 {
+            self.locked = true;
+            self.found = true;
+        }
+    }
+}
+
+/// Whether two periods are the same within [`TEMPO_SAME`], also an octave or two apart.
+fn same_folded(a: f64, b: f64) -> bool {
+    if a.is_nan() || b.is_nan() || a <= 0.0 || b <= 0.0 {
+        return false;
+    }
+    let octaves = (a / b).log2();
+    (octaves - octaves.round()).abs() < (1.0 + TEMPO_SAME).log2() && octaves.round().abs() <= 2.0
 }
 
 /// The analysis state for one signal at one sample rate.
@@ -362,7 +426,8 @@ pub struct Analyzer {
     tempo: Tempo,
     /// Beats as a running count; its fraction is the phase.
     phase: f64,
-    locked: bool,
+    /// The oscillator has taken a measured phase (since the tempo last jumped).
+    phased: bool,
     /// Hops in a row the measured phase was far from the oscillator's.
     off: u32,
     /// The beat count last reported, so a beat ticks once.
@@ -423,7 +488,7 @@ impl Analyzer {
             hops: 0,
             tempo: Tempo::default(),
             phase: 0.0,
-            locked: false,
+            phased: false,
             off: 0,
             reported: None,
             bar_strength: Vec::new(),
@@ -476,8 +541,7 @@ impl Analyzer {
         let trim = if s.trim_db.is_finite() { s.trim_db.clamp(-MAX_TRIM_DB, MAX_TRIM_DB) } else { 0.0 };
         // `as`: a gain to the samples' precision.
         let gain = 10f64.powf(trim / 20.0) as f32;
-        let floor_db = if s.floor_db.is_finite() { s.floor_db.clamp(-200.0, 0.0) } else { -60.0 };
-        let floor = 10f64.powf(floor_db / 20.0);
+        let floor = floor(s);
         for &x in samples {
             let x = if x.is_finite() { x.clamp(-16.0, 16.0) } else { 0.0 };
             sum_sq += f64::from(x) * f64::from(x);
@@ -560,7 +624,8 @@ impl Analyzer {
     /// The phases and tempo as they stand.
     fn describe(&mut self, f: &mut Features, s: &Settings) {
         f.confidence = self.tempo.confidence;
-        if self.tempo.period > 0.0 && self.locked {
+        f.locked = self.tempo.locked;
+        if self.tempo.period > 0.0 && self.phased && self.tempo.found {
             f.bpm = 60.0 * self.fps() / self.tempo.period;
             // The oscillator stands at the newest frame's centre; the newest sample is half a
             // frame later.
@@ -575,7 +640,7 @@ impl Analyzer {
             f.bar_beat = position as u32;
             f.bar = (position as f64 + f.beat) / f64::from(beats_per_bar);
             f.beats = index.max(0) as u64;
-            f.tick = self.reported.is_some_and(|r| index > r);
+            f.tick = self.tempo.locked && self.reported.is_some_and(|r| index > r);
             if self.reported.is_none_or(|r| index > r) {
                 self.reported = Some(index);
             }
@@ -626,6 +691,11 @@ impl Analyzer {
             }
         }
         self.spectrum_bands(bands, &mut out.spectrum);
+        // Silence has no onsets: the room's noise below the floor must not make a beat.
+        let level = out.bands.iter().map(|p| p.max(0.0)).sum::<f64>().sqrt();
+        if s.normalize && (level.is_nan() || level < floor(s)) {
+            (flux, flux_low, flux_beat) = (0.0, 0.0, 0.0);
+        }
         self.hops += 1;
         let fps = self.fps();
         let fall = 10f32.powf(-0.5 / fps as f32);
@@ -685,11 +755,13 @@ impl Analyzer {
             })
             .collect();
         let ac0 = ac.first().copied().unwrap_or(0.0);
+        let alpha = 1.0 - (-TEMPO_EVERY / SUPPORT_SECONDS).exp();
         if ac0.is_nan() || ac0 <= 1e-12 {
-            self.tempo.confidence *= 0.8;
+            self.tempo.confidence *= 0.7;
+            self.tempo.support(false, alpha);
             return;
         }
-        let at = |i: usize| ac.get(i).copied().unwrap_or(0.0);
+        let at = |i: usize| ac.get(i).copied().unwrap_or(0.0) / ac0;
         // The best value near `center`, within `reach` either side.
         let best_near = |center: usize, reach: usize| -> (usize, f64) {
             let lo = center.saturating_sub(reach);
@@ -697,7 +769,9 @@ impl Analyzer {
                 .map(|i| (i, at(i)))
                 .fold((center, f64::MIN), |b, c| if c.1 > b.1 { c } else { b })
         };
-        let mut best = (0usize, f64::MIN);
+        // Per period, how well the onsets repeat at it (at most 1).
+        let mut scores = Vec::with_capacity(lag_max - lag_min + 1);
+        let mut best = (0usize, f64::MIN, 0.0);
         for lag in lag_min..=lag_max {
             let mut score = 0.0;
             for m in 1..=4usize {
@@ -706,28 +780,42 @@ impl Analyzer {
             // Off-beats (hi-hats, a bass between the kicks) speak for the period whose half
             // they fall on; a period of one and a half beats has nothing at its half.
             score += 0.5 * best_near(lag / 2, 1).1.max(0.0);
+            let score = score / 4.5;
+            scores.push(score);
             let bpm = 60.0 * fps / lag as f64;
             // A preference for tempos near 120, to break ties between related periods.
             let prior = (-0.5 * (bpm / 120.0).log2().powi(2)).exp();
-            let score = score * prior;
-            if score > best.1 {
-                best = (lag, score);
+            if score * prior > best.1 {
+                best = (lag, score * prior, score);
             }
         }
-        let (lag, score) = best;
+        let (lag, _, score) = best;
         if lag == 0 {
             return;
         }
+        // Confidence is how far the winner stands out from the typical period in range. Each
+        // score is a sum of maxima over windows of lags, so even noise scores above 0; the
+        // median carries the same bias and takes it out.
+        scores.sort_by(f64::total_cmp);
+        let median = scores.get(scores.len() / 2).copied().unwrap_or(0.0);
+        let confidence = if median < 1.0 { ((score - median) / (1.0 - median)).clamp(0.0, 1.0) } else { 0.0 };
         // Refine from the fourth multiple's peak, interpolated.
         let (peak4, _) = best_near(4 * lag, 3);
         let refined = parabola(at(peak4.saturating_sub(1)), at(peak4), at(peak4 + 1))
             .map(|d| (peak4 as f64 + d) / 4.0)
             .filter(|p| (p / lag as f64 - 1.0).abs() < 0.1)
             .unwrap_or(lag as f64);
-        let confidence = ((score / 4.0 / ac0 - 0.05) / 0.35).clamp(0.0, 1.0);
+        // A beat that stopped leaves its repeats in the window for seconds; the newest part
+        // must hold onsets of its own.
+        // `as`: seconds to hops.
+        let recent = ((RECENT_SECONDS * fps).ceil() as usize).max(1);
+        let recent_mean =
+            self.odf.values.iter().rev().take(recent).sum::<f32>() / recent.min(n).max(1) as f32;
+        let active = f64::from(recent_mean) >= RECENT_SHARE * f64::from(mean);
         let t = &mut self.tempo;
         t.confidence = 0.7 * t.confidence + 0.3 * confidence;
-        if confidence < 0.1 {
+        if confidence < LOCK_CONFIDENCE {
+            t.support(false, alpha);
             return;
         }
         if t.period <= 0.0 {
@@ -745,9 +833,11 @@ impl Analyzer {
             if count >= TEMPO_SWITCH {
                 t.period = refined;
                 t.pending = None;
-                self.locked = false;
+                self.phased = false;
             }
         }
+        let backs = active && same_folded(refined, t.period);
+        t.support(backs, alpha);
     }
 
     /// Moves the beat oscillator by one hop and pulls it towards the measured phase.
@@ -760,9 +850,9 @@ impl Analyzer {
         if let Some(measured) = self.measure_phase(period) {
             let current = self.phase.rem_euclid(1.0);
             let err = (measured - current + 0.5).rem_euclid(1.0) - 0.5;
-            if !self.locked {
+            if !self.phased {
                 self.phase += err;
-                self.locked = true;
+                self.phased = true;
                 self.off = 0;
             } else {
                 self.off = if err.abs() > 0.2 { self.off + 1 } else { 0 };
@@ -773,7 +863,8 @@ impl Analyzer {
                 } else {
                     // A time constant of about a second at full confidence, so a beat the
                     // comb misplaces now and then hardly moves the phase.
-                    let gain = 0.003 + 0.012 * self.tempo.confidence;
+                    // Clean music has a confidence of about 0.5 and up.
+                    let gain = 0.003 + 0.012 * (self.tempo.confidence / 0.5).min(1.0);
                     self.phase += gain * err;
                 }
             }

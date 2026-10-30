@@ -9,6 +9,8 @@
 // A measuring tool that only runs by hand: a WAV it cannot parse may fail it.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
+mod common;
+
 use std::io::Write;
 use std::path::Path;
 
@@ -312,4 +314,138 @@ fn cost_per_cook() {
         let us = start.elapsed().as_secs_f64() * 1e6 / f64::from(cooks);
         println!("{rate} Hz: {us:.1} us per cook over {cooks} cooks ({sink:.1})");
     }
+}
+
+/// Material with and without a beat: `(label, samples, rate)`. Real recordings are cut to
+/// 40 s; the ones that are missing are left out.
+fn beat_material() -> Vec<(String, Vec<f32>, f64)> {
+    let mut out: Vec<(String, Vec<f32>, f64)> = Vec::new();
+    let r = 48_000.0;
+    out.push(("white noise".into(), common::white(r, 30.0, 0.1, 3), r));
+    out.push(("pink noise".into(), common::pink(r, 30.0, 0.3, 4), r));
+    out.push(("speech-like".into(), common::speech(r, 30.0, 5), r));
+    out.push(("speech-like 2".into(), common::speech(r, 30.0, 17), r));
+    for rate in [44_100.0, 48_000.0, 96_000.0] {
+        out.push((format!("house 124 @{rate}"), common::house(rate, 20.0, |_| 124.0, 0.3).0, rate));
+    }
+    let (mut h, _) = common::house(r, 12.0, |_| 124.0, 0.3);
+    h.extend(std::iter::repeat_n(0.0, (r * 12.0) as usize));
+    out.push(("house 12 s, then zeros".into(), h, r));
+    let (mut h, _) = common::house(r, 12.0, |_| 124.0, 0.3);
+    h.extend(common::white(r, 12.0, 0.0003, 9));
+    out.push(("house 12 s, then -76 dB hiss".into(), h, r));
+    let (mut h, _) = common::house(r, 12.0, |_| 124.0, 0.3);
+    h.extend(common::speech(r, 15.0, 21));
+    out.push(("house 12 s, then speech".into(), h, r));
+    out.push((
+        "house 120 then 128 at 12 s".into(),
+        common::house(r, 30.0, |t| if t < 12.0 { 120.0 } else { 128.0 }, 0.1).0,
+        r,
+    ));
+    let files = [
+        "keygen/halloween-1.wav",
+        "keygen/halloween-2.wav",
+        "keygen/keygen-1.wav",
+        "keygen/keygen-2.wav",
+        "pend/a.wav",
+        "pend/st.wav",
+        "synthwave-prof/stem-ALL.wav",
+        "synthwave-prof/stem-pad.wav",
+        "s99p3/ambience_rain.wav",
+        "s99p3/ambience_water.wav",
+        "asfasdf/483684__danielmcadams__zoom-h4n-super-close-lightning-strike-and-thunderstorm.wav",
+        "s82/row82/room-ch2.wav",
+        "s82/row82/room.wav",
+    ];
+    for name in files {
+        let Some((mut x, rate)) = read_wav(&Path::new(DIR).join(name)) else {
+            println!("{name}: not read");
+            continue;
+        };
+        x.truncate((rate * 40.0) as usize);
+        let short = name.rsplit('/').next().unwrap_or(name).chars().take(28).collect::<String>();
+        if name == "keygen/keygen-1.wav" {
+            let mut y = x.clone();
+            y.truncate((rate * 20.0) as usize);
+            y.extend(std::iter::repeat_n(0.0, (rate * 12.0) as usize));
+            out.push(("keygen-1 20 s, then zeros".into(), y, rate));
+        }
+        out.push((format!("{short} ({:.0} s @{rate})", x.len() as f64 / rate), x, rate));
+    }
+    out
+}
+
+/// Confidence, lock and ticks over time on [`beat_material`], in cooks of 1/60 s.
+#[test]
+#[ignore = "a measurement, reads WAV files outside the repository"]
+fn diagnose_beat() {
+    let s = Settings::default();
+    println!(
+        "material                         | conf P10/P50/P90 after 6 s | locked share, first lock | ticks/s | bpm end | conf per 2 s"
+    );
+    let only = std::env::var("PN_ONLY").ok();
+    for (label, x, rate) in beat_material() {
+        if only.as_ref().is_some_and(|o| !label.contains(o.as_str())) {
+            continue;
+        }
+        let mut a = Analyzer::new(rate).unwrap();
+        let block = (rate / 60.0).round() as usize;
+        let mut conf = Vec::new();
+        let mut timeline: Vec<Vec<f64>> = Vec::new();
+        let mut kicks: Vec<usize> = Vec::new();
+        let mut locks: Vec<bool> = Vec::new();
+        let mut first_lock = None;
+        let mut ticks = 0usize;
+        let mut late = 0.0;
+        let mut bpm = 0.0;
+        let mut lock_line = String::new();
+        let mut last_lock = None;
+        for (k, chunk) in x.chunks(block).enumerate() {
+            let t = (k + 1) as f64 * block as f64 / rate;
+            let f = a.process(chunk, &s);
+            let locked = lock_of(&f);
+            if locked && first_lock.is_none() {
+                first_lock = Some(t);
+            }
+            if last_lock != Some(locked) {
+                lock_line += &format!(" {}@{t:.1}", if locked { "L" } else { "U" });
+                last_lock = Some(locked);
+            }
+            let bin = (t / 2.0) as usize;
+            if timeline.len() <= bin {
+                timeline.resize(bin + 1, Vec::new());
+            }
+            timeline[bin].push(f.confidence);
+            if kicks.len() <= bin {
+                kicks.resize(bin + 1, 0);
+            }
+            kicks[bin] += usize::from(f.kick);
+            if t > 6.0 {
+                conf.push(f.confidence);
+                locks.push(locked);
+                ticks += usize::from(f.tick);
+                late += chunk.len() as f64 / rate;
+            }
+            bpm = f.bpm;
+        }
+        let share = locks.iter().filter(|l| **l).count() as f64 / locks.len().max(1) as f64;
+        let line: Vec<String> = timeline.iter_mut().map(|v| format!("{:.2}", percentile(v, 0.5))).collect();
+        println!(
+            "{label:<32} | {:.2}/{:.2}/{:.2} | {share:.2}, {} | {:.2} | {bpm:.1} | {}",
+            percentile(&mut conf.clone(), 0.1),
+            percentile(&mut conf.clone(), 0.5),
+            percentile(&mut conf, 0.9),
+            first_lock.map_or("never".to_string(), |t| format!("{t:.1} s")),
+            ticks as f64 / late.max(1e-9),
+            line.join(" ")
+        );
+        println!("{:<32}   lock changes:{lock_line}", "");
+        let kicks: Vec<String> = kicks.iter().map(|k| k.to_string()).collect();
+        println!("{:<32}   kicks per 2 s: {}", "", kicks.join(" "));
+    }
+}
+
+/// Whether the analysis says it has a beat.
+fn lock_of(f: &penumbra_audio::Features) -> bool {
+    f.locked
 }

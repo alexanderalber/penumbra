@@ -1,76 +1,9 @@
 //! The analysis against synthetic signals with known levels, onsets and tempo.
 
+mod common;
+
+use common::{Rng, house, pink, speech, white};
 use penumbra_audio::{Analyzer, Features, Settings};
-
-/// A small deterministic noise source.
-struct Rng(u64);
-
-impl Rng {
-    fn next(&mut self) -> f32 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        ((self.0 >> 40) as f32 / (1u64 << 24) as f32) * 2.0 - 1.0
-    }
-}
-
-/// A house-like loop: a kick on every beat, a hi-hat between, a clap on beats 2 and 4, a bass
-/// note per bar that changes on the downbeat. The tempo may change over time. Returns the
-/// samples and the beat times.
-fn house(rate: f64, seconds: f64, bpm: impl Fn(f64) -> f64, start: f64) -> (Vec<f32>, Vec<f64>) {
-    let n = (rate * seconds) as usize;
-    let mut out = vec![0.0f32; n];
-    let mut beats = Vec::new();
-    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
-    let mut t = start;
-    let mut k = 0usize;
-    while t < seconds {
-        beats.push(t);
-        let period = 60.0 / bpm(t);
-        let at = (t * rate) as usize;
-        // Kick: a falling sine, 120 ms.
-        for i in 0..(0.12 * rate) as usize {
-            let s = i as f64 / rate;
-            let f = 50.0 + 100.0 * (-s * 30.0).exp();
-            let v = (std::f64::consts::TAU * f * s).sin() * (-s * 25.0).exp() * 0.8;
-            if let Some(o) = out.get_mut(at + i) {
-                *o += v as f32;
-            }
-        }
-        // Hi-hat on the off-beat: noise, 50 ms, high-passed by differencing.
-        let off = ((t + period / 2.0) * rate) as usize;
-        let mut last = 0.0f32;
-        for i in 0..(0.05 * rate) as usize {
-            let s = i as f64 / rate;
-            let x = rng.next();
-            let v = (x - last) * 0.15 * (-s * 60.0).exp() as f32;
-            last = x;
-            if let Some(o) = out.get_mut(off + i) {
-                *o += v;
-            }
-        }
-        // Clap on 2 and 4.
-        if k % 2 == 1 {
-            for i in 0..(0.08 * rate) as usize {
-                let s = i as f64 / rate;
-                if let Some(o) = out.get_mut(at + i) {
-                    *o += rng.next() * 0.25 * (-s * 40.0).exp() as f32;
-                }
-            }
-        }
-        // Bass: a note per bar, held.
-        let note = [55.0, 55.0 * 1.335, 55.0 * 1.189, 55.0 * 1.498].get((k / 4) % 4).copied().unwrap_or(55.0);
-        for i in (0.12 * rate) as usize..(period * rate) as usize {
-            let s = (at + i) as f64 / rate;
-            if let Some(o) = out.get_mut(at + i) {
-                *o += ((std::f64::consts::TAU * note * s).sin() * 0.2) as f32;
-            }
-        }
-        t += period;
-        k += 1;
-    }
-    (out, beats)
-}
 
 /// Runs `samples` through an analysis in blocks of a 60 Hz frame; the features after each
 /// block with the time at its end.
@@ -120,6 +53,7 @@ fn finds_tempo_and_phase_of_a_house_loop() {
             last.bpm, last.confidence
         );
         assert!(last.confidence > 0.5, "{rate} Hz: confidence {}", last.confidence);
+        assert!(late.iter().all(|(_, f)| f.locked), "{rate} Hz: not locked throughout");
         assert!(worst < 0.06, "{rate} Hz: phase off by {worst:.3} of a beat");
         let ticks = late.iter().filter(|(_, f)| f.tick).count();
         let (from, to) = (late[0].0, late.last().unwrap().0);
@@ -147,6 +81,65 @@ fn follows_a_tempo_change() {
     let at = |s: f64| frames.iter().find(|(t, _)| *t >= s).unwrap().1.bpm;
     assert!((at(11.0) - 120.0).abs() < 0.7, "{}", at(11.0));
     assert!((at(29.0) - 128.0).abs() < 0.7, "{}", at(29.0));
+    // Locked at the new tempo, ticking with it.
+    let late: Vec<&(f64, Features)> = frames.iter().filter(|(t, _)| *t > 25.0 && *t <= 29.0).collect();
+    assert!(late.iter().all(|(_, f)| f.locked));
+    let ticks = late.iter().filter(|(_, f)| f.tick).count();
+    assert!(ticks.abs_diff(128 * 4 / 60) <= 1, "{ticks} ticks in 4 s at 128 BPM");
+}
+
+#[test]
+fn no_beat_in_noise_speech_or_silence() {
+    for rate in [44_100.0, 48_000.0, 96_000.0] {
+        let material = [
+            ("white noise", white(rate, 20.0, 0.1, 3)),
+            ("pink noise", pink(rate, 20.0, 0.3, 4)),
+            ("speech", speech(rate, 30.0, 5)),
+            ("other speech", speech(rate, 30.0, 17)),
+            ("silence", vec![0.0; (rate * 10.0) as usize]),
+        ];
+        for (name, x) in material {
+            let frames = run(rate, &x, &Settings::default());
+            let late: Vec<f64> = frames.iter().filter(|(t, _)| *t > 6.0).map(|(_, f)| f.confidence).collect();
+            let mean = late.iter().sum::<f64>() / late.len().max(1) as f64;
+            assert!(mean < 0.15, "{name} at {rate} Hz: confidence {mean:.2}");
+            for (t, f) in &frames {
+                assert!(!f.locked && !f.tick, "{name} at {rate} Hz: a beat at {t:.2}");
+                assert_eq!((f.bpm, f.beat), (0.0, 0.0), "{name} at {rate} Hz: a tempo before any lock");
+            }
+        }
+    }
+}
+
+#[test]
+fn music_locks_and_lets_go_when_it_stops() {
+    for rate in [44_100.0, 48_000.0, 96_000.0] {
+        let (music, _) = house(rate, 12.0, |_| 124.0, 0.3);
+        // Silence, room noise below the floor, and speech after the music.
+        let after = [
+            ("silence", vec![0.0; (rate * 12.0) as usize]),
+            ("room noise", white(rate, 12.0, 0.0003, 9)),
+            ("speech", speech(rate, 15.0, 21)),
+        ];
+        for (name, tail) in after {
+            let x: Vec<f32> = music.iter().chain(&tail).copied().collect();
+            let frames = run(rate, &x, &Settings::default());
+            let locked_at = frames.iter().find(|(_, f)| f.locked).map(|(t, _)| *t);
+            assert!(locked_at.is_some_and(|t| t < 6.5), "{name} at {rate} Hz: locked at {locked_at:?}");
+            let between: Vec<&(f64, Features)> =
+                frames.iter().filter(|(t, _)| *t > 6.5 && *t < 12.0).collect();
+            assert!(between.iter().all(|(_, f)| f.locked), "{name} at {rate} Hz: let go during the music");
+            // Quiet lets go within 5 s; speech once the music has left most of the 8 s the
+            // tempo is measured over.
+            let gone = if name == "speech" { 12.0 + 11.0 } else { 12.0 + 5.0 };
+            for (t, f) in frames.iter().filter(|(t, _)| *t > gone) {
+                assert!(!f.locked && !f.tick, "{name} at {rate} Hz: still a beat at {t:.2}");
+            }
+            // The tempo stays known for when the beat comes back.
+            let last = &frames.last().unwrap().1;
+            assert!((last.bpm - 124.0).abs() < 1.0, "{name} at {rate} Hz: {} BPM", last.bpm);
+        }
+    }
 }
 
 #[test]
@@ -225,7 +218,7 @@ fn silence_noise_and_garbage() {
     let mut rng = Rng(3);
     let noise: Vec<f32> = (0..48_000 * 10).map(|_| rng.next() * 0.3).collect();
     let f = run(rate, &noise, &Settings::default()).pop().unwrap().1;
-    assert!(f.confidence < 0.4, "noise confidence {}", f.confidence);
+    assert!(f.confidence < 0.15 && !f.locked, "noise confidence {}", f.confidence);
     let garbage: Vec<f32> = (0..48_000).map(|i| [f32::NAN, f32::INFINITY, -1e30, 0.5][i % 4]).collect();
     let f = run(rate, &garbage, &Settings::default()).pop().unwrap().1;
     assert!(f.rms.is_finite() && f.level.is_finite() && f.spectrum.iter().all(|v| v.is_finite()));

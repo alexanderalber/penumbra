@@ -16,7 +16,7 @@
 //! - **`chan.audio_analysis`** turns sound into channels to bind, the bridge from `audio` to
 //!   `chan`: levels (`level`, `low`,
 //!   `mid`, `high`), events (`onset`, `kick`, `tick` are 1 in the frame they happen), the
-//!   tempo (`bpm`, `confidence`) and the phases (`beat`, `bar` rising from 0 to 1, `bar_beat`
+//!   tempo (`bpm`, `confidence`, `locked` while a beat is heard) and the phases (`beat`, `bar` rising from 0 to 1, `bar_beat`
 //!   counting). Its second output is a spectrum: one channel whose samples are log-spaced bands
 //!   from 30 Hz to 16 kHz. See `penumbra-audio`'s `analysis` module for how. Its third, `meters`,
 //!   is the viewer's meters as a texture ([`crate::tex::meters_picture`]), drawn only while
@@ -73,10 +73,11 @@ const METERS: usize = 2;
 /// dropped).
 pub const MAX_BLOCK_SECONDS: f64 = 0.5;
 
-/// The channels `chan.audio_analysis` outputs, in order. The last three repeat params
-/// (`beats_per_bar`, `low`, `high`), so what draws the analysis (its `meters` output, the
-/// viewer) knows them from the channels alone, also while a param is bound to a channel.
-pub const FEATURES: [&str; 17] = [
+/// The channels `chan.audio_analysis` outputs, in order. `beats_per_bar`, `low_hz` and
+/// `high_hz` repeat params (`beats_per_bar`, `low`, `high`), so what draws the analysis (its
+/// `meters` output, the viewer) knows them from the channels alone, also while a param is
+/// bound to a channel. New channels go at the end, so the order of the others stays.
+pub const FEATURES: [&str; 18] = [
     "level",
     "low",
     "mid",
@@ -94,6 +95,7 @@ pub const FEATURES: [&str; 17] = [
     "beats_per_bar",
     "low_hz",
     "high_hz",
+    "locked",
 ];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
@@ -200,7 +202,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .lazy_output("meters")
         .describe_output(
             "out",
-            "Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them",
+            "Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, locked, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them",
         )
         .describe_output("spectrum", "One channel whose samples are log-spaced bands from 30 Hz to 16 kHz")
         .describe_output(
@@ -434,6 +436,7 @@ impl Operator for Analysis {
             f64::from(settings.beats_per_bar),
             settings.low_hz,
             settings.high_hz,
+            flag(f.locked),
         ];
         let channels = self
             .names

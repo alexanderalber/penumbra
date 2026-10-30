@@ -1097,7 +1097,7 @@ Inputs:
 
 Outputs:
 
-- `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them
+- `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, locked, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them
 - `spectrum` (chan): One channel whose samples are log-spaced bands from 30 Hz to 16 kHz
 - `meters` (tex): The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum. Drawn only while something reads this output
 
