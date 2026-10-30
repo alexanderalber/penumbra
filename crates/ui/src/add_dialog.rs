@@ -31,13 +31,14 @@ use crate::{automation, theme};
 
 /// Families always offered, by tab and in this order, even before they have node types; others
 /// found in the registry follow alphabetically, one tab each.
-const GROUPS: [&[&str]; 6] = [
+const GROUPS: [&[&str]; 7] = [
     &["tex"],
     &["chan"],
     &["audio"],
     &["table"],
     &["geo", "mat", "light", "view"],
-    &["script", "out", "comp"],
+    &["out"],
+    &["script", "comp"],
 ];
 /// The tab of the component files on offer: penumbra's library, the user's and the project's
 /// `components/`. Not a family of node types; it takes the colour of `comp`.
@@ -46,13 +47,12 @@ pub const LIBRARY: &str = "library";
 /// by it.
 const NAMES: [(&str, &str); 2] = [("geo", "rendering"), ("script", "system")];
 /// The headings over the families of a shared tab; a family missing here is headed by its name.
-const HEADINGS: [(&str, &str); 7] = [
+const HEADINGS: [(&str, &str); 6] = [
     ("geo", "geometry"),
     ("mat", "materials"),
     ("light", "lights"),
     ("view", "cameras"),
     ("script", "scripts"),
-    ("out", "outputs"),
     ("comp", "components"),
 ];
 /// Height of the heading row.
@@ -389,7 +389,7 @@ fn tab(
     let even = title.as_ref().map_or(0.0, |t| (t.size().x + 24.0) / segments.len() as f32);
     let widths: Vec<f32> = segments
         .iter()
-        .map(|(_, _, t)| t.as_ref().map_or(even.max(28.0), |t| (t.size().x + 16.0).max(64.0)))
+        .map(|(_, _, t)| t.as_ref().map_or(even.max(12.0), |t| (t.size().x + 16.0).max(64.0)))
         .collect();
     let (rect, r) = ui.allocate_exact_size(vec2(widths.iter().sum(), 22.0), Sense::click());
     let mut x = rect.min.x;
