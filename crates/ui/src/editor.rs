@@ -1580,6 +1580,10 @@ impl Editor {
                     tip.push_str(&format!("\nwarning: {w}"));
                 }
             }
+            let outputs = input.outputs.get(&g.id).into_iter().flatten();
+            for chans in outputs.filter_map(|d| d.get::<penumbra_core::Chans>()) {
+                tip.push_str(&channel_lines(chans));
+            }
             resp.clone().on_hover_text_at_pointer(tip);
         }
     }
@@ -2211,6 +2215,30 @@ fn chan_body(
             theme::TEXT_WEAK,
         );
     }
+}
+
+/// Most channels a node's tooltip names; it counts the rest.
+const TIP_CHANNELS: usize = 16;
+
+/// The tooltip lines for one chan output: each channel's name and value now. The body leaves
+/// some names out (a lone `value`, all but the first on a plot); here they can be read.
+fn channel_lines(chans: &penumbra_core::Chans) -> String {
+    let channels = chans.channels();
+    let mut text = match channels.len() {
+        0 => return "\nno channels".to_string(),
+        1 => "\n1 channel".to_string(),
+        n => format!("\n{n} channels"),
+    };
+    if chans.window() > 1 {
+        text.push_str(&format!(", {} samples at {} per second", chans.len(), format_value(chans.rate())));
+    }
+    for c in channels.iter().take(TIP_CHANNELS) {
+        text.push_str(&format!("\n  {}  {}", c.name, format_value(c.value())));
+    }
+    if channels.len() > TIP_CHANNELS {
+        text.push_str(&format!("\n  +{} more", channels.len() - TIP_CHANNELS));
+    }
+    text
 }
 
 /// A table node's body: its first rows, cells separated by spaces.
