@@ -102,3 +102,40 @@ fn cubic_keeps_a_ramp_straight_growing_and_shrinking() {
     let Some(row) = scaled("cubic_stripes_100", "stripes.wgsl", 1600, 16, "cubic") else { return };
     assert!(close(&row[2..14], &[1.0 / 3.0; 12], 0.01), "{row:?}");
 }
+
+/// `tex.fit` at native size puts a 4 texel ramp in the middle of 12 pixels: beside it the edge
+/// modes repeat, mirror or hold the ramp, the same in every sampling.
+#[test]
+fn fit_extends_the_input_by_its_edge_mode_in_every_sampling() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("resample_fit_extend");
+    std::fs::write(dir.join("index.wgsl"), INDEX).unwrap();
+    let modes = [
+        ("repeat", [0.0, 1.0, 2.0, 3.0, 0.0, 1.0, 2.0, 3.0, 0.0, 1.0, 2.0, 3.0]),
+        ("mirror", [3.0, 2.0, 1.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 2.0, 1.0, 0.0]),
+        ("hold", [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 3.0, 3.0, 3.0, 3.0]),
+    ];
+    for sampling in ["linear", "cubic", "nearest"] {
+        for (extend, want) in &modes {
+            let ops = [
+                source("index.wgsl", 4),
+                create(
+                    "/fit",
+                    "tex.fit",
+                    &[
+                        ("fit", "native".into()),
+                        ("width", Value::Int(12)),
+                        ("height", Value::Int(4)),
+                        ("extend", (*extend).into()),
+                        ("sampling", sampling.into()),
+                    ],
+                ),
+                connect("/src", "/fit", 0),
+            ];
+            let mut rig = Rig::new(gpu.clone(), Some(&dir), &ops);
+            let px = rig.pixels("/fit");
+            let got: Vec<f32> = (0..px.width).map(|x| px.get(x, 1).unwrap()[0]).collect();
+            assert!(close(&got, want, 0.01), "{sampling} {extend}: {got:?}");
+        }
+    }
+}

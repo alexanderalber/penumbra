@@ -20,8 +20,9 @@
 //!                                               // 0 hold, 1 zero, 2 repeat, 3 mirror outside 0..1
 //! fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f
 //!                                               // mean over `footprint` source texels (downscaling)
-//! fn pn_resample(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, mode: i32) -> vec4f
-//!                                               // scaling: 0 linear, 1 cubic, 2 nearest
+//! fn pn_resample(t: texture_2d<f32>, uv: vec2f, footprint: vec2f, mode: i32, edge: i32) -> vec4f
+//!                                               // scaling: 0 linear, 1 cubic, 2 nearest;
+//!                                               // edge as in pn_extend (zero holds here)
 //! struct PnPalette { count: i32, colours: array<vec4f, 32> }   // a palette param's field
 //! fn pn_palette(p: PnPalette, i: i32) -> vec4f  // colour i, wrapping (also below 0)
 //! fn pn_colormap(p: PnPalette, t: f32) -> vec4f // 0..1 along the colours, blended
@@ -166,52 +167,52 @@ fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f
 // (bilinear growing, the mean of the footprint shrinking), 1 cubic (Catmull-Rom, its kernel
 // stretched over the footprint shrinking); both count every texel up to 512 texels per pixel
 // (cubic 128) and skip some beyond. 2 nearest (the one texel under the pixel, hard edges, aliases when shrinking).
-fn pn_resample(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, mode: i32) -> vec4f {
+// `edge` is pn_extend's numbering (zero holds), applied per tap, so a caller inlines this once,
+// not once per sampler: three copies made a shader WARP took longer to run than a read waits.
+// Ifs, not a switch whose every case returns: FXC (Direct3D) rejects that as a path
+// without a return.
+fn pn_resample(t: texture_2d<f32>, uv: vec2f, footprint: vec2f, mode: i32, edge: i32) -> vec4f {
     let size = vec2f(textureDimensions(t));
-    switch mode {
-        case 1: {
-            let x = uv * size;
-            let n = vec2i(pn_cubic_count(footprint.x), pn_cubic_count(footprint.y));
-            var sum = vec4f(0.0);
-            var weight = 0.0;
-            for (var j = 0; j < n.y; j++) {
-                let ty = pn_cubic_tap(x.y, footprint.y, j);
-                for (var i = 0; i < n.x; i++) {
-                    let tx = pn_cubic_tap(x.x, footprint.x, i);
-                    let w = tx.y * ty.y;
-                    // A tap stands for the texels up to the next: the mean of them.
-                    let span = vec2f(pn_cubic_step(footprint.x), pn_cubic_step(footprint.y));
-                    sum += w * pn_box(t, s, vec2f(tx.x, ty.x) / size, span, 8.0);
-                    weight += w;
-                }
+    if (mode == 1) {
+        let x = uv * size;
+        let n = vec2i(pn_cubic_count(footprint.x), pn_cubic_count(footprint.y));
+        // A tap stands for the texels up to the next: the mean of them.
+        let span = vec2f(pn_cubic_step(footprint.x), pn_cubic_step(footprint.y));
+        var sum = vec4f(0.0);
+        var weight = 0.0;
+        for (var j = 0; j < n.y; j++) {
+            let ty = pn_cubic_tap(x.y, footprint.y, j);
+            for (var i = 0; i < n.x; i++) {
+                let tx = pn_cubic_tap(x.x, footprint.x, i);
+                let w = tx.y * ty.y;
+                sum += w * pn_box_edge(t, edge, vec2f(tx.x, ty.x) / size, span);
+                weight += w;
             }
-            sum /= weight;
-            // The kernel's negative lobes overshoot at hard edges: no negative light, alpha 0..1.
-            return vec4f(max(sum.rgb, vec3f(0.0)), clamp(sum.a, 0.0, 1.0));
         }
-        case 2: {
-            // A texel's centre, where linear filtering returns that texel alone.
-            return textureSampleLevel(t, s, (floor(uv * size) + 0.5) / size, 0.0);
-        }
-        default: {
-            if (all(footprint <= vec2f(16.0))) {
-                return pn_box(t, s, uv, footprint, 8.0);
-            }
-            // Beyond 16 texels a row of boxes, each an even number of whole texels wide, so its
-            // taps sit on texel edges and average exactly; the row is snapped to whole texels.
-            let part = 2.0 * ceil(footprint / 32.0);
-            let n = vec2i(clamp(round(footprint / part), vec2f(1.0), vec2f(32.0)));
-            let start = round(uv * size - vec2f(n) * part * 0.5);
-            var sum = vec4f(0.0);
-            for (var j = 0; j < n.y; j++) {
-                for (var i = 0; i < n.x; i++) {
-                    let at = start + (vec2f(f32(i), f32(j)) + 0.5) * part;
-                    sum += pn_box(t, s, at / size, part, 8.0);
-                }
-            }
-            return sum / f32(n.x * n.y);
+        sum /= weight;
+        // The kernel's negative lobes overshoot at hard edges: no negative light, alpha 0..1.
+        return vec4f(max(sum.rgb, vec3f(0.0)), clamp(sum.a, 0.0, 1.0));
+    }
+    if (mode == 2) {
+        // A texel's centre, where linear filtering returns that texel alone.
+        return pn_tap(t, edge, (floor(uv * size) + 0.5) / size);
+    }
+    if (all(footprint <= vec2f(16.0))) {
+        return pn_box_edge(t, edge, uv, footprint);
+    }
+    // Beyond 16 texels a row of boxes, each an even number of whole texels wide, so its taps sit
+    // on texel edges and average exactly; the row is snapped to whole texels.
+    let part = 2.0 * ceil(footprint / 32.0);
+    let n = vec2i(clamp(round(footprint / part), vec2f(1.0), vec2f(32.0)));
+    let start = round(uv * size - vec2f(n) * part * 0.5);
+    var sum = vec4f(0.0);
+    for (var j = 0; j < n.y; j++) {
+        for (var i = 0; i < n.x; i++) {
+            let at = start + (vec2f(f32(i), f32(j)) + 0.5) * part;
+            sum += pn_box_edge(t, edge, at / size, part);
         }
     }
+    return sum / f32(n.x * n.y);
 }
 
 fn pn_box(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, most: f32) -> vec4f {
@@ -225,6 +226,31 @@ fn pn_box(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, most: f32
         }
     }
     return sum / f32(n.x * n.y);
+}
+
+// pn_box with up to 8 x 8 taps, through the sampler `edge` names.
+fn pn_box_edge(t: texture_2d<f32>, edge: i32, uv: vec2f, footprint: vec2f) -> vec4f {
+    let texel = 1.0 / vec2f(textureDimensions(t));
+    let n = vec2i(clamp(ceil(footprint * 0.5), vec2f(1.0), vec2f(8.0)));
+    var sum = vec4f(0.0);
+    for (var j = 0; j < n.y; j++) {
+        for (var i = 0; i < n.x; i++) {
+            let o = (vec2f(f32(i), f32(j)) + 0.5) / vec2f(n) - 0.5;
+            sum += pn_tap(t, edge, uv + o * footprint * texel);
+        }
+    }
+    return sum / f32(n.x * n.y);
+}
+
+// One linear sample with `edge`'s edge mode: 2 repeat, 3 mirror, else held. One sampler and
+// selects, no branch: branches in the nested loops of pn_resample blew the shader up. Mirrored
+// or held, a point is moved inside the outer texels' centres, where the repeating sampler
+// blends nothing from the other side, which is what a mirroring or clamping sampler returns.
+fn pn_tap(t: texture_2d<f32>, edge: i32, uv: vec2f) -> vec4f {
+    let half = 0.5 / vec2f(textureDimensions(t));
+    let mirrored = 1.0 - abs(fract(uv * 0.5) * 2.0 - 1.0);
+    let inside = clamp(select(uv, mirrored, edge == 3), half, 1.0 - half);
+    return textureSampleLevel(t, pn_repeat, select(inside, uv, edge == 2), 0.0);
 }
 
 // Catmull-Rom weight at distance `x`, in kernel units; 0 from 2 on.

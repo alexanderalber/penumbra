@@ -20,11 +20,5 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     if (params.extend == extend_zero && (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0)))) {
         return vec4f(0.0);
     }
-    var sampled: vec4f;
-    switch params.extend {
-        case extend_repeat: { sampled = pn_resample(in0, pn_repeat, uv, 1.0 / s, params.sampling); }
-        case extend_mirror: { sampled = pn_resample(in0, pn_mirror, uv, 1.0 / s, params.sampling); }
-        default: { sampled = pn_resample(in0, pn_clamp, uv, 1.0 / s, params.sampling); }
-    }
-    return sampled;
+    return pn_resample(in0, uv, 1.0 / s, params.sampling, params.extend);
 }

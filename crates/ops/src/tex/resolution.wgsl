@@ -5,5 +5,5 @@
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
     let footprint = vec2f(textureDimensions(in0)) / pn.resolution;
-    return pn_resample(in0, pn_clamp, v.uv, footprint, params.sampling);
+    return pn_resample(in0, v.uv, footprint, params.sampling, 0);
 }
