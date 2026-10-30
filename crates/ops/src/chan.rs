@@ -324,7 +324,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("chan.merge", "Puts the channels of its inputs together into one")
-            .input_run("in", DataKind::Chan, 2, "The channels to put together, in0's first")
+            .input_run(
+                "in",
+                DataKind::Chan,
+                2,
+                "The channels to put together, in0's first. A name an earlier input already has                  gets a number: the second `value` becomes `value1`",
+            )
             .renamed_input("a", "in0")
             .renamed_input("b", "in1")
             .renamed_input("c", "in2")
@@ -1122,17 +1127,22 @@ impl Operator for Merge {
             cx.warn("the inputs differ in length; only their last samples are merged");
         }
         let mut channels: Vec<Channel> = Vec::new();
-        let mut dropped = Vec::new();
         for ch in inputs.iter().flat_map(|c| c.channels()) {
-            if channels.iter().any(|c| c.name == ch.name) {
-                dropped.push(ch.name.to_string());
-                continue;
-            }
+            let taken = |n: &str| channels.iter().any(|c| c.name.as_str() == n);
+            let name = if taken(ch.name.as_str()) {
+                // A number after the name, past a `_` when the name already ends in a digit.
+                let base = ch.name.as_str();
+                let sep = if base.ends_with(|c: char| c.is_ascii_digit()) { "_" } else { "" };
+                let free = (1usize..).map(|n| format!("{base}{sep}{n}")).find(|n| !taken(n));
+                match free {
+                    Some(n) => Name::new(&n)?,
+                    None => continue,
+                }
+            } else {
+                ch.name.clone()
+            };
             let samples = if same_len { ch.samples.clone() } else { vec![ch.value()] };
-            channels.push(Channel { name: ch.name.clone(), samples });
-        }
-        if !dropped.is_empty() {
-            cx.warn(format!("names taken by an earlier input, left out: {}", dropped.join(", ")));
+            channels.push(Channel { name, samples });
         }
         out(Chans::new(first.rate(), channels)?.shaped_like(first))
     }
@@ -1374,17 +1384,23 @@ mod tests {
     }
 
     #[test]
-    fn merge_leaves_out_taken_names() {
+    fn merge_numbers_taken_names() {
         let mut f = F::new(&[
             create("/a", "chan.constant"),
             create("/b", "chan.constant"),
+            create("/c", "chan.constant"),
             create("/m", "chan.merge"),
+            set("/c.name0", "chan0_1"),
             connect("/a", "/m", 0),
-            connect("/b", "/m", 2),
+            connect("/b", "/m", 1),
+            connect("/c", "/m", 2),
+            connect("/a", "/m", 3),
         ]);
-        assert_eq!(f.chans("/m").channels().len(), 1);
+        let c = f.chans("/m");
+        let names: Vec<&str> = c.channels().iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["chan0", "chan0_1", "chan0_1_1", "chan0_2"]);
         let id = f.net.resolve(&"/m".parse().unwrap()).unwrap();
-        assert!(f.cooker.status(id).unwrap().warning.unwrap().contains("left out: chan0"));
+        assert!(f.cooker.status(id).unwrap().warning.is_none());
     }
 
     #[test]
