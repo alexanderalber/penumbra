@@ -85,7 +85,7 @@ fn with_path(e: &Engine, id: NodeId, mut s: Status) -> Json {
 }
 
 /// The node's `record` as stored, and whether a channel drives it.
-fn record_param(e: &Engine, id: NodeId) -> (bool, bool) {
+pub(crate) fn record_param(e: &Engine, id: NodeId) -> (bool, bool) {
     let net = e.session().doc().snapshot();
     let Some(node) = net.node(id) else { return (false, false) };
     let on = node.params.get("record").and_then(Value::as_bool).unwrap_or(false);
@@ -94,7 +94,7 @@ fn record_param(e: &Engine, id: NodeId) -> (bool, bool) {
 }
 
 /// Sets `record` as an edit, waiting out the gate's quiet after a user edit.
-fn set_record(e: &Engine, path: &NodePath, on: bool) -> CmdResult<()> {
+pub(crate) fn set_record(e: &Engine, path: &NodePath, on: bool) -> CmdResult<()> {
     let name = Name::new("record").map_err(|e| CommandError(e.0))?;
     let param = ParamPath::new(path.clone(), name).map_err(|e| CommandError(e.0))?;
     let ops = [Op::Set { param, value: Value::Bool(on) }];

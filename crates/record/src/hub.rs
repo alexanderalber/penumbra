@@ -1,7 +1,9 @@
 //! The recordings of a process.
 //!
 //! Each `out.video` node attaches itself ([`Hub::attach`]) and starts its recordings through the
-//! hub ([`Hub::start`]), which keeps their threads; the node's `record` param decides when. The status of a node's current or last recording
+//! hub ([`Hub::start`]), which keeps their threads; the node's `record` param decides when. Each
+//! `out.audio_file` does the same with [`Hub::attach_sound`] and [`Hub::start_sound`]; its
+//! recordings are listed apart ([`Hub::sound_status`], [`Hub::all_sound`]). The status of a node's current or last recording
 //! stays readable here ([`Hub::status`]), also after the node's handle is gone.
 //!
 //! [`Hub::shutdown`] stops every recording and waits (bounded) for the files to be finished:
@@ -17,6 +19,7 @@ use penumbra_core::{NodeId, lock};
 use serde::Serialize;
 
 use crate::looping::{Jobs, LoopStatus};
+use crate::wav::{self, SoundRecording, SoundStatus, WavSettings};
 use crate::writer::{self, Recording, Settings, Shared};
 
 /// A recording as far as it got.
@@ -73,15 +76,36 @@ struct Entry {
     detached: bool,
 }
 
+/// A node recording sound alone.
+#[derive(Default)]
+struct SoundEntry {
+    path: String,
+    current: Option<Arc<wav::Shared>>,
+    detached: bool,
+}
+
 #[derive(Default)]
 struct Inner {
     nodes: BTreeMap<NodeId, Entry>,
+    sounds: BTreeMap<NodeId, SoundEntry>,
     /// Recording threads not yet joined.
     threads: Vec<JoinHandle<()>>,
     /// Shut down: no new recordings.
     closed: bool,
     /// How long a recording waits for a frame's planes; [`writer::PLANES_TIMEOUT`] when `None`.
     planes_timeout: Option<Duration>,
+}
+
+/// Joins the recording threads that have ended.
+fn reap(inner: &mut Inner) {
+    let (finished, running): (Vec<_>, Vec<_>) =
+        std::mem::take(&mut inner.threads).into_iter().partition(JoinHandle::is_finished);
+    inner.threads = running;
+    for t in finished {
+        if t.join().is_err() {
+            log::error!("a recording thread panicked");
+        }
+    }
 }
 
 /// Cheap to clone; every clone is the same hub.
@@ -141,20 +165,75 @@ impl Hub {
         if inner.closed {
             return Err("the app is closing".into());
         }
-        let (finished, running): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut inner.threads).into_iter().partition(JoinHandle::is_finished);
-        inner.threads = running;
-        for t in finished {
-            if t.join().is_err() {
-                log::error!("a recording thread panicked");
-            }
-        }
+        reap(&mut inner);
         let path = inner.nodes.get(&node).map(|e| e.path.clone()).unwrap_or_default();
         let timeout = inner.planes_timeout.unwrap_or(writer::PLANES_TIMEOUT);
         let (recording, shared, handle) = writer::start(&path, settings, timeout, self.loops.clone())?;
         inner.threads.push(handle);
         inner.nodes.entry(node).or_default().current = Some(shared);
         Ok(recording)
+    }
+
+    /// Registers `node`, a node recording sound alone, under `label`. Called on every cook;
+    /// cheap.
+    pub fn attach_sound(&self, node: NodeId, label: &str) {
+        let mut inner = lock(&self.inner);
+        let e = inner.sounds.entry(node).or_default();
+        if e.detached {
+            *e = SoundEntry::default();
+        }
+        if e.path != label {
+            e.path = label.to_string();
+        }
+    }
+
+    /// Forgets `node`, a node recording sound alone; the status of its last recording stays.
+    pub fn detach_sound(&self, node: NodeId) {
+        let mut inner = lock(&self.inner);
+        match inner.sounds.get_mut(&node) {
+            Some(e) if e.current.is_some() => e.detached = true,
+            Some(_) => {
+                inner.sounds.remove(&node);
+            }
+            None => {}
+        }
+    }
+
+    /// Starts a sound recording for `node`. Refused once the hub is shut down.
+    pub fn start_sound(&self, node: NodeId, settings: WavSettings) -> Result<SoundRecording, String> {
+        let mut inner = lock(&self.inner);
+        if inner.closed {
+            return Err("the app is closing".into());
+        }
+        reap(&mut inner);
+        let path = inner.sounds.get(&node).map(|e| e.path.clone()).unwrap_or_default();
+        let (recording, shared, handle) = wav::start(&path, settings)?;
+        inner.threads.push(handle);
+        inner.sounds.entry(node).or_default().current = Some(shared);
+        Ok(recording)
+    }
+
+    /// The status of `node`'s current or last sound recording; `None` when it has not recorded.
+    pub fn sound_status(&self, node: NodeId) -> Option<SoundStatus> {
+        let inner = lock(&self.inner);
+        let e = inner.sounds.get(&node)?;
+        let mut s = e.current.as_ref()?.status();
+        s.node.clone_from(&e.path);
+        Some(s)
+    }
+
+    /// Every attached node recording sound alone, with its current or last recording.
+    pub fn all_sound(&self) -> Vec<(NodeId, SoundStatus)> {
+        let inner = lock(&self.inner);
+        inner
+            .sounds
+            .iter()
+            .map(|(id, e)| {
+                let mut s = e.current.as_ref().map(|c| c.status()).unwrap_or_default();
+                s.node.clone_from(&e.path);
+                (*id, s)
+            })
+            .collect()
     }
 
     /// The status of `node`'s current or last recording; `None` when it has not recorded (or
@@ -196,6 +275,11 @@ impl Hub {
             let mut inner = lock(&self.inner);
             inner.closed = true;
             for e in inner.nodes.values() {
+                if let Some(c) = &e.current {
+                    c.stop.store(true, Ordering::Release);
+                }
+            }
+            for e in inner.sounds.values() {
                 if let Some(c) = &e.current {
                     c.stop.store(true, Ordering::Release);
                 }

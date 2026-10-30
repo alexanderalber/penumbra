@@ -74,6 +74,36 @@ named Speakers plays, without a cable.
 **Recording.** `out.video` records the sound with the picture: the sum of every `out.audio`,
 as the speakers get it, each frame of sound at its show time. This holds for a render slower
 than real time too, where nothing plays on the speakers. See [Recording](recording.md#sound).
+`out.audio_file` records sound alone, see below.
+
+## Recording sound to a file
+
+`out.audio_file` records sound to a WAV file. Turn `record` on, or press its record button, to
+start a new file. Turn it off to finish the file. `audio_file_out.start` and `.stop` do the same
+by command. A binding to a channel starts and stops it from OSC or a button. A project always
+opens with `record` off.
+
+`source` says what is recorded. With `input` (the default), it is the sound wired to `in`: its
+rate, and its channels up to 64. With `all`, it is what every `out.audio` plays, added up as
+the speakers get it, in stereo. `audio.mute` silences the room; the file keeps the sound.
+
+`format` `pcm24` stores 24-bit integers, which every editing program opens. Sound above full
+scale is clipped. `float32` keeps it, in files a third larger.
+
+The file goes to `file`, relative to the project. Left empty, it goes to
+`recordings/<node name>.wav`. An existing file is never overwritten: the recording takes the
+next free name with `_2`, `_3`, ... The file appears with the first sound. A recording that got
+no sound writes no file.
+
+Each sample goes where its show time falls. A pause records nothing. A jump back, or more than
+a second ahead, continues the file without a gap. A shorter jump ahead leaves silence for the
+time skipped. When the input changes its rate or channel count, the new sound is left out and
+the node warns. Turn `record` off and on for a file in the new format.
+
+The file stays readable while it records: its header is brought up to date every second. A
+crash loses at most the last second. A WAV file holds at most 4 GB, about 4 hours of stereo at
+48 kHz in `pcm24`. A recording that reaches it is finished there. `audio_file_out.status` shows
+the file, its length and what was dropped or left out.
 
 ## Filter
 

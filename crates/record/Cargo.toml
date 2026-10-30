@@ -1,6 +1,6 @@
 [package]
 name = "penumbra-record"
-description = "Movie recording: H.264 and ProRes encoding, sound as AAC or PCM, and MP4/MOV writing on threads of their own, a bounded queue that drops frames instead of blocking. No GPU, no UI."
+description = "Movie and sound recording: H.264 and ProRes encoding, sound as AAC or PCM, MP4/MOV and WAV writing on threads of their own, bounded queues that drop instead of blocking. No GPU, no UI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -2082,7 +2082,7 @@ Outputs:
 
 ## out
 
-[out.audio](#outaudio), [out.dmx](#outdmx), [out.mesh](#outmesh), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
+[out.audio](#outaudio), [out.audio_file](#outaudio_file), [out.dmx](#outdmx), [out.mesh](#outmesh), [out.ndi](#outndi), [out.projector](#outprojector), [out.spout](#outspout), [out.table](#outtable), [out.video](#outvideo)
 
 ### out.audio
 
@@ -2106,6 +2106,25 @@ Outputs: none.
 | `room` | float | `0.4` | 0 to 1 (soft) | The size of the room: how long the sound rings on. 0 dies away in 0.3 s, 0.4 in 0.85 s, 0.7 in 1.8 s, 1 in 4 s |
 | `damping` *(more)* | float | `0.5` | 0 to 1 (soft) | How much faster high tones die away in the room: 0 as fast as low ones, 0.5 in about half the time, 1 in a tenth. More sounds warmer and duller |
 | `latency` *(more)* | float | `50` | 20 to 200 (soft) | Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns) |
+
+### out.audio_file
+
+Records sound to a WAV file: its input, or everything the out.audio nodes play
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `in` (audio): The sound to record with `source` at input: any number of channels up to 64
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `record` | bool | `false` |  | Recording while on: turning record on starts a new file, turning record off finishes the file. The record button above and audio_file_out.start / .stop switch this param; bind it to a channel to start and stop from OSC or a button. A project always opens with record off |
+| `source` | input \| all | `"input"` |  | What is recorded, fixed when the recording starts; input: the sound wired to `in`, as it comes, with its rate and channels; all: what every out.audio of the project plays, added up as the speakers get it, in stereo (audio.mute silences the room, not the file). No out.audio: nothing is recorded |
+| `format` | pcm24 \| float32 | `"pcm24"` |  | How the samples are stored, fixed when the recording starts; pcm24: 24-bit integers, what editing programs expect. Sound above full scale is clipped; float32: 32-bit floats, in files a third larger. Sound above full scale is kept, for an input without a limiter |
+| `file` | text |  |  | The WAV file, relative to the project; empty records to recordings/<node name>.wav. A file that exists is never overwritten: the recording gets the next free name with _2, _3, ... |
 
 ### out.dmx
 

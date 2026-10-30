@@ -5,6 +5,7 @@
 //! and the project thread (autosave, external edits). It uses the GPU (snapshots) but no UI.
 
 pub mod audio;
+pub mod audio_file_out;
 pub mod blob_track;
 pub mod calib;
 pub mod clipboard;
@@ -89,6 +90,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     video_file::register(&mut registry, engine);
     video_in::register(&mut registry, engine);
     video_out::register(&mut registry, engine);
+    audio_file_out::register(&mut registry, engine);
     table_out::register(&mut registry, engine);
     mesh_out::register(&mut registry, engine);
     blob_track::register(&mut registry, engine);

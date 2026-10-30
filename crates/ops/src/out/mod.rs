@@ -1,6 +1,7 @@
 //! `out` nodes: sinks that leave the graph.
 //!
-//! `out.audio` plays sound on a speaker ([`audio`]). `out.video` records its input to a movie file ([`video`]); `out.spout` shares it with other
+//! `out.audio` plays sound on a speaker ([`audio`]), `out.audio_file` records sound to a WAV file
+//! ([`audio_file`]). `out.video` records its input to a movie file ([`video`]); `out.spout` shares it with other
 //! programs on this machine ([`spout`]), `out.ndi` with programs on the network ([`ndi`]).
 //! `out.table` writes a table to a CSV or TSV file ([`table`]), `out.mesh` geometry to an OBJ, STL
 //! or glb file ([`mesh`]); both share [`file`].
@@ -32,6 +33,9 @@
 //! of the black where another projector does not reach; `projector.flatfield` measures them.
 
 pub mod audio;
+pub mod audio_file;
+#[cfg(test)]
+mod audio_file_tests;
 #[cfg(test)]
 mod audio_tests;
 pub mod correct;
@@ -312,6 +316,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .time_dependent();
     types.register(FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>))?;
     audio::register(types)?;
+    audio_file::register(types)?;
     ndi::register(types)?;
     spout::register(types)?;
     table::register(types)?;

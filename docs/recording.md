@@ -57,6 +57,8 @@ With `audio` at `all` (the default), the file also gets the project's sound: wha
 `out.audio` plays, added up as the speakers get it. That is after each node's room, `level`,
 `mute` and limiter. `audio.mute` silences the room only; the file keeps the sound. A project
 without an `out.audio` records no sound track. `audio` off records none either.
+For sound without a picture, `out.audio_file` writes a WAV file (see
+[Recording sound to a file](audio.md#recording-sound-to-a-file)).
 
 | `codec` | sound | why |
 |---|---|---|

@@ -23,6 +23,14 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `audio.play` | An audio.instrument plays one note at its next frame, as if channel `lane` of play had crossed threshold there; wired or not:{path, lane? (default 0)}. While the show is paused nothing sounds and the press is dropped |
 | `audio.status` | Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) and output buses (device, open, error, rate, latency_ms with fill_ms and device_ms, underruns, overruns, glitches, limiter reduction per node and of the sum, muted) |
 
+## audio_file_out
+
+| command | |
+|---|---|
+| `audio_file_out.start` | Start recording an out.audio_file node to a new WAV file (its params say what and how): turns its record param on (an edit); {path}; answers with the status once the file is created, or with a note while no sound came yet |
+| `audio_file_out.status` | Sound recordings: node, recording, finishing, done, file, opened, format, rate, channels, seconds, samples, bytes, gap_samples, cut_samples, refused, dropped, sources (out.audio nodes heard with source all, else null), error; {path?} |
+| `audio_file_out.stop` | Stop an out.audio_file's recording and finish the file: turns record off (an edit); {path}; answers with the status |
+
 ## blob_track
 
 | command | |

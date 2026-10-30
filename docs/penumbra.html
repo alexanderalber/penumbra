@@ -122,7 +122,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-component-ports">Component ports</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -682,7 +682,14 @@ water      15
 <p>Every output ends in a limiter that keeps the sound below -1 dBFS. It is always on, because a sudden blast in a room full of people is the worst thing an installation can do. When the limiter has to work, the node warns how much it takes off. Turn <code>level</code> down until the warning goes. Several <a class="ref" href="#out.audio"><code>out.audio</code></a> nodes on one device are added together, and their sum is limited too. They must share one sample rate.</p>
 <p>Sound plays while the show runs. Pause the show and the output fades out; play it and the sound comes back. This holds for a microphone routed to <a class="ref" href="#out.audio"><code>out.audio</code></a> too. <a class="ref" href="#audio.mute"><code>audio.mute</code></a> mutes every output at once: a panic button, also in Helpers &gt; Audio.</p>
 <p>The delay from a frame to the speaker has two parts. <code>latency</code> is what penumbra queues, 50 ms by default. The device adds its own buffer, about 30 to 50 ms in Windows' shared mode. A smaller <code>latency</code> answers faster. 30 ms holds on a calm machine, but then a late frame is heard as a gap. <a class="ref" href="#audio.status"><code>audio.status</code></a> shows the delay and counts the gaps. <a class="ref" href="#audio.measure_latency"><code>audio.measure_latency</code></a> plays quiet clicks and finds them again on an input. The input <code>loopback:Speakers</code> records what the output named Speakers plays, without a cable.</p>
-<p><strong>Recording.</strong> <a class="ref" href="#out.video"><code>out.video</code></a> records the sound with the picture: the sum of every <a class="ref" href="#out.audio"><code>out.audio</code></a>, as the speakers get it, each frame of sound at its show time. This holds for a render slower than real time too, where nothing plays on the speakers. See <a href="#recording-sound">Recording</a>.</p>
+<p><strong>Recording.</strong> <a class="ref" href="#out.video"><code>out.video</code></a> records the sound with the picture: the sum of every <a class="ref" href="#out.audio"><code>out.audio</code></a>, as the speakers get it, each frame of sound at its show time. This holds for a render slower than real time too, where nothing plays on the speakers. See <a href="#recording-sound">Recording</a>. <a class="ref" href="#out.audio_file"><code>out.audio_file</code></a> records sound alone, see below.</p>
+<h3 id="audio-recording-sound-to-a-file">Recording sound to a file</h3>
+<p><a class="ref" href="#out.audio_file"><code>out.audio_file</code></a> records sound to a WAV file. Turn <code>record</code> on, or press its record button, to start a new file. Turn it off to finish the file. <a class="ref" href="#audio_file_out.start"><code>audio_file_out.start</code></a> and <code>.stop</code> do the same by command. A binding to a channel starts and stops it from OSC or a button. A project always opens with <code>record</code> off.</p>
+<p><code>source</code> says what is recorded. With <code>input</code> (the default), it is the sound wired to <code>in</code>: its rate, and its channels up to 64. With <code>all</code>, it is what every <a class="ref" href="#out.audio"><code>out.audio</code></a> plays, added up as the speakers get it, in stereo. <a class="ref" href="#audio.mute"><code>audio.mute</code></a> silences the room; the file keeps the sound.</p>
+<p><code>format</code> <code>pcm24</code> stores 24-bit integers, which every editing program opens. Sound above full scale is clipped. <code>float32</code> keeps it, in files a third larger.</p>
+<p>The file goes to <code>file</code>, relative to the project. Left empty, it goes to <code>recordings/&lt;node name&gt;.wav</code>. An existing file is never overwritten: the recording takes the next free name with <code>_2</code>, <code>_3</code>, ... The file appears with the first sound. A recording that got no sound writes no file.</p>
+<p>Each sample goes where its show time falls. A pause records nothing. A jump back, or more than a second ahead, continues the file without a gap. A shorter jump ahead leaves silence for the time skipped. When the input changes its rate or channel count, the new sound is left out and the node warns. Turn <code>record</code> off and on for a file in the new format.</p>
+<p>The file stays readable while it records: its header is brought up to date every second. A crash loses at most the last second. A WAV file holds at most 4 GB, about 4 hours of stereo at 48 kHz in <code>pcm24</code>. A recording that reaches it is finished there. <a class="ref" href="#audio_file_out.status"><code>audio_file_out.status</code></a> shows the file, its length and what was dropped or left out.</p>
 <h3 id="audio-filter">Filter</h3>
 <p><a class="ref" href="#audio.filter"><code>audio.filter</code></a> filters any sound, every channel on its own, at any sample rate. Wire a sound into <code>in</code>; the output has the same channels and rate.</p>
 <p><strong>Types.</strong> <code>lowpass</code> removes the highs above <code>cutoff</code>, <code>highpass</code> the lows below it. <code>bandpass</code> keeps only a band around <code>cutoff</code>, <code>notch</code> cuts a narrow band out, e.g. a hum. <code>peak</code> turns a band around <code>cutoff</code> up or down by <code>gain</code> (dB). <code>low_shelf</code> turns everything below <code>cutoff</code> up or down by <code>gain</code>, e.g. to tame a room's boom. <code>high_shelf</code> does the same above <code>cutoff</code>.</p>
@@ -870,7 +877,7 @@ water      15
 </table>
 <p>(<code>h264</code> there with <code>preset</code> balanced.) Inside the running show the encoder shares the CPU: <code>prores_422_hq</code> managed about 39 frames per second of the curl-noise example and dropped 40 % of the frames. The cook thread took about 0.4 ms more per frame while recording. So: <code>h264</code> for recording a busy show in real time, ProRes for calm pictures, smaller sizes or lower rates.</p>
 <h3 id="recording-sound">Sound</h3>
-<p>With <code>audio</code> at <code>all</code> (the default), the file also gets the project's sound: what every <a class="ref" href="#out.audio"><code>out.audio</code></a> plays, added up as the speakers get it. That is after each node's room, <code>level</code>, <code>mute</code> and limiter. <a class="ref" href="#audio.mute"><code>audio.mute</code></a> silences the room only; the file keeps the sound. A project without an <a class="ref" href="#out.audio"><code>out.audio</code></a> records no sound track. <code>audio</code> off records none either.</p>
+<p>With <code>audio</code> at <code>all</code> (the default), the file also gets the project's sound: what every <a class="ref" href="#out.audio"><code>out.audio</code></a> plays, added up as the speakers get it. That is after each node's room, <code>level</code>, <code>mute</code> and limiter. <a class="ref" href="#audio.mute"><code>audio.mute</code></a> silences the room only; the file keeps the sound. A project without an <a class="ref" href="#out.audio"><code>out.audio</code></a> records no sound track. <code>audio</code> off records none either. For sound without a picture, <a class="ref" href="#out.audio_file"><code>out.audio_file</code></a> writes a WAV file (see <a href="#audio-recording-sound-to-a-file">Recording sound to a file</a>).</p>
 <table>
 <thead><tr><th><code>codec</code></th><th>sound</th><th>why</th></tr></thead>
 <tbody>
@@ -4649,7 +4656,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-out">
 <h3>out</h3>
-<p class="kinds"><a href="#out.audio">out.audio</a> <a href="#out.dmx">out.dmx</a> <a href="#out.mesh">out.mesh</a> <a href="#out.ndi">out.ndi</a> <a href="#out.projector">out.projector</a> <a href="#out.spout">out.spout</a> <a href="#out.table">out.table</a> <a href="#out.video">out.video</a></p>
+<p class="kinds"><a href="#out.audio">out.audio</a> <a href="#out.audio_file">out.audio_file</a> <a href="#out.dmx">out.dmx</a> <a href="#out.mesh">out.mesh</a> <a href="#out.ndi">out.ndi</a> <a href="#out.projector">out.projector</a> <a href="#out.spout">out.spout</a> <a href="#out.table">out.table</a> <a href="#out.video">out.video</a></p>
 <details class="entry node" id="out.audio"><summary><code class="name">out.audio</code><span class="sum">Plays sound on a speaker or headphones, always through a limiter that keeps it below -1 dBFS</span></summary>
 <div class="body">
 <p>Plays sound on a speaker or headphones, always through a limiter that keeps it below -1 dBFS</p>
@@ -4675,7 +4682,29 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>latency</code></td><td>float</td><td><code>50</code></td><td>20 to 200 (soft)</td><td>Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a>, <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-not-yet">Recording › Not yet</a>, <a href="#control-headless-runs">Control › Headless runs</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a>, <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-not-yet">Recording › Not yet</a>, <a href="#control-headless-runs">Control › Headless runs</a></p>
+</div></details>
+<details class="entry node" id="out.audio_file"><summary><code class="name">out.audio_file</code><span class="sum">Records sound to a WAV file: its input, or everything the out.audio nodes play</span></summary>
+<div class="body">
+<p>Records sound to a WAV file: its input, or everything the out.audio nodes play</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">audio</span>: The sound to record with <code>source</code> at input: any number of channels up to 64</li>
+</ul>
+<h4>Outputs</h4>
+<p>none</p>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>record</code></td><td>bool</td><td><code>false</code></td><td></td><td>Recording while on: turning record on starts a new file, turning record off finishes the file. The record button above and audio_file_out.start / .stop switch this param; bind it to a channel to start and stop from OSC or a button. A project always opens with record off</td></tr>
+<tr><td><code>source</code></td><td>input | all</td><td><code>&quot;input&quot;</code></td><td></td><td>What is recorded, fixed when the recording starts<ul><li><code>input</code>: the sound wired to <code>in</code>, as it comes, with its rate and channels</li><li><code>all</code>: what every out.audio of the project plays, added up as the speakers get it, in stereo (audio.mute silences the room, not the file). No out.audio: nothing is recorded</li></ul></td></tr>
+<tr><td><code>format</code></td><td>pcm24 | float32</td><td><code>&quot;pcm24&quot;</code></td><td></td><td>How the samples are stored, fixed when the recording starts<ul><li><code>pcm24</code>: 24-bit integers, what editing programs expect. Sound above full scale is clipped</li><li><code>float32</code>: 32-bit floats, in files a third larger. Sound above full scale is kept, for an input without a limiter</li></ul></td></tr>
+<tr><td><code>file</code></td><td>text</td><td></td><td></td><td>The WAV file, relative to the project; empty records to recordings/&lt;node name&gt;.wav. A file that exists is never overwritten: the recording gets the next free name with _2, _3, ...</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a>, <a href="#recording-sound">Recording › Sound</a></p>
 </div></details>
 <details class="entry node" id="out.dmx"><summary><code class="name">out.dmx</code><span class="sum">Sends channels to DMX lights and fixtures: Enttec Open DMX USB, Art-Net, sACN or DDP</span></summary>
 <div class="body">
@@ -5161,7 +5190,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="audio.mute"><summary><code class="name">audio.mute</code><span class="sum">Mutes every audio output at once, a panic button: {mute?} (default true; false unmutes). For this run only</span></summary>
 <div class="body">
 <p>Mutes every audio output at once, a panic button: {mute?} (default true; false unmutes). For this run only</p>
-<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#recording-sound">Recording › Sound</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a>, <a href="#recording-sound">Recording › Sound</a></p>
 </div></details>
 <details class="entry command" id="audio.outputs"><summary><code class="name">audio.outputs</code><span class="sum">The audio outputs of this machine: name, default, rate, channels, format</span></summary>
 <div class="body">
@@ -5176,6 +5205,23 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) and          output buses (device, open, error, rate, latency_ms with fill_ms and device_ms, underruns, overruns,          glitches, limiter reduction per node and of the sum, muted)</p>
 <p class="mentions">Mentioned in: <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-setting-up">Audio › Setting up</a></p>
+</div></details>
+</div>
+<div class="group" id="group-audio_file_out">
+<h3>audio_file_out</h3>
+<details class="entry command" id="audio_file_out.start"><summary><code class="name">audio_file_out.start</code><span class="sum">Start recording an out.audio_file node to a new WAV file (its params say what and how): turns its record param on (an edit)</span></summary>
+<div class="body">
+<p>Start recording an out.audio_file node to a new WAV file (its params say what and how): turns its record param on (an edit); {path}; answers with the status once the file is created, or with a note while no sound came yet</p>
+<p class="mentions">Mentioned in: <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a></p>
+</div></details>
+<details class="entry command" id="audio_file_out.status"><summary><code class="name">audio_file_out.status</code><span class="sum">Sound recordings: node, recording, finishing, done, file, opened, format, rate, channels, seconds, samples, bytes, gap_samples, cut_samples, refused, dropped, sources (out.audio nodes heard with source all, else null), error</span></summary>
+<div class="body">
+<p>Sound recordings: node, recording, finishing, done, file, opened, format, rate, channels, seconds, samples, bytes, gap_samples, cut_samples, refused, dropped, sources (out.audio nodes heard with source all, else null), error; {path?}</p>
+<p class="mentions">Mentioned in: <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a></p>
+</div></details>
+<details class="entry command" id="audio_file_out.stop"><summary><code class="name">audio_file_out.stop</code><span class="sum">Stop an out.audio_file's recording and finish the file: turns record off (an edit)</span></summary>
+<div class="body">
+<p>Stop an out.audio_file's recording and finish the file: turns record off (an edit); {path}; answers with the status</p>
 </div></details>
 </div>
 <div class="group" id="group-blob_track">

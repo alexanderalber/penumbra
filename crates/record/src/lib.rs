@@ -7,6 +7,8 @@
 //!   dropped (the caller counts it), so whoever records never waits for the encoder.
 //! - [`audio`]: the sound beside the picture: AAC in MP4, 24-bit PCM in MOV, each block put at
 //!   the sample of the file its show time falls on.
+//! - [`wav`]: sound alone, recorded to a WAV file (24-bit PCM or 32-bit float) on a thread of
+//!   its own, placed by show time as the sound beside a picture is.
 //! - [`hub`]: the recordings of a process: their status, and finishing every file when the app
 //!   closes.
 //! - [`looping`]: a movie made from a recording that a player can repeat without a visible
@@ -20,7 +22,11 @@
 pub mod audio;
 pub mod hub;
 pub mod looping;
+pub mod wav;
 pub mod writer;
+
+#[cfg(test)]
+mod wav_tests;
 
 #[cfg(test)]
 mod audio_tests;
@@ -33,6 +39,7 @@ use serde::Serialize;
 
 pub use audio::{AudioBlock, AudioCodec, AudioStatus};
 pub use hub::{Hub, Status};
+pub use wav::{SoundRecording, SoundStatus, WavFormat, WavSettings};
 pub use writer::{Recording, Settings, Sink};
 
 /// How hard the H.264 encoder works for each frame: the trade of speed against size and

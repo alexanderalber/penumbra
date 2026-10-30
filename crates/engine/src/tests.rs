@@ -1102,6 +1102,9 @@ mod audio_tests;
 #[path = "video_out_tests.rs"]
 mod video_out_tests;
 
+#[path = "audio_file_out_tests.rs"]
+mod audio_file_out_tests;
+
 #[path = "table_out_tests.rs"]
 mod table_out_tests;
 

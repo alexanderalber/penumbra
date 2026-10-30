@@ -49,7 +49,8 @@ pub struct Inputs<'a> {
     pub audio: &'a penumbra_audio::Hub,
     /// The engine's audio outputs: an `out.audio` shows how its device plays.
     pub audio_out: &'a penumbra_audio::Outputs,
-    /// The engine's recordings: an `out.video` shows its own and has start and stop.
+    /// The engine's recordings: an `out.video` or `out.audio_file` shows its own and has start
+    /// and stop.
     pub record: &'a penumbra_record::Hub,
     /// The engine's scans: a `tex.scan` shows how its scan stands and has scan and cancel.
     pub scans: &'a penumbra_ops::tex::scan::Scans,
@@ -231,6 +232,9 @@ impl ParamPanel {
         }
         if node.kind == penumbra_ops::out::video::VIDEO_OUT {
             record_row(ui, input, node, auto, actions);
+        }
+        if node.kind == penumbra_ops::out::audio_file::AUDIO_FILE_OUT {
+            sound_record_row(ui, input, node, auto, actions);
         }
         if node.kind == penumbra_ops::out::audio::AUDIO_OUT {
             audio_out_row(ui, input, auto);
@@ -2356,9 +2360,100 @@ fn scan_row(
     }
 }
 
-/// An `out.video`'s record or stop button and how its recording stands. The button switches
+/// The record or stop button of a recording node (`out.video`, `out.audio_file`). It switches
 /// the `record` param (an edit, one undo step), so button and param always agree; while a
-/// channel drives `record` the button is off.
+/// channel drives `record` the button is off. `tips` name the commands for on and off.
+fn record_button(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+    tips: [&str; 2],
+) {
+    let bound = node.binds.keys().any(|k| k.param.as_str() == "record");
+    let stored = node.params.get("record").and_then(Value::as_bool).unwrap_or(false);
+    let live = input.status.and_then(|s| s.bound.get("record")).and_then(Value::as_bool);
+    let on = if bound { live.unwrap_or(stored) } else { stored };
+    let [start, stop] = tips;
+    let (label, tip, id) =
+        if on { ("stop", stop, "param.record_stop") } else { ("record", start, "param.record_start") };
+    let tip = if bound { "record is bound to a channel; unbind record to switch it here" } else { tip };
+    let r = ui
+        .add_enabled(input.can_edit && !bound, egui::Button::new(label))
+        .on_hover_text(tip)
+        .on_disabled_hover_text(tip);
+    auto.add(id, r.rect, label);
+    if r.clicked()
+        && let Some(path) = input.net.path_of(input.node)
+        && let Ok(name) = "record".parse::<Name>()
+        && let Ok(param) = ParamPath::new(path, name)
+    {
+        actions.push(Action::Edit {
+            ops: vec![Op::Set { param, value: Value::Bool(!on) }],
+            label: if on { "stop recording" } else { "start recording" }.into(),
+            group: None,
+        });
+    }
+}
+
+/// An `out.audio_file`'s record or stop button and how its recording stands.
+fn sound_record_row(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    node: &NodeDef,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    let status = input.record.sound_status(input.node);
+    ui.horizontal(|ui| {
+        record_button(
+            ui,
+            input,
+            node,
+            auto,
+            actions,
+            [
+                "Turn record on: start recording to a new WAV file (audio_file_out.start)",
+                "Turn record off: stop recording and finish the file (audio_file_out.stop)",
+            ],
+        );
+        let Some(s) = &status else {
+            ui.label(RichText::new("not recording").color(theme::TEXT_WEAK).small());
+            return;
+        };
+        let name = Path::new(&s.file)
+            .file_name()
+            .map_or_else(|| s.file.clone(), |n| n.to_string_lossy().into_owned());
+        let format = if s.rate > 0 {
+            let ch = match s.channels {
+                1 => "mono".to_string(),
+                2 => "stereo".to_string(),
+                n => format!("{n} channels"),
+            };
+            format!("{} kHz {ch}", f64::from(s.rate) / 1000.0)
+        } else {
+            String::new()
+        };
+        let (text, colour) = if s.recording && !s.opened {
+            ("waiting for sound: the file starts with it".to_string(), theme::TEXT_WEAK)
+        } else if s.recording {
+            let text = format!("{name}  {:.1} s  {format}  {} dropped", s.seconds, s.dropped);
+            (text, if s.dropped > 0 || s.refused > 0 { theme::WARNING } else { theme::ERROR })
+        } else if s.finishing {
+            (format!("{name}: finishing the file ..."), theme::TEXT_WEAK)
+        } else if let Some(e) = &s.error {
+            (e.clone(), theme::ERROR)
+        } else if !s.opened {
+            ("no sound came: no file written".to_string(), theme::TEXT_WEAK)
+        } else {
+            (format!("saved {name}: {:.1} s, {format}, {} dropped", s.seconds, s.dropped), theme::TEXT_WEAK)
+        };
+        ui.label(RichText::new(text).color(colour).small()).on_hover_text(&s.file);
+    });
+}
+
+/// An `out.video`'s record or stop button and how its recording stands.
 fn record_row(
     ui: &mut Ui,
     input: &Inputs<'_>,
@@ -2367,41 +2462,18 @@ fn record_row(
     actions: &mut Vec<Action>,
 ) {
     let status = input.record.status(input.node);
-    let bound = node.binds.keys().any(|k| k.param.as_str() == "record");
-    let stored = node.params.get("record").and_then(Value::as_bool).unwrap_or(false);
-    let live = input.status.and_then(|s| s.bound.get("record")).and_then(Value::as_bool);
-    let on = if bound { live.unwrap_or(stored) } else { stored };
     ui.horizontal(|ui| {
-        let (label, tip, id) = if on {
-            (
-                "stop",
-                "Turn record off: stop recording and finish the file (video_out.stop)",
-                "param.record_stop",
-            )
-        } else {
-            (
-                "record",
+        record_button(
+            ui,
+            input,
+            node,
+            auto,
+            actions,
+            [
                 "Turn record on: start recording to a new file (video_out.start)",
-                "param.record_start",
-            )
-        };
-        let tip = if bound { "record is bound to a channel; unbind record to switch it here" } else { tip };
-        let r = ui
-            .add_enabled(input.can_edit && !bound, egui::Button::new(label))
-            .on_hover_text(tip)
-            .on_disabled_hover_text(tip);
-        auto.add(id, r.rect, label);
-        if r.clicked()
-            && let Some(path) = input.net.path_of(input.node)
-            && let Ok(name) = "record".parse::<Name>()
-            && let Ok(param) = ParamPath::new(path, name)
-        {
-            actions.push(Action::Edit {
-                ops: vec![Op::Set { param, value: Value::Bool(!on) }],
-                label: if on { "stop recording" } else { "start recording" }.into(),
-                group: None,
-            });
-        }
+                "Turn record off: stop recording and finish the file (video_out.stop)",
+            ],
+        );
         let Some(s) = &status else {
             ui.label(RichText::new("not recording").color(theme::TEXT_WEAK).small());
             return;
