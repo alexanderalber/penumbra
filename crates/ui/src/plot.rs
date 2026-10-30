@@ -408,7 +408,8 @@ const BODY_MIN_LANE: f32 = 12.0;
 /// newest at the right edge and a window that is not full yet (a growing `chan.trail`) growing
 /// in from there; stacked lanes when a moving channel would be flat on the shared scale (as the
 /// viewer's `auto`), a faint zero line where the range crosses 0, and the first channel's value
-/// now at the top left, `text_left` points further right (past the input labels). Costs one
+/// now at the top left, `text_left` points further right (past the input labels). Sound gets
+/// every channel's peak level in dB there instead, side by side as far as they fit. Costs one
 /// pass over the samples and a few points per pixel of width.
 pub fn body(painter: &Painter, rect: Rect, chans: &Chans, zoom: f32, text_left: f32) {
     let channels = chans.channels();
@@ -454,25 +455,78 @@ pub fn body(painter: &Painter, rect: Rect, chans: &Chans, zoom: f32, text_left: 
             painter.add(egui::Shape::line(points, Stroke::new(stroke, theme::channel_color(i))));
         }
     }
-    if zoom > 0.6
-        && let Some(first) = channels.first()
-    {
-        let text = if channels.len() == 1 && first.name.as_str() == "value" {
-            format_value(first.value())
-        } else {
-            format!("{} {}", first.name, format_value(first.value()))
-        };
-        let color = if channels.len() == 1 { theme::TEXT } else { theme::channel_color(0) };
-        let galley = painter.layout_no_wrap(text, FontId::monospace(10.0 * zoom), color);
-        let at = pos2(rect.min.x + text_left.max(0.0) + 4.0 * zoom, rect.min.y + 2.0 * zoom);
-        if at.x + galley.size().x < rect.max.x - 4.0 * zoom {
-            painter.rect_filled(
-                Rect::from_min_size(at, galley.size()).expand2(vec2(2.0, 0.0) * zoom),
-                2.0 * zoom,
-                Color32::from_black_alpha(140),
-            );
-            painter.galley(at, galley, color);
+    if zoom <= 0.6 {
+        return;
+    }
+    let at = pos2(rect.min.x + text_left.max(0.0) + 4.0 * zoom, rect.min.y + 2.0 * zoom);
+    let single = channels.len() == 1;
+    let labels: Vec<(String, Color32)> = if is_audio(chans) {
+        // The sample now of a sound swings too fast to read: each channel's level instead.
+        channels
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let text = format!("{} {}", c.name, level_text(&c.samples));
+                (text, if single { theme::TEXT } else { theme::channel_color(i) })
+            })
+            .collect()
+    } else {
+        channels
+            .first()
+            .map(|first| {
+                let text = if single && first.name.as_str() == "value" {
+                    format_value(first.value())
+                } else {
+                    format!("{} {}", first.name, format_value(first.value()))
+                };
+                (text, if single { theme::TEXT } else { theme::channel_color(0) })
+            })
+            .into_iter()
+            .collect()
+    };
+    // Side by side as far as they fit; the first is left out only when even it does not fit.
+    let font = FontId::monospace(10.0 * zoom);
+    let gap = 8.0 * zoom;
+    let mut x = at.x;
+    for (text, color) in labels {
+        let galley = painter.layout_no_wrap(text, font.clone(), color);
+        if x + galley.size().x >= rect.max.x - 4.0 * zoom {
+            break;
         }
+        let pos = pos2(x, at.y);
+        painter.rect_filled(
+            Rect::from_min_size(pos, galley.size()).expand2(vec2(2.0, 0.0) * zoom),
+            2.0 * zoom,
+            Color32::from_black_alpha(140),
+        );
+        x += galley.size().x + gap;
+        painter.galley(pos, galley, color);
+    }
+}
+
+/// Lowest sample rate whose channels the body treats as sound and labels with their level.
+const AUDIO_RATE: f64 = 4000.0;
+
+/// Whether `chans` look like sound: samples over time at an audio rate, more than one per cook.
+fn is_audio(chans: &Chans) -> bool {
+    chans.axis() == penumbra_core::SampleAxis::Time && chans.rate() >= AUDIO_RATE && chans.len() > 1
+}
+
+/// The peak of `samples` in dB below full scale (1.0), whole decibels; `-inf` below -90 dB.
+fn level_text(samples: &[f64]) -> String {
+    let peak = samples.iter().filter(|v| v.is_finite()).fold(0.0f64, |m, v| m.max(v.abs()));
+    let db = 20.0 * peak.log10();
+    if !db.is_finite() || db < -90.0 {
+        return "-inf dB".to_string();
+    }
+    let db = db.round();
+    if db > 0.0 {
+        format!("+{db:.0} dB")
+    } else if db == 0.0 {
+        // Also -0, which would print as "-0".
+        "0 dB".to_string()
+    } else {
+        format!("{db:.0} dB")
     }
 }
 
@@ -546,6 +600,16 @@ fn backdrop(painter: &Painter, around: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn level_is_the_peak_in_db() {
+        assert_eq!(level_text(&[0.1, -0.5, 0.2]), "-6 dB");
+        assert_eq!(level_text(&[1.0]), "0 dB");
+        assert_eq!(level_text(&[0.999]), "0 dB");
+        assert_eq!(level_text(&[-2.0]), "+6 dB");
+        assert_eq!(level_text(&[0.0, 0.0]), "-inf dB");
+        assert_eq!(level_text(&[]), "-inf dB");
+    }
 
     #[test]
     fn ticks_are_round_and_inside() {
