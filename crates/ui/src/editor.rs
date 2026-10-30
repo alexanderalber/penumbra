@@ -1812,6 +1812,7 @@ impl Editor {
         actions: &mut Vec<Action>,
     ) {
         let Some(menu) = self.add_menu.as_mut() else { return };
+        menu.in_component = !level_path(input.net, level).is_root();
         let outcome = menu.show(ui, input.types, input.library, auto);
         self.add_family.clone_from(&menu.family);
         let at = menu.at;

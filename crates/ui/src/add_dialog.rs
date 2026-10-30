@@ -18,6 +18,9 @@
 //! itself. Enter takes the first match of the active tab, Tab switches to the next tab, Escape or a
 //! click outside closes. Opened by double-click on empty canvas or Tab in the editor, and by "Replace
 //! node..." in the node menu, where choosing replaces that node.
+//!
+//! The component ports (`tex.in`, `chan.out`, ...) are greyed out and cannot be chosen at the
+//! top level of the project: there they have no component whose sockets they would be.
 
 use std::sync::Arc;
 
@@ -74,6 +77,8 @@ pub struct AddDialog {
     /// What choosing does, beside the search field, when it is not adding a node ("replace
     /// noise1 with").
     pub title: Option<String>,
+    /// Whether the node goes into a component, where the component ports can be chosen.
+    pub in_component: bool,
 }
 
 pub enum Outcome {
@@ -226,9 +231,36 @@ fn matches(kind: &str, filter: &str) -> bool {
     kind != GAP && (filter.is_empty() || kind.to_lowercase().contains(filter))
 }
 
+/// What can be chosen where the node goes: everything inside a component, everything but the
+/// component ports at the top level.
+#[derive(Clone, Copy)]
+struct Usable<'a> {
+    types: &'a NodeTypes,
+    in_component: bool,
+}
+
+impl Usable<'_> {
+    fn allows(self, kind: &str) -> bool {
+        self.in_component || self.types.desc(kind).is_none_or(|d| d.port.is_none())
+    }
+
+    /// A choice for the search: usable here and containing the text.
+    fn hit(self, kind: &str, filter: &str) -> bool {
+        self.allows(kind) && matches(kind, filter)
+    }
+}
+
 impl AddDialog {
     pub fn new(screen: Pos2, at: Pos2, family: &str) -> Self {
-        Self { at, screen, filter: String::new(), focus: true, family: family.to_string(), title: None }
+        Self {
+            at,
+            screen,
+            filter: String::new(),
+            focus: true,
+            family: family.to_string(),
+            title: None,
+            in_component: false,
+        }
     }
 
     /// `library`: the component files on offer, shown in the `library` tab; choosing one gives
@@ -241,6 +273,7 @@ impl AddDialog {
         auto: &mut automation::Registry,
     ) -> Outcome {
         let groups = groups(types);
+        let usable = Usable { types, in_component: self.in_component };
         let mut active = groups.iter().position(|g| g.contains(&self.family)).unwrap_or(0);
         let filter = self.filter.trim().to_lowercase();
         let mut outcome = Outcome::Open;
@@ -266,7 +299,7 @@ impl AddDialog {
         }
 
         let (cells, sections) = cells(types, group, library);
-        let first = cells.iter().map(|c| &c.kind).find(|k| matches(k, &filter)).cloned();
+        let first = cells.iter().map(|c| &c.kind).find(|k| usable.hit(k, &filter)).cloned();
         if enter && let Some(k) = &first {
             outcome = Outcome::Chosen(k.clone());
         }
@@ -282,7 +315,7 @@ impl AddDialog {
                     ui.set_width(width);
                     self.search_row(ui, auto, &mut outcome);
                     ui.add_space(2.0);
-                    self.tabs(ui, &groups, active, types, library, &filter, auto);
+                    self.tabs(ui, &groups, active, usable, library, &filter, auto);
                     ui.separator();
                     headings(ui, group, &sections, width, auto);
                     let grid = Grid {
@@ -292,12 +325,13 @@ impl AddDialog {
                         filter: &filter,
                         first: first.as_deref(),
                         library,
+                        usable,
                     };
                     let hovered = grid.show(ui, auto, &mut outcome);
                     ui.separator();
                     // The summary of the type under the pointer (or of Enter's choice).
                     let about = hovered.or(first.as_deref());
-                    summary(ui, about, types, library, width);
+                    summary(ui, about, usable, library, width);
                 });
             });
         let outside = ui.input(|i| i.pointer.any_pressed())
@@ -339,7 +373,7 @@ impl AddDialog {
         ui: &mut Ui,
         groups: &[Vec<String>],
         active: usize,
-        types: &NodeTypes,
+        usable: Usable<'_>,
         library: &[Offered],
         filter: &str,
         auto: &mut automation::Registry,
@@ -348,7 +382,7 @@ impl AddDialog {
             // Wider than a seam, so a tab of several families reads as one.
             ui.spacing_mut().item_spacing.x = 6.0;
             for (g, families) in groups.iter().enumerate() {
-                let r = tab(ui, families, g == active, types, library, filter, auto);
+                let r = tab(ui, families, g == active, usable, library, filter, auto);
                 if r.clicked() {
                     self.family = families.first().cloned().unwrap_or_default();
                     self.focus = true;
@@ -363,7 +397,7 @@ fn tab(
     ui: &mut Ui,
     families: &[String],
     active: bool,
-    types: &NodeTypes,
+    usable: Usable<'_>,
     library: &[Offered],
     filter: &str,
     auto: &mut automation::Registry,
@@ -374,8 +408,8 @@ fn tab(
     let segments: Vec<(&String, bool, Option<Arc<egui::Galley>>)> = families
         .iter()
         .map(|f| {
-            let kinds = kinds_of(types, f, library);
-            let hit = !filter.is_empty() && kinds.iter().any(|k| matches(k, filter));
+            let kinds = kinds_of(usable.types, f, library);
+            let hit = !filter.is_empty() && kinds.iter().any(|k| usable.hit(k, filter));
             let bright = if filter.is_empty() { !kinds.is_empty() } else { hit };
             let text = if bright { Color32::WHITE } else { theme::TEXT_WEAK };
             let galley =
@@ -479,6 +513,7 @@ struct Grid<'a> {
     /// The first match, Enter's choice.
     first: Option<&'a str>,
     library: &'a [Offered],
+    usable: Usable<'a>,
 }
 
 impl<'a> Grid<'a> {
@@ -515,11 +550,15 @@ impl<'a> Grid<'a> {
                 );
                 continue;
             }
-            let r = ui.interact(cell, ui.id().with(("add", kind.as_str())), Sense::click());
-            auto.add(format!("add.{kind}"), cell, kind.as_str());
-            let hit = matches(kind, self.filter);
+            let allowed = self.usable.allows(kind);
+            let sense = if allowed { Sense::click() } else { Sense::hover() };
+            let r = ui.interact(cell, ui.id().with(("add", kind.as_str())), sense);
+            let label = if allowed { kind.clone() } else { format!("{kind} (only in a component)") };
+            auto.add(format!("add.{kind}"), cell, label);
+            let hit = self.usable.hit(kind, self.filter);
             let fill = match (hit, r.hovered()) {
-                (_, true) => color.gamma_multiply(1.4),
+                (_, true) if allowed => color.gamma_multiply(1.4),
+                (_, true) => color.gamma_multiply(0.3),
                 (true, false) => color.gamma_multiply(if row % 2 == 0 { 0.8 } else { 0.65 }),
                 (false, false) => color.gamma_multiply(0.2),
             };
@@ -549,7 +588,7 @@ impl<'a> Grid<'a> {
             if r.hovered() {
                 hovered = Some(kind.as_str());
             }
-            if r.clicked() && !removing {
+            if r.clicked() && allowed && !removing {
                 *outcome = Outcome::Chosen(kind.clone());
             }
         }
@@ -606,7 +645,7 @@ impl<'a> Grid<'a> {
 }
 
 /// The summary of the type or component file `about`, in one line.
-fn summary(ui: &mut Ui, about: Option<&str>, types: &NodeTypes, library: &[Offered], width: f32) {
+fn summary(ui: &mut Ui, about: Option<&str>, usable: Usable<'_>, library: &[Offered], width: f32) {
     let text = about
         .and_then(|k| match k.strip_prefix(LIBRARY_MARK) {
             Some(name) => {
@@ -618,7 +657,10 @@ fn summary(ui: &mut Ui, about: Option<&str>, types: &NodeTypes, library: &[Offer
                 };
                 Some(format!("{name}: a component file from {place} (comp.load)"))
             }
-            None => types.desc(k).map(|d| format!("{k}: {}", d.summary)),
+            None if !usable.allows(k) => Some(format!(
+                "{k}: only inside a component. At the top level there is no component socket for it"
+            )),
+            None => usable.types.desc(k).map(|d| format!("{k}: {}", d.summary)),
         })
         .unwrap_or_default();
     ui.allocate_ui_with_layout(vec2(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -673,5 +715,17 @@ mod tests {
         assert_eq!(kinds_of(&types, "comp", &library), ["comp.base"], "comp keeps its own types");
         let (_, sections) = cells(&types, &[LIBRARY.to_string()], &library);
         assert_eq!(sections.len(), 1, "no sub-division");
+    }
+
+    #[test]
+    fn the_component_ports_are_offered_only_inside_a_component() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let top = Usable { types: &types, in_component: false };
+        let inside = Usable { types: &types, in_component: true };
+        assert!(!top.allows("tex.in") && !top.allows("chan.out"));
+        assert!(top.allows("tex.noise") && top.allows("out.video"));
+        assert!(inside.allows("tex.in") && inside.allows("tex.noise"));
+        assert!(!top.hit("tex.in", "tex.in"), "the search passes over a port at the top level");
+        assert!(inside.hit("tex.in", "tex.in"));
     }
 }
