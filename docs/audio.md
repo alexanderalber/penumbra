@@ -230,9 +230,17 @@ All values are channels of the `out` output, in this order:
 | `rms`, `peak` | the raw level, full scale is 1 |
 | `beats_per_bar`, `low_hz`, `high_hz` | the params `beats_per_bar`, `low` and `high` as they are (bound ones evaluated), for what draws the analysis |
 
-With `normalize` on (the default), `level`, the bands and the spectrum are measured against
-the loudest of the last seconds, so a quiet microphone still spans 0 to 1. Sounds below
-`floor` (-60 dB) count as silence and are not raised.
+With `normalize` on (the default), a quiet microphone still spans 0 to 1. `level`, the bands
+and the spectrum are measured against their range over the last 4 seconds. A single knock
+does not squash them: it is too short to set the top of that range. Sound below `floor`
+(-60 dB) counts as silence: the values read 0, and the range stays as it was. If a silent room
+does not read 0, raise `floor` above the room's noise. If quiet sound reads 0, lift it with
+`trim` (up to 24 dB), which changes the analysis only.
+
+`level` covers 20 Hz to 16 kHz, the three bands together. `rms` and `peak` are the whole signal
+as it comes in, including noise above the hearing range that some interfaces add at 96 kHz.
+A microphone on one input of a stereo interface arrives 6 dB quieter when both channels are
+averaged: set `channel` to its input.
 
 The second output, `spectrum`, is one channel whose samples are the loudness of `bands` (32)
 bands from 30 Hz to 16 kHz, low to high, each 0 to 1 over 60 dB.

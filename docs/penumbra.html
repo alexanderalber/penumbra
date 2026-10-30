@@ -738,7 +738,8 @@ water      15
 <tr><td><code>beats_per_bar</code>, <code>low_hz</code>, <code>high_hz</code></td><td>the params <code>beats_per_bar</code>, <code>low</code> and <code>high</code> as they are (bound ones evaluated), for what draws the analysis</td></tr>
 </tbody>
 </table>
-<p>With <code>normalize</code> on (the default), <code>level</code>, the bands and the spectrum are measured against the loudest of the last seconds, so a quiet microphone still spans 0 to 1. Sounds below <code>floor</code> (-60 dB) count as silence and are not raised.</p>
+<p>With <code>normalize</code> on (the default), a quiet microphone still spans 0 to 1. <code>level</code>, the bands and the spectrum are measured against their range over the last 4 seconds. A single knock does not squash them: it is too short to set the top of that range. Sound below <code>floor</code> (-60 dB) counts as silence: the values read 0, and the range stays as it was. If a silent room does not read 0, raise <code>floor</code> above the room's noise. If quiet sound reads 0, lift it with <code>trim</code> (up to 24 dB), which changes the analysis only.</p>
+<p><code>level</code> covers 20 Hz to 16 kHz, the three bands together. <code>rms</code> and <code>peak</code> are the whole signal as it comes in, including noise above the hearing range that some interfaces add at 96 kHz. A microphone on one input of a stereo interface arrives 6 dB quieter when both channels are averaged: set <code>channel</code> to its input.</p>
 <p>The second output, <code>spectrum</code>, is one channel whose samples are the loudness of <code>bands</code> (32) bands from 30 Hz to 16 kHz, low to high, each 0 to 1 over 60 dB.</p>
 <h3 id="audio-the-meters-in-the-viewer">The meters in the viewer</h3>
 <p>Selected, the analysis shows meters in the viewer, made to be read at a glance during a show:</p>
@@ -3311,12 +3312,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>offset</code></td><td>float</td><td><code>0</code></td><td>-200 to 200 (soft)</td><td>Milliseconds to move beat and bar ahead by, to make up for the projector's delay</td></tr>
 <tr><td><code>beats_per_bar</code></td><td>int</td><td><code>4</code></td><td>2 to 8 (soft)</td><td>Beats in one bar (4 for 4/4, 3 for a waltz): how often bar and bar_beat come round</td></tr>
 <tr><td><code>sensitivity</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1</td><td>How readily an onset or kick counts: higher finds quieter ones</td></tr>
-<tr><td><code>normalize</code></td><td>bool</td><td><code>true</code></td><td></td><td>A quiet input still spans 0 to 1: levels and spectrum are measured relative to the loudest of the last seconds</td></tr>
+<tr><td><code>normalize</code></td><td>bool</td><td><code>true</code></td><td></td><td>A quiet input still spans 0 to 1: levels and spectrum are measured against their range over the last 4 seconds. Off: level and bands are the raw RMS, full scale is 1</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>min_bpm</code></td><td>float</td><td><code>70</code></td><td>40 to 200 (soft)</td><td>The slowest tempo considered, in beats per minute. Keep min_bpm and max_bpm less than an octave apart: then a half or double tempo cannot be taken</td></tr>
 <tr><td><code>max_bpm</code></td><td>float</td><td><code>180</code></td><td>80 to 300 (soft)</td><td>The fastest tempo considered, in beats per minute; see min_bpm</td></tr>
 <tr class="section"><th colspan="5">levels</th></tr>
-<tr><td><code>floor</code></td><td>float</td><td><code>-60</code></td><td>-90 to -20 dB (soft)</td><td>Quieter than this counts as silence and is not raised by normalize</td></tr>
+<tr><td><code>floor</code></td><td>float</td><td><code>-60</code></td><td>-90 to -20 dB (soft)</td><td>Quieter than this counts as silence: with normalize, levels and spectrum read 0. Set it above the room's noise, so a silent room reads 0</td></tr>
+<tr><td><code>trim</code></td><td>float</td><td><code>0</code></td><td>-24 to 24 dB</td><td>Makes the sound louder or quieter for the analysis only. Lift a quiet microphone until it is above floor. The rms and peak channels still show the sound as it comes in</td></tr>
 <tr><td><code>low</code></td><td>float</td><td><code>150</code></td><td>40 to 500 Hz (soft)</td><td>Where the low band ends: the low channel is the level below this frequency</td></tr>
 <tr><td><code>high</code></td><td>float</td><td><code>2500</code></td><td>1000 to 8000 Hz (soft)</td><td>Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high</td></tr>
 <tr><td><code>bands</code></td><td>int</td><td><code>32</code></td><td>4 to 128 (soft)</td><td>Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame</td></tr>

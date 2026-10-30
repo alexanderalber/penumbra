@@ -26,6 +26,14 @@
 //! the spectrum below 1 kHz is averaged over each beat and compared with the beat before; that
 //! change is averaged per position in the bar, and the position with the most change is the
 //! downbeat (a new one must be 15 % ahead to take over). A guess where nothing changes per bar.
+//!
+//! **Normalising:** level and bands each keep their values of the last four seconds, one per
+//! hop (a hop is the unit the bands are measured in, and its length does not depend on how
+//! often the caller asks). A value reads 0 at the window's 5th percentile and 1 near its 95th,
+//! with a soft knee above 0.85, so a short loud moment never sets the top of the range: it is
+//! fewer than 5 % of the window and drops out of it after four seconds. The spectrum takes the
+//! 95th percentile of its loudest band as its reference. Frames quieter than the floor are
+//! silence: they do not enter the window, and the outputs read 0.
 
 use std::collections::VecDeque;
 
@@ -51,8 +59,21 @@ pub const SPECTRUM_LOW: f64 = 30.0;
 pub const SPECTRUM_HIGH: f64 = 16_000.0;
 /// The span of the spectrum's values: 0 is this far below the reference.
 const SPECTRUM_DB: f64 = 60.0;
-/// How fast the normalising peak falls, dB per second.
-const FALL_DB_PER_S: f64 = 1.5;
+/// Seconds of levels the normalisation ranges over.
+const RANGE_SECONDS: f64 = 4.0;
+/// The percentiles of those levels that map to 0 and to 1.
+const RANGE_LOW: f64 = 0.05;
+const RANGE_HIGH: f64 = 0.95;
+/// The smallest range, as a share of its top: a steady tone reads near 1 instead of its tiny
+/// wobble being stretched over 0 to 1.
+const RANGE_MIN_SPAN: f64 = 0.25;
+/// Above this the normalised value bends towards 1 instead of being cut off, so peaks over
+/// the range still read louder.
+const KNEE: f64 = 0.85;
+/// A range whose top is below this (linear) reads 0.
+const RANGE_TINY: f64 = 1e-6;
+/// Largest lift or cut of the analysed signal, dB.
+pub const MAX_TRIM_DB: f64 = 24.0;
 /// Largest number of spectrum bands.
 pub const MAX_BANDS: usize = 512;
 
@@ -70,11 +91,15 @@ pub struct Settings {
     pub beats_per_bar: u32,
     /// Spectrum bands, log-spaced from 30 Hz to 16 kHz.
     pub bands: usize,
-    /// Divide levels and spectrum by the loudest of the last seconds, so a quiet input still
+    /// Map levels and spectrum onto the range of the last seconds, so a quiet input still
     /// spans 0 to 1.
     pub normalize: bool,
-    /// Levels below this (dBFS) are not raised by `normalize`: silence stays silence.
+    /// With `normalize`: a level below this (dBFS, after `trim_db`) is silence. Levels and
+    /// spectrum read 0 and the range is kept as it was.
     pub floor_db: f64,
+    /// Gain in dB on the signal before it is analysed (clamped to [`MAX_TRIM_DB`] either
+    /// way); `rms` and `peak` report the signal as it came in.
+    pub trim_db: f64,
     /// Seconds the beat and bar phase are moved ahead (positive: earlier), to make up for
     /// what comes after the analysis: the projector, the graph.
     pub offset: f64,
@@ -92,6 +117,7 @@ impl Default for Settings {
             bands: 32,
             normalize: true,
             floor_db: -60.0,
+            trim_db: 0.0,
             offset: 0.0,
         }
     }
@@ -104,7 +130,9 @@ pub struct Features {
     pub rms: f64,
     /// Largest absolute sample of the block.
     pub peak: f64,
-    /// RMS, normalised when asked.
+    /// RMS from 20 Hz to 16 kHz (the three bands together) after the trim, normalised when
+    /// asked. Unlike `rms`, it leaves out noise above the hearing range, which some interfaces
+    /// have plenty of at 96 kHz.
     pub level: f64,
     pub low: f64,
     pub mid: f64,
@@ -221,21 +249,82 @@ impl Picker {
     }
 }
 
-/// A peak follower for normalising: the loudest lately, falling slowly.
-#[derive(Clone, Copy, Debug, Default)]
-struct Follower(f64);
+/// Normalising by percentiles: the recent values of one level, one per hop, and where its
+/// range lies. A loud moment leaves the window after [`RANGE_SECONDS`], so a single knock
+/// cannot hold the top of the range for long.
+#[derive(Clone, Debug)]
+struct Ranger {
+    /// A ring of the newest values, written at `pos`.
+    values: Vec<f32>,
+    cap: usize,
+    pos: usize,
+    /// For the percentiles, so a query allocates nothing.
+    scratch: Vec<f32>,
+    /// The percentiles at [`RANGE_LOW`] and [`RANGE_HIGH`], `None` while out of date.
+    bounds: Option<(f64, f64)>,
+}
 
-impl Follower {
-    fn update(&mut self, x: f64, seconds: f64) -> f64 {
-        let fall = 10f64.powf(-FALL_DB_PER_S * seconds.max(0.0) / 20.0);
-        self.0 = (self.0 * fall).max(x);
-        self.0
+impl Ranger {
+    fn new(cap: usize) -> Self {
+        let cap = cap.max(1);
+        Self { values: Vec::with_capacity(cap), cap, pos: 0, scratch: Vec::with_capacity(cap), bounds: None }
     }
 
-    /// `x` over the follower (not below `floor`), clamped to 0..1.
-    fn scale(self, x: f64, floor: f64) -> f64 {
-        let reference = self.0.max(floor);
-        if reference > 0.0 { (x / reference).clamp(0.0, 1.0) } else { 0.0 }
+    fn push(&mut self, v: f64) {
+        if !v.is_finite() {
+            return;
+        }
+        // `as`: a level to the ring's precision.
+        let v = v.max(0.0) as f32;
+        if self.values.len() < self.cap {
+            self.values.push(v);
+        } else if let Some(slot) = self.values.get_mut(self.pos) {
+            *slot = v;
+        }
+        self.pos = (self.pos + 1) % self.cap;
+        self.bounds = None;
+    }
+
+    /// The low and high percentile of the window; `None` while it is empty.
+    fn bounds(&mut self) -> Option<(f64, f64)> {
+        if self.bounds.is_none() && !self.values.is_empty() {
+            self.scratch.clear();
+            self.scratch.extend_from_slice(&self.values);
+            let last = self.scratch.len() - 1;
+            // `as`: shares of the window to indices.
+            let lo = ((last as f64 * RANGE_LOW).round() as usize).min(last);
+            let hi = ((last as f64 * RANGE_HIGH).round() as usize).clamp(lo, last);
+            let (_, p_lo, above) = self.scratch.select_nth_unstable_by(lo, f32::total_cmp);
+            let p_lo = *p_lo;
+            let p_hi =
+                if hi == lo { p_lo } else { *above.select_nth_unstable_by(hi - lo - 1, f32::total_cmp).1 };
+            self.bounds = Some((f64::from(p_lo), f64::from(p_hi)));
+        }
+        self.bounds
+    }
+
+    /// `v` in the window's range: 0 at the low percentile, 0.85 at 85 % of the range, then
+    /// bending towards 1. A range with a top below [`RANGE_TINY`] gives 0.
+    fn scale(&mut self, v: f64) -> f64 {
+        let Some((lo, hi)) = self.bounds() else { return 0.0 };
+        if hi.is_nan() || hi <= RANGE_TINY || !v.is_finite() {
+            return 0.0;
+        }
+        let span = (hi - lo).max(RANGE_MIN_SPAN * hi);
+        knee((v - (hi - span)) / span)
+    }
+}
+
+/// 0 to 1 from a value that is mostly within 0 to 1: linear up to [`KNEE`], then bending to an
+/// asymptote at 1 with no kink.
+fn knee(x: f64) -> f64 {
+    if x.is_nan() || x <= 0.0 {
+        0.0
+    } else if x <= KNEE {
+        x
+    } else {
+        let room = 1.0 - KNEE;
+        KNEE + room * (1.0 - (-(x - KNEE) / room).exp())
     }
 }
 
@@ -287,8 +376,10 @@ pub struct Analyzer {
     beat_spectrum: Option<(i64, Vec<f32>, u32)>,
     /// The previous beat's mean log spectrum.
     last_spectrum: Option<Vec<f32>>,
-    followers: [Follower; 4],
-    spectrum_follower: Follower,
+    /// The ranges of level, low, mid and high.
+    ranges: [Ranger; 4],
+    /// The range of the loudest spectrum band, whose top is the spectrum's reference.
+    spectrum_range: Ranger,
     /// The band and spectrum amplitudes of the last block that completed a frame, for blocks
     /// too short to complete one.
     last_amps: ([f64; 3], Vec<f64>),
@@ -312,6 +403,7 @@ impl Analyzer {
         let fps = rate / hop as f64;
         let tempo_len = (TEMPO_SECONDS * fps).ceil() as usize;
         let picker_len = (0.3 * fps).ceil() as usize;
+        let range_len = (RANGE_SECONDS * fps).ceil() as usize;
         Ok(Analyzer {
             rate,
             hop,
@@ -343,8 +435,8 @@ impl Analyzer {
             ),
             beat_spectrum: None,
             last_spectrum: None,
-            followers: [Follower::default(); 4],
-            spectrum_follower: Follower::default(),
+            ranges: std::array::from_fn(|_| Ranger::new(range_len)),
+            spectrum_range: Ranger::new(range_len),
             last_amps: ([0.0; 3], Vec::new()),
             edges: None,
         })
@@ -381,12 +473,17 @@ impl Analyzer {
         let mut frames = 0usize;
         let bands = s.bands.clamp(1, MAX_BANDS);
         let mut spectrum_sq = vec![0.0f64; bands];
+        let trim = if s.trim_db.is_finite() { s.trim_db.clamp(-MAX_TRIM_DB, MAX_TRIM_DB) } else { 0.0 };
+        // `as`: a gain to the samples' precision.
+        let gain = 10f64.powf(trim / 20.0) as f32;
+        let floor_db = if s.floor_db.is_finite() { s.floor_db.clamp(-200.0, 0.0) } else { -60.0 };
+        let floor = 10f64.powf(floor_db / 20.0);
         for &x in samples {
             let x = if x.is_finite() { x.clamp(-16.0, 16.0) } else { 0.0 };
             sum_sq += f64::from(x) * f64::from(x);
             peak = peak.max(x.abs());
             if let Some(slot) = self.ring.get_mut(self.pos) {
-                *slot = x;
+                *slot = (x * gain).clamp(-16.0, 16.0);
             }
             self.pos = (self.pos + 1) % self.ring.len().max(1);
             self.since_hop += 1;
@@ -402,34 +499,40 @@ impl Analyzer {
                 }
                 f.onset |= frame.onset;
                 f.kick |= frame.kick;
+                self.range_hop(&frame, floor);
             }
         }
-        let seconds = samples.len() as f64 / self.rate;
         let n = samples.len().max(1) as f64;
         f.rms = (sum_sq / n).sqrt();
         f.peak = f64::from(peak);
-        let floor = 10f64.powf(s.floor_db.clamp(-200.0, 0.0) / 20.0);
         let per_frame = |v: f64| if frames > 0 { (v / frames as f64).sqrt() } else { 0.0 };
         if frames > 0 {
             self.last_amps = (bands_sq.map(per_frame), spectrum_sq.iter().map(|&v| per_frame(v)).collect());
         }
         let ([low, mid, high], amps) = &self.last_amps;
-        let raw = [f.rms, *low, *mid, *high];
+        let level = (low * low + mid * mid + high * high).sqrt();
+        let raw = [level, *low, *mid, *high];
         let mut amps = amps.clone();
         amps.resize(bands, 0.0);
+        let silent = s.normalize && level < floor;
         let mut out = [0.0; 4];
-        for ((o, r), fl) in out.iter_mut().zip(raw).zip(self.followers.iter_mut()) {
-            fl.update(r, seconds);
-            *o = if s.normalize { fl.scale(r, floor) } else { r };
+        if !silent {
+            for ((o, r), range) in out.iter_mut().zip(raw).zip(self.ranges.iter_mut()) {
+                *o = if s.normalize { range.scale(r) } else { r };
+            }
         }
         [f.level, f.low, f.mid, f.high] = out;
-        let loudest = amps.iter().copied().fold(0.0, f64::max);
-        let reference =
-            if s.normalize { self.spectrum_follower.update(loudest, seconds).max(floor) } else { 1.0 };
+        let reference = if !s.normalize {
+            1.0
+        } else if silent {
+            0.0
+        } else {
+            self.spectrum_range.bounds().map_or(0.0, |(_, hi)| hi)
+        };
         f.spectrum = amps
             .iter()
             .map(|&a| {
-                if a <= 0.0 || reference <= 0.0 {
+                if a <= 0.0 || reference <= RANGE_TINY {
                     return 0.0;
                 }
                 (1.0 + 20.0 * (a / reference).log10() / SPECTRUM_DB).clamp(0.0, 1.0)
@@ -437,6 +540,21 @@ impl Analyzer {
             .collect();
         self.describe(&mut f, s);
         f
+    }
+
+    /// Takes one frame's levels into the ranges, unless the frame is quieter than `floor`:
+    /// silence keeps the range of the sound before it.
+    fn range_hop(&mut self, frame: &Frame, floor: f64) {
+        let [low, mid, high] = frame.bands.map(|p| p.max(0.0).sqrt());
+        let level = (low * low + mid * mid + high * high).sqrt();
+        if level.is_nan() || level < floor {
+            return;
+        }
+        for (range, v) in self.ranges.iter_mut().zip([level, low, mid, high]) {
+            range.push(v);
+        }
+        let loudest = frame.spectrum.iter().copied().fold(0.0, f64::max);
+        self.spectrum_range.push(loudest.max(0.0).sqrt());
     }
 
     /// The phases and tempo as they stand.

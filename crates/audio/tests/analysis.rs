@@ -187,9 +187,10 @@ fn levels_of_sines() {
     let peak = f.spectrum.iter().cloned().enumerate().fold((0, 0.0), |b, c| if c.1 > b.1 { c } else { b });
     assert_eq!(f.spectrum.len(), 32);
     assert!(peak.0 > 24, "band {}", peak.0);
-    // Normalised, a quiet sine still reaches 1.
+    // Normalised, a quiet steady sine reads near the top of its range: the knee bends 1 to
+    // about 0.95.
     let f = run(rate, &sine(1000.0, 0.01), &Settings::default()).pop().unwrap().1;
-    assert!(f.level > 0.95 && f.mid > 0.95, "{} {}", f.level, f.mid);
+    assert!(f.level > 0.9 && f.mid > 0.9, "{} {}", f.level, f.mid);
 }
 
 #[test]
@@ -239,6 +240,7 @@ fn silence_noise_and_garbage() {
         bands: 100_000,
         normalize: true,
         floor_db: f64::NAN,
+        trim_db: f64::INFINITY,
         offset: f64::INFINITY,
     };
     let f = run(rate, &noise, &odd).pop().unwrap().1;
@@ -262,6 +264,143 @@ fn blocks_shorter_than_a_hop_keep_the_bands() {
         // After the first frame has filled.
         if i > 5 {
             assert!(f.mid > 0.3, "mid {}", f.mid);
+        }
+    }
+}
+
+/// `x` scaled to an RMS of `db` dBFS.
+fn scaled(mut x: Vec<f32>, db: f64) -> Vec<f32> {
+    let rms = (x.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / x.len().max(1) as f64).sqrt();
+    let gain = (10f64.powf(db / 20.0) / rms.max(1e-12)) as f32;
+    for v in &mut x {
+        *v *= gain;
+    }
+    x
+}
+
+/// The `p` percentile of `level`, `low`, `mid` and `high` over the frames from `from` to `to` s.
+fn spread(frames: &[(f64, Features)], from: f64, to: f64, p: f64) -> [f64; 4] {
+    let mut out = [0.0; 4];
+    for (k, o) in out.iter_mut().enumerate() {
+        let mut v: Vec<f64> = frames
+            .iter()
+            .filter(|(t, _)| *t >= from && *t < to)
+            .filter_map(|(_, f)| [f.level, f.low, f.mid, f.high].get(k).copied())
+            .collect();
+        v.sort_by(f64::total_cmp);
+        *o = v.get(((v.len().max(1) - 1) as f64 * p).round() as usize).copied().unwrap_or(f64::NAN);
+    }
+    out
+}
+
+/// A knock on the microphone at `at` s: 5 ms of decaying noise at half full scale.
+fn knock(x: &mut [f32], rate: f64, at: f64) {
+    let mut rng = Rng(11);
+    let start = (at * rate) as usize;
+    for i in 0..(0.005 * rate) as usize {
+        if let Some(s) = x.get_mut(start + i) {
+            *s += 0.5 * rng.next() * (-(i as f64) / (0.001 * rate)).exp() as f32;
+        }
+    }
+}
+
+#[test]
+fn quiet_music_moves_over_the_range_at_any_rate() {
+    for rate in [44_100.0, 48_000.0, 96_000.0] {
+        // A microphone in the room: the music at -45 dBFS RMS.
+        let x = scaled(house(rate, 12.0, |_| 124.0, 0.3).0, -45.0);
+        let frames = run(rate, &x, &Settings::default());
+        // The loop is sparse (the mid band has only the claps on 2 and 4), so most of the
+        // time sits low; the hits reach the top.
+        let (lo, hi) = (spread(&frames, 5.0, 12.0, 0.1), spread(&frames, 5.0, 12.0, 0.99));
+        for k in 0..4 {
+            assert!(lo[k] < 0.3 && hi[k] > 0.9, "{rate} Hz, value {k}: P10 {} P99 {}", lo[k], hi[k]);
+        }
+        assert!(
+            frames
+                .iter()
+                .all(|(_, f)| [f.level, f.low, f.mid, f.high].iter().all(|v| (0.0..=1.0).contains(v)))
+        );
+    }
+}
+
+#[test]
+fn a_knock_holds_the_range_for_four_seconds_at_most() {
+    let rate = 48_000.0;
+    let mut x = scaled(house(rate, 20.0, |_| 124.0, 0.3).0, -45.0);
+    knock(&mut x, rate, 8.0);
+    let frames = run(rate, &x, &Settings::default());
+    let clean = run(rate, &scaled(house(rate, 20.0, |_| 124.0, 0.3).0, -45.0), &Settings::default());
+    // One knock is a single hop of the 4 s window, far fewer than the 5 % above the top
+    // percentile: right after it, the bands read as they do without it.
+    for (from, to) in [(8.1, 12.0), (12.0, 20.0)] {
+        for p in [0.5, 0.9] {
+            let (a, b) = (spread(&frames, from, to, p), spread(&clean, from, to, p));
+            for k in 0..4 {
+                assert!(
+                    (a[k] - b[k]).abs() < 0.05,
+                    "value {k} from {from} s, P{p}: {} against {}",
+                    a[k],
+                    b[k]
+                );
+            }
+        }
+    }
+    // Half a second of loud noise fills more than 5 % of the window: it presses the bands
+    // down while it is in the window and is gone 4 s after it ended.
+    let mut loud = scaled(house(rate, 20.0, |_| 124.0, 0.3).0, -45.0);
+    let mut rng = Rng(13);
+    for v in loud.iter_mut().skip(8 * 48_000).take(24_000) {
+        *v += rng.next() * 0.3;
+    }
+    let frames = run(rate, &loud, &Settings::default());
+    let (a, b) = (spread(&frames, 9.0, 12.0, 0.9), spread(&clean, 9.0, 12.0, 0.9));
+    assert!(a.iter().zip(&b).all(|(a, b)| a < b), "{a:?} against {b:?}");
+    for p in [0.5, 0.9] {
+        let (a, b) = (spread(&frames, 12.6, 20.0, p), spread(&clean, 12.6, 20.0, p));
+        for k in 0..4 {
+            assert!((a[k] - b[k]).abs() < 0.05, "value {k} after the noise, P{p}: {} against {}", a[k], b[k]);
+        }
+    }
+}
+
+#[test]
+fn silence_reads_zero_and_keeps_the_range() {
+    let rate = 48_000.0;
+    let music = scaled(house(rate, 8.0, |_| 124.0, 0.3).0, -45.0);
+    let mut rng = Rng(5);
+    // Room noise 10 dB below the floor.
+    let hiss: Vec<f32> = (0..(rate * 4.0) as usize).map(|_| rng.next() * 0.0005).collect();
+    let x: Vec<f32> = music.iter().chain(&hiss).chain(&music).copied().collect();
+    let frames = run(rate, &x, &Settings::default());
+    for (t, f) in frames.iter().filter(|(t, _)| *t > 8.1 && *t < 12.0) {
+        assert_eq!([f.level, f.low, f.mid, f.high], [0.0; 4], "at {t:.2}");
+        assert!(f.spectrum.iter().all(|v| *v == 0.0), "spectrum at {t:.2}");
+    }
+    // The range is the music's from before the pause, so the music reads at once.
+    let back = spread(&frames, 12.2, 13.5, 0.99);
+    assert!(back.iter().all(|v| *v > 0.9), "{back:?}");
+    // A trim lifts the same noise above the floor.
+    let lifted = Settings { trim_db: 24.0, ..Settings::default() };
+    let f = run(rate, &hiss, &lifted).pop().unwrap().1;
+    assert!(f.level > 0.0 && f.spectrum.iter().any(|v| *v > 0.0), "{f:?}");
+    // rms and peak are the signal as it came in.
+    let plain = run(rate, &hiss, &Settings::default()).pop().unwrap().1;
+    assert!((f.rms - plain.rms).abs() < 1e-9 && (f.peak - plain.peak).abs() < 1e-9);
+}
+
+#[test]
+fn garbage_keeps_the_normalised_values_in_range() {
+    let rate = 96_000.0;
+    let mut x = scaled(house(rate, 6.0, |_| 124.0, 0.3).0, -45.0);
+    for (i, v) in x.iter_mut().enumerate().skip(2 * 96_000).take(10_000) {
+        *v = [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 1e30][i % 4];
+    }
+    for trim_db in [0.0, f64::NAN, -1e9, 24.0] {
+        let s = Settings { trim_db, ..Settings::default() };
+        for (t, f) in run(rate, &x, &s) {
+            let all = [f.level, f.low, f.mid, f.high].into_iter().chain(f.spectrum.iter().copied());
+            assert!(all.into_iter().all(|v| (0.0..=1.0).contains(&v)), "trim {trim_db} at {t:.2}: {f:?}");
         }
     }
 }

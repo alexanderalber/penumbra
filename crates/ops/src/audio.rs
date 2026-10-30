@@ -149,7 +149,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(
             ParamSpec::bool("normalize", true)
-                .doc("A quiet input still spans 0 to 1: levels and spectrum are measured relative to the loudest of the last seconds"),
+                .doc("A quiet input still spans 0 to 1: levels and spectrum are measured against their range over the last 4 seconds. Off: level and bands are the raw RMS, full scale is 1"),
         )
         .param(
             ParamSpec::float("floor", -60.0)
@@ -157,7 +157,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(-90.0, -20.0)
                 .unit(Unit::Decibels)
                 .group("levels")
-                .doc("Quieter than this counts as silence and is not raised by normalize"),
+                .doc("Quieter than this counts as silence: with normalize, levels and spectrum read 0. Set it above the room's noise, so a silent room reads 0"),
+        )
+        .param(
+            ParamSpec::float("trim", 0.0)
+                .clamp(-penumbra_audio::analysis::MAX_TRIM_DB, penumbra_audio::analysis::MAX_TRIM_DB)
+                .unit(Unit::Decibels)
+                .group("levels")
+                .doc("Makes the sound louder or quieter for the analysis only. Lift a quiet microphone until it is above floor. The rms and peak channels still show the sound as it comes in"),
         )
         .param(
             ParamSpec::float("low", 150.0)
@@ -343,6 +350,7 @@ impl Analysis {
             bands: usize::try_from(cx.int("bands")?).unwrap_or(32),
             normalize: cx.bool("normalize")?,
             floor_db: cx.float("floor")?,
+            trim_db: cx.float("trim")?,
             offset: cx.float("offset")? / 1000.0,
         })
     }

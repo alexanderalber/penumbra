@@ -177,8 +177,9 @@ fn an_old_audio_in_opens_as_a_device_in() {
         hub.feed("test", 48_000, 2, chunk).unwrap();
         std::thread::sleep(Duration::from_millis(10));
     }
+    // `rms`, since `level` reads 0 when the last block is the quiet tail between two kicks.
     eventually("the analysis to hear it", || {
-        channel(&f.call("chan.read", json!({"path": "/a"})), "level") > 0.0
+        channel(&f.call("chan.read", json!({"path": "/a"})), "rms") > 0.0
     });
     let read = f.call("chan.read", json!({"path": "/mic"}));
     assert_eq!(read["kind"], "audio", "{read}");

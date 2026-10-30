@@ -1109,8 +1109,9 @@ Outputs:
 | `sensitivity` | float | `0.5` | 0 to 1 | How readily an onset or kick counts: higher finds quieter ones |
 | `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered, in beats per minute. Keep min_bpm and max_bpm less than an octave apart: then a half or double tempo cannot be taken |
 | `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered, in beats per minute; see min_bpm |
-| `normalize` | bool | `true` |  | A quiet input still spans 0 to 1: levels and spectrum are measured relative to the loudest of the last seconds |
-| `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence and is not raised by normalize |
+| `normalize` | bool | `true` |  | A quiet input still spans 0 to 1: levels and spectrum are measured against their range over the last 4 seconds. Off: level and bands are the raw RMS, full scale is 1 |
+| `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence: with normalize, levels and spectrum read 0. Set it above the room's noise, so a silent room reads 0 |
+| `trim` *(levels)* | float | `0` | -24 to 24 dB | Makes the sound louder or quieter for the analysis only. Lift a quiet microphone until it is above floor. The rms and peak channels still show the sound as it comes in |
 | `low` *(levels)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends: the low channel is the level below this frequency |
 | `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high |
 | `bands` *(levels)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame |

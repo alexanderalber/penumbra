@@ -2508,7 +2508,7 @@ fn peak_line_high(px: &Pixels) -> bool {
 }
 
 /// An audio input fed by the test, into an analysis at 320 x 180 whose levels are the input's
-/// own (no normalising), so a block of 0.9 reads as level 0.9.
+/// own (no normalising), so a tone of RMS 0.9 reads as level 0.9.
 fn analysis_rig(gpu: Gpu, more: &[Op]) -> Rig {
     let mut ops = vec![
         create("/in", "audio.device_in", &[("device", "test".into())]),
@@ -2521,6 +2521,18 @@ fn analysis_rig(gpu: Gpu, more: &[Op]) -> Rig {
     ];
     ops.extend_from_slice(more);
     Rig::new(gpu, None, &ops)
+}
+
+/// A frame of a 1200 Hz tone with an RMS of `level`, two channels at 48 kHz: 20 whole periods,
+/// so frame after frame joins up. A steady value would be no sound: the analysis' `level`
+/// leaves out what is below 20 Hz.
+fn tone(level: f32) -> Vec<f32> {
+    (0..800)
+        .flat_map(|i| {
+            let v = level * std::f32::consts::SQRT_2 * (std::f32::consts::TAU * i as f32 / 40.0).sin();
+            [v, v]
+        })
+        .collect()
 }
 
 /// The analysis' meters output with `level` fed and shown (as a viewer shows it), once it has
@@ -2536,9 +2548,12 @@ fn meters_shown_at(rig: &mut Rig, level: f32) -> (Tex, Instant) {
     let meters = Port { node: a, output: 2 };
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut last = None;
+    // The analysis' frame is 2048 samples: the first feeds of a new level read it only in part.
+    let mut feeds = 0;
     loop {
         let cooked = Instant::now();
-        rig.audio.feed("test", 48_000, 2, &[level; 1600]).unwrap();
+        rig.audio.feed("test", 48_000, 2, &tone(level)).unwrap();
+        feeds += 1;
         rig.clock.advance(1);
         rig.cooker.cook_showing(&rig.net, rig.clock.now(), &[], &[], &[meters]);
         let s = rig.cooker.status(a).unwrap();
@@ -2548,7 +2563,7 @@ fn meters_shown_at(rig: &mut Rig, level: f32) -> (Tex, Instant) {
             Some(penumbra_graph::JobStatus::Queued | penumbra_graph::JobStatus::Running { .. })
         );
         if let Some(t) = rig.cooker.output(meters).and_then(|d| d.get::<Tex>()).cloned() {
-            if idle && last.is_some() {
+            if idle && last.is_some() && feeds > 3 {
                 return (t, cooked);
             }
             last = Some(t);
