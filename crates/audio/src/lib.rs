@@ -16,6 +16,8 @@
 //!   nodes on it played in a frame and pushes it to the device's player.
 //! - [`limiter`]: the look-ahead peak limiter every output ends in.
 //! - [`reverb`]: the room [`Reverb`] of every output, a feedback delay network.
+//! - [`resample`]: a streaming [`Resampler`] between any two sample rates, and the kernel the
+//!   playback engine shares.
 //! - [`measure`]: measures the delay from a push to the sound arriving back at an input.
 
 pub mod analysis;
@@ -26,6 +28,9 @@ pub mod limiter;
 pub mod measure;
 pub mod outputs;
 pub mod playback;
+pub mod resample;
+#[cfg(test)]
+mod resample_tests;
 pub mod reverb;
 #[cfg(test)]
 mod reverb_tests;
@@ -37,5 +42,6 @@ pub use envelope::{Detect, Envelope};
 pub use limiter::Limiter;
 pub use outputs::{BusStatus, LaneStatus, Outputs, Tap, TapBlock, Want, keep_off_devices};
 pub use playback::{Engine, EngineStatus, Player, PlayerStatus, output_devices};
+pub use resample::Resampler;
 pub use reverb::Reverb;
 pub use spectrum::Spectrum;

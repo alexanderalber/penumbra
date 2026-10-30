@@ -43,6 +43,8 @@ pub mod instrument;
 mod instrument_tests;
 pub mod lanes;
 pub mod mix;
+#[cfg(test)]
+mod mix_tests;
 pub mod oscillator;
 pub mod pitch;
 pub mod spectrum;

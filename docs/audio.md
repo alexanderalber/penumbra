@@ -22,8 +22,8 @@ sound to channels that params can be bound to.
   params `frequency` and `amplitude` can be bound; a change glides across one frame, so it
   does not click. `rate` is the sample rate, 48000 by default.
 - `audio.mix` adds up to eight sounds. Each input has its own gain (`gain0` to `gain7`), and
-  `gain` sets the whole. All inputs need the same sample rate; two rates are an error, since
-  the mix does not convert between them.
+  `gain` sets the whole. Inputs may have different sample rates. See
+  [Mixing rates and devices](#mixing-rates-and-devices).
 - `audio.filter` shapes a sound by frequency. See [Filter](#filter).
 - `audio.instrument` and `audio.ambience` are ready-made sounds in a key and scale, played by
   channels. See [Instruments and ambience](#instruments-and-ambience).
@@ -37,6 +37,26 @@ A tone generator makes exactly the samples of one frame. At 48 kHz and 60 fps th
 samples. At 44.1 kHz it alternates between 735 and 736, so the sound stays in step with the
 picture for hours. After skipped frames, the next block covers them all, up to half a second.
 After a longer pause or a jump in time, the sound starts over.
+
+## Mixing rates and devices
+
+**Rate.** `audio.mix` plays at the rate of its first wired input. Set `rate` (under more) to
+pick another, e.g. 48000. Every input at another rate is converted to it. The conversion keeps
+the sound flat within 0.01 dB up to 20 kHz. Everything it adds is more than 90 dB below the
+sound.
+
+**Pace.** The first wired input sets the pace: the mix makes a block whenever that input brings
+one. Wire the sound that matters most for timing to `in0`, usually a generator or instrument.
+
+**Delay.** Two sounds on the show clock at the mix's rate are added sample for sample, with no
+delay. A sound at another rate comes about 2 ms late. A microphone or interface
+(`audio.device_in`) delivers uneven pieces on its own clock. The mix queues it, and it comes
+about 12 to 16 ms late, about one of the device's buffers. The queue also follows the device's
+clock when it runs a little fast or slow.
+
+**Gaps.** When a device delivers too little, its sound fades out and back in. When it delivers
+far too much at once, the oldest part is dropped with a short crossfade. The node warns with
+the counts.
 
 ## Playing sound
 
@@ -58,7 +78,8 @@ Every output ends in a limiter that keeps the sound below -1 dBFS. It is always 
 sudden blast in a room full of people is the worst thing an installation can do. When the
 limiter has to work, the node warns how much it takes off. Turn `level` down until the warning
 goes. Several `out.audio` nodes on one device are added together, and their sum is limited too.
-They must share one sample rate.
+They must share one sample rate. To play sounds at different rates on one device, add them in
+one `audio.mix` first.
 
 Sound plays while the show runs. Pause the show and the output fades out; play it and the sound
 comes back. This holds for a microphone routed to `out.audio` too. `audio.mute` mutes every

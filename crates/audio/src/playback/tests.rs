@@ -249,7 +249,7 @@ fn a_44_1_khz_source_plays_on_a_48_khz_device() {
 #[test]
 fn resampled_output_has_no_spurs() {
     // A 48 kHz tone on a 44.1 kHz device: all energy at the tone, nothing more than 200 Hz away
-    // from it above -60 dB.
+    // from it above -90 dB.
     let mut sim = Sim::new(48_000, 44_100, 0.0);
     sim.freq = 5_000.0;
     let mut tail: Vec<f32> = Vec::new();
@@ -283,7 +283,7 @@ fn resampled_output_has_no_spurs() {
     println!("spur at {:.0} Hz", spur_bin as f64 * 44_100.0 / n as f64);
     let db = 20.0 * (spur / peak).log10();
     println!("largest spur {db:.1} dB");
-    assert!(db < -60.0, "largest spur {db:.1} dB");
+    assert!(db < -90.0, "largest spur {db:.1} dB");
 }
 
 #[test]

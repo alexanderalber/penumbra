@@ -665,7 +665,7 @@ water      15
 </li>
 <li><a class="ref" href="#audio.oscillator"><code>audio.oscillator</code></a> makes a test tone. <code>shape</code> is sine, saw, square, triangle or noise. The params <code>frequency</code> and <code>amplitude</code> can be bound; a change glides across one frame, so it does not click. <code>rate</code> is the sample rate, 48000 by default.
 </li>
-<li><a class="ref" href="#audio.mix"><code>audio.mix</code></a> adds up to eight sounds. Each input has its own gain (<code>gain0</code> to <code>gain7</code>), and <code>gain</code> sets the whole. All inputs need the same sample rate; two rates are an error, since the mix does not convert between them.
+<li><a class="ref" href="#audio.mix"><code>audio.mix</code></a> adds up to eight sounds. Each input has its own gain (<code>gain0</code> to <code>gain7</code>), and <code>gain</code> sets the whole. Inputs may have different sample rates. See <a href="#audio-mixing-rates-and-devices">Mixing rates and devices</a>.
 </li>
 <li><a class="ref" href="#audio.filter"><code>audio.filter</code></a> shapes a sound by frequency. See <a href="#audio-filter">Filter</a>.
 </li>
@@ -676,10 +676,15 @@ water      15
 </ul>
 <p>The viewer shows sound as the last 50 ms of its waveform and a peak meter per channel in dBFS. The waveform starts at a rising zero crossing, so a steady tone stands still.</p>
 <p>A tone generator makes exactly the samples of one frame. At 48 kHz and 60 fps that is 800 samples. At 44.1 kHz it alternates between 735 and 736, so the sound stays in step with the picture for hours. After skipped frames, the next block covers them all, up to half a second. After a longer pause or a jump in time, the sound starts over.</p>
+<h3 id="audio-mixing-rates-and-devices">Mixing rates and devices</h3>
+<p><strong>Rate.</strong> <a class="ref" href="#audio.mix"><code>audio.mix</code></a> plays at the rate of its first wired input. Set <code>rate</code> (under more) to pick another, e.g. 48000. Every input at another rate is converted to it. The conversion keeps the sound flat within 0.01 dB up to 20 kHz. Everything it adds is more than 90 dB below the sound.</p>
+<p><strong>Pace.</strong> The first wired input sets the pace: the mix makes a block whenever that input brings one. Wire the sound that matters most for timing to <code>in0</code>, usually a generator or instrument.</p>
+<p><strong>Delay.</strong> Two sounds on the show clock at the mix's rate are added sample for sample, with no delay. A sound at another rate comes about 2 ms late. A microphone or interface (<a class="ref" href="#audio.device_in"><code>audio.device_in</code></a>) delivers uneven pieces on its own clock. The mix queues it, and it comes about 12 to 16 ms late, about one of the device's buffers. The queue also follows the device's clock when it runs a little fast or slow.</p>
+<p><strong>Gaps.</strong> When a device delivers too little, its sound fades out and back in. When it delivers far too much at once, the oldest part is dropped with a short crossfade. The node warns with the counts.</p>
 <h3 id="audio-playing-sound">Playing sound</h3>
 <p><a class="ref" href="#out.audio"><code>out.audio</code></a> plays its input on a speaker or headphones. Mono plays on every speaker, stereo on left and right. <code>device</code> is part of an output's name; the <code>...</code> menu lists them, and empty is the system's default output. <code>level</code> is the volume in dB, and <code>mute</code> silences the node. Both glide across one frame.</p>
 <p><strong>Room.</strong> Every output plays its sound in a small room by default, so a synthesised sound does not come out bone dry. <code>reverb</code> sets how much room you hear: 0 plays the sound dry, 0.2 (the default) a small room you just notice, 1 only the room. At 0.2 the room's sound is about 11 dB below the direct sound. <code>room</code> sets how long the sound rings on: 0 dies away in 0.3 s, 0.4 (the default) in 0.85 s, 0.7 in 1.8 s and 1 in 4 s. <code>damping</code> (under more) makes high tones die away faster, for a warmer room. The room gives a mono sound stereo width; a mono speaker plays the mean of both sides. <code>mute</code> and a pause silence the room's tail too, and a seek clears it. Set <code>reverb</code> to 0 when the output feeds a room that already rings, or another reverb.</p>
-<p>Every output ends in a limiter that keeps the sound below -1 dBFS. It is always on, because a sudden blast in a room full of people is the worst thing an installation can do. When the limiter has to work, the node warns how much it takes off. Turn <code>level</code> down until the warning goes. Several <a class="ref" href="#out.audio"><code>out.audio</code></a> nodes on one device are added together, and their sum is limited too. They must share one sample rate.</p>
+<p>Every output ends in a limiter that keeps the sound below -1 dBFS. It is always on, because a sudden blast in a room full of people is the worst thing an installation can do. When the limiter has to work, the node warns how much it takes off. Turn <code>level</code> down until the warning goes. Several <a class="ref" href="#out.audio"><code>out.audio</code></a> nodes on one device are added together, and their sum is limited too. They must share one sample rate. To play sounds at different rates on one device, add them in one <a class="ref" href="#audio.mix"><code>audio.mix</code></a> first.</p>
 <p>Sound plays while the show runs. Pause the show and the output fades out; play it and the sound comes back. This holds for a microphone routed to <a class="ref" href="#out.audio"><code>out.audio</code></a> too. <a class="ref" href="#audio.mute"><code>audio.mute</code></a> mutes every output at once: a panic button, also in Helpers &gt; Audio.</p>
 <p>The delay from a frame to the speaker has two parts. <code>latency</code> is what penumbra queues, 50 ms by default. The device adds its own buffer, about 30 to 50 ms in Windows' shared mode. A smaller <code>latency</code> answers faster. 30 ms holds on a calm machine, but then a late frame is heard as a gap. <a class="ref" href="#audio.status"><code>audio.status</code></a> shows the delay and counts the gaps. <a class="ref" href="#audio.measure_latency"><code>audio.measure_latency</code></a> plays quiet clicks and finds them again on an input. The input <code>loopback:Speakers</code> records what the output named Speakers plays, without a cable.</p>
 <p><strong>Recording.</strong> <a class="ref" href="#out.video"><code>out.video</code></a> records the sound with the picture: the sum of every <a class="ref" href="#out.audio"><code>out.audio</code></a>, as the speakers get it, each frame of sound at its show time. This holds for a render slower than real time too, where nothing plays on the speakers. See <a href="#recording-sound">Recording</a>. <a class="ref" href="#out.audio_file"><code>out.audio_file</code></a> records sound alone, see below.</p>
@@ -3982,7 +3987,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>spread</code></td><td>int</td><td><code>1</code></td><td>0 to 7 (soft)</td><td>Notes of the scale between neighbouring gate channels: with 1, channel 0 holds the root, channel 1 the next note up, and so on</td></tr>
 <tr><td><code>glide</code></td><td>float</td><td><code>0.1</code></td><td>0.005 to 20 s (soft)</td><td>Seconds that pitch, brightness, swarm, density and level take to get 90% of the way to a new value. At least 5 ms</td></tr>
 <tr><td><code>threshold</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>A gate channel above this value sounds its tone. 0 suits pulses from 0 to 1 and waves around 0</td></tr>
-<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made; nodes that mix sound need the same rate on all inputs</td></tr>
+<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates</td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a></p>
@@ -4003,7 +4008,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the input's name (Helpers &gt; Audio lists them), e.g. <code>Focusrite</code>; empty: the system's default input</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="audio.filter"><summary><code class="name">audio.filter</code><span class="sum">Shapes a sound by frequency: removes the highs or the lows, picks out or cuts a band, or turns a range up or down. Every channel is filtered on its own</span></summary>
 <div class="body">
@@ -4063,7 +4068,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>spread</code></td><td>int</td><td><code>1</code></td><td>0 to 7 (soft)</td><td>Notes of the scale between neighbouring play channels: with 1, channel 0 plays the root, channel 1 the next note up, and so on</td></tr>
 <tr><td><code>threshold</code></td><td>float</td><td><code>0</code></td><td>-1 to 1 (soft)</td><td>The value a play channel must cross to start a note. 0 suits pulses from 0 to 1 and waves around 0</td></tr>
 <tr><td><code>voices</code></td><td>int</td><td><code>32</code></td><td>1 to 64 (soft)</td><td>Most notes sounding at once. One more fades out the oldest in 5 ms</td></tr>
-<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made; nodes that mix sound need the same rate on all inputs</td></tr>
+<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates</td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-params">Concepts › Params</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a></p>
@@ -4071,9 +4076,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry node" id="audio.mix"><summary><code class="name">audio.mix</code><span class="sum">Adds sounds together, each by its own gain</span></summary>
 <div class="body">
 <p>Adds sounds together, each by its own gain</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>in0 .. in7</code> <span class="kind">audio</span>: The sounds to add, all at one sample rate. The output has the channels of the first wired one Any number, up to 8: each one wired adds a free slot below it.</li>
+<li><code>in0 .. in7</code> <span class="kind">audio</span>: The sounds to add, at any sample rate. The first wired one sets the channels, and the rate when rate is 0 Any number, up to 8: each one wired adds a free slot below it.</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -4093,9 +4099,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>gain5</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in5 before it is added; 0 mutes it</td></tr>
 <tr><td><code>gain6</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in6 before it is added; 0 mutes it</td></tr>
 <tr><td><code>gain7</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>Multiplies input in7 before it is added; 0 mutes it</td></tr>
+<tr><td><code>rate</code></td><td>int</td><td><code>0</code></td><td>0 to 192000</td><td>Samples per second of the mix. 0 takes the rate of the first wired input. Inputs at another rate are converted to it</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a></p>
+<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-playing-sound">Audio › Playing sound</a></p>
 </div></details>
 <details class="entry node" id="audio.oscillator"><summary><code class="name">audio.oscillator</code><span class="sum">A test tone or noise as sound: sine, saw, square, triangle, noise</span></summary>
 <div class="body">
@@ -4116,7 +4123,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>amplitude</code></td><td>float</td><td><code>0.25</code></td><td>0 to 1 (soft)</td><td>The peak of the wave; 1 is full scale. A change glides across one frame</td></tr>
 <tr><td><code>name</code></td><td>text</td><td><code>&quot;ch1&quot;</code></td><td></td><td>Name of the channel it makes, as other nodes see it</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made; nodes that mix sound need the same rate on all inputs</td></tr>
+<tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates</td></tr>
 <tr><td><code>seed</code></td><td>int</td><td><code>0</code></td><td>0 to 100 (soft)</td><td>Picks another noise of the same character</td></tr>
 </tbody>
 </table>

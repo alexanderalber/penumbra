@@ -1576,7 +1576,7 @@ Outputs: `out` (audio).
 | `attack` | float | `0.1` | 0.005 to 20 s (soft) | Seconds a tone takes to fade in when its gate opens. At least 5 ms |
 | `release` | float | `0.5` | 0.005 to 20 s (soft) | Seconds a tone takes to fade out when its gate closes. At least 5 ms. Does something only while gate is wired. |
 | `threshold` *(more)* | float | `0` | -1 to 1 (soft) | A gate channel above this value sounds its tone. 0 suits pulses from 0 to 1 and waves around 0. Does something only while gate is wired. |
-| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made; nodes that mix sound need the same rate on all inputs |
+| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates |
 | `name` | text | `"ch1"` |  | Name of the channel it makes, as other nodes see it |
 
 ### audio.device_in
@@ -1639,16 +1639,18 @@ Outputs: `out` (audio).
 | `trigger` | up \| down \| both | `"up"` |  | Which crossings of threshold by a play channel start a note; up: the value rises above threshold: a pulse from 0 to 1 plays once; down: the value falls to threshold or below; both: either way: a swinging value plays at every pass, as a pendulum at the bottom. Does something only while play is wired. |
 | `threshold` *(more)* | float | `0` | -1 to 1 (soft) | The value a play channel must cross to start a note. 0 suits pulses from 0 to 1 and waves around 0. Does something only while play is wired. |
 | `voices` *(more)* | int | `32` | 1 to 64 (soft) | Most notes sounding at once. One more fades out the oldest in 5 ms |
-| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made; nodes that mix sound need the same rate on all inputs |
+| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates |
 | `name` | text | `"ch1"` |  | Name of the channel it makes, as other nodes see it |
 
 ### audio.mix
 
 Adds sounds together, each by its own gain
 
+Follows the show clock: cooks again whenever time moves.
+
 Inputs:
 
-- `in0 .. in7` (audio): The sounds to add, all at one sample rate. The output has the channels of the first wired one. Any number, up to 8: each one wired adds a free slot below it
+- `in0 .. in7` (audio): The sounds to add, at any sample rate. The first wired one sets the channels, and the rate when rate is 0. Any number, up to 8: each one wired adds a free slot below it
 
 Outputs: `out` (audio).
 
@@ -1663,6 +1665,7 @@ Outputs: `out` (audio).
 | `gain5` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in5 before it is added; 0 mutes it |
 | `gain6` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in6 before it is added; 0 mutes it |
 | `gain7` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in7 before it is added; 0 mutes it |
+| `rate` *(more)* | int | `0` | 0 to 192000 | Samples per second of the mix. 0 takes the rate of the first wired input. Inputs at another rate are converted to it |
 
 ### audio.oscillator
 
@@ -1679,7 +1682,7 @@ Outputs: `out` (audio).
 | `shape` | sine \| saw \| square \| triangle \| noise | `"sine"` |  | The form of the wave, from -1 to 1 before amplitude; sine: a pure tone; saw: rising evenly from -1 to 1, then jumping back: bright and buzzing; square: 1 for the first half of each wave, -1 for the second: hollow; triangle: straight up and straight down: softer than the square; noise: white noise, the same for one seed on every machine |
 | `frequency` | float | `440` | 20 to 20000 Hz (soft) | Waves per second: 440 Hz is the A above middle C. A change glides across one frame. Does something only with shape sine, saw, square or triangle. |
 | `amplitude` | float | `0.25` | 0 to 1 (soft) | The peak of the wave; 1 is full scale. A change glides across one frame |
-| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made; nodes that mix sound need the same rate on all inputs |
+| `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates |
 | `seed` *(more)* | int | `0` | 0 to 100 (soft) | Picks another noise of the same character. Does something only with shape noise. |
 | `name` | text | `"ch1"` |  | Name of the channel it makes, as other nodes see it |
 

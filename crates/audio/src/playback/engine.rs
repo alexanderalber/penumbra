@@ -3,12 +3,12 @@
 //! [`Engine::pull`].
 //!
 //! - **Ring:** source frames, interleaved, preallocated when the source format changes (on the
-//!   producer's side, never in the device callback). The first [`TAPS`] frames are mirrored past
-//!   the end, so the resampler's window is always one contiguous slice.
-//! - **Resampler:** windowed sinc, [`TAPS`] taps, a Kaiser window, [`PHASES`] phases with linear
-//!   interpolation between them. The cutoff is half the lower of the two rates, so a 48 kHz
-//!   source on a 44.1 kHz device is filtered before it is decimated. The same path runs when
-//!   both rates are equal; the ratio is then 1 plus the drift correction.
+//!   producer's side, never in the device callback). The first [`MIRROR`] frames are mirrored
+//!   past the end, so the resampler's window is always one contiguous slice.
+//! - **Resampler:** the [`Kernel`] of [`crate::resample`] (windowed sinc, cut off at half the
+//!   lower of the two rates, 64 taps or more when the rate falls), read straight from the ring:
+//!   the ring is the resampler's history, and the device pulls as many frames as it needs. The
+//!   same path runs when both rates are equal; the ratio is then 1 plus the drift correction.
 //! - **Drift loop:** the producer follows the show clock, the device its own crystal. A slow PI
 //!   loop steers the smoothed fill to the target by nudging the ratio, at most
 //!   [`MAX_CORRECTION`].
@@ -22,12 +22,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Taps of the resampling filter.
-pub const TAPS: usize = 32;
-/// Filter phases between two source samples (interpolated linearly in between).
-pub const PHASES: usize = 256;
-/// Kaiser window shape: about 70 dB stopband.
-const KAISER_BETA: f64 = 7.0;
+use crate::resample::{self, Kernel};
+
+/// Frames mirrored past the end of the ring: the longest kernel.
+pub const MIRROR: usize = resample::MAX_TAPS;
 /// Most source or device channels.
 pub const MAX_CHANNELS: usize = 64;
 /// Source rates accepted, Hz.
@@ -133,7 +131,7 @@ pub struct Engine {
     settings: Settings,
     rate: u32,
     channels: usize,
-    /// `(cap + TAPS) * channels` samples: `cap` frames and the first `TAPS` mirrored.
+    /// `(cap + MIRROR) * channels` samples: `cap` frames and the first `MIRROR` mirrored.
     ring: Vec<f32>,
     cap: usize,
     /// The oldest frame still needed (the start of the resampler's window).
@@ -141,9 +139,10 @@ pub struct Engine {
     len: usize,
     device_rate: u32,
     device_channels: usize,
-    /// One row of coefficients per phase, and one more for the interpolation.
-    kernel: Vec<[f32; TAPS]>,
-    coeffs: [f32; TAPS],
+    /// The kernel for the source and device rates (none before both are known).
+    kernel: Option<Kernel>,
+    /// The kernel's coefficients at the play point, [`MIRROR`] long, so a pull never allocates.
+    coeffs: Vec<f32>,
     mix: [f32; MAX_CHANNELS],
     base_step: f64,
     frac: f64,
@@ -181,8 +180,8 @@ impl Engine {
             len: 0,
             device_rate: 0,
             device_channels: 0,
-            kernel: vec![[0.0; TAPS]; PHASES + 1],
-            coeffs: [0.0; TAPS],
+            kernel: None,
+            coeffs: vec![0.0; MIRROR],
             mix: [0.0; MAX_CHANNELS],
             base_step: 1.0,
             frac: 0.0,
@@ -212,7 +211,7 @@ impl Engine {
         if self.rate != 0 && self.channels != 0 && cap != self.cap {
             // Keeps the newest frames that fit; the output fades in again.
             let keep = self.len.min(cap);
-            let mut ring = vec![0.0; (cap + TAPS) * self.channels];
+            let mut ring = vec![0.0; (cap + MIRROR) * self.channels];
             let ch = self.channels;
             for i in 0..keep {
                 let from = (self.head + self.len - keep + i) % self.cap.max(1);
@@ -294,13 +293,18 @@ impl Engine {
     fn capacity_for(&self, rate: u32) -> usize {
         let seconds = RING_SECONDS + 3.0 * self.settings.latency_seconds();
         // `as`: a positive count of frames, well inside `usize`.
-        ((f64::from(rate) * seconds).ceil() as usize).max(TAPS * 4)
+        ((f64::from(rate) * seconds).ceil() as usize).max(MIRROR * 2)
+    }
+
+    /// Frames the kernel reads per output frame.
+    fn taps(&self) -> usize {
+        self.kernel.as_ref().map_or(resample::BASE_TAPS, Kernel::taps)
     }
 
     /// Frames in the ring when the fill is at the target.
     fn target_len(&self) -> usize {
         // `as`: a positive count of frames.
-        (self.target_frames().round() as usize) + TAPS / 2
+        (self.target_frames().round() as usize) + self.taps() / 2
     }
 
     fn target_frames(&self) -> f64 {
@@ -310,7 +314,7 @@ impl Engine {
     /// Queued frames ahead of what plays now (the play point sits in the window's middle).
     fn fill_frames(&self) -> f64 {
         // `as`: frame counts to a fractional position.
-        (self.len as f64 - (TAPS / 2 - 1) as f64 - self.frac).max(0.0)
+        (self.len as f64 - (self.taps() / 2 - 1) as f64 - self.frac).max(0.0)
     }
 
     /// Queues one block, one slice per channel, all of one length. Non-numbers play as
@@ -343,7 +347,7 @@ impl Engine {
             self.rate = rate;
             self.channels = channels;
             self.cap = self.capacity_for(rate);
-            self.ring = vec![0.0; (self.cap + TAPS) * channels];
+            self.ring = vec![0.0; (self.cap + MIRROR) * channels];
             self.head = 0;
             self.len = 0;
             self.frac = 0.0;
@@ -405,29 +409,7 @@ impl Engine {
         }
         let ratio = f64::from(self.device_rate) / f64::from(self.rate);
         self.base_step = 1.0 / ratio;
-        // Cutoff in cycles per source sample: half the lower rate.
-        let fc = 0.5 * ratio.min(1.0);
-        let half = (TAPS / 2) as f64;
-        let i0b = bessel_i0(KAISER_BETA);
-        for (p, row) in self.kernel.iter_mut().enumerate() {
-            let frac = p as f64 / PHASES as f64;
-            let mut sum = 0.0;
-            for (k, h) in row.iter_mut().enumerate() {
-                // Distance of tap `k` from the play point at `TAPS / 2 - 1 + frac`.
-                let t = k as f64 - (half - 1.0) - frac;
-                let x = t / half;
-                let w = if x.abs() < 1.0 { bessel_i0(KAISER_BETA * (1.0 - x * x).sqrt()) / i0b } else { 0.0 };
-                let v = 2.0 * fc * sinc(2.0 * fc * t) * w;
-                sum += v;
-                *h = v as f32;
-            }
-            if sum.abs() > 1e-9 {
-                for h in row.iter_mut() {
-                    // `as`: the normalisation in f64, stored as f32.
-                    *h = (f64::from(*h) / sum) as f32;
-                }
-            }
-        }
+        self.kernel = Some(Kernel::new(f64::from(self.rate), f64::from(self.device_rate)));
     }
 
     /// Fills `out` (interleaved, the device's channel count from [`Engine::set_device`]) with
@@ -448,6 +430,7 @@ impl Engine {
         let fade = 1.0 / (FADE_SECONDS * f64::from(self.device_rate)).max(1.0);
         let start = self.start_len(step, fade);
         let target = self.target_len();
+        let taps = self.taps();
         let ch = self.channels;
         for frame in out.chunks_exact_mut(dc) {
             match self.state {
@@ -474,14 +457,14 @@ impl Engine {
                     // Starts the fade while enough is left to finish it.
                     let needed = (self.gain / fade) * step + 2.0;
                     // `as`: a frame count to compare with a fractional need.
-                    if ((self.len - TAPS.min(self.len)) as f64) < needed {
+                    if ((self.len - taps.min(self.len)) as f64) < needed {
                         self.state = State::FadingOut;
                         self.underruns += 1;
                     }
                 }
                 State::FadingOut | State::Dropping => {}
             }
-            if self.len < TAPS {
+            if self.len < taps {
                 self.silence();
                 continue;
             }
@@ -529,7 +512,7 @@ impl Engine {
     /// starts near the target), and at least enough for a fade.
     fn start_len(&self, step: f64, fade: f64) -> usize {
         // `as`: a positive count of frames.
-        let fade_len = (step / fade).ceil() as usize + TAPS + 4;
+        let fade_len = (step / fade).ceil() as usize + self.taps() + 4;
         // `as`: a positive count of frames.
         let half_block = self.last_block.min(self.target_frames() as usize) / 2;
         (self.target_len() + half_block).max(fade_len)
@@ -560,21 +543,23 @@ impl Engine {
 
     /// The source channels at the play point, into `mix`.
     fn interpolate(&mut self) {
-        let p = self.frac * PHASES as f64;
-        let i = (p.floor() as usize).min(PHASES - 1);
-        // `as`: the fraction between two phases.
-        let t = (p - i as f64) as f32;
-        let (Some(a), Some(b)) = (self.kernel.get(i), self.kernel.get(i + 1)) else {
+        let Some(kernel) = &self.kernel else {
             return;
         };
-        for ((c, x), y) in self.coeffs.iter_mut().zip(a).zip(b) {
-            *c = x + (y - x) * t;
-        }
+        let taps = kernel.taps();
+        kernel.coefficients(self.frac, &mut self.coeffs);
+        let coeffs = self.coeffs.get(..taps).unwrap_or(&[]);
         let ch = self.channels;
-        let window = self.ring.get(self.head * ch..(self.head + TAPS) * ch).unwrap_or(&[]);
+        let window = self.ring.get(self.head * ch..(self.head + taps) * ch).unwrap_or(&[]);
         let mix = self.mix.get_mut(..ch).unwrap_or(&mut []);
         mix.fill(0.0);
-        for (frame, h) in window.chunks_exact(ch).zip(self.coeffs.iter()) {
+        if ch == 1 {
+            if let Some(m) = mix.first_mut() {
+                *m = resample::dot(coeffs, window);
+            }
+            return;
+        }
+        for (frame, h) in window.chunks_exact(ch).zip(coeffs) {
             for (m, v) in mix.iter_mut().zip(frame) {
                 *m += h * v;
             }
@@ -615,12 +600,12 @@ fn check(rate: u32, channels: usize) -> Result<(), String> {
     Ok(())
 }
 
-/// Writes one sample of frame `at`, mirrored past the end for the first [`TAPS`] frames.
+/// Writes one sample of frame `at`, mirrored past the end for the first [`MIRROR`] frames.
 fn write(ring: &mut [f32], cap: usize, ch: usize, at: usize, c: usize, v: f32) {
     if let Some(s) = ring.get_mut(at * ch + c) {
         *s = v;
     }
-    if at < TAPS
+    if at < MIRROR
         && let Some(s) = ring.get_mut((cap + at) * ch + c)
     {
         *s = v;
@@ -649,29 +634,4 @@ fn map(mix: &[f32], ch: usize, frame: &mut [f32], g: f32) {
 fn smoothstep(x: f64) -> f64 {
     let x = x.clamp(0.0, 1.0);
     x * x * (3.0 - 2.0 * x)
-}
-
-fn sinc(x: f64) -> f64 {
-    if x.abs() < 1e-12 {
-        1.0
-    } else {
-        let px = std::f64::consts::PI * x;
-        px.sin() / px
-    }
-}
-
-/// The modified Bessel function of the first kind, order zero (for the Kaiser window).
-fn bessel_i0(x: f64) -> f64 {
-    let mut sum = 1.0;
-    let mut term = 1.0;
-    let half = x / 2.0;
-    for k in 1..64 {
-        let f = half / f64::from(k);
-        term *= f * f;
-        sum += term;
-        if term < sum * 1e-16 {
-            break;
-        }
-    }
-    sum
 }

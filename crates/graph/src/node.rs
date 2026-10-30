@@ -49,7 +49,8 @@ pub enum DataKind {
     /// - A source on a device clock (`audio.device_in`, an NDI source's audio) outputs what
     ///   arrived since its last cook, whatever its length, and hands the same result on
     ///   (`Data::same`) while nothing new came.
-    /// - Nodes combining audio refuse inputs at different sample rates; nothing resamples.
+    /// - `audio.mix` converts inputs at other sample rates to its own and queues those not in
+    ///   step with its first input. The `out.audio` nodes on one device must share one rate.
     Audio,
 }
 

@@ -29,7 +29,7 @@ use serde::Serialize;
 
 pub use engine::{
     Engine, EngineStatus, FADE_SECONDS, MAX_CHANNELS, MAX_CORRECTION, MAX_LATENCY_MS, MAX_RATE,
-    MIN_LATENCY_MS, MIN_RATE, PHASES, Settings, State, TAPS,
+    MIN_LATENCY_MS, MIN_RATE, MIRROR, Settings, State,
 };
 
 use crate::capture::DeviceInfo;

@@ -196,20 +196,6 @@ fn mix_adds_by_gain_and_matches_channels_by_name() {
     assert!((c.channels()[0].samples[10] - 0.25).abs() < 1e-9);
 }
 
-#[test]
-fn mix_refuses_two_rates() {
-    let mut ops = osc("/a", "sine", 440.0);
-    ops.extend(osc("/b", "sine", 440.0));
-    ops.extend([
-        set("/b.rate", 44_100),
-        create("/m", "audio.mix"),
-        connect("/a", "/m", 0),
-        connect("/b", "/m", 1),
-    ]);
-    let e = F::new(&ops).cook("/m").unwrap_err();
-    assert!(e.contains("44100") && e.contains("48000") && e.contains("resample"), "{e}");
-}
-
 /// A sound cannot be wired into a chan input, nor a channel into an audio input.
 #[test]
 fn audio_and_chan_do_not_connect() {

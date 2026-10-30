@@ -46,7 +46,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .doc("The peak of the wave; 1 is full scale. A change glides across one frame"),
             )
             .param(ParamSpec::int("rate", 48_000).clamp(f64::from(MIN_RATE), f64::from(MAX_RATE)).more().doc(
-                "Samples per second of the sound made; nodes that mix sound need the same rate on all inputs",
+                "Samples per second of the sound made. out.audio nodes on one device need the same rate; audio.mix converts between rates",
             ))
             .param(
                 ParamSpec::int("seed", 0)

@@ -663,7 +663,7 @@ impl Outputs {
             if let Some((id, l)) = other {
                 bus.refused += 1;
                 return Err(format!(
-                    "node {id} plays on this device at {} Hz, this one at {rate} Hz: give both the same rate",
+                    "node {id} plays on this device at {} Hz, this one at {rate} Hz: give both the same rate, or play both through one audio.mix",
                     l.rate
                 ));
             }
