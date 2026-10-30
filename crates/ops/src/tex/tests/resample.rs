@@ -71,6 +71,12 @@ fn linear_shrinking_is_the_mean_of_the_footprint() {
     // 48 to 1, beyond the 16 a pass averaged before: stripes every third column are grey.
     let Some(row) = scaled("stripes", "stripes.wgsl", 384, 8, "linear") else { return };
     assert!(close(&row, &[1.0 / 3.0; 8], 0.01), "{row:?}");
+    // 100 to 1 (a resolution of 1 %): still grey, and a ramp keeps its place.
+    let Some(row) = scaled("stripes_far", "stripes.wgsl", 1600, 16, "linear") else { return };
+    assert!(close(&row, &[1.0 / 3.0; 16], 0.01), "{row:?}");
+    let Some(row) = scaled("box_far", "index.wgsl", 1600, 16, "linear") else { return };
+    let ramp: Vec<f32> = (0..16).map(|j| (j as f32 + 0.5) * 100.0 - 0.5).collect();
+    assert!(close(&row, &ramp, 1.0), "{row:?}");
 }
 
 #[test]
@@ -84,10 +90,15 @@ fn cubic_keeps_a_ramp_straight_growing_and_shrinking() {
     assert!(close(&row[4..12], &ramp(0.5, 4..12), 0.01), "{row:?}");
     let Some(row) = scaled("cubic_down", "index.wgsl", 64, 8, "cubic") else { return };
     assert!(close(&row[2..6], &ramp(8.0, 2..6), 0.05), "{row:?}");
+    // Far beyond 16 texels per pixel the kernel still sits on the pixel, not beside it.
+    let Some(row) = scaled("cubic_far", "index.wgsl", 1600, 16, "cubic") else { return };
+    assert!(close(&row[2..14], &ramp(100.0, 2..14), 1.0), "{row:?}");
     // Shrinking it averages: stripes are grey, with taps on every texel (12 to 1) and on every
     // other texel's edge (24 to 1). The held edges shade the outer pixels.
     let Some(row) = scaled("cubic_stripes", "stripes.wgsl", 96, 8, "cubic") else { return };
     assert!(close(&row[2..6], &[1.0 / 3.0; 4], 0.01), "{row:?}");
     let Some(row) = scaled("cubic_stripes_far", "stripes.wgsl", 384, 16, "cubic") else { return };
+    assert!(close(&row[2..14], &[1.0 / 3.0; 12], 0.01), "{row:?}");
+    let Some(row) = scaled("cubic_stripes_100", "stripes.wgsl", 1600, 16, "cubic") else { return };
     assert!(close(&row[2..14], &[1.0 / 3.0; 12], 0.01), "{row:?}");
 }

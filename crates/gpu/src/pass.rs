@@ -163,9 +163,9 @@ fn pn_area(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f) -> vec4f
 }
 
 // The source at `uv` for an output pixel `footprint` source texels wide. `mode` 0 linear
-// (bilinear growing, the mean of the footprint shrinking, exact up to 64 texels per axis),
-// 1 cubic (Catmull-Rom, its kernel stretched over the footprint shrinking, up to 16 texels),
-// 2 nearest (the one texel under the pixel, hard edges, aliases when shrinking).
+// (bilinear growing, the mean of the footprint shrinking), 1 cubic (Catmull-Rom, its kernel
+// stretched over the footprint shrinking); both count every texel up to 512 texels per pixel
+// (cubic 128) and skip some beyond. 2 nearest (the one texel under the pixel, hard edges, aliases when shrinking).
 fn pn_resample(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, mode: i32) -> vec4f {
     let size = vec2f(textureDimensions(t));
     switch mode {
@@ -179,7 +179,9 @@ fn pn_resample(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, mode
                 for (var i = 0; i < n.x; i++) {
                     let tx = pn_cubic_tap(x.x, footprint.x, i);
                     let w = tx.y * ty.y;
-                    sum += w * textureSampleLevel(t, s, vec2f(tx.x, ty.x) / size, 0.0);
+                    // A tap stands for the texels up to the next: the mean of them.
+                    let span = vec2f(pn_cubic_step(footprint.x), pn_cubic_step(footprint.y));
+                    sum += w * pn_box(t, s, vec2f(tx.x, ty.x) / size, span, 8.0);
                     weight += w;
                 }
             }
@@ -192,7 +194,22 @@ fn pn_resample(t: texture_2d<f32>, s: sampler, uv: vec2f, footprint: vec2f, mode
             return textureSampleLevel(t, s, (floor(uv * size) + 0.5) / size, 0.0);
         }
         default: {
-            return pn_box(t, s, uv, footprint, 32.0);
+            if (all(footprint <= vec2f(16.0))) {
+                return pn_box(t, s, uv, footprint, 8.0);
+            }
+            // Beyond 16 texels a row of boxes, each an even number of whole texels wide, so its
+            // taps sit on texel edges and average exactly; the row is snapped to whole texels.
+            let part = 2.0 * ceil(footprint / 32.0);
+            let n = vec2i(clamp(round(footprint / part), vec2f(1.0), vec2f(32.0)));
+            let start = round(uv * size - vec2f(n) * part * 0.5);
+            var sum = vec4f(0.0);
+            for (var j = 0; j < n.y; j++) {
+                for (var i = 0; i < n.x; i++) {
+                    let at = start + (vec2f(f32(i), f32(j)) + 0.5) * part;
+                    sum += pn_box(t, s, at / size, part, 8.0);
+                }
+            }
+            return sum / f32(n.x * n.y);
         }
     }
 }
@@ -224,14 +241,18 @@ fn pn_catmull_rom(x: f32) -> f32 {
 
 // Catmull-Rom taps along one axis for an output pixel `k` source texels wide. The kernel is 4
 // texels wide growing and stretched to 4k shrinking. Up to 8 texels per pixel a tap sits on
-// every texel's centre, beyond on every other texel's edge, where linear filtering averages two
-// texels equally: each texel counts once either way. At most 33 taps, so 16 texels per pixel.
+// every texel's centre. Beyond, taps sit on texel edges an even number of texels apart, each
+// the mean of the texels up to the next (linear filtering averages the two at an edge
+// equally): each texel counts once, up to 33 taps.
 fn pn_cubic_count(k: f32) -> i32 {
-    return i32(min(ceil(4.0 * max(k, 1.0) / pn_cubic_step(k)), 32.0)) + 1;
+    return i32(ceil(4.0 * max(k, 1.0) / pn_cubic_step(k))) + 1;
 }
 
 fn pn_cubic_step(k: f32) -> f32 {
-    return select(1.0, 2.0, k > 8.0);
+    if (k <= 8.0) {
+        return 1.0;
+    }
+    return 2.0 * ceil(k / 16.0);
 }
 
 // Tap `i` at `x` (texels from the edge): its position in texels and its weight, not yet
@@ -239,7 +260,7 @@ fn pn_cubic_step(k: f32) -> f32 {
 fn pn_cubic_tap(x: f32, k: f32, i: i32) -> vec2f {
     let unit = max(k, 1.0);
     let step = pn_cubic_step(k);
-    let p = floor(x - 2.0 * unit) + step * 0.5 + step * f32(i);
+    let p = floor(x - 2.0 * unit) + step * (f32(i) + 0.5);
     return vec2f(p, pn_catmull_rom((p - x) / unit));
 }
 
