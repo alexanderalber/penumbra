@@ -570,8 +570,13 @@ fn every_builtin_cooks_without_warnings() {
     let dmx_in_port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
     // tex.spout_in receives what out.spout sends (it cooks first, `out` sorts before `tex`).
     let spout = format!("penumbra test registry {}", std::process::id());
+    // The component ports sit in a component: the top level has no sockets for them.
+    let is_port = |kind: &str| types.desc(kind).is_some_and(|d| d.port.is_some());
+    let path_of =
+        |i: usize, kind: &str| if is_port(kind) { format!("/ports/n{i}") } else { format!("/n{i}") };
+    ops.push(create("/ports", crate::comp::COMP_KIND, &[]));
     for (i, kind) in kinds.iter().enumerate() {
-        let path = format!("/n{i}");
+        let path = path_of(i, kind);
         let mut params: Vec<(&str, Value)> = Vec::new();
         let desc = types.desc(kind).unwrap();
         if desc.param_spec("width").is_some() {
@@ -609,6 +614,13 @@ fn every_builtin_cooks_without_warnings() {
             _ => {}
         }
         ops.push(create(&path, kind, &params));
+        // An output port reads from inside its component: the input port of its family there.
+        if desc.port == Some(penumbra_graph::PortRole::Out) {
+            let family = kind.split_once('.').map_or("", |(f, _)| f);
+            let input = kinds.iter().position(|k| *k == format!("{family}.in")).unwrap();
+            ops.push(connect(&path_of(input, &kinds[input]), &path, 0));
+            continue;
+        }
         for (input, spec) in desc.inputs.iter().enumerate() {
             let feed = match spec.kind {
                 penumbra_graph::DataKind::Tex => Some("/feed"),
@@ -643,7 +655,7 @@ fn every_builtin_cooks_without_warnings() {
     }
     let mut rig = Rig::new(gpu, Some(&dir), &ops);
     for (i, kind) in kinds.iter().enumerate() {
-        let path = format!("/n{i}");
+        let path = path_of(i, kind);
         if kind == "script.python" && penumbra_script::host().install().is_err() {
             // Needs a Python; without one its error is the expected outcome.
             continue;

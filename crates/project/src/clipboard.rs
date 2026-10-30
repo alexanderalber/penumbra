@@ -9,7 +9,8 @@
 //! the pair into one undoable edit with [`crate::diff`]. Inside the pasted set, wires, bindings
 //! and node references follow the copies. A wire from a node outside the set is kept where the
 //! graph allows it at the new place (pasted beside the original, it reads the same source);
-//! elsewhere it is dropped and listed. A binding to a node outside the set is kept while that
+//! elsewhere it is dropped and listed. A component port pasted at the top level is dropped and
+//! listed too: there is no component whose socket it would be. A binding to a node outside the set is kept while that
 //! node exists, since bindings may reach anywhere.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -165,8 +166,14 @@ pub fn paste(base: &Content, types: &NodeTypes, clip: &Clip, into: &NodePath) ->
     let mut taken = children_names(base, into);
     let mut moved: BTreeMap<NodePath, NodePath> = BTreeMap::new();
     let mut new_top = Vec::new();
+    let mut dropped = Vec::new();
     for t in &top {
         let Some(name) = t.name() else { continue };
+        let kind = clip.content.nodes.get(t).map_or("", |n| n.kind.as_str());
+        if into.is_root() && types.desc(kind).is_some_and(|d| d.port.is_some()) {
+            dropped.push(format!("{t} ({kind}), a component port, which goes inside a component"));
+            continue;
+        }
         let fresh = copy_name(name, &taken)?;
         taken.insert(fresh.clone());
         let to = into.child(fresh)?;
@@ -177,7 +184,6 @@ pub fn paste(base: &Content, types: &NodeTypes, clip: &Clip, into: &NodePath) ->
         new_top.push(to);
     }
 
-    let mut dropped = Vec::new();
     let mut added = Content::default();
     for (path, node) in &clip.content.nodes {
         let Some(new_path) = moved.get(path).cloned() else { continue };
@@ -334,13 +340,17 @@ mod tests {
         let n = |s: &str| got.nodes.get(&p(s)).unwrap_or_else(|| panic!("{s}"));
         assert_eq!(n("/g1/in").inputs[0], Some(PortRef { node: p("/src"), output: 0 }));
         assert_eq!(n("/g1/x").inputs[0], Some(PortRef { node: p("/g1/in"), output: 0 }));
-        // Copied out of the component, the input node pasted at the top level reads /src too.
+        // Copied out of the component to the top level, the input node stays behind: there is no
+        // socket for it there, and the node it fed loses that wire.
         let inner = copy(&got, &[p("/g/in"), p("/g/x")]).unwrap();
         let out = paste(&got, &types, &inner, &NodePath::root()).unwrap();
-        assert!(out.dropped.is_empty(), "{:?}", out.dropped);
+        assert_eq!(
+            out.dropped,
+            ["/g/in (test.in), a component port, which goes inside a component", "/x input `a` from /g/in"],
+        );
         let flat = apply(&got, &out.content);
-        assert_eq!(flat.nodes[&p("/x")].inputs[0], Some(PortRef { node: p("/in"), output: 0 }));
-        assert_eq!(flat.nodes[&p("/in")].inputs[0], Some(PortRef { node: p("/src"), output: 0 }));
+        assert_eq!(flat.nodes[&p("/x")].inputs[0], None);
+        assert!(!flat.nodes.contains_key(&p("/in")));
         // Into another component: its input node is fed from outside it, where /src is.
         let other = paste(&got, &types, &inner, &p("/g1")).unwrap();
         assert!(other.dropped.is_empty(), "{:?}", other.dropped);

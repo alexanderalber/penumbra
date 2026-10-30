@@ -846,6 +846,12 @@ impl Applied {
                         types.kinds().collect::<Vec<_>>().join(", ")
                     ))
                 })?;
+                // A port is a socket of the component it sits in; the top level has none.
+                if parent.is_none() && desc.port.is_some() {
+                    return Err(Error::new(format!(
+                        "`{kind}` goes inside a component: at the top level there is no component socket for it"
+                    )));
+                }
                 if net.name_taken(parent, name, None) {
                     return Err(Error::new(format!("{path} exists already")));
                 }
@@ -1232,6 +1238,7 @@ mod tests {
         assert!(refuse(create("/a", "test.const")).contains("exists"));
         assert!(refuse(create("/x", "tex.nope")).contains("unknown node kind"));
         assert!(refuse(create("/a/x", "test.const")).contains("cannot hold nodes"));
+        assert!(refuse(create("/x", "test.in")).contains("inside a component"));
         assert!(refuse(create("/missing/x", "test.const")).contains("no node at /missing"));
         assert!(
             refuse(Op::Set { param: pp("/a.value"), value: Value::Text("x".into()) }).contains("expects")
