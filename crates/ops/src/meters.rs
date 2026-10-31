@@ -252,8 +252,10 @@ pub struct Reading {
     pub bar_beat: u32,
     pub bpm: f64,
     pub confidence: f64,
-    /// A beat is heard; beats flash only then. Missing, it counts as locked.
+    /// A beat is heard; beats flash only then or while coasting. Missing, it counts as locked.
     pub locked: bool,
+    /// The lock was lost but ticks go on from the running phase; beats flash, the ring stays dim.
+    pub coasting: bool,
     /// The bar's length in beats.
     pub beats_per_bar: u32,
     /// Where the low band ends and the high one starts, in Hz, for the spectrum's colours.
@@ -274,6 +276,7 @@ impl Default for Reading {
             bpm: 0.0,
             confidence: 0.0,
             locked: true,
+            coasting: false,
             beats_per_bar: DEFAULT_BEATS_PER_BAR,
             low_hz: DEFAULT_LOW_HZ,
             high_hz: DEFAULT_HIGH_HZ,
@@ -297,6 +300,7 @@ impl Reading {
             bpm: v("bpm").max(0.0),
             confidence: v("confidence").clamp(0.0, 1.0),
             locked: get("locked").is_none_or(|l| l > 0.5),
+            coasting: v("coasting") > 0.5,
             beats_per_bar: get("beats_per_bar")
                 .map_or(DEFAULT_BEATS_PER_BAR, |b| b.round().clamp(1.0, 64.0) as u32),
             low_hz: get("low_hz").filter(|h| *h > 0.0).map_or(DEFAULT_LOW_HZ, |h| h.min(100_000.0)),
@@ -348,7 +352,11 @@ impl Meters {
             // A tick missed between two draws still shows: the phase has started over.
             let wrapped = self.beat_phase.is_some_and(|p| reading.beat + 0.3 < p);
             let recent = self.last_beat.is_some_and(|t| now - t < BEAT_DEBOUNCE && now >= t);
-            if (reading.tick || wrapped) && !recent && reading.bpm > 0.0 && reading.locked {
+            if (reading.tick || wrapped)
+                && !recent
+                && reading.bpm > 0.0
+                && (reading.locked || reading.coasting)
+            {
                 self.last_beat = Some(now);
                 self.last_beat_down = reading.bar_beat == 0;
                 self.hit(now, Hit::Beat, self.last_beat_down);
@@ -547,7 +555,9 @@ impl Draw<'_> {
             [rect.min[0], number_at[1] + number_h],
             Anchor::LEFT_TOP,
             caption,
-            if r.bpm > 0.0 && !r.locked {
+            if r.bpm > 0.0 && r.coasting {
+                format!("bpm, coasting, {:.0} % sure", r.confidence * 100.0)
+            } else if r.bpm > 0.0 && !r.locked {
                 format!("bpm, no beat, {:.0} % sure", r.confidence * 100.0)
             } else if r.bpm > 0.0 {
                 format!("bpm, {:.0} % sure", r.confidence * 100.0)
@@ -808,6 +818,11 @@ mod tests {
         m.update(Some(&unlocked(0.01)), true, 30.5);
         assert_eq!(m.hits.iter().filter(|(_, k, _)| *k == Hit::Beat).count(), 0);
         assert_eq!(m.hits.iter().filter(|(_, k, _)| *k == Hit::Kick).count(), 2);
+        // Coasting after a lost lock, a tick is a beat again.
+        let coasting =
+            out(&[("tick", 1.0), ("bpm", 120.0), ("beat", 0.01), ("locked", 0.0), ("coasting", 1.0)]);
+        m.update(Some(&coasting), true, 31.0);
+        assert_eq!(m.hits.iter().filter(|(_, k, _)| *k == Hit::Beat).count(), 1);
     }
 
     #[test]

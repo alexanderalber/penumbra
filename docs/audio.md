@@ -304,7 +304,7 @@ All values are channels of the `out` output, in this order:
 | `onset` | 1 in the frame a sound starts (a hit, a note), else 0 |
 | `kick` | 1 in the frame a sound starts in the low band |
 | `beat` | 0 at each beat, rising to 1 at the next: drive anything that should move with the beat. Keeps running at the last tempo while not `locked` |
-| `tick` | 1 in the frame a beat starts, only while `locked` |
+| `tick` | 1 in the frame a beat starts, only while `locked` or `coasting` |
 | `bar` | 0 at each bar's first beat, rising to 1 at the next bar |
 | `bar_beat` | the beat within the bar: 0, 1, 2, 3 |
 | `bpm` | the tempo, 0 until a beat has locked once |
@@ -312,6 +312,7 @@ All values are channels of the `out` output, in this order:
 | `rms`, `peak` | the raw level, full scale is 1 |
 | `beats_per_bar`, `low_hz`, `high_hz` | the params `beats_per_bar`, `low` and `high` as they are (bound ones evaluated), for what draws the analysis |
 | `locked` | 1 while a beat is heard: the tempo has held with a `confidence` of at least 0.2 for about 2 seconds. 0 on noise, speech and silence. Multiply what pulses with `beat` by `locked` to stop it there |
+| `coasting` | 1 when the lock was lost but the sound still has onsets at the tempo: `tick` goes on from the running beat for up to 30 seconds. Never 1 while `locked`. Gate with `locked` alone to stop at once, with `locked` plus `coasting` to ride through a weak passage |
 
 With `normalize` on (the default), a quiet microphone still spans 0 to 1. `level`, the bands
 and the spectrum are measured against their range over the last 4 seconds. A single knock
@@ -338,8 +339,9 @@ Selected, the analysis shows meters in the viewer, made to be read at a glance d
   the dimmer the number; the bar below it is `confidence` (red below 0.2, amber, green from 0.4). Without a beat
   the caption says "no beat".
 - **Beat light:** a disc that flashes on each beat, amber on a bar's first, blue on the others,
-  in a ring that fills with `beat` from one beat to the next. It flashes only while `locked`;
-  the ring dims while no beat is locked.
+  in a ring that fills with `beat` from one beat to the next. It flashes only while `locked`
+  or `coasting`; the ring dims while no beat is locked. While coasting the caption says
+  "coasting".
 - **Bar:** a cell per beat of the bar (the `beats_per_bar` channel), the first outlined in amber; the
   current one (`bar_beat`) is lit and fills with `beat`. The line below fills with `bar`.
 - **Hits:** the last four seconds of kicks, onsets and beats as marks moving left, a row each
@@ -388,6 +390,21 @@ after the music starts. It lets go about 4 seconds after the music stops or fall
 over the last 8 seconds, and the music has to leave them first. While no beat is locked, `tick`
 stays 0 and the beat light stays dark. `beat` and `bar` keep running at the last tempo, so
 visuals stay in time through a breakdown. Gate them with `locked` where they should stop.
+
+A breakdown or a loud room can drop the lock while the beat goes on. Then the beat
+**coasts**: `coasting` reads 1 and `tick` keeps coming from the running beat. It needs onsets
+in the last second and a half that still repeat at the tempo, with a `confidence` of 0.1 or
+more. It ends when they stop, and at the latest 30 seconds after the beat last counted as
+clear. Noise alone, speech and silence do not coast.
+
+The beat follows small drifts within a second or two. A jump of the beat by a quarter or half
+of a beat, as at a hard cut in a DJ mix, takes about 9 seconds to follow. A short stretch of
+off-beat hits (a fill, a syncopated break) therefore leaves the beat where it was.
+
+In a loud room, with crowd noise or a fan near the microphone, turn on `superflux` (in the
+`more` section). The onsets then ignore the slow wobble of broadband noise, so the beat locks
+sooner and holds longer. In clean sound and in reverb it finds the beat a little less well, so
+it is off by default.
 
 `beat` is meant to be in time with what is heard. A projector shows a picture a few frames
 late; `offset` moves beat and bar ahead by that many milliseconds. Set it by eye: flash

@@ -18,7 +18,8 @@
 //! - **`chan.audio_analysis`** turns sound into channels to bind, the bridge from `audio` to
 //!   `chan`: levels (`level`, `low`,
 //!   `mid`, `high`), events (`onset`, `kick`, `tick` are 1 in the frame they happen), the
-//!   tempo (`bpm`, `confidence`, `locked` while a beat is heard) and the phases (`beat`, `bar` rising from 0 to 1, `bar_beat`
+//!   tempo (`bpm`, `confidence`, `locked` while a beat is heard, `coasting` while ticks go on
+//!   after a lost lock) and the phases (`beat`, `bar` rising from 0 to 1, `bar_beat`
 //!   counting). Its second output is a spectrum: one channel whose samples are log-spaced bands
 //!   from 30 Hz to 16 kHz. See `penumbra-audio`'s `analysis` module for how. Its third, `meters`,
 //!   is the viewer's meters as a texture ([`crate::tex::meters_picture`]), drawn only while
@@ -84,7 +85,7 @@ pub const MAX_BLOCK_SECONDS: f64 = 0.5;
 /// `high_hz` repeat params (`beats_per_bar`, `low`, `high`), so what draws the analysis (its
 /// `meters` output, the viewer) knows them from the channels alone, also while a param is
 /// bound to a channel. New channels go at the end, so the order of the others stays.
-pub const FEATURES: [&str; 18] = [
+pub const FEATURES: [&str; 19] = [
     "level",
     "low",
     "mid",
@@ -103,6 +104,7 @@ pub const FEATURES: [&str; 18] = [
     "low_hz",
     "high_hz",
     "locked",
+    "coasting",
 ];
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
@@ -157,6 +159,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("The fastest tempo considered, in beats per minute; see min_bpm"),
         )
         .param(
+            ParamSpec::bool("superflux", false)
+                .more()
+                .doc("Finds the beat in a noisy room: the onsets ignore the slow wobble of broadband noise. Costs a little in clean sound and in reverb, so leave it off unless the room is loud"),
+        )
+        .param(
             ParamSpec::bool("normalize", true)
                 .doc("A quiet input still spans 0 to 1: levels and spectrum are measured against their range over the last 4 seconds. Off: level and bands are the raw RMS, full scale is 1"),
         )
@@ -209,7 +216,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .lazy_output("meters")
         .describe_output(
             "out",
-            "Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, locked, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them",
+            "Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, locked, coasting, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them. coasting is 1 when the lock was lost but the onsets still follow the tempo: tick goes on for up to 30 seconds",
         )
         .describe_output("spectrum", "One channel whose samples are log-spaced bands from 30 Hz to 16 kHz")
         .describe_output(
@@ -362,6 +369,7 @@ impl Analysis {
             floor_db: cx.float("floor")?,
             trim_db: cx.float("trim")?,
             offset: cx.float("offset")? / 1000.0,
+            superflux: cx.bool("superflux")?,
         })
     }
 }
@@ -445,6 +453,7 @@ impl Operator for Analysis {
             settings.low_hz,
             settings.high_hz,
             flag(f.locked),
+            flag(f.coasting),
         ];
         let channels = self
             .names

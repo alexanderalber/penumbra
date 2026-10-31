@@ -104,7 +104,7 @@ fn no_beat_in_noise_speech_or_silence() {
             let mean = late.iter().sum::<f64>() / late.len().max(1) as f64;
             assert!(mean < 0.15, "{name} at {rate} Hz: confidence {mean:.2}");
             for (t, f) in &frames {
-                assert!(!f.locked && !f.tick, "{name} at {rate} Hz: a beat at {t:.2}");
+                assert!(!f.locked && !f.coasting && !f.tick, "{name} at {rate} Hz: a beat at {t:.2}");
                 assert_eq!((f.bpm, f.beat), (0.0, 0.0), "{name} at {rate} Hz: a tempo before any lock");
             }
         }
@@ -133,7 +133,7 @@ fn music_locks_and_lets_go_when_it_stops() {
             // tempo is measured over.
             let gone = if name == "speech" { 12.0 + 11.0 } else { 12.0 + 5.0 };
             for (t, f) in frames.iter().filter(|(t, _)| *t > gone) {
-                assert!(!f.locked && !f.tick, "{name} at {rate} Hz: still a beat at {t:.2}");
+                assert!(!f.locked && !f.coasting && !f.tick, "{name} at {rate} Hz: still a beat at {t:.2}");
             }
             // The tempo stays known for when the beat comes back.
             let last = &frames.last().unwrap().1;
@@ -235,6 +235,7 @@ fn silence_noise_and_garbage() {
         floor_db: f64::NAN,
         trim_db: f64::INFINITY,
         offset: f64::INFINITY,
+        superflux: true,
     };
     let f = run(rate, &noise, &odd).pop().unwrap().1;
     assert!(f.spectrum.len() <= penumbra_audio::analysis::MAX_BANDS);
@@ -396,4 +397,130 @@ fn garbage_keeps_the_normalised_values_in_range() {
             assert!(all.into_iter().all(|v| (0.0..=1.0).contains(&v)), "trim {trim_db} at {t:.2}: {f:?}");
         }
     }
+}
+
+/// The house loop at 124 BPM, starting at 0.3 s, with its beats moved by `shift` of a beat
+/// from `from` to `to` s.
+fn shifted_loop(rate: f64, seconds: f64, shift: f64, from: f64, to: f64) -> (Vec<f32>, Vec<f64>) {
+    let period = 60.0 / 124.0;
+    let (a, beats) = house(rate, seconds, |_| 124.0, 0.3);
+    let (b, moved) = house(rate, seconds, |_| 124.0, 0.3 + shift * period);
+    let range = (from * rate) as usize..(to * rate) as usize;
+    let x =
+        a.iter().zip(&b).enumerate().map(|(i, (p, q))| if range.contains(&i) { *q } else { *p }).collect();
+    let mut beats: Vec<f64> = beats
+        .iter()
+        .filter(|&&t| t < from || t >= to)
+        .chain(moved.iter().filter(|&&t| t >= from && t < to))
+        .copied()
+        .collect();
+    beats.sort_by(f64::total_cmp);
+    (x, beats)
+}
+
+/// The largest phase error, in beats, against `beats` over the frames from `from` to `to` s.
+fn worst_phase(frames: &[(f64, Features)], beats: &[f64], from: f64, to: f64) -> f64 {
+    frames
+        .iter()
+        .filter(|(t, _)| *t > from && *t < to)
+        .filter_map(|(t, f)| Some(wrap(f.beat - true_phase(beats, *t)?).abs()))
+        .fold(0.0, f64::max)
+}
+
+#[test]
+fn the_phase_stays_through_a_few_seconds_of_off_beats() {
+    let rate = 48_000.0;
+    // Four seconds of the loop half a beat late, then back where it was: a fill or a break,
+    // not a move of the music.
+    let (x, _) = shifted_loop(rate, 30.0, 0.5, 15.0, 19.0);
+    let (_, steady) = house(rate, 30.0, |_| 124.0, 0.3);
+    let frames = run(rate, &x, &Settings::default());
+    let worst = worst_phase(&frames, &steady, 12.0, 29.0);
+    assert!(worst < 0.06, "the phase slid by {worst:.3} of a beat");
+    assert!(frames.iter().filter(|(t, _)| *t > 12.0 && *t < 29.0).all(|(_, f)| f.locked));
+    // A move that lasts is followed, after about 9 s.
+    let (x, beats) = shifted_loop(rate, 40.0, 0.5, 15.0, 40.0);
+    let frames = run(rate, &x, &Settings::default());
+    let worst = worst_phase(&frames, &beats, 27.0, 39.5);
+    assert!(worst < 0.06, "12 s after the move, the phase is off by {worst:.3} of a beat");
+}
+
+/// The house loop at `gain` with pink noise at 0.3 throughout; from 15 s the loop at half that.
+fn fading_into_noise(rate: f64, seconds: f64, gain: f32) -> (Vec<f32>, Vec<f64>) {
+    let (music, beats) = house(rate, seconds, |_| 124.0, 0.3);
+    let noise = pink(rate, seconds, 0.3, 4);
+    let split = (15.0 * rate) as usize;
+    let x = music
+        .iter()
+        .zip(&noise)
+        .enumerate()
+        .map(|(i, (m, n))| if i < split { m * gain + n } else { m * gain * 0.5 + n })
+        .collect();
+    (x, beats)
+}
+
+#[test]
+fn ticks_coast_on_after_the_lock_is_lost() {
+    let rate = 48_000.0;
+    let (x, beats) = fading_into_noise(rate, 70.0, 0.35);
+    let frames = run(rate, &x, &Settings::default());
+    let lost = frames
+        .iter()
+        .skip_while(|(_, f)| !f.locked)
+        .find(|(_, f)| !f.locked)
+        .map(|(t, _)| *t)
+        .expect("the lock is lost under the noise");
+    assert!(frames.iter().all(|(_, f)| !(f.locked && f.coasting)), "locked and coasting at once");
+    // Ticks go on for the next 5 s, each near a beat of the loop.
+    let coasting: Vec<&(f64, Features)> =
+        frames.iter().filter(|(t, f)| *t > lost && *t < lost + 5.0 && f.tick).collect();
+    assert!(coasting.len() >= 8, "{} ticks in the 5 s after the lock was lost at {lost:.1}", coasting.len());
+    for (t, f) in &coasting {
+        assert!(f.coasting && !f.locked, "at {t:.2}");
+        let off = beats.iter().map(|b| (t - b).abs()).fold(f64::MAX, f64::min);
+        assert!(off < 0.06, "a coasting tick {off:.3} s from a beat at {t:.2}");
+    }
+    // And they stop: within the 30 s limit, here because the beat sinks into the noise.
+    let last = frames.iter().filter(|(_, f)| f.tick).map(|(t, _)| *t).fold(0.0, f64::max);
+    assert!(
+        last > lost + 5.0 && last < lost + 30.0,
+        "the last tick at {last:.1}, the lock lost at {lost:.1}"
+    );
+    assert!(!frames.last().unwrap().1.coasting);
+}
+
+#[test]
+fn a_minute_of_room_noise_makes_no_tick() {
+    let rate = 48_000.0;
+    for db in [-50.0, -30.0] {
+        let x = scaled(pink(rate, 60.0, 0.3, 8), db);
+        for superflux in [false, true] {
+            let frames = run(rate, &x, &Settings { superflux, ..Settings::default() });
+            assert!(
+                frames.iter().all(|(_, f)| !f.locked && !f.coasting && !f.tick),
+                "pink noise at {db} dBFS, superflux {superflux}: a beat"
+            );
+        }
+    }
+}
+
+#[test]
+fn superflux_finds_the_beat_in_noise_and_in_clean_sound() {
+    let rate = 48_000.0;
+    let on = Settings { superflux: true, ..Settings::default() };
+    // Clean: the same tempo and phase as without it.
+    let (x, beats) = house(rate, 20.0, |_| 124.0, 0.3);
+    let frames = run(rate, &x, &on);
+    let late: Vec<&(f64, Features)> = frames.iter().filter(|(t, _)| *t > 12.0 && *t < 19.5).collect();
+    assert!(late.iter().all(|(_, f)| f.locked && (f.bpm - 124.0).abs() < 0.7));
+    let worst = worst_phase(&frames, &beats, 12.0, 19.5);
+    assert!(worst < 0.06, "superflux: phase off by {worst:.3} of a beat");
+    // Onsets and kicks come from the plain flux either way; only the beat's strength changes.
+    let plain = run(rate, &x, &Settings::default());
+    assert!(plain.iter().zip(&frames).all(|((_, a), (_, b))| a.onset == b.onset && a.kick == b.kick));
+    assert!(plain.iter().zip(&frames).any(|((_, a), (_, b))| a.confidence != b.confidence));
+    // A loop under loud noise: without it no beat, with it a lock.
+    let (x, _) = fading_into_noise(rate, 15.0, 0.25);
+    assert!(run(rate, &x, &Settings::default()).iter().all(|(_, f)| !f.locked));
+    assert!(run(rate, &x, &on).iter().any(|(_, f)| f.locked));
 }

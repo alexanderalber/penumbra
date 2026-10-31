@@ -1127,7 +1127,7 @@ Inputs:
 
 Outputs:
 
-- `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, locked, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them
+- `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, locked, coasting, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them. coasting is 1 when the lock was lost but the onsets still follow the tempo: tick goes on for up to 30 seconds
 - `spectrum` (chan): One channel whose samples are log-spaced bands from 30 Hz to 16 kHz
 - `meters` (tex): The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum. Drawn only while something reads this output
 
@@ -1139,6 +1139,7 @@ Outputs:
 | `sensitivity` | float | `0.5` | 0 to 1 | How readily an onset or kick counts: higher finds quieter ones |
 | `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered, in beats per minute. Keep min_bpm and max_bpm less than an octave apart: then a half or double tempo cannot be taken |
 | `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered, in beats per minute; see min_bpm |
+| `superflux` *(more)* | bool | `false` |  | Finds the beat in a noisy room: the onsets ignore the slow wobble of broadband noise. Costs a little in clean sound and in reverb, so leave it off unless the room is loud |
 | `normalize` | bool | `true` |  | A quiet input still spans 0 to 1: levels and spectrum are measured against their range over the last 4 seconds. Off: level and bands are the raw RMS, full scale is 1 |
 | `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence: with normalize, levels and spectrum read 0. Set it above the room's noise, so a silent room reads 0 |
 | `trim` *(levels)* | float | `0` | -24 to 24 dB | Makes the sound louder or quieter for the analysis only. Lift a quiet microphone until it is above floor. The rms and peak channels still show the sound as it comes in |

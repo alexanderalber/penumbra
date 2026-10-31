@@ -6,7 +6,9 @@
 //! and transformed. From each frame come the band levels, the spectrum, and an **onset
 //! strength**: the spectral flux of log-compressed magnitudes, how much louder the spectrum got
 //! since the last frame. Its peaks above an adaptive threshold are the onsets (and in the low
-//! band, the kicks).
+//! band, the kicks). With [`Settings::superflux`], the beat's onset strength takes each bin's
+//! rise over the loudest of it and its two neighbours two frames back instead: the slow wobble
+//! of broadband noise rises over no neighbour, so the beat holds in a noisy room.
 //!
 //! **Tempo:** every 0.2 s the onset strength of the last eight seconds (local mean removed,
 //! negative parts dropped) is autocorrelated; every period in the allowed range scores its
@@ -20,21 +22,32 @@
 //! score sums maxima over small windows of lags, so noise scores above 0 too; the median
 //! carries the same bias, and the difference does not. Noise, rain and speech stay below 0.15,
 //! clean music reaches 0.4 to 0.8. A beat is **locked** once the estimates have backed the
-//! tempo for a while: an estimate backs it when its confidence is at least 0.2, it agrees with
-//! the tempo within 4 % (or an octave or two from it), and the last 1.5 s hold onsets of their
-//! own. The share of backing estimates, averaged over 2.5 s, locks the beat above 0.6 and lets
-//! it go below 0.35: about 2.3 s of clear beat to lock, 2.6 s without one to let go. Ticks
-//! come only while locked. The phases keep running at the last tempo, so a visual that follows
+//! tempo for a while: an estimate backs it when its confidence is at least 0.2 (0.15 before the
+//! first lock, so a soft intro locks too), it agrees with the tempo within 4 % (or an octave or
+//! two from it), and the last 1.5 s hold onsets of their own. The share of backing estimates,
+//! averaged over 2.5 s, locks the beat above 0.6 and lets it go below 0.35: about 2.3 s of
+//! clear beat to lock, 2.6 s without one to let go.
+//!
+//! **Coasting:** a lock is often lost while the beat goes on, when a breakdown or a noisy room
+//! pushes the confidence below 0.2 for a few seconds. So after the lock is lost, the beat
+//! **coasts**: ticks go on from the running phase while looser estimates still agree (onsets
+//! in the last 1.5 s, a confidence of at least 0.1, the same tempo; their share over 2.5 s
+//! above a half), for up to 30 s after the last backing estimate. Ticks come while locked or
+//! coasting. The phases keep running at the last tempo either way, so a visual that follows
 //! `beat` stays in time through a breakdown; tempo and phases read 0 until the first lock.
 //! Frames below the silence floor give no onset strength, so a quiet room's noise makes no
-//! beat.
+//! beat, and noise alone neither locks nor coasts.
 //!
 //! **Beat phase:** every hop, a comb with the beat period is laid over the recent onset
 //! strength at every offset; the best offset says where the last beat was. An oscillator
 //! running at the tempo is pulled towards it a little each hop (more when the estimate is
 //! confident), so the phase moves smoothly and keeps running through a breakdown with no beat
-//! (the confidence drops, the tempo stays). The phase is given at the newest sample: the delay
-//! of the frame (half its length) is taken out.
+//! (the confidence drops, the tempo stays). A measurement more than 0.2 beat from the
+//! oscillator does not pull: the comb points at the off-beat now and then for a few seconds,
+//! and a pull would slide the beat there. Only when the measurement stays that far off for 8 s
+//! does the oscillator jump to it, since then the music itself moved; a hard cut in a DJ mix
+//! takes about 9 s to follow. The phase is given at the newest sample: the delay of the frame
+//! (half its length) is taken out.
 //!
 //! **Bar phase:** beats are counted. Bass lines and chords tend to change on the downbeat, so
 //! the spectrum below 1 kHz is averaged over each beat and compared with the beat before; that
@@ -67,6 +80,21 @@ const TEMPO_SWITCH: u32 = 6;
 const TEMPO_SAME: f64 = 0.04;
 /// Confidence an estimate needs to count towards the lock, and to move the tempo.
 const LOCK_CONFIDENCE: f64 = 0.2;
+/// The same before the beat has locked for the first time. Soft intros sit between this and
+/// [`LOCK_CONFIDENCE`]; noise and speech stay below it.
+const FIRST_LOCK_CONFIDENCE: f64 = 0.15;
+/// A measured phase further than this from the oscillator (in beats) does not pull it: when the
+/// comb points at the off-beat for a while, a pull would drag the oscillator there.
+const PULL_WITHIN: f64 = 0.2;
+/// Seconds the measured phase must stay far off before the oscillator jumps to it: the music
+/// itself moved.
+const FAR_SECONDS: f64 = 8.0;
+/// Seconds since the last backing estimate that ticks may go on after the lock is lost.
+const COAST_SECONDS: f64 = 30.0;
+/// Confidence an estimate needs to let ticks go on after the lock is lost.
+const COAST_CONFIDENCE: f64 = 0.1;
+/// The share of such estimates, averaged like the support, above which ticks go on.
+const COAST_ABOVE: f64 = 0.5;
 /// Seconds the lock's support averages over.
 const SUPPORT_SECONDS: f64 = 2.5;
 /// Support above which the beat locks, and below which it lets go.
@@ -129,6 +157,10 @@ pub struct Settings {
     /// Seconds the beat and bar phase are moved ahead (positive: earlier), to make up for
     /// what comes after the analysis: the projector, the graph.
     pub offset: f64,
+    /// The beat's onset strength takes each bin's rise over the loudest of it and its two
+    /// neighbours two frames back (SuperFlux). It ignores the slow wobble of broadband noise,
+    /// so the beat holds in a noisy room; in clean music and in reverb it is a little worse.
+    pub superflux: bool,
 }
 
 impl Default for Settings {
@@ -145,6 +177,7 @@ impl Default for Settings {
             floor_db: -60.0,
             trim_db: 0.0,
             offset: 0.0,
+            superflux: false,
         }
     }
 }
@@ -173,9 +206,12 @@ pub struct Features {
     pub confidence: f64,
     /// A beat is heard: the tempo has kept winning with some confidence for the last seconds.
     pub locked: bool,
+    /// Not locked any more, but onsets still come at the tempo: ticks go on from the running
+    /// phase for up to 30 s after the last confident estimate.
+    pub coasting: bool,
     /// 0 at a beat, rising to 1 at the next; keeps running while not locked.
     pub beat: f64,
-    /// A beat started in the block (only while locked).
+    /// A beat started in the block (only while locked or coasting).
     pub tick: bool,
     /// 0 at a downbeat, rising to 1 at the next.
     pub bar: f64,
@@ -450,6 +486,13 @@ pub struct Analyzer {
     last_amps: ([f64; 3], Vec<f64>),
     /// Spectrum band edges in bins for the `(bands, size)` they were made for.
     edges: Option<(usize, Vec<(usize, usize)>)>,
+    /// The log magnitudes two frames back, for SuperFlux.
+    prev2_log: Vec<f32>,
+    /// Hops since an estimate last backed the tempo.
+    since_back: u64,
+    /// Like the support, from looser estimates (onsets present, some confidence, the tempo
+    /// agrees): whether ticks may go on after the lock is lost.
+    loose: f64,
 }
 
 impl Analyzer {
@@ -504,6 +547,9 @@ impl Analyzer {
             spectrum_range: Ranger::new(range_len),
             last_amps: ([0.0; 3], Vec::new()),
             edges: None,
+            prev2_log: vec![0.0; size / 2 + 1],
+            since_back: u64::MAX / 2,
+            loose: 0.0,
         })
     }
 
@@ -514,6 +560,15 @@ impl Analyzer {
     /// Samples per hop.
     pub fn hop(&self) -> usize {
         self.hop
+    }
+
+    /// Whether the lock was lost lately while onsets still come at the tempo, so ticks go on.
+    fn coasting(&self) -> bool {
+        // `as`: a hop count to seconds.
+        !self.tempo.locked
+            && self.tempo.found
+            && (self.since_back as f64) < COAST_SECONDS * self.fps()
+            && self.loose > COAST_ABOVE
     }
 
     /// Hops per second.
@@ -625,6 +680,7 @@ impl Analyzer {
     fn describe(&mut self, f: &mut Features, s: &Settings) {
         f.confidence = self.tempo.confidence;
         f.locked = self.tempo.locked;
+        f.coasting = self.coasting();
         if self.tempo.period > 0.0 && self.phased && self.tempo.found {
             f.bpm = 60.0 * self.fps() / self.tempo.period;
             // The oscillator stands at the newest frame's centre; the newest sample is half a
@@ -640,7 +696,7 @@ impl Analyzer {
             f.bar_beat = position as u32;
             f.bar = (position as f64 + f.beat) / f64::from(beats_per_bar);
             f.beats = index.max(0) as u64;
-            f.tick = self.tempo.locked && self.reported.is_some_and(|r| index > r);
+            f.tick = (f.locked || f.coasting) && self.reported.is_some_and(|r| index > r);
             if self.reported.is_none_or(|r| index > r) {
                 self.reported = Some(index);
             }
@@ -662,6 +718,12 @@ impl Analyzer {
         // the many bins of a hi-hat do not outweigh the few of a kick.
         let mut flux_beat = 0.0f32;
         let beat_first = bin(40.0).max(1);
+        // SuperFlux compares each bin with the loudest of it and its neighbours two frames back:
+        // `prev2_log` holds those until the loop below overwrites it with the last frame's.
+        let superflux = s.superflux;
+        let prev2 = &mut self.prev2_log;
+        let last_bin = prev2.len().saturating_sub(1);
+        let mut held_below = prev2.first().copied().unwrap_or(0.0);
         for (k, (m, prev)) in self.magnitudes.iter().zip(self.prev_log.iter_mut()).enumerate() {
             let power = bin_power(*m);
             if (first..=last).contains(&k) {
@@ -678,6 +740,19 @@ impl Analyzer {
             }
             let log = (1.0 + 1000.0 * m).ln();
             let rise = (log - *prev).max(0.0);
+            let beat_rise = if superflux {
+                // The neighbour below is already overwritten; `held_below` keeps it.
+                let here = prev2.get(k).copied().unwrap_or(0.0);
+                let above = prev2.get((k + 1).min(last_bin)).copied().unwrap_or(0.0);
+                let reference = held_below.max(here).max(above);
+                (log - reference).max(0.0)
+            } else {
+                rise
+            };
+            if let Some(p2) = prev2.get_mut(k) {
+                held_below = *p2;
+                *p2 = *prev;
+            }
             *prev = log;
             if (first..=last).contains(&k) {
                 flux += rise;
@@ -686,7 +761,7 @@ impl Analyzer {
                 }
                 if k >= beat_first {
                     // `as`: a bin index to a weight.
-                    flux_beat += rise * beat_first as f32 / k as f32;
+                    flux_beat += beat_rise * beat_first as f32 / k as f32;
                 }
             }
         }
@@ -696,6 +771,7 @@ impl Analyzer {
         if s.normalize && (level.is_nan() || level < floor(s)) {
             (flux, flux_low, flux_beat) = (0.0, 0.0, 0.0);
         }
+        self.since_back = self.since_back.saturating_add(1);
         self.hops += 1;
         let fps = self.fps();
         let fall = 10f32.powf(-0.5 / fps as f32);
@@ -759,6 +835,7 @@ impl Analyzer {
         if ac0.is_nan() || ac0 <= 1e-12 {
             self.tempo.confidence *= 0.7;
             self.tempo.support(false, alpha);
+            self.loose -= alpha * self.loose;
             return;
         }
         let at = |i: usize| ac.get(i).copied().unwrap_or(0.0) / ac0;
@@ -812,9 +889,16 @@ impl Analyzer {
         let recent_mean =
             self.odf.values.iter().rev().take(recent).sum::<f32>() / recent.min(n).max(1) as f32;
         let active = f64::from(recent_mean) >= RECENT_SHARE * f64::from(mean);
+        // After a lost lock, ticks go on while looser estimates still agree with the tempo.
+        let coast_ok = self.tempo.found
+            && active
+            && confidence >= COAST_CONFIDENCE
+            && same_folded(refined, self.tempo.period);
+        self.loose += alpha * (if coast_ok { 1.0 } else { 0.0 } - self.loose);
+        let lock_confidence = if self.tempo.found { LOCK_CONFIDENCE } else { FIRST_LOCK_CONFIDENCE };
         let t = &mut self.tempo;
         t.confidence = 0.7 * t.confidence + 0.3 * confidence;
-        if confidence < LOCK_CONFIDENCE {
+        if confidence < lock_confidence {
             t.support(false, alpha);
             return;
         }
@@ -838,6 +922,9 @@ impl Analyzer {
         }
         let backs = active && same_folded(refined, t.period);
         t.support(backs, alpha);
+        if backs {
+            self.since_back = 0;
+        }
     }
 
     /// Moves the beat oscillator by one hop and pulls it towards the measured phase.
@@ -855,14 +942,17 @@ impl Analyzer {
                 self.phased = true;
                 self.off = 0;
             } else {
-                self.off = if err.abs() > 0.2 { self.off + 1 } else { 0 };
-                // Far off for a second: the music moved; take the measurement.
-                if f64::from(self.off) > self.fps() {
+                self.off = if err.abs() > PULL_WITHIN { self.off.saturating_add(1) } else { 0 };
+                // Far off for a while: the music moved; take the measurement.
+                if f64::from(self.off) > FAR_SECONDS * self.fps() {
                     self.phase += err;
                     self.off = 0;
-                } else {
+                } else if err.abs() <= PULL_WITHIN {
                     // A time constant of about a second at full confidence, so a beat the
-                    // comb misplaces now and then hardly moves the phase.
+                    // comb misplaces now and then hardly moves the phase. A measurement far
+                    // off does not pull at all: when the comb points at the off-beat for a few
+                    // seconds, a pull would slide the oscillator there before the music
+                    // comes back.
                     // Clean music has a confidence of about 0.5 and up.
                     let gain = 0.003 + 0.012 * (self.tempo.confidence / 0.5).min(1.0);
                     self.phase += gain * err;
