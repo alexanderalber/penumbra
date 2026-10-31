@@ -18,7 +18,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use penumbra_core::lock;
 use penumbra_engine::Engine;
@@ -39,6 +39,45 @@ pub const EXIT_CRASHED: i32 = 3;
 /// thread stuck in a call on the lost device must not keep a dead app open.
 const CRASH_SHUTDOWN: Duration = Duration::from_secs(10);
 
+/// What winit's panic says when a monitor handle went stale. While Windows rearranges the
+/// displays (a projector unplugged, Win+P), a handle taken a moment before stops being valid,
+/// and winit unwraps the error of asking it for its size or position. The next event sees the
+/// new arrangement, so such a panic skips one event instead of ending the app.
+const MONITOR_GONE: &str = "Invalid monitor handle";
+
+/// More stale-monitor panics than this within [`TRANSIENT_WINDOW`] are no longer a
+/// rearrangement passing by: the app ends as after any other crash.
+const TRANSIENT_LIMIT: usize = 30;
+const TRANSIENT_WINDOW: Duration = Duration::from_secs(10);
+
+/// Counts stale-monitor panics ([`MONITOR_GONE`]) and says which may pass.
+#[derive(Default)]
+struct Passing {
+    times: Vec<Instant>,
+}
+
+impl Passing {
+    /// Whether the panic `what` at `now` may pass: a stale monitor handle, and not more than
+    /// [`TRANSIENT_LIMIT`] of them within [`TRANSIENT_WINDOW`].
+    fn allows(&mut self, what: &str, now: Instant) -> bool {
+        if !what.contains(MONITOR_GONE) {
+            return false;
+        }
+        self.times.retain(|t| now.saturating_duration_since(*t) < TRANSIENT_WINDOW);
+        self.times.push(now);
+        self.times.len() <= TRANSIENT_LIMIT
+    }
+}
+
+/// The text of a caught panic.
+fn panic_text(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".into())
+}
+
 pub struct Host<'a> {
     pub eframe: eframe::EframeWinitApplication<'a>,
     pub outputs: Outputs,
@@ -51,6 +90,8 @@ pub struct Host<'a> {
     device_events_always: bool,
     /// The arguments to start again with after a crash in show mode.
     restart_args: Vec<String>,
+    /// The recent stale-monitor panics ([`MONITOR_GONE`]).
+    passing: Passing,
 }
 
 impl<'a> Host<'a> {
@@ -69,6 +110,31 @@ impl<'a> Host<'a> {
             crashed: false,
             device_events_always: false,
             restart_args,
+            passing: Passing::default(),
+        }
+    }
+
+    /// Whether a caught panic is a stale monitor handle that may pass ([`MONITOR_GONE`]).
+    fn passing(&mut self, what: &str) -> bool {
+        let pass = self.passing.allows(what, Instant::now());
+        if pass {
+            log::warn!("a display went away while it was asked about; skipping one event: {what}");
+        }
+        pass
+    }
+
+    /// Runs `f` on the output windows; a panic in it ends the app as a crash, unless it is a
+    /// stale monitor handle ([`MONITOR_GONE`]). `None` when it panicked.
+    fn guard_outputs<T>(&mut self, f: impl FnOnce(&mut Outputs) -> T) -> Option<T> {
+        match catch_unwind(AssertUnwindSafe(|| f(&mut self.outputs))) {
+            Ok(v) => Some(v),
+            Err(payload) => {
+                let what = panic_text(payload.as_ref());
+                if !self.passing(&what) {
+                    self.crash(&format!("An output window failed: {what}"));
+                }
+                None
+            }
         }
     }
 
@@ -102,13 +168,12 @@ impl<'a> Host<'a> {
         }
         let result = catch_unwind(AssertUnwindSafe(|| f(&mut self.eframe)));
         if let Err(payload) = result {
-            let what = payload
-                .downcast_ref::<&str>()
-                .map(|s| s.to_string())
-                .or_else(|| payload.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "unknown panic".into());
+            let what = panic_text(payload.as_ref());
             let message = match self.engine.gpu().and_then(penumbra_gpu::Gpu::lost) {
                 Some(why) => format!("The GPU device was lost: {why}"),
+                // egui-winit asks the editor's monitor for its size before each frame, so the
+                // panic comes before the frame begins and eframe can go on with the next event.
+                None if self.passing(&what) => return,
                 None => format!("The editor window failed: {what}"),
             };
             self.crash(&message);
@@ -229,7 +294,8 @@ impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
         if !self.alive() {
             return;
         }
-        if !self.outputs.window_event(window_id, &event) {
+        let Some(handled) = self.guard_outputs(|o| o.window_event(window_id, &event)) else { return };
+        if !handled {
             // eframe configures the surface while it handles a resize (a new window gets a few
             // right after it opens), and wgpu fails that configure, leaving the window black
             // until the next resize, if another thread submits while it waits for an idle GPU.
@@ -278,7 +344,10 @@ impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
             });
         }
         if self.attached {
-            self.outputs.tick(event_loop);
+            self.guard_outputs(|o| o.tick(event_loop));
+            if self.crashed {
+                return;
+            }
         }
         // Wake for the next tick even while the editor is idle or minimised.
         let next = self.outputs.next_tick();
@@ -302,5 +371,35 @@ impl ApplicationHandler<eframe::UserEvent> for Host<'_> {
 
     fn memory_warning(&mut self, event_loop: &ActiveEventLoop) {
         self.guard(|e| e.memory_warning(event_loop));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_monitor_panics_pass_until_they_keep_coming() {
+        let gone = "called `Result::unwrap()` on an `Err` value: Os { code: 1461, kind: Uncategorized, \
+                    message: \"Invalid monitor handle.\" }";
+        let mut p = Passing::default();
+        let t0 = Instant::now();
+        assert!(!p.allows("index out of bounds", t0), "other panics never pass");
+        for i in 0..TRANSIENT_LIMIT {
+            assert!(p.allows(gone, t0 + Duration::from_millis(i as u64)), "panic {i}");
+        }
+        assert!(!p.allows(gone, t0 + Duration::from_millis(100)), "one too many within the window");
+        // Later, the old ones have aged out.
+        assert!(p.allows(gone, t0 + TRANSIENT_WINDOW + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn panic_text_reads_both_kinds_of_payload() {
+        let s: Box<dyn std::any::Any + Send> = Box::new("plain");
+        assert_eq!(panic_text(s.as_ref()), "plain");
+        let s: Box<dyn std::any::Any + Send> = Box::new(String::from("formatted"));
+        assert_eq!(panic_text(s.as_ref()), "formatted");
+        let s: Box<dyn std::any::Any + Send> = Box::new(7_u8);
+        assert_eq!(panic_text(s.as_ref()), "unknown panic");
     }
 }
