@@ -1327,6 +1327,7 @@ Outputs: `out` (chan).
 |---|---|---|---|---|
 | `layout` | columns \| rows | `"columns"` |  | Which cells make up one channel; columns: each column is a channel, its samples read top to bottom; rows: each row is a channel, its samples read left to right |
 | `names` | bool | `true` |  | On, the first cell of each column (or row) is the channel's name; off, the channels are called chan0, chan1, ... and every cell is a value |
+| `row` | int | `-1` (all) | -1 to 20 (soft) | Only this row, counted from 0 under the names: one value per channel. Bind it to the step of a chan.sequence, and each cue reads its own row of a cue sheet. Past the last row: the last. With layout rows: this column. -1: all; -1: all |
 
 ### chan.from_tex
 
@@ -1574,12 +1575,13 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `steps` | text |  |  | One step per line: piece, seconds, transition into the next step, its length. E.g. `faces 10 fade 2`. Transitions: cut, fade (cross-fade over the step's last seconds), black (fade out to black, the next cuts in), flash (cut to white, which fades into the next step over its first seconds). # starts a comment. The last step's transition leads into the black the show ends in |
-| `file` | file (json, txt) |  |  | Read the steps from this file instead (relative to the project directory; saving it reloads): lines as in `steps`, or JSON {"lead_in": s, "steps": [{"piece", "duration", "transition", "length"}]}, whose lead_in then wins over the param |
+| `steps` | text |  |  | One step per line: piece, seconds, transition into the next step, its length. E.g. `faces 10 fade 2`. Seconds `hold`: the step stays until `go`, then its transition plays. Transitions: cut, fade (cross-fade over the step's last seconds), black (fade out to black, the next cuts in), flash (cut to white, which fades into the next step over its first seconds). # starts a comment. The last step's transition leads into the black the show ends in |
+| `file` | file (json, txt) |  |  | Read the steps from this file instead (relative to the project directory; saving it reloads): lines as in `steps`, or JSON {"lead_in": s, "steps": [{"piece", "duration" (seconds or "hold"), "transition", "length"}]}, whose lead_in then wins over the param |
 | `names` | text |  |  | The pieces in input order, separated by spaces: piece k is input in<k> of a tex.sequence and has a channel run_<name>. Steps naming another piece are left out. Empty: the pieces in the order the steps first name them |
 | `lead_in` | float | `1` | 0 to 10 s (soft) | Black before the first step, so its piece starts over when the show starts |
 | `run` | float | `1` | 0 to 1 (soft) | On from 0.5 up (with `equals` set: while it equals that number). Each time it turns on the show starts from its beginning; while it is off it shows black and every run gate is 0 |
 | `equals` | int | `-1` (off) | -1 to 20 (soft) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the show's own number. While off, `run` is on from 0.5 up; -1: off |
+| `go` | float | `0` | 0 to 1 (soft) | Each time it rises past 0.5 the step on screen moves on: a holding step starts its transition, a timed one cuts its time short. Ignored while a transition plays. Bind it to a key's gate or an OSC address |
 | `mode` | once \| loop | `"once"` |  | What the show does after its last step; once: it ends in black and stays there; loop: it starts over from its lead-in, round after round |
 
 ### chan.slider

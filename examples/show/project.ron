@@ -1,0 +1,22 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 2,
+    nodes: {
+        "/caption": (kind: "tex.text", params: {"color": [1.0, 1.0, 1.0, 0.85], "position": [0.5, 0.9], "size": 72.0, "style": "Light"}, binds: {"text": (node: "cue", channel: "hour", format: "{.0}:00")}, pos: [1100.0, 142.0]),
+        "/cue": (kind: "chan.from_table", inputs: {"in": "cues"}, binds: {"row": "show:step"}, pos: [850.0, 426.0]),
+        "/cues": (kind: "table.text", params: {"format": "csv", "text": "cue,hour,rain_db\n1,6,-60\n2,12,-60\n3,17,-10\n4,22,-24\n5,0,-60"}, pos: [850.0, 284.0]),
+        "/dawn": (kind: "tex.ramp", params: {"keys": "0 1 0.3 0.06\n0.4 0.5 0.14 0.25\n1 0.02 0.03 0.15", "shape": "vertical"}, pos: [600.0, 142.0]),
+        "/day": (kind: "tex.primitive", params: {"background": [0.2, 0.45, 0.9, 1.0], "center": [0.7, 0.3], "fill": [1.0, 0.85, 0.35, 1.0], "shape": "ellipse", "size": [0.3, 0.3], "softness": 30.0}, pos: [600.0, 284.0]),
+        "/desk": (kind: "chan.osc_out", params: {"port": 8000, "rate": 60.0}, inputs: {"chans": "go_button"}, pos: [200.0, 142.0]),
+        "/go": (kind: "chan.math", params: {"op": "max"}, inputs: {"a": "keys", "b": "osc"}, pos: [400.0, 0.0]),
+        "/go_button": (kind: "chan.button", params: {"label": "GO", "name": "go", "show": true}, pos: [0.0, 142.0]),
+        "/keys": (kind: "chan.keyboard_in", params: {"keys": "space"}, pos: [0.0, 0.0]),
+        "/night": (kind: "tex.ramp", params: {"keys": "0 0.45 0.5 0.7\n0.12 0.1 0.12 0.3\n1 0.004 0.005 0.02", "shape": "radial"}, pos: [600.0, 568.0]),
+        "/osc": (kind: "chan.osc_in", params: {"addresses": "/go"}, pos: [400.0, 142.0]),
+        "/out": (kind: "tex.composite", inputs: {"in0": "screen", "in1": "caption"}, pos: [1100.0, 0.0]),
+        "/screen": (kind: "tex.sequence", inputs: {"sequence": "show", "in0": "dawn", "in1": "day", "in2": "storm", "in3": "night"}, pos: [850.0, 0.0]),
+        "/show": (kind: "chan.sequence", params: {"lead_in": 0.0, "names": "dawn day storm night end", "steps": "# cue   seconds  transition  length\ndawn    hold     fade        3\nday     hold     fade        2\nstorm   8        flash       0.8\nnight   hold     fade        3\nend     hold"}, binds: {"go": "go:key_space"}, pos: [600.0, 0.0]),
+        "/storm": (kind: "tex.noise", params: {"amplitude": 0.4, "frequency": 3.0, "octaves": 5, "offset": 0.3, "roughness": 0.6, "speed": 0.6}, pos: [600.0, 426.0]),
+    },
+)

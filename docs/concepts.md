@@ -67,7 +67,8 @@ explained [below](#bindings), references under [Paths](#paths).
   where it should be. Animations stay in step with the wall clock and with the music.
 - **Pause** (the status bar, or `cook.play`) stops the clock. Everything that follows it stands
   still. Edits, cameras and incoming OSC still show.
-- **Cues and restarts.** penumbra has no cue list of its own. A piece or a clip starts over
+- **Cues and restarts.** A `chan.sequence` whose steps `hold` is a cue list: its `go` moves
+  it to the next cue (see [Shows](#shows)). A piece or a clip starts over
   when a channel turns on: a `chan.clock`'s or `chan.sequence`'s `run`, a `tex.video_file`'s
   `restart`. Bind that channel to a key, an OSC message or a show step (see [A clock per
   piece](#a-clock-per-piece), [Shows](#shows), [Video clips on cue](#video-clips-on-cue)).
@@ -238,6 +239,9 @@ then its cells. Dropping a chan wire on the row binds the whole param.
   `0.5`). `{.2}` gives exactly two, `{.0}` none. Text around it stays: `{.1} m`,
   `Round {}`, `{.0}%`. Write `{{` and `}}` for a brace. Without a format the binding uses
   `{}`.
+- **A row per cue.** A cell binding names a fixed cell. For a value that changes with the cue,
+  bind the `row` of a `chan.from_table` to a `chan.sequence`'s `step`: its channels then hold
+  that row's numbers, which a format turns into text.
 - **A channel into a choice** picks the entry by its place: 0 is the first, rounded, held at
   the first and the last.
 - **A text a choice does not have** leaves the choice at its last entry, and the node shows a
@@ -379,6 +383,12 @@ between them. Two kinds of node make it:
   is input `in<k>` of a `tex.sequence` and gets a channel `run_<name>`. Steps naming a piece not
   in the list are left out with a warning. Left empty, the pieces are numbered as the steps first
   name them.
+
+  **Cues by hand.** `hold` instead of seconds keeps a step on screen until `go` rises past 0.5;
+  then its transition plays: `faces hold fade 2`. In a timed step, `go` ends the step early. A
+  `go` during a transition does nothing, so a double press skips no cue. Bind `go` to a key's
+  gate or an OSC address: the [show](../examples/show/README.md) example steps five cues with
+  the space key, a button on the show screen and OSC.
 
   `run` (with `equals`, as for a clock) starts the show from its beginning each time it turns
   on; while it is off the show is black. `mode` `loop` plays it round after round. Its channels:

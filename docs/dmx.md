@@ -29,6 +29,16 @@ channels to bind params to. See [Receiving](#receiving).
 More than 512 channels spill into the next universes (Art-Net, sACN, up to 64 universes);
 the Open DMX USB leaves them out and says so on the node.
 
+## Trying it without a light
+
+Art-Net to this machine needs no hardware. Set an `out.dmx` to `protocol` `art_net` and `host`
+`127.0.0.1`, and add a `chan.dmx_in` with its defaults (Art-Net, universe 1). Its `ch1` then
+shows what the `out.dmx` sends to slot 1: a channel at 0.5 arrives as 0.502 (128 of 255).
+To see the slots in a lighting program instead, leave out the `chan.dmx_in` (only one program
+can listen on port 6454). In QLC+, turn on the ArtNet input on 127.0.0.1 in the Inputs/Outputs
+tab and open the DMX Monitor. QLC+ counts universes from 1, so its universe 1 receives
+penumbra's universe 0: set the `out.dmx`'s `universe` to 0.
+
 ## How it sends
 
 Each target (a port, an address) has a thread of its own that sends the newest frame `rate`

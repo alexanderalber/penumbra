@@ -78,6 +78,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(ParamSpec::bool("names", true).doc(
             "On, the first cell of each column (or row) is the channel's name; off, the channels              are called chan0, chan1, ... and every cell is a value",
         ))
+        .param(ParamSpec::int("row", -1).clamp(-1.0, 1e9).range(-1.0, 20.0).special(-1.0, "all").doc(
+            "Only this row, counted from 0 under the names: one value per channel. Bind it to the \
+             step of a chan.sequence, and each cue reads its own row of a cue sheet. Past the last \
+             row: the last. With layout rows: this column. -1: all",
+        ))
         .input("in", DataKind::Table)
         .output("out", DataKind::Chan),
         || Box::new(FromTable) as Box<dyn Operator>,
@@ -176,6 +181,8 @@ impl Operator for FromTable {
         };
         let first = usize::from(named);
         let len = cells.saturating_sub(first).max(1);
+        // One sample of each channel, when `row` picks one.
+        let pick = usize::try_from(cx.int("row")?).ok().map(|r| r.min(len - 1));
         let mut channels: Vec<Channel> = Vec::new();
         let mut not_numbers: Vec<String> = Vec::new();
         let mut twice: Vec<String> = Vec::new();
@@ -203,6 +210,9 @@ impl Operator for FromTable {
                     Err(_) => not_numbers.push(format!("`{}` (row {row}, column {col})", short(text))),
                 }
             }
+            if let Some(k) = pick {
+                samples = vec![samples.get(k).copied().unwrap_or(0.0)];
+            }
             channels.push(Channel { name, samples });
         }
         let mut warnings = Vec::new();
@@ -222,7 +232,7 @@ impl Operator for FromTable {
         if !warnings.is_empty() {
             cx.warn(warnings.join("; "));
         }
-        let axis = if len > 1 { SampleAxis::Index } else { SampleAxis::Time };
+        let axis = if len > 1 && pick.is_none() { SampleAxis::Index } else { SampleAxis::Time };
         let chans = Chans::new(rate, channels)?.with_axis(axis);
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Chan, chans)]))
     }
@@ -412,5 +422,15 @@ mod tests {
         let (c, warning) = from_table("", &[]);
         assert!(c.is_empty());
         assert_eq!(warning, None);
+
+        // One row: a cue sheet read at the cue playing; past the end the last row.
+        let sheet = "cue,hour\n1,6\n2,12\n3,17";
+        let (c, _) = from_table(sheet, &[set("/c.row", 1)]);
+        assert_eq!(c.get("hour").unwrap().samples, [12.0]);
+        assert_eq!(c.axis(), SampleAxis::Time);
+        let (c, _) = from_table(sheet, &[set("/c.row", 9)]);
+        assert_eq!(c.get("cue").unwrap().samples, [3.0]);
+        let (c, _) = from_table("a,1,2\nb,3,4", &[set("/c.layout", "rows"), set("/c.row", 0)]);
+        assert_eq!(c.get("b").unwrap().samples, [3.0], "with layout rows: a column");
     }
 }

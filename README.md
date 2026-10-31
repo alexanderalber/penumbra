@@ -69,8 +69,9 @@ lists every one.
   mouse as inputs. Any parameter can be bound to a channel by dragging a wire onto it. OSC
   addresses can be learned.
 - **Shows:** a show as a list of steps (`chan.sequence`): which piece, how long, which
-  transition. `tex.sequence` blends between the pieces and cooks only what is shown; a
-  `chan.clock` per piece starts it from its beginning.
+  transition. A step can hold until GO, from a key, a button or OSC. `tex.sequence` blends
+  between the pieces and cooks only what is shown; a `chan.clock` per piece starts it from its
+  beginning. The [show](examples/show/README.md) example runs five cues.
 - **Python:** a script node (CPython 3.12 or later). It turns channels and tables into channels
   and a table, and keeps its state between frames.
 - **Components:** networks inside a node, with chosen params exposed, kept in a library.

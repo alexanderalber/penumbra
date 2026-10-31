@@ -5,7 +5,10 @@
 //! that moves on by one at each cut and gradually during a fade. From the place come the two
 //! entries shown and the share of the second (`from`, `to`, `mix`), which a `tex.sequence` per
 //! output turns into the picture, and a run gate per piece for the pieces' own clocks. Nothing
-//! but the start time is state: the same seconds always give the same answer.
+//! but the show's clock is state: the same seconds always give the same answer.
+//!
+//! A step may hold (`hold` instead of seconds): the show's clock stops just before the step's
+//! way out until `go` rises, as a cue list waits for GO. `go` also cuts a timed step short.
 
 use std::sync::Arc;
 
@@ -29,6 +32,9 @@ const MIN_DURATION: f64 = 0.1;
 const MIN_LENGTH: f64 = 0.05;
 /// A share of the second entry below this counts as none (the same threshold as `tex.switch`).
 const MIX_EPSILON: f64 = 1e-6;
+/// How long before its way out a holding step stops the clock, in seconds: a cut at the end of
+/// the step must not have happened yet.
+const HOLD_BEFORE: f64 = 1e-3;
 
 /// Registers `chan.sequence`.
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
@@ -41,15 +47,16 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .stateful()
         .param(ParamSpec::text("steps", "").multiline().doc(
             "One step per line: piece, seconds, transition into the next step, its length. E.g. \
-             `faces 10 fade 2`. Transitions: cut, fade (cross-fade over the step's last seconds), \
+             `faces 10 fade 2`. Seconds `hold`: the step stays until `go`, then its transition plays. \
+             Transitions: cut, fade (cross-fade over the step's last seconds), \
              black (fade out to black, the next cuts in), flash (cut to white, which fades into the next \
              step over its first seconds). # starts a comment. The last step's transition leads into \
              the black the show ends in",
         ))
         .param(ParamSpec::file("file", &["json", "txt"]).doc(
             "Read the steps from this file instead (relative to the project directory; saving it \
-             reloads): lines as in `steps`, or JSON {\"lead_in\": s, \"steps\": [{\"piece\", \"duration\", \
-             \"transition\", \"length\"}]}, whose lead_in then wins over the param",
+             reloads): lines as in `steps`, or JSON {\"lead_in\": s, \"steps\": [{\"piece\", \"duration\" \
+             (seconds or \"hold\"), \"transition\", \"length\"}]}, whose lead_in then wins over the param",
         ))
         .param(ParamSpec::text("names", "").doc(
             "The pieces in input order, separated by spaces: piece k is input in<k> of a tex.sequence \
@@ -70,6 +77,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(ParamSpec::int("equals", -1).clamp(-1.0, 1e9).range(-1.0, 20.0).special(-1.0, "off").doc(
             "When set, `run` is on while it equals this number: bind `run` to the channel that says \
              which piece plays and set this to the show's own number. While off, `run` is on from 0.5 up",
+        ))
+        .param(ParamSpec::float("go", 0.0).range(0.0, 1.0).doc(
+            "Each time it rises past 0.5 the step on screen moves on: a holding step starts its \
+             transition, a timed one cuts its time short. Ignored while a transition plays. Bind it \
+             to a key's gate or an OSC address",
         ))
         .param(
             ParamSpec::choice("mode", &["once", "loop"])
@@ -162,6 +174,8 @@ impl Transition {
 struct Written {
     piece: String,
     duration: Option<f64>,
+    /// Written `hold` instead of seconds: the step waits for `go`.
+    hold: bool,
     transition: Option<String>,
     length: Option<f64>,
     /// Where it was written, for messages ("line 3", "step 2").
@@ -192,7 +206,9 @@ fn parse_lines(text: &str) -> (Option<f64>, Vec<Written>, Vec<String>) {
                 },
             }
         };
-        let (duration, length) = match (number(1), number(3)) {
+        let hold = words.get(1).is_some_and(|w| w.eq_ignore_ascii_case("hold"));
+        let duration = if hold { Ok(None) } else { number(1) };
+        let (duration, length) = match (duration, number(3)) {
             (Ok(d), Ok(l)) => (d, l),
             (Err(e), _) | (_, Err(e)) => {
                 problems.push(e);
@@ -206,6 +222,7 @@ fn parse_lines(text: &str) -> (Option<f64>, Vec<Written>, Vec<String>) {
         steps.push(Written {
             piece: (*piece).to_string(),
             duration,
+            hold,
             transition: words.get(2).map(|w| (*w).to_string()),
             length,
             at,
@@ -232,9 +249,14 @@ fn parse_json(text: &str) -> (Option<f64>, Vec<Written>, Vec<String>) {
             continue;
         };
         let number = |key: &str| st.get(key).and_then(serde_json::Value::as_f64).filter(|x| x.is_finite());
+        let hold = st
+            .get("duration")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|d| d.eq_ignore_ascii_case("hold"));
         steps.push(Written {
             piece: piece.to_string(),
             duration: number("duration"),
+            hold,
             transition: st.get("transition").and_then(serde_json::Value::as_str).map(str::to_string),
             length: number("length"),
             at,
@@ -248,6 +270,7 @@ fn parse_json(text: &str) -> (Option<f64>, Vec<Written>, Vec<String>) {
 struct Step {
     piece: usize,
     duration: f64,
+    hold: bool,
 }
 
 /// A show worked out: the row of entries and the moments the place in it moves on by one.
@@ -258,6 +281,9 @@ pub struct Show {
     /// When each step starts, in seconds from the show's start, and after them the end of the
     /// last.
     starts: Vec<f64>,
+    /// Per step, when its way out starts (`go` jumps there), and whether the clock holds just
+    /// before it.
+    exits: Vec<(f64, bool)>,
     entries: Vec<Entry>,
     /// Per move to the next entry: when it starts and how long it takes (0: a cut).
     moves: Vec<(f64, f64)>,
@@ -328,7 +354,7 @@ impl Show {
                 Transition::Cut => 0.0,
                 _ => w.length.unwrap_or(kind.default_length()).max(MIN_LENGTH),
             };
-            steps.push(Step { piece, duration: w.duration.unwrap_or(10.0).max(MIN_DURATION) });
+            steps.push(Step { piece, duration: w.duration.unwrap_or(10.0).max(MIN_DURATION), hold: w.hold });
             leads.push((kind, length, w.at));
         }
         for n in &known {
@@ -345,24 +371,30 @@ impl Show {
         let mut entries = vec![Entry::Black];
         let mut moves = vec![(lead, 0.0)];
         let mut starts = Vec::with_capacity(steps.len() + 1);
+        let mut exits = Vec::with_capacity(steps.len());
         let mut t = lead;
-        for (i, (step, (kind, length, at))) in steps.iter().zip(&leads).enumerate() {
+        let count = steps.len();
+        for (i, (step, (kind, length, at))) in steps.iter_mut().zip(&leads).enumerate() {
             entries.push(Entry::Piece(step.piece));
             starts.push(t);
-            let last = i + 1 == steps.len();
+            let last = i + 1 == count;
             let flash_in = match i.checked_sub(1).and_then(|p| leads.get(p)) {
                 Some((Transition::Flash, l, _)) => *l,
                 _ => 0.0,
             };
             let own = if matches!(kind, Transition::Fade | Transition::Black) { *length } else { 0.0 };
             let taken = flash_in + own;
-            if taken > step.duration {
+            if step.hold {
+                // Long enough for the flash coming in and the way out, with a moment between.
+                step.duration = taken + MIN_DURATION;
+            } else if taken > step.duration {
                 problems.push(format!(
                     "{at}: its {} s are less than its transitions take ({taken} s)",
                     step.duration
                 ));
             }
             let end = t + step.duration;
+            exits.push((end - own, step.hold));
             match kind {
                 Transition::Cut => moves.push((end, 0.0)),
                 Transition::Fade => moves.push((end - length, *length)),
@@ -385,7 +417,7 @@ impl Show {
         // Each step's piece came in with its own round; after the last, the black it ends in.
         entries.push(Entry::Black);
         let length = moves.iter().map(|(a, w)| a + w).fold(lead, f64::max);
-        Show { names: known, steps, starts, entries, moves, length, problems }
+        Show { names: known, steps, starts, exits, entries, moves, length, problems }
     }
 
     /// Seconds from the start to the end of the last transition.
@@ -401,6 +433,27 @@ impl Show {
     /// What was wrong with the steps (each left out, cut or shortened as it says).
     pub fn problems(&self) -> &[String] {
         &self.problems
+    }
+
+    /// Where the clock stops at `t`: just before the way out of the first holding step from step
+    /// `free` on, once `t` has reached that moment.
+    fn held(&self, t: f64, free: usize) -> Option<f64> {
+        let (exit, _) = self.exits.iter().skip(free).find(|(_, hold)| *hold)?;
+        let at = (exit - HOLD_BEFORE).max(0.0);
+        (t >= at).then_some(at)
+    }
+
+    /// What `go` does at `t`: the time to go on from, and the first step that may hold again.
+    /// `None` while a transition plays and after the last step.
+    fn go(&self, t: f64) -> Option<(f64, usize)> {
+        let first = self.starts.first().copied().unwrap_or(0.0);
+        if t < first {
+            return Some((first, 0));
+        }
+        let step = usize::try_from(self.at(t).step).ok()?;
+        let (exit, _) = *self.exits.get(step)?;
+        // A holding step waits just before its exit; later than that its transition plays.
+        (t <= exit).then_some((t.max(exit - HOLD_BEFORE), step + 1))
     }
 
     /// What the show shows `t` seconds after its start.
@@ -443,10 +496,18 @@ struct Source {
     lead_in: f64,
 }
 
-/// `chan.sequence`: when it was switched on, when it last cooked, the show and its steps file.
+/// `chan.sequence`: the show's clock (its seconds at a tick, running on from there), when it
+/// last cooked, the show and its steps file.
 #[derive(Default)]
 struct Sequence {
-    start: Option<Tick>,
+    /// The tick the clock was last set at, and its seconds then; `None` while the show is off.
+    anchor: Option<(Tick, f64)>,
+    /// Steps before this one no longer hold: `go` let them go.
+    free: usize,
+    /// Whether `go` was up in the last cook, to see it rise.
+    go_up: bool,
+    /// Whether a looping show has been round once.
+    round: bool,
     last: Option<Tick>,
     show: Option<(Source, Arc<Show>)>,
     slot: AsyncSlot<String>,
@@ -515,17 +576,38 @@ impl Operator for Sequence {
         let back = self.last.is_some_and(|last| now.0 < last.0);
         self.last = Some(now);
         if !on {
-            self.start = None;
-        } else if self.start.is_none() || back {
-            self.start = Some(now);
+            self.anchor = None;
+        } else if self.anchor.is_none() || back {
+            self.anchor = Some((now, 0.0));
+            self.free = 0;
+            self.round = false;
         }
-        let elapsed = self.start.map_or(0.0, |s| Tick(now.0.saturating_sub(s.0)).seconds());
+        let go = cx.float("go")? >= 0.5;
+        let rose = go && !self.go_up;
+        self.go_up = go;
         let length = show.length();
-        let seconds = match cx.text("mode")? {
-            "loop" if length > 0.0 => elapsed.rem_euclid(length),
-            _ => elapsed.min(length),
-        };
-        let done = on && elapsed >= length;
+        let looping = cx.text("mode")? == "loop" && length > 0.0;
+        let mut seconds = 0.0;
+        if let Some((tick, base)) = self.anchor {
+            let mut t = base + Tick(now.0.saturating_sub(tick.0)).seconds();
+            if looping && t >= length {
+                t = t.rem_euclid(length);
+                self.free = 0;
+                self.round = true;
+                self.anchor = Some((now, t));
+            }
+            if let Some(at) = show.held(t, self.free) {
+                t = at;
+                self.anchor = Some((now, t));
+            }
+            if rose && let Some((from, free)) = show.go(t) {
+                t = from;
+                self.free = self.free.max(free);
+                self.anchor = Some((now, t));
+            }
+            seconds = t.min(length);
+        }
+        let done = on && (self.round || seconds >= length);
         let moment = if on { show.at(seconds) } else { Moment::OFF };
 
         let channel = |name: &str, v: f64| -> Result<Channel, CookError> {
@@ -696,5 +778,98 @@ mod tests {
         assert_eq!(Entry::from_code(f64::NAN), Entry::Black);
         assert_eq!(Entry::from_code(-7.0), Entry::Black);
         assert_eq!(shown(None), (Entry::Black, Entry::Black, 0.0));
+    }
+
+    #[test]
+    fn a_holding_step_waits_before_its_way_out() {
+        // a holds, fades into b over 2 s; b holds behind a flash in; c is timed.
+        let show = Show::new("a hold fade 2\nb hold flash 0.5\nc 4\nd hold", "", 1.0);
+        assert!(show.problems().is_empty(), "{:?}", show.problems());
+        // a from 1 s; long enough for its fade and a moment: 2.1 s, its way out from 1.1 s.
+        let (a_exit, hold) = show.exits[0];
+        assert!(hold && close(a_exit, 1.1));
+        let at = show.held(5.0, 0).unwrap();
+        assert!(close(at, 1.1 - HOLD_BEFORE));
+        assert_eq!(show.held(1.0, 0), None, "not there yet");
+        let m = show.at(at);
+        assert_eq!((m.step, m.from, m.mix), (0, Entry::Piece(0), 0.0));
+        // Let go: from there the fade plays, and b's hold comes next.
+        assert_eq!(show.go(at), Some((at, 1)));
+        assert!(show.at(at + HOLD_BEFORE + 1.0).mix > 0.4);
+        let b_hold = show.held(100.0, 1).unwrap();
+        let m = show.at(b_hold);
+        assert_eq!((m.step, m.from), (1, Entry::Piece(1)));
+        // b's way out is the flash: its cut to white has not happened while it holds.
+        assert_eq!(show.at(b_hold + 2.0 * HOLD_BEFORE).from, Entry::White);
+        // During a fade `go` does nothing; in a timed step it jumps to the step's way out.
+        assert_eq!(show.go(at + 1.0), None);
+        let c_start = show.starts[2];
+        let (c_exit, c_holds) = show.exits[2];
+        assert!(!c_holds && close(c_exit, c_start + 4.0));
+        let (from, free) = show.go(c_start + 0.5).unwrap();
+        assert!(close(from, c_exit - HOLD_BEFORE) && free == 3);
+        // In the lead-in it starts the first step; after the last, nothing.
+        assert_eq!(show.go(0.5), Some((1.0, 0)));
+        assert_eq!(show.go(1000.0), None);
+        // JSON says it as a duration.
+        let json = Show::new(r#"{"steps": [{"piece": "a", "duration": "hold"}]}"#, "", 0.0);
+        assert!(json.exits[0].1 && json.problems().is_empty());
+    }
+
+    /// The node over time: it holds on the first cue, `go` lets it fade into the next, a second
+    /// `go` during the fade is ignored, and a timed step follows by itself.
+    #[test]
+    fn go_steps_a_cue_list() {
+        use penumbra_core::{NodePath, ParamPath, Rate, ShowClock, Value};
+        use penumbra_graph::{Cooker, JobPool, Network, Op, Port};
+        let types = Arc::new(crate::builtin_types().unwrap());
+        let create = Op::Create {
+            path: NodePath::parse("/s").unwrap(),
+            kind: SEQUENCE.into(),
+            params: Default::default(),
+        };
+        let set = |p: &str, v: Value| Op::Set { param: ParamPath::parse(p).unwrap(), value: v };
+        let mut net = Arc::new(
+            Network::new()
+                .apply(
+                    &types,
+                    &[
+                        create,
+                        set("/s.steps", "a hold fade 1\nb 2 fade 1\nc hold".into()),
+                        set("/s.lead_in", Value::Float(0.0)),
+                    ],
+                )
+                .unwrap()
+                .network,
+        );
+        let mut cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
+        let id = net.resolve(&"/s".parse().unwrap()).unwrap();
+        let mut clock = ShowClock::new(Rate::FPS_60, Default::default());
+        let mut run = |net: &Arc<Network>, frames: u64| {
+            for _ in 0..frames {
+                clock.advance(1);
+                cooker.cook(net, clock.now(), &[id], &[]);
+            }
+            let c = cooker.output(Port { node: id, output: 0 }).unwrap().get::<Chans>().unwrap().clone();
+            (c.value(Some("step")).unwrap(), c.value(Some("from")).unwrap(), c.value(Some("mix")).unwrap())
+        };
+        let go = |net: &mut Arc<Network>, v: f64| {
+            *net = Arc::new(net.apply(&types, &[set("/s.go", Value::Float(v))]).unwrap().network);
+        };
+        // Ten seconds on: still a, no fade.
+        assert_eq!(run(&net, 600), (0.0, 0.0, 0.0));
+        go(&mut net, 1.0);
+        let (step, from, mix) = run(&net, 30);
+        assert_eq!((step, from), (0.0, 0.0));
+        assert!((mix - 0.5).abs() < 0.05, "half way through the fade: {mix}");
+        // Held down and pressed again during the fade: nothing more.
+        go(&mut net, 0.0);
+        run(&net, 1);
+        go(&mut net, 1.0);
+        assert_eq!(run(&net, 40).0, 1.0, "b, not skipped");
+        // b plays 2 s and fades into c by itself; c holds.
+        assert_eq!(run(&net, 300), (2.0, 2.0, 0.0));
+        go(&mut net, 0.0);
+        assert_eq!(run(&net, 300), (2.0, 2.0, 0.0));
     }
 }
