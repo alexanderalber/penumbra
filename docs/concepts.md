@@ -134,8 +134,10 @@ The families:
   default of Blender, Maya, 3ds Max and Unity. An ASCII FBX file gives an error: export it as
   binary. Each FBX model becomes a part with its name, placed as in the file, in metres and z up.
   Materials bring their diffuse colour and texture, embedded or from a file beside the FBX.
-  Animation, skins, cameras and lights are not read yet: an animated file shows its mesh as
-  stored, without the motion.
+  Animated models play: each part moves as its model does in the file. `take` picks the
+  animation (the `takes` output lists them), `play`, `speed` and `loop` work as for a video, and
+  with `play` off a channel bound to `time` drives it. Skins, cameras and lights are not read
+  yet: a character that moves only through its skin stays in the pose it was stored in.
   `out.mesh` writes geometry to an OBJ, STL or glb file, every model where it stands in the
   scene. Each part stays a part: an OBJ object or a glTF node. Only glb keeps material colours;
   textures are not written. File, `overwrite` and the modes `changes` and `manual` work as for

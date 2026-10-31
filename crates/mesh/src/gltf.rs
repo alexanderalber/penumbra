@@ -57,7 +57,7 @@ pub fn parse(
     r.walk()?;
     let Reader { b, mut warnings, .. } = r;
     warnings.dedup();
-    Ok(Loaded { mesh: b.finish(), warnings })
+    Ok(Loaded { mesh: b.finish(), warnings, motion: None })
 }
 
 /// The JSON chunk and the optional BIN chunk of a `.glb`.
@@ -535,7 +535,7 @@ impl<'a> Reader<'a> {
             Err(Error::new("no uri and no bufferView"))
         };
         let id = match bytes {
-            Ok(bytes) => Some(self.b.image(Image { name, bytes })?),
+            Ok(bytes) => Some(self.b.image(Image { name, bytes: bytes.into() })?),
             Err(e) => {
                 self.warnings.push(format!("images[{i}]: {e}"));
                 None

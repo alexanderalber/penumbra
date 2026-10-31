@@ -359,6 +359,12 @@ impl Curve {
         Ok(Curve { keys, pre, post, ticks_per_second: scale })
     }
 
+    /// Whether the curve has one value at all times: every key the same, flat tangents.
+    pub fn is_constant(&self) -> bool {
+        let Some(first) = self.keys.first() else { return true };
+        self.keys.iter().all(|k| k.value == first.value && k.left.dy == 0.0 && k.right.dy == 0.0)
+    }
+
     /// The first and the last key's time; `None` without keys.
     pub fn span(&self) -> Option<(f64, f64)> {
         Some((self.keys.first()?.time, self.keys.last()?.time))
@@ -816,29 +822,51 @@ impl Animation {
         hierarchy.evaluate(&self.transform_props(hierarchy, take, time))
     }
 
-    /// Whether take `take` drives any transform property of a model of `hierarchy`.
+    /// Whether take `take` changes a transform property of a model of `hierarchy` over time.
     pub fn moves(&self, hierarchy: &Hierarchy, take: usize) -> bool {
+        self.moves_any(hierarchy, take, |_| true)
+    }
+
+    /// Whether take `take` changes, over time, a transform property of a model of `hierarchy`
+    /// for which `wanted(index)` holds. Curves that hold one value do not count; a layer
+    /// whose weight changes counts for all it drives.
+    pub fn moves_any(&self, hierarchy: &Hierarchy, take: usize, wanted: impl Fn(usize) -> bool) -> bool {
+        let varies = |value: usize| {
+            self.curve_nodes.get(value).is_some_and(|n| {
+                n.curves.iter().flatten().any(|c| self.curves.get(*c).is_some_and(|c| !c.is_constant()))
+            })
+        };
         let mut any = false;
-        self.each_driven(take, 0.0, |_, _, d, _| {
-            any |= hierarchy.index_of(d.target).is_some()
-                && matches!(
-                    d.property.as_str(),
-                    "Lcl Translation"
-                        | "Lcl Rotation"
-                        | "Lcl Scaling"
-                        | "PreRotation"
-                        | "PostRotation"
-                        | "RotationOffset"
-                        | "RotationPivot"
-                        | "ScalingOffset"
-                        | "ScalingPivot"
-                        | "GeometricTranslation"
-                        | "GeometricRotation"
-                        | "GeometricScaling"
-                );
+        self.each_driven(take, 0.0, |_, layer, d, _| {
+            if !any && is_transform(&d.property) && hierarchy.index_of(d.target).is_some_and(&wanted) {
+                let weight = layer
+                    .driven
+                    .iter()
+                    .any(|w| w.target == layer.id && w.property == "Weight" && varies(w.value));
+                any = varies(d.value) || weight;
+            }
         });
         any
     }
+}
+
+/// Whether `property` is one of a model's transform properties.
+pub fn is_transform(property: &str) -> bool {
+    matches!(
+        property,
+        "Lcl Translation"
+            | "Lcl Rotation"
+            | "Lcl Scaling"
+            | "PreRotation"
+            | "PostRotation"
+            | "RotationOffset"
+            | "RotationPivot"
+            | "ScalingOffset"
+            | "ScalingPivot"
+            | "GeometricTranslation"
+            | "GeometricRotation"
+            | "GeometricScaling"
+    )
 }
 
 /// Puts layer `layer`'s `value` (at position `pos` in its take, weight `w`) onto `out`.

@@ -15,6 +15,7 @@
 
 mod fbx;
 mod gltf;
+pub mod motion;
 mod obj;
 pub mod prim;
 mod stl;
@@ -22,7 +23,9 @@ pub mod write;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+pub use motion::Motion;
 pub use penumbra_core::Error;
 
 /// One vertex: position, normal (unit length, or zero where unknown) and texture coordinates.
@@ -63,7 +66,8 @@ impl Material {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Image {
     pub name: String,
-    pub bytes: Vec<u8>,
+    /// Shared, so a mesh copied per frame does not copy its images.
+    pub bytes: Arc<[u8]>,
 }
 
 /// A mesh with named parts. Part ids are the indices into [`Mesh::parts`]; they come from the
@@ -191,7 +195,8 @@ impl Mesh {
     /// meshes from voxel or marching-cubes tools, whose staircases of small steps still show
     /// after one ring. For meshes that carry only face normals, such as STL, whose faceted
     /// surfaces otherwise shade grainy. A vertex whose corners come out different is split;
-    /// more than `max_vertices` is an error, the mesh left as it was.
+    /// more than `max_vertices` is an error, the mesh left as it was. Returns, for each vertex
+    /// added at the end by a split, the vertex it was copied from.
     ///
     /// Bounded for hostile input: corners sharing a point beyond [`SMOOTH_GROUP`] faces take
     /// the plain average (no crease test), so the work stays linear per ring.
@@ -200,7 +205,7 @@ impl Mesh {
         crease_degrees: f32,
         rings: u32,
         max_vertices: usize,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<u32>, Error> {
         let tris = self.triangle_count();
         // Part of each triangle, from the ranges.
         let mut part = vec![0u32; tris];
@@ -297,6 +302,7 @@ impl Mesh {
         let mut set = vec![false; vertices.len()];
         // Copies made by splitting, by (vertex, normal), so corners alike share one.
         let mut copies: std::collections::HashMap<(u32, [u32; 3]), u32> = std::collections::HashMap::new();
+        let mut origins = Vec::new();
         for (n, index) in corners.iter().copied().zip(indices.iter_mut()) {
             let v = *index as usize;
             let count = vertices.len();
@@ -318,6 +324,7 @@ impl Mesh {
                     copies.insert((*index, n.map(f32::to_bits)), count as u32);
                     *index = count as u32;
                     vertices.push(copy);
+                    origins.push(v as u32);
                     set.push(true);
                 }
                 _ => {}
@@ -325,7 +332,7 @@ impl Mesh {
         }
         self.vertices = vertices;
         self.indices = indices;
-        Ok(())
+        Ok(origins)
     }
 
     pub fn bounds(&self) -> Option<Bounds> {
@@ -506,6 +513,8 @@ impl Default for Limits {
 pub struct Loaded {
     pub mesh: Mesh,
     pub warnings: Vec<String>,
+    /// How the mesh moves, for files with animation (FBX); `None` for a still mesh.
+    pub motion: Option<Motion>,
 }
 
 /// Extensions the file picker offers.

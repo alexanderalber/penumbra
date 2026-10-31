@@ -80,5 +80,5 @@ pub fn parse(bytes: &[u8], stem: &str, limits: &Limits) -> Result<Loaded, Error>
             }
         }
     }
-    Ok(Loaded { mesh: b.finish(), warnings: Vec::new() })
+    Ok(Loaded { mesh: b.finish(), warnings: Vec::new(), motion: None })
 }

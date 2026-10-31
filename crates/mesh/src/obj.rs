@@ -163,7 +163,7 @@ pub fn parse(
     if uvs.is_empty() {
         warnings.push("no texture coordinates: a texture shows as one colour".into());
     }
-    Ok(Loaded { mesh: b.finish(), warnings })
+    Ok(Loaded { mesh: b.finish(), warnings, motion: None })
 }
 
 fn uv_of(uvs: &[[f32; 2]], i: u32) -> [f32; 2] {
@@ -262,7 +262,9 @@ fn read_mtl(
                     Some(id) => *id,
                     None => {
                         let id = match sidecar(file) {
-                            Ok(bytes) => Some(b.image(Image { name: file.to_string(), bytes })?),
+                            Ok(bytes) => {
+                                Some(b.image(Image { name: file.to_string(), bytes: bytes.into() })?)
+                            }
                             Err(e) => {
                                 warnings.push(format!("{library}: texture {e}"));
                                 None

@@ -1862,14 +1862,15 @@ Outputs: `out` (geo).
 
 ### geo.file
 
-A 3D model from a file (OBJ, STL, glTF/GLB, FBX) with its parts; updates when the file changes
+A 3D model from a file (OBJ, STL, glTF/GLB, FBX) with its parts; updates when the file changes. An animated FBX plays its moving parts
 
 Inputs: none.
 
 Outputs:
 
-- `out` (geo): The mesh
+- `out` (geo): The mesh, posed at the animation's current time
 - `parts` (table): One row per part: id, name, triangles, bounds (min_x .. max_z)
+- `takes` (table): One row per animation in the file: take, name, start, stop, seconds. Only a header for a still file
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -1878,6 +1879,11 @@ Outputs:
 | `normals` | file \| smooth | `"file"` |  | Which way each corner faces, for the shading; file: as the file has them (flat where it has none, as STL); smooth: averaged over each corner's faces, for faceted or voxel meshes |
 | `rings` *(more)* | int | `1` | 1 to 16 | smooth: rings of faces averaged around each corner; 3 to 6 for voxel or marching-cubes meshes |
 | `crease` *(more)* | float | `180` | 0 to 180° | smooth: edges sharper than this stay hard; 180 smooths everything |
+| `take` | int | `0` | 0 to 10 (soft) | Which animation of an FBX file plays: 0 is the first. The `takes` output lists them |
+| `play` | bool | `true` |  | Off holds the animation at `time` |
+| `speed` | float | `1` | 0 to 4 (soft) | Playback rate of the animation: 2 plays twice as fast |
+| `loop` | bool | `true` |  | Off stops the animation on its last frame |
+| `time` | float | `0` | 0 to 60 s (soft) | Seconds into the animation, added to the seconds played. With `play` off, bind a channel here to drive the animation |
 
 ### geo.instance
 

@@ -17,7 +17,7 @@ use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc,
     NodeTypes, Operator,
 };
-use penumbra_mesh::{Bounds, Limits, Mesh, Up, prim};
+use penumbra_mesh::{Bounds, Limits, Mesh, Motion, Up, prim};
 
 use crate::{gpu, waiting};
 
@@ -34,7 +34,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "geo.file",
-            "A 3D model from a file (OBJ, STL, glTF/GLB, FBX) with its parts; updates when the file changes",
+            "A 3D model from a file (OBJ, STL, glTF/GLB, FBX) with its parts; updates when the file changes. An animated FBX plays its moving parts",
         )
         .param(
             ParamSpec::file("file", penumbra_mesh::EXTENSIONS)
@@ -67,10 +67,33 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .more()
                 .doc("smooth: edges sharper than this stay hard; 180 smooths everything"),
         )
+        .param(
+            ParamSpec::int("take", 0)
+                .clamp(0.0, 1e6)
+                .range(0.0, 10.0)
+                .doc("Which animation of an FBX file plays: 0 is the first. The `takes` output lists them"),
+        )
+        .param(ParamSpec::bool("play", true).doc("Off holds the animation at `time`"))
+        .param(
+            ParamSpec::float("speed", 1.0)
+                .clamp(0.0, 16.0)
+                .range(0.0, 4.0)
+                .doc("Playback rate of the animation: 2 plays twice as fast"),
+        )
+        .param(ParamSpec::bool("loop", true).doc("Off stops the animation on its last frame"))
+        .param(
+            ParamSpec::float("time", 0.0)
+                .clamp(-1e7, 1e7)
+                .range(0.0, 60.0)
+                .unit(Unit::Seconds)
+                .doc("Seconds into the animation, added to the seconds played. With `play` off, bind a channel here to drive the animation"),
+        )
         .output("out", DataKind::Geo)
         .output("parts", DataKind::Table)
-        .describe_output("out", "The mesh")
-        .describe_output("parts", "One row per part: id, name, triangles, bounds (min_x .. max_z)"),
+        .output("takes", DataKind::Table)
+        .describe_output("out", "The mesh, posed at the animation's current time")
+        .describe_output("parts", "One row per part: id, name, triangles, bounds (min_x .. max_z)")
+        .describe_output("takes", "One row per animation in the file: take, name, start, stop, seconds. Only a header for a still file"),
         || Box::new(GeoFile::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
@@ -326,11 +349,33 @@ fn parts_table(mesh: &Mesh) -> Result<Table, Error> {
     Table::new(rows)
 }
 
+/// The `takes` table: a header, then one row per take.
+fn takes_table(motion: Option<&Motion>) -> Result<Table, Error> {
+    let mut rows = vec![["take", "name", "start", "stop", "seconds"].map(str::to_string).to_vec()];
+    for (k, t) in motion.map_or(&[][..], |m| m.takes.as_slice()).iter().enumerate() {
+        rows.push(vec![
+            k.to_string(),
+            t.name.clone(),
+            format!("{:.4}", t.start),
+            format!("{:.4}", t.stop),
+            format!("{:.4}", t.duration()),
+        ]);
+    }
+    Table::new(rows)
+}
+
 struct Loaded {
     geo: Geo,
     parts: Table,
+    takes: Table,
+    /// The animation, for a file whose models move.
+    motion: Option<Motion>,
     warnings: Vec<String>,
 }
+
+/// A pause in cooking longer than this is not played through: the animation goes on where it
+/// was, as `tex.video_file` does.
+const GAP_SECONDS: f64 = 0.5;
 
 #[derive(Default)]
 struct GeoFile {
@@ -338,6 +383,48 @@ struct GeoFile {
     watch: Option<FileWatch>,
     /// The `up`, `normals`, `crease` and `rings` the last load was started with.
     how: Option<(String, String, (u64, u32))>,
+    /// The loaded file moves and `play` is on: the node follows the show clock.
+    playing: bool,
+    /// Seconds played so far, times `speed`.
+    played: f64,
+    /// Show time of the last cook that played.
+    last_time: Option<f64>,
+    /// The take and the position (bits) last posed, for the loaded file.
+    shown: Option<(usize, u64)>,
+    /// The vertices posed last, kept to reuse their memory.
+    scratch: Vec<penumbra_mesh::Vertex>,
+}
+
+impl GeoFile {
+    /// Seconds into `take` for this cook: `time` plus the seconds played, wrapped or held at
+    /// the ends.
+    fn position(
+        &mut self,
+        cx: &CookContext<'_>,
+        take: &penumbra_mesh::motion::Take,
+    ) -> Result<f64, CookError> {
+        if self.playing {
+            let now = cx.time().seconds();
+            let dt = match self.last_time {
+                Some(last) if (0.0..=GAP_SECONDS).contains(&(now - last)) => now - last,
+                Some(_) => f64::from(cx.rate().den()) / f64::from(cx.rate().num().max(1)),
+                None => 0.0,
+            };
+            self.last_time = Some(now);
+            self.played += dt * cx.float("speed")?.clamp(0.0, 16.0);
+        } else {
+            self.last_time = None;
+        }
+        let p = cx.float("time")? + self.played;
+        let d = take.duration();
+        Ok(if !p.is_finite() || d <= 0.0 {
+            0.0
+        } else if cx.bool("loop")? {
+            p.rem_euclid(d)
+        } else {
+            p.clamp(0.0, d)
+        })
+    }
 }
 
 impl Operator for GeoFile {
@@ -369,43 +456,82 @@ impl Operator for GeoFile {
                 "z" => Up::Z,
                 _ => Up::of_file(&p.to_string_lossy()),
             };
+            let gpu = gpu.clone();
             self.slot.start(cx.spawn(move |_job| {
                 let mut loaded = penumbra_mesh::load_file(&p, &Limits::default()).map_err(|e| e.0)?;
                 loaded.mesh.to_z_up(up);
+                if let Some(m) = loaded.motion.as_mut() {
+                    m.to_z_up(up);
+                }
                 if smooth {
-                    loaded
+                    let split = loaded
                         .mesh
                         .smooth_normals(crease as f32, rings, Limits::default().max_vertices)
                         .map_err(|e| e.0)?;
+                    if let Some(m) = loaded.motion.as_mut() {
+                        m.split(&split);
+                    }
                 }
                 let parts = parts_table(&loaded.mesh).map_err(|e| e.0)?;
+                let takes = takes_table(loaded.motion.as_ref()).map_err(|e| e.0)?;
+                let motion = loaded.motion.take();
                 let label =
                     p.file_name().map_or_else(|| "mesh".to_string(), |n| n.to_string_lossy().to_string());
                 let (model, mut warnings) = Model::upload(&gpu, loaded.mesh, &label).map_err(|e| e.0)?;
                 warnings.splice(0..0, loaded.warnings);
                 let geo = Geo::single(Arc::new(model));
-                Ok(Arc::new(Loaded { geo, parts, warnings }))
+                Ok(Arc::new(Loaded { geo, parts, takes, motion, warnings }))
             }));
         }
         if let Some(e) = self.slot.error() {
             return Err(CookError::failed(e));
         }
-        let Some(l) = self.slot.latest() else { return Err(CookError::Pending) };
+        let Some(l) = self.slot.latest().cloned() else { return Err(CookError::Pending) };
         for w in l.warnings.iter().take(4) {
             cx.warn(w.clone());
         }
         if fresh {
-            Ok(Cooked::Outputs(vec![
-                Data::new(DataKind::Geo, l.geo.clone()),
-                Data::new(DataKind::Table, l.parts.clone()),
-            ]))
-        } else {
-            Ok(Cooked::Unchanged)
+            self.shown = None;
         }
+        let take = usize::try_from(cx.int("take")?).unwrap_or(0);
+        let moving = l.motion.as_ref().filter(|m| m.moves(take));
+        if let Some(m) = l.motion.as_ref()
+            && take >= m.takes.len()
+        {
+            cx.warn(format!("the file has {} takes: `take` counts from 0", m.takes.len()));
+        }
+        self.playing = moving.is_some() && cx.bool("play")?;
+        let geo = match (moving, l.motion.as_ref().and_then(|m| m.takes.get(take))) {
+            (Some(m), Some(t)) => {
+                let at = self.position(cx, t)?;
+                if !fresh && self.shown == Some((take, at.to_bits())) {
+                    return Ok(Cooked::Unchanged);
+                }
+                self.shown = Some((take, at.to_bits()));
+                let Some(base) = l.geo.items.first() else {
+                    return Err(CookError::failed("the mesh is empty"));
+                };
+                let mut vertices = std::mem::take(&mut self.scratch);
+                m.deform(&base.model.mesh.vertices, take, at, &mut vertices);
+                let model = base.model.with_vertices(&gpu, vertices)?;
+                Geo::single(Arc::new(model))
+            }
+            _ if fresh || self.shown.take().is_some() => l.geo.clone(),
+            _ => return Ok(Cooked::Unchanged),
+        };
+        Ok(Cooked::Outputs(vec![
+            Data::new(DataKind::Geo, geo),
+            Data::new(DataKind::Table, l.parts.clone()),
+            Data::new(DataKind::Table, l.takes.clone()),
+        ]))
     }
 
     fn job_status(&self) -> Option<JobStatus> {
         Some(self.slot.status())
+    }
+
+    fn time_dependent(&self) -> Option<bool> {
+        Some(self.playing)
     }
 }
 

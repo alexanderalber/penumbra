@@ -3,8 +3,10 @@
 //! (pivots, pre- and post-rotation, geometric transforms, inherit types). Polygons are split
 //! into triangles. Normals and the first UV set are read, materials as their diffuse colour
 //! and diffuse texture (embedded in the file, or a file beside it). Units become metres, and
-//! the file's axes become penumbra's: z up, front towards -y. Not read: animation, skins,
-//! blend shapes, cameras, lights; ASCII files are refused with an error saying so.
+//! the file's axes become penumbra's: z up, front towards -y. Animated models come with a
+//! [`Motion`]: each vertex remembers its model and control point, and moves with the model's
+//! animated transform. Not read: skins, blend shapes, cameras, lights; ASCII files are refused
+//! with an error saying so.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -12,7 +14,9 @@ use std::path::Path;
 use penumbra_fbx::transform::mul;
 use penumbra_fbx::{Axes, Axis, Geometry, Scene};
 
-use crate::{Builder, Error, Image, Limits, Loaded, Material, Vertex, determinant, normal_matrix, normalize};
+use crate::{
+    Builder, Error, Image, Limits, Loaded, Material, Motion, Vertex, determinant, normal_matrix, normalize,
+};
 
 type Mat = [[f64; 4]; 4];
 
@@ -58,6 +62,10 @@ pub fn parse(
         materials: HashMap::new(),
         images: HashMap::new(),
         warnings,
+        points: Vec::new(),
+        local: Vec::new(),
+        piece_of: Vec::new(),
+        pieces: Vec::new(),
     };
     let mut geometries: HashMap<i64, Geometry> = HashMap::new();
     let (mut degenerate, mut out_of_range) = (0usize, 0usize);
@@ -86,6 +94,10 @@ pub fn parse(
             slots.push(r.material(*id)?);
         }
         r.geometry(g, &world, part, &slots).map_err(|e| e.context(format!("model `{name}`")))?;
+        let piece = r.pieces.len() as u32;
+        r.pieces.push((inst.node, inst.geometry_to_world));
+        let n = r.b.vertex_count();
+        r.piece_of.resize(n, piece);
     }
     if degenerate > 0 {
         r.warnings.push(format!("{degenerate} polygons with fewer than three corners skipped"));
@@ -93,9 +105,16 @@ pub fn parse(
     if out_of_range > 0 {
         r.warnings.push(format!("{out_of_range} polygons with a corner outside the vertices skipped"));
     }
-    let Reader { b, mut warnings, .. } = r;
+    let Reader { b, mut warnings, points, local, piece_of, pieces, .. } = r;
     warnings.dedup();
-    Ok(Loaded { mesh: b.finish(), warnings })
+    let mesh = b.finish();
+    let n = mesh.vertices.len();
+    let motion = if points.len() == n && local.len() == n && piece_of.len() == n {
+        Motion::new(scene.hierarchy.clone(), scene.animation.clone(), pieces, root, piece_of, points, local)
+    } else {
+        None
+    };
+    Ok(Loaded { mesh, warnings, motion })
 }
 
 struct Reader<'a> {
@@ -107,6 +126,13 @@ struct Reader<'a> {
     /// FBX texture id to our image (`None`: could not be read, warned once).
     images: HashMap<i64, Option<u32>>,
     warnings: Vec<String>,
+    /// Per vertex made so far: its control point, and its piece (one per mesh instance).
+    points: Vec<u32>,
+    /// Per vertex made so far: its position and normal in its geometry's own space.
+    local: Vec<Vertex>,
+    piece_of: Vec<u32>,
+    /// Per piece: its hierarchy node and geometry-to-file matrix.
+    pieces: Vec<(usize, Mat)>,
 }
 
 impl Reader<'_> {
@@ -173,7 +199,7 @@ impl Reader<'_> {
             Ok(bytes) => {
                 let name =
                     if t.name.is_empty() { format!("texture{}", self.images.len()) } else { t.name.clone() };
-                Some(self.b.image(Image { name, bytes })?)
+                Some(self.b.image(Image { name, bytes: bytes.into() })?)
             }
             Err(e) => {
                 self.warnings.push(format!("texture `{}`: {e}", t.name));
@@ -196,6 +222,15 @@ impl Reader<'_> {
         };
         let uv = |c: usize| -> [f32; 2] {
             g.uvs.as_ref().and_then(|a| a.at(c)).map_or([0.0; 2], |[u, v]| [u as f32, (1.0 - v) as f32])
+        };
+        // A corner in the geometry's own space, its normal as the file has it (zero without).
+        let local = |c: usize| -> Vertex {
+            let f = |p: [f64; 3]| p.map(|x| x as f32);
+            Vertex {
+                position: f(g.position(c).unwrap_or([0.0; 3])),
+                normal: g.normals.as_ref().and_then(|a| a.at(c)).map_or([0.0; 3], f),
+                uv: [0.0; 2],
+            }
         };
         let corners: usize = g.polygons.iter().map(|p| p.count as usize).sum();
         let triangles: usize = g.polygons.iter().map(|p| p.count as usize - 2).sum();
@@ -238,6 +273,8 @@ impl Reader<'_> {
                                     let normal = na.at(c).map_or([0.0; 3], turn);
                                     let position = place(g.position(c).unwrap_or([0.0; 3]));
                                     let i = self.b.vertex(Vertex { position, normal, uv: uv(c) })?;
+                                    self.points.push(v);
+                                    self.local.push(local(c));
                                     shared.insert(key, i);
                                     i
                                 }
@@ -251,6 +288,8 @@ impl Reader<'_> {
                             continue;
                         }
                         self.b.flat_triangle(p, tri.map(|c| uv(c as usize)), part, material)?;
+                        self.points.extend(tri.map(|c| g.corners.get(c as usize).copied().unwrap_or(0)));
+                        self.local.extend(tri.map(|c| local(c as usize)));
                     }
                 }
                 self.b.inner_edges(inner);

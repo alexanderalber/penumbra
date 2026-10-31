@@ -149,10 +149,62 @@ impl Model {
             })
             .collect();
         let bounds = mesh.bounds();
-        static NEXT: AtomicU64 = AtomicU64::new(1);
-        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let id = next_id();
         let wire = Mutex::new(None);
         Ok((Model { mesh, id, vertices, indices, textures, centers, bounds, wire }, warnings))
+    }
+
+    /// The same model with other vertices, as many as before: an animated mesh at a new time.
+    /// Shares the index buffer and the textures; uploads only the vertices. Gets an id of its
+    /// own, so caches keyed by geometry see the change.
+    pub fn with_vertices(&self, gpu: &Gpu, vertices: Vec<penumbra_mesh::Vertex>) -> Result<Model, Error> {
+        if vertices.len() != self.mesh.vertices.len() {
+            return Err(Error::new("the new vertices do not match the model's"));
+        }
+        let mut v = Vec::with_capacity(vertices.len() * VERTEX_BYTES as usize);
+        for x in &vertices {
+            for f in x.position.iter().chain(&x.normal).chain(&x.uv) {
+                v.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+        let (buffer, error) = gpu.scoped(|| {
+            let b = gpu.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some("animated vertices"),
+                size: v.len() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            gpu.queue().write_buffer(&b, 0, &v);
+            b
+        });
+        if let Some(e) = error {
+            return Err(Error::new(format!("cannot upload the vertices: {e}")));
+        }
+        let mesh = Mesh { vertices, ..self.mesh.clone() };
+        let centers = mesh
+            .ranges
+            .iter()
+            .map(|r| {
+                let corners = mesh
+                    .indices
+                    .get(r.first as usize..(r.first as usize).saturating_add(r.count as usize))
+                    .unwrap_or(&[])
+                    .iter()
+                    .filter_map(|i| mesh.vertices.get(*i as usize).map(|v| v.position));
+                Bounds::of(corners).map_or([0.0; 3], |b| b.center())
+            })
+            .collect();
+        let bounds = mesh.bounds();
+        Ok(Model {
+            mesh,
+            id: next_id(),
+            vertices: buffer,
+            indices: self.indices.clone(),
+            textures: self.textures.clone(),
+            centers,
+            bounds,
+            wire: Mutex::new(None),
+        })
     }
 
     /// The vertices a wireframe draws: three per triangle in index order (so a run of indices
@@ -210,6 +262,12 @@ impl Model {
             + self.textures.iter().flatten().map(Tex::bytes).sum::<u64>()
             + lock(&self.wire).as_ref().map_or(0, wgpu::Buffer::size)
     }
+}
+
+/// A model id not given out before.
+fn next_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Per triangle, a bit per edge (bit k: the edge opposite corner k) inside a polygon: the

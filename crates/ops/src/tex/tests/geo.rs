@@ -1755,3 +1755,67 @@ fn textures_far_finer_than_the_pixels_average_out() {
         assert!(lo > mean * 0.8 && hi < mean * 1.2, "{name}: {lo} to {hi} around {mean}");
     }
 }
+
+/// The bounds of `/fbx`'s geometry once its output has a version other than `after`.
+fn fbx_bounds(rig: &mut Rig, after: u64) -> penumbra_mesh::Bounds {
+    let id = rig.id("/fbx");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        rig.cooker.cook(&rig.net, rig.clock.now(), &[id], &[]);
+        let s = rig.cooker.status(id).unwrap();
+        if s.version != after
+            && let Some(g) =
+                rig.cooker.output(Port { node: id, output: 0 }).and_then(|d| d.get::<Geo>().cloned())
+        {
+            return g.bounds().unwrap();
+        }
+        assert!(Instant::now() < deadline, "{s:?}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[test]
+fn an_animated_fbx_moves_its_parts_with_the_time() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("geo-fbx-anim");
+    let scene = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::animated_scene(), true);
+    std::fs::write(dir.join("towers.fbx"), scene).unwrap();
+    let ops = vec![
+        create("/fbx", "geo.file", &[("file", "towers.fbx".into()), ("play", Value::Bool(false))]),
+        render(
+            "/view",
+            &[
+                ("surface", "material".into()),
+                ("position", Value::Vec3([2.5, -3.5, 2.2])),
+                ("target", Value::Vec3([0.0, 0.0, 1.2])),
+            ],
+        ),
+        connect("/fbx", "/view", 0),
+    ];
+    let mut rig = rig(gpu, Some(&dir), &ops);
+    let rest = fbx_bounds(&mut rig, 0);
+    let s = rig.cooker.status(rig.id("/fbx")).unwrap();
+    assert_eq!((s.error, s.warning, s.time_dependent), (None, None, false));
+    let takes =
+        rig.cooker.output(Port { node: rig.id("/fbx"), output: 2 }).unwrap().get::<Table>().cloned().unwrap();
+    assert_eq!(takes.rows()[1][..2], ["0".to_string(), "Take 001".to_string()]);
+    // A second in, the base has risen 50 cm (the file is y up in centimetres).
+    let v = rig.version("/fbx");
+    rig.edit(&[set("/fbx.time", Value::Float(1.0))]);
+    let moved = fbx_bounds(&mut rig, v);
+    assert!((moved.min[2] - rest.min[2] - 0.5).abs() < 1e-3, "{rest:?} {moved:?}");
+    look(&mut rig, "/view", "render_fbx_anim_1s", (super::W, super::H));
+    // Past the end it loops; with `loop` off it holds the last frame (base up 1 m).
+    // Three seconds into a take of two is one second in: the same pose, nothing new to make.
+    let v = rig.version("/fbx");
+    rig.edit(&[set("/fbx.time", Value::Float(3.0))]);
+    rig.cook("/fbx");
+    assert_eq!(rig.version("/fbx"), v);
+    let v = rig.version("/fbx");
+    rig.edit(&[set("/fbx.loop", Value::Bool(false))]);
+    assert!((fbx_bounds(&mut rig, v).min[2] - rest.min[2] - 1.0).abs() < 1e-3);
+    // Playing, the node follows the show clock.
+    rig.edit(&[set("/fbx.play", Value::Bool(true))]);
+    rig.cook("/fbx");
+    assert!(rig.cooker.status(rig.id("/fbx")).unwrap().time_dependent);
+}

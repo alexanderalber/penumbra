@@ -155,7 +155,7 @@ f 1 3 4
     let wood = &m.materials[m.ranges[0].material as usize];
     assert_eq!(wood.name, "wood");
     assert!((wood.color[1] - srgb_to_linear(0.5)).abs() < 1e-6);
-    assert_eq!(m.images[wood.texture.unwrap() as usize].bytes, b"PNG");
+    assert_eq!(&*m.images[wood.texture.unwrap() as usize].bytes, b"PNG");
     let glass = m.materials.iter().find(|x| x.name == "glass").unwrap();
     assert_eq!(glass.color[3], 0.25);
     // No normals in the file: flat ones facing +z.
@@ -573,12 +573,12 @@ fn fbx_loads_as_parts_in_metres_and_z_up() {
 fn fbx_textures_come_embedded_or_from_beside_the_file() {
     let embedded =
         parse("s.fbx", &fbx_scene(Some(b"\x89PNG embedded")), &no_files, &Limits::default()).unwrap();
-    assert_eq!(embedded.mesh.images[0].bytes, b"\x89PNG embedded");
+    assert_eq!(&*embedded.mesh.images[0].bytes, b"\x89PNG embedded");
     assert_eq!(embedded.mesh.materials[1].texture, Some(0));
     // No content: the relative path, with its backslash turned.
     let side = files(HashMap::from([("tex/wood.png", b"beside".to_vec())]));
     let beside = parse("s.fbx", &fbx_scene(Some(b"")), &side, &Limits::default()).unwrap();
-    assert_eq!(beside.mesh.images[0].bytes, b"beside");
+    assert_eq!(&*beside.mesh.images[0].bytes, b"beside");
     // Neither: a warning, the colour stays.
     let none = parse("s.fbx", &fbx_scene(Some(b"")), &no_files, &Limits::default()).unwrap();
     assert!(
@@ -595,4 +595,30 @@ fn fbx_errors_say_why() {
     assert!(e.0.contains("ASCII"), "{e}");
     let cut = fbx_scene(None);
     assert!(parse("a.fbx", &cut[..cut.len() / 2], &no_files, &Limits::default()).is_err());
+}
+
+#[test]
+fn animated_fbx_files_come_with_their_motion() {
+    let bytes = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::animated_scene(), false);
+    let none = |_: &str| Err(Error::new("no sidecar"));
+    let l = parse("a.fbx", &bytes, &none, &Limits::default()).unwrap();
+    let m = l.motion.expect("motion");
+    assert_eq!(m.piece.len(), l.mesh.vertices.len());
+    assert_eq!(m.takes.len(), 1);
+    // A second in, the base (piece 0) has risen 50 cm along z; at 0 nothing moved.
+    let mut out = Vec::new();
+    m.deform(&l.mesh.vertices, 0, 0.0, &mut out);
+    assert!(
+        out.iter()
+            .zip(&l.mesh.vertices)
+            .all(|(a, b)| (0..3).all(|k| (a.position[k] - b.position[k]).abs() < 1e-5))
+    );
+    m.deform(&l.mesh.vertices, 0, 1.0, &mut out);
+    for (i, (a, b)) in out.iter().zip(&l.mesh.vertices).enumerate() {
+        if m.piece[i] == 0 {
+            assert!((a.position[2] - b.position[2] - 0.5).abs() < 1e-5);
+        }
+    }
+    // Control points come along: the cube has 8.
+    assert!(m.point.iter().all(|p| *p < 8));
 }

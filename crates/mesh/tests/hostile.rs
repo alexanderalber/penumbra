@@ -180,6 +180,7 @@ mod fuzz {
             ("s.gltf", gltf_json),
             ("s.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::example_scene(), true)),
             ("w.fbx", penumbra_fbx::write::to_bytes(7500, &penumbra_fbx::write::example_scene(), false)),
+            ("m.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::animated_scene(), false)),
         ];
         let limits = Limits::default();
         let mut rng = Rng(0x5EED_1234_ABCD_0001);
@@ -197,6 +198,14 @@ mod fuzz {
                         l.mesh
                             .check()
                             .unwrap_or_else(|e| panic!("{name} case {case}: inconsistent mesh: {e}"));
+                        // A motion poses at any time without trouble.
+                        if let Some(m) = &l.motion {
+                            let mut out = Vec::new();
+                            for t in [-1.0, 0.7, f64::NAN, 1e30] {
+                                m.deform(&l.mesh.vertices, 0, t, &mut out);
+                                assert_eq!(out.len(), l.mesh.vertices.len());
+                            }
+                        }
                         ok += 1;
                     }
                     Ok(Err(_)) => errors += 1,
