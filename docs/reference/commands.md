@@ -181,7 +181,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `node.replace` | Replace a node with one of another kind under the same name (one undo step). Keeps the params, wires and bindings that fit and lists what was not kept; {path, kind} |
 | `node.reset` | Start stateful nodes over (feedback, cache, time machine, tracker, filter...). A component resets the stateful nodes inside; locked nodes keep their outputs; {paths} or {path} |
 | `node.set` | Set params, null resets to the default; {path, params: {name: value}} |
-| `node.snapshot` | Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file?} |
+| `node.snapshot` | Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file? (relative to the project; default in the temp directory)} |
 | `node.unbind` | Back to the param's stored value; {param} |
 | `node.watch` | Cook a node every frame (or stop); {path, watch?} |
 

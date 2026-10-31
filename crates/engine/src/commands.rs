@@ -118,7 +118,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "node.snapshot",
-        "Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file?}",
+        "Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file? (relative to the project; default in the temp directory)}",
         node_snapshot,
     );
     add(
@@ -1384,7 +1384,10 @@ fn node_snapshot(e: &Engine, p: &Json) -> Result<Json> {
     let pixels = gpu.read(&tex)?;
     let png = pixels.to_png()?;
     let file = match a.file {
-        Some(f) => f,
+        Some(f) if f.is_absolute() => f,
+        // Like every other file a command names: a script or a session working on the project
+        // finds its pictures there, wherever the app was started from.
+        Some(f) => e.session().dir().join(f),
         None => {
             let name = a.path.to_string().trim_start_matches('/').replace('/', "_");
             std::env::temp_dir().join("penumbra").join("snapshots").join(format!("{name}.png"))

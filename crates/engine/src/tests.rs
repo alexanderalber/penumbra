@@ -342,6 +342,9 @@ fn snapshot_of_a_texture_node() {
     assert_eq!(png.get(1..4), Some(&b"PNG"[..]));
     let mean = r["stats"]["mean"][0].as_f64().unwrap();
     assert!(mean > 0.1 && mean < 0.9, "{r}");
+    // A relative file lands in the project, not where the process was started.
+    f.call("node.snapshot", json!({"path": "/n", "file": "shots/relative.png"}));
+    assert!(f.engine.session().dir().join("shots").join("relative.png").is_file());
     assert!(f.fail("node.snapshot", json!({"path": "/l"})).contains("not a texture"));
     assert!(f.fail("node.snapshot", json!({"path": "/n", "output": "nope"})).contains("nope"));
 
