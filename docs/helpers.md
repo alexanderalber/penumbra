@@ -145,7 +145,17 @@ Set up a `tex.video_in` that sees the projections, with the camera's automatic e
 balance and any dynamic-range processing (Sony: DRO / Auto HDR) off, and an exposure where a
 projector's white is not clipped. Let the projectors overlap in the camera's view if they
 overlap on the wall: then all of them are measured on the same patch of wall, which cancels the
-wall's colour and the camera's vignetting. Then run, for example:
+wall's colour and the camera's vignetting.
+
+Check the exposure first. It takes a few seconds:
+
+    penumbra-cli ctl camera.exposure '{"camera": "/cam"}'
+
+Each projector alone shows white. The reply gives per projector the brightest pixels (`peak`,
+of 255; aim for about 200), the share that clips, the black, how steady the light is, and a
+verdict: `ok`, `clipped`, `dark` or `unsteady`. `ok` in the reply is false while any projector
+clips. A match that starts while the camera clips stops after its first pictures and says so
+(`check_exposure: false` goes on anyway). Then run, for example:
 
     penumbra-cli ctl projector.match '{"camera": "/cam", "projectors": ["/proj_a", "/proj_b"]}'
 

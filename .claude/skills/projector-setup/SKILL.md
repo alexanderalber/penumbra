@@ -49,18 +49,26 @@ them. Add it with `node.create {"path": "/cam", "kind": "tex.video_in", "params"
 "<part of its name>"}}`; `video_in.devices` lists the cameras.
 
 **Exposure decides the colour match.** A camera that clips white makes `projector.match` finish
-with a correction that is wrong in every channel. Measure before the first long run:
+with a correction that is wrong in every channel. Check before the first long run:
 
-1. A `tex.constant` with `color` `[1, 1, 1, 1]` and one with `[0, 0, 0, 1]`. Set `correct` to
-   false on every `out.projector`.
-2. Connect white into one projector and black into the others (`node.connect` to input `in`),
-   wait 2 s, snapshot the camera. Repeat for each projector, then once with all black.
-3. Read the 8-bit picture where the projectors will be measured. The brightest projector
-   should reach about 200 of 255 and no pixel 250 or more. All black should stay under 10.
-4. Too bright: close the aperture or lower ISO. Keep the shutter at the projectors' frame time
-   (1/60 s for 60 Hz) or longer. A shorter shutter makes rows of the picture brighter and
-   darker by several percent.
-5. Set `correct` back to true. From here on nobody touches the camera's settings.
+    penumbra-cli ctl camera.exposure '{"camera": "/cam"}'
+
+It takes a few seconds. Each projector alone shows white, and the camera is read where that
+projector lights the picture. Give `area` as for the match to read only the measuring spot.
+
+1. Look at `peak` per projector: the brightest pixels, of 255. The brightest projector should
+   reach about 200, and `clipped_percent` must be 0. `black` should stay under 10.
+2. `verdict` `clipped`: close the aperture or lower ISO, then check again. `dark`: open up or
+   raise ISO. `stops` says by how much (a rough guide, since cameras do not encode like sRGB).
+3. `verdict` `unsteady`: the light changes between frames (`flicker_percent`) or bands move
+   through the rows (`banding_percent`). Set the shutter to the projectors' frame time (1/60 s
+   for 60 Hz) or longer. Some projectors hold their picture steady even at 1/1000 s; others,
+   DLP in particular, do not.
+4. From here on nobody touches the camera's settings.
+
+`projector.match` and `projector.flatfield` run the clipping part of this check on their own
+first pictures. They stop within seconds when the camera clips, instead of finishing a wrong
+measurement.
 
 ## 3. Colour match
 
@@ -74,7 +82,8 @@ projector becomes the reference; the others are dimmed to it.
 
 | warning | what it means | what to do |
 |---|---|---|
-| the camera clips its white | the measurement is wrong | step 2 again, lower exposure, run again |
+| stopped before measuring: the camera clips the white of ... | nothing was measured | lower the exposure, `camera.exposure` again, run again |
+| the camera clips its white | the measurement is wrong | lower the exposure, `camera.exposure` again, run again |
 | white is 0.7 .. 0.9 times red + green + blue | partly the camera's own curve | normal for most cameras; below about 0.6 look for a white boost or dynamic contrast in the projector's menu |
 | no projector is the dimmest in every channel: about N % more brightness | a white between the white points would be brighter | with N over 20 %, match again `from` the saved files |
 | cannot show the green of white as bright as the reference | one projector cannot reach the reference's white | lower the reference's `gain` a little |

@@ -82,7 +82,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          projector px, 6), contrast? (projector contrast, black = white / contrast, where the camera \
          cannot read the black), out? (folder in the project, flatfield), apply? (true: connect the \
          maps, one undo step), pictures? (false: also keep the camera's pictures, 16-bit sRGB PNGs, in \
-         out/pictures), wait? (false: start and answer at once; job.status follows it; true)}",
+         out/pictures), check_exposure? (stop after the whites when the camera clips one, true), wait? (false: start and answer at once; job.status follows it; true)}",
         move |p| {
             let a: FlatfieldArgs = args(p)?;
             flatfield_job(&e, a, Actor::Claude)
@@ -124,6 +124,8 @@ pub struct FlatfieldArgs {
     pub pictures: Option<bool>,
     #[serde(default)]
     pub even: Even,
+    /// Stop after the whites when the camera clips one (the default), or `false` to go on.
+    pub check_exposure: Option<bool>,
     /// Answer when done (the default), or start and answer at once (`job.status` follows it).
     pub wait: Option<bool>,
 }
@@ -244,7 +246,14 @@ struct Pictures {
 
 /// Takes the [`Pictures`] of `count` projectors: `frames` camera frames averaged per picture,
 /// three times as many for black (its values are the faintest).
-fn measure(rig: &mut Rig<'_>, count: usize, drives: &[f64], frames: usize) -> CmdResult<Pictures> {
+/// Stops after the whites when the camera clips one (unless `check` is false).
+fn measure(
+    rig: &mut Rig<'_>,
+    count: usize,
+    drives: &[f64],
+    frames: usize,
+    check: Option<bool>,
+) -> CmdResult<Pictures> {
     rig.frames = frames * 3;
     rig.note("all black, then each projector's white");
     let black = rig.shot(|_| [0.0; 3])?;
@@ -253,6 +262,10 @@ fn measure(rig: &mut Rig<'_>, count: usize, drives: &[f64], frames: usize) -> Cm
     for k in 0..count {
         whites.push(rig.shot(|j| if j == k { [1.0; 3] } else { [0.0; 3] })?);
     }
+    // A projector that lights nothing is reported later, with the others' lighting.
+    let masks: Vec<Vec<bool>> =
+        whites.iter().map(|w| colour::lit(w, &black).unwrap_or_else(|| vec![false; w.rgb.len()])).collect();
+    crate::exposure::refuse_clipped(check, &rig.projectors, &whites, &black, &masks)?;
     let mut ramps: Vec<[Vec<Picture>; 3]> = Vec::with_capacity(count);
     for k in 0..count {
         let path = rig.projectors.get(k).map(|(_, p)| p.clone()).unwrap_or_default();
@@ -611,7 +624,7 @@ pub fn run(e: &Engine, a: &FlatfieldArgs, job: Option<&Job>, actor: Actor) -> Cm
         job.expect(1 + projectors.len() * (1 + 3 * levels));
     }
     let drives = drives(levels, low);
-    let pictures = measure(&mut rig, projectors.len(), &drives, frames)?;
+    let pictures = measure(&mut rig, projectors.len(), &drives, frames, a.check_exposure)?;
     drop(claim);
     let measured_s = started.elapsed().as_secs_f64();
     if let Some(job) = job {

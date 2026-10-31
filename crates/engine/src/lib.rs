@@ -17,6 +17,7 @@ pub mod control;
 pub mod crash;
 pub mod dmx;
 pub mod engine;
+pub mod exposure;
 pub mod file_out;
 pub mod flatfield;
 pub mod http;
@@ -109,6 +110,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     scan_synthetic::register(&mut registry, engine);
     scan_run::register(&mut registry, engine);
     projector::register(&mut registry, engine);
+    exposure::register(&mut registry, engine);
     flatfield::register(&mut registry, engine);
     jobs::register(&mut registry, engine);
     projects::register(&mut registry, engine);

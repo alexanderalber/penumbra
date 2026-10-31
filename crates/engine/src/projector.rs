@@ -88,7 +88,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          5; 0 off), grey_levels? (greys the curves are refined on, evenly spaced; 3), save? (folder, \
          relative to the project: also measures a grey ramp and writes each projector's measurement as \
          NAME.json with NAME the node name, to match from later), note? (text saved with them: settings, lamp hours), \
-         apply? (true: write the params as one undo step), wait? (false: start and answer at once; \
+         apply? (true: write the params as one undo step), check_exposure? (stop after the first pictures \n         when the camera clips a projector's white, true), wait? (false: start and answer at once; \
          job.status follows it and keeps the reply; true)}. Without the camera: {from (folder of \
          NAME.json, or {projector path: file}), projectors?, samples?, apply?, wait?} matches from stored \
          measurements; each camera channel follows the projector dimmest there, so the common white lies \
@@ -216,6 +216,8 @@ pub struct MatchArgs {
     pub grey_levels: Option<u32>,
     #[serde(default)]
     pub target: Target,
+    /// Stop before the ramps when the camera clips a white (the default), or `false` to go on.
+    pub check_exposure: Option<bool>,
 }
 
 /// The projectors a measurement holds: while it lives no other measurement runs on the engine,
@@ -666,7 +668,7 @@ fn settings(a: &MatchArgs) -> CmdResult<Settings> {
 
 /// Keeps of `mask` (a `width` x `height` picture's) only the pixels whose centres lie in `area`
 /// (`[x, y, w, h]`, 0..1 of the picture).
-fn keep_area(mask: &mut [bool], width: usize, height: usize, area: [f64; 4]) {
+pub(crate) fn keep_area(mask: &mut [bool], width: usize, height: usize, area: [f64; 4]) {
     let [x, y, w, h] = area;
     let (pw, ph) = (width as f64, height as f64);
     let width = width.max(1);
@@ -1129,6 +1131,7 @@ pub fn run(e: &Engine, a: &MatchArgs, job: Option<&Job>, actor: Actor) -> CmdRes
 
     // Where each projector lights the camera picture.
     let lit = measure_lit(&mut rig, &projectors, a.area)?;
+    crate::exposure::refuse_clipped(a.check_exposure, &projectors, &lit.whites, &lit.black, &lit.masks)?;
     let spots = colour::spots(&lit.masks, lit.black.width, lit.black.height);
     let mut warnings = Vec::new();
     if projectors.len() > 1 && !spots.shared {

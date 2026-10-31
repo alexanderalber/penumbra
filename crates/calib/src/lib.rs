@@ -24,6 +24,7 @@ pub mod borders;
 mod camera;
 pub mod colour;
 pub mod epipolar;
+pub mod exposure;
 pub mod flatfield;
 mod homography;
 pub mod objects;
