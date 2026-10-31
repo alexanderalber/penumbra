@@ -5,7 +5,7 @@ params can be bound to:
 
 - `chan.audio_envelope` for loudness: one number per channel, how loud it is now.
 - `chan.audio_spectrum` for frequency bands: the spectrum as numbers and as a texture.
-- `chan.audio_analysis` for music: beat, bar and tempo, with levels and hits.
+- `chan.beat_analysis` for music: beat, bar and tempo, with levels and hits.
 
 The energy of one band is an `audio.filter` (`bandpass`) into a `chan.audio_envelope`.
 
@@ -14,7 +14,7 @@ The energy of one band is an `audio.filter` (`bandpass`) into a `chan.audio_enve
 Sound travels on cyan wires of its own kind, `audio`. A `chan` wire carries values: its last
 sample is the value now. An `audio` wire carries a stream: each frame's block of samples
 continues the block before, so every sample counts. The two kinds do not connect.
-`chan.audio_envelope`, `chan.audio_spectrum` and `chan.audio_analysis` are the bridges from
+`chan.audio_envelope`, `chan.audio_spectrum` and `chan.beat_analysis` are the bridges from
 sound to channels that params can be bound to.
 
 - `audio.device_in` reads a microphone or an audio interface.
@@ -278,7 +278,7 @@ bands neighbouring low bands repeat one value.
    a typed name picked). `audio.status` names it too. The `...` menu beside `device` lists the inputs of this machine; part of a
    name typed in works too, e.g. `Focusrite`. The [Helpers window](helpers.md#audio) shows a
    level meter per channel. The device is opened in shared mode, so other programs can use it too.
-2. Connect it to a `chan.audio_analysis`.
+2. Connect it to a `chan.beat_analysis`.
 3. Bind params to the analysis' channels, as to any channel (see
    [bindings](concepts.md#bindings)): drag a wire from its output onto a param row, or pick the
    channel in the param's link menu.
@@ -291,7 +291,7 @@ opened again every two seconds until it is back.
 Projects saved before `audio` was a family name the node `chan.audio_in`. They open with
 the new name. A wire from it, or from an NDI source's sound, into a chan node other than the
 analysis is left out on opening, and so is a binding to it; the log names each. Put a
-`chan.audio_analysis` in between and bind to the analysis.
+`chan.beat_analysis` in between and bind to the analysis.
 
 ## What the analysis gives
 

@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/analysis": (kind: "chan.audio_analysis", inputs: {"audio": "mic"}, pos: [200.0, 0.0]),
+        "/analysis": (kind: "chan.beat_analysis", inputs: {"audio": "mic"}, pos: [200.0, 0.0]),
         "/bands": (kind: "chan.select", params: {"channels": "level low high"}, inputs: {"in": "analysis"}, pos: [400.0, 0.0]),
         "/bar": (kind: "chan.select", params: {"channels": "bar"}, inputs: {"in": "analysis"}, pos: [400.0, 142.0]),
         "/bright": (kind: "tex.level", inputs: {"in": "tint"}, binds: {"brightness": "punch:kick"}, pos: [1600.0, 0.0]),

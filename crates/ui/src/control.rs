@@ -113,7 +113,7 @@ const COMMANDS: &[(&str, &str)] = &[
         "ui.options",
         "The editor's options (right-click on empty space) and the viewer's channel options; {chan_bars?, viewer_background?, binding_lines?, \
          chan_scale?: auto|shared|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale), \
-         audio_view?: meters|plot (what the viewer shows of a chan.audio_analysis: meters, beat and spectrum, or the channel plot), \
+         audio_view?: meters|plot (what the viewer shows of a chan.beat_analysis: meters, beat and spectrum, or the channel plot), \
          viewer_aspect?: auto|number (width over height of the viewer's picture area; the height follows the column's width; \
          dragging the viewer's edge sets the aspect, auto is 16:9)}",
     ),

@@ -66,8 +66,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 /// as long as files with the old name may be around; a further rename of a kind updates its
 /// rows here.
 pub const RENAMED_KINDS: &[(&str, &str)] = &[
+    // The analysis is named for what it is there for: the beat.
+    ("chan.audio_analysis", "chan.beat_analysis"),
     // Compound names got an underscore.
-    ("chan.audioanalysis", "chan.audio_analysis"),
+    ("chan.audioanalysis", "chan.beat_analysis"),
     ("chan.audioin", "audio.device_in"),
     ("chan.fromtex", "chan.from_tex"),
     ("chan.oscin", "chan.osc_in"),

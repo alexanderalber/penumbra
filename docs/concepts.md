@@ -55,7 +55,7 @@ explained [below](#bindings), references under [Paths](#paths).
   So a clock sees its `run` turn off and on while the piece it drives is skipped. The reference
   marks such nodes "Cooks in every frame".
 - **Outputs made on demand (lazy).** Some outputs are made only while something reads them:
-  `chan.audio_analysis`'s `meters`, `tex.ndi_in`'s `audio`, `tex.fluid`'s `velocity`. Wire one
+  `chan.beat_analysis`'s `meters`, `tex.ndi_in`'s `audio`, `tex.fluid`'s `velocity`. Wire one
   up, show it in the viewer or reference it, and the node makes it from then on.
 
 ### Time
@@ -113,7 +113,7 @@ The families:
   into channels (at 1 x 1, its mean colour). Channels named `r`, `g`, `b` (and `a`), as
   `chan.from_tex` makes them, come back from `tex.from_chan` as a colour.
 - **`audio`**: sound. A device input, a test tone, a mix, ready-made instruments and drones.
-  `chan.audio_analysis` turns sound into channels (see [Audio](audio.md)).
+  `chan.beat_analysis` turns sound into channels (see [Audio](audio.md)).
 - **`table`**: text tables, typed in or read from a file, for scripts and OSC.
   `table.file` reads a CSV, TSV or text file and reloads it when the file changes.
   `chan.from_table` turns a table of numbers into channels, a channel per column (or row), named

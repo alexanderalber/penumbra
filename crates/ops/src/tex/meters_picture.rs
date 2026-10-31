@@ -1,4 +1,4 @@
-//! The `meters` output of `chan.audio_analysis`: the viewer's meters as a picture in the
+//! The `meters` output of `chan.beat_analysis`: the viewer's meters as a picture in the
 //! network, to project or composite. The look comes from [`crate::meters`], the same description
 //! the viewer paints with egui; here it is drawn by [`Canvas`] on the GPU, on transparent black
 //! (a solid backdrop is a `tex.composite` over a `tex.constant` away).
@@ -217,7 +217,7 @@ impl MetersPicture {
         if !wanted.is_empty() && self.job.is_none() {
             self.request(cx, wanted);
         }
-        let target = self.ring.next(gpu, w, h, "chan.audio_analysis meters")?;
+        let target = self.ring.next(gpu, w, h, "chan.beat_analysis meters")?;
         self.canvas.render(gpu, &target, [0.0; 4], &paints)?;
         Ok(target)
     }

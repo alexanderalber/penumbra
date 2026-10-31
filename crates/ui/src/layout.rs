@@ -155,7 +155,7 @@ pub struct EditorOptions {
     pub binding_lines: bool,
     /// How the viewer scales several channels.
     pub chan_scale: ChanScale,
-    /// What the viewer shows of a `chan.audio_analysis`: its meters or the channel plot.
+    /// What the viewer shows of a `chan.beat_analysis`: its meters or the channel plot.
     pub audio_view: AudioView,
     /// The thumbnail mode and rate as older builds kept them here, read so their files load
     /// (the project takes them over as it opens, `penumbra_project::legacy`), never written.

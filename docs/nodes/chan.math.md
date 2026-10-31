@@ -36,6 +36,6 @@ For a whole range in one go (0 to 1 into 20 to 80), chain two: `multiply` by 60,
 
 ## Example
 
-A rotation that follows the music: a `chan.audio_analysis` level into `chan.math` with `op`
+A rotation that follows the music: a `chan.beat_analysis` level into `chan.math` with `op`
 `multiply` and `b` 90, and bind a `tex.transform`'s `rotate` to the output. Loud passages turn
 the picture by up to 90 degrees.

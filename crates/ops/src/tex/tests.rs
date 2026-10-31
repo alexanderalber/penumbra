@@ -2675,7 +2675,7 @@ fn analysis_rig(gpu: Gpu, more: &[Op]) -> Rig {
         create("/in", "audio.device_in", &[("device", "test".into())]),
         create(
             "/a",
-            "chan.audio_analysis",
+            "chan.beat_analysis",
             &[("width", Value::Int(320)), ("height", Value::Int(180)), ("normalize", Value::Bool(false))],
         ),
         connect("/in", "/a", 0),

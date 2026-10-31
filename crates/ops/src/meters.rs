@@ -4,7 +4,7 @@
 //! onsets and beats, and the spectrum.
 //!
 //! One description serves two painters: the viewer paints the shapes [`Meters::shapes`] lists
-//! with egui, the `meters` output of `chan.audio_analysis` draws the same list into a texture on
+//! with egui, the `meters` output of `chan.beat_analysis` draws the same list into a texture on
 //! the GPU. Nothing here knows either; text is measured through [`Measure`], which each painter
 //! provides.
 //!

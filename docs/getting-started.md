@@ -180,7 +180,7 @@ all samples of one with many; a spectrum or a picture's row is counted by sample
 `scale` button switches between one shared scale for all channels, a lane per channel with
 its own scale, and auto, which takes lanes when a channel that moves would be flat on the
 shared scale (`bpm` next to levels of 0 to 1). The choice is kept with the project
-(`ui.options {chan_scale}`). A `chan.audio_analysis` shows its meters instead (see
+(`ui.options {chan_scale}`). A `chan.beat_analysis` shows its meters instead (see
 [Audio](audio.md#the-meters-in-the-viewer)); `view: meters` in the header switches to the
 plot and back, kept with the project as well (`ui.options {audio_view}`).
 

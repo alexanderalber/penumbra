@@ -204,6 +204,6 @@ fn audio_and_chan_do_not_connect() {
     assert!(Network::new().apply(&types, &ops).is_err());
     let ops = [create("/c", "chan.constant"), create("/m", "audio.mix"), connect("/c", "/m", 0)];
     assert!(Network::new().apply(&types, &ops).is_err());
-    let ops = [create("/o", "audio.oscillator"), create("/a", "chan.audio_analysis"), connect("/o", "/a", 0)];
+    let ops = [create("/o", "audio.oscillator"), create("/a", "chan.beat_analysis"), connect("/o", "/a", 0)];
     assert!(Network::new().apply(&types, &ops).is_ok());
 }

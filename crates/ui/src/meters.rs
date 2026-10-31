@@ -1,4 +1,4 @@
-//! The viewer's view of a `chan.audio_analysis`: the meters [`penumbra_ops::meters`] lays out
+//! The viewer's view of a `chan.beat_analysis`: the meters [`penumbra_ops::meters`] lays out
 //! (levels with peaks, tempo, beat light, bar, recent hits, spectrum), painted with egui. The
 //! analysis' `meters` output draws the same shapes into a texture, so both look alike.
 //!
@@ -24,7 +24,7 @@ impl AudioNode {
     /// The analysis node `id` of `net`, if it is one.
     pub fn of(net: &penumbra_graph::Network, id: NodeId) -> Option<AudioNode> {
         let node = net.node(id)?;
-        (node.kind == penumbra_ops::audio::AUDIO_ANALYSIS).then_some(AudioNode { id })
+        (node.kind == penumbra_ops::audio::BEAT_ANALYSIS).then_some(AudioNode { id })
     }
 }
 

@@ -469,7 +469,7 @@ fn load_node(
         {
             if split_from_chan(kind, spec.kind) {
                 dropped.push(format!(
-                    "{}: {source} gives {kind:?}, the input wants {:?}; the wire is left out (sound                      became a family of its own: chan.audio_analysis turns it into channels)",
+                    "{}: {source} gives {kind:?}, the input wants {:?}; the wire is left out (sound                      became a family of its own: chan.beat_analysis turns it into channels)",
                     ctx(),
                     spec.kind
                 ));
@@ -499,7 +499,7 @@ fn load_node(
             }
             if from.is_some_and(|f| f.outputs.iter().any(|o| o.kind == DataKind::Audio)) {
                 dropped.push(format!(
-                    "{}: {} gives sound, not channels; the binding is left out (bind to a                      chan.audio_analysis of it instead)",
+                    "{}: {} gives sound, not channels; the binding is left out (bind to a                      chan.beat_analysis of it instead)",
                     ctx(),
                     src.node
                 ));

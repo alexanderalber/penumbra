@@ -1111,44 +1111,9 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
 *in:* [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
-
-### chan.audio_analysis
-
-Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat
-
-Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
-
-Inputs:
-
-- `audio` (audio): The sound to listen to, e.g. from an audio.device_in
-
-Outputs:
-
-- `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, locked, coasting, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them. coasting is 1 when the lock was lost but the onsets still follow the tempo: tick goes on for up to 30 seconds
-- `spectrum` (chan): One channel whose samples are log-spaced bands from 30 Hz to 16 kHz
-- `meters` (tex): The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum. Drawn only while something reads this output
-
-| param | type | default | range | meaning |
-|---|---|---|---|---|
-| `channel` | text |  |  | The channel to analyse, e.g. `ch1`; empty: all mixed |
-| `offset` | float | `0` | -200 to 200 (soft) | Milliseconds to move beat and bar ahead by, to make up for the projector's delay |
-| `beats_per_bar` | int | `4` | 2 to 8 (soft) | Beats in one bar (4 for 4/4, 3 for a waltz): how often bar and bar_beat come round |
-| `sensitivity` | float | `0.5` | 0 to 1 | How readily an onset or kick counts: higher finds quieter ones |
-| `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered, in beats per minute. Keep min_bpm and max_bpm less than an octave apart: then a half or double tempo cannot be taken |
-| `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered, in beats per minute; see min_bpm |
-| `superflux` *(more)* | bool | `false` |  | Finds the beat in a noisy room: the onsets ignore the slow wobble of broadband noise. Costs a little in clean sound and in reverb, so leave it off unless the room is loud |
-| `normalize` | bool | `true` |  | A quiet input still spans 0 to 1: levels and spectrum are measured against their range over the last 4 seconds. Off: level and bands are the raw RMS, full scale is 1 |
-| `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence: with normalize, levels and spectrum read 0. Set it above the room's noise, so a silent room reads 0 |
-| `trim` *(levels)* | float | `0` | -24 to 24 dB | Makes the sound louder or quieter for the analysis only. Lift a quiet microphone until it is above floor. The rms and peak channels still show the sound as it comes in |
-| `low` *(levels)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends: the low channel is the level below this frequency |
-| `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high |
-| `bands` *(levels)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame |
-| `width` *(meters)* | int | `1920` | 1 to 16384 px | Width of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
-| `height` *(meters)* | int | `1080` | 1 to 16384 px | Height of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
-| `keep_size` *(meters)* | bool | `false` |  | res.optimize leaves the width and height of the meters output alone |
 
 ### chan.audio_envelope
 
@@ -1197,6 +1162,41 @@ Outputs:
 | `unit` | level \| linear \| db | `"level"` |  | What number a band gives; level: 0 at floor to 1 at full scale, even in dB: ready to drive a param; linear: the amplitude: 1 is full scale, a sine at -20 dBFS reads 0.1. 0 below floor; db: dBFS: 0 is full scale, -20 a tenth of it. Never below floor |
 | `floor` | float | `-60` | -120 to -20 dB (soft) | Quieter than this counts as silence: 0 in linear and level, the floor itself in db |
 | `history` *(texture)* | int | `1` | 1 to 512 (soft) | Rows of texture: 1 is the spectrum now; more keep that many blocks of the past below it, newest at the top, as a scrolling spectrogram |
+
+### chan.beat_analysis
+
+Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat
+
+Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `audio` (audio): The sound to listen to, e.g. from an audio.device_in
+
+Outputs:
+
+- `out` (chan): Channels to bind: level, low, mid, high, onset, kick, tick, bpm, confidence, locked, coasting, beat, bar, bar_beat; also rms, peak, and beats_per_bar, low_hz, high_hz as the params set them. coasting is 1 when the lock was lost but the onsets still follow the tempo: tick goes on for up to 30 seconds
+- `spectrum` (chan): One channel whose samples are log-spaced bands from 30 Hz to 16 kHz
+- `meters` (tex): The meters as in the viewer, on transparent black: level and band bars with peaks, tempo, beat light, bar, hits, spectrum. Drawn only while something reads this output
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `channel` | text |  |  | The channel to analyse, e.g. `ch1`; empty: all mixed |
+| `offset` | float | `0` | -200 to 200 (soft) | Milliseconds to move beat and bar ahead by, to make up for the projector's delay |
+| `beats_per_bar` | int | `4` | 2 to 8 (soft) | Beats in one bar (4 for 4/4, 3 for a waltz): how often bar and bar_beat come round |
+| `sensitivity` | float | `0.5` | 0 to 1 | How readily an onset or kick counts: higher finds quieter ones |
+| `min_bpm` *(more)* | float | `70` | 40 to 200 (soft) | The slowest tempo considered, in beats per minute. Keep min_bpm and max_bpm less than an octave apart: then a half or double tempo cannot be taken |
+| `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered, in beats per minute; see min_bpm |
+| `superflux` *(more)* | bool | `false` |  | Finds the beat in a noisy room: the onsets ignore the slow wobble of broadband noise. Costs a little in clean sound and in reverb, so leave it off unless the room is loud |
+| `normalize` | bool | `true` |  | A quiet input still spans 0 to 1: levels and spectrum are measured against their range over the last 4 seconds. Off: level and bands are the raw RMS, full scale is 1 |
+| `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence: with normalize, levels and spectrum read 0. Set it above the room's noise, so a silent room reads 0 |
+| `trim` *(levels)* | float | `0` | -24 to 24 dB | Makes the sound louder or quieter for the analysis only. Lift a quiet microphone until it is above floor. The rms and peak channels still show the sound as it comes in |
+| `low` *(levels)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends: the low channel is the level below this frequency |
+| `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high |
+| `bands` *(levels)* | int | `32` | 4 to 128 (soft) | Bands of the spectrum output, log-spaced from 30 Hz to 16 kHz: its samples per frame |
+| `width` *(meters)* | int | `1920` | 1 to 16384 px | Width of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` *(meters)* | int | `1080` | 1 to 16384 px | Height of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
+| `keep_size` *(meters)* | bool | `false` |  | res.optimize leaves the width and height of the meters output alone |
 
 ### chan.button
 

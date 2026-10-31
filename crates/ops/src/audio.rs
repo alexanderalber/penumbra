@@ -15,7 +15,7 @@
 //!   noise, water, rain), both in a key and scale ([`pitch`]). Their inputs are the bridge from `chan` to
 //!   `audio`: a channel crossing a threshold starts a note or opens a gate at the sample the
 //!   crossing falls on ([`lanes`]). [`synth`] holds the filter and saw they share.
-//! - **`chan.audio_analysis`** turns sound into channels to bind, the bridge from `audio` to
+//! - **`chan.beat_analysis`** turns sound into channels to bind, the bridge from `audio` to
 //!   `chan`: levels (`level`, `low`,
 //!   `mid`, `high`), events (`onset`, `kick`, `tick` are 1 in the frame they happen), the
 //!   tempo (`bpm`, `confidence`, `locked` while a beat is heard, `coasting` while ticks go on
@@ -74,14 +74,14 @@ use std::sync::Arc;
 /// Kind of the audio input node.
 pub const AUDIO_IN: &str = "audio.device_in";
 /// Kind of the analysis node.
-pub const AUDIO_ANALYSIS: &str = "chan.audio_analysis";
+pub const BEAT_ANALYSIS: &str = "chan.beat_analysis";
 /// The index of the analysis' `meters` output.
 const METERS: usize = 2;
 /// Most seconds of audio one cook of `audio.device_in` hands on (after a long pause, the rest is
 /// dropped).
 pub const MAX_BLOCK_SECONDS: f64 = 0.5;
 
-/// The channels `chan.audio_analysis` outputs, in order. `beats_per_bar`, `low_hz` and
+/// The channels `chan.beat_analysis` outputs, in order. `beats_per_bar`, `low_hz` and
 /// `high_hz` repeat params (`beats_per_bar`, `low`, `high`), so what draws the analysis (its
 /// `meters` output, the viewer) knows them from the channels alone, also while a param is
 /// bound to a channel. New channels go at the end, so the order of the others stays.
@@ -125,7 +125,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let [width, height, keep_size] = meters_picture::params();
     types.register(FnNodeType::new(
         NodeDesc::new(
-            AUDIO_ANALYSIS,
+            BEAT_ANALYSIS,
             "Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat",
         )
         .stateful()

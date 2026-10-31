@@ -44,7 +44,7 @@ fn fed_audio_becomes_channels_and_a_tempo() {
         "node.batch",
         json!({"ops": [
             {"op": "create", "path": "/in", "kind": "audio.device_in", "params": {"device": "test"}},
-            {"op": "create", "path": "/a", "kind": "chan.audio_analysis"},
+            {"op": "create", "path": "/a", "kind": "chan.beat_analysis"},
             {"op": "connect", "from": "/in", "to": "/a"},
         ]}),
     );
@@ -102,7 +102,7 @@ fn audio_errors_are_node_errors() {
         "node.batch",
         json!({"ops": [
             {"op": "create", "path": "/lfo", "kind": "chan.lfo"},
-            {"op": "create", "path": "/a", "kind": "chan.audio_analysis"},
+            {"op": "create", "path": "/a", "kind": "chan.beat_analysis"},
         ]}),
     );
     let e = f.fail("node.connect", json!({"from": "/lfo", "to": "/a"}));
@@ -141,7 +141,7 @@ fn an_old_audio_in_opens_as_a_device_in() {
     let file = old.path().join(penumbra_project::FILE_NAME);
     let text = r#"(version: 2, nodes: {
         "/mic": (kind: "chan.audio_in", params: {"device": "test"}),
-        "/a": (kind: "chan.audio_analysis", inputs: {"audio": "mic"}),
+        "/a": (kind: "chan.beat_analysis", inputs: {"audio": "mic"}),
         "/m": (kind: "chan.math", params: {"b": 2.0}, inputs: {"a": "mic", "b": "a"}),
         "/t": (kind: "chan.lfo", binds: {"rate": "mic:ch1", "amplitude": "a:level"}),
     })"#;
