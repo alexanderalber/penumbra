@@ -1039,6 +1039,7 @@ Outputs: `out` (tex).
 | `rotate` | float | `0` | -180 to 180° (soft) | Turn around the pivot, counter-clockwise on screen |
 | `scale` | vec2 | `[1, 1]` | 0 to 4 (soft) | Size across and down, around the pivot: 1 keeps it, 2 doubles it, negative mirrors |
 | `pivot` *(more)* | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | The point rotate and scale turn and grow around, in image sizes: 0, 0 is the top left, 0.5, 0.5 the centre |
+| `order` *(more)* | srt \| str \| rst \| rts \| tsr \| trs | `"srt"` |  | The order of scale, rotate and translate. Each step also acts on what the steps before it did; srt: scale, rotate, translate: the move follows the screen axes, whatever the turn and size; str: scale, translate, rotate: the move turns with rotate, so the picture circles the pivot; rst: rotate, scale, translate: a non-uniform scale stretches along the screen axes and skews a turned picture; rts: rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned picture; tsr: translate, scale, rotate: the move grows with scale and turns with rotate, circling the pivot; trs: translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned picture |
 | `extend` | hold \| zero \| repeat \| mirror | `"hold"` |  | What shows where the picture is fetched from beyond the input's edges; hold: the edge pixels continue outwards; zero: transparent black; repeat: the input again, tiled; mirror: the input again, mirrored, so the copies meet at the edges |
 
 ### tex.video_file
@@ -1847,7 +1848,7 @@ Outputs: `out` (geo).
 
 ### geo.transform
 
-Moves, turns and scales geometry (scale first, then rotate, then move)
+Moves, turns and scales geometry
 
 Inputs:
 
@@ -1857,10 +1858,11 @@ Outputs: `out` (geo).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `translate` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | Move along x, y, z (z up), in scene units (metres), after scale and rotate |
-| `rotate` | vec3 | `[0, 0, 0]` | -180 to 180° (soft) | Turn about x, then y, then z, after scale and before translate |
-| `scale` | vec3 | `[1, 1, 1]` | 0 to 4 (soft) | Size along x, y, z around the origin, applied first: 1 keeps the size, negative mirrors |
+| `translate` | vec3 | `[0, 0, 0]` | -10 to 10 (soft) | Move along x, y, z (z up), in scene units (metres) |
+| `rotate` | vec3 | `[0, 0, 0]` | -180 to 180° (soft) | Turn about the origin: about x, then y, then z |
+| `scale` | vec3 | `[1, 1, 1]` | 0 to 4 (soft) | Size along x, y, z around the origin: 1 keeps the size, negative mirrors |
 | `uniform` | float | `1` | 0.001 to 1000 (soft) | Times the scale: 0.001 turns millimetres into metres |
+| `order` *(more)* | srt \| str \| rst \| rts \| tsr \| trs | `"srt"` |  | The order of scale, rotate and translate. Each step also acts on what the steps before it did; srt: scale, rotate, translate: the move follows the world axes, whatever the turn and size; str: scale, translate, rotate: the move turns with rotate, so the object circles the origin; rst: rotate, scale, translate: a non-uniform scale stretches along the world axes and skews a turned object; rts: rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned object; tsr: translate, scale, rotate: the move grows with scale and turns with rotate, circling the origin; trs: translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned object |
 
 ## mat
 

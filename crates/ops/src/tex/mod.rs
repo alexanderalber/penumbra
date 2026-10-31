@@ -251,6 +251,7 @@ fn core_builtins() -> Vec<Builtin> {
                     .more()
                     .doc("The point rotate and scale turn and grow around, in image sizes: 0, 0 is the top left, 0.5, 0.5 the centre"),
             )
+            .param(crate::geo::order_param("picture", "the pivot", "screen"))
             .param(extend("hold"))
             .input("in", DataKind::Tex)
             .output("out", DataKind::Tex),
@@ -434,8 +435,15 @@ fn transform_density(def: &NodeDef, desc: &NodeDesc, _: usize, sizes: Option<Siz
     let a = sizes.map_or(1.0, |s| f64::from(s.output.0) / f64::from(s.output.1.max(1)));
     let angle = def.param(desc, "rotate").and_then(|v| v.as_f64()).unwrap_or(0.0).to_radians();
     let (c, s) = (angle.cos(), angle.sin());
-    // diag(1 / (sx a), 1 / sy) * [[c, -s], [s, c]] * diag(a, 1)
-    Density::Linear([[c / sx, -s / (sx * a)], [s * a / sy, c / sy]])
+    let order = def.param(desc, "order").and_then(|v| v.as_str()).unwrap_or("srt");
+    if order.find('r') < order.find('s') {
+        // Turned first, scaled along the screen: diag(1 / a, 1) * [[c, -s], [s, c]] *
+        // diag(1 / sx, 1 / sy) * diag(a, 1)
+        Density::Linear([[c / sx, -s / (sy * a)], [s * a / sx, c / sy]])
+    } else {
+        // diag(1 / (sx a), 1 / sy) * [[c, -s], [s, c]] * diag(a, 1)
+        Density::Linear([[c / sx, -s / (sx * a)], [s * a / sy, c / sy]])
+    }
 }
 
 /// Adds `width`, `height` and [`keep_size`].

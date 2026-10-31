@@ -923,6 +923,76 @@ fn transform_density_follows_scale() {
 }
 
 #[test]
+fn transform_density_follows_the_order() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/c", "tex.constant", &size()),
+        create(
+            "/t",
+            "tex.transform",
+            &[("scale", Value::Vec2([2.0, 1.0])), ("rotate", Value::Float(90.0)), ("order", "rst".into())],
+        ),
+        connect("/c", "/t", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    rig.cook("/t");
+    // Turned first, then stretched across the screen: the stretch lands on the input's height.
+    let a = W as f64 / H as f64;
+    let want = [[0.0, -1.0 / a], [a / 2.0, 0.0]];
+    match rig.cooker.density(rig.id("/t"), 0) {
+        Some(Density::Linear(m)) => {
+            let close = m.iter().flatten().zip(want.iter().flatten()).all(|(g, w)| (g - w).abs() < 1e-9);
+            assert!(close, "{m:?}");
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+/// The centre of a picture's alpha, in image sizes.
+fn alpha_centre(px: &Pixels) -> [f64; 2] {
+    let (mut sum, mut x, mut y) = (0.0, 0.0, 0.0);
+    for (i, p) in px.data.iter().enumerate() {
+        let a = f64::from(p[3]);
+        let i = i as u32;
+        sum += a;
+        x += a * (f64::from(i % px.width) + 0.5) / f64::from(px.width);
+        y += a * (f64::from(i / px.width) + 0.5) / f64::from(px.height);
+    }
+    [x / sum, y / sum]
+}
+
+#[test]
+fn transform_order_decides_whether_the_move_turns_and_grows() {
+    let Some(gpu) = gpu() else { return };
+    // A quarter-size patch, moved 0.2 across, turned 90 degrees: where its centre lands.
+    let a = W as f64 / H as f64;
+    let cases = [("srt", [0.7, 0.5]), ("str", [0.5, 0.5 - 0.2 * a]), ("tsr", [0.5, 0.5 - 0.05 * a])];
+    for (order, want) in cases {
+        let mut white = size().to_vec();
+        white.push(("color", Value::Vec4([1.0; 4])));
+        let ops = [
+            create("/c", "tex.constant", &white),
+            create(
+                "/t",
+                "tex.transform",
+                &[
+                    ("scale", Value::Vec2([0.25, 0.25])),
+                    ("rotate", Value::Float(90.0)),
+                    ("translate", Value::Vec2([0.2, 0.0])),
+                    ("extend", "zero".into()),
+                    ("order", order.into()),
+                ],
+            ),
+            connect("/c", "/t", 0),
+        ];
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        let got = alpha_centre(&rig.pixels("/t"));
+        let close = (got[0] - want[0]).abs() < 0.02 && (got[1] - want[1]).abs() < 0.02;
+        assert!(close, "{order}: centre at {got:?}, want {want:?}");
+    }
+}
+
+#[test]
 fn text_follows_a_new_size_before_its_raster_is_done() {
     let Some(gpu) = gpu() else { return };
     let ops = [create(

@@ -3258,6 +3258,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>extend</code></td><td>hold | zero | repeat | mirror</td><td><code>&quot;hold&quot;</code></td><td></td><td>What shows where the picture is fetched from beyond the input's edges<ul><li><code>hold</code>: the edge pixels continue outwards</li><li><code>zero</code>: transparent black</li><li><code>repeat</code>: the input again, tiled</li><li><code>mirror</code>: the input again, mirrored, so the copies meet at the edges</li></ul></td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>pivot</code></td><td>vec2</td><td><code>[0.5, 0.5]</code></td><td>0 to 1 (soft)</td><td>The point rotate and scale turn and grow around, in image sizes: 0, 0 is the top left, 0.5, 0.5 the centre</td></tr>
+<tr><td><code>order</code></td><td>srt | str | rst | rts | tsr | trs</td><td><code>&quot;srt&quot;</code></td><td></td><td>The order of scale, rotate and translate. Each step also acts on what the steps before it did<ul><li><code>srt</code>: scale, rotate, translate: the move follows the screen axes, whatever the turn and size</li><li><code>str</code>: scale, translate, rotate: the move turns with rotate, so the picture circles the pivot</li><li><code>rst</code>: rotate, scale, translate: a non-uniform scale stretches along the screen axes and skews a turned picture</li><li><code>rts</code>: rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned picture</li><li><code>tsr</code>: translate, scale, rotate: the move grows with scale and turns with rotate, circling the pivot</li><li><code>trs</code>: translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned picture</li></ul></td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
@@ -4352,9 +4353,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
-<details class="entry node" id="geo.transform"><summary><code class="name">geo.transform</code><span class="sum">Moves, turns and scales geometry (scale first, then rotate, then move)</span></summary>
+<details class="entry node" id="geo.transform"><summary><code class="name">geo.transform</code><span class="sum">Moves, turns and scales geometry</span></summary>
 <div class="body">
-<p>Moves, turns and scales geometry (scale first, then rotate, then move)</p>
+<p>Moves, turns and scales geometry</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">geo</span></li>
@@ -4367,10 +4368,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>translate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-10 to 10 (soft)</td><td>Move along x, y, z (z up), in scene units (metres), after scale and rotate</td></tr>
-<tr><td><code>rotate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-180 to 180° (soft)</td><td>Turn about x, then y, then z, after scale and before translate</td></tr>
-<tr><td><code>scale</code></td><td>vec3</td><td><code>[1, 1, 1]</code></td><td>0 to 4 (soft)</td><td>Size along x, y, z around the origin, applied first: 1 keeps the size, negative mirrors</td></tr>
+<tr><td><code>translate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-10 to 10 (soft)</td><td>Move along x, y, z (z up), in scene units (metres)</td></tr>
+<tr><td><code>rotate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-180 to 180° (soft)</td><td>Turn about the origin: about x, then y, then z</td></tr>
+<tr><td><code>scale</code></td><td>vec3</td><td><code>[1, 1, 1]</code></td><td>0 to 4 (soft)</td><td>Size along x, y, z around the origin: 1 keeps the size, negative mirrors</td></tr>
 <tr><td><code>uniform</code></td><td>float</td><td><code>1</code></td><td>0.001 to 1000 (soft)</td><td>Times the scale: 0.001 turns millimetres into metres</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>order</code></td><td>srt | str | rst | rts | tsr | trs</td><td><code>&quot;srt&quot;</code></td><td></td><td>The order of scale, rotate and translate. Each step also acts on what the steps before it did<ul><li><code>srt</code>: scale, rotate, translate: the move follows the world axes, whatever the turn and size</li><li><code>str</code>: scale, translate, rotate: the move turns with rotate, so the object circles the origin</li><li><code>rst</code>: rotate, scale, translate: a non-uniform scale stretches along the world axes and skews a turned object</li><li><code>rts</code>: rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned object</li><li><code>tsr</code>: translate, scale, rotate: the move grows with scale and turns with rotate, circling the origin</li><li><code>trs</code>: translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned object</li></ul></td></tr>
 </tbody>
 </table>
 </div></details>

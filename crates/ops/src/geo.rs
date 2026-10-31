@@ -103,34 +103,32 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Primitive) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
-        NodeDesc::new(
-            "geo.transform",
-            "Moves, turns and scales geometry (scale first, then rotate, then move)",
-        )
-        .param(
-            ParamSpec::vec3("translate", [0.0; 3])
-                .range(-10.0, 10.0)
-                .doc("Move along x, y, z (z up), in scene units (metres), after scale and rotate"),
-        )
-        .param(
-            ParamSpec::vec3("rotate", [0.0; 3])
-                .range(-180.0, 180.0)
-                .unit(Unit::Degrees)
-                .doc("Turn about x, then y, then z, after scale and before translate"),
-        )
-        .param(
-            ParamSpec::vec3("scale", [1.0; 3]).range(0.0, 4.0).doc(
-                "Size along x, y, z around the origin, applied first: 1 keeps the size, negative mirrors",
-            ),
-        )
-        .param(
-            ParamSpec::float("uniform", 1.0)
-                .range(0.001, 1000.0)
-                .curve(Curve::Log)
-                .doc("Times the scale: 0.001 turns millimetres into metres"),
-        )
-        .input("in", DataKind::Geo)
-        .output("out", DataKind::Geo),
+        NodeDesc::new("geo.transform", "Moves, turns and scales geometry")
+            .param(
+                ParamSpec::vec3("translate", [0.0; 3])
+                    .range(-10.0, 10.0)
+                    .doc("Move along x, y, z (z up), in scene units (metres)"),
+            )
+            .param(
+                ParamSpec::vec3("rotate", [0.0; 3])
+                    .range(-180.0, 180.0)
+                    .unit(Unit::Degrees)
+                    .doc("Turn about the origin: about x, then y, then z"),
+            )
+            .param(
+                ParamSpec::vec3("scale", [1.0; 3])
+                    .range(0.0, 4.0)
+                    .doc("Size along x, y, z around the origin: 1 keeps the size, negative mirrors"),
+            )
+            .param(
+                ParamSpec::float("uniform", 1.0)
+                    .range(0.001, 1000.0)
+                    .curve(Curve::Log)
+                    .doc("Times the scale: 0.001 turns millimetres into metres"),
+            )
+            .param(order_param("object", "the origin", "world"))
+            .input("in", DataKind::Geo)
+            .output("out", DataKind::Geo),
         || Box::new(Transform) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
@@ -433,8 +431,32 @@ fn vec3(cx: &CookContext<'_>, name: &str) -> Result<[f64; 3], CookError> {
     }
 }
 
+/// The orders the `order` param of `tex.transform` and `geo.transform` offers: the steps
+/// scale, rotate and translate by their first letter, in the order they act.
+pub const ORDERS: [&str; 6] = ["srt", "str", "rst", "rts", "tsr", "trs"];
+
+/// The `order` param of a transform. `thing` is what it moves, `around` the point it turns
+/// and scales about, `axes` the axes a plain move follows.
+pub(crate) fn order_param(thing: &str, around: &str, axes: &str) -> ParamSpec {
+    ParamSpec::choice("order", &ORDERS)
+        .more()
+        .doc("The order of scale, rotate and translate. Each step also acts on what the steps before it did")
+        .choice_doc("srt", &format!("scale, rotate, translate: the move follows the {axes} axes, whatever the turn and size"))
+        .choice_doc("str", &format!("scale, translate, rotate: the move turns with rotate, so the {thing} circles {around}"))
+        .choice_doc("rst", &format!("rotate, scale, translate: a non-uniform scale stretches along the {axes} axes and skews a turned {thing}"))
+        .choice_doc("rts", &format!("rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned {thing}"))
+        .choice_doc("tsr", &format!("translate, scale, rotate: the move grows with scale and turns with rotate, circling {around}"))
+        .choice_doc("trs", &format!("translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned {thing}"))
+}
+
 /// Scale, then rotate about x, y, z, then translate.
 pub fn trs(translate: [f64; 3], rotate_degrees: [f64; 3], scale: [f64; 3]) -> Mat4 {
+    ordered("srt", translate, rotate_degrees, scale)
+}
+
+/// The steps in `order` (one of [`ORDERS`]; anything else is `srt`) as one matrix.
+pub fn ordered(order: &str, translate: [f64; 3], rotate_degrees: [f64; 3], scale: [f64; 3]) -> Mat4 {
+    let order = if ORDERS.contains(&order) { order } else { "srt" };
     let [ax, ay, az] = rotate_degrees.map(f64::to_radians);
     let (sx, cx) = ax.sin_cos();
     let (sy, cy) = ay.sin_cos();
@@ -442,14 +464,20 @@ pub fn trs(translate: [f64; 3], rotate_degrees: [f64; 3], scale: [f64; 3]) -> Ma
     let rx = [[1.0, 0.0, 0.0, 0.0], [0.0, cx, -sx, 0.0], [0.0, sx, cx, 0.0], [0.0, 0.0, 0.0, 1.0]];
     let ry = [[cy, 0.0, sy, 0.0], [0.0, 1.0, 0.0, 0.0], [-sy, 0.0, cy, 0.0], [0.0, 0.0, 0.0, 1.0]];
     let rz = [[cz, -sz, 0.0, 0.0], [sz, cz, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    let r = mul(&rz, &mul(&ry, &rx));
     let [x, y, z] = scale;
     let s = [[x, 0.0, 0.0, 0.0], [0.0, y, 0.0, 0.0], [0.0, 0.0, z, 0.0], [0.0, 0.0, 0.0, 1.0]];
-    let mut m = mul(&rz, &mul(&ry, &mul(&rx, &s)));
     let [t0, t1, t2] = translate;
-    let [r0, r1, r2, _] = &mut m;
-    r0[3] = t0;
-    r1[3] = t1;
-    r2[3] = t2;
+    let t = [[1.0, 0.0, 0.0, t0], [0.0, 1.0, 0.0, t1], [0.0, 0.0, 1.0, t2], [0.0, 0.0, 0.0, 1.0]];
+    let mut m = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    for step in order.chars() {
+        let next = match step {
+            's' => &s,
+            'r' => &r,
+            _ => &t,
+        };
+        m = mul(next, &m);
+    }
     m
 }
 
@@ -462,7 +490,7 @@ impl Operator for Transform {
         let Some(input) = cx.input_as::<Geo>(0) else { return Err(waiting(cx)) };
         let u = cx.float("uniform")?;
         let scale = vec3(cx, "scale")?.map(|s| s * u);
-        let m = trs(vec3(cx, "translate")?, vec3(cx, "rotate")?, scale);
+        let m = ordered(cx.text("order")?, vec3(cx, "translate")?, vec3(cx, "rotate")?, scale);
         if !m.iter().flatten().all(|v| v.is_finite()) {
             return Err(CookError::failed("the transform is not finite"));
         }
@@ -632,5 +660,46 @@ impl Operator for PutMaterial {
             input.items.iter().map(|i| Item { material: Some(mat.material.clone()), ..i.clone() }).collect();
         let geo = Geo { items, preview: None };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn apply(m: &Mat4, p: [f64; 3]) -> [f64; 3] {
+        let row = |r: &[f64; 4]| r[0] * p[0] + r[1] * p[1] + r[2] * p[2] + r[3];
+        [row(&m[0]), row(&m[1]), row(&m[2])]
+    }
+
+    #[test]
+    fn the_order_decides_what_the_later_steps_do_to_the_move() {
+        // Moved 1 along x, turned 90 degrees about z, scaled by 2: where the origin lands.
+        let want = [
+            ("srt", [1.0, 0.0, 0.0]),
+            ("str", [0.0, 1.0, 0.0]),
+            ("rst", [1.0, 0.0, 0.0]),
+            ("rts", [2.0, 0.0, 0.0]),
+            ("tsr", [0.0, 2.0, 0.0]),
+            ("trs", [0.0, 2.0, 0.0]),
+            ("nonsense", [1.0, 0.0, 0.0]),
+        ];
+        for (order, at) in want {
+            let m = ordered(order, [1.0, 0.0, 0.0], [0.0, 0.0, 90.0], [2.0; 3]);
+            let got = apply(&m, [0.0; 3]);
+            assert!(got.iter().zip(at).all(|(g, w)| (g - w).abs() < 1e-9), "{order}: {got:?}");
+        }
+    }
+
+    #[test]
+    fn a_non_uniform_scale_after_a_turn_stretches_along_the_world_axes() {
+        // Turned 90 degrees about z, then stretched along x: the point on x ends up on y,
+        // unstretched; scaled first, it is stretched before it turns.
+        let turned_first = ordered("rst", [0.0; 3], [0.0, 0.0, 90.0], [2.0, 1.0, 1.0]);
+        let scaled_first = ordered("srt", [0.0; 3], [0.0, 0.0, 90.0], [2.0, 1.0, 1.0]);
+        let a = apply(&turned_first, [1.0, 0.0, 0.0]);
+        let b = apply(&scaled_first, [1.0, 0.0, 0.0]);
+        assert!((a[1] - 1.0).abs() < 1e-9 && a[0].abs() < 1e-9, "{a:?}");
+        assert!((b[1] - 2.0).abs() < 1e-9 && b[0].abs() < 1e-9, "{b:?}");
     }
 }
