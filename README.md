@@ -20,7 +20,8 @@ TouchDesigner Python API, its own node names.
 
 ![The penumbra window: the curl-noise example's network on the left, the selected shader's parameters and the rendered output on the right](assets/screenshot.png)
 
-**Status:** work in progress, used for its author's installations. The current version is on
+**Status:** work in progress, used for its author's installations. There will be breaking
+changes before 1.0 ([scope](#scope)). The current version is on
 the [releases page](https://github.com/alexanderalber/penumbra/releases/latest). Windows 10
 and 11 only so far; Linux is planned but untested, macOS is not planned.
 
@@ -117,7 +118,7 @@ The node kinds map roughly onto TouchDesigner's families: `tex` onto TOPs, `chan
 `table` onto DATs, `geo` onto SOPs, `mat` onto MATs, `comp` onto COMPs. penumbra was built for
 one person's installations and has far fewer nodes in each family.
 
-Not in penumbra, as of now:
+Not in penumbra, as of now. Some of this is planned, some stays out, see [Scope](#scope):
 
 - MIDI, timecode (LTC, MTC), audio output, audio files, VST plugins.
 - Depth cameras and other tracking hardware (Kinect, RealSense, ZED, Leap Motion).
@@ -141,6 +142,29 @@ Different by design:
 - Projection onto objects from a camera scan is built in, down to the content.
 - Free and open source (MIT or Apache-2.0), no licence tiers or resolution limits.
 
+## Scope
+
+penumbra is built with Claude Code, and new scenes are meant to be built the same way: you
+describe the scene, Claude Code builds the network. Because of that, some things from
+TouchDesigner are missing on purpose. For example there are few logic nodes. A short Python
+script in a script node does the same job, and Claude Code writes that script faster than
+anyone wires the nodes.
+
+Not every planned feature is there yet. More will come over the first months. The feature list
+of TouchDesigner is not the goal. Hardware the author does not own, like depth cameras, stays
+out until someone who owns it contributes. Things that would make penumbra hard to maintain
+for one person stay out on purpose.
+
+There will be breaking changes before 1.0. A project is plain text and Claude Code can read
+it. So when an update breaks a project, Claude Code can usually fix the files. Release notes
+list every rename.
+
+The goal is that a show runs more stably and faster in penumbra than in TouchDesigner. And
+that penumbra does some things TouchDesigner does not, like structured light scanning.
+
+The author used TouchDesigner for almost six years. Since penumbra 0.2 the author works only
+in penumbra. The plan is to maintain penumbra for a long time.
+
 ## Projection onto objects
 
 You draw the content once, in the camera's picture. Each projector shows its share of it, in
@@ -161,8 +185,8 @@ crates with a pumpkin, lit by two projectors:
 
 ![Two photos of the same corner of crates with a pumpkin. Left: vertical stripes from one projector, bent by the pumpkin. Right: a cyan grid projected on every crate face, each following its own face, and an orange grid wrapped around the pumpkin](assets/photos/scan.jpg)
 
-Without projectors, `scan.synthetic` ray casts a made-up scene of the same kind, for trying
-the chain at the desk.
+Without projectors, `scan.synthetic` ray casts a made-up scene of the same kind. With it you
+can try the whole chain without hardware.
 
 The [content library](library/README.md) has effects that fit any scanned scene: colours per
 region, outlines, light from inside an object, a carved face, water. Each has a preview on the
@@ -287,14 +311,14 @@ of a render, `cargo xtask dist` builds the release zip. Linux is only checked by
 
 ## How this is built
 
-Most of the code is written by Claude Code; the author directs it, reviews what it wrote and
-tests the result on the projectors, the camera and the shows the tool is built for. What keeps
-that honest is enforced, not promised: the workspace denies `unwrap`, `expect`, `panic`,
-`unreachable`, indexing that can panic and `unsafe` outside delimited FFI modules; the layer
-check runs on every dependency set; renders are compared with golden images; file, network and
-hardware input is tested with hostile data. The history on GitHub begins with the split into a
-public repository in October 2026; the work before that is in a private archive. How the
-code is put together is in [ARCHITECTURE.md](ARCHITECTURE.md).
+Most of the code is written by Claude Code. The author directs it, reviews what it wrote and
+tests the result on the projectors, the camera and real shows. Tooling enforces the rules: the
+workspace denies `unwrap`, `expect`, `panic`, `unreachable`, indexing that can panic and
+`unsafe` outside delimited FFI modules. A layer check runs on every dependency set. Renders are
+compared with golden images. File, network and hardware input is tested with hostile data. The
+history on GitHub begins with the split into a public repository in October 2026; the work
+before that is in a private archive. How the code is put together is in
+[ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Documentation
 
@@ -314,6 +338,13 @@ gate. It also builds directly on several of their crates: `photocraft-codecs` an
 `photocraft-psd` for image files and PSD layers, `effectcraft-text` for text, and the
 `filmcraft-*` crates for video.
 penumbra is an independent project and not affiliated with the storytold team.
+
+## Contributing
+
+Issues and pull requests are welcome. The best fit: support for hardware the author cannot
+test, from someone who uses it. For example "I have a Kinect and want to use it in penumbra,
+here is a PR." For anything bigger than a fix, open an issue first, so we can agree on the
+scope before the work is done. Contributions are licensed as below.
 
 ## License
 
