@@ -34,7 +34,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "geo.file",
-            "A 3D model from a file (OBJ, STL, glTF/GLB) with its parts; updates when the file changes",
+            "A 3D model from a file (OBJ, STL, glTF/GLB, FBX) with its parts; updates when the file changes",
         )
         .param(
             ParamSpec::file("file", penumbra_mesh::EXTENSIONS)
@@ -44,7 +44,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::choice("up", &UP)
                 .more()
                 .doc("Which axis is up in the file, turned into penumbra's z up")
-                .choice_doc("auto", "y for glTF and OBJ, z for STL")
+                .choice_doc(
+                    "auto",
+                    "y for glTF and OBJ, z for STL; FBX files say which way is up, and that is used",
+                )
                 .choice_doc("y", "the file's y is up (most modelling tools, glTF)")
                 .choice_doc("z", "the file's z is up already, as STL from CAD usually is"),
         )

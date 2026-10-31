@@ -1,6 +1,6 @@
 [package]
 name = "penumbra-mesh"
-description = "Meshes on the CPU: OBJ, STL and glTF readers with budgets, part ids, primitives. No GPU, no UI."
+description = "Meshes on the CPU: OBJ, STL, glTF and FBX readers with budgets, part ids, primitives. No GPU, no UI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 penumbra-core.workspace = true
+penumbra-fbx.workspace = true
 serde_json.workspace = true
 
 [lints]

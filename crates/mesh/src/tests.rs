@@ -502,3 +502,97 @@ fn append_renumbers_and_keeps_polygon_edges() {
     assert_eq!(out.inner_edges.len(), out.triangle_count(), "padded for the cube's triangles");
     assert_eq!(out.inner_edges[cube.triangle_count()..], grid.inner_edges[..]);
 }
+
+/// The example FBX scene of `penumbra-fbx`, optionally with a diffuse texture on its material:
+/// embedded (`content`) or beside the file as `tex/wood.png`.
+fn fbx_scene(texture: Option<&[u8]>) -> Vec<u8> {
+    use penumbra_fbx::Value;
+    use penumbra_fbx::write::{connection, leaf, object, to_bytes};
+    let mut nodes = penumbra_fbx::write::example_scene();
+    if let Some(content) = texture {
+        let objects = nodes.iter_mut().find(|n| n.name == "Objects").unwrap();
+        objects.children.push(object(
+            "Texture",
+            40,
+            "wood",
+            "",
+            Vec::new(),
+            vec![
+                leaf("FileName", Value::String("C:/Users/someone/tex/wood.png".into())),
+                leaf("RelativeFilename", Value::String(r"tex\wood.png".into())),
+            ],
+        ));
+        objects.children.push(object(
+            "Video",
+            50,
+            "wood",
+            "Clip",
+            Vec::new(),
+            vec![leaf("Content", Value::Raw(content.to_vec()))],
+        ));
+        let conns = nodes.iter_mut().find(|n| n.name == "Connections").unwrap();
+        conns.children.push(connection("OP", 40, 30, Some("DiffuseColor")));
+        conns.children.push(connection("OO", 50, 40, None));
+    }
+    to_bytes(7400, &nodes, true)
+}
+
+#[test]
+fn fbx_loads_as_parts_in_metres_and_z_up() {
+    let bytes = fbx_scene(None);
+    let l = parse("scene.fbx", &bytes, &no_files, &Limits::default()).unwrap();
+    // Sniffed by its magic, whatever the name.
+    assert_eq!(parse("scene.bin", &bytes, &no_files, &Limits::default()).unwrap(), l);
+    assert_eq!(Up::of_file("x.FBX"), Up::Z);
+    let m = &l.mesh;
+    assert_eq!(m.parts, ["base", "top"]);
+    assert_eq!(m.triangle_count(), 24);
+    assert!(l.warnings.is_empty(), "{:?}", l.warnings);
+    let info = m.part_info();
+    // The base cube: 1 m, standing on the floor (z = 0), turned 45 degrees: its corners reach
+    // out to half a diagonal.
+    let b = info[0].bounds.unwrap();
+    let h = std::f32::consts::FRAC_1_SQRT_2;
+    assert!(close(b.min, [-h, -h, 0.0]) && close(b.max, [h, h, 1.0]), "{b:?}");
+    // The top cube sits 1.5 m up, half the size; y up became z up, z front became -y.
+    let c = info[1].bounds.unwrap().center();
+    let o = 0.25 * h;
+    assert!(close(c, [-o, -o, 1.5]), "{c:?}");
+    // Quads split along an inner edge, and normals pointing outwards.
+    assert_eq!(m.inner_edges.iter().filter(|e| **e != 0).count(), 24);
+    for t in m.indices.as_chunks::<3>().0 {
+        let p = t.map(|i| m.vertices[i as usize].position);
+        let n = m.vertices[t[0] as usize].normal;
+        assert!(close(face_normal(p), n), "{p:?} {n:?}");
+    }
+    assert_eq!(m.materials[1].name, "red");
+    assert!(m.ranges.iter().all(|r| r.material == 1));
+}
+
+#[test]
+fn fbx_textures_come_embedded_or_from_beside_the_file() {
+    let embedded =
+        parse("s.fbx", &fbx_scene(Some(b"\x89PNG embedded")), &no_files, &Limits::default()).unwrap();
+    assert_eq!(embedded.mesh.images[0].bytes, b"\x89PNG embedded");
+    assert_eq!(embedded.mesh.materials[1].texture, Some(0));
+    // No content: the relative path, with its backslash turned.
+    let side = files(HashMap::from([("tex/wood.png", b"beside".to_vec())]));
+    let beside = parse("s.fbx", &fbx_scene(Some(b"")), &side, &Limits::default()).unwrap();
+    assert_eq!(beside.mesh.images[0].bytes, b"beside");
+    // Neither: a warning, the colour stays.
+    let none = parse("s.fbx", &fbx_scene(Some(b"")), &no_files, &Limits::default()).unwrap();
+    assert!(
+        none.mesh.images.is_empty() && none.warnings.iter().any(|w| w.contains("wood")),
+        "{:?}",
+        none.warnings
+    );
+}
+
+#[test]
+fn fbx_errors_say_why() {
+    let ascii = b"; FBX 7.4.0 project file\nFBXHeaderExtension:  {\n}\n";
+    let e = parse("a.fbx", ascii, &no_files, &Limits::default()).unwrap_err();
+    assert!(e.0.contains("ASCII"), "{e}");
+    let cut = fbx_scene(None);
+    assert!(parse("a.fbx", &cut[..cut.len() / 2], &no_files, &Limits::default()).is_err());
+}

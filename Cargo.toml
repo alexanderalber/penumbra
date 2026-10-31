@@ -18,6 +18,7 @@ penumbra-camera = { path = "crates/camera" }
 penumbra-core = { path = "crates/core" }
 penumbra-dmx = { path = "crates/dmx" }
 penumbra-engine = { path = "crates/engine" }
+penumbra-fbx = { path = "crates/fbx" }
 penumbra-gpu = { path = "crates/gpu" }
 penumbra-graph = { path = "crates/graph" }
 penumbra-http = { path = "crates/http" }
@@ -75,6 +76,8 @@ filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0b
 # The MP4/MOV sample tables for HAP, which FilmCraft does not decode; HAP's second stage is Snappy.
 filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
 snap = "1"
+# zlib for the arrays in FBX files (crates/fbx); already in the tree through flate2.
+miniz_oxide = "0.9.1"
 # Recording (crates/record): FilmCraft's encoders and its MP4/MOV writer, same pin as the decoders.
 # rayon is the thread pool both encoders use (already in the tree through FilmCraft).
 filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
@@ -149,6 +152,9 @@ opt-level = 2
 
 # Structured light decoding runs per camera pixel and bit (46 pictures of 1080p).
 [profile.dev.package.penumbra-calib]
+opt-level = 2
+
+[profile.dev.package.penumbra-fbx]
 opt-level = 2
 
 [profile.dev.package.penumbra-gpu]

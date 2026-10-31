@@ -3258,6 +3258,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "penumbra-fbx"
+version = "0.6.0"
+dependencies = [
+ "miniz_oxide 0.9.1",
+]
+
+[[package]]
 name = "penumbra-gpu"
 version = "0.6.0"
 dependencies = [
@@ -3301,6 +3308,7 @@ name = "penumbra-mesh"
 version = "0.6.0"
 dependencies = [
  "penumbra-core",
+ "penumbra-fbx",
  "serde_json",
 ]
 
@@ -3328,6 +3336,7 @@ dependencies = [
  "penumbra-camera",
  "penumbra-core",
  "penumbra-dmx",
+ "penumbra-fbx",
  "penumbra-gpu",
  "penumbra-graph",
  "penumbra-http",

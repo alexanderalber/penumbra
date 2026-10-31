@@ -38,7 +38,7 @@ lists every one.
 - **Palettes and colormaps** as a kind of param: pick a set of colours by name, paste hex
   colours or a coolors or colorhunt link, or let a channel switch between them
   ([below](#palettes)).
-- **3D:** meshes from OBJ, STL and glTF, primitives, instancing from a table or from a texture
+- **3D:** meshes from OBJ, STL, glTF and FBX, primitives, instancing from a table or from a texture
   (tens of thousands of instances on the GPU). Phong, PBR, wireframe and occluder materials.
   Ambient, directional, point, spot and environment lights, shadows, transparency, ambient
   occlusion. Perspective, orthographic and calibrated cameras. A projector light throws a
@@ -99,7 +99,7 @@ lists every one.
 | Camera, capture card | yes | | `tex.video_in` | Media Foundation (UVC webcams, Elgato Cam Link and similar) |
 | Video files | yes | yes | `tex.video_file`, `out.video` | in: MP4, MOV, MKV, WebM, MXF, MPEG with H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP; GIF. Out: H.264 (MP4), ProRes 422, 422 HQ, 4444 (MOV) |
 | Image files | yes | snapshots | `tex.image_file`, `tex.layer` | PNG, JPEG, TIFF, EXR, HDR, WebP and more; PSD/PSB layers. `node.snapshot` saves any node as PNG |
-| 3D files | yes | yes | `geo.file`, `out.mesh` | in: OBJ (with MTL), STL, glTF/GLB. Out: OBJ, STL, GLB |
+| 3D files | yes | yes | `geo.file`, `out.mesh` | in: OBJ (with MTL), STL, glTF/GLB, FBX (binary 7.x, static). Out: OBJ, STL, GLB |
 | Text tables | yes | yes | `table.file`, `out.table` | in: CSV, TSV, plain lines. Out: CSV, TSV |
 | Audio | yes | yes | `audio.device_in`, `audio.file`, `out.audio`, `out.audio_file`, `chan.audio_envelope`, `chan.audio_spectrum`, `chan.beat_analysis`, `audio.instrument`, `audio.ambience`, `audio.filter` | any device (WASAPI, shared mode). Loudness per channel, a spectrum as numbers or a spectrogram texture, beat and tempo. Output always through a limiter at -1 dBFS; `audio.mute` silences everything. Ready-made instruments and drones in a key and scale, played by channels. A filter for any sound. Sound files (WAV, FLAC, MP3, Ogg, AAC) play in step with video files (the [clips](examples/clips/README.md) example); `out.audio_file` records to WAV |
 | Spout | yes | yes | `tex.spout_in`, `out.spout` | textures shared with other programs on the same machine |
@@ -324,6 +324,9 @@ a JSON control channel, headless snapshots, the no-panic rule, `cargo xtask ci` 
 gate. It also builds directly on several of their crates: `photocraft-codecs` and
 `photocraft-psd` for image files and PSD layers, `effectcraft-text` for text, and the
 `filmcraft-*` crates for video.
+The FBX reader follows the format knowledge of [ufbx](https://github.com/ufbx/ufbx) (Samuli
+Raivio) and [fbxcel](https://github.com/lo48576/fbxcel) (YOSHIOKA Takuma), and ufbx's test
+files check it.
 penumbra is an independent project and not affiliated with the storytold team.
 
 ## Contributing

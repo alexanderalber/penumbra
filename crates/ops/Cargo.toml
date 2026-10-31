@@ -34,6 +34,7 @@ effectcraft-text.workspace = true
 tiny-skia.workspace = true
 
 [dev-dependencies]
+penumbra-fbx.workspace = true
 photocraft-codecs.workspace = true
 photocraft-psd.workspace = true
 

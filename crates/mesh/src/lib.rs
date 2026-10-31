@@ -1,5 +1,5 @@
 //! Meshes on the CPU: what flows along a `geo` connection before it reaches the GPU, the readers
-//! for OBJ, STL and glTF, and a few primitives.
+//! for OBJ, STL, glTF and FBX, and a few primitives.
 //!
 //! Every file is hostile input. The readers are our own (not `effectcraft-model`, see the plan):
 //! they check every count against [`Limits`] *before* allocating for it, use checked
@@ -13,6 +13,7 @@
 //! is flipped on the way in). Triangles are lists of three indices; the winding is kept as in the
 //! file but not relied on (the renderer does not cull by default).
 
+mod fbx;
 mod gltf;
 mod obj;
 pub mod prim;
@@ -154,11 +155,12 @@ pub enum Up {
 
 impl Up {
     /// What a format usually is: glTF y up (its spec), OBJ y up (most exporters), STL z up (most
-    /// CAD and 3D printing tools).
+    /// CAD and 3D printing tools). FBX files say which way is up, and the reader turns them to z
+    /// up already.
     pub fn of_file(name: &str) -> Up {
         let ext =
             Path::new(name).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
-        if ext == "stl" { Up::Z } else { Up::Y }
+        if ext == "stl" || ext == "fbx" { Up::Z } else { Up::Y }
     }
 }
 
@@ -507,7 +509,7 @@ pub struct Loaded {
 }
 
 /// Extensions the file picker offers.
-pub const EXTENSIONS: &[&str] = &["obj", "stl", "gltf", "glb"];
+pub const EXTENSIONS: &[&str] = &["obj", "stl", "gltf", "glb", "fbx"];
 
 /// Reads a mesh file. Files it refers to (materials, buffers, textures) are read relative to its
 /// directory; absolute paths, drive letters, network paths and URLs are refused.
@@ -549,9 +551,12 @@ pub fn parse(
     let stem = if stem.is_empty() { "mesh".to_string() } else { stem };
     let loaded = if bytes.starts_with(b"glTF") {
         gltf::parse(bytes, sidecar, limits)?
+    } else if penumbra_fbx::is_binary_fbx(bytes) {
+        fbx::parse(bytes, sidecar, limits)?
     } else {
         match ext.as_str() {
             "gltf" | "glb" => gltf::parse(bytes, sidecar, limits)?,
+            "fbx" => fbx::parse(bytes, sidecar, limits)?,
             "stl" => stl::parse(bytes, &stem, limits)?,
             "obj" => obj::parse(bytes, &stem, sidecar, limits)?,
             _ => {

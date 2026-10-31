@@ -471,6 +471,47 @@ fn mesh_files_load_with_their_parts_and_reload() {
     }
 }
 
+#[test]
+fn fbx_files_load_with_their_transforms_baked_in_metres() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("geo-fbx");
+    let scene = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::example_scene(), true);
+    std::fs::write(dir.join("towers.fbx"), scene).unwrap();
+    let ops = vec![
+        create("/fbx", "geo.file", &[("file", "towers.fbx".into())]),
+        render(
+            "/view",
+            &[
+                ("surface", "material".into()),
+                ("position", Value::Vec3([2.5, -3.5, 2.2])),
+                ("target", Value::Vec3([0.0, 0.0, 0.9])),
+            ],
+        ),
+        connect("/fbx", "/view", 0),
+    ];
+    let mut rig = rig(gpu, Some(&dir), &ops);
+    let id = rig.id("/fbx");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let geo = loop {
+        rig.cooker.cook(&rig.net, rig.clock.now(), &[id], &[]);
+        if let Some(g) = rig.cooker.output(Port { node: id, output: 0 }).and_then(|d| d.get::<Geo>().cloned())
+        {
+            break g;
+        }
+        assert!(Instant::now() < deadline, "{:?}", rig.cooker.status(id));
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    assert_eq!(geo.part_names(), ["base", "top"]);
+    assert_eq!(geo.triangle_count(), 24);
+    let s = rig.cooker.status(id).unwrap();
+    assert_eq!((s.error, s.warning), (None, None));
+    // The red base fills the middle of the picture.
+    let px = rig.pixels("/view");
+    let [r, g, b, _] = at(&px, px.width / 2, px.height * 3 / 4);
+    assert!(r > 0.1 && r > 3.0 * g && r > 3.0 * b, "{r} {g} {b}");
+    look(&mut rig, "/view", "render_fbx", (super::W, super::H));
+}
+
 /// A wall 2 m square seen head on by two cameras sharing one texture, the near one twice as
 /// close: what each asks of the texture, the most of both as its need, the overlay per pixel.
 #[test]

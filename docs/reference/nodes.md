@@ -1862,7 +1862,7 @@ Outputs: `out` (geo).
 
 ### geo.file
 
-A 3D model from a file (OBJ, STL, glTF/GLB) with its parts; updates when the file changes
+A 3D model from a file (OBJ, STL, glTF/GLB, FBX) with its parts; updates when the file changes
 
 Inputs: none.
 
@@ -1873,8 +1873,8 @@ Outputs:
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `file` | file (obj, stl, gltf, glb) |  |  | The mesh file, relative to the project directory; saving it again reloads the node |
-| `up` *(more)* | auto \| y \| z | `"auto"` |  | Which axis is up in the file, turned into penumbra's z up; auto: y for glTF and OBJ, z for STL; y: the file's y is up (most modelling tools, glTF); z: the file's z is up already, as STL from CAD usually is |
+| `file` | file (obj, stl, gltf, glb, fbx) |  |  | The mesh file, relative to the project directory; saving it again reloads the node |
+| `up` *(more)* | auto \| y \| z | `"auto"` |  | Which axis is up in the file, turned into penumbra's z up; auto: y for glTF and OBJ, z for STL; FBX files say which way is up, and that is used; y: the file's y is up (most modelling tools, glTF); z: the file's z is up already, as STL from CAD usually is |
 | `normals` | file \| smooth | `"file"` |  | Which way each corner faces, for the shading; file: as the file has them (flat where it has none, as STL); smooth: averaged over each corner's faces, for faceted or voxel meshes |
 | `rings` *(more)* | int | `1` | 1 to 16 | smooth: rings of faces averaged around each corner; 3 to 6 for voxel or marching-cubes meshes |
 | `crease` *(more)* | float | `180` | 0 to 180° | smooth: edges sharper than this stay hard; 180 smooths everything |
