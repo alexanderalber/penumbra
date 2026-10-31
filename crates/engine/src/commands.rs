@@ -490,9 +490,9 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
         .collect();
     let status = e.on_cook(move |st| {
         let watched = st.watched.contains(&id);
-        (st.cooker.status(id), watched, st.clock.rate())
+        (st.cooker.status(id), watched)
     })?;
-    let (status, watched, rate) = status;
+    let (status, watched) = status;
     // A param that does nothing with the others as they are says so, as the panel greys it.
     let kind_type = e.types().get(&node.kind);
     for (v, spec) in params.iter_mut().zip(&desc.params) {
@@ -544,7 +544,7 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             "last_ms": ms(s.stats.last),
             "average_ms": ms(s.stats.average),
             "max_ms": ms(s.stats.max),
-            "load": s.stats.load(rate),
+            "load": s.stats.load(),
         })
     });
     let mut info = json!({

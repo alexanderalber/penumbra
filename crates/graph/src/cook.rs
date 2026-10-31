@@ -383,10 +383,25 @@ pub struct CookStats {
     /// Exponential moving average over roughly the last 10 cooks.
     pub average: Duration,
     pub max: Duration,
+    /// Cook seconds, each weighted by how long ago it happened (`exp(-age / LOAD_TAU)`), as of
+    /// `at`.
+    #[serde(skip)]
+    recent: f64,
+    /// When the last cook ended.
+    #[serde(skip)]
+    at: Option<Instant>,
 }
+
+/// Time constant of [`CookStats::load`]: a node that stops cooking fades to no load in a few
+/// of these.
+const LOAD_TAU: f64 = 1.0;
 
 impl CookStats {
     fn add(&mut self, d: Duration) {
+        self.add_at(d, Instant::now());
+    }
+
+    fn add_at(&mut self, d: Duration, now: Instant) {
         self.cooks += 1;
         self.last = d;
         self.max = self.max.max(d);
@@ -395,11 +410,25 @@ impl CookStats {
         } else {
             Duration::from_secs_f64(self.average.as_secs_f64() * 0.9 + d.as_secs_f64() * 0.1)
         };
+        self.recent = self.recent_at(now) + d.as_secs_f64();
+        self.at = Some(now);
     }
 
-    /// Average cook time as a share of one frame period: the number behind the editor tint.
-    pub fn load(&self, rate: Rate) -> f64 {
-        self.average.as_secs_f64() / rate.period().as_secs_f64().max(1e-9)
+    fn recent_at(&self, now: Instant) -> f64 {
+        let Some(at) = self.at else { return 0.0 };
+        self.recent * (-now.saturating_duration_since(at).as_secs_f64() / LOAD_TAU).exp()
+    }
+
+    /// Share of the recent time the node spent cooking: the number behind the editor tint.
+    /// A node cooking every frame scores its cook time over the frame period. A node that
+    /// cooked once and then holds its result fades to 0 within a few seconds, however long
+    /// that one cook took.
+    pub fn load(&self) -> f64 {
+        self.load_at(Instant::now())
+    }
+
+    fn load_at(&self, now: Instant) -> f64 {
+        self.recent_at(now) / LOAD_TAU
     }
 }
 
@@ -2105,7 +2134,25 @@ mod tests {
         assert_eq!(st.cooks, 1);
         assert!(st.last >= Duration::from_millis(2));
         assert_eq!(st.average, st.last);
-        assert!(st.load(Rate::FPS_60) > 0.1);
+        assert!(st.load() > 0.0);
+    }
+
+    #[test]
+    fn load_counts_cooks_per_time_and_fades() {
+        let t0 = Instant::now();
+        let period = Duration::from_secs_f64(1.0 / 60.0);
+        // Every frame at a quarter of the frame: about a quarter of the time.
+        let mut busy = CookStats::default();
+        for i in 0..600 {
+            busy.add_at(period / 4, t0 + period * i);
+        }
+        let now = t0 + period * 599;
+        assert!((busy.load_at(now) - 0.25).abs() < 0.01, "{}", busy.load_at(now));
+        // One cook of a whole second and nothing after: gone a few seconds later.
+        let mut once = CookStats::default();
+        once.add_at(Duration::from_secs(1), t0);
+        assert!(once.load_at(t0 + Duration::from_secs(5)) < 0.01);
+        assert_eq!(once.average, Duration::from_secs(1));
     }
 
     #[test]

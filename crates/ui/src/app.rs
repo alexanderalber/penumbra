@@ -1121,7 +1121,6 @@ impl PenumbraApp {
         if self.library.1.is_none_or(|t| now.saturating_duration_since(t) > Duration::from_secs(3)) {
             self.library = (crate::components::library_names(&self.engine), Some(now));
         }
-        let period = view.time.map_or(1.0 / 60.0, |t| t.rate.period().as_secs_f64());
         let background = theme::editor_bg(tint);
         let (thumbnails, passive) = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
@@ -1140,7 +1139,6 @@ impl PenumbraApp {
                     backdrop: target
                         .filter(|_| self.layout.options.viewer_background)
                         .map(|id| (id, self.viewer.output)),
-                    period,
                     can_edit,
                     viewer: target,
                     highlight: &self.changes.hovered,

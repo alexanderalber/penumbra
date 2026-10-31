@@ -58,8 +58,6 @@ pub struct Inputs<'a> {
     pub binding_lines: bool,
     /// The viewer's node and output, drawn behind the network (`EditorOptions::viewer_background`).
     pub backdrop: Option<(NodeId, u32)>,
-    /// Frame period in seconds, for the cook-time tint.
-    pub period: f64,
     pub can_edit: bool,
     pub viewer: Option<NodeId>,
     /// Nodes to outline: touched by the change-log entry under the pointer.
@@ -1326,7 +1324,7 @@ impl Editor {
         let Some(node) = input.net.node(g.id) else { return };
         let zoom = (g.rect.width() / NODE_SIZE.x).max(0.01);
         let status = input.status.get(&g.id);
-        let load = status.map_or(0.0, |s| s.stats.average.as_secs_f64() / input.period.max(1e-9));
+        let load = status.map_or(0.0, |s| s.stats.load());
         let family = node.kind.split('.').next().unwrap_or("");
         let radius = CornerRadius::same((4.0 * zoom).round().clamp(0.0, 255.0) as u8);
         let body = theme::load_tint(load);

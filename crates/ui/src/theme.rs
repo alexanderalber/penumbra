@@ -154,13 +154,13 @@ pub fn family_color(family: &str) -> Color32 {
     c.gamma_multiply(0.55)
 }
 
-/// Node body colour for a cook load (average cook time / frame period): neutral when cheap,
+/// Node body colour for a cook load (share of the recent time spent cooking): neutral when cheap,
 /// towards red as a node takes half a frame or more.
 pub fn load_tint(load: f64) -> Color32 {
     let base = Color32::from_gray(44);
     let hot = Color32::from_rgb(130, 40, 36);
     let t = if load.is_finite() { (load / 0.5).clamp(0.0, 1.0) as f32 } else { 1.0 };
-    // Below about 2 % of a frame nothing shows, so ordinary nodes stay calm.
+    // Below about 2 % of the time nothing shows, so ordinary nodes stay calm.
     let t = ((t - 0.04) / 0.96).max(0.0).sqrt();
     lerp(base, hot, t)
 }
