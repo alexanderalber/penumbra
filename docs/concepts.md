@@ -34,7 +34,7 @@ Three ways a node can use another, each with its own line in the editor:
 | | what it carries | drawn as | across a component's edge |
 |---|---|---|---|
 | **wire** | a whole output (picture, channels, table, 3D) into an input of the same kind | a solid line in the kind's colour | only through its [ports](#components) |
-| **binding** | one channel's value into one param | a dashed green line into the node's top | anywhere |
+| **binding** | one channel's value or one table cell into one param | a dashed line into the node's top, green from a channel | anywhere |
 | **node reference** | a node named in a param (`tex.select`'s `node`) | a dashed line | anywhere |
 
 All three make the source cook first. A bound param recooks its node only when the value it
@@ -218,9 +218,36 @@ specific channel by name. A vector or colour binds per component: drop the wire 
 A bound row shows its name in the channel colour, the live value, and the source. The stored
 value stays and comes back when the binding is removed; it is also used, with a warning, while
 the channel is missing. Integers round, booleans are on from 0.5, hard ranges clamp. The editor
-draws every binding as a dashed green line into the top of the node. With "All binding lines"
-unticked in the editor's right-click menu, a binding shows as a short stub on the bound node,
-and as a line only while the source or the bound node is selected or under the pointer.
+draws every binding as a dashed line into the top of the node, green from a channel. With "All
+binding lines" unticked in the editor's right-click menu, a binding shows as a short stub on the
+bound node, and as a line only while the source or the bound node is selected or under the
+pointer.
+
+### Text and choices
+
+Text params and choices bind too, so a table or a `script.python` can change them during a
+show. The link button lists the chan nodes and the table nodes; a table offers its rows and
+then its cells. Dropping a chan wire on the row binds the whole param.
+
+- **A table cell** is one cell of the source's first `table` output. Rows and columns count
+  from 0, or go by header: a row by its first cell, a column by its cell in the first row.
+  A text param takes the cell as it is. A number param reads it as a number. A choice takes
+  the entry with that name, case and surrounding spaces aside.
+- **A channel into a text** is written by a format: the placeholder `{}` stands for the
+  number. `{}` gives up to three digits after the point and drops trailing zeros (`3`,
+  `0.5`). `{.2}` gives exactly two, `{.0}` none. Text around it stays: `{.1} m`,
+  `Round {}`, `{.0}%`. Write `{{` and `}}` for a brace. Without a format the binding uses
+  `{}`.
+- **A channel into a choice** picks the entry by its place: 0 is the first, rounded, held at
+  the first and the last.
+- **A text a choice does not have** leaves the choice at its last entry, and the node shows a
+  warning that names the text.
+
+File paths, node references and scripts cannot be bound. From the control channel:
+`node.bind {param, from, cell: {row, col}}` for a cell and
+`node.bind {param, from, format: "{.1} m"}` for a formatted channel. In `project.ron` such a
+binding is written as `(node: "scores", cell: (row: 1, col: "name"))` or
+`(node: "lfo1", format: "{.1} m")`. A plain channel binding keeps the short form `"lfo1:x"`.
 
 ### Buttons and sliders on the node
 

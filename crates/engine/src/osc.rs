@@ -674,6 +674,8 @@ fn bind(param: &ParamPath, component: Option<u8>, from: &NodePath, channel: &str
         component,
         from: from.clone(),
         channel: Some(Name::new(channel).map_err(|e| e.0)?),
+        cell: None,
+        format: None,
     })
 }
 

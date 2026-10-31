@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use penumbra_core::{Chans, Error, Name, NodeId, NodePath, ParamPart, ParamPath, Table, Value};
+use penumbra_core::{
+    Cell, Chans, Error, Name, NodeId, NodePath, NumberFormat, ParamPart, ParamPath, Table, Value,
+};
 use penumbra_gpu::{Geo, Tex};
 use penumbra_graph::{
     Data, EditOutcome, JobStatus, Network, NodeDesc, NodeStatus, Op, Port, PortRole, Recorded, ThumbnailMode,
@@ -103,7 +105,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "node.bind",
-        "Drive a param (or one component, /t.translate.0) with a channel; {param, from, channel?}",
+        "Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (\"{.1} m\"), a choice its entry by name or place; {param, from, channel?, cell?: {row?, col?}, format?}",
         node_bind,
     );
     add("node.unbind", "Back to the param's stored value; {param}", node_unbind);
@@ -452,7 +454,16 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
                 Some(c) => format!("{p}:{c}"),
                 None => p.to_string(),
             });
-            json!({"param": part.to_string(), "from": from})
+            let mut j = json!({"param": part.to_string(), "from": from});
+            if let Some(o) = j.as_object_mut() {
+                if let Some(cell) = &b.cell {
+                    o.insert("cell".into(), json!(cell));
+                }
+                if let Some(format) = &b.format {
+                    o.insert("format".into(), json!(format));
+                }
+            }
+            j
         })
         .collect();
     // Of a run of inputs, the wired slots and the next free one, as the editor shows them.
@@ -876,10 +887,13 @@ fn node_bind(e: &Engine, p: &Json) -> Result<Json> {
         param: String,
         from: NodePath,
         channel: Option<Name>,
+        cell: Option<Cell>,
+        format: Option<NumberFormat>,
     }
     let a: A = args(p)?;
     let (param, component) = param_part(&a.param)?;
-    Ok(outcome(&edit(e, &[Op::Bind { param, component, from: a.from, channel: a.channel }], "")?))
+    let op = Op::Bind { param, component, from: a.from, channel: a.channel, cell: a.cell, format: a.format };
+    Ok(outcome(&edit(e, &[op], "")?))
 }
 
 fn node_unbind(e: &Engine, p: &Json) -> Result<Json> {

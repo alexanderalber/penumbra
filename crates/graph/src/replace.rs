@@ -167,27 +167,14 @@ pub fn replace(net: &Network, types: &NodeTypes, path: &NodePath, kind: &str) ->
             continue;
         }
         let param = ParamPath::new(path.clone(), part.param.clone())?;
-        attempt(
-            Op::Bind { param, component: part.component, from, channel: bind.channel.clone() },
-            what,
-            &mut lost,
-        );
+        attempt(bind.op(param, part.component, from), what, &mut lost);
     }
     for reader in net.nodes().filter(|n| n.id != id) {
         for (part, bind) in reader.binds.iter().filter(|(_, b)| b.node == id) {
             let Some(reader_path) = net.path_of(reader.id) else { continue };
             let param = ParamPath::new(reader_path, part.param.clone())?;
             let what = format!("binding of {}", part_text(&param.to_string(), part.component));
-            attempt(
-                Op::Bind {
-                    param,
-                    component: part.component,
-                    from: path.clone(),
-                    channel: bind.channel.clone(),
-                },
-                what,
-                &mut lost,
-            );
+            attempt(bind.op(param, part.component, path.clone()), what, &mut lost);
         }
     }
     Ok(Replacement { ops, lost })
@@ -231,6 +218,8 @@ mod tests {
                 component: None,
                 from: p("/c"),
                 channel: None,
+                cell: None,
+                format: None,
             },
             Op::Place { path: p("/c"), pos: Some([120.0, -40.0]) },
         ];

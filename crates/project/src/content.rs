@@ -8,8 +8,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use penumbra_core::{Error, Name, NodePath, ParamPart, Value};
-use penumbra_graph::{Network, Op};
+use penumbra_core::{Cell, Error, Name, NodePath, NumberFormat, ParamPart, Value};
+use penumbra_graph::{Bind, Network, Op};
 
 /// One output of one node, by path.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,11 +18,31 @@ pub struct PortRef {
     pub output: u32,
 }
 
-/// What a bound parameter reads, by path: a channel of the first `chan` output of `node`.
+/// What a bound parameter reads, by path: a channel of the first `chan` output of `node`, or a
+/// cell of its first `table` output ([`penumbra_graph::Bind`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BindRef {
     pub node: NodePath,
     pub channel: Option<Name>,
+    pub cell: Option<Cell>,
+    pub format: Option<NumberFormat>,
+}
+
+impl BindRef {
+    /// Channel `channel` of `node` (its first when `None`).
+    pub fn chan(node: NodePath, channel: Option<Name>) -> Self {
+        Self { node, channel, cell: None, format: None }
+    }
+
+    /// `bind` read from `node` instead of its source.
+    pub fn of(node: NodePath, bind: &Bind) -> Self {
+        Self { node, channel: bind.channel.clone(), cell: bind.cell.clone(), format: bind.format.clone() }
+    }
+
+    /// The same binding, read from `node`.
+    pub fn with_node(&self, node: NodePath) -> Self {
+        Self { node, ..self.clone() }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -63,9 +83,7 @@ impl Content {
             let binds = def
                 .binds
                 .iter()
-                .map(|(part, b)| {
-                    Ok((part.clone(), BindRef { node: path(b.node)?, channel: b.channel.clone() }))
-                })
+                .map(|(part, b)| Ok((part.clone(), BindRef::of(path(b.node)?, b))))
                 .collect::<Result<BTreeMap<_, _>, Error>>()?;
             nodes.insert(
                 path(def.id)?,
@@ -221,6 +239,8 @@ fn bind(path: &NodePath, part: &ParamPart, src: &BindRef) -> Option<Op> {
         component: part.component,
         from: src.node.clone(),
         channel: src.channel.clone(),
+        cell: src.cell.clone(),
+        format: src.format.clone(),
     })
 }
 
@@ -356,8 +376,7 @@ mod tests {
                 ("/c", "test.const", &[], &[], false),
             ]);
             if let Some(n) = c.nodes.get_mut(&"/c".parse::<NodePath>().unwrap()) {
-                let src =
-                    BindRef { node: src.parse().unwrap(), channel: channel.map(|c| c.parse().unwrap()) };
+                let src = BindRef::chan(src.parse().unwrap(), channel.map(|c| c.parse().unwrap()));
                 n.binds.insert(ParamPart::parse("value").unwrap(), src);
             }
             c
@@ -379,7 +398,7 @@ mod tests {
         let mut ab = none.clone();
         let mut ba = none.clone();
         let part = ParamPart::parse("value").unwrap();
-        let src = |p: &str| BindRef { node: p.parse().unwrap(), channel: None };
+        let src = |p: &str| BindRef::chan(p.parse().unwrap(), None);
         ab.nodes.get_mut(&"/b".parse::<NodePath>().unwrap()).unwrap().binds.insert(part.clone(), src("/a"));
         ba.nodes.get_mut(&"/a".parse::<NodePath>().unwrap()).unwrap().binds.insert(part, src("/b"));
         let swapped = apply(&load(&ab), &diff(&ab, &ba));

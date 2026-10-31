@@ -5,6 +5,7 @@
 //! No GPU, no UI. The data flowing between nodes is type-erased ([`Data`]); the crates that
 //! implement the families (textures in `gpu`, channels and tables in `ops`) give it meaning.
 
+mod bound;
 pub mod broken;
 pub mod cook;
 pub mod document;
@@ -27,9 +28,9 @@ pub use document::{Document, EditOutcome};
 pub use history::{Entry, History, Recorded, Source};
 pub use job::{AsyncSlot, Job, JobContext, JobPool, JobStatus};
 pub use network::{
-    Applied, EXPOSE, Exposed, MAX_POS, MAX_THUMBNAIL_EVERY, Network, NodeDef, Op, PERSIST_STATE, Params,
-    Port, SETTINGS, SettingKind, SettingSpec, THUMBNAIL_EVERY, THUMBNAILS, check_param, check_pos,
-    check_setting, natural_cmp, parse_expose,
+    Applied, Bind, EXPOSE, Exposed, MAX_POS, MAX_THUMBNAIL_EVERY, Network, NodeDef, Op, PERSIST_STATE,
+    Params, Port, SETTINGS, SettingKind, SettingSpec, THUMBNAIL_EVERY, THUMBNAILS, check_bind_read,
+    check_param, check_pos, check_setting, natural_cmp, parse_expose,
 };
 pub use node::{
     Block, CookError, Cooked, Data, DataKind, Density, FnNodeType, Inactive, InputChooser, InputRun,

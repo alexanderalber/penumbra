@@ -260,7 +260,7 @@ details.target { outline: 2px solid var(--accent); }
 <thead><tr><th></th><th>what it carries</th><th>drawn as</th><th>across a component's edge</th></tr></thead>
 <tbody>
 <tr><td><strong>wire</strong></td><td>a whole output (picture, channels, table, 3D) into an input of the same kind</td><td>a solid line in the kind's colour</td><td>only through its <a href="#concepts-components">ports</a></td></tr>
-<tr><td><strong>binding</strong></td><td>one channel's value into one param</td><td>a dashed green line into the node's top</td><td>anywhere</td></tr>
+<tr><td><strong>binding</strong></td><td>one channel's value or one table cell into one param</td><td>a dashed line into the node's top, green from a channel</td><td>anywhere</td></tr>
 <tr><td><strong>node reference</strong></td><td>a node named in a param (<a class="ref" href="#tex.select"><code>tex.select</code></a>'s <code>node</code>)</td><td>a dashed line</td><td>anywhere</td></tr>
 </tbody>
 </table>
@@ -364,7 +364,20 @@ moss = #1b4332 #52b788
 </ul>
 <h3 id="concepts-bindings">Bindings</h3>
 <p>A param can follow a channel instead of its stored value: drag a wire from a <code>chan</code> output onto the param's row, or use the link button at the end of the row, which also offers a specific channel by name. A vector or colour binds per component: drop the wire on one field.</p>
-<p>A bound row shows its name in the channel colour, the live value, and the source. The stored value stays and comes back when the binding is removed; it is also used, with a warning, while the channel is missing. Integers round, booleans are on from 0.5, hard ranges clamp. The editor draws every binding as a dashed green line into the top of the node. With &quot;All binding lines&quot; unticked in the editor's right-click menu, a binding shows as a short stub on the bound node, and as a line only while the source or the bound node is selected or under the pointer.</p>
+<p>A bound row shows its name in the channel colour, the live value, and the source. The stored value stays and comes back when the binding is removed; it is also used, with a warning, while the channel is missing. Integers round, booleans are on from 0.5, hard ranges clamp. The editor draws every binding as a dashed line into the top of the node, green from a channel. With &quot;All binding lines&quot; unticked in the editor's right-click menu, a binding shows as a short stub on the bound node, and as a line only while the source or the bound node is selected or under the pointer.</p>
+<h4 id="concepts-text-and-choices">Text and choices</h4>
+<p>Text params and choices bind too, so a table or a <a class="ref" href="#script.python"><code>script.python</code></a> can change them during a show. The link button lists the chan nodes and the table nodes; a table offers its rows and then its cells. Dropping a chan wire on the row binds the whole param.</p>
+<ul>
+<li><strong>A table cell</strong> is one cell of the source's first <code>table</code> output. Rows and columns count from 0, or go by header: a row by its first cell, a column by its cell in the first row. A text param takes the cell as it is. A number param reads it as a number. A choice takes the entry with that name, case and surrounding spaces aside.
+</li>
+<li><strong>A channel into a text</strong> is written by a format: the placeholder <code>{}</code> stands for the number. <code>{}</code> gives up to three digits after the point and drops trailing zeros (<code>3</code>, <code>0.5</code>). <code>{.2}</code> gives exactly two, <code>{.0}</code> none. Text around it stays: <code>{.1} m</code>, <code>Round {}</code>, <code>{.0}%</code>. Write <code>{{</code> and <code>}}</code> for a brace. Without a format the binding uses <code>{}</code>.
+</li>
+<li><strong>A channel into a choice</strong> picks the entry by its place: 0 is the first, rounded, held at the first and the last.
+</li>
+<li><strong>A text a choice does not have</strong> leaves the choice at its last entry, and the node shows a warning that names the text.
+</li>
+</ul>
+<p>File paths, node references and scripts cannot be bound. From the control channel: <a class="ref" href="#node.bind"><code>node.bind {param, from, cell: {row, col}}</code></a> for a cell and <a class="ref" href="#node.bind"><code>node.bind {param, from, format: &quot;{.1} m&quot;}</code></a> for a formatted channel. In <code>project.ron</code> such a binding is written as <code>(node: &quot;scores&quot;, cell: (row: 1, col: &quot;name&quot;))</code> or <code>(node: &quot;lfo1&quot;, format: &quot;{.1} m&quot;)</code>. A plain channel binding keeps the short form <code>&quot;lfo1:x&quot;</code>.</p>
 <h4 id="concepts-buttons-and-sliders-on-the-node">Buttons and sliders on the node</h4>
 <p><a class="ref" href="#chan.button"><code>chan.button</code></a> and <a class="ref" href="#chan.slider"><code>chan.slider</code></a> are steered right on their node in the network editor, without selecting it. <strong>Button:</strong> with <code>mode</code> <code>momentary</code> its channel is 1 while the mouse button is held on it; with <code>mode</code> <code>toggle</code> each click switches it between 1 and 0. <strong>Slider:</strong> dragging on it sets <code>value</code> between <code>min</code> and <code>max</code>. One drag is one undo step. A toggle's state and a slider's value are params, saved with the project. A momentary press is no edit: it leaves no history and works while Claude edits. Bind params to their channel like to any other. From the control channel: <a class="ref" href="#chan.press"><code>chan.press {path}</code></a> (or <code>{path, down}</code> to hold and let go) presses a button, <a class="ref" href="#node.set"><code>node.set</code></a> moves a slider. With <code>show</code> ticked, the control also appears on the show screen while <a href="#getting-started-show-mode">show mode</a> is on. There it still works, but a change makes no undo step and is saved only after show mode ends.</p>
 <h4 id="concepts-keys">Keys</h4>
@@ -1780,6 +1793,7 @@ penumbra-cli ctl node.snapshot path=/noise1 file=noise.png
 <pre><code>claude mcp add penumbra -- penumbra-cli mcp
 claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </code></pre>
+<p>A running server keeps its exe locked, and every Claude Code session starts one. So when you build penumbra yourself, point the client at a copy, not at the build output: <code>cargo xtask mcp</code> builds <code>penumbra-cli</code> in release and puts the copy in <code>target/mcp/</code>. Run it again after a change to <code>penumbra-cli</code>; sessions already open keep the old server until they reconnect (<code>/mcp</code> in Claude Code).</p>
 <table>
 <thead><tr><th>Tool</th><th></th></tr></thead>
 <tbody>
@@ -3191,7 +3205,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
-<tr><td><code>text</code></td><td>text</td><td><code>&quot;Text&quot;</code></td><td></td><td>What is written. Line breaks are kept; align sets how the lines line up</td></tr>
+<tr><td><code>text</code></td><td>text</td><td><code>&quot;Text&quot;</code></td><td></td><td>What is written. Line breaks are kept; align sets how the lines line up. Bind it to a table cell, or to a channel with a format like <code>{.1} m</code></td></tr>
 <tr><td><code>size</code></td><td>float</td><td><code>100</code></td><td>4 to 500 px (soft)</td><td>Font size in pixels of the output picture (the font's em, a little more than a capital's height)</td></tr>
 <tr><td><code>color</code></td><td>colour</td><td><code>[1, 1, 1, 1]</code></td><td></td><td>Colour of the text, linear RGBA with straight alpha; the rest is transparent</td></tr>
 <tr><td><code>position</code></td><td>vec2</td><td><code>[0.5, 0.5]</code></td><td>0 to 1 (soft)</td><td>Where the text's anchor sits, in image sizes; 0, 0 is the top left</td></tr>
@@ -4777,7 +4791,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">chan</span>: The channels cook(cx) returns</li>
-<li><code>table</code> <span class="kind">table</span>: The table cook(cx) returns</li>
+<li><code>table</code> <span class="kind">table</span>: The table cook(cx) returns; bind a text or a choice param to one of its cells</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -4789,7 +4803,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>code</code></td><td>text</td><td>an example script</td><td></td><td>The script while <code>file</code> is empty</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#scripts">Scripts</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-text-and-choices">Concepts › Text and choices</a>, <a href="#scripts">Scripts</a></p>
 </div></details>
 </div>
 <div class="group" id="family-out">
@@ -5601,9 +5615,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Apply ops as one all-or-nothing batch; {ops: [{op, ...}], label?}</p>
 <p class="mentions">Mentioned in: <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
-<details class="entry command" id="node.bind"><summary><code class="name">node.bind</code><span class="sum">Drive a param (or one component, /t.translate.0) with a channel</span></summary>
+<details class="entry command" id="node.bind"><summary><code class="name">node.bind</code><span class="sum">Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place</span></summary>
 <div class="body">
-<p>Drive a param (or one component, /t.translate.0) with a channel; {param, from, channel?}</p>
+<p>Drive a param (or one component, /t.translate.0) with a channel or a table cell: a text param takes a cell as it is or a number by format (&quot;{.1} m&quot;), a choice its entry by name or place; {param, from, channel?, cell?: {row?, col?}, format?}</p>
+<p class="mentions">Mentioned in: <a href="#concepts-text-and-choices">Concepts › Text and choices</a></p>
 </div></details>
 <details class="entry command" id="node.connect"><summary><code class="name">node.connect</code><span class="sum">Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers)</span></summary>
 <div class="body">

@@ -19,7 +19,7 @@ use penumbra_core::{Error, Name, NodePath};
 use penumbra_graph::{NodeTypes, PortRole, natural_cmp};
 
 use crate::component::{children_names, fix_refs, is_within, rebase};
-use crate::content::{BindRef, Content, PortRef};
+use crate::content::{Content, PortRef};
 use crate::file;
 
 /// The first line of copied text; what tells it apart from other text on the clipboard.
@@ -212,7 +212,7 @@ pub fn paste(base: &Content, types: &NodeTypes, clip: &Clip, into: &NodePath) ->
         for (part, b) in &node.binds {
             match moved.get(&b.node) {
                 Some(n) => {
-                    binds.insert(part.clone(), BindRef { node: n.clone(), channel: b.channel.clone() });
+                    binds.insert(part.clone(), b.with_node(n.clone()));
                 }
                 None if base.nodes.contains_key(&b.node) => {
                     binds.insert(part.clone(), b.clone());
@@ -255,7 +255,7 @@ mod tests {
             .get_mut(&p(at))
             .unwrap()
             .binds
-            .insert(ParamPart::parse(param).unwrap(), BindRef { node: p(to), channel: None });
+            .insert(ParamPart::parse(param).unwrap(), crate::content::BindRef::chan(p(to), None));
     }
 
     /// `/src`, `/a <- /src`, `/b <- /a, /a:neg` (locked), `/r` naming `a`, `/k` bound to `/lfo`,

@@ -121,7 +121,14 @@ mod tests {
             create("/sum", "test.add"),
             Op::Connect { from: p("/x"), output: NAMED_OUTPUT, to: p("/sum"), input: 0 },
             Op::Connect { from: p("/c"), output: 0, to: p("/sum"), input: 1 },
-            Op::Bind { param: "/c.value".parse().unwrap(), component: None, from: p("/x"), channel: None },
+            Op::Bind {
+                param: "/c.value".parse().unwrap(),
+                component: None,
+                from: p("/x"),
+                channel: None,
+                cell: None,
+                format: None,
+            },
         ];
         let e = Network::new().apply(&types, &ops).unwrap_err();
         assert!(e.0.contains("only loading a project"), "{e}");

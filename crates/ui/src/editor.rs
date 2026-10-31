@@ -465,6 +465,8 @@ struct Placed<'a> {
 struct Bindings {
     /// (source, reader), both on this level (or inside a component on it).
     pairs: BTreeSet<(NodeId, NodeId)>,
+    /// The pairs whose bindings all read a table cell: drawn from the table output.
+    cells: BTreeSet<(NodeId, NodeId)>,
     /// (source outside, reader): a stub above the reader.
     from_outside: BTreeSet<(NodeId, NodeId)>,
     /// The readers outside by their source: a stub below the source.
@@ -559,8 +561,13 @@ impl<'a> Placed<'a> {
     /// The bindings that touch this level. A binding into or out of a component shows on the
     /// component.
     fn bindings(&self) -> Bindings {
-        let mut b =
-            Bindings { pairs: BTreeSet::new(), from_outside: BTreeSet::new(), to_outside: BTreeMap::new() };
+        let mut b = Bindings {
+            pairs: BTreeSet::new(),
+            cells: BTreeSet::new(),
+            from_outside: BTreeSet::new(),
+            to_outside: BTreeMap::new(),
+        };
+        let mut chans = BTreeSet::new();
         for node in self.net.nodes().filter(|n| !n.binds.is_empty()) {
             let Some(reader) = self.shown(node.id) else {
                 for bind in node.binds.values() {
@@ -574,6 +581,11 @@ impl<'a> Placed<'a> {
                 match self.shown(bind.node) {
                     Some(src) if src != reader => {
                         b.pairs.insert((src, reader));
+                        if bind.cell.is_some() {
+                            b.cells.insert((src, reader));
+                        } else {
+                            chans.insert((src, reader));
+                        }
                     }
                     Some(_) => {}
                     None => {
@@ -582,6 +594,7 @@ impl<'a> Placed<'a> {
                 }
             }
         }
+        b.cells.retain(|pair| !chans.contains(pair));
         b
     }
 }
@@ -2619,8 +2632,9 @@ fn draw_bindings(
     for (src, reader) in bindings.pairs {
         let Some(to) = placed.geo(reader) else { continue };
         let Some(from) = placed.geo(src) else { continue };
+        let kind = if bindings.cells.contains(&(src, reader)) { DataKind::Table } else { DataKind::Chan };
         // A component holding the channel has no chan port: from its right edge.
-        let chan_out = from.outputs.iter().find(|o| o.kind == DataKind::Chan).map(|o| o.pos);
+        let chan_out = from.outputs.iter().find(|o| o.kind == kind).map(|o| o.pos);
         let Some(a) = chan_out.or_else(|| from.comp.then(|| from.rect.right_center())) else {
             continue;
         };
@@ -2629,7 +2643,7 @@ fn draw_bindings(
         let hot = input.highlight.contains(&reader) && input.highlight.contains(&src);
         let touched = [src, reader].iter().any(|id| selection.contains(id) || hovered == Some(*id))
             || hovered_line == Some(key);
-        let color = theme::kind_color(DataKind::Chan).gamma_multiply(if hot || touched { 1.0 } else { 0.7 });
+        let color = theme::kind_color(kind).gamma_multiply(if hot || touched { 1.0 } else { 0.7 });
         if input.binding_lines || hot || touched {
             dashed(painter, a, b, color, zoom);
             lines.push((key, vec![a, b]));

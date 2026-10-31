@@ -17,9 +17,14 @@
 //! Nodes are keyed by path, one per line, sorted. `params` holds only values that differ from the
 //! declared default (the app writes it that way; a file may list defaults too). `inputs` maps an
 //! input name to the node feeding it: `"path"` for its first output, `"path:name"` (or `"path:1"`)
-//! for another. `binds` maps a parameter (or one component, `translate.0`) to the channel driving
-//! it: `"path"` for the first channel of the node's first `chan` output, `"path:name"` for the
-//! channel called `name` (after the colon comes a channel here, not an output). Node keys are
+//! for another. `binds` maps a parameter (or one component, `translate.0`) to what drives it:
+//! `"path"` for the first channel of the node's first `chan` output, `"path:name"` for the
+//! channel called `name` (after the colon comes a channel here, not an output). What a short text
+//! cannot say takes the structured form: `(node: "path", cell: (row: 1, col: "name"))` for a cell
+//! of the node's first `table` output (rows and columns by place from 0 or by header),
+//! `(node: "path", channel: "x", format: "{.1} m")` for a channel written as text into a text
+//! param ([`penumbra_core::NumberFormat`]); `channel`, `cell` and `format` may be left out. The
+//! reader takes both forms; the writer writes the short one wherever it says everything. Node keys are
 //! absolute; the paths in `inputs` and `binds` are read on the level of the node they belong to, by
 //! the rule node references use ([`NodePath::resolve_ref`]): absolute (`/a/b`), a name beside the
 //! node, `sub/x` below, `../x` up. The app writes the shorter form ([`NodePath::write_ref`]).
@@ -37,9 +42,10 @@
 
 use std::collections::BTreeMap;
 
-use penumbra_core::{Error, Name, NodePath, ParamPart, Value};
+use penumbra_core::{BindTarget, Cell, Error, Name, NodePath, NumberFormat, ParamPart, Value};
 use penumbra_graph::{
-    DataKind, Network, NodeDesc, NodeTypes, Params, broken, check_param, check_pos, check_setting,
+    DataKind, Network, NodeDesc, NodeTypes, Params, broken, check_bind_read, check_param, check_pos,
+    check_setting,
 };
 use serde::{Deserialize, Serialize};
 
@@ -75,7 +81,7 @@ struct NodeRepr {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     inputs: BTreeMap<Name, String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    binds: BTreeMap<ParamPart, String>,
+    binds: BTreeMap<ParamPart, BindRepr>,
     #[serde(default, skip_serializing_if = "is_false")]
     locked: bool,
     /// Written as `[x, y]` (a list, like vector params), not as `Some((x, y))`; `(x, y)` reads
@@ -87,6 +93,92 @@ struct NodeRepr {
         deserialize_with = "read_pos"
     )]
     pos: Option<[f32; 2]>,
+}
+
+/// One entry of `binds` as written: `"path"` or `"path:channel"`, or the structured form
+/// ([`BindFields`]) for what a short text cannot say.
+#[derive(Clone, Debug, PartialEq)]
+enum BindRepr {
+    Short(String),
+    Full(BindFields),
+}
+
+/// `(node: "path", channel: "x")`, `(node: "path", cell: (row: 1, col: "name"))`,
+/// `(node: "path", format: "{.1} m")`. Missing fields mean none; `channel` and `cell` exclude
+/// each other.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BindFields {
+    node: String,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "bare")]
+    channel: Option<Name>,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "bare")]
+    cell: Option<Cell>,
+    #[serde(default, skip_serializing_if = "Option::is_none", with = "bare")]
+    format: Option<NumberFormat>,
+}
+
+/// An optional field written as its value alone (`channel: "x"`), not as `Some("x")`.
+mod bare {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<T: Serialize, S: Serializer>(value: &Option<T>, s: S) -> Result<S::Ok, S::Error> {
+        match value {
+            Some(v) => v.serialize(s),
+            None => s.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, T: Deserialize<'de>, D: Deserializer<'de>>(d: D) -> Result<Option<T>, D::Error> {
+        T::deserialize(d).map(Some)
+    }
+}
+
+impl Serialize for BindRepr {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            BindRepr::Short(text) => s.serialize_str(text),
+            BindRepr::Full(fields) => fields.serialize(s),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for BindRepr {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = BindRepr;
+            fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(r#"a binding: "path", "path:channel" or (node: "path", ...)"#)
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<BindRepr, E> {
+                Ok(BindRepr::Short(v.to_string()))
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<BindRepr, A::Error> {
+                BindFields::deserialize(serde::de::value::MapAccessDeserializer::new(map)).map(BindRepr::Full)
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
+impl BindRepr {
+    /// The short form where it says everything, else the structured one.
+    fn write(level: &NodePath, b: &BindRef) -> Self {
+        let from = level.write_ref(&b.node);
+        if b.cell.is_none() && b.format.is_none() {
+            return BindRepr::Short(match &b.channel {
+                Some(c) => format!("{from}:{c}"),
+                None => from,
+            });
+        }
+        BindRepr::Full(BindFields {
+            node: from,
+            channel: b.channel.clone(),
+            cell: b.cell.clone(),
+            format: b.format.clone(),
+        })
+    }
 }
 
 fn is_false(b: &bool) -> bool {
@@ -332,9 +424,16 @@ fn check_own<'t>(
             )));
         }
     }
-    for part in node.binds.keys() {
-        if let Some(spec) = d.param_spec(part.param.as_str()) {
-            spec.check_bindable(part.component).map_err(|e| e.context(format!("{path} bind `{part}`")))?;
+    for (part, bind) in &node.binds {
+        let ctx = || format!("{path} bind `{part}`");
+        let target = match d.param_spec(part.param.as_str()) {
+            Some(spec) => spec.bind_target(part.component).map_err(|e| e.context(ctx()))?,
+            // Checked against the instance's own declaration when it cooks.
+            None => BindTarget::Text,
+        };
+        if let BindRepr::Full(f) = bind {
+            check_bind_read(target, f.channel.as_ref(), f.cell.as_ref(), f.format.as_ref())
+                .map_err(|e| e.context(ctx()))?;
         }
     }
     Ok(d)
@@ -390,10 +489,14 @@ fn load_node(
     for (part, source) in &node.binds {
         let ctx = || format!("{path} bind `{part}`");
         let src = parse_bind(&level, source, nodes, outside).map_err(|e| e.context(ctx()))?;
+        let reads = if src.cell.is_some() { DataKind::Table } else { DataKind::Chan };
         if let Some(from) = nodes.get(&src.node).filter(|_| !failed.contains_key(&src.node))
             && let from = types.desc(&from.kind)
-            && !from.is_some_and(|f| f.outputs.iter().any(|o| o.kind == DataKind::Chan))
+            && !from.is_some_and(|f| f.outputs.iter().any(|o| o.kind == reads))
         {
+            if reads == DataKind::Table {
+                return Err(Error::new(format!("{}: {} has no table output to bind to", ctx(), src.node)));
+            }
             if from.is_some_and(|f| f.outputs.iter().any(|o| o.kind == DataKind::Audio)) {
                 dropped.push(format!(
                     "{}: {} gives sound, not channels; the binding is left out (bind to a                      chan.audio_analysis of it instead)",
@@ -424,22 +527,32 @@ fn split_from_chan(from: DataKind, to: DataKind) -> bool {
     matches!((from, to), (DataKind::Audio, DataKind::Chan) | (DataKind::Chan, DataKind::Audio))
 }
 
-/// `"path"` or `"path:channel"`, read on `level`.
+/// A `binds` entry ([`BindRepr`]), its paths read on `level`.
 fn parse_bind(
     level: &NodePath,
-    text: &str,
+    repr: &BindRepr,
     nodes: &BTreeMap<NodePath, NodeRepr>,
     outside: bool,
 ) -> Result<BindRef, Error> {
-    let (path, channel) = match text.split_once(':') {
-        Some((p, c)) => (p, Some(Name::new(c).map_err(|e| e.context("channel"))?)),
-        None => (text, None),
+    let bind = match repr {
+        BindRepr::Short(text) => {
+            let (path, channel) = match text.split_once(':') {
+                Some((p, c)) => (p, Some(Name::new(c).map_err(|e| e.context("channel"))?)),
+                None => (text.as_str(), None),
+            };
+            BindRef::chan(level.resolve_ref(path)?, channel)
+        }
+        BindRepr::Full(f) => BindRef {
+            node: level.resolve_ref(&f.node)?,
+            channel: f.channel.clone(),
+            cell: f.cell.clone(),
+            format: f.format.clone(),
+        },
     };
-    let node = level.resolve_ref(path)?;
-    if !outside && !nodes.contains_key(&node) {
-        return Err(Error::new(format!("{node} is not in the file")));
+    if !outside && !nodes.contains_key(&bind.node) {
+        return Err(Error::new(format!("{} is not in the file", bind.node)));
     }
-    Ok(BindRef { node, channel })
+    Ok(bind)
 }
 
 /// `"path"` or `"path:output"`, where output is a name or an index, read on `level`; with the
@@ -593,18 +706,7 @@ pub fn print(content: &Content, types: &NodeTypes) -> Result<String, Error> {
             };
             inputs.insert(Name::new(&input.name)?, source);
         }
-        let binds = node
-            .binds
-            .iter()
-            .map(|(part, b)| {
-                let from = level.write_ref(&b.node);
-                let source = match &b.channel {
-                    Some(c) => format!("{from}:{c}"),
-                    None => from,
-                };
-                (part.clone(), source)
-            })
-            .collect();
+        let binds = node.binds.iter().map(|(part, b)| (part.clone(), BindRepr::write(&level, b))).collect();
         nodes.insert(
             path.clone(),
             NodeRepr {
@@ -627,6 +729,8 @@ pub fn print(content: &Content, types: &NodeTypes) -> Result<String, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use penumbra_core::Index;
+
     use crate::testing::{content, test_types};
 
     #[test]
@@ -671,6 +775,57 @@ mod tests {
             let e = parse(&text, &types).unwrap_err();
             assert!(e.0.contains(want), "{bad}: {e}");
         }
+    }
+
+    #[test]
+    fn structured_binds_read_and_are_written_where_needed() {
+        let types = test_types();
+        let text = r#"(version: 2, nodes: {
+            "/a": (kind: "test.const"),
+            "/t": (kind: "test.table"),
+            "/l": (kind: "test.label", binds: {"label": (node: "/t", cell: (row: 1, col: "name"))}),
+            "/m": (kind: "test.label", binds: {"label": (node: "a", format: "{.1} m"), "mode": (node: "t", cell: (row: 2))}),
+            "/n": (kind: "test.const", binds: {"value": (node: "a", channel: "value")}),
+        })"#;
+        let c = parse(text, &types).unwrap();
+        let l = &c.nodes[&"/l".parse::<NodePath>().unwrap()].binds[&ParamPart::parse("label").unwrap()];
+        assert_eq!(l.cell, Some(Cell { row: Index::At(1), col: Index::Named("name".into()) }));
+        let printed = print(&c, &types).unwrap();
+        // The structured form only where a short text cannot say it.
+        assert!(
+            printed.contains(r#"binds: {"label": (node: "t", cell: (row: 1, col: "name"))}"#),
+            "{printed}"
+        );
+        assert!(
+            printed.contains(r#"binds: {"label": (node: "a", format: "{.1} m"), "mode": (node: "t", cell: (row: 2, col: 0))}"#),
+            "{printed}"
+        );
+        assert!(printed.contains(r#""/n": (kind: "test.const", binds: {"value": "a:value"})"#), "{printed}");
+        assert_eq!(parse(&printed, &types).unwrap(), c);
+        for (bad, want) in [
+            (r#"binds: {"label": (node: "/t", cell: (row: -1))}"#, "count from 0"),
+            (r#"binds: {"label": (node: "/t", cell: (row: ""))}"#, "cannot be empty"),
+            (r#"binds: {"label": (node: "/t", cell: (rows: 1))}"#, "rows"),
+            (r#"binds: {"label": (node: "/t", sell: 1)}"#, "sell"),
+            (r#"binds: {"label": (node: "/a", format: "m")}"#, "no placeholder"),
+            (r#"binds: {"label": (node: "/a", channel: "value", cell: (row: 1))}"#, "not both"),
+            (r#"binds: {"label": (node: "/t", cell: (row: 1), format: "{}")}"#, "text already"),
+            (r#"binds: {"mode": (node: "/a", format: "{}")}"#, "text param"),
+            (r#"binds: {"label": (node: "/a", cell: (row: 1))}"#, "no table output"),
+            (r#"binds: {"label": (channel: "x")}"#, "node"),
+            (r#"binds: {"label": 3}"#, "a binding"),
+        ] {
+            let text = format!(
+                r#"(version: 2, nodes: {{"/a": (kind: "test.const"), "/t": (kind: "test.table"), "/b": (kind: "test.label", {bad})}})"#
+            );
+            let e = parse(&text, &types).unwrap_err();
+            assert!(e.0.contains(want), "{bad}: {e}");
+        }
+        // A node that does not load keeps its structured binding as written.
+        let entry = r#""/x": (kind: "test.gone", binds: {"label": (node: "t", cell: (row: 1, col: 0))})"#;
+        let text = format!(r#"(version: 2, nodes: {{"/t": (kind: "test.table"), {entry}}})"#);
+        let kept = print(&load(&text, &types).unwrap(), &types).unwrap();
+        assert!(kept.contains(entry), "{kept}");
     }
 
     #[test]

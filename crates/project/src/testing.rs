@@ -63,6 +63,14 @@ pub fn test_types() -> NodeTypes {
             .param(ParamSpec::node("node"))
             .output("out", DataKind::Chan),
     );
+    register(
+        &mut t,
+        NodeDesc::new("test.label", "A text and a choice")
+            .param(ParamSpec::text("label", ""))
+            .param(ParamSpec::choice("mode", &["over", "add"]))
+            .output("out", DataKind::Chan),
+    );
+    register(&mut t, NodeDesc::new("test.table", "A table").output("out", DataKind::Table));
     register(&mut t, NodeDesc::new("test.group", "Holds nodes").container());
     register(
         &mut t,

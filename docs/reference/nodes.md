@@ -981,7 +981,7 @@ Outputs: `out` (tex).
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `text` | text | `"Text"` |  | What is written. Line breaks are kept; align sets how the lines line up |
+| `text` | text | `"Text"` |  | What is written. Line breaks are kept; align sets how the lines line up. Bind it to a table cell, or to a channel with a format like `{.1} m` |
 | `size` | float | `100` | 4 to 500 px (soft) | Font size in pixels of the output picture (the font's em, a little more than a capital's height) |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the text, linear RGBA with straight alpha; the rest is transparent |
 | `position` | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Where the text's anchor sits, in image sizes; 0, 0 is the top left |
@@ -2167,7 +2167,7 @@ Inputs:
 Outputs:
 
 - `out` (chan): The channels cook(cx) returns
-- `table` (table): The table cook(cx) returns
+- `table` (table): The table cook(cx) returns; bind a text or a choice param to one of its cells
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|

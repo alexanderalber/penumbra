@@ -312,6 +312,8 @@ fn a_tone_and_a_white_frame_at_the_same_show_time_meet_in_the_file() {
             component: Some(c),
             from: NodePath::parse("/flash").unwrap(),
             channel: None,
+            cell: None,
+            format: None,
         });
     }
     let mut rig = Rig::new(gpu, "sync", "sync.mov", &extra);

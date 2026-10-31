@@ -4,6 +4,7 @@
 //!
 //! No GPU, no UI, no threads.
 
+pub mod bind;
 pub mod chan;
 pub mod error;
 pub mod files;
@@ -17,12 +18,13 @@ pub mod table;
 pub mod time;
 pub mod value;
 
+pub use bind::{Cell, Index, NumberFormat};
 pub use chan::{Channel, Chans, SampleAxis};
 pub use error::Error;
 pub use id::{GroupId, NodeId};
 pub use param::{
-    ChoiceDoc, ChoiceHelp, Condition, Curve, MORE, ParamHelp, ParamKind, ParamSpec, Range, Resolves, Special,
-    Unit,
+    BindTarget, ChoiceDoc, ChoiceHelp, Condition, Curve, MORE, ParamHelp, ParamKind, ParamSpec, Range,
+    Resolves, Special, Unit,
 };
 pub use path::{Name, NodePath, ParamPart, ParamPath};
 pub use sync::lock;

@@ -151,6 +151,17 @@ pub struct ParamSpec {
     pub applies: Vec<Condition>,
 }
 
+/// What a bound param takes from its source ([`ParamSpec::bind_target`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BindTarget {
+    /// A number: a channel as it is, a table cell read as a number.
+    Number,
+    /// A text: a table cell as it is, a channel written by a [`crate::NumberFormat`].
+    Text,
+    /// A choice: a table cell naming the entry, a channel picking it by its place.
+    Choice,
+}
+
 /// A condition under which a param does something, given the node's other params and wiring.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -230,7 +241,7 @@ pub struct ParamHelp {
     pub curve: String,
     /// The section of the param panel; empty for the main rows.
     pub group: String,
-    /// Whether a channel can drive it (numbers, vectors, colours).
+    /// Whether a binding can drive it (numbers, vectors, colours, text, choices).
     pub bindable: bool,
     /// For a choice: every value, with what it does where that is written down.
     pub choices: Vec<ChoiceHelp>,
@@ -565,7 +576,7 @@ impl ParamSpec {
             }
             .to_string(),
             group: self.group.clone(),
-            bindable: self.bind_components() > 0,
+            bindable: self.bindable(),
             choices,
             specials: self.special_lines(),
             applies: self.applies_label(),
@@ -631,6 +642,40 @@ impl ParamSpec {
             ))),
             (_, Some(c)) if c < n => Ok(()),
             (_, Some(c)) => Err(Error::new(format!("`{}` has no component {c}", self.name))),
+        }
+    }
+
+    /// What a binding (a channel or a table cell, [`crate::bind`]) may drive on this param, as a
+    /// whole (`component` `None`) or one component of a vector or colour: a number, a text or a
+    /// choice. File paths, node references and programs cannot be bound: a file would load
+    /// anew on every change, a node reference changes what cooks first, and a program must not
+    /// come from data.
+    pub fn bind_target(&self, component: Option<u8>) -> Result<BindTarget, Error> {
+        let whole = |target| match component {
+            None => Ok(target),
+            Some(_) => Err(Error::new(format!("`{}` has no components; bind it as a whole", self.name))),
+        };
+        match &self.kind {
+            ParamKind::Text if self.node_ref => {
+                Err(Error::new(format!("`{}` names a node; a binding cannot drive it", self.name)))
+            }
+            ParamKind::Text if self.code => {
+                Err(Error::new(format!("`{}` is a program; a binding cannot drive it", self.name)))
+            }
+            ParamKind::Text => whole(BindTarget::Text),
+            ParamKind::Choice(_) => whole(BindTarget::Choice),
+            ParamKind::File { .. } => {
+                Err(Error::new(format!("`{}` is a file path; a binding cannot drive it", self.name)))
+            }
+            _ => self.check_bindable(component).map(|()| BindTarget::Number),
+        }
+    }
+
+    /// Whether a binding can drive the param at all ([`ParamSpec::bind_target`]).
+    pub fn bindable(&self) -> bool {
+        match self.bind_components() {
+            0 => self.bind_target(None).is_ok(),
+            _ => true,
         }
     }
 
@@ -1031,6 +1076,16 @@ mod tests {
         );
         assert!(ParamSpec::choice("m", &["a"]).check_bindable(None).is_err());
         assert!(ParamSpec::text("t", "").check_bindable(None).is_err());
+        // Bindings beyond channels drive text and choices as a whole.
+        assert_eq!(ParamSpec::text("t", "").bind_target(None), Ok(BindTarget::Text));
+        assert_eq!(ParamSpec::choice("m", &["a"]).bind_target(None), Ok(BindTarget::Choice));
+        assert!(ParamSpec::choice("m", &["a"]).bind_target(Some(0)).is_err());
+        assert_eq!(f.bind_target(None), Ok(BindTarget::Number));
+        assert!(v.bind_target(None).is_err());
+        assert!(ParamSpec::file("f", &[]).bind_target(None).unwrap_err().0.contains("file path"));
+        assert!(ParamSpec::node("n").bind_target(None).unwrap_err().0.contains("names a node"));
+        assert!(ParamSpec::text("c", "").code().bind_target(None).unwrap_err().0.contains("program"));
+        assert!(ParamSpec::text("t", "").bindable() && !ParamSpec::file("f", &[]).bindable());
     }
 
     #[test]

@@ -3125,6 +3125,8 @@ fn bind(param: &str, from: &str, channel: &str) -> Op {
         component: None,
         from: from.parse().unwrap(),
         channel: Some(penumbra_core::Name::new(channel).unwrap()),
+        cell: None,
+        format: None,
     }
 }
 

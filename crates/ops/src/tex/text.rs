@@ -39,7 +39,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(
                 ParamSpec::text("text", "Text")
                     .multiline()
-                    .doc("What is written. Line breaks are kept; align sets how the lines line up"),
+                    .doc("What is written. Line breaks are kept; align sets how the lines line up. Bind it to a table cell, or to a channel with a format like `{.1} m`"),
             )
             .param(
                 ParamSpec::float("size", 100.0)

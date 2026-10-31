@@ -75,7 +75,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Chan)
         .output("table", DataKind::Table)
         .describe_output("out", "The channels cook(cx) returns")
-        .describe_output("table", "The table cook(cx) returns")
+        .describe_output("table", "The table cook(cx) returns; bind a text or a choice param to one of its cells")
         .extra_params(),
         || Box::new(Script::new()) as Box<dyn Operator>,
     ))

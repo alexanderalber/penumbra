@@ -42,11 +42,16 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use penumbra_core::{Chans, FrameTime, Name, NodeId, ParamSpec, Rate, Tick, Value};
+use penumbra_core::bind as bindv;
+use penumbra_core::param::MAX_TEXT;
+use penumbra_core::{
+    BindTarget, Chans, FrameTime, Name, NodeId, ParamKind, ParamPart, ParamSpec, Rate, Table, Tick, Value,
+};
 use serde::{Deserialize, Serialize};
 
+use crate::bound::{self, BindRead, Resolved, short};
 use crate::job::{Job, JobContext, JobPool, JobStatus, panic_message};
-use crate::network::{Network, NodeDef, Port};
+use crate::network::{Bind, Network, NodeDef, Port};
 use crate::node::{
     CookError, Cooked, Data, DataKind, Density, InputChooser, NodeDesc, NodeType, NodeTypes, Operator,
     StateItem,
@@ -504,6 +509,8 @@ struct Runtime {
     seen_inputs: Vec<Option<(Port, u64)>>,
     /// Values of bound parameters at the last cook; a change counts as a parameter change.
     seen_bound: BTreeMap<Name, Value>,
+    /// Why bindings could not be applied at the last cook, apart from the operator's warning.
+    bind_warning: Option<String>,
     seen_tick: Option<Tick>,
     fresh: bool,
     params_changed: bool,
@@ -567,6 +574,7 @@ impl Runtime {
             output_versions: Vec::new(),
             seen_inputs: Vec::new(),
             seen_bound: BTreeMap::new(),
+            bind_warning: None,
             seen_tick: None,
             fresh: true,
             params_changed: false,
@@ -897,7 +905,7 @@ impl Cooker {
                 }
                 Visit::Choose => {
                     stack.push((id, Visit::Cook));
-                    let needed = self.needed(rt, &self.resolve_binds(rt).0);
+                    let needed = self.needed(rt, &self.resolve_binds(rt));
                     rt.def
                         .inputs
                         .iter()
@@ -949,11 +957,17 @@ impl Cooker {
     }
 
     fn cook_one(&mut self, id: NodeId, time: FrameTime, report: &mut CookReport) {
-        let Some(rt) = self.runtimes.get(&id) else { return };
+        let Some(rt) = self.runtimes.get_mut(&id) else { return };
         if rt.evaluated_pass == self.pass {
             return;
         }
-        let (bound, bind_warnings) = self.resolve_binds(rt);
+        // Taken out and put back below, so the bound values are brought up to date in place
+        // and an unchanged text costs no allocation.
+        let mut bound = std::mem::take(&mut rt.seen_bound);
+        let Some(rt) = self.runtimes.get(&id) else { return };
+        let mut bind_warnings = Vec::new();
+        let bound_changed = self.update_bound(rt, &mut bound, Some(&mut bind_warnings));
+        let bind_warning = (!bind_warnings.is_empty()).then(|| bind_warnings.join("; "));
         let needed = self.needed(rt, &bound);
         let mut inputs = Vec::with_capacity(rt.def.inputs.len());
         let mut signature = Vec::with_capacity(rt.def.inputs.len());
@@ -1002,6 +1016,10 @@ impl Cooker {
 
         let Some(rt) = self.runtimes.get_mut(&id) else { return };
         rt.evaluated_pass = self.pass;
+        rt.seen_bound = bound;
+        if rt.bind_warning != bind_warning {
+            rt.bind_warning = bind_warning;
+        }
         let since_last_use = if self.for_thumbnails {
             None
         } else {
@@ -1012,6 +1030,9 @@ impl Cooker {
         // unlocking it recooks exactly when something changed meanwhile. A node locked before
         // it ever produced anything cooks once to have something to hold.
         if rt.def.locked && rt.outputs.is_some() {
+            // The bound values were brought up to date; a change recooks the node once it is
+            // unlocked.
+            rt.params_changed |= bound_changed;
             return;
         }
         let Some(ty) = rt.ty.clone() else {
@@ -1024,7 +1045,7 @@ impl Cooker {
         let wanted_changed = !rt.fresh && rt.seen_wanted != wanted;
         // A channel driving a parameter is a parameter change, but only when the value moved:
         // a source that recooked to the same number does not recook this node.
-        let params_changed = rt.params_changed || rt.seen_bound != bound;
+        let params_changed = rt.params_changed || bound_changed;
         // A node whose operator panicked is not retried until something changes, so a
         // deterministic panic does not repeat every frame.
         if !(rt.fresh || params_changed || rt.notified || time_moved || inputs_changed || wanted_changed) {
@@ -1048,7 +1069,7 @@ impl Cooker {
             time_read: Cell::new(false),
             inputs: &inputs,
             refs: &ref_data,
-            bound: &bound,
+            bound: &rt.seen_bound,
             first_cook,
             params_changed,
             inputs_changed,
@@ -1109,10 +1130,8 @@ impl Cooker {
         rt.warning = [restore_warning, time_warning, op_warning, stray_warning]
             .into_iter()
             .flatten()
-            .chain(bind_warnings)
             .reduce(|a, b| format!("{a}; {b}"));
         rt.seen_inputs = signature;
-        rt.seen_bound = bound;
         rt.seen_tick = Some(time.tick);
         rt.seen_wanted = wanted;
         rt.fresh = false;
@@ -1170,8 +1189,7 @@ impl Cooker {
         if rt.fresh || rt.params_changed || rt.notified || time_moved {
             return false;
         }
-        let bound = self.resolve_binds(rt).0;
-        let needed = self.needed(rt, &bound);
+        let needed = if chooser(rt).is_some() { self.needed(rt, &self.resolve_binds(rt)) } else { None };
         let refs_same = self.current_refs(rt).all(|t| {
             known.get(&t) == Some(&true)
                 && rt.seen_inputs.iter().flatten().any(|(p, v)| {
@@ -1205,7 +1223,7 @@ impl Cooker {
                     _ => false,
                 });
         let binds_same =
-            rt.def.binds.values().all(|b| known.get(&b.node) == Some(&true)) && bound == rt.seen_bound;
+            rt.def.binds.values().all(|b| known.get(&b.node) == Some(&true)) && self.bound_same(rt);
         inputs_same && binds_same && rt.seen_inputs.len() >= rt.def.inputs.len()
     }
 
@@ -1231,56 +1249,192 @@ impl Cooker {
         self.refs(rt).into_iter().filter_map(|(_, t)| t.ok().flatten())
     }
 
-    /// The values bound parameters take now, and a warning per binding that cannot be applied
-    /// (the parameter falls back to its stored value then).
-    fn resolve_binds(&self, rt: &Runtime) -> (BTreeMap<Name, Value>, Vec<String>) {
-        let mut bound = BTreeMap::new();
-        let mut warnings = Vec::new();
+    /// The values bound parameters take now, as a new map ([`Self::update_bound`] on the values
+    /// in effect at the last cook).
+    fn resolve_binds(&self, rt: &Runtime) -> BTreeMap<Name, Value> {
+        let mut bound = if rt.def.binds.is_empty() { BTreeMap::new() } else { rt.seen_bound.clone() };
+        self.update_bound(rt, &mut bound, None);
+        bound
+    }
+
+    /// Brings `bound` from the values in effect at the last cook to the values bound
+    /// parameters take now, in place, so an unchanged text costs no allocation; whether a value
+    /// changed. A warning per binding that cannot be applied goes into `warnings` (the
+    /// parameter falls back to its stored value then).
+    fn update_bound(
+        &self,
+        rt: &Runtime,
+        bound: &mut BTreeMap<Name, Value>,
+        warnings: Option<&mut Vec<String>>,
+    ) -> bool {
+        let before = bound.len();
+        bound.retain(|name, _| rt.def.is_bound(name.as_str()));
+        let mut changed = bound.len() != before;
+        self.each_bound(rt, warnings, |name, r| changed |= bound::apply(bound, name, r));
+        changed
+    }
+
+    /// Whether the bindings of `rt` give the values in effect at its last cook. Does not
+    /// allocate while they do.
+    fn bound_same(&self, rt: &Runtime) -> bool {
+        if rt.seen_bound.keys().any(|name| !rt.def.is_bound(name.as_str())) {
+            return false;
+        }
+        let mut same = true;
+        self.each_bound(rt, None, |name, r| same &= bound::same(rt.seen_bound.get(name), &r));
+        same
+    }
+
+    /// Calls `f` with what each bound parameter of `rt` comes out as now; a warning per binding
+    /// that cannot be applied goes into `warnings` when given.
+    fn each_bound(
+        &self,
+        rt: &Runtime,
+        mut warnings: Option<&mut Vec<String>>,
+        mut f: impl FnMut(&Name, Resolved<'_>),
+    ) {
         if rt.def.binds.is_empty() {
-            return (bound, warnings);
+            return;
         }
-        let Some(desc) = rt.ty.as_ref().map(|t| t.desc()) else { return (bound, warnings) };
-        let instance = rt.op.as_ref().and_then(|op| op.params()).unwrap_or_default();
-        let path = |id: NodeId| {
-            self.last_net
-                .as_ref()
-                .and_then(|n| n.path_of(id))
-                .map_or_else(|| format!("node {id}"), |p| p.to_string())
-        };
-        for (part, bind) in &rt.def.binds {
-            let name = part.param.as_str();
-            let Some(spec) = desc.param_spec(name).or_else(|| instance.iter().find(|s| s.name == name))
-            else {
-                warnings.push(format!("`{part}` is bound, but the node has no such param"));
-                continue;
-            };
-            let chans = self.runtimes.get(&bind.node).and_then(|src| {
-                let ty = src.ty.as_ref()?;
-                let i = ty.desc().outputs.iter().position(|o| o.kind == DataKind::Chan)?;
-                src.outputs.as_ref()?.get(i)?.get::<Chans>()
-            });
-            let Some(chans) = chans else {
-                warnings.push(format!("`{part}` is bound to {}, which has no channels yet", path(bind.node)));
-                continue;
-            };
-            let Some(x) = chans.value(bind.channel.as_ref().map(Name::as_str)) else {
-                let names: Vec<&str> = chans.names().map(Name::as_str).collect();
-                let has = if names.is_empty() { "none".to_string() } else { names.join(", ") };
-                let which =
-                    bind.channel.as_ref().map_or_else(|| "any channel".into(), |c| format!("channel `{c}`"));
-                warnings.push(format!("`{part}`: {} has no {which} (it has {has})", path(bind.node)));
-                continue;
-            };
-            let current =
-                bound.get(&part.param).or_else(|| rt.def.params.get(name)).unwrap_or(&spec.default).clone();
-            match spec.bind_value(&current, part.component, x) {
-                Ok(v) => {
-                    bound.insert(part.param.clone(), v);
-                }
-                Err(e) => warnings.push(format!("`{part}`: {e}")),
+        let Some(desc) = rt.ty.as_ref().map(|t| t.desc()) else { return };
+        // Params a shader declares in its header; asked for only when the type lacks one.
+        let mut instance: Option<Vec<ParamSpec>> = None;
+        let mut warn = |w: String| {
+            if let Some(ws) = warnings.as_deref_mut() {
+                ws.push(w);
             }
+        };
+        let mut parts = rt.def.binds.iter().peekable();
+        while let Some((first, _)) = parts.peek() {
+            let name = &first.param;
+            let spec = match desc.param_spec(name.as_str()) {
+                Some(spec) => Some(spec),
+                None => instance
+                    .get_or_insert_with(|| rt.op.as_ref().and_then(|op| op.params()).unwrap_or_default())
+                    .iter()
+                    .find(|s| s.name == name.as_str()),
+            };
+            let Some(spec) = spec else {
+                while let Some((part, _)) = parts.next_if(|(p, _)| &p.param == name) {
+                    warn(format!("`{part}` is bound, but the node has no such param"));
+                }
+                continue;
+            };
+            let stored = rt.def.params.get(name.as_str()).unwrap_or(&spec.default);
+            let mut value: Option<Value> = None;
+            let mut resolved = None;
+            // All parts of one param: a vector bound per component builds one value.
+            while let Some((part, bind)) = parts.next_if(|(p, _)| &p.param == name) {
+                let target = match spec.bind_target(part.component) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        warn(format!("`{part}`: {e}"));
+                        continue;
+                    }
+                };
+                let read = match self.read_bind(part, bind) {
+                    Ok(read) => read,
+                    Err(w) => {
+                        warn(w);
+                        continue;
+                    }
+                };
+                let source = || self.path(bind.node);
+                match (target, read) {
+                    (BindTarget::Number, read) => {
+                        let x = match read {
+                            BindRead::Number(x) => x,
+                            BindRead::Text(t) => match bindv::cell_number(t) {
+                                Some(x) => x,
+                                None => {
+                                    warn(format!(
+                                        "`{part}`: {} gives \"{}\", which is no number",
+                                        source(),
+                                        short(t)
+                                    ));
+                                    continue;
+                                }
+                            },
+                        };
+                        match spec.bind_value(value.as_ref().unwrap_or(stored), part.component, x) {
+                            Ok(v) => value = Some(v),
+                            Err(e) => warn(format!("`{part}`: {e}")),
+                        }
+                    }
+                    (BindTarget::Text, BindRead::Text(t)) if t.len() > MAX_TEXT => {
+                        warn(format!("`{part}`: the cell of {} is longer than {MAX_TEXT} bytes", source()));
+                    }
+                    (BindTarget::Text, BindRead::Text(t)) => resolved = Some(Resolved::Text(t)),
+                    (BindTarget::Text, BindRead::Number(x)) => {
+                        let format = bind.format.as_ref().unwrap_or(&bindv::DEFAULT_FORMAT);
+                        resolved = Some(Resolved::Formatted(x, format));
+                    }
+                    (BindTarget::Choice, read) => {
+                        let ParamKind::Choice(choices) = &spec.kind else { continue };
+                        let entry = match read {
+                            BindRead::Number(x) => bindv::choice_at(choices, x),
+                            BindRead::Text(t) => bindv::choice_named(choices, t),
+                        };
+                        resolved = Some(match (entry, read) {
+                            (Some(e), _) => Resolved::Text(e),
+                            (None, BindRead::Text(t)) => {
+                                warn(format!(
+                                    "`{part}`: {} gives \"{}\", which is none of {}; it keeps its last entry",
+                                    source(),
+                                    short(t),
+                                    choices.join(", ")
+                                ));
+                                Resolved::Keep
+                            }
+                            (None, BindRead::Number(_)) => Resolved::Stored,
+                        });
+                    }
+                }
+            }
+            let r = match (value, resolved) {
+                (Some(v), _) => Resolved::Value(v),
+                (None, Some(r)) => r,
+                (None, None) => Resolved::Stored,
+            };
+            f(name, r);
         }
-        (bound, warnings)
+    }
+
+    /// What binding `bind` (of `part`) reads now: a channel's number or a table cell's text; a
+    /// warning when there is none.
+    fn read_bind<'s>(&'s self, part: &ParamPart, bind: &Bind) -> Result<BindRead<'s>, String> {
+        let output = |kind: DataKind| {
+            let src = self.runtimes.get(&bind.node)?;
+            let i = src.ty.as_ref()?.desc().outputs.iter().position(|o| o.kind == kind)?;
+            src.outputs.as_ref()?.get(i)
+        };
+        if let Some(cell) = &bind.cell {
+            let Some(table) = output(DataKind::Table).and_then(|d| d.get::<Table>()) else {
+                return Err(format!("`{part}` is bound to {}, which has no table yet", self.path(bind.node)));
+            };
+            return cell
+                .find(table)
+                .map(BindRead::Text)
+                .map_err(|e| format!("`{part}`: {} has no {cell}: {e}", self.path(bind.node)));
+        }
+        let Some(chans) = output(DataKind::Chan).and_then(|d| d.get::<Chans>()) else {
+            return Err(format!("`{part}` is bound to {}, which has no channels yet", self.path(bind.node)));
+        };
+        chans.value(bind.channel.as_ref().map(Name::as_str)).map(BindRead::Number).ok_or_else(|| {
+            let names: Vec<&str> = chans.names().map(Name::as_str).collect();
+            let has = if names.is_empty() { "none".to_string() } else { names.join(", ") };
+            let which =
+                bind.channel.as_ref().map_or_else(|| "any channel".into(), |c| format!("channel `{c}`"));
+            format!("`{part}`: {} has no {which} (it has {has})", self.path(bind.node))
+        })
+    }
+
+    /// The path of node `id` for a message.
+    fn path(&self, id: NodeId) -> String {
+        self.last_net
+            .as_ref()
+            .and_then(|n| n.path_of(id))
+            .map_or_else(|| format!("node {id}"), |p| p.to_string())
     }
 
     /// What a state snapshot should keep, per node: the outputs of locked nodes and whatever
@@ -1407,7 +1561,10 @@ impl Cooker {
             version: rt.version,
             has_output: rt.outputs.is_some(),
             error: rt.error.clone(),
-            warning: rt.warning.clone(),
+            warning: match (&rt.warning, &rt.bind_warning) {
+                (Some(a), Some(b)) => Some(format!("{a}; {b}")),
+                (a, b) => a.clone().or_else(|| b.clone()),
+            },
             job: rt.op.as_ref().and_then(|op| op.job_status()),
             stats: rt.stats,
             params: if params { rt.op.as_ref().and_then(|op| op.params()) } else { None },
@@ -2202,6 +2359,8 @@ mod tests {
             component: None,
             from: pp(from),
             channel: channel.map(|c| Name::new(c).unwrap()),
+            cell: None,
+            format: None,
         };
         let mut f = Fixture::new(&[create("/src", "test.const"), create("/dst", "test.const")]);
         f.set("/dst.value", Value::Float(7.0));
@@ -2244,6 +2403,8 @@ mod tests {
             component: None,
             from: pp("/t"),
             channel: None,
+            cell: None,
+            format: None,
         }]);
         f.cook(&["/dst"]);
         f.clock.advance(30);
@@ -2412,6 +2573,8 @@ mod tests {
                 component: None,
                 from: pp("/idx"),
                 channel: None,
+                cell: None,
+                format: None,
             },
         ]);
         assert_eq!(f.cook(&["/pick"]), ["/idx", "/a", "/pick"]);

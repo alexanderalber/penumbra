@@ -1350,6 +1350,8 @@ mod tests {
             component: None,
             from: "/lfo".parse().unwrap(),
             channel: None,
+            cell: None,
+            format: None,
         };
         f.net = Arc::new(
             f.net
@@ -1635,6 +1637,8 @@ mod tests {
                 component: None,
                 from: "/piece".parse().unwrap(),
                 channel: None,
+                cell: None,
+                format: None,
             },
         ]);
         let seconds = |f: &mut F| f.chans("/clock").value(Some("seconds")).unwrap();

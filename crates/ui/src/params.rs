@@ -16,8 +16,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use egui::{RichText, Ui};
-use penumbra_core::{Chans, GroupId, Name, NodeId, ParamKind, ParamPath, ParamSpec, Value, palette};
-use penumbra_graph::{Data, DataKind, Network, NodeDef, NodeStatus, NodeTypes, Op};
+use penumbra_core::{
+    Cell, Chans, GroupId, Index, Name, NodeId, ParamKind, ParamPath, ParamSpec, Table, Value, palette,
+};
+use penumbra_graph::{Bind, Data, DataKind, Network, NodeDef, NodeStatus, NodeTypes, Op};
 
 use crate::icons::{self, Icon};
 use crate::{Action, automation, theme};
@@ -631,8 +633,13 @@ impl ParamPanel {
             for (part, b) in binds.into_iter().rev() {
                 let from = input.net.path_of(b.node).map_or("?".to_string(), |p| {
                     let p = level_of(input.net, node.id).write_ref(&p);
-                    match &b.channel {
-                        Some(c) => format!("{p}:{c}"),
+                    let p = match (&b.channel, &b.cell) {
+                        (_, Some(cell)) => format!("{p}, {cell}"),
+                        (Some(c), None) => format!("{p}:{c}"),
+                        (None, None) => p,
+                    };
+                    match &b.format {
+                        Some(f) => format!("{p} as {f}"),
                         None => p,
                     }
                 });
@@ -641,9 +648,10 @@ impl ParamPanel {
                     Some(c) => format!("{c}: {from}"),
                     None => from,
                 };
-                ui.label(RichText::new(text).color(theme::kind_color(DataKind::Chan)).small());
+                let kind = if b.cell.is_some() { DataKind::Table } else { DataKind::Chan };
+                ui.label(RichText::new(text).color(theme::kind_color(kind)).small());
             }
-            if spec.bind_components() > 0 {
+            if spec.bindable() {
                 bind_menu(ui, input, node, &param, spec, auto, actions);
             }
             if is_color {
@@ -887,7 +895,7 @@ impl ParamPanel {
             ParamKind::Choice(choices) => {
                 let current = value.as_str().unwrap_or("");
                 let options: Vec<&str> = choices.iter().map(String::as_str).collect();
-                choice_box(ui, key, current, &options, new);
+                ui.add_enabled_ui(!whole_bound, |ui| choice_box(ui, key, current, &options, new));
             }
             ParamKind::Palette => {
                 let project = self.project_palettes(input.project_dir);
@@ -942,7 +950,7 @@ impl ParamPanel {
                 {
                     let current = value.as_str().unwrap_or("");
                     let options: Vec<&str> = options.iter().map(String::as_str).collect();
-                    choice_box(ui, key, current, &options, new);
+                    ui.add_enabled_ui(!whole_bound, |ui| choice_box(ui, key, current, &options, new));
                     return;
                 }
                 let current = value.as_str().unwrap_or("").to_string();
@@ -997,34 +1005,37 @@ impl ParamPanel {
                     }
                     let buffer = self.buffers.entry(key.to_string()).or_insert_with(|| current.clone());
                     let width = ui.available_width();
-                    let r = if spec.multiline {
-                        // A text longer than the box (a script) scrolls inside it rather than
-                        // growing over the rows below.
-                        egui::ScrollArea::vertical()
-                            .id_salt(("multiline", key))
-                            .max_height(height)
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
-                                ui.add(
-                                    egui::TextEdit::multiline(buffer)
-                                        .code_editor()
-                                        .desired_rows(multiline_rows(spec))
-                                        .desired_width(width),
-                                )
-                            })
-                            .inner
-                    } else if node.kind == penumbra_ops::audio::AUDIO_IN && spec.name == "device" {
-                        audio_device_box(ui, buffer, width, input.audio, &current)
-                    } else {
-                        ui.add(egui::TextEdit::singleline(buffer).desired_width(width))
-                    };
-                    if !r.has_focus() && !r.lost_focus() && *buffer != current {
-                        // Changed elsewhere (undo, Claude): show the new value.
-                        buffer.clone_from(&current);
-                    }
-                    if r.lost_focus() && *buffer != current {
-                        *new = Some(Value::Text(buffer.clone()));
-                    }
+                    // A bound text shows what the binding gives and is not edited here.
+                    ui.add_enabled_ui(!whole_bound, |ui| {
+                        let r = if spec.multiline {
+                            // A text longer than the box (a script) scrolls inside it rather than
+                            // growing over the rows below.
+                            egui::ScrollArea::vertical()
+                                .id_salt(("multiline", key))
+                                .max_height(height)
+                                .auto_shrink([false, true])
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::TextEdit::multiline(buffer)
+                                            .code_editor()
+                                            .desired_rows(multiline_rows(spec))
+                                            .desired_width(width),
+                                    )
+                                })
+                                .inner
+                        } else if node.kind == penumbra_ops::audio::AUDIO_IN && spec.name == "device" {
+                            audio_device_box(ui, buffer, width, input.audio, &current)
+                        } else {
+                            ui.add(egui::TextEdit::singleline(buffer).desired_width(width))
+                        };
+                        if !r.has_focus() && !r.lost_focus() && *buffer != current {
+                            // Changed elsewhere (undo, Claude): show the new value.
+                            buffer.clone_from(&current);
+                        }
+                        if r.lost_focus() && *buffer != current {
+                            *new = Some(Value::Text(buffer.clone()));
+                        }
+                    });
                 });
             }
         }
@@ -1617,7 +1628,7 @@ fn constant_remove_ops(
         if let Some((_, b)) = bind_of(&value_next)
             && let Some(from) = net.path_of(b.node)
         {
-            ops.push(Op::Bind { param: value_p, component: None, from, channel: b.channel.clone() });
+            ops.push(b.op(value_p, None, from));
         }
     }
     if let Ok(param) = named(path, "rows") {
@@ -2006,6 +2017,8 @@ fn drop_target(
 ) {
     let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) else { return };
     let target = match (&spec.kind, spec.bind_components()) {
+        // A text or a choice takes the channel as a whole.
+        (_, 0) if spec.bindable() => row.contains(pointer).then_some((row, None)),
         (_, 0) => None,
         (_, 1) => row.contains(pointer).then_some((row, None)),
         // The colour's first part is the picker; its numbers follow.
@@ -2032,7 +2045,7 @@ fn drop_target(
         && input.can_edit
         && let Some(from) = input.net.path_of(src)
     {
-        actions.push(Action::edit(vec![Op::Bind { param: param.clone(), component, from, channel: None }]));
+        actions.push(Action::edit(vec![Bind::chan(src, None).op(param.clone(), component, from)]));
     }
 }
 
@@ -2061,12 +2074,29 @@ fn bind_menu(
         .filter_map(|n| Some((n.id, level.write_ref(&input.net.path_of(n.id)?))))
         .collect();
     sources.sort_by_key(|(_, label)| ref_order(label));
+    // A text or a choice also takes a table cell.
+    let cells = spec.bind_components() == 0;
+    let mut tables: Vec<(NodeId, String)> = input
+        .net
+        .nodes()
+        .filter(|n| cells && n.id != node.id)
+        .filter(|n| {
+            input.types.desc(&n.kind).is_some_and(|d| d.outputs.iter().any(|o| o.kind == DataKind::Table))
+        })
+        .filter_map(|n| Some((n.id, level.write_ref(&input.net.path_of(n.id)?))))
+        .collect();
+    tables.sort_by_key(|(_, label)| ref_order(label));
     let id = ui.make_persistent_id(("bind", &key));
-    let r = icons::small_button(ui, Icon::Bind).on_hover_text("bind to a channel");
+    let hover = if cells { "bind to a channel or a table cell" } else { "bind to a channel" };
+    let r = icons::small_button(ui, Icon::Bind).on_hover_text(hover);
     auto.add(format!("param.{key}.bind"), r.rect, "bind");
     egui::Popup::menu(&r).id(id).show(|ui| {
         let n = spec.bind_components();
-        if n == 1 {
+        if cells {
+            source_list(ui, input, &sources, param, None, auto, actions);
+            ui.separator();
+            table_list(ui, input, &tables, param, auto, actions);
+        } else if n == 1 {
             source_list(ui, input, &sources, param, None, auto, actions);
         } else {
             for c in 0..n {
@@ -2176,7 +2206,79 @@ fn source_list(
     if let Some((id, channel)) = chosen
         && let Some(from) = input.net.path_of(id)
     {
-        actions.push(Action::edit(vec![Op::Bind { param: param.clone(), component, from, channel }]));
+        actions.push(Action::edit(vec![Bind::chan(id, channel).op(param.clone(), component, from)]));
+        ui.close();
+    }
+}
+
+/// Most rows and columns of a table the bind menu lists.
+const MENU_CELLS: usize = 24;
+
+/// Table nodes to bind a text or a choice to, each with its rows and their cells when the view
+/// has its output (automation ids `bind.table.<i>`, `bind.table.<i>.<row>` and
+/// `bind.table.<i>.<row>.<col>`); a table the view has no data of binds its first cell.
+fn table_list(
+    ui: &mut Ui,
+    input: &Inputs<'_>,
+    tables: &[(NodeId, String)],
+    param: &ParamPath,
+    auto: &mut automation::Registry,
+    actions: &mut Vec<Action>,
+) {
+    if tables.is_empty() {
+        ui.label(RichText::new("no table nodes in the network").color(theme::TEXT_WEAK));
+    }
+    let cell_label = |i: usize, text: &str| {
+        let short: String = text.chars().take(24).collect();
+        if short.len() < text.len() { format!("{i}: {short}...") } else { format!("{i}: {short}") }
+    };
+    let mut chosen: Option<(NodeId, usize, usize)> = None;
+    for (i, (id, path)) in tables.iter().enumerate() {
+        let table = input
+            .outputs
+            .get(id)
+            .and_then(|o| o.iter().find(|d| d.kind() == DataKind::Table))
+            .and_then(|d| d.get::<Table>());
+        let Some(table) = table.filter(|t| t.num_rows() > 0) else {
+            let r = ui.button(format!("{path}, row 0, column 0"));
+            auto.add(format!("bind.table.{i}"), r.rect, path.clone());
+            if r.clicked() {
+                chosen = Some((*id, 0, 0));
+            }
+            continue;
+        };
+        let r = ui.menu_button(path, |ui| {
+            for (row, cells) in table.rows().iter().enumerate().take(MENU_CELLS) {
+                let label = cell_label(row, cells.first().map_or("", String::as_str));
+                if cells.len() <= 1 {
+                    let r = ui.button(label);
+                    auto.add(format!("bind.table.{i}.{row}"), r.rect, format!("row {row}"));
+                    if r.clicked() {
+                        chosen = Some((*id, row, 0));
+                    }
+                    continue;
+                }
+                let r = ui.menu_button(label, |ui| {
+                    for (col, text) in cells.iter().enumerate().take(MENU_CELLS) {
+                        let r = ui.button(cell_label(col, text));
+                        auto.add(format!("bind.table.{i}.{row}.{col}"), r.rect, format!("column {col}"));
+                        if r.clicked() {
+                            chosen = Some((*id, row, col));
+                        }
+                    }
+                });
+                auto.add(format!("bind.table.{i}.{row}"), r.response.rect, format!("row {row}"));
+            }
+        });
+        auto.add(format!("bind.table.{i}"), r.response.rect, path.clone());
+    }
+    if let Some((id, row, col)) = chosen
+        && let Some(from) = input.net.path_of(id)
+        && let (Ok(row), Ok(col)) = (u32::try_from(row), u32::try_from(col))
+    {
+        let cell = Cell { row: Index::At(row), col: Index::At(col) };
+        let bind = Bind { node: id, channel: None, cell: Some(cell), format: None };
+        actions.push(Action::edit(vec![bind.op(param.clone(), None, from)]));
         ui.close();
     }
 }
@@ -2710,6 +2812,8 @@ mod tests {
                         component: None,
                         from: "/lfo".parse().unwrap(),
                         channel: None,
+                        cell: None,
+                        format: None,
                     },
                 ],
             )

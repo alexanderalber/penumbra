@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use penumbra_core::{Error, Name, NodePath, Value};
 use penumbra_graph::{DataKind, NodeTypes, PortRole, natural_cmp};
 
-use crate::content::{BindRef, Content, NodeContent, PortRef};
+use crate::content::{Content, NodeContent, PortRef};
 use crate::file;
 
 /// What a component file is called: `<name>.comp.ron`.
@@ -381,7 +381,7 @@ pub fn expand(base: &Content, types: &NodeTypes, comp: &NodePath) -> Result<Expa
                 Some(b.node.clone())
             };
             if let Some(src) = src {
-                binds.insert(part.clone(), BindRef { node: remap(&src), channel: b.channel.clone() });
+                binds.insert(part.clone(), b.with_node(remap(&src)));
             }
         }
         node.binds = binds;
@@ -427,7 +427,7 @@ pub fn extract(base: &Content, types: &NodeTypes, comp: &NodePath) -> Result<(Co
         for (part, b) in &node.binds {
             match rebase(&b.node, comp, &top) {
                 Some(n) => {
-                    binds.insert(part.clone(), BindRef { node: n, channel: b.channel.clone() });
+                    binds.insert(part.clone(), b.with_node(n));
                 }
                 None => dropped.lines.push(format!("{path}.{part} bound to {}", b.node)),
             }
@@ -514,9 +514,7 @@ pub fn instantiate(
         node.binds = node
             .binds
             .iter()
-            .filter_map(|(part, b)| {
-                Some((part.clone(), BindRef { node: remap(&b.node)?, channel: b.channel.clone() }))
-            })
+            .filter_map(|(part, b)| Some((part.clone(), b.with_node(remap(&b.node)?))))
             .collect();
         if let Some(new) = remap(p) {
             added.nodes.insert(new, node);
@@ -642,7 +640,7 @@ mod tests {
         let k = base.nodes.get_mut(&p("/k")).unwrap();
         k.binds.insert(
             penumbra_core::ParamPart::parse("value").unwrap(),
-            BindRef { node: p("/a"), channel: None },
+            crate::content::BindRef::chan(p("/a"), None),
         );
         base.nodes.get_mut(&p("/r")).unwrap().params.insert("node".parse().unwrap(), Value::Text("a".into()));
         let members = [p("/a"), p("/b"), p("/k"), p("/r")];

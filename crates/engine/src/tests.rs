@@ -1093,6 +1093,9 @@ mod keyboard_tests;
 #[path = "buttons_tests.rs"]
 mod buttons_tests;
 
+#[path = "bind_tests.rs"]
+mod bind_tests;
+
 #[path = "mouse_tests.rs"]
 mod mouse_tests;
 
