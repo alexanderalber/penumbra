@@ -1358,15 +1358,18 @@ impl Editor {
         let load = status.map_or(0.0, |s| s.stats.load());
         let family = node.kind.split('.').next().unwrap_or("");
         let radius = CornerRadius::same((4.0 * zoom).round().clamp(0.0, 255.0) as u8);
-        let body = theme::load_tint(load);
-        painter.rect_filled(g.rect, radius, body);
         let header = Rect::from_min_max(g.rect.min, pos2(g.rect.max.x, g.rect.min.y + HEADER * zoom));
-        painter.rect_filled(
-            header,
-            CornerRadius { nw: radius.nw, ne: radius.ne, sw: 0, se: 0 },
-            theme::family_color(family),
-        );
         let body_rect = Rect::from_min_max(pos2(g.rect.min.x, header.max.y), g.rect.max);
+        let top = CornerRadius { nw: radius.nw, ne: radius.ne, sw: 0, se: 0 };
+        // The family colour is half transparent: it lies on the neutral body colour, so the load
+        // tint stays in the body and the header keeps its colour.
+        painter.rect_filled(header, top, theme::NODE_BODY);
+        painter.rect_filled(header, top, theme::family_color(family));
+        painter.rect_filled(
+            body_rect,
+            CornerRadius { nw: 0, ne: 0, sw: radius.sw, se: radius.se },
+            theme::load_tint(load),
+        );
 
         // Content: a thumbnail for textures, the value for channels.
         let shown = input.pictures.contains(&g.id).then(|| input.outputs.get(&g.id)).flatten();
