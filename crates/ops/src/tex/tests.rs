@@ -274,6 +274,47 @@ fn golden_images() {
         ),
         create("/noise", "tex.noise", &size()),
         create(
+            "/primitive_rectangle",
+            "tex.primitive",
+            &[
+                size()[0].clone(),
+                size()[1].clone(),
+                ("size", Value::Vec2([0.9, 0.5])),
+                ("rotate", Value::Float(15.0)),
+                ("corner", Value::Float(0.1)),
+                ("border", Value::Float(3.0)),
+                ("border_color", Value::Vec4([0.1, 0.3, 1.0, 1.0])),
+            ],
+        ),
+        create(
+            "/primitive_ellipse",
+            "tex.primitive",
+            &[
+                size()[0].clone(),
+                size()[1].clone(),
+                ("shape", "ellipse".into()),
+                ("center", Value::Vec2([0.4, 0.5])),
+                ("size", Value::Vec2([1.0, 0.4])),
+                ("rotate", Value::Float(-30.0)),
+                ("softness", Value::Float(6.0)),
+                ("fill", Value::Vec4([1.0, 0.5, 0.1, 1.0])),
+                ("background", Value::Vec4([0.0, 0.0, 0.2, 1.0])),
+            ],
+        ),
+        create(
+            "/primitive_polygon",
+            "tex.primitive",
+            &[
+                size()[0].clone(),
+                size()[1].clone(),
+                ("shape", "polygon".into()),
+                ("sides", Value::Int(5)),
+                ("size", Value::Vec2([0.8, 0.8])),
+                ("border", Value::Float(4.0)),
+                ("fill", Value::Vec4([1.0, 1.0, 1.0, 0.5])),
+            ],
+        ),
+        create(
             "/noise_value",
             "tex.noise",
             &[
@@ -497,6 +538,9 @@ lumen"
         "atop",
         "overlay",
         "ramp",
+        "primitive_rectangle",
+        "primitive_ellipse",
+        "primitive_polygon",
     ];
     for name in names {
         let px = rig.pixels(&format!("/{name}"));
@@ -989,6 +1033,30 @@ fn transform_order_decides_whether_the_move_turns_and_grows() {
         let got = alpha_centre(&rig.pixels("/t"));
         let close = (got[0] - want[0]).abs() < 0.02 && (got[1] - want[1]).abs() < 0.02;
         assert!(close, "{order}: centre at {got:?}, want {want:?}");
+    }
+}
+
+#[test]
+fn primitive_shapes_cover_their_area() {
+    let Some(gpu) = gpu() else { return };
+    // Half the image height across: a radius of 16 pixels at 64 high.
+    let r = H as f64 / 4.0;
+    let cases = [
+        ("rectangle", vec![("size", Value::Vec2([0.5, 0.25]))], 2.0 * r * r),
+        ("ellipse", vec![], std::f64::consts::PI * r * r),
+        ("ellipse", vec![("size", Value::Vec2([1.0, 0.25]))], std::f64::consts::PI * (2.0 * r) * (r / 2.0)),
+        ("polygon", vec![("sides", Value::Int(6))], 1.5 * 3f64.sqrt() * r * r),
+        ("polygon", vec![("sides", Value::Int(4)), ("rotate", Value::Float(45.0))], 2.0 * r * r),
+    ];
+    for (shape, extra, want) in cases {
+        let mut params = size().to_vec();
+        params.push(("shape", shape.into()));
+        params.extend(extra);
+        let ops = [create("/p", "tex.primitive", &params)];
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        let px = rig.pixels("/p");
+        let area: f64 = px.data.iter().map(|p| f64::from(p[3])).sum();
+        assert!((area - want).abs() < want * 0.02, "{shape}: {area} pixels, want {want}");
     }
 }
 

@@ -8,7 +8,7 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#g
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
 
 *in:* [tex.ndi_in](#texndi_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
@@ -643,6 +643,31 @@ Outputs: `out` (tex).
 | `levels` *(more)* | int | `4` | 1 to 6 (soft) | Pyramid levels, each half the size of the one before; each one doubles the fastest motion followed |
 | `iterations` *(more)* | int | `3` | 1 to 6 (soft) | Refining steps per level; more is more exact and costs more |
 | `window` *(more)* | int | `3` | 1 to 6 px (soft) | Radius of the neighbourhood each pixel's motion is judged from; more is smoother and steadier, less keeps small moving things apart |
+
+### tex.primitive
+
+Draws one rectangle, ellipse or polygon with a fill and a border: masks, frames, simple graphics
+
+Inputs: none.
+
+Outputs: `out` (tex).
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
+| `shape` | rectangle \| ellipse \| polygon | `"rectangle"` |  | The shape drawn; rectangle: a rectangle, with rounded corners when corner is above 0; ellipse: an ellipse; with equal width and height a circle; polygon: a regular polygon with sides corners, one corner pointing up |
+| `center` | vec2 | `[0.5, 0.5]` | 0 to 1 (soft) | Where the shape's centre sits, in image sizes: 0, 0 is the top left, 0.5, 0.5 the centre |
+| `size` | vec2 | `[0.5, 0.5]` | 0 to 2 (soft) | Width and height of the shape in image heights: 1, 1 is a square as tall as the picture |
+| `rotate` | float | `0` | -180 to 180° (soft) | Turn around the centre, counter-clockwise on screen |
+| `sides` | int | `6` | 3 to 12 (soft) | Corners of the polygon. The corners lie on the ellipse that size describes. Does something only with shape polygon. |
+| `corner` | float | `0` | 0 to 0.5 (soft) | Radius of the rounded corners, in image heights; at most half the shorter side takes effect. Does something only with shape rectangle. |
+| `fill` | colour | `[1, 1, 1, 1]` |  | Colour inside the shape, linear RGBA with straight alpha |
+| `border` | float | `0` | 0 to 50 px (soft) | Width of the border, in pixels, inside the shape's edge; 0 draws none |
+| `border_color` | colour | `[0, 0, 0, 1]` |  | Colour of the border |
+| `softness` | float | `0` | 0 to 100 px (soft) | How many pixels the edges fade over; 0 gives a crisp edge, smoothed over one pixel |
+| `background` | colour | `[0, 0, 0, 0]` |  | Colour around the shape; the default is transparent, for a composite over something else |
 
 ### tex.quantize
 

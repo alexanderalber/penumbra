@@ -23,6 +23,7 @@ pub mod mapper;
 pub(crate) mod meters_picture;
 pub mod ndi_in;
 mod optical_flow;
+mod primitive;
 mod ramp;
 pub mod render;
 pub mod scan;
@@ -135,6 +136,7 @@ fn builtins() -> Vec<Builtin> {
     let mut all = core_builtins();
     all.extend(filters::builtins());
     all.push(shape_content::builtin());
+    all.push(primitive::builtin());
     all.push(scan_pattern::builtin());
     all
 }
