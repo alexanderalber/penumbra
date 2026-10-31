@@ -169,40 +169,25 @@ that penumbra does some things TouchDesigner does not, like structured light sca
 The author used TouchDesigner for almost six years. Since penumbra 0.2 the author works only
 in penumbra. The plan is to maintain penumbra for a long time.
 
-## Projection onto objects
+## Projection onto objects and walls
 
-You draw the content once, in the camera's picture. Each projector shows its share of it, in
-place on the objects. The scan behind that: each projector shows stripe patterns, the camera
-films them, and from the films penumbra knows which camera pixel each projector pixel lands
-on. During the show that costs one lookup and one multiply per projector.
+Each projector shows stripe patterns, the camera films them, and from the films penumbra
+knows where every projector pixel lands. You draw the content once, in the camera's picture;
+each projector shows its share, in place. On objects, `scan.scene` finds the faces and
+`scan.regions` groups them. A Halloween show on crates and a pumpkin, two projectors (click
+for the film):
 
-A relief panel needs one scan per projector. `scan.relief` turns it into a height map and a
-blend weight for each projector. The [projection-onto-objects](examples/projection-onto-objects/README.md)
-example lights a 3D-printed mountain range this way, from a real scan that ships with it:
+[![Two photos of the same corner of crates with a pumpkin. Left: vertical stripes from one projector, bent by the pumpkin. Right: a cyan grid projected on every crate face, each following its own face, and an orange grid wrapped around the pumpkin](assets/photos/scan.jpg)](https://www.youtube.com/watch?v=KsELIfs2M8Y)
 
-![Left: a grey relief of a mountain range as the camera saw it. Right: the same relief in land colours by height, with contour lines, a lake and snow](assets/gallery/relief.jpg)
+On a wall, three projectors become one picture: blend weights from the scan, colours matched
+by the camera. A dot crossing all three, filmed by the camera:
 
-A scene of boxes and things on them works the same way. `scan.scene` finds every flat face and
-every object, with straight borders where the faces have them. `scan.regions` groups the faces
-into regions, one per crate front, side or lid, and switches the floor off. Here a corner of
-crates with a pumpkin, lit by two projectors:
+![A white dot gliding across three overlapping projector pictures on a wall, with no step at the seams](assets/photos/dot-crossing.gif)
 
-![Two photos of the same corner of crates with a pumpkin. Left: vertical stripes from one projector, bent by the pumpkin. Right: a cyan grid projected on every crate face, each following its own face, and an orange grid wrapped around the pumpkin](assets/photos/scan.jpg)
-
-Without projectors, `scan.synthetic` ray casts a made-up scene of the same kind. With it you
-can try the whole chain without hardware.
-
-The [content library](library/README.md) has effects that fit any scanned scene: colours per
-region, outlines, light from inside an object, a carved face, water. Each has a preview on the
-same crates and pumpkin.
-
-What a show on such a scan looks like in the room:
-
-![Left: glowing lines wrapped around the pumpkin, seen close up. Right: blood running down the crate fronts and pooling in red along their feet](assets/photos/show.jpg)
-
-The whole chain is in [Scanning](docs/scanning.md). The repository also holds a
-[Claude Code skill](.claude/skills/projection-mapping/SKILL.md) that walks a session through
-it: check the hardware, scan, find the faces, blend, put content on and look at the result.
+[Scanning](docs/scanning.md) has the whole chain; the examples
+[projection-onto-objects](examples/projection-onto-objects/README.md) and
+[projector-wall](examples/projector-wall/README.md) ship real scans, and a
+[Claude Code skill](.claude/skills/projection-mapping/SKILL.md) walks a session through it.
 
 ## Gallery
 
