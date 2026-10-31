@@ -1,0 +1,168 @@
+<!doctype html>
+<!--
+  A control page for any penumbra project. It needs no change when you copy it.
+
+  To use it in your own project:
+  1. Copy this www folder into the project folder.
+  2. Add a chan.http_in node. Its defaults serve this page at http://localhost:8090/.
+  3. Tick `show` on the chan.slider and chan.button nodes the page should offer.
+  For a phone, set the chan.http_in's `bind` to `lan`; http.status names the address.
+
+  The page draws one slider per chan.slider and one switch per toggle chan.button, in the
+  order of the show screen, named by `label` or the node path. Moving one sends
+  {"<path>/value": number} over the WebSocket. The state messages that come back carry every
+  control's value, so all open pages follow each other.
+
+  A momentary chan.button shows as a lamp that lights while it is held. The page cannot press
+  it: chan.http_in sets only the `value` of a slider or a toggle. Press it on the show screen,
+  with chan.press, or use a toggle instead.
+
+  What to change: the colours in the style block, the title, and the text in <h1>.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>penumbra controls</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font: 18px system-ui, sans-serif; background: #111; color: #eee; margin: 0 auto; padding: 1em; max-width: 36em; }
+  h1 { font-size: 1.2em; margin: 0 0 0.6em; }
+  .control { margin: 0 0 1.2em; }
+  .head { display: flex; justify-content: space-between; margin-bottom: 0.3em; }
+  .value { color: #aaa; font-variant-numeric: tabular-nums; }
+  input[type=range] { width: 100%; height: 3em; margin: 0; accent-color: #e8731a; touch-action: pan-y; }
+  button { font: inherit; width: 100%; min-height: 3.2em; border: 0; border-radius: 0.4em; background: #333; color: #eee; }
+  button.on { background: #e8731a; color: #111; }
+  button:disabled { opacity: 1; background: #222; color: #888; border: 1px dashed #555; }
+  button:disabled.on { background: #fff; color: #111; }
+  .bound { color: #c96; font-size: 0.8em; }
+  #state { color: #9c9; font-size: 0.9em; }
+  #state.off { color: #c66; }
+</style>
+</head>
+<body>
+<h1>penumbra controls</h1>
+<div id="controls"></div>
+<p id="state" class="off">connecting</p>
+
+<script>
+"use strict";
+
+let socket = null;
+let pending = {};
+let shape = "";                 // the controls the page shows now: path, kind and mode of each
+const widgets = new Map();      // path -> { update(control) }
+const touched = new Map();      // address -> time it was last sent, to keep a dragged slider still
+
+function connect() {
+  socket = new WebSocket("ws://" + location.host + "/ws");
+  socket.onopen = () => status("connected", true);
+  socket.onclose = () => { status("not connected, trying again", false); setTimeout(connect, 1000); };
+  socket.onmessage = (e) => receive(JSON.parse(e.data));
+}
+
+function status(text, ok) {
+  const s = document.getElementById("state");
+  s.textContent = text;
+  s.className = ok ? "" : "off";
+}
+
+// Sends at most once per animation frame; a fast slider sends only its latest value.
+function send(address, value) {
+  pending[address] = value;
+  touched.set(address, performance.now());
+  requestAnimationFrame(flush);
+}
+
+function flush() {
+  if (Object.keys(pending).length === 0 || !socket || socket.readyState !== 1) return;
+  socket.send(JSON.stringify(pending));
+  pending = {};
+}
+
+// A state message: {"in": {...}, "chans": {...}, "controls": [...]}, or {"error": "..."}.
+function receive(state) {
+  if (state.error) { status(state.error, false); return; }
+  const list = state.controls || [];
+  const now = list.map((c) => c.path + " " + c.kind + " " + (c.mode || "")).join("|");
+  if (now !== shape) { build(list); shape = now; }
+  for (const c of list) widgets.get(c.path)?.update(c);
+}
+
+function build(list) {
+  const box = document.getElementById("controls");
+  box.replaceChildren();
+  widgets.clear();
+  if (list.length === 0) {
+    box.textContent = "No controls. Tick `show` on a chan.slider or chan.button.";
+    return;
+  }
+  for (const c of list) {
+    const make = c.kind === "chan.slider" ? slider : button;
+    const { element, update } = make(c);
+    box.append(element);
+    widgets.set(c.path, { update });
+  }
+}
+
+function frame(c) {
+  const element = document.createElement("div");
+  element.className = "control";
+  const head = document.createElement("div");
+  head.className = "head";
+  const name = document.createElement("span");
+  name.textContent = c.label || c.path;
+  const value = document.createElement("span");
+  value.className = "value";
+  head.append(name, value);
+  element.append(head);
+  return { element, value };
+}
+
+// A number for the readout: up to three digits after the point.
+const shown = (x) => String(Math.round(x * 1000) / 1000);
+
+function slider(c) {
+  const { element, value } = frame(c);
+  const input = document.createElement("input");
+  input.type = "range";
+  input.step = "any";
+  input.oninput = () => { value.textContent = shown(Number(input.value)); send(c.address, Number(input.value)); };
+  element.append(input);
+  const update = (c) => {
+    input.min = Math.min(c.min, c.max);
+    input.max = Math.max(c.min, c.max);
+    input.disabled = c.bound;
+    value.textContent = shown(c.value) + (c.bound ? " (bound)" : "");
+    // A value coming back must not pull a slider from under the finger.
+    if (performance.now() - (touched.get(c.address) || -1e9) > 500) input.value = c.value;
+  };
+  return { element, update };
+}
+
+function button(c) {
+  const { element, value } = frame(c);
+  const b = document.createElement("button");
+  const momentary = c.mode !== "toggle";
+  b.disabled = momentary;
+  let on = false;
+  if (!momentary) b.onclick = () => { on = !on; show(); send(c.address, on ? 1 : 0); };
+  element.append(b);
+  const show = () => {
+    b.classList.toggle("on", on);
+    b.textContent = momentary ? (on ? "held" : "press on the show screen") : on ? "on" : "off";
+  };
+  const update = (c) => {
+    if (performance.now() - (touched.get(c.address) || -1e9) > 500) on = c.value >= 0.5;
+    if (!momentary) b.disabled = c.bound;
+    value.textContent = c.bound ? "(bound)" : "";
+    show();
+  };
+  return { element, update };
+}
+
+connect();
+</script>
+</body>
+</html>

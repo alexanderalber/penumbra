@@ -15,6 +15,7 @@ saves into it.)
 |---|---|---|---|
 | [curl-noise](curl-noise/README.md) | 65 536 sticks drifting through a flow field, simulated on the GPU and drawn instanced | `/out` | |
 | [feedback](feedback/README.md) | a loop that feeds each frame back into the next: trails, zoom, drifting colour | `/show` | |
+| [control-page](control-page/README.md) | a web page that moves the project's sliders and switches from a phone or a browser, made to be copied into your own project | `/show` | (for a phone: the same network as this computer) |
 | [audio-reactive](audio-reactive/README.md) | sound turned into channels that move the picture: level, kick, bar | `/show` | a microphone |
 | [pendulum-wave](pendulum-wave/README.md) | 121 pendulums seen from above, drifting apart and back into sync, each striking a note as it passes its rest point, over a hi-hat and kick | `/out` | speakers or headphones |
 | [blob-tracking](blob-tracking/README.md) | finding and following spots of light, with ids that stay | `/view`, `/track` | |

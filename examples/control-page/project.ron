@@ -1,0 +1,15 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 2,
+    nodes: {
+        "/flash": (kind: "chan.button", params: {"label": "flash", "show": true}, pos: [0.0, 420.0]),
+        "/http": (kind: "chan.http_in", pos: [300.0, 420.0]),
+        "/look": (kind: "comp.base", pos: [0.0, 140.0]),
+        "/look/hue": (kind: "chan.slider", params: {"label": "colour", "max": 180.0, "min": -180.0, "show": true}, pos: [0.0, 0.0]),
+        "/round": (kind: "chan.button", params: {"label": "round", "mode": "toggle", "show": true}, pos: [0.0, 280.0]),
+        "/shape": (kind: "tex.primitive", params: {"background": [0.0, 0.0, 0.0, 1.0], "fill": [1.0, 0.45, 0.1, 1.0], "softness": 2.0}, binds: {"background.0": "flash", "background.1": "flash", "background.2": "flash", "shape": "round", "size.0": "size", "size.1": "size"}, pos: [300.0, 140.0]),
+        "/show": (kind: "tex.hsv", inputs: {"in": "shape"}, binds: {"hue": "look/hue"}, pos: [550.0, 140.0]),
+        "/size": (kind: "chan.slider", params: {"label": "size", "max": 1.0, "min": 0.1, "show": true, "value": 0.5}, pos: [0.0, 0.0]),
+    },
+)
