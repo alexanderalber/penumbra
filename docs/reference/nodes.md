@@ -1862,7 +1862,7 @@ Outputs: `out` (geo).
 
 ### geo.file
 
-A 3D model from a file (OBJ, STL, glTF/GLB, FBX) with its parts; updates when the file changes. An animated FBX plays its moving parts
+A 3D model from a file (OBJ, STL, glTF/GLB, FBX) with its parts; updates when the file changes. An animated FBX plays: parts move with their models, skinned characters bend with their bones
 
 Inputs: none.
 

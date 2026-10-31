@@ -5,17 +5,20 @@
 //! and diffuse texture (embedded in the file, or a file beside it). Units become metres, and
 //! the file's axes become penumbra's: z up, front towards -y. Animated models come with a
 //! [`Motion`]: each vertex remembers its model and control point, and moves with the model's
-//! animated transform. Not read: skins, blend shapes, cameras, lights; ASCII files are refused
-//! with an error saying so.
+//! animated transform, or with the bones of its skin (linear blend skinning). The file as stored
+//! is the rest pose. Not read: blend shapes, geometry caches, cameras, lights; ASCII files are
+//! refused with an error saying so.
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
 use penumbra_fbx::transform::mul;
 use penumbra_fbx::{Axes, Axis, Geometry, Scene};
 
 use crate::{
-    Builder, Error, Image, Limits, Loaded, Material, Motion, Vertex, determinant, normal_matrix, normalize,
+    Builder, Error, Image, Limits, Loaded, Material, Motion, Vertex, determinant, motion::Bind,
+    normal_matrix, normalize,
 };
 
 type Mat = [[f64; 4]; 4];
@@ -68,6 +71,9 @@ pub fn parse(
         pieces: Vec::new(),
     };
     let mut geometries: HashMap<i64, Geometry> = HashMap::new();
+    // Skins matter only when something can move them.
+    let animated = !scene.animation.is_empty();
+    let mut skins: HashMap<i64, Option<Arc<Bind>>> = HashMap::new();
     let (mut degenerate, mut out_of_range) = (0usize, 0usize);
     for inst in scene.mesh_instances() {
         let g = match geometries.entry(inst.geometry_id) {
@@ -94,8 +100,21 @@ pub fn parse(
             slots.push(r.material(*id)?);
         }
         r.geometry(g, &world, part, &slots).map_err(|e| e.context(format!("model `{name}`")))?;
+        let skin = match skins.get(&inst.geometry_id) {
+            Some(s) => s.clone(),
+            None if animated => {
+                let s = scene.skin(inst.geometry_id, &fl).map_err(|e| Error::new(e.0))?;
+                let bind = s.map(|s| {
+                    r.warnings.extend(s.warnings.iter().cloned());
+                    Arc::new(Bind::from_skin(&s))
+                });
+                skins.insert(inst.geometry_id, bind.clone());
+                bind
+            }
+            None => None,
+        };
         let piece = r.pieces.len() as u32;
-        r.pieces.push((inst.node, inst.geometry_to_world));
+        r.pieces.push((inst.node, inst.geometry_to_world, skin));
         let n = r.b.vertex_count();
         r.piece_of.resize(n, piece);
     }
@@ -131,8 +150,8 @@ struct Reader<'a> {
     /// Per vertex made so far: its position and normal in its geometry's own space.
     local: Vec<Vertex>,
     piece_of: Vec<u32>,
-    /// Per piece: its hierarchy node and geometry-to-file matrix.
-    pieces: Vec<(usize, Mat)>,
+    /// Per piece: its hierarchy node, geometry-to-file matrix and skin.
+    pieces: Vec<(usize, Mat, Option<Arc<Bind>>)>,
 }
 
 impl Reader<'_> {

@@ -181,6 +181,7 @@ mod fuzz {
             ("s.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::example_scene(), true)),
             ("w.fbx", penumbra_fbx::write::to_bytes(7500, &penumbra_fbx::write::example_scene(), false)),
             ("m.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::animated_scene(), false)),
+            ("k.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::skinned_scene(), false)),
         ];
         let limits = Limits::default();
         let mut rng = Rng(0x5EED_1234_ABCD_0001);

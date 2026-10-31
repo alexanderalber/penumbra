@@ -622,3 +622,43 @@ fn animated_fbx_files_come_with_their_motion() {
     // Control points come along: the cube has 8.
     assert!(m.point.iter().all(|p| *p < 8));
 }
+
+#[test]
+fn skinned_fbx_files_bend_with_their_bones() {
+    let bytes = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::skinned_scene(), false);
+    let none = |_: &str| Err(Error::new("no sidecar"));
+    let mut l = parse("s.fbx", &bytes, &none, &Limits::default()).unwrap();
+    assert!(l.warnings.is_empty(), "{:?}", l.warnings);
+    // Only the bones move, yet the file moves.
+    let mut m = l.motion.take().expect("motion");
+    assert!(m.moves(0));
+    // Turned to y up and with smoothed normals, as geo.file may do: the motion follows.
+    l.mesh.to_z_up(Up::Y);
+    m.to_z_up(Up::Y);
+    let split = l.mesh.smooth_normals(30.0, 1, 1 << 20).unwrap();
+    m.split(&split);
+    let mut out = Vec::new();
+    m.deform(&l.mesh.vertices, 0, 0.0, &mut out);
+    for (a, b) in out.iter().zip(&l.mesh.vertices) {
+        assert!((0..3).all(|k| (a.position[k] - b.position[k]).abs() < 1e-5), "{a:?} {b:?}");
+        assert!((0..3).all(|k| (a.normal[k] - b.normal[k]).abs() < 1e-4), "{a:?} {b:?}");
+    }
+    // Two seconds in, the knee has turned 90 degrees. Read into penumbra's axes (metres, z up,
+    // front -y) and then turned once more, file point (x, y, z) cm lands at (x, -y, -z) / 100.
+    m.deform(&l.mesh.vertices, 0, 2.0, &mut out);
+    for (i, v) in out.iter().enumerate() {
+        let want: [f32; 3] = match m.point[i] {
+            0 => [-0.5, 1.0, 0.5],
+            2 => [-1.0, 0.5, 0.5],
+            7 => [-0.625, -0.625, -0.5],
+            _ => continue,
+        };
+        assert!(
+            (0..3).all(|k| (v.position[k] - want[k]).abs() < 1e-5),
+            "point {}: {:?}",
+            m.point[i],
+            v.position
+        );
+        assert!((v.normal.iter().map(|c| c * c).sum::<f32>() - 1.0).abs() < 1e-4);
+    }
+}

@@ -1819,3 +1819,36 @@ fn an_animated_fbx_moves_its_parts_with_the_time() {
     rig.cook("/fbx");
     assert!(rig.cooker.status(rig.id("/fbx")).unwrap().time_dependent);
 }
+
+#[test]
+fn a_skinned_fbx_bends_with_its_bones() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("geo-fbx-skin");
+    let scene = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::skinned_scene(), true);
+    std::fs::write(dir.join("column.fbx"), scene).unwrap();
+    let ops = vec![
+        create("/fbx", "geo.file", &[("file", "column.fbx".into()), ("play", Value::Bool(false))]),
+        render(
+            "/view",
+            &[
+                ("surface", "material".into()),
+                ("position", Value::Vec3([0.5, -4.0, 0.5])),
+                ("target", Value::Vec3([-0.3, 0.0, 0.2])),
+            ],
+        ),
+        connect("/fbx", "/view", 0),
+    ];
+    let mut rig = rig(gpu, Some(&dir), &ops);
+    // Only bones move in the file, yet the node plays it.
+    let rest = fbx_bounds(&mut rig, 0);
+    assert!((rest.min[0] + 0.5).abs() < 1e-3 && (rest.max[2] - 1.0).abs() < 1e-3, "{rest:?}");
+    // Two seconds in, the knee has turned 90 degrees: the top half lies along -x.
+    let v = rig.version("/fbx");
+    rig.edit(&[set("/fbx.time", Value::Float(2.0)), set("/fbx.loop", Value::Bool(false))]);
+    let bent = fbx_bounds(&mut rig, v);
+    assert!((bent.min[0] + 1.0).abs() < 1e-3 && (bent.max[2] - 0.625).abs() < 1e-3, "{bent:?}");
+    look(&mut rig, "/view", "render_fbx_skin_2s", (super::W, super::H));
+    rig.edit(&[set("/fbx.play", Value::Bool(true))]);
+    rig.cook("/fbx");
+    assert!(rig.cooker.status(rig.id("/fbx")).unwrap().time_dependent);
+}
