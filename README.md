@@ -61,7 +61,7 @@ lists every one.
   background-removed photo, a threshold, a scan's regions), then simplified and edited by hand.
 - **Camera:** live input from webcams and capture cards, denoising, optical flow, blob tracking
   with ids that stay with a blob.
-- **Sound:** input from any audio device, loudness, bands, onsets, a spectrum (also as a texture) and a beat tracker
+- **Sound:** input from any audio device or a sound file, loudness, bands, onsets, a spectrum (also as a texture), a beat tracker, instruments and drones played by channels, output through a limiter or to a WAV file
   (see [below](#beat-tracking)).
 - **Channels:** LFO, noise, math, filter, integrator, derivative, trail, merge, select. Mouse, keyboard and 3D
   mouse as inputs. Any parameter can be bound to a channel by dragging a wire onto it. OSC
@@ -98,7 +98,7 @@ lists every one.
 | Image files | yes | snapshots | `tex.image_file`, `tex.layer` | PNG, JPEG, TIFF, EXR, HDR, WebP and more; PSD/PSB layers. `node.snapshot` saves any node as PNG |
 | 3D files | yes | yes | `geo.file`, `out.mesh` | in: OBJ (with MTL), STL, glTF/GLB. Out: OBJ, STL, GLB |
 | Text tables | yes | yes | `table.file`, `out.table` | in: CSV, TSV, plain lines. Out: CSV, TSV |
-| Audio | yes | yes | `audio.device_in`, `out.audio`, `chan.audio_envelope`, `chan.audio_spectrum`, `chan.audio_analysis`, `audio.instrument`, `audio.ambience`, `audio.filter` | any device (WASAPI, shared mode). Loudness per channel, a spectrum as numbers or a spectrogram texture, beat and tempo. Output always through a limiter at -1 dBFS; `audio.mute` silences everything. Ready-made instruments and drones in a key and scale, played by channels. A filter for any sound. No audio files yet |
+| Audio | yes | yes | `audio.device_in`, `audio.file`, `out.audio`, `out.audio_file`, `chan.audio_envelope`, `chan.audio_spectrum`, `chan.audio_analysis`, `audio.instrument`, `audio.ambience`, `audio.filter` | any device (WASAPI, shared mode). Loudness per channel, a spectrum as numbers or a spectrogram texture, beat and tempo. Output always through a limiter at -1 dBFS; `audio.mute` silences everything. Ready-made instruments and drones in a key and scale, played by channels. A filter for any sound. Sound files (WAV, FLAC, MP3, Ogg, AAC) play in step with video files; `out.audio_file` records to WAV |
 | Spout | yes | yes | `tex.spout_in`, `out.spout` | textures shared with other programs on the same machine |
 | NDI® | video and audio | video | `tex.ndi_in`, `out.ndi` | needs the NDI runtime installed |
 | DMX over USB | | yes | `out.dmx` | Enttec Open DMX USB, one universe |
@@ -120,12 +120,13 @@ one person's installations and has far fewer nodes in each family.
 
 Not in penumbra, as of now. Some of this is planned, some stays out, see [Scope](#scope):
 
-- MIDI, timecode (LTC, MTC), audio output, audio files, VST plugins.
+- MIDI, timecode (LTC, MTC), VST plugins.
 - Depth cameras and other tracking hardware (Kinect, RealSense, ZED, Leap Motion).
 - Python expressions on parameters. Parameters are driven by binding them to channels. Python
   runs only in script nodes.
-- Custom control panels (TouchDesigner's Panel COMPs), keyframe animation and a timeline. A
-  show runs as a list of steps instead (`chan.sequence`).
+- Custom control panels (TouchDesigner's Panel COMPs): buttons and sliders sit on their nodes
+  and, flagged `show`, on the locked show screen. Keyframe animation and a timeline: a show
+  runs as a list of steps instead (`chan.sequence`).
 - Geometry modelling beyond primitives, transforms, merging and instancing. Particle systems
   and physics have no dedicated nodes; both can be done in shaders, as in the curl-noise
   example.
