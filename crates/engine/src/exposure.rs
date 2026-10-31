@@ -18,10 +18,12 @@ use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
 use crate::engine::Engine;
+use crate::jobs::Job;
 use crate::projector::{
     CameraStream, Claim, MAX_WIDTH, Rig, keep_area, projector_list, settle_of, timeout_of,
 };
 use penumbra_core::NodePath;
+use penumbra_project::Actor;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -40,10 +42,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          dark, unsteady), stops to change by and advice; `ok` is false while any projector clips. \
          {camera (tex.video_in path), projectors? (paths, default every active out.projector), area? \
          ([x, y, w, h] of the camera picture, 0..1), frames? (camera frames per projector, 4), settle? \
-         (s, 0.5), timeout? (s, 5)}",
+         (s, 0.5), timeout? (s, 5), wait? (false: start and answer at once; job.status follows it and          keeps the reply; true)}",
         move |p| {
             let a: ExposureArgs = args(p)?;
-            run(&e, &a)
+            exposure_job(&e, a, Actor::Claude)
         },
     ));
 }
@@ -57,9 +59,19 @@ pub struct ExposureArgs {
     pub frames: Option<usize>,
     pub settle: Option<f64>,
     pub timeout: Option<f64>,
+    /// Answer when done (the default), or start and answer at once (`job.status` follows it).
+    pub wait: Option<bool>,
 }
 
-pub fn run(e: &Engine, a: &ExposureArgs) -> CmdResult<Json> {
+/// Runs the check as a helper job (one at a time with the match, flat field and blend; the
+/// Helpers window shows its progress and reply): on this thread when `wait` (the default),
+/// else on its own.
+pub fn exposure_job(e: &Arc<Engine>, a: ExposureArgs, actor: Actor) -> CmdResult<Json> {
+    let wait = a.wait.unwrap_or(true);
+    crate::jobs::run(e, "camera.exposure", actor, wait, move |e, job| run(e, &a, Some(job)))
+}
+
+pub fn run(e: &Engine, a: &ExposureArgs, job: Option<&Job>) -> CmdResult<Json> {
     let frames = a.frames.unwrap_or(DEFAULT_FRAMES);
     if !(1..=30).contains(&frames) {
         return Err("`frames` is 1 to 30".into());
@@ -87,8 +99,12 @@ pub fn run(e: &Engine, a: &ExposureArgs) -> CmdResult<Json> {
         timeout: Duration::from_secs_f64(timeout),
         pass: e.output().pass,
         frames: 1,
-        job: None,
+        job,
     };
+    if let Some(job) = job {
+        job.expect(1 + projectors.len());
+        job.step("each projector alone in white", Some(0.0));
+    }
     let started = Instant::now();
     let black = rig.shot(|_| [0.0; 3])?;
     let mut out = Vec::with_capacity(projectors.len());
@@ -132,7 +148,13 @@ pub fn run(e: &Engine, a: &ExposureArgs) -> CmdResult<Json> {
             )
         })
         .collect();
+    // What to do, per projector, where there is something to do.
+    let warnings: Vec<String> = out
+        .iter()
+        .filter_map(|r| Some(format!("{}: {}", r["projector"].as_str()?, r["advice"].as_str()?)))
+        .collect();
     Ok(json!({
+        "warnings": warnings,
         "message": format!(
             "exposure {}: {}",
             if ok { "usable" } else { "not usable" },

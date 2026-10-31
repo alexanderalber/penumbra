@@ -106,8 +106,12 @@ options; the rest keeps the commands' defaults, and the files go where the comma
   scan's folder, where its `tex.scan` reads them; on by default when a `tex.scan` writes one of
   the scans. Off, numbered files (`weight_0.png`, in the order listed) go into the folder named
   beside it (`objects`).
-- **Camera** and **Projectors** choose what the two measurements use: the `tex.video_in` (the
+- **Camera** and **Projectors** choose what the measurements use: the `tex.video_in` (the
   one the `tex.scan` nodes name, at first) and the active projectors (all, at first).
+- **Camera exposure**: **Check** shows each chosen projector alone in white for a moment and
+  lists per projector whether the camera reads it well: `ok`, `clipped`, `dark` or `unsteady`,
+  with its brightest pixels (aim for about 200 of 255). Takes a few seconds
+  (`camera.exposure`, see [below](#matching-projectors)).
 - **Colour match**: **Match** measures with the camera (see [below](#matching-projectors)).
   **keep the measurements in** also writes one file per projector into the folder, with the
   **note**. **Match from the files** matches from that folder without the camera. **apply** off

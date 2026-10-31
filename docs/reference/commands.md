@@ -50,7 +50,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `camera.exposure` | Check the camera's exposure before a match, flat field or scan, in a few seconds: each projector alone shows white, the camera's frames are read where it lights the picture. Reports per projector the brightest pixels (peak, of 255; aim for about 200), the median, the black, the share that clips and in which channels, the change from frame to frame (flicker) and of the rows between frames (banding: a shutter shorter than the projector's frame), a verdict (ok, clipped, dark, unsteady), stops to change by and advice; `ok` is false while any projector clips. {camera (tex.video_in path), projectors? (paths, default every active out.projector), area? ([x, y, w, h] of the camera picture, 0..1), frames? (camera frames per projector, 4), settle? (s, 0.5), timeout? (s, 5)} |
+| `camera.exposure` | Check the camera's exposure before a match, flat field or scan, in a few seconds: each projector alone shows white, the camera's frames are read where it lights the picture. Reports per projector the brightest pixels (peak, of 255; aim for about 200), the median, the black, the share that clips and in which channels, the change from frame to frame (flicker) and of the rows between frames (banding: a shutter shorter than the projector's frame), a verdict (ok, clipped, dark, unsteady), stops to change by and advice; `ok` is false while any projector clips. {camera (tex.video_in path), projectors? (paths, default every active out.projector), area? ([x, y, w, h] of the camera picture, 0..1), frames? (camera frames per projector, 4), settle? (s, 0.5), timeout? (s, 5), wait? (false: start and answer at once; job.status follows it and keeps the reply; true)} |
 
 ## chan
 
@@ -135,8 +135,8 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `job.cancel` | Stop the helper job going on (projector.match, projector.flatfield before their next picture; scan.blend between its steps). Nothing is applied; {} |
-| `job.status` | How the helper jobs stand (scan.blend, projector.match, projector.flatfield, also when started from the Helpers window): the one running (command, step, progress 0 to 1, seconds) and the last of each command (ok, message, warnings, its whole reply); {} |
+| `job.cancel` | Stop the helper job going on (projector.match, projector.flatfield, camera.exposure before their next picture; scan.blend between its steps). Nothing is applied; {} |
+| `job.status` | How the helper jobs stand (scan.blend, projector.match, projector.flatfield, camera.exposure, also when started from the Helpers window): the one running (command, step, progress 0 to 1, seconds) and the last of each command (ok, message, warnings, its whole reply); {} |
 
 ## keyboard
 

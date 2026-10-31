@@ -280,7 +280,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "job.status",
-        "How the helper jobs stand (scan.blend, projector.match, projector.flatfield, also when started \
+        "How the helper jobs stand (scan.blend, projector.match, projector.flatfield, camera.exposure, also when started \
          from the Helpers window): the one running (command, step, progress 0 to 1, seconds) and the \
          last of each command (ok, message, warnings, its whole reply); {}",
         move |p| {
@@ -294,7 +294,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(
         "job.cancel",
-        "Stop the helper job going on (projector.match, projector.flatfield before their next picture; \
+        "Stop the helper job going on (projector.match, projector.flatfield, camera.exposure before their next picture; \
          scan.blend between its steps). Nothing is applied; {}",
         move |p| {
             #[derive(Deserialize)]

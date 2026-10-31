@@ -30,6 +30,7 @@ use crate::{automation, theme};
 const BLEND: &str = "scan.blend";
 const MATCH: &str = "projector.match";
 const FLATFIELD: &str = "projector.flatfield";
+const EXPOSURE: &str = "camera.exposure";
 
 /// What the section remembers between frames: the scans found and the options chosen.
 pub struct BlendMatch {
@@ -154,6 +155,8 @@ impl BlendMatch {
 
         ui.add_space(4.0);
         let projectors = self.rig(ui, input, auto);
+        self.exposure(ui, input, &projectors, can, why, auto);
+        finished(ui, status.last.get(EXPOSURE), auto);
         self.matching(ui, input, &projectors, can, why, auto);
         finished(ui, status.last.get(MATCH), auto);
 
@@ -308,6 +311,54 @@ impl BlendMatch {
             }
         });
         all.into_iter().filter(|p| !self.skipped.get(p).copied().unwrap_or(false)).collect()
+    }
+
+    /// The exposure check: a few seconds, before a match or flat field.
+    fn exposure(
+        &mut self,
+        ui: &mut Ui,
+        input: &HelpersInput<'_>,
+        projectors: &[String],
+        can: bool,
+        why: &str,
+        auto: &mut automation::Registry,
+    ) {
+        use penumbra_engine::exposure::ExposureArgs;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Camera exposure").strong()).on_hover_text(
+                "A camera that clips the white makes every measurement wrong; check before a match, flat                  field or scan",
+            );
+            let ready = can && !projectors.is_empty() && !self.camera.is_empty();
+            let need = if projectors.is_empty() {
+                "Choose a projector"
+            } else if self.camera.is_empty() {
+                "Add a tex.video_in that sees the projectors"
+            } else {
+                why
+            };
+            let r = ui
+                .add_enabled(ready, egui::Button::new("Check"))
+                .on_hover_text(
+                    "Each projector alone shows white for a moment; reads the camera where it lights: the                      brightest pixels (aim for about 200 of 255), clipping, flicker (camera.exposure)",
+                )
+                .on_disabled_hover_text(need);
+            auto.add("helpers.exposure.run", r.rect, "Check");
+            if r.clicked() {
+                let started = match parse(&self.camera) {
+                    Some(camera) => {
+                        let a = ExposureArgs {
+                            camera,
+                            projectors: Some(projectors.iter().filter_map(|p| parse(p)).collect()),
+                            wait: Some(false),
+                            ..ExposureArgs::default()
+                        };
+                        penumbra_engine::exposure::exposure_job(input.engine, a, Actor::User)
+                    }
+                    None => Err(format!("{} is not a node path", self.camera).into()),
+                };
+                self.start(started);
+            }
+        });
     }
 
     fn matching(
@@ -519,6 +570,7 @@ fn finished(ui: &mut Ui, f: Option<&Finished>, auto: &mut automation::Registry) 
             MATCH => match_result(ui, &f.reply),
             FLATFIELD => flatfield_result(ui, &f.reply),
             BLEND => blend_result(ui, &f.reply),
+            EXPOSURE => exposure_result(ui, &f.reply),
             _ => {}
         }
     }
@@ -652,5 +704,27 @@ fn blend_result(ui: &mut Ui, reply: &Json) {
             ui.label(RichText::new(format!("{scan}: shares {shared} camera px with the others")).color(weak))
                 .on_hover_text(format!("wrote {weight}"));
         }
+    }
+}
+
+/// The exposure check: per projector its verdict, the brightest pixels and what clips.
+fn exposure_result(ui: &mut Ui, reply: &Json) {
+    let Some(projectors) = reply.get("projectors").and_then(Json::as_array) else { return };
+    for p in projectors {
+        let path = p.get("projector").and_then(Json::as_str).unwrap_or("?");
+        let verdict = p.get("verdict").and_then(Json::as_str).unwrap_or("?");
+        let colour = match verdict {
+            "ok" => theme::TEXT_WEAK,
+            "clipped" | "unseen" => theme::ERROR,
+            _ => theme::WARNING,
+        };
+        let mut text = format!("{path}: {verdict}");
+        if let Some(peak) = p.get("peak").and_then(Json::as_f64) {
+            text.push_str(&format!(", brightest {peak:.0} of 255"));
+        }
+        if let Some(c) = p.get("clipped_percent").and_then(Json::as_f64).filter(|c| *c > 0.0) {
+            text.push_str(&format!(", {c:.1} % clipped"));
+        }
+        ui.colored_label(colour, text);
     }
 }
