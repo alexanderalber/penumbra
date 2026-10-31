@@ -470,26 +470,37 @@ impl Room {
     /// with the square of the distance (1 at the target), black where the projector does not
     /// reach.
     pub fn photo(&self, p: usize) -> Vec<[f32; 4]> {
-        let (proj, cam) = (self.projector_pinhole(p), self.camera_pinhole());
         let (cw, ch) = self.camera;
-        let reach = dot(sub(self.target, proj.at), sub(self.target, proj.at));
         rows(ch, |y| {
             (0..cw)
-                .map(|x| {
-                    let d = cam.ray(x as f64 + 0.5, y as f64 + 0.5);
-                    let Some((t, s)) = self.hit(cam.at, d) else { return [0.0, 0.0, 0.0, 1.0] };
-                    let point = add(cam.at, mul(d, t));
-                    if !self.visible(proj.at, point) || proj.project(point).is_none() {
-                        return [0.0, 0.0, 0.0, 1.0];
-                    }
-                    let to = sub(proj.at, point);
-                    let lambert = dot(self.normal(s, point, cam.at), unit(to)).max(0.0);
-                    let light = lambert * reach / dot(to, to).max(1e-9);
-                    let a = albedo(s);
-                    [(a[0] * light) as f32, (a[1] * light) as f32, (a[2] * light) as f32, 1.0]
+                .map(|x| match self.lit_at(p, x as f64 + 0.5, y as f64 + 0.5) {
+                    Some((_, [r, g, b])) => [r, g, b, 1.0],
+                    None => [0.0, 0.0, 0.0, 1.0],
                 })
                 .collect()
         })
+    }
+
+    /// What the camera sees at `(x, y)` (camera pixels, continuous) lit by projector `p`: the
+    /// projector position (pixels, continuous) that lights it, and its colour lit white as in
+    /// [`Room::photo`]. `None` where the camera sees nothing or the projector does not reach.
+    /// A projector picture looked up at several points per camera pixel renders the camera's
+    /// picture of any pattern.
+    pub fn lit_at(&self, p: usize, x: f64, y: f64) -> Option<([f64; 2], [f32; 3])> {
+        let (proj, cam) = (self.projector_pinhole(p), self.camera_pinhole());
+        let reach = dot(sub(self.target, proj.at), sub(self.target, proj.at));
+        let d = cam.ray(x, y);
+        let (t, s) = self.hit(cam.at, d)?;
+        let point = add(cam.at, mul(d, t));
+        if !self.visible(proj.at, point) {
+            return None;
+        }
+        let at = proj.project(point)?;
+        let to = sub(proj.at, point);
+        let lambert = dot(self.normal(s, point, cam.at), unit(to)).max(0.0);
+        let light = lambert * reach / dot(to, to).max(1e-9);
+        let a = albedo(s);
+        Some((at, [(a[0] * light) as f32, (a[1] * light) as f32, (a[2] * light) as f32]))
     }
 
     /// Where the camera sees a point (camera pixels), if in its picture.

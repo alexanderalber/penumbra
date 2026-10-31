@@ -30,8 +30,8 @@ The quickest way: one `tex.scan` node per projector. Its params name the `projec
 (`out.projector`), the `camera` (`tex.video_in`), the `folder` scans go to (`scan`, the
 projector's scan is the folder named after its path inside, `scan/proj_a`) and, optionally, the
 `mapper` (`tex.mapper`) feeding the projector. Under *more*: `settle`, `level`, `second_level`
-(0, off: a second pass at that level, see "Two levels" below) and `fill`, as for
-`scan.capture` below.
+(0, off: a second pass at that level, see "Two levels" below), `fill`, `coding` and `gamma` (see
+"Finer than a pixel" below), as for `scan.capture` below.
 
 The **scan** button in its param panel scans the projectors of every `tex.scan` naming the same
 camera, one after another; then, if every one of them names its mapper, lines them up
@@ -134,6 +134,26 @@ the walls throw on as if the projector lit those surfaces directly. The decoder 
 own epipolar geometry and drops pixels further than `options.epipolar` (4 projector pixels; 0
 turns it off) from it; the reply's `off_geometry` counts them. Maps decoded before this check
 keep their wrong pixels: decode the kept frames again.
+
+**Finer than a pixel: `coding: gray_phase`.** Plain Gray code places a camera pixel to about
+one projector pixel. A camera that sees the projector coarser than its own pixels loses the
+finest stripes to grey, and the map gets coarser still. `"coding": "gray_phase"` stops the Gray
+code at stripes 8 pixels wide and adds 8 sines across and 8 down, 16 projector pixels long
+(`period`, `steps`). The camera sees those sines clearly, and their phase places a pixel to a
+tenth of a projector pixel. A scan takes 54 pictures per projector at 1920 x 1080 instead of
+46. On a synthetic scene of crates and a pumpkin, with the camera at 0.57 pixels
+per projector pixel, the median error fell from 0.5 to 0.04 projector pixels, and the share off
+by more than a pixel from 17 % to 0.2 %.
+
+Use it where the position matters below a pixel: `scan.relief`, smooth surfaces, fine relief
+such as a pumpkin's ribs. Masks, faces and blends gain little. The sines are grey levels, so the
+projector's response bends them: `gamma` (2.2) is that response, light = signal ^ gamma.
+Measure it or leave 2.2. On the synthetic scene, a `gamma` of 1 for a projector of 2.2 changed
+nothing measurable with 8 steps; 4 steps (`"steps": 4`, 46 pictures) are more sensitive to it.
+Camera pixels on the edge between a near and a far surface get a position between the two. The
+reply's `sine_amplitude` says how clearly the camera saw the sines, 0 to 1; under 0.3 is a
+warning (focus, or a longer `period`). `scan.decode` of kept frames needs the same `coding`,
+`period` and `steps`. `tex.scan_pattern` shows plain Gray code only.
 
 Kept frames of several levels merge again with `scan.decode` and a list:
 `"frames": ["scan/proj_a/frames", "scan/proj_a/frames_1"]`.

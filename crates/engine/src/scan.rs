@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use penumbra_calib::objects;
-use penumbra_calib::scan::{self, Decoder, Options, Patterns, Status};
+use penumbra_calib::scan::{self, Coding, Decoder, Options, Patterns, Status};
 use penumbra_gpu::Pixels;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
@@ -63,20 +63,27 @@ pub const QUALITY: &str = "quality.png";
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     registry.register(FnCommand::new(
         "scan.patterns",
-        "The pictures of a structured light scan in the order tex.scan_pattern shows them; {projector?: [w, h] (1920, 1080)}",
+        "The pictures of a structured light scan in the order scan.capture shows them (tex.scan_pattern \
+         shows plain Gray code only); {projector?: [w, h] (1920, 1080), coding?, period?, steps? (as \
+         scan.capture)}",
         |p| {
             #[derive(Deserialize)]
             #[serde(deny_unknown_fields)]
             struct A {
                 projector: Option<[u32; 2]>,
+                coding: Option<String>,
+                period: Option<u32>,
+                steps: Option<u32>,
             }
             let a: A = args(p)?;
             let [w, h] = a.projector.unwrap_or(DEFAULT_PROJECTOR);
-            let patterns = Patterns::new(w, h).map_err(CommandError)?;
+            let coding = coding_of(a.coding.as_deref(), a.period, a.steps)?;
+            let patterns = Patterns::with_coding(w, h, coding).map_err(CommandError)?;
             let names: Vec<String> =
                 (0..patterns.count()).filter_map(|k| patterns.get(k).map(|p| p.name())).collect();
             Ok(json!({
                 "count": patterns.count(),
+                "coding": coding.name(),
                 "column_bits": patterns.column_bits(),
                 "row_bits": patterns.row_bits(),
                 "patterns": names,
@@ -91,7 +98,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          proj_to_cam.exr (maps for tex.remap), scene.png (the scene as the projector sees it) and \
          quality.png; {frames (folder, relative to the project; or a list of folders: scans of one projector \
          at different levels of light, merged per camera pixel, the surest decode winning, the first's colour), projector?: [w, h] (1920, 1080), \
-         out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, \
+         coding?, period?, steps? (as scan.capture took them), out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, \
          saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture), \
          epipolar? (px a decoded pixel may lie off the geometry the decode as a whole obeys, else it is dropped: light thrown on by the walls decodes wrong, 4; 0 off)}}",
         move |p| {
@@ -139,6 +146,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
 pub struct DecodeArgs {
     pub frames: Frames,
     pub projector: Option<[u32; 2]>,
+    pub coding: Option<String>,
+    pub period: Option<u32>,
+    pub steps: Option<u32>,
     pub out: Option<PathBuf>,
     pub fill: Option<u32>,
     #[serde(default)]
@@ -157,12 +167,31 @@ pub enum Frames {
 /// Most frame folders `scan.decode` merges.
 const MAX_LEVELS: usize = 4;
 
+/// The coding the scan commands' `coding`, `period` and `steps` ask for: plain Gray code unless
+/// `coding` is `gray_phase`, whose sines are 16 pixels and 8 steps unless given.
+pub(crate) fn coding_of(coding: Option<&str>, period: Option<u32>, steps: Option<u32>) -> CmdResult<Coding> {
+    let coding = match coding.unwrap_or("gray") {
+        "gray" if period.is_some() || steps.is_some() => {
+            return Err("`period` and `steps` are for `coding: gray_phase`".into());
+        }
+        "gray" => Coding::Gray,
+        "gray_phase" => Coding::GrayPhase {
+            period: period.unwrap_or(scan::DEFAULT_PERIOD),
+            steps: steps.unwrap_or(scan::DEFAULT_STEPS),
+        },
+        other => return Err(format!("no coding `{other}`: gray or gray_phase").into()),
+    };
+    coding.check().map_err(CommandError)?;
+    Ok(coding)
+}
+
 /// Decodes the pictures in `a.frames` (relative to `dir`) and writes the results; the reply
 /// counts what was found.
 pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
     let started = Instant::now();
     let [pw, ph] = a.projector.unwrap_or(DEFAULT_PROJECTOR);
-    let patterns = Patterns::new(pw, ph).map_err(CommandError)?;
+    let coding = coding_of(a.coding.as_deref(), a.period, a.steps)?;
+    let patterns = Patterns::with_coding(pw, ph, coding).map_err(CommandError)?;
     a.options.check().map_err(CommandError)?;
     let fill = fill_of(a.fill)?;
     let folders: Vec<PathBuf> = match &a.frames {
@@ -270,22 +299,36 @@ impl Decoded {
 /// pixels are larger than the projector's on the scene.
 const BITS_MISSING_NOTED: u32 = 2;
 
+/// How clearly the camera must see the sines of a `gray_phase` scan (their median amplitude over
+/// a full sine's) before a decode warns.
+const MODULATION_WARNED: f32 = 0.3;
+
 /// What a decode's counts warn of: few camera pixels decoded (`valid` of `total`), more than
-/// [`BITS_MISSING_NOTED`] bits the camera does not resolve, much of the picture clipped.
-fn decode_warnings(
-    valid: usize,
-    total: usize,
-    clipped: usize,
-    bits: [u32; 2],
-    resolved: [u32; 2],
-) -> Vec<String> {
+/// [`BITS_MISSING_NOTED`] bits the camera does not resolve (any with sines, which need every
+/// Gray bit to find their period), sines the camera hardly sees, much of the picture clipped.
+fn decode_warnings(valid: usize, total: usize, clipped: usize, stats: &scan::Stats) -> Vec<String> {
+    let (bits, resolved) = (stats.bits, stats.resolved);
     let mut warnings: Vec<String> = Vec::new();
     if valid * 10 < total {
         warnings.push(format!(
             "only {valid} of {total} camera pixels decoded: is the projector in view, the room dark and the order right?"
         ));
     }
-    if bits_missing(bits, resolved) > BITS_MISSING_NOTED {
+    let phase = matches!(stats.coding, Coding::GrayPhase { .. });
+    if phase && bits_missing(bits, resolved) > 0 {
+        warnings.push(format!(
+            "the camera resolves {} of {} column and {} of {} row bits of the Gray code: the sines land in the wrong period in places; use a longer period, or coding gray",
+            resolved[0], bits[0], resolved[1], bits[1]
+        ));
+    }
+    let faint = stats.modulation.iter().copied().fold(f32::INFINITY, f32::min);
+    if phase && faint < MODULATION_WARNED {
+        warnings.push(format!(
+            "the camera hardly sees the sines (median amplitude {:.2} of a full sine's): focus the projector and the camera, or use a longer period",
+            faint
+        ));
+    }
+    if !phase && bits_missing(bits, resolved) > BITS_MISSING_NOTED {
         warnings.push(format!(
             "the camera resolves {} of {} column and {} of {} row bits: the map is several projector pixels coarse; move the camera closer or use a longer lens",
             resolved[0], bits[0], resolved[1], bits[1]
@@ -303,10 +346,12 @@ fn bits_missing(bits: [u32; 2], resolved: [u32; 2]) -> u32 {
     bits.iter().zip(resolved).map(|(b, r)| b.saturating_sub(r)).max().unwrap_or(0)
 }
 
-/// What a decode notes without warning: the camera misses only the finest one or two bits.
-fn decode_notes(bits: [u32; 2], resolved: [u32; 2]) -> Vec<String> {
+/// What a decode notes without warning: the camera misses only the finest one or two bits of a
+/// plain Gray code.
+fn decode_notes(stats: &scan::Stats) -> Vec<String> {
+    let (bits, resolved) = (stats.bits, stats.resolved);
     let missing = bits_missing(bits, resolved);
-    if missing == 0 || missing > BITS_MISSING_NOTED {
+    if stats.coding != Coding::Gray || missing == 0 || missing > BITS_MISSING_NOTED {
         return Vec::new();
     }
     vec![format!(
@@ -364,8 +409,8 @@ pub(crate) fn write_decoded(
     let stats = &result.stats;
     let total = result.status.len().max(1);
     let valid = stats.count(Status::Valid);
-    let warnings = decode_warnings(valid, total, stats.count(Status::Clipped), stats.bits, stats.resolved);
-    let notes = decode_notes(stats.bits, stats.resolved);
+    let warnings = decode_warnings(valid, total, stats.count(Status::Clipped), stats);
+    let notes = decode_notes(stats);
     let counts: serde_json::Map<String, Json> =
         Status::ALL.iter().map(|s| (s.name().to_string(), json!(stats.count(*s)))).collect();
     let [measured, filled, empty] = inverse.counts();
@@ -375,8 +420,10 @@ pub(crate) fn write_decoded(
         "pictures": patterns.count(),
         "camera_pixels": counts,
         "projector_pixels": {"measured": measured, "filled": filled, "empty": empty},
+        "coding": stats.coding.name(),
         "bits": stats.bits,
         "resolved_bits": stats.resolved,
+        "sine_amplitude": stats.modulation.map(|m| (m * 100.0).round() / 100.0),
         "step": stats.step,
         "off_geometry": stats.off_geometry,
         "files": files,
@@ -1005,22 +1052,66 @@ mod tests {
 
     #[test]
     fn decode_warnings_say_what_went_wrong() {
-        assert!(decode_warnings(50, 100, 1, [3, 2], [3, 2]).is_empty());
-        let w = decode_warnings(5, 100, 2, [11, 10], [8, 10]);
+        let stats = |bits: [u32; 2], resolved: [u32; 2]| scan::Stats {
+            counts: [0; 6],
+            bits,
+            resolved,
+            step: 1.0,
+            off_geometry: 0,
+            coding: Coding::Gray,
+            modulation: [0.0; 2],
+        };
+        assert!(decode_warnings(50, 100, 1, &stats([3, 2], [3, 2])).is_empty());
+        let w = decode_warnings(5, 100, 2, &stats([11, 10], [8, 10]));
         assert_eq!(w.len(), 3, "{w:?}");
         assert!(w[0].starts_with("only 5 of 100 camera pixels decoded"));
         assert!(w[1].starts_with("the camera resolves 8 of 11 column and 10 of 10 row bits"));
         assert!(w[2].starts_with("more than 1 % of the camera picture clipped"));
-        assert!(decode_notes([11, 10], [8, 10]).is_empty());
+        assert!(decode_notes(&stats([11, 10], [8, 10])).is_empty());
+        // With sines every Gray bit counts, and faint sines warn.
+        let phase = |resolved: [u32; 2], modulation: [f32; 2]| scan::Stats {
+            coding: Coding::gray_phase(),
+            modulation,
+            ..stats([9, 9], resolved)
+        };
+        assert!(decode_warnings(50, 100, 1, &phase([9, 9], [0.7, 0.6])).is_empty());
+        let w = decode_warnings(50, 100, 1, &phase([8, 9], [0.7, 0.2]));
+        assert_eq!(w.len(), 2, "{w:?}");
+        assert!(w[0].contains("the sines land in the wrong period"), "{w:?}");
+        assert!(w[1].starts_with("the camera hardly sees the sines (median amplitude 0.20"), "{w:?}");
+        assert!(decode_notes(&phase([8, 9], [0.7, 0.7])).is_empty());
     }
 
     #[test]
     fn one_or_two_missing_bits_are_a_note() {
-        assert!(decode_warnings(50, 100, 1, [11, 10], [9, 9]).is_empty());
-        let n = decode_notes([11, 10], [9, 9]);
+        let stats = |bits: [u32; 2], resolved: [u32; 2]| scan::Stats {
+            counts: [0; 6],
+            bits,
+            resolved,
+            step: 1.0,
+            off_geometry: 0,
+            coding: Coding::Gray,
+            modulation: [0.0; 2],
+        };
+        assert!(decode_warnings(50, 100, 1, &stats([11, 10], [9, 9])).is_empty());
+        let n = decode_notes(&stats([11, 10], [9, 9]));
         assert_eq!(n.len(), 1, "{n:?}");
         assert!(n[0].starts_with("the camera resolves 9 of 11 column and 9 of 10 row bits"));
-        assert!(decode_notes([11, 10], [11, 10]).is_empty());
+        assert!(decode_notes(&stats([11, 10], [11, 10])).is_empty());
+    }
+
+    #[test]
+    fn coding_args() {
+        assert_eq!(coding_of(None, None, None).unwrap(), Coding::Gray);
+        assert_eq!(coding_of(Some("gray_phase"), None, None).unwrap(), Coding::gray_phase());
+        assert_eq!(
+            coding_of(Some("gray_phase"), Some(32), Some(4)).unwrap(),
+            Coding::GrayPhase { period: 32, steps: 4 }
+        );
+        assert!(coding_of(Some("gray"), Some(16), None).unwrap_err().0.contains("`period`"));
+        assert!(coding_of(Some("gray_phase"), Some(12), None).unwrap_err().0.contains("`period`"));
+        assert!(coding_of(Some("gray_phase"), None, Some(2)).unwrap_err().0.contains("`steps`"));
+        assert!(coding_of(Some("sine"), None, None).unwrap_err().0.contains("gray or gray_phase"));
     }
 
     #[test]

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use penumbra_calib::scan::Patterns;
+use penumbra_calib::scan::{Coding, Pattern, Patterns};
 use penumbra_camera::{CameraFrame, Key, Matrix, PixelFormat};
 use penumbra_core::NodeId;
 use penumbra_gpu::projection::Stripes;
@@ -50,13 +50,33 @@ fn frame(luma: Vec<u8>) -> CameraFrame {
 /// finest stripes of each axis are a flat grey to the camera. Also returns where a camera pixel
 /// sees lit and dark projector pixels at once (where a real camera flickers).
 /// `glare`: the camera's left 40 columns see the light twice as bright, so a full level clips there.
+/// Sines are shown as the projector shows them (bent by the stripes' gamma, which the projector
+/// bends back) and seen as light, sRGB-encoded.
 fn picture(stripes: &[Option<Stripes>], fine: bool, glare: bool) -> (Vec<u8>, Vec<bool>) {
     let mut luma = vec![40u8; W * H];
     let mut mixed = vec![false; W * H];
+    let linear = |c: f32| ((c / 255.0 + 0.055) / 1.055).powf(2.4);
+    let code =
+        |l: f32| ((1.055 * l.max(0.0).powf(1.0 / 2.4) - 0.055) * 255.0).round().clamp(0.0, 255.0) as u8;
     for (s, (ox, oy)) in stripes.iter().zip(OFFSETS) {
         let Some(s) = s else { continue };
-        let patterns = Patterns::new(s.size[0], s.size[1]).unwrap();
+        let coding =
+            if s.period > 0 { Coding::GrayPhase { period: s.period, steps: s.steps } } else { Coding::Gray };
+        let patterns = Patterns::with_coding(s.size[0], s.size[1], coding).unwrap();
         let Some(pattern) = patterns.get(s.pattern as usize) else { continue };
+        if matches!(pattern, Pattern::ColumnPhase { .. } | Pattern::RowPhase { .. }) {
+            for (i, v) in luma.iter_mut().enumerate() {
+                let (x, y) = (i % W, i / W);
+                let (u, w) = (((x.saturating_sub(ox)) / 2) as u32, ((y.saturating_sub(oy)) / 2) as u32);
+                if x < ox || y < oy || u >= s.size[0] || w >= s.size[1] {
+                    continue;
+                }
+                let signal = s.level * patterns.light(pattern, u, w).powf(1.0 / s.gamma);
+                let light = signal.powf(s.gamma);
+                *v = code(linear(f32::from(*v)) + (linear(200.0) - linear(40.0)) * light);
+            }
+            continue;
+        }
         for (i, (v, m)) in luma.iter_mut().zip(mixed.iter_mut()).enumerate() {
             let (x, y) = (i % W, i / W);
             if x < ox || y < oy {
@@ -142,7 +162,7 @@ impl Camera {
                     .map(|id| {
                         let p = out.projectors.iter().find(|p| p.node == *id)?;
                         // Without an override a projector shows its content: all lit here.
-                        let content = Stripes { pattern: 0, level: 1.0, size: [PW, PH] };
+                        let content = Stripes::gray(0, 1.0, [PW, PH]);
                         if p.flat.is_some() { None } else { Some(p.stripes.unwrap_or(content)) }
                     })
                     .collect();
@@ -316,6 +336,58 @@ fn scan_capture_and_align_with_a_simulated_camera() {
     let e = f.fail("scan.capture", json!({"camera": "/cam", "projectors": ["/proj_c"], "timeout": 0.3}));
     assert!(e.contains("/proj_c, white") && e.contains("did not change"), "{e}");
     assert!(f.engine.board().state().stripes.is_empty() && f.engine.board().state().flat.is_empty());
+}
+
+#[test]
+fn scan_capture_with_sines_places_each_camera_pixel_to_a_fraction_of_a_pixel() {
+    let f = Fixture::new("scan-capture-sines");
+    let key = Key::new("sim", "");
+    f.engine.camera().feed(&key, frame(vec![40; W * H]));
+    f.call("node.create", json!({"path": "/cam", "kind": "tex.video_in", "params": {"device": "sim"}}));
+    let viewport = json!([0.0, 0.0, f64::from(PW) / 1920.0, f64::from(PH) / 1080.0]);
+    f.call(
+        "node.create",
+        json!({"path": "/proj_a", "kind": "out.projector", "params": {"viewport": viewport}}),
+    );
+    f.call("cook.play", json!({"playing": true}));
+    let net = f.engine.session().doc().snapshot();
+    let id = net.resolve(&"/proj_a".parse().unwrap()).unwrap();
+    let _camera = Camera::start(f.engine.clone(), key, vec![id]);
+
+    assert!(f.fail("scan.capture", json!({"camera": "/cam", "gamma": 2.0})).contains("`gamma`"));
+    let e = f.fail("scan.capture", json!({"camera": "/cam", "coding": "gray_phase", "gamma": 5.0}));
+    assert!(e.contains("`gamma` is 1 to 3"), "{e}");
+    let r = f.call(
+        "scan.capture",
+        json!({"camera": "/cam", "coding": "gray_phase", "gamma": 2.0, "settle": 0.0, "frames": true}),
+    );
+    let p = &r["projectors"][0];
+    let patterns = Patterns::with_coding(PW, PH, Coding::gray_phase()).unwrap();
+    assert_eq!(p["pictures"], patterns.count(), "{r}");
+    assert_eq!(p["coding"], "gray_phase", "{r}");
+    assert!(p["warnings"].as_array().unwrap().is_empty(), "{r}");
+    let valid = p["camera_pixels"]["valid"].as_u64().unwrap();
+    assert!((3700..=3840).contains(&valid), "{valid}: {r}");
+    // Each camera pixel sees one projector pixel's light: the decode lands on its centre.
+    let dir = f.engine.session().dir().to_path_buf();
+    let map = penumbra_gpu::image::decode_file_raw(&dir.join("scan/proj_a/cam_to_proj.exr"), 8192, 1 << 24)
+        .unwrap();
+    let (ox, oy) = OFFSETS[0];
+    let mut worst = 0.0f32;
+    for y in oy + 2..oy + 2 * PH as usize - 2 {
+        for x in ox + 2..ox + 2 * PW as usize - 2 {
+            let at = map.rgba[y * W + x];
+            let want = [((x - ox) / 2) as f32 + 0.5, ((y - oy) / 2) as f32 + 0.5];
+            worst = worst.max((at[0] * PW as f32 - want[0]).abs()).max((at[1] * PH as f32 - want[1]).abs());
+        }
+    }
+    assert!(worst < 0.1, "{worst}");
+    // The kept frames decode alike with the same coding.
+    let d = f.call(
+        "scan.decode",
+        json!({"frames": "scan/proj_a/frames", "projector": [PW, PH], "coding": "gray_phase"}),
+    );
+    assert_eq!(d["camera_pixels"]["valid"], p["camera_pixels"]["valid"], "{d}");
 }
 
 #[test]

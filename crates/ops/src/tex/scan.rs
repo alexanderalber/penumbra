@@ -89,6 +89,24 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .more()
                 .doc("Projector pixels the decode fills in from measured neighbours"),
         )
+        .param(
+            ParamSpec::choice("coding", &["gray", "gray_phase"])
+                .more()
+                .doc("How the scan tells the projector's pixels apart")
+                .choice_doc("gray", "Gray-code stripes alone: 46 pictures at 1080p, good to about a projector pixel")
+                .choice_doc(
+                    "gray_phase",
+                    "Gray-code stripes down to 8 pixels, then 8 sines across and 8 down: 54 pictures, good to a \
+                     tenth of a pixel where the camera sees the sines",
+                ),
+        )
+        .param(
+            ParamSpec::float("gamma", 2.2)
+                .clamp(1.0, 3.0)
+                .more()
+                .applies_when("coding", &["gray_phase"])
+                .doc("The projector's response to its signal (light = signal ^ gamma), so its sines stay sines; measure it or leave 2.2"),
+        )
         .output("proj_to_cam", DataKind::Tex)
         .describe_output(
             "proj_to_cam",

@@ -9,6 +9,17 @@
 //! bit only, so a camera pixel on a stripe edge that reads that bit either way lands on one of the
 //! two columns beside the edge: an ambiguous bit costs at most a pixel.
 //!
+//! **Gray code plus phase** ([`Coding::GrayPhase`]): the Gray code stops at stripes half a
+//! `period` wide, and `steps` sines of `period` projector pixels follow per axis (columns, then
+//! rows), each shifted by `1 / steps` of a period. The Gray code says which quarter period a
+//! camera pixel sees; the sines' phase says where in its period, to a fraction of a pixel. A
+//! camera that sees the projector coarser than its pixels loses the finest Gray stripes, but it
+//! still sees sines of 16 pixels clearly. The phase is unwrapped to the period nearest the Gray
+//! code's quarter, so a Gray bit read wrong on its own stripe edge costs nothing. The sines are
+//! light: the projector's response bends them (its gamma), which [`Patterns::light`] leaves to
+//! whoever turns light into the signal. 1920 x 1080 with periods of 16 and 8 steps takes
+//! 2 + 2 * (9 + 9) + 2 * 8 = 54 pictures.
+//!
 //! **Decoding** ([`Decoder`]): per camera pixel and bit, "pattern brighter than inverse" instead
 //! of a threshold, so dark and bright surfaces and stray light decode alike. A pixel is kept when
 //! the projector reaches it (white minus black at least [`Options::min_contrast`]), the white
@@ -92,6 +103,73 @@ pub fn from_gray(g: u32) -> u32 {
     v
 }
 
+/// The periods of [`Coding::GrayPhase`]'s sines (projector pixels): powers of two, so the Gray
+/// code's cells fit them.
+pub const PHASE_PERIODS: [u32; 4] = [8, 16, 32, 64];
+pub const DEFAULT_PERIOD: u32 = 16;
+/// The fewest and most sines per axis of [`Coding::GrayPhase`].
+pub const MIN_STEPS: u32 = 3;
+pub const MAX_STEPS: u32 = 16;
+pub const DEFAULT_STEPS: u32 = 8;
+
+/// How a scan tells the projector's pixels apart.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Coding {
+    /// Gray code down to stripes two projector pixels wide.
+    #[default]
+    Gray,
+    /// Gray code down to stripes half `period` wide, then `steps` shifted sines of `period`
+    /// projector pixels per axis.
+    GrayPhase { period: u32, steps: u32 },
+}
+
+impl Coding {
+    /// Gray code plus 8 sines of 16 pixels per axis.
+    pub fn gray_phase() -> Coding {
+        Coding::GrayPhase { period: DEFAULT_PERIOD, steps: DEFAULT_STEPS }
+    }
+
+    /// `gray` or `gray_phase`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Coding::Gray => "gray",
+            Coding::GrayPhase { .. } => "gray_phase",
+        }
+    }
+
+    /// Whether the period and the steps are in their ranges.
+    pub fn check(&self) -> Result<(), String> {
+        match *self {
+            Coding::Gray => Ok(()),
+            Coding::GrayPhase { period, steps } => {
+                if !PHASE_PERIODS.contains(&period) {
+                    return Err(format!("the sines' `period` is one of {PHASE_PERIODS:?} projector pixels"));
+                }
+                if !(MIN_STEPS..=MAX_STEPS).contains(&steps) {
+                    return Err(format!("`steps` is {MIN_STEPS} to {MAX_STEPS} sines per axis"));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    /// The finest Gray bits per axis the sines stand in for.
+    pub fn dropped_bits(&self) -> u32 {
+        match self {
+            Coding::Gray => 0,
+            Coding::GrayPhase { period, .. } => (period / 4).max(1).trailing_zeros(),
+        }
+    }
+
+    /// Sines per axis.
+    pub fn steps(&self) -> u32 {
+        match self {
+            Coding::Gray => 0,
+            Coding::GrayPhase { steps, .. } => *steps,
+        }
+    }
+}
+
 /// One picture of a scan.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pattern {
@@ -107,6 +185,14 @@ pub enum Pattern {
         bit: u32,
         inverse: bool,
     },
+    /// Sine `step` across the columns ([`Coding::GrayPhase`]).
+    ColumnPhase {
+        step: u32,
+    },
+    /// Sine `step` down the rows.
+    RowPhase {
+        step: u32,
+    },
 }
 
 impl Pattern {
@@ -118,6 +204,8 @@ impl Pattern {
             Pattern::Black => "black".into(),
             Pattern::Columns { bit, inverse } => format!("column {bit}{}", inv(*inverse)),
             Pattern::Rows { bit, inverse } => format!("row {bit}{}", inv(*inverse)),
+            Pattern::ColumnPhase { step } => format!("column sine {step}"),
+            Pattern::RowPhase { step } => format!("row sine {step}"),
         }
     }
 }
@@ -127,14 +215,28 @@ impl Pattern {
 pub struct Patterns {
     width: u32,
     height: u32,
+    coding: Coding,
 }
 
 impl Patterns {
+    /// Plain Gray code.
     pub fn new(width: u32, height: u32) -> Result<Self, String> {
+        Self::with_coding(width, height, Coding::Gray)
+    }
+
+    pub fn with_coding(width: u32, height: u32, coding: Coding) -> Result<Self, String> {
         if !(1..=MAX_SIDE).contains(&width) || !(1..=MAX_SIDE).contains(&height) {
             return Err(format!("a projector of {width} x {height}: each side is 1 to {MAX_SIDE} pixels"));
         }
-        Ok(Self { width, height })
+        coding.check()?;
+        let dropped = coding.dropped_bits();
+        if bits(width) <= dropped || bits(height) <= dropped {
+            return Err(format!(
+                "a projector of {width} x {height} is too small for sines of {} pixels",
+                4u32 << dropped
+            ));
+        }
+        Ok(Self { width, height, coding })
     }
 
     /// The projector's size.
@@ -142,32 +244,51 @@ impl Patterns {
         (self.width, self.height)
     }
 
+    pub fn coding(&self) -> Coding {
+        self.coding
+    }
+
+    /// Gray bits shown across the columns.
     pub fn column_bits(&self) -> u32 {
-        bits(self.width)
+        bits(self.width).saturating_sub(self.coding.dropped_bits())
     }
 
     pub fn row_bits(&self) -> u32 {
-        bits(self.height)
+        bits(self.height).saturating_sub(self.coding.dropped_bits())
     }
 
-    /// Pictures in a scan: white, black, and a pattern and its inverse per bit.
+    /// Projector pixels per cell of the Gray code shown: 1 for plain Gray code, a quarter of the
+    /// sines' period with them.
+    pub fn cell(&self) -> u32 {
+        1 << self.coding.dropped_bits()
+    }
+
+    /// Pictures in a scan: white, black, a pattern and its inverse per Gray bit, the sines.
     pub fn count(&self) -> usize {
-        2 + 2 * (self.column_bits() + self.row_bits()) as usize
+        2 + 2 * (self.column_bits() + self.row_bits()) as usize + 2 * self.coding.steps() as usize
     }
 
     /// The pattern shown as picture `index` (0 is white), `None` past the last.
     pub fn get(&self, index: usize) -> Option<Pattern> {
         let (cb, rb) = (self.column_bits() as usize, self.row_bits() as usize);
+        let steps = self.coding.steps() as usize;
         match index {
             0 => Some(Pattern::White),
             1 => Some(Pattern::Black),
             _ => {
                 let k = index - 2;
-                let (bit, inverse) = (k / 2, k % 2 == 1);
-                if bit < cb {
-                    Some(Pattern::Columns { bit: bit as u32, inverse })
-                } else if bit < cb + rb {
-                    Some(Pattern::Rows { bit: (bit - cb) as u32, inverse })
+                let pairs = 2 * (cb + rb);
+                if k < pairs {
+                    let (bit, inverse) = (k / 2, k % 2 == 1);
+                    if bit < cb {
+                        Some(Pattern::Columns { bit: bit as u32, inverse })
+                    } else {
+                        Some(Pattern::Rows { bit: (bit - cb) as u32, inverse })
+                    }
+                } else if k - pairs < steps {
+                    Some(Pattern::ColumnPhase { step: (k - pairs) as u32 })
+                } else if k - pairs < 2 * steps {
+                    Some(Pattern::RowPhase { step: (k - pairs - steps) as u32 })
                 } else {
                     None
                 }
@@ -175,9 +296,11 @@ impl Patterns {
         }
     }
 
-    /// The position of `pattern` in the scan, `None` for a bit the projector does not have.
+    /// The position of `pattern` in the scan, `None` for a bit or sine the scan does not have.
     pub fn index(&self, pattern: Pattern) -> Option<usize> {
         let (cb, rb) = (self.column_bits(), self.row_bits());
+        let steps = self.coding.steps();
+        let sines = 2 + 2 * (cb + rb) as usize;
         match pattern {
             Pattern::White => Some(0),
             Pattern::Black => Some(1),
@@ -187,20 +310,50 @@ impl Patterns {
             Pattern::Rows { bit, inverse } if bit < rb => {
                 Some(2 + 2 * (cb + bit) as usize + usize::from(inverse))
             }
+            Pattern::ColumnPhase { step } if step < steps => Some(sines + step as usize),
+            Pattern::RowPhase { step } if step < steps => Some(sines + (steps + step) as usize),
             _ => None,
         }
     }
 
-    /// Whether projector pixel `(x, y)` is lit in `pattern`.
+    /// Whether projector pixel `(x, y)` is lit in `pattern`; a sine counts as lit where it is
+    /// above half.
     pub fn lit(&self, pattern: Pattern, x: u32, y: u32) -> bool {
-        let stripe = |v: u32, bits: u32, bit: u32| {
-            bits.checked_sub(1 + bit).is_some_and(|shift| (gray(v) >> shift) & 1 == 1)
+        let stripe = |v: u32, side: u32, shown: u32, bit: u32| {
+            bit < shown && bits(side).checked_sub(1 + bit).is_some_and(|shift| (gray(v) >> shift) & 1 == 1)
         };
         match pattern {
             Pattern::White => true,
             Pattern::Black => false,
-            Pattern::Columns { bit, inverse } => stripe(x, self.column_bits(), bit) != inverse,
-            Pattern::Rows { bit, inverse } => stripe(y, self.row_bits(), bit) != inverse,
+            Pattern::Columns { bit, inverse } => stripe(x, self.width, self.column_bits(), bit) != inverse,
+            Pattern::Rows { bit, inverse } => stripe(y, self.height, self.row_bits(), bit) != inverse,
+            Pattern::ColumnPhase { .. } | Pattern::RowPhase { .. } => self.light(pattern, x, y) >= 0.5,
+        }
+    }
+
+    /// The light of projector pixel `(x, y)` in `pattern`, 0 to 1: 0 or 1 for the stripes,
+    /// `(1 + cos(2 pi ((v + 0.5) / period - step / steps))) / 2` for a sine along `v`. This is
+    /// light: a projector whose response to its signal is not linear needs it bent first (its
+    /// gamma).
+    pub fn light(&self, pattern: Pattern, x: u32, y: u32) -> f32 {
+        let wave = |v: u32, step: u32| -> f32 {
+            let Coding::GrayPhase { period, steps } = self.coding else { return 0.0 };
+            if step >= steps {
+                return 0.0;
+            }
+            let turn = (f64::from(v) + 0.5) / f64::from(period) - f64::from(step) / f64::from(steps);
+            (0.5 + 0.5 * (std::f64::consts::TAU * turn).cos()) as f32
+        };
+        match pattern {
+            Pattern::ColumnPhase { step } => wave(x, step),
+            Pattern::RowPhase { step } => wave(y, step),
+            _ => {
+                if self.lit(pattern, x, y) {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
         }
     }
 }
@@ -276,7 +429,7 @@ pub enum Status {
     Ambiguous,
     /// A column or row past the projector's edge (the codes run up to a power of two).
     Outside,
-    /// Fewer than two neighbours agree with it.
+    /// Fewer than two neighbours agree with it, or its sines' phase and its Gray code disagree.
     Inconsistent,
 }
 
@@ -306,7 +459,8 @@ impl Status {
 ///
 /// Holds the white picture's colour, the black picture's brightness, and per bit pattern minus
 /// inverse (two bytes a pixel); a pattern waits for its inverse as one brightness picture. Adding
-/// a pattern again starts its pair over (a bit captured too early is captured again).
+/// a pattern again starts its pair over (a bit captured too early is captured again). Each sine
+/// is kept as its brightness (two bytes a pixel); adding one again replaces it.
 pub struct Decoder {
     patterns: Patterns,
     width: u32,
@@ -318,6 +472,36 @@ pub struct Decoder {
     pending: Vec<Option<(bool, Vec<f32>)>>,
     /// Per bit: pattern minus inverse.
     diffs: Vec<Option<Vec<i16>>>,
+    /// Per sine (columns, then rows): its brightness in units of `1 / WAVE_SCALE`.
+    waves: Vec<Option<Vec<u16>>>,
+}
+
+/// A sine's brightness is kept as `u16` in units of `1 / WAVE_SCALE`, so up to 2.
+const WAVE_SCALE: f32 = 32767.0;
+
+/// The sines' sums per axis and camera pixel: `sum(I_k sin d_k)` and `sum(I_k cos d_k)` over the
+/// steps `k` with `d_k = 2 pi k / steps`, whose angle is the phase.
+struct Phase {
+    sums: [Vec<[f32; 2]>; 2],
+    period: f32,
+    steps: f32,
+    /// Projector pixels per Gray code cell.
+    cell: f32,
+}
+
+impl Phase {
+    /// The position along `axis` of camera pixel `i` whose Gray code says cell `code`; how
+    /// clearly the camera sees the sines there (their amplitude over that of a full sine at its
+    /// `contrast`, 0 to 1); and how far the phase lies from the cell's centre, in cells.
+    fn position(&self, axis: usize, i: usize, code: u32, contrast: f32) -> (f32, f32, f32) {
+        let [s, c] = self.sums.get(axis).and_then(|v| v.get(i)).copied().unwrap_or([0.0; 2]);
+        let modulation = 4.0 * (s * s + c * c).sqrt() / (self.steps * contrast.max(1e-6));
+        let turn = s.atan2(c) / std::f32::consts::TAU;
+        let within = turn.rem_euclid(1.0) * self.period;
+        let centre = (code as f32 + 0.5) * self.cell;
+        let at = within + ((centre - within) / self.period).round() * self.period;
+        (at, modulation.min(1.0), (at - centre).abs() / self.cell)
+    }
 }
 
 impl Decoder {
@@ -336,6 +520,7 @@ impl Decoder {
             black: None,
             pending: vec![None; slots],
             diffs: vec![None; slots],
+            waves: vec![None; 2 * patterns.coding().steps() as usize],
         })
     }
 
@@ -377,6 +562,20 @@ impl Decoder {
             }
             Pattern::Columns { bit, inverse } => (bit as usize, inverse),
             Pattern::Rows { bit, inverse } => ((self.patterns.column_bits() + bit) as usize, inverse),
+            Pattern::ColumnPhase { step } | Pattern::RowPhase { step } => {
+                let row = usize::from(matches!(pattern, Pattern::RowPhase { .. }));
+                let slot = row * self.patterns.coding().steps() as usize + step as usize;
+                let Some(wave) = self.waves.get_mut(slot) else {
+                    return Err(format!("picture {index}: no such sine"));
+                };
+                *wave = Some(
+                    pixels
+                        .iter()
+                        .map(|p| (brightness(p) * WAVE_SCALE).clamp(0.0, f32::from(u16::MAX)).round() as u16)
+                        .collect(),
+                );
+                return Ok(());
+            }
         };
         let this: Vec<f32> = pixels.iter().map(brightness).collect();
         let (Some(pending), Some(diff)) = (self.pending.get_mut(slot), self.diffs.get_mut(slot)) else {
@@ -428,7 +627,36 @@ impl Decoder {
                 out.extend(self.patterns.index(pattern));
             }
         }
+        let steps = self.patterns.coding().steps() as usize;
+        for (slot, wave) in self.waves.iter().enumerate() {
+            if wave.is_some() {
+                continue;
+            }
+            let step = (slot % steps.max(1)) as u32;
+            let pattern =
+                if slot < steps { Pattern::ColumnPhase { step } } else { Pattern::RowPhase { step } };
+            out.extend(self.patterns.index(pattern));
+        }
         out
+    }
+
+    /// The sines' sums per axis, `None` for plain Gray code.
+    fn phase(&self) -> Option<Phase> {
+        let Coding::GrayPhase { period, steps } = self.patterns.coding() else { return None };
+        let n = self.width as usize * self.height as usize;
+        let mut sums = [vec![[0.0f32; 2]; n], vec![[0.0f32; 2]; n]];
+        for (slot, wave) in self.waves.iter().enumerate() {
+            let Some(wave) = wave else { continue };
+            let (axis, step) = (slot / steps as usize, slot % steps as usize);
+            let (sin, cos) = (std::f32::consts::TAU * step as f32 / steps as f32).sin_cos();
+            let Some(sum) = sums.get_mut(axis) else { continue };
+            for (acc, v) in sum.iter_mut().zip(wave) {
+                let v = f32::from(*v) / WAVE_SCALE;
+                acc[0] += v * sin;
+                acc[1] += v * cos;
+            }
+        }
+        Some(Phase { sums, period: period as f32, steps: steps as f32, cell: self.patterns.cell() as f32 })
     }
 
     /// Decodes the pictures added so far; every one must be there.
@@ -503,6 +731,32 @@ impl Decoder {
         };
         let resolved_count = [resolved_axis(0..cb), resolved_axis(cb..diffs.len())];
         let counts_mask = self.counting_bits(&diffs, &contrast, &lit_status, &resolved, options.window);
+        let phase = self.phase();
+        // How clearly the camera sees the sines: per axis the median over the reached pixels.
+        let modulation = phase.as_ref().map_or([0.0; 2], |ph| {
+            [0, 1].map(|axis| {
+                let mut hist = [0u64; BINS];
+                let mut total = 0u64;
+                for (i, s) in lit_status.iter().enumerate() {
+                    if *s != Status::Valid {
+                        continue;
+                    }
+                    let (_, m, _) = ph.position(axis, i, 0, contrast.get(i).copied().unwrap_or(1.0));
+                    if let Some(h) = hist.get_mut(((m * BINS as f32) as usize).min(BINS - 1)) {
+                        *h += 1;
+                    }
+                    total += 1;
+                }
+                let mut seen = 0u64;
+                for (b, h) in hist.iter().enumerate() {
+                    seen += h;
+                    if total > 0 && seen * 2 >= total {
+                        return (b as f32 + 0.5) / BINS as f32;
+                    }
+                }
+                0.0
+            })
+        });
 
         // Per pixel: the code of both axes and the confidence.
         let mut status = lit_status;
@@ -543,13 +797,26 @@ impl Decoder {
             };
             let (x, cx) = axis(0..cb);
             let (y, cy) = axis(cb..diffs.len());
-            *conf = cx.min(cy);
+            // With sines: the position from the phase, the confidence also how clearly the
+            // sines show, and a phase further than a cell from the Gray code's cell is a
+            // disagreement (a sine or a bit read wrong).
+            let (at, sure, apart) = match &phase {
+                None => ([x as f32 + 0.5, y as f32 + 0.5], 1.0, 0.0),
+                Some(ph) => {
+                    let (u, mu, du) = ph.position(0, i, x, c);
+                    let (v, mv, dv) = ph.position(1, i, y, c);
+                    ([u, v], mu.min(mv), du.max(dv))
+                }
+            };
+            *conf = cx.min(cy).min(sure);
             if *conf < options.min_confidence {
                 *st = Status::Ambiguous;
-            } else if x >= pw || y >= ph {
+            } else if apart > 1.0 {
+                *st = Status::Inconsistent;
+            } else if at[0] < 0.0 || at[1] < 0.0 || at[0] >= pw as f32 || at[1] >= ph as f32 {
                 *st = Status::Outside;
             } else {
-                *pt = Some([x as f32 + 0.5, y as f32 + 0.5]);
+                *pt = Some(at);
             }
         }
 
@@ -580,9 +847,10 @@ impl Decoder {
             }
             median
         };
+        let cell = self.patterns.cell() as f32;
         let unresolved_span = |bits: usize, count: u32| -> f32 {
             let unresolved = (bits as u32).saturating_sub(count).min(16);
-            ((1u32 << unresolved) - 1) as f32
+            ((1u32 << unresolved) - 1) as f32 * cell
         };
         let all = diffs.len();
         let tol = |i: usize| -> [f32; 2] {
@@ -636,6 +904,8 @@ impl Decoder {
                 resolved: resolved_count,
                 step,
                 off_geometry,
+                coding: self.patterns.coding(),
+                modulation,
             },
         })
     }
@@ -839,6 +1109,10 @@ pub struct Stats {
     pub step: f32,
     /// Decoded pixels dropped (as inconsistent) for lying off the decode's epipolar geometry.
     pub off_geometry: usize,
+    pub coding: Coding,
+    /// How clearly the camera sees the sines across the columns and down the rows: the median
+    /// over the reached pixels of their amplitude over a full sine's, 0 to 1 (0 without sines).
+    pub modulation: [f32; 2],
 }
 
 impl Stats {
@@ -885,7 +1159,8 @@ pub struct Fusion {
 /// per camera pixel the decode of the surest scan, ties to the earlier one. Where none decoded,
 /// the pixel's status is that of the first scan not clipped there (else clipped). The scene colour
 /// and the counts of resolved bits and the step are the first scan's, so its exposure sets the
-/// look of the scene picture; resolved bits are the most any scan resolved.
+/// look of the scene picture; resolved bits and the sines' modulation are the most any scan
+/// reached.
 pub fn fuse(scans: Vec<Scan>) -> Result<Fusion, String> {
     let mut it = scans.into_iter();
     let Some(mut out) = it.next() else { return Err("no scans to merge".into()) };
@@ -979,6 +1254,9 @@ pub fn fuse(scans: Vec<Scan>) -> Result<Fusion, String> {
             *a = (*a).max(b);
         }
         out.stats.off_geometry += s.stats.off_geometry;
+        for (a, b) in out.stats.modulation.iter_mut().zip(s.stats.modulation) {
+            *a = a.max(b);
+        }
     }
     let apart = (!apart.is_empty()).then(|| {
         apart.sort_by(f32::total_cmp);

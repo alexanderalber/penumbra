@@ -23,7 +23,7 @@ pub const MAX_CURVE: usize = 64;
 const VIEWPORT_AT: usize = 192;
 const FLAT_AT: usize = 224;
 const CURVE_AT: u64 = 304;
-const UNIFORM_SIZE: u64 = CURVE_AT + 16 * MAX_CURVE as u64 + 32;
+const UNIFORM_SIZE: u64 = CURVE_AT + 16 * MAX_CURVE as u64 + 48;
 
 /// A projector's colour correction, the last step before its signal: a matrix in linear light
 /// (`drive = matrix * colour`, clamped to 0..1), then per channel a tone curve from the drive,
@@ -113,7 +113,8 @@ pub const MOTION_WRAP: u32 = 900_000;
 /// One picture of a structured light scan in a projector's own pixels, in the order and with the
 /// stripes of `penumbra_calib::scan::Patterns` (and `tex.scan_pattern`): 0 white, 1 black, then
 /// per column bit (most significant first) its Gray-code stripes and their inverse, then the
-/// rows; black past the last.
+/// rows; with sines (`period` above 0) the Gray code stops at stripes half a period wide and
+/// `steps` sines across, then `steps` down follow; black past the last.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stripes {
     pub pattern: u32,
@@ -122,6 +123,20 @@ pub struct Stripes {
     /// The projector's size in pixels the stripes are counted in; the viewport is divided into
     /// that many (one to one when it is the viewport's own size).
     pub size: [u32; 2],
+    /// The sines' period in projector pixels (a power of two from 8), 0 for plain Gray code.
+    pub period: u32,
+    /// Sines per axis.
+    pub steps: u32,
+    /// The projector's response to its signal, light = signal ^ gamma: a sine's light `l`
+    /// is shown as the signal `level * l ^ (1 / gamma)`, so its light stays a sine.
+    pub gamma: f32,
+}
+
+impl Stripes {
+    /// Picture `pattern` of a plain Gray code scan.
+    pub fn gray(pattern: u32, level: f32, size: [u32; 2]) -> Self {
+        Self { pattern, level, size, period: 0, steps: 0, gamma: 1.0 }
+    }
 }
 
 /// The resolution overlay: green where a surface pixel covers about one projector pixel, red where
@@ -491,7 +506,7 @@ fn uniform_bytes(
         b.extend_from_slice(&0f32.to_le_bytes());
     }
     // The stripes after the curves: projector width and height, level, pattern.
-    let stripes = look.stripes.unwrap_or(Stripes { pattern: 0, level: 0.0, size: [1, 1] });
+    let stripes = look.stripes.unwrap_or(Stripes::gray(0, 0.0, [1, 1]));
     for v in [
         stripes.size[0].max(1) as f32,
         stripes.size[1].max(1) as f32,
@@ -504,6 +519,11 @@ fn uniform_bytes(
     // and late counts.
     let (frame, late) = look.test.map_or((0, 0), |t| (t.frame % MOTION_WRAP, t.late.min(99_999)));
     for v in [amount(look.flatten).min(1.0), amount(look.lift), frame as f32, late as f32] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    // Then the stripes' sines: period, steps, gamma.
+    let gamma = if stripes.gamma.is_finite() { stripes.gamma.clamp(0.1, 10.0) } else { 1.0 };
+    for v in [stripes.period.min(1 << 14) as f32, stripes.steps.min(64) as f32, gamma, 0.0] {
         b.extend_from_slice(&v.to_le_bytes());
     }
     b.resize(UNIFORM_SIZE as usize, 0);
@@ -542,7 +562,14 @@ mod tests {
             flatten: 0.875,
             lift: 0.5,
             flat: Some([0.0625, 0.0, 0.0]),
-            stripes: Some(Stripes { pattern: 9, level: 0.5, size: [11, 12] }),
+            stripes: Some(Stripes {
+                pattern: 9,
+                level: 0.5,
+                size: [11, 12],
+                period: 32,
+                steps: 5,
+                gamma: 2.5,
+            }),
         };
         let b = uniform_bytes(&look, (13, 14), [15.0, 16.0, 17.0, 18.0], false, true, true);
         assert_eq!(b.len() as u64, UNIFORM_SIZE);
@@ -566,6 +593,8 @@ mod tests {
         assert_eq!(f32_at(&b, member(&m, "curve").offset + 16), 0.5);
         assert_eq!(f("stripes"), 11.0);
         assert_eq!(f("field"), 0.875);
+        let sines = member(&m, "sines").offset;
+        assert_eq!([f32_at(&b, sines), f32_at(&b, sines + 4), f32_at(&b, sines + 8)], [32.0, 5.0, 2.5]);
         // The motion pattern's frame and late counts after the gain and lift amounts.
         let test = Some(Test { pattern: TestPattern::Motion, rank: 2, frame: MOTION_WRAP + 7, late: 3 });
         let b = uniform_bytes(&Look { test, ..look }, (13, 14), [15.0; 4], false, false, false);
@@ -1012,7 +1041,7 @@ mod tests {
         let mut drawer = Projection::new(&gpu);
         let (vertices, indices) = quad([0.0, 0.0, 1.0, 1.0]);
         // A 20 x 6 projector drawn into a viewport twice its size: each projector pixel is 2 x 2.
-        let mut shot = |pattern: u32| {
+        let mut shot = |stripes: Stripes| {
             let target = Tex::new(&gpu, 40, 12, "projector").unwrap();
             let look = Look {
                 region: [0.0, 0.0, 1.0, 1.0],
@@ -1031,7 +1060,7 @@ mod tests {
                 flatten: 1.0,
                 lift: 1.0,
                 flat: None,
-                stripes: Some(Stripes { pattern, level: 1.0, size: [20, 6] }),
+                stripes: Some(stripes),
             };
             let item = Item {
                 key: 6,
@@ -1057,12 +1086,43 @@ mod tests {
             (17, Box::new(move |_, y| gray(y) & 1 == 0)),
             (18, Box::new(|_, _| false)),
         ] {
-            let px = shot(pattern);
+            let px = shot(Stripes::gray(pattern, 1.0, [20, 6]));
             for y in 0..6u32 {
                 for x in 0..20u32 {
                     let v = px.get(2 * x + 1, 2 * y + 1).unwrap()[0];
                     let want = if lit(x, y) { 1.0 } else { 0.0 };
                     assert!((v - want).abs() < 2e-3, "pattern {pattern} at {x}, {y}: {v}");
+                }
+            }
+        }
+        // With sines of 8 pixels, 3 steps: the Gray code stops one bit early on each axis (4
+        // column bits, 2 row bits), then 3 sines across and 3 down, bent by the gamma.
+        let sine = |v: u32, step: u32| {
+            let turn = (v as f32 + 0.5) / 8.0 - step as f32 / 3.0;
+            0.5 + 0.5 * (std::f32::consts::TAU * turn).cos()
+        };
+        let level = 0.8;
+        for (pattern, light) in [
+            (
+                8u32,
+                Box::new(move |x: u32, _: u32| f32::from(u8::from((gray(x) >> 1) & 1 == 1)))
+                    as Box<dyn Fn(u32, u32) -> f32>,
+            ),
+            (12, Box::new(move |_, y| f32::from(u8::from((gray(y) >> 1) & 1 == 1)))),
+            (14, Box::new(move |x, _| sine(x, 0))),
+            (16, Box::new(move |x, _| sine(x, 2))),
+            (18, Box::new(move |_, y| sine(y, 1))),
+            (20, Box::new(|_, _| 0.0)),
+        ] {
+            let px = shot(Stripes { pattern, level, size: [20, 6], period: 8, steps: 3, gamma: 2.2 });
+            for y in 0..6u32 {
+                for x in 0..20u32 {
+                    let v = px.get(2 * x + 1, 2 * y + 1).unwrap()[0];
+                    // The target is sRGB: it reads back the signal decoded.
+                    let signal = level * light(x, y).powf(1.0 / 2.2);
+                    let want =
+                        if signal <= 0.04045 { signal / 12.92 } else { ((signal + 0.055) / 1.055).powf(2.4) };
+                    assert!((v - want).abs() < 6e-3, "pattern {pattern} at {x}, {y}: {v}, want {want}");
                 }
             }
         }

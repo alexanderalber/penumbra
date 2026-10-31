@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use penumbra_calib::colour;
-use penumbra_calib::scan::{Decoder, Options, Pattern, Patterns};
+use penumbra_calib::scan::{Coding, Decoder, Options, Pattern, Patterns};
 use penumbra_camera::CameraFrame;
 use penumbra_core::{NodeId, NodePath, Value};
 use penumbra_gpu::Pixels;
@@ -43,7 +43,7 @@ use serde_json::{Value as Json, json};
 use crate::command::{CommandError, FnCommand, Registry, args};
 use crate::engine::Engine;
 use crate::projector::{CameraStream, Claim, projector_list, settle_of, timeout_of, wait_shown};
-use crate::scan::{Decoded, fill_of, ms, write_decoded};
+use crate::scan::{Decoded, coding_of, fill_of, ms, write_decoded};
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -73,6 +73,10 @@ const MIN_MARGIN: f64 = 0.35;
 const CHECKED_BITS: u32 = 2;
 /// Most levels a projector is scanned at.
 const MAX_LEVELS: usize = 4;
+/// The projector's response to its signal that the sines of `coding: gray_phase` assume unless
+/// told otherwise (light = signal ^ gamma), and the range of `gamma`.
+pub const DEFAULT_GAMMA: f32 = 2.2;
+const GAMMAS: std::ops::RangeInclusive<f32> = 1.0..=3.0;
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
@@ -91,7 +95,13 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          out/<projector>/frames, frames_1, ... per level, false), verify? (take a picture only when two frames agree, true), \
          retries? (frames that may disagree, 3), fill? (projector px, 32), options?: {min_contrast?, \
          saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture), \
-         epipolar? (px a decoded pixel may lie off the geometry the decode as a whole obeys, else it is dropped: light thrown on by the walls decodes wrong, 4; 0 off)}}",
+         epipolar? (px a decoded pixel may lie off the geometry the decode as a whole obeys, else it is dropped: light thrown on by the walls decodes wrong, 4; 0 off)}, \
+         coding? (gray: Gray code alone, 46 pictures at 1080p, good to about a projector pixel; gray_phase: \
+         the Gray code down to stripes of half a period, then sines per axis, 54 pictures, good to a tenth of a \
+         pixel where the camera sees the sines; gray), period? (gray_phase: the sines' period, 8, 16, 32 or 64 \
+         projector px; 16), steps? (gray_phase: sines per axis, 3 to 16; 8), gamma? (gray_phase: the \
+         projector's response, light = signal ^ gamma, so the sines leave it as sines; measure it or leave \
+         2.2; 1 to 3)}",
         move |p| {
             let a: CaptureArgs = args(p)?;
             capture(&e, &a)
@@ -115,6 +125,10 @@ pub struct CaptureArgs {
     pub fill: Option<u32>,
     #[serde(default)]
     pub options: Options,
+    pub coding: Option<String>,
+    pub period: Option<u32>,
+    pub steps: Option<u32>,
+    pub gamma: Option<f32>,
 }
 
 pub use penumbra_ops::tex::scan::folder_name;
@@ -212,6 +226,8 @@ struct Scanner<'a> {
     verify: bool,
     retries: u32,
     level: f32,
+    coding: Coding,
+    gamma: f32,
     /// The share of a projector's scan done before the pass at this level, and the share it
     /// takes: for the progress.
     share: (f32, f32),
@@ -228,10 +244,17 @@ impl Scanner<'_> {
         if self.watch.is_some_and(|w| w.cancel.load(Ordering::Relaxed)) {
             return Err(CANCELLED.into());
         }
+        let (period, steps) = match self.coding {
+            Coding::Gray => (0, 0),
+            Coding::GrayPhase { period, steps } => (period, steps),
+        };
         let stripes = Stripes {
             pattern: u32::try_from(pattern).unwrap_or(u32::MAX),
             level: self.level,
             size: [size.0, size.1],
+            period,
+            steps,
+            gamma: self.gamma,
         };
         self.e.board().update(|b| {
             for (id, _) in &self.projectors {
@@ -444,6 +467,8 @@ struct Settings {
     fill: u32,
     keep_frames: bool,
     verify: bool,
+    coding: Coding,
+    gamma: f32,
 }
 
 fn settings(a: &CaptureArgs) -> CmdResult<Settings> {
@@ -466,6 +491,14 @@ fn settings(a: &CaptureArgs) -> CmdResult<Settings> {
     }
     a.options.check().map_err(CommandError)?;
     let fill = fill_of(a.fill)?;
+    let coding = coding_of(a.coding.as_deref(), a.period, a.steps)?;
+    let gamma = match (coding, a.gamma) {
+        (Coding::Gray, Some(_)) => return Err("`gamma` is for `coding: gray_phase`".into()),
+        (_, Some(g)) if !GAMMAS.contains(&g) => {
+            return Err(format!("`gamma` is {} to {}", GAMMAS.start(), GAMMAS.end()).into());
+        }
+        (_, g) => g.unwrap_or(DEFAULT_GAMMA),
+    };
     Ok(Settings {
         settle,
         timeout,
@@ -474,6 +507,8 @@ fn settings(a: &CaptureArgs) -> CmdResult<Settings> {
         fill,
         keep_frames: a.frames.unwrap_or(false),
         verify: a.verify.unwrap_or(true),
+        coding,
+        gamma,
     })
 }
 
@@ -838,7 +873,8 @@ pub fn capture(e: &Engine, a: &CaptureArgs) -> CmdResult<Json> {
 /// ([`scan_projector`]), then its decode written and its report; the reply ([`capture_reply`]).
 pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -> CmdResult<Json> {
     let started = Instant::now();
-    let Settings { settle, timeout, levels, retries, fill, keep_frames, verify } = settings(a)?;
+    let Settings { settle, timeout, levels, retries, fill, keep_frames, verify, coding, gamma } =
+        settings(a)?;
 
     let session = e.session();
     let net = session.doc().snapshot();
@@ -850,7 +886,8 @@ pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -
     let sizes: Vec<(u32, u32)> = projectors.iter().map(|(id, _)| projector_size(e, &net, *id)).collect();
     let mut all_patterns = Vec::new();
     for (size, (_, path)) in sizes.iter().zip(&projectors) {
-        all_patterns.push(Patterns::new(size.0, size.1).map_err(|err| format!("{path}: {err}"))?);
+        all_patterns
+            .push(Patterns::with_coding(size.0, size.1, coding).map_err(|err| format!("{path}: {err}"))?);
     }
     let camera = CameraStream::open(e, &net, &a.camera)?;
     let out = session.dir().join(a.out.as_deref().unwrap_or(std::path::Path::new(DEFAULT_OUT)));
@@ -866,6 +903,8 @@ pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -
         verify,
         retries,
         level: levels.first().copied().unwrap_or(1.0),
+        coding,
+        gamma,
         share: (0.0, 1.0),
         pass: e.output().pass,
         intervals: Vec::new(),

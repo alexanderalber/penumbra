@@ -4,7 +4,9 @@
 //! noise, decoded and compared with the truth.
 
 use crate::Homography;
-use crate::scan::{Decoder, Options, Pattern, Patterns, Sample, Scan, Status, bits, from_gray, fuse, gray};
+use crate::scan::{
+    Coding, Decoder, Options, Pattern, Patterns, Sample, Scan, Status, bits, from_gray, fuse, gray,
+};
 
 /// A tiny deterministic generator, so the synthetic data is the same on every run.
 struct Lcg(u64);
@@ -228,7 +230,7 @@ impl Setup {
             if p[0] < 0.0 || p[1] < 0.0 || p[0] >= pw as f32 || p[1] >= ph as f32 {
                 return 0.0;
             }
-            if patterns.lit(pattern, p[0] as u32, p[1] as u32) { self.gain } else { 0.0 }
+            self.gain * patterns.light(pattern, p[0] as u32, p[1] as u32)
         };
         let mut img = vec![[0.0f32; 3]; (cw * ch) as usize];
         for y in 0..ch {
@@ -262,7 +264,11 @@ impl Setup {
     }
 
     fn scan(&self, options: &Options) -> (Scan, Truth) {
-        let patterns = Patterns::new(self.projector.0, self.projector.1).unwrap();
+        self.scan_coded(options, Coding::Gray)
+    }
+
+    fn scan_coded(&self, options: &Options, coding: Coding) -> (Scan, Truth) {
+        let patterns = Patterns::with_coding(self.projector.0, self.projector.1, coding).unwrap();
         let mut d = Decoder::new(patterns, self.camera.0, self.camera.1).unwrap();
         let mut rng = Lcg(7);
         for k in 0..patterns.count() {
@@ -484,6 +490,157 @@ fn a_camera_coarser_than_the_projector_still_maps_to_a_few_pixels() {
         n as f32 / r.kept.max(1) as f32
     };
     assert!(within4 > 0.98, "{within4} {r:?}");
+}
+
+/// Root mean square and the share above `limit` of the error (larger of the two axes) over the
+/// clean kept pixels.
+fn rms_and_over(scan: &Scan, truth: &Truth, limit: f32) -> (f32, f32) {
+    let (mut sum, mut over, mut n) = (0.0f64, 0usize, 0usize);
+    for ((t, clean), p) in truth.iter().zip(&scan.points) {
+        if let (Some(t), Some(p), true) = (t, p, clean) {
+            let e = (t[0] - p[0]).abs().max((t[1] - p[1]).abs());
+            sum += f64::from(e * e);
+            over += usize::from(e > limit);
+            n += 1;
+        }
+    }
+    ((sum / n.max(1) as f64).sqrt() as f32, over as f32 / n.max(1) as f32)
+}
+
+#[test]
+fn gray_phase_is_54_pictures_at_full_hd_in_a_fixed_order() {
+    let p = Patterns::with_coding(1920, 1080, Coding::gray_phase()).unwrap();
+    assert_eq!((p.column_bits(), p.row_bits(), p.cell()), (9, 9, 4));
+    assert_eq!(p.count(), 54);
+    assert_eq!(p.get(2), Some(Pattern::Columns { bit: 0, inverse: false }));
+    assert_eq!(p.get(20), Some(Pattern::Rows { bit: 0, inverse: false }));
+    assert_eq!(p.get(37), Some(Pattern::Rows { bit: 8, inverse: true }));
+    assert_eq!(p.get(38), Some(Pattern::ColumnPhase { step: 0 }));
+    assert_eq!(p.get(46), Some(Pattern::RowPhase { step: 0 }));
+    assert_eq!(p.get(53), Some(Pattern::RowPhase { step: 7 }));
+    assert_eq!(p.get(54), None);
+    for k in 0..54 {
+        assert_eq!(p.index(p.get(k).unwrap()), Some(k));
+    }
+    assert_eq!(p.index(Pattern::Columns { bit: 9, inverse: false }), None);
+    assert_eq!(p.index(Pattern::ColumnPhase { step: 8 }), None);
+    assert_eq!(p.get(53).unwrap().name(), "row sine 7");
+    // The Gray stripes are plain Gray code's, the finest shown 8 pixels wide.
+    let g = Patterns::new(1920, 1080).unwrap();
+    for x in 0..64 {
+        for bit in 0..9 {
+            let c = Pattern::Columns { bit, inverse: false };
+            assert_eq!(p.lit(c, x, 0), g.lit(c, x, 0));
+        }
+    }
+    let finest = Pattern::Columns { bit: 8, inverse: false };
+    let row: Vec<bool> = (0..32).step_by(4).map(|x| p.lit(finest, x, 0)).collect();
+    assert_eq!(row, [false, true, true, false, false, true, true, false]);
+    // Sine 0 peaks where (x + 0.5) is a whole period, sine 4 of 8 is its inverse.
+    let s0 = Pattern::ColumnPhase { step: 0 };
+    let s4 = Pattern::ColumnPhase { step: 4 };
+    assert!((p.light(s0, 15, 0) - (0.5 + 0.5 * (std::f32::consts::TAU / 32.0).cos())).abs() < 1e-6);
+    for x in 0..40 {
+        assert!((p.light(s0, x, 0) + p.light(s4, x, 0) - 1.0).abs() < 1e-6);
+        assert_eq!(p.light(s0, x, 0), p.light(s0, x + 16, 0));
+    }
+    assert_eq!(p.light(Pattern::RowPhase { step: 0 }, 3, 15), p.light(s0, 15, 3));
+    assert_eq!(p.light(Pattern::White, 0, 0), 1.0);
+    // Periods, steps and projectors too small for them.
+    let c = |period, steps| Coding::GrayPhase { period, steps };
+    assert!(Patterns::with_coding(1920, 1080, c(12, 8)).unwrap_err().contains("period"));
+    assert!(Patterns::with_coding(1920, 1080, c(16, 2)).unwrap_err().contains("steps"));
+    assert!(Patterns::with_coding(4, 64, c(16, 8)).unwrap_err().contains("too small"));
+    assert_eq!(Patterns::with_coding(8, 8, c(16, 4)).unwrap().count(), 2 + 2 * 2 + 8);
+    assert_eq!(Patterns::with_coding(1920, 1080, c(32, 4)).unwrap().count(), 2 + 2 * 16 + 8);
+}
+
+#[test]
+fn sines_come_in_any_order_and_a_repeated_one_replaces_the_first() {
+    let setup = Setup::plain((64, 32), (48, 40));
+    let patterns = Patterns::with_coding(64, 32, Coding::GrayPhase { period: 8, steps: 4 }).unwrap();
+    let mut rng = Lcg(1);
+    let imgs: Vec<_> =
+        (0..patterns.count()).map(|k| setup.render(&patterns, patterns.get(k).unwrap(), &mut rng)).collect();
+    let mut a = Decoder::new(patterns, 48, 40).unwrap();
+    for (k, img) in imgs.iter().enumerate() {
+        a.add(k, img).unwrap();
+    }
+    let first_sine = patterns.index(Pattern::ColumnPhase { step: 0 }).unwrap();
+    let mut b = Decoder::new(patterns, 48, 40).unwrap();
+    b.add(first_sine, &imgs[0]).unwrap();
+    for (k, img) in imgs.iter().enumerate().rev().filter(|(k, _)| *k != first_sine + 1) {
+        b.add(k, img).unwrap();
+    }
+    assert_eq!(b.missing(), [first_sine + 1]);
+    let e = b.finish(&Options::default()).unwrap_err();
+    assert!(e.contains("column sine 1"), "{e}");
+    b.add(first_sine + 1, &imgs[first_sine + 1]).unwrap();
+    let o = Options::default();
+    let (sa, sb) = (a.finish(&o).unwrap(), b.finish(&o).unwrap());
+    assert_eq!(sa.points, sb.points);
+    assert_eq!(sa.stats.coding, Coding::GrayPhase { period: 8, steps: 4 });
+}
+
+#[test]
+fn sines_place_a_camera_coarser_than_the_projector_to_a_fraction_of_a_pixel() {
+    // The finest Gray stripes, 2 projector pixels, are under one camera pixel here; the sines'
+    // period is 16 projector pixels, over 6 camera pixels. Five subsamples a side: fewer would
+    // sample the stepped sine too sparsely for a truth of a tenth of a pixel.
+    let mut setup = Setup::plain((512, 320), (200, 150));
+    setup.noise = 0.004;
+    setup.blur = 0.6;
+    setup.supersample = 5;
+    let (gray_scan, truth) = setup.scan(&Options::default());
+    let (phase_scan, _) = setup.scan_coded(&Options::default(), Coding::gray_phase());
+    let (gray_rms, gray_over) = rms_and_over(&gray_scan, &truth, 1.0);
+    let (phase_rms, phase_over) = rms_and_over(&phase_scan, &truth, 0.5);
+    let r = compare(&phase_scan, &truth, |_| true);
+    eprintln!(
+        "coarse camera: gray rms {gray_rms:.3} over 1 px {gray_over:.3}; gray_phase rms {phase_rms:.3} over 0.5 px \
+         {phase_over:.4}, {r:?}, stats {:?}",
+        phase_scan.stats
+    );
+    assert!(r.kept_share() > 0.97, "{r:?}");
+    assert_eq!(r.false_kept, 0, "{r:?}");
+    assert!(phase_rms < 0.15, "{phase_rms}");
+    assert!(phase_rms < gray_rms / 3.0, "{phase_rms} against {gray_rms}");
+    assert!(phase_over < 0.002, "{phase_over}");
+    assert!(phase_scan.stats.modulation.iter().all(|m| *m > 0.6), "{:?}", phase_scan.stats);
+    assert_eq!(phase_scan.stats.resolved, phase_scan.stats.bits);
+}
+
+#[test]
+fn sines_keep_shadows_out_and_hold_on_dark_and_bright_surfaces() {
+    let mut setup = Setup::objects((256, 160), (240, 180), 9.0);
+    setup.ambient = 0.1;
+    setup.noise = 0.008;
+    setup.blur = 0.7;
+    let (scan, truth) = setup.scan_coded(&Options::default(), Coding::GrayPhase { period: 16, steps: 8 });
+    eprintln!("objects, gray_phase: stats {:?}", scan.stats);
+    for name in ["wall", "face", "dark", "bright", "shadow"] {
+        let r = compare(&scan, &truth, |i| region(&setup, i) == name);
+        eprintln!("{name}: {r:?}");
+        match name {
+            "shadow" => assert!(r.unreached > 100 && r.false_kept == 0, "{name}: {r:?}"),
+            // The dark book's contrast is 0.04 against noise of 0.008: its sines are faint.
+            "dark" => {
+                assert!(r.kept_share() > 0.8, "{name}: {r:?}");
+                assert!(r.within1_share() > 0.97, "{name}: {r:?}");
+            }
+            // Blur mixes the wall and the face standing 9 pixels nearer into the camera pixels on
+            // their edge: those get a position between the two, a pixel or so off.
+            "face" => {
+                assert!(r.kept_share() > 0.9, "{name}: {r:?}");
+                assert!(r.within1_share() > 0.96, "{name}: {r:?}");
+                assert!(r.within2_share() > 0.995, "{name}: {r:?}");
+            }
+            _ => {
+                assert!(r.kept_share() > 0.9, "{name}: {r:?}");
+                assert!(r.within1_share() > 0.995, "{name}: {r:?}");
+            }
+        }
+    }
 }
 
 /// Splits the objects setup into its regions for the per-disturbance numbers.

@@ -1600,6 +1600,66 @@ fn decode_a_scan_from_pictures_in_a_folder() {
 }
 
 #[test]
+fn decode_a_gray_phase_scan_to_a_fraction_of_a_pixel() {
+    let f = Fixture::new("scan_phase");
+    let r = f.call("scan.patterns", json!({"projector": [64, 32], "coding": "gray_phase"}));
+    assert_eq!((r["count"].as_u64(), r["coding"].as_str()), (Some(32), Some("gray_phase")), "{r}");
+    assert_eq!(r["patterns"][16], "column sine 0", "{r}");
+    assert!(f.fail("scan.patterns", json!({"coding": "gray", "steps": 4})).contains("`steps`"));
+    // A camera seeing a 64 x 32 projector at twice its size, shifted by (6, 4) camera pixels;
+    // the sines written as light (sRGB-encoded 8-bit, as a camera's PNG).
+    let (pw, ph) = (64u32, 32u32);
+    let patterns =
+        penumbra_calib::scan::Patterns::with_coding(pw, ph, penumbra_calib::scan::Coding::gray_phase())
+            .unwrap();
+    let frames = f.engine.session().dir().join("captures");
+    std::fs::create_dir_all(&frames).unwrap();
+    let linear = |c: f32| ((c / 255.0 + 0.055) / 1.055).powf(2.4);
+    let code = |l: f32| {
+        let e = if l <= 0.0031308 { 12.92 * l } else { 1.055 * l.powf(1.0 / 2.4) - 0.055 };
+        (e * 255.0).round().clamp(0.0, 255.0) as u8
+    };
+    let (dark, bright) = (linear(60.0), linear(200.0));
+    let (cw, ch) = (140u32, 76u32);
+    for k in 0..patterns.count() {
+        let p = patterns.get(k).unwrap();
+        let mut rgba = Vec::new();
+        for y in 0..ch {
+            for x in 0..cw {
+                let (u, v) = ((x as i64 - 6) / 2, (y as i64 - 4) / 2);
+                let inside = x >= 6 && y >= 4 && u < pw as i64 && v < ph as i64;
+                let light = if inside { patterns.light(p, u as u32, v as u32) } else { 0.0 };
+                let c = code(dark + (bright - dark) * light);
+                rgba.extend([c, c, c, 255]);
+            }
+        }
+        let png = penumbra_gpu::encode_png_rgba8(cw, ch, rgba).unwrap();
+        std::fs::write(frames.join(format!("{k:02}.png")), png).unwrap();
+    }
+    // Plain Gray code expects another number of pictures.
+    assert!(f.fail("scan.decode", json!({"frames": "captures", "projector": [pw, ph]})).contains("picture"));
+    let r = f.call(
+        "scan.decode",
+        json!({"frames": "captures", "projector": [pw, ph], "coding": "gray_phase", "fill": 4}),
+    );
+    assert_eq!(r["coding"], "gray_phase", "{r}");
+    assert_eq!(r["camera_pixels"]["valid"], 128 * 64, "{r}");
+    assert!(r["warnings"].as_array().unwrap().is_empty(), "{r}");
+    assert!(r["sine_amplitude"][0].as_f64().unwrap() > 0.9, "{r}");
+    // Every camera pixel lands on its projector pixel's centre to a few hundredths of a pixel.
+    let map = penumbra_gpu::image::decode_file(&frames.join("decoded/cam_to_proj.exr"), 8192).unwrap();
+    let mut worst = 0.0f32;
+    for y in 4..68usize {
+        for x in 6..134usize {
+            let at = |c: usize| map.rgba[(y * cw as usize + x) * 4 + c].to_f32();
+            let want = [((x - 6) / 2) as f32 + 0.5, ((y - 4) / 2) as f32 + 0.5];
+            worst = worst.max((at(0) * pw as f32 - want[0]).abs()).max((at(1) * ph as f32 - want[1]).abs());
+        }
+    }
+    assert!(worst < 0.05, "{worst}");
+}
+
+#[test]
 fn objects_and_blend_from_decoded_scans() {
     let f = Fixture::new("scan_objects");
     let dir = f.engine.session().dir().to_path_buf();

@@ -122,6 +122,9 @@ struct Item {
     /// A second pass at this level, merged with the first; 0 none.
     second_level: f32,
     fill: u32,
+    /// `gray` or `gray_phase`, and the projector's gamma the sines assume.
+    coding: String,
+    gamma: f32,
 }
 
 struct Plan {
@@ -233,6 +236,11 @@ fn plan(e: &Engine, nodes: Option<&[NodePath]>) -> CmdResult<Plan> {
             second_level: number(&net, e, id, "second_level").unwrap_or(0.0) as f32,
             fill: number(&net, e, id, "fill")
                 .map_or(crate::scan::DEFAULT_FILL, |f| f.clamp(0.0, 1024.0) as u32),
+            coding: match text(&net, e, id, "coding") {
+                "gray_phase" => "gray_phase".to_string(),
+                _ => "gray".to_string(),
+            },
+            gamma: number(&net, e, id, "gamma").map_or(crate::scan_capture::DEFAULT_GAMMA, |g| g as f32),
         });
     }
     let camera = camera.ok_or("no camera")?;
@@ -372,6 +380,10 @@ fn run(e: &Engine, plan: &Plan, ticket: &RunTicket, actor: Actor) -> CmdResult<J
             retries: None,
             fill: Some(item.fill),
             options: Options::default(),
+            coding: Some(item.coding.clone()),
+            period: None,
+            steps: None,
+            gamma: (item.coding == "gray_phase").then_some(item.gamma),
         };
         let r = capture_watched(e, &args, Some(&watch)).map_err(|err| {
             if err.0 == CANCELLED { err } else { CommandError(format!("{}: {}", item.path, err.0)) }

@@ -40,6 +40,9 @@ struct Look {
     // How much of the gain map and of the black lift apply; the motion pattern's frame and late
     // counts.
     field: vec4f,
+    // The structured light's sines: period (projector pixels, 0 none), steps per axis, the
+    // projector's gamma.
+    sines: vec4f,
 }
 
 @group(0) @binding(0) var src: texture_2d<f32>;
@@ -353,28 +356,52 @@ fn bits(side: u32) -> u32 {
     return firstLeadingBit(side - 1u) + 1u;
 }
 
-// Whether projector pixel `p` of a `size` image is lit in scan pattern `i`, as
-// `penumbra_calib::scan::Patterns::lit` and `tex.scan_pattern` have it.
-fn stripe_lit(p: vec2u, size: vec2u, i: u32) -> bool {
+// The light (0 to 1) of projector pixel `p` of a `size` image in scan pattern `i`, as
+// `penumbra_calib::scan::Patterns::light` and `tex.scan_pattern` have it: Gray-code stripes, with
+// sines (`u.sines`) only down to stripes half a period wide, then the sines across and down.
+fn stripe_light(p: vec2u, size: vec2u, i: u32) -> f32 {
     if i == 0u {
-        return true;
+        return 1.0;
     }
     if i == 1u {
-        return false;
+        return 0.0;
     }
-    let bx = bits(size.x);
-    let by = bits(size.y);
+    let period = u32(max(u.sines.x, 0.0) + 0.5);
+    let steps = u32(max(u.sines.y, 0.0) + 0.5);
+    var dropped = 0u;
+    if period >= 8u {
+        dropped = firstTrailingBit(period / 4u);
+    }
+    let fx = bits(size.x);
+    let fy = bits(size.y);
+    let bx = fx - min(dropped, fx);
+    let by = fy - min(dropped, fy);
     let k = i - 2u;
     let bit = k / 2u;
-    var on = false;
-    if bit < bx {
-        on = (((p.x ^ (p.x >> 1u)) >> (bx - 1u - bit)) & 1u) == 1u;
-    } else if bit < bx + by {
-        on = (((p.y ^ (p.y >> 1u)) >> (by - 1u - (bit - bx))) & 1u) == 1u;
-    } else {
-        return false;
+    if bit < bx + by {
+        var on = false;
+        if bit < bx {
+            on = (((p.x ^ (p.x >> 1u)) >> (fx - 1u - bit)) & 1u) == 1u;
+        } else {
+            on = (((p.y ^ (p.y >> 1u)) >> (fy - 1u - (bit - bx))) & 1u) == 1u;
+        }
+        return select(0.0, 1.0, on != ((k & 1u) == 1u));
     }
-    return on != ((k & 1u) == 1u);
+    if period < 8u || steps == 0u {
+        return 0.0;
+    }
+    let s = k - 2u * (bx + by);
+    var v = p.x;
+    var step = s;
+    if s >= 2u * steps {
+        return 0.0;
+    }
+    if s >= steps {
+        v = p.y;
+        step = s - steps;
+    }
+    let turn = (f32(v % period) + 0.5) / f32(period) - f32(step) / f32(steps);
+    return 0.5 + 0.5 * cos(6.2831853 * turn);
 }
 
 // Linear light to the projector's signal: matrix, clamp, the gain map and the black lift at
@@ -411,8 +438,10 @@ fn fs(v: V) -> @location(0) vec4f {
         let size = max(u.stripes.xy, vec2f(1.0));
         let q = (v.pos.xy - u.viewport.xy) / max(u.viewport.zw, vec2f(1.0)) * size;
         let p = vec2u(clamp(floor(q), vec2f(0.0), size - 1.0));
-        let lit = stripe_lit(p, vec2u(size), u32(u.stripes.w + 0.5));
-        rgb = vec3f(select(0.0, clamp(u.stripes.z, 0.0, 1.0), lit));
+        let light = stripe_light(p, vec2u(size), u32(u.stripes.w + 0.5));
+        // The signal whose light is `light` for a projector of this gamma.
+        let shown = select(0.0, pow(light, 1.0 / max(u.sines.z, 0.1)), light > 0.0);
+        rgb = vec3f(clamp(u.stripes.z, 0.0, 1.0) * shown);
         signal = true;
     } else if (u.flags & 2056u) == 2056u {
         rgb = motion_pattern(v.pos.xy - u.viewport.xy, u.viewport.zw);
