@@ -305,3 +305,91 @@ pub fn example_scene() -> Vec<Node> {
         connections,
     ]
 }
+
+/// Key interpolation flags for [`curve`]: constant, linear, cubic with auto tangents.
+pub const KEY_CONSTANT: i32 = 0x2;
+pub const KEY_LINEAR: i32 = 0x4;
+pub const KEY_CUBIC: i32 = 0x8;
+
+/// An `AnimationCurve` record with keys at `seconds` holding `values`, all interpolated by
+/// `flags` (one attribute group for every key, slopes zero).
+pub fn curve(id: i64, seconds: &[f64], values: &[f32], flags: i32) -> Node {
+    let ticks: Vec<i64> =
+        seconds.iter().map(|s| (s * crate::anim::TICKS_PER_SECOND as f64).round() as i64).collect();
+    object(
+        "AnimationCurve",
+        id,
+        "",
+        "",
+        Vec::new(),
+        vec![
+            leaf("Default", Value::F64(0.0)),
+            leaf("KeyVer", Value::I32(4009)),
+            leaf("KeyTime", Value::Array(Array::I64(ticks))),
+            leaf("KeyValueFloat", Value::Array(Array::F32(values.to_vec()))),
+            leaf("KeyAttrFlags", Value::Array(Array::I32(vec![flags]))),
+            leaf("KeyAttrDataFloat", Value::Array(Array::F32(vec![0.0; 4]))),
+            leaf("KeyAttrRefCount", Value::Array(Array::I32(vec![seconds.len() as i32]))),
+        ],
+    )
+}
+
+/// [`example_scene`] with a take of 2 seconds at 30 frames per second: `base` rises from 50 to
+/// 150 cm (linear, its y), and `top` turns from 0 to 90 degrees about its z (cubic).
+pub fn animated_scene() -> Vec<Node> {
+    let mut nodes = example_scene();
+    let ticks = |s: f64| Value::I64((s * crate::anim::TICKS_PER_SECOND as f64).round() as i64);
+    let stack = object(
+        "AnimationStack",
+        40,
+        "Take 001",
+        "",
+        vec![prop("LocalStart", "KTime", vec![ticks(0.0)]), prop("LocalStop", "KTime", vec![ticks(2.0)])],
+        Vec::new(),
+    );
+    let layer = object("AnimationLayer", 41, "BaseLayer", "", Vec::new(), Vec::new());
+    let node = |id: i64, name: &str, v: [f64; 3]| {
+        object(
+            "AnimationCurveNode",
+            id,
+            name,
+            "",
+            vec![
+                prop("d|X", "Number", vec![Value::F64(v[0])]),
+                prop("d|Y", "Number", vec![Value::F64(v[1])]),
+                prop("d|Z", "Number", vec![Value::F64(v[2])]),
+            ],
+            Vec::new(),
+        )
+    };
+    let added = vec![
+        stack,
+        layer,
+        node(42, "T", [0.0, 50.0, 0.0]),
+        node(43, "R", [0.0, 0.0, 0.0]),
+        curve(44, &[0.0, 2.0], &[50.0, 150.0], KEY_LINEAR),
+        curve(45, &[0.0, 2.0], &[0.0, 90.0], KEY_CUBIC),
+    ];
+    let links = vec![
+        connection("OO", 41, 40, None),
+        connection("OO", 42, 41, None),
+        connection("OO", 43, 41, None),
+        connection("OP", 42, 10, Some("Lcl Translation")),
+        connection("OP", 43, 11, Some("Lcl Rotation")),
+        connection("OP", 44, 42, Some("d|Y")),
+        connection("OP", 45, 43, Some("d|Z")),
+    ];
+    for n in &mut nodes {
+        match n.name.as_str() {
+            "Objects" => n.children.extend(added.clone()),
+            "Connections" => n.children.extend(links.clone()),
+            "GlobalSettings" => {
+                if let Some(p) = n.children.first_mut() {
+                    p.children.push(prop("TimeMode", "enum", vec![Value::I32(6)]));
+                }
+            }
+            _ => {}
+        }
+    }
+    nodes
+}

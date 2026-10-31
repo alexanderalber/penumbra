@@ -55,7 +55,7 @@ impl RotationOrder {
     }
 
     /// The axes in the order they apply.
-    fn axes(self) -> [usize; 3] {
+    pub fn axes(self) -> [usize; 3] {
         match self {
             RotationOrder::Xyz | RotationOrder::Spheric => [0, 1, 2],
             RotationOrder::Xzy => [0, 2, 1],

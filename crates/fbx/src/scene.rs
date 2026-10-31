@@ -1,6 +1,7 @@
 //! The scene as a user sees it: meshes placed in the world, their materials and textures, and
 //! the file's units and axes.
 
+use crate::anim::Animation;
 use crate::document::{Document, Object, Properties};
 use crate::geometry::Geometry;
 use crate::transform::{Hierarchy, Mat4, NodeWorld};
@@ -149,6 +150,8 @@ pub struct Scene {
     pub unit_meters: f64,
     /// The file's axes; `None` when `GlobalSettings` does not say (most such files are y up).
     pub axes: Option<Axes>,
+    /// The takes and their curves; [`Animation::worlds`] places the models at a time.
+    pub animation: Animation,
     pub warnings: Vec<String>,
 }
 
@@ -163,7 +166,8 @@ impl Scene {
         let worlds = hierarchy.evaluate_static();
         let unit = document.settings.number("UnitScaleFactor").filter(|u| *u > 0.0).unwrap_or(1.0);
         let axes = Axes::from_settings(&document.settings);
-        Ok(Scene { unit_meters: unit / 100.0, axes, document, hierarchy, worlds, warnings })
+        let animation = Animation::read(&document, limits, &mut warnings)?;
+        Ok(Scene { unit_meters: unit / 100.0, axes, document, hierarchy, worlds, animation, warnings })
     }
 
     /// Every model with a mesh geometry, in hierarchy order. A model with several geometries

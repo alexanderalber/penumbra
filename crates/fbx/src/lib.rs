@@ -11,8 +11,10 @@
 //!    the same functions per frame.
 //! 4. [`geometry`]: a `Geometry` object's polygons, normals, texture coordinates and material
 //!    indices, with FBX's mapping and reference modes resolved.
-//! 5. [`Scene`]: the meshes placed in the world, materials, textures and the file's units and
-//!    axes. Most users start here.
+//! 5. [`anim`]: takes, layers and curves, and the models' transform properties at any time,
+//!    which [`Hierarchy::evaluate`] turns into world transforms per frame.
+//! 6. [`Scene`]: the meshes placed in the world, materials, textures, the animation and the
+//!    file's units and axes. Most users start here.
 //!
 //! Every file is treated as hostile. Each count is checked against [`Limits`] before memory is
 //! allocated for it, offsets use checked arithmetic, and nothing panics. A zlib array cannot
@@ -20,14 +22,16 @@
 //! certainty against bugs should still run the reader inside `catch_unwind`.
 //!
 //! Not read: ASCII FBX, big-endian files and versions below 7000 (each is refused with an
-//! error that says so), animation, skins, blend shapes, cameras, lights, NURBS.
+//! error that says so), skins, blend shapes, cameras, lights, NURBS.
 //!
 //! The format knowledge follows ufbx (Samuli Raivio, MIT or Unlicense,
 //! <https://github.com/ufbx/ufbx>) and fbxcel (YOSHIOKA Takuma, MIT or Apache-2.0,
 //! <https://github.com/lo48576/fbxcel>). The transform composition and the handling of the
-//! inherit types are ported from ufbx's `ufbxi_get_transform` and `ufbxi_update_node`, taken
-//! under the Unlicense. No code is taken from fbxcel.
+//! inherit types are ported from ufbx's `ufbxi_get_transform` and `ufbxi_update_node`, the
+//! animation curves and layer blending from ufbx's curve reading and evaluation (see [`anim`]),
+//! all taken under the Unlicense. No code is taken from fbxcel.
 
+pub mod anim;
 pub mod document;
 pub mod geometry;
 pub mod scene;
@@ -37,6 +41,7 @@ pub mod write;
 
 use std::fmt;
 
+pub use anim::{Animation, Curve, Interpolation, Key, Layer, Take};
 pub use document::{Connection, ConnectionKind, Document, Object, Properties, Property};
 pub use geometry::{Attribute, Geometry, Polygon};
 pub use scene::{Axes, Axis, MaterialInfo, MeshInstance, Scene, TextureInfo};
@@ -87,6 +92,9 @@ pub struct Limits {
     /// Control points of one geometry, and its polygon corners.
     pub max_vertices: usize,
     pub max_polygon_vertices: usize,
+    /// Animation curves, and their keys together.
+    pub max_curves: usize,
+    pub max_keys: usize,
 }
 
 impl Default for Limits {
@@ -101,6 +109,8 @@ impl Default for Limits {
             max_connections: 4 << 20,
             max_vertices: 16 << 20,
             max_polygon_vertices: 32 << 20,
+            max_curves: 1 << 20,
+            max_keys: 16 << 20,
         }
     }
 }

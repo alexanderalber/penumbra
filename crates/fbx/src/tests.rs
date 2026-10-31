@@ -410,3 +410,125 @@ fn axes_convert_to_any_target() {
     assert!(near(transform_point(&m, [0.0, 0.0, 1.0]), [0.0, -1.0, 0.0]));
     assert!(near(transform_point(&max.conversion_to(&max), [1.0, 2.0, 3.0]), [1.0, 2.0, 3.0]));
 }
+
+fn curve_of(seconds: &[f64], values: &[f32], flags: i32) -> anim::Curve {
+    anim::Curve::read(&write::curve(1, seconds, values, flags), anim::TICKS_PER_SECOND as f64).unwrap()
+}
+
+#[test]
+fn curves_interpolate_as_their_keys_say() {
+    let linear = curve_of(&[0.0, 1.0, 3.0], &[0.0, 10.0, 0.0], write::KEY_LINEAR);
+    assert!((linear.evaluate(0.5, 0.0) - 5.0).abs() < 1e-9);
+    assert!((linear.evaluate(2.0, 0.0) - 5.0).abs() < 1e-9);
+    // Constant extrapolation on both ends.
+    assert_eq!(linear.evaluate(-1.0, 0.0), 0.0);
+    assert_eq!(linear.evaluate(9.0, 0.0), 0.0);
+    let held = curve_of(&[0.0, 1.0], &[2.0, 4.0], write::KEY_CONSTANT);
+    assert_eq!(held.evaluate(0.99, 0.0), 2.0);
+    assert_eq!(held.evaluate(1.0, 0.0), 4.0);
+    let next = curve_of(&[0.0, 1.0], &[2.0, 4.0], write::KEY_CONSTANT | 0x100);
+    assert_eq!(next.evaluate(0.01, 0.0), 4.0);
+    // Two cubic keys with auto tangents: each end follows the chord, a straight line.
+    let auto_ends = curve_of(&[0.0, 1.0], &[0.0, 1.0], write::KEY_CUBIC);
+    assert!((auto_ends.evaluate(0.1, 0.0) - 0.1).abs() < 1e-6);
+    // Flat user tangents ease in and out: symmetric, slow at the ends.
+    let eased = curve_of(&[0.0, 1.0], &[0.0, 1.0], write::KEY_CUBIC | 0x400);
+    assert!((eased.evaluate(0.5, 0.0) - 0.5).abs() < 1e-6);
+    assert!(eased.evaluate(0.1, 0.0) < 0.05 && eased.evaluate(0.9, 0.0) > 0.95);
+    // Three cubic keys: the middle one gets a slope from its neighbours, so the curve passes
+    // through it rising.
+    let auto = curve_of(&[0.0, 1.0, 2.0], &[0.0, 1.0, 2.0], write::KEY_CUBIC);
+    assert!((auto.evaluate(1.0, 0.0) - 1.0).abs() < 1e-9);
+    assert!(auto.evaluate(1.1, 0.0) > 1.05);
+    // No keys: the default.
+    let none = anim::Curve::default();
+    assert_eq!(none.evaluate(1.0, 7.0), 7.0);
+}
+
+#[test]
+fn curves_repeat_mirror_and_slope_beyond_their_keys() {
+    let mut c = curve_of(&[0.0, 1.0], &[0.0, 10.0], write::KEY_LINEAR);
+    let at = |c: &anim::Curve, t: f64| c.evaluate(t, 0.0);
+    c.post = anim::Beyond { mode: anim::Extrapolation::Repeat, repetitions: None };
+    assert!((at(&c, 1.25) - 2.5).abs() < 1e-6);
+    c.post.mode = anim::Extrapolation::RepeatRelative;
+    assert!((at(&c, 1.25) - 12.5).abs() < 1e-6);
+    c.post.mode = anim::Extrapolation::Mirror;
+    assert!((at(&c, 1.25) - 7.5).abs() < 1e-6);
+    c.post = anim::Beyond { mode: anim::Extrapolation::Repeat, repetitions: Some(1) };
+    assert!((at(&c, 5.5) - 10.0).abs() < 1e-6, "one repetition, then the end holds");
+    c.pre = anim::Beyond { mode: anim::Extrapolation::Slope, repetitions: None };
+    assert!((at(&c, -0.5) + 5.0).abs() < 1e-4);
+}
+
+#[test]
+fn euler_angles_come_back_from_their_matrix_in_every_order() {
+    use crate::transform::RotationOrder::*;
+    for order in [Xyz, Xzy, Yzx, Yxz, Zxy, Zyx] {
+        for angles in [[10.0, 20.0, 30.0], [-170.0, 45.0, 99.0], [30.0, 90.0, 10.0], [5.0, -90.0, 40.0]] {
+            let m = euler(angles, order);
+            let back = euler(anim::euler_of(&m, order), order);
+            for (r, s) in m.iter().zip(&back) {
+                for (a, b) in r.iter().zip(s) {
+                    assert!((a - b).abs() < 1e-9, "{order:?} {angles:?}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_animated_scene_moves_its_models() {
+    let bytes = to_bytes(7400, &write::animated_scene(), false);
+    let scene = Scene::parse(&bytes, &Limits::default()).unwrap();
+    let a = &scene.animation;
+    assert_eq!(a.takes.len(), 1);
+    assert_eq!(a.frame_rate, 30.0);
+    let take = &a.takes[0];
+    assert_eq!((take.name.as_str(), take.start, take.stop), ("Take 001", 0.0, 2.0));
+    assert!(a.moves(&scene.hierarchy, 0));
+    let base = scene.hierarchy.index_of(10).unwrap();
+    let top = scene.hierarchy.index_of(11).unwrap();
+    let w = a.worlds(&scene.hierarchy, 0, 1.0);
+    // Halfway: base at 100 cm.
+    assert!(near(transform_point(&w[base].world, [0.0; 3]), [0.0, 100.0, 0.0]));
+    // The take's start is the file's pose.
+    let w0 = a.worlds(&scene.hierarchy, 0, 0.0);
+    assert!(w0.iter().zip(&scene.worlds).all(|(x, y)| x.world == y.world));
+    // At the end, top has turned 90 degrees about z (after its pre-rotation of 90).
+    let p = a.transform_props(&scene.hierarchy, 0, 2.0);
+    assert!(near(p[top].rotation, [0.0, 0.0, 90.0]));
+    // A take that does not exist leaves the file's values.
+    assert_eq!(a.transform_props(&scene.hierarchy, 5, 1.0)[base], scene.hierarchy.nodes[base].props);
+}
+
+#[test]
+fn animation_budgets_and_broken_curves() {
+    let bytes = to_bytes(7400, &write::animated_scene(), true);
+    let few = Limits { max_keys: 3, ..Limits::default() };
+    assert!(Scene::parse(&bytes, &few).unwrap_err().0.contains("animation keys"));
+    let one = Limits { max_curves: 1, ..Limits::default() };
+    assert!(Scene::parse(&bytes, &one).unwrap_err().0.contains("animation curves"));
+    // A curve whose arrays disagree is left out with a warning; the rest still moves.
+    let mut nodes = write::animated_scene();
+    for n in &mut nodes {
+        if n.name == "Objects"
+            && let Some(c) = n.children.iter_mut().find(|c| c.value(0) == Some(&Value::I64(45)))
+            && let Some(v) = c.children.iter_mut().find(|v| v.name == "KeyValueFloat")
+        {
+            v.values = vec![Value::Array(Array::F32(vec![1.0]))];
+        }
+    }
+    let scene = Scene::parse(&to_bytes(7400, &nodes, false), &Limits::default()).unwrap();
+    assert!(scene.warnings.iter().any(|w| w.contains("curves could not be read")));
+    assert_eq!(scene.animation.curves.len(), 1);
+    // Every truncation of an animated file ends in an error or a scene, and evaluating it at
+    // any time is safe.
+    for n in (0..bytes.len()).step_by(7) {
+        if let Ok(s) = Scene::parse(&bytes[..n], &Limits::default()) {
+            for t in [-1.0, 0.5, f64::NAN, 1e300] {
+                let _ = s.animation.worlds(&s.hierarchy, 0, t);
+            }
+        }
+    }
+}
