@@ -25,8 +25,9 @@
 //!
 //! Thumbnails: a thumbnail of a node that cooked for an output this frame costs nothing extra.
 //! Otherwise it is cooked only when dirty, at most once every [`ThumbnailPolicy::min_interval`]
-//! cook passes per node, and only while the frame's
-//! [`ThumbnailPolicy::budget`] lasts (round robin, so every thumbnail gets its turn). Pausing a
+//! cook passes per node, and only while the frame has time left: until the pass has used
+//! [`THUMB_FRAME_SHARE`] of the frame period, and at least [`ThumbnailPolicy::budget`] for
+//! thumbnails however long the outputs took (round robin, so every thumbnail gets its turn). Pausing a
 //! node's thumbnail means the caller stops requesting it; the global switch is
 //! [`ThumbnailPolicy::mode`]; which pictures are still up to date without cooking is
 //! [`Cooker::current`]. Not to be confused with locking a node
@@ -365,7 +366,8 @@ pub struct ThumbnailPolicy {
     pub mode: ThumbnailMode,
     /// Cook passes between two thumbnail cooks of the same node (1 is every pass, 6 is 10 Hz at 60 fps).
     pub min_interval: u32,
-    /// Time per pass for thumbnail cooks, after the outputs.
+    /// Time per pass thumbnail cooks always get after the outputs, even when the outputs used
+    /// up the frame. With time left in the frame they get more ([`THUMB_FRAME_SHARE`]).
     pub budget: Duration,
 }
 
@@ -374,6 +376,10 @@ impl Default for ThumbnailPolicy {
         Self { mode: ThumbnailMode::Always, min_interval: 1, budget: Duration::from_millis(2) }
     }
 }
+
+/// Share of the frame period a pass may fill with thumbnail cooks: thumbnails stay smooth
+/// while the whole pass fits in the frame, and the rest of the period is margin for a slow cook.
+pub const THUMB_FRAME_SHARE: f64 = 0.75;
 
 /// Cook-time statistics of one node (shown as a tint in the editor, reported by `node.info`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
@@ -695,7 +701,7 @@ impl Cooker {
             self.evaluate(id, time, &mut report);
         }
         self.for_thumbnails = true;
-        self.cook_thumbnails(thumbnails, time, &mut report);
+        self.cook_thumbnails(thumbnails, time, start, &mut report);
         self.for_thumbnails = false;
         if self.pass.is_multiple_of(TRIM_CHECK_EVERY) {
             self.trim_idle();
@@ -723,12 +729,19 @@ impl Cooker {
         }
     }
 
-    fn cook_thumbnails(&mut self, thumbnails: &[NodeId], time: FrameTime, report: &mut CookReport) {
+    fn cook_thumbnails(
+        &mut self,
+        thumbnails: &[NodeId],
+        time: FrameTime,
+        pass_start: Instant,
+        report: &mut CookReport,
+    ) {
         let n = thumbnails.len();
         if n == 0 {
             return;
         }
         let start = Instant::now();
+        let headroom = time.rate.period().mul_f64(THUMB_FRAME_SHARE);
         let first = self.thumb_cursor % n;
         for k in 0..n {
             let i = (first + k) % n;
@@ -746,7 +759,7 @@ impl Cooker {
                 report.thumbnails_deferred += 1;
                 continue;
             }
-            if start.elapsed() >= self.thumbs.budget {
+            if start.elapsed() >= self.thumbs.budget && pass_start.elapsed() >= headroom {
                 // Start here next pass, so the ones at the back are not starved.
                 self.thumb_cursor = i;
                 report.thumbnails_deferred += n - k;
@@ -2078,6 +2091,8 @@ mod tests {
             min_interval: 0,
             budget: Duration::from_millis(1),
         });
+        // At 1000 fps the frame has no headroom left, so only the budget counts.
+        f.clock.set_rate(Rate::fps(1000).unwrap());
         let names = ["/s0", "/s1", "/s2", "/s3"];
         let mut seen = BTreeSet::new();
         for pass in 0..8 {
@@ -2092,6 +2107,31 @@ mod tests {
             seen.extend(cooked);
         }
         assert_eq!(seen.len(), 4, "every thumbnail got a turn: {seen:?}");
+    }
+
+    #[test]
+    fn thumbnails_use_the_frame_headroom_beyond_the_budget() {
+        let mut ops = Vec::new();
+        for i in 0..4 {
+            ops.push(create(&format!("/s{i}"), "test.slowcook"));
+        }
+        let mut f = Fixture::new(&ops);
+        f.cooker.set_thumbnail_policy(ThumbnailPolicy {
+            mode: ThumbnailMode::Always,
+            min_interval: 0,
+            budget: Duration::from_millis(1),
+        });
+        let names = ["/s0", "/s1", "/s2", "/s3"];
+        for pass in 0..3 {
+            f.edit(&names.map(|n| Op::Set {
+                param: ParamPath::parse(&format!("{n}.value")).unwrap(),
+                value: Value::Float(f64::from(pass) + 1.0),
+            }));
+            let (cooked, r) = f.cook_with(&[], &names);
+            // Four 2 ms cooks fit in 75 % of a 60 fps frame, past the 1 ms budget.
+            assert_eq!(cooked.len(), 4, "{cooked:?}");
+            assert_eq!(r.thumbnails_deferred, 0);
+        }
     }
 
     #[test]
