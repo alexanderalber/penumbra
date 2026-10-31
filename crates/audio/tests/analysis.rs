@@ -524,3 +524,38 @@ fn superflux_finds_the_beat_in_noise_and_in_clean_sound() {
     assert!(run(rate, &x, &Settings::default()).iter().all(|(_, f)| !f.locked));
     assert!(run(rate, &x, &on).iter().any(|(_, f)| f.locked));
 }
+
+/// The mean phase offset against the kick starts of a house loop, in seconds, with the
+/// loop fed in blocks of `block` samples.
+fn phase_offset(rate: f64, block: usize) -> f64 {
+    let (samples, beats) = house(rate, 20.0, |_| 124.0, 0.3);
+    let Ok(mut a) = Analyzer::new(rate) else { return f64::NAN };
+    let period = 60.0 / 124.0;
+    let (mut sum, mut n) = (0.0, 0usize);
+    let mut done = 0usize;
+    for chunk in samples.chunks(block) {
+        let f = a.process(chunk, &Settings::default());
+        done += chunk.len();
+        let t = done as f64 / rate;
+        if t < 10.0 || !f.locked {
+            continue;
+        }
+        if let Some(p) = true_phase(&beats, t) {
+            sum += wrap(f.beat - p) * period;
+            n += 1;
+        }
+    }
+    sum / n.max(1) as f64
+}
+
+#[test]
+fn ticks_land_on_the_kick_whatever_the_block_size() {
+    let rate = 48000.0;
+    // 512 samples is the hop itself; 800 does not divide it, so the phase has to count the
+    // samples since the last frame.
+    let aligned = phase_offset(rate, 512);
+    let odd = phase_offset(rate, 800);
+    // Within a hop of the kick start (without the 13 ms lag the phase sits 17 ms early).
+    assert!(aligned.abs() < 0.008, "phase {aligned:.4} s off the kick");
+    assert!((aligned - odd).abs() < 0.002, "block size moves the phase: {aligned:.4} vs {odd:.4}");
+}

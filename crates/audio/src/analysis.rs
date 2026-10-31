@@ -47,7 +47,8 @@
 //! and a pull would slide the beat there. Only when the measurement stays that far off for 8 s
 //! does the oscillator jump to it, since then the music itself moved; a hard cut in a DJ mix
 //! takes about 9 s to follow. The phase is given at the newest sample: the delay of the frame
-//! (half its length) is taken out.
+//! (half its length, plus the samples that came since it) is taken out. The phase is also moved
+//! back 13 ms, because the onset strength peaks before the beat is heard.
 //!
 //! **Bar phase:** beats are counted. Bass lines and chords tend to change on the downbeat, so
 //! the spectrum below 1 kHz is averaged over each beat and compared with the beat before; that
@@ -107,6 +108,11 @@ const RECENT_SECONDS: f64 = 1.5;
 const RECENT_SHARE: f64 = 0.15;
 /// Periods laid over the onset strength to find the beat.
 const COMB_BEATS: usize = 6;
+/// Seconds the beat phase is moved back, so a tick lands where the beat is heard. The onset
+/// strength rises most when an attack enters the frame: the log compression makes its first,
+/// quiet part the largest rise. That puts the phase about 8 ms early, at any tempo. A beat is
+/// also heard a little after its attack, about 5 ms more on a DJ mix.
+const PHASE_LAG: f64 = 0.013;
 /// Lowest spectrum frequency, Hz.
 pub const SPECTRUM_LOW: f64 = 30.0;
 /// Highest spectrum frequency, Hz (or the Nyquist frequency, if lower).
@@ -683,9 +689,11 @@ impl Analyzer {
         f.coasting = self.coasting();
         if self.tempo.period > 0.0 && self.phased && self.tempo.found {
             f.bpm = 60.0 * self.fps() / self.tempo.period;
-            // The oscillator stands at the newest frame's centre; the newest sample is half a
-            // frame later.
-            let ahead = (self.size() / 2) as f64 / self.hop as f64 / self.tempo.period;
+            // The oscillator stands at the newest frame's centre. The newest sample is half a
+            // frame later, plus the samples that came since that frame.
+            // `as`: sample counts to hops.
+            let hops = (self.size() / 2 + self.since_hop) as f64 / self.hop as f64;
+            let ahead = (hops - PHASE_LAG * self.fps()) / self.tempo.period;
             let offset = if s.offset.is_finite() { s.offset.clamp(-10.0, 10.0) } else { 0.0 };
             let p = self.phase + ahead + offset * f.bpm / 60.0;
             f.beat = p.rem_euclid(1.0);
