@@ -21,6 +21,11 @@
 //! - `dist`: a release build for Windows, zipped with everything it needs beside the exe, the
 //!   documentation, the examples and the content library: `target/dist/penumbra-VERSION-windows-x64.zip`. Not part
 //!   of `ci`.
+//! - `mcp`: a release build of `penumbra-cli` copied to `target/mcp/`, the place an MCP client
+//!   configuration should point at. A running MCP server locks its exe, and every Claude Code
+//!   session runs one, so a server started from `target/release/` blocks every later release
+//!   build. The copy is renamed aside while it runs and replaced; the running servers keep the
+//!   old file until their session reconnects.
 
 use std::path::Path;
 use std::process::{Command, ExitCode};
@@ -84,8 +89,9 @@ fn main() -> ExitCode {
         "docs" => docs(),
         "notices" => notices(),
         "dist" => dist(),
+        "mcp" => mcp(),
         other => Err(format!(
-            "unknown task `{other}`; tasks: ci, fmt, clippy, test, linux, layers, bless, docs, notices, dist"
+            "unknown task `{other}`; tasks: ci, fmt, clippy, test, linux, layers, bless, docs, notices, dist, mcp"
         )),
     };
     match result {
@@ -342,6 +348,57 @@ fn dist() -> Result<(), String> {
 }
 
 /// Copies a directory tree of plain files.
+/// What `penumbra-cli` needs beside it to run; the DLL is loaded only by script nodes, which
+/// the MCP server does not run, so a locked DLL is no error.
+const MCP_FILES: &[(&str, bool)] = &[("penumbra-cli.exe", true), ("pyhost.dll", false)];
+
+fn mcp() -> Result<(), String> {
+    let root = root()?;
+    let release = root.join("target").join("release");
+    let dir = root.join("target").join("mcp");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // A server started from the build output (the set-up before this task existed) locks the
+    // exe there too, and cargo cannot replace it; moved aside, the link step writes a new one.
+    move_aside(&release.join("penumbra-cli.exe"))?;
+    cargo(&["build", "--release", "-p", "penumbra-cli", "-p", "penumbra-pyhost"])?;
+    for (file, required) in MCP_FILES {
+        let from = release.join(file);
+        let to = dir.join(file);
+        move_aside(&to)?;
+        match std::fs::copy(&from, &to) {
+            Ok(_) => {}
+            Err(e) if !required => eprintln!("xtask: {} not copied: {e}", from.display()),
+            Err(e) => return Err(format!("cannot copy {}: {e}", from.display())),
+        }
+    }
+    eprintln!("xtask: MCP server at {}", dir.join("penumbra-cli.exe").display());
+    eprintln!("xtask: running sessions keep the old server until they reconnect (/mcp in Claude Code)");
+    Ok(())
+}
+
+/// Renames `path` to `<name>.<time>.old` when it exists. A file a running process holds cannot
+/// be overwritten or deleted, but it can be renamed. Earlier `.old` files beside it are removed
+/// where nothing holds them any more.
+fn move_aside(path: &Path) -> Result<(), String> {
+    let Some(parent) = path.parent() else { return Ok(()) };
+    let name = path.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
+    if let Ok(entries) = std::fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let stale = entry.path();
+            let stale_name = stale.file_name().map_or(String::new(), |n| n.to_string_lossy().into_owned());
+            if stale_name.starts_with(&format!("{name}.")) && stale_name.ends_with(".old") {
+                let _ = std::fs::remove_file(&stale);
+            }
+        }
+    }
+    if !path.exists() {
+        return Ok(());
+    }
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    let aside = parent.join(format!("{name}.{stamp}.old"));
+    std::fs::rename(path, &aside).map_err(|e| format!("cannot move {} aside: {e}", path.display()))
+}
+
 fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|e| format!("cannot create {}: {e}", to.display()))?;
     let entries = std::fs::read_dir(from).map_err(|e| format!("cannot read {}: {e}", from.display()))?;

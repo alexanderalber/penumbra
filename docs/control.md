@@ -37,6 +37,12 @@ claude mcp add penumbra -- penumbra-cli mcp
 claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 ```
 
+A running server keeps its exe locked, and every Claude Code session starts one. So when you
+build penumbra yourself, point the client at a copy, not at the build output: `cargo xtask mcp`
+builds `penumbra-cli` in release and puts the copy in `target/mcp/`. Run it again after a
+change to `penumbra-cli`; sessions already open keep the old server until they reconnect
+(`/mcp` in Claude Code).
+
 | Tool | |
 |---|---|
 | `command_list` | every command with its summary; `filter` |
