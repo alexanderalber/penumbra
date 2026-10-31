@@ -1,5 +1,5 @@
 //! The device hubs: what outlives a project and talks to hardware or the network on threads of
-//! its own (OSC, audio, DMX out and in, cameras, recordings, scans, the 3D mouse), and the
+//! its own (OSC, HTTP, audio, DMX out and in, cameras, recordings, scans, the 3D mouse), and the
 //! keyboard, mouse and node-body buttons the windows pass on.
 //!
 //! The engine drives every hub through [`DeviceHub`]: provided to each new cooker, told when the
@@ -16,6 +16,7 @@ use penumbra_camera::Hub as CameraHub;
 use penumbra_dmx::Hub as DmxHub;
 use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_graph::{Cooker, Network, NodeTypes};
+use penumbra_http::Hub as HttpHub;
 use penumbra_ops::audio::file::SoundFiles;
 use penumbra_ops::chan::controls::Buttons;
 use penumbra_ops::keyboard::Keyboard;
@@ -46,6 +47,8 @@ pub trait DeviceHub: Send + Sync {
 /// Every device hub of the engine. Cheap to share: the hubs are handles themselves.
 pub struct Hubs {
     pub osc: Arc<OscShared>,
+    /// HTTP and WebSocket in (`chan.http_in`); hands its messages to the OSC hub.
+    pub http: HttpHub,
     pub audio: AudioHub,
     /// The audio outputs: one bus per device the `out.audio` nodes play on.
     pub audio_out: AudioOutputs,
@@ -72,8 +75,10 @@ impl Hubs {
     pub fn new() -> Self {
         let keyboard = Keyboard::new();
         let spacenav = SpaceNav::new();
+        let osc = penumbra_osc::Hub::new();
         Hubs {
-            osc: Arc::new(OscShared::new(penumbra_osc::Hub::new(), keyboard.clone(), spacenav.clone())),
+            http: HttpHub::new(osc.clone()),
+            osc: Arc::new(OscShared::new(osc, keyboard.clone(), spacenav.clone())),
             audio: AudioHub::new(),
             // The engine's own tests play into buses without a device, never on a speaker.
             audio_out: if cfg!(test) { AudioOutputs::offline(48_000, 2) } else { AudioOutputs::new() },
@@ -93,10 +98,11 @@ impl Hubs {
     /// Every hub, in the order they shut down. Recordings come first: when the app closes, the
     /// cook thread has dropped its nodes and every recording is finishing its file, which the
     /// shutdown waits for.
-    pub fn all(&self) -> [&dyn DeviceHub; 13] {
+    pub fn all(&self) -> [&dyn DeviceHub; 14] {
         // Destructured so that a field missing here does not compile.
         let Hubs {
             osc,
+            http,
             audio,
             audio_out,
             dmx,
@@ -113,6 +119,7 @@ impl Hubs {
         [
             record,
             osc.as_ref(),
+            http,
             audio,
             audio_out,
             dmx,
@@ -145,6 +152,20 @@ impl DeviceHub for OscShared {
 
     fn shutdown(&self) {
         self.hub().shutdown();
+    }
+}
+
+impl DeviceHub for HttpHub {
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    fn network_changed(&self, net: &Network, types: &NodeTypes) {
+        self.set_wanted(&penumbra_ops::http::wants(net, types));
+    }
+
+    fn shutdown(&self) {
+        HttpHub::shutdown(self);
     }
 }
 
@@ -327,6 +348,7 @@ mod tests {
             hub.provide(&mut cooker);
         }
         assert!(cooker.resource::<penumbra_osc::Hub>().is_some());
+        assert!(cooker.resource::<HttpHub>().is_some());
         assert!(cooker.resource::<AudioHub>().is_some());
         assert!(cooker.resource::<AudioOutputs>().is_some());
         assert!(cooker.resource::<DmxHub>().is_some());

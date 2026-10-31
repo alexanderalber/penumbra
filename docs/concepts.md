@@ -299,6 +299,37 @@ wheel).
 the same time. **learn from OSC** also takes the 3D mouse while such a node exists: press a
 button, or push the cap clearly along one axis.
 
+### A control page in the browser
+
+`chan.http_in` makes a web page a control surface: a phone or tablet on the same network, or
+another program. **Where the page lives:** the node serves the files in its `folder` (`www` in
+the project), so `www/index.html` opens at `http://localhost:8090/`. With `bind` at `lan`,
+other devices reach it at `http://<this computer's address>:8090/`; `http.status` names the
+address. **Messages:** a JSON object of addresses and values, sent over a WebSocket at `/ws`,
+as `POST /set`, or as `GET /set?fader=0.5`. `{"/fader": 0.5}` makes channel `fader`; an array
+of numbers makes one channel per number (`xy_0`, `xy_1`); an array of arrays or of objects is a
+table on the `table` output. Bind params to the channels as for OSC. **Show controls:** with
+`params` at `controls` (the default), `{"/fade/value": 0.3}` moves the `chan.slider` `/fade`
+flagged `show`. **What comes back:** a WebSocket gets
+`{"in": {...}, "chans": {...}, "controls": [...]}` whenever something changed, at most `rate`
+times a second: what the node received, the channels at its input, and the show controls with
+their values. A page from another site or a file cannot send. From the control channel:
+`http.send {message}` sends as a page does, `http.status` lists clients and drops.
+
+```html
+<input id="f" type="range" min="0" max="1" step="0.01">
+<pre id="back"></pre>
+<script>
+  const ws = new WebSocket("ws://" + location.host + "/ws");
+  document.getElementById("f").oninput = (e) =>
+    ws.send(JSON.stringify({ "/fader": Number(e.target.value) }));
+  ws.onmessage = (e) =>
+    (document.getElementById("back").textContent = JSON.stringify(JSON.parse(e.data).in));
+</script>
+```
+
+The [feedback](../examples/feedback/README.md) example has a fuller page.
+
 ### A clock per piece
 
 `chan.clock` counts the seconds since it was switched on. Its `run` is on from 0.5 up; each

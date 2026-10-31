@@ -1113,7 +1113,7 @@ Outputs:
 
 [chan.audio_analysis](#chanaudio_analysis), [chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
-*in:* [chan.dmx_in](#chandmx_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
+*in:* [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
 ### chan.audio_analysis
 
@@ -1342,6 +1342,30 @@ Outputs: `out` (chan).
 | `columns` | int | `1` | 1 to 256 (soft) | Samples per channel: the picture is averaged down to this many columns |
 | `rows` | int | `1` | 1 to 64 (soft) | Rows the picture is averaged down to. With more than one row, the channels are numbered by row from the top (r0, r1, ...) |
 | `components` | rgba \| rgb \| red \| luminance | `"rgba"` |  | Which channels a row gives; values are linear and premultiplied, as the picture holds them; rgba: r, g, b and a; rgb: r, g and b; red: r only; luminance: lum, the brightness as the eye weighs it (Rec. 709) |
+
+### chan.http_in
+
+A control page in the browser (a phone on the LAN) or another program sends JSON over HTTP or a WebSocket: every address a channel
+
+Inputs:
+
+- `chans` (chan): Channels sent back to the page with every state message, under `chans`
+
+Outputs:
+
+- `out` (chan): A channel per address (per number), holding its latest value
+- `messages` (table): What arrived: address, count, values
+- `table` (table): A table a message sent as an array of arrays or of objects
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `port` | int | `8090` | 1024 to 65535 (soft) | TCP port to listen on. The page opens at `http://localhost:8090/` for the default; http.status names the address and the port it got; 0: any free port |
+| `bind` | localhost \| lan | `"localhost"` |  | Who may connect; localhost: this machine only; lan: other devices too (a phone on the same network); Windows may ask to allow it |
+| `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
+| `params` | controls \| off \| all | `"controls"` |  | Which params the addresses may set (live, outside the undo history); controls: the value of a chan.slider or chan.button flagged `show`: `/fader/value 0.5`; off: no param: the messages make channels only; all: any param the address names, as chan.osc_in's `params`: `/scene/speed 0.5` |
+| `folder` | text | `"www"` |  | Folder in the project whose files the page and its scripts come from; / opens its index.html. Empty: no files |
+| `rate` | float | `30` | 1 to 60 Hz (soft) | State messages per second to each WebSocket client, at most (only when something changed) |
+| `table` | text |  |  | The address whose table the `table` output holds: `/cues`. Empty: the table that came last |
 
 ### chan.integrator
 

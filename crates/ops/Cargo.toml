@@ -15,6 +15,7 @@ penumbra-core.workspace = true
 penumbra-dmx.workspace = true
 penumbra-graph.workspace = true
 penumbra-gpu.workspace = true
+penumbra-http.workspace = true
 penumbra-mesh.workspace = true
 penumbra-ndi.workspace = true
 penumbra-osc.workspace = true

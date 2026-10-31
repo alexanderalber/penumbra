@@ -3241,6 +3241,7 @@ dependencies = [
  "penumbra-dmx",
  "penumbra-gpu",
  "penumbra-graph",
+ "penumbra-http",
  "penumbra-mesh",
  "penumbra-ndi",
  "penumbra-ops",
@@ -3285,6 +3286,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "penumbra-http"
+version = "0.6.0"
+dependencies = [
+ "log",
+ "penumbra-core",
+ "penumbra-osc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "penumbra-mesh"
 version = "0.6.0"
 dependencies = [
@@ -3318,6 +3330,7 @@ dependencies = [
  "penumbra-dmx",
  "penumbra-gpu",
  "penumbra-graph",
+ "penumbra-http",
  "penumbra-mesh",
  "penumbra-ndi",
  "penumbra-osc",

@@ -1150,6 +1150,11 @@ impl Engine {
         &self.hubs.osc
     }
 
+    /// HTTP and WebSocket in: the listeners of the `chan.http_in` nodes.
+    pub fn http(&self) -> &penumbra_http::Hub {
+        &self.hubs.http
+    }
+
     /// The audio inputs.
     pub fn audio(&self) -> &AudioHub {
         &self.hubs.audio

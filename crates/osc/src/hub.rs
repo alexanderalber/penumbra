@@ -140,7 +140,9 @@ pub struct Store {
 }
 
 impl Store {
-    fn set(&mut self, address: &str, args: &[Arg], max: usize) -> bool {
+    /// Takes in one message for `address`: its numbers and first string become the entry's
+    /// latest. `false` when the address is new and the store already holds `max`.
+    pub fn set(&mut self, address: &str, args: &[Arg], max: usize) -> bool {
         let values: Vec<f64> = args.iter().filter_map(Arg::as_f64).take(MAX_VALUES).collect();
         let text = args.iter().find_map(|a| a.as_str().map(str::to_string));
         let i = match self.index.get(address) {
@@ -185,18 +187,33 @@ impl Store {
     }
 }
 
+/// Where a message came from: OSC over UDP, or HTTP and WebSocket (`penumbra-http`, which hands
+/// its messages over with [`Hub::feed`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Via {
+    #[default]
+    Osc,
+    Http,
+}
+
 /// A message waiting to become a param edit.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Incoming {
+    pub via: Via,
     pub port: u16,
     pub address: String,
     pub args: Vec<Arg>,
     pub from: SocketAddr,
+    /// Only the `value` of a control on the show screen may be set (a `chan.button` or
+    /// `chan.slider` flagged `show`), no other param.
+    pub controls_only: bool,
 }
 
 /// What learn heard.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Heard {
+    pub via: Via,
     pub port: u16,
     pub address: String,
     /// Numeric args.
@@ -324,9 +341,11 @@ struct Inner {
     listeners: Mutex<BTreeMap<u16, Running>>,
     /// Watchers by port, also of ports nothing listens on yet.
     watches: Mutex<Vec<WatchEntry>>,
-    queue: Mutex<BTreeMap<(u16, String), Incoming>>,
+    queue: Mutex<BTreeMap<(Via, u16, String), Incoming>>,
     queued: Condvar,
     learning: AtomicBool,
+    /// Counts the times learn was armed, so another transport can tell its busy addresses.
+    armed: AtomicU64,
     heard: Mutex<Option<Heard>>,
     /// Addresses busy when learn was armed, by port.
     busy: Mutex<std::collections::BTreeSet<(u16, String)>>,
@@ -389,6 +408,7 @@ impl Hub {
                 queue: Mutex::new(BTreeMap::new()),
                 queued: Condvar::new(),
                 learning: AtomicBool::new(false),
+                armed: AtomicU64::new(0),
                 heard: Mutex::new(None),
                 busy: Mutex::new(std::collections::BTreeSet::new()),
                 recent: Mutex::new(VecDeque::new()),
@@ -555,7 +575,70 @@ impl Hub {
             }
         }
         *lock(&self.inner.busy) = busy;
+        if on {
+            self.inner.armed.fetch_add(1, Ordering::AcqRel);
+        }
         self.inner.learning.store(on, Ordering::Release);
+    }
+
+    /// How often learn was armed; changes with every arming. Another transport feeding the hub
+    /// ([`Hub::feed`]) notes its busy addresses when this changes.
+    pub fn learn_generation(&self) -> u64 {
+        self.inner.armed.load(Ordering::Acquire)
+    }
+
+    /// Messages that came by another transport than UDP (HTTP, WebSocket), on the listener
+    /// that `port` names for that transport: queued for the params when `params` is
+    /// `Some(controls_only)`, offered to learn unless `busy` says the address was busy when
+    /// learn was armed. The transport keeps its own store of what arrived.
+    pub fn feed(
+        &self,
+        via: Via,
+        port: u16,
+        from: SocketAddr,
+        messages: &[Message],
+        params: Option<bool>,
+        busy: &dyn Fn(&str) -> bool,
+    ) {
+        let inner = &self.inner;
+        if let Some(controls_only) = params {
+            let mut q = lock(&inner.queue);
+            for m in messages {
+                let key = (via, port, m.address.clone());
+                if q.len() < MAX_QUEUED || q.contains_key(&key) {
+                    q.insert(
+                        key,
+                        Incoming {
+                            via,
+                            port,
+                            address: m.address.clone(),
+                            args: m.args.clone(),
+                            from,
+                            controls_only,
+                        },
+                    );
+                }
+            }
+            drop(q);
+            inner.queued.notify_all();
+        }
+        if inner.learning.load(Ordering::Acquire) {
+            let found = messages.iter().find(|m| {
+                !is_pattern(&m.address) && m.args.iter().any(|a| a.as_f64().is_some()) && !busy(&m.address)
+            });
+            if let Some(m) = found {
+                let mut heard = lock(&inner.heard);
+                if heard.is_none() && inner.learning.swap(false, Ordering::AcqRel) {
+                    *heard = Some(Heard {
+                        via,
+                        port,
+                        address: m.address.clone(),
+                        values: m.args.iter().filter(|a| a.as_f64().is_some()).count(),
+                    });
+                    inner.queued.notify_all();
+                }
+            }
+        }
     }
 
     pub fn learning(&self) -> bool {
@@ -861,10 +944,12 @@ fn receive(inner: &Inner, l: &Listener, want: Want, data: &[u8], from: SocketAdd
         }
         if want.params {
             queue.push(Incoming {
+                via: Via::Osc,
                 port: want.port,
                 address: msg.address.clone(),
                 args: msg.args.clone(),
                 from,
+                controls_only: false,
             });
         }
         if !pattern
@@ -875,6 +960,7 @@ fn receive(inner: &Inner, l: &Listener, want: Want, data: &[u8], from: SocketAdd
             let mut heard = lock(&inner.heard);
             if heard.is_none() && inner.learning.swap(false, Ordering::AcqRel) {
                 *heard = Some(Heard {
+                    via: Via::Osc,
                     port: want.port,
                     address: msg.address.clone(),
                     values: msg.args.iter().filter(|a| a.as_f64().is_some()).count(),
@@ -897,7 +983,7 @@ fn receive(inner: &Inner, l: &Listener, want: Want, data: &[u8], from: SocketAdd
     if !queue.is_empty() {
         let mut q = lock(&inner.queue);
         for m in queue {
-            let key = (m.port, m.address.clone());
+            let key = (m.via, m.port, m.address.clone());
             if q.len() < MAX_QUEUED || q.contains_key(&key) {
                 q.insert(key, m);
             }
@@ -1077,7 +1163,10 @@ mod tests {
         assert_eq!(q.len(), 3);
         assert_eq!(q[1].address, "/n/scale");
         assert_eq!(q[1].args, vec![Arg::Float(0.3)]);
-        assert_eq!(hub.take_heard(), Some(Heard { port: 0, address: "/n/scale".into(), values: 1 }));
+        assert_eq!(
+            hub.take_heard(),
+            Some(Heard { via: Via::Osc, port: 0, address: "/n/scale".into(), values: 1 })
+        );
         assert_eq!(hub.take_heard(), None);
         assert!(!hub.learning());
         hub.shutdown();

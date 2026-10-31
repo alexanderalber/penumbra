@@ -14,6 +14,14 @@ readable on its own trail.
 
 `/x` and `/y` are LFOs bound to the text's position. They make it wander.
 
+**Control page.** `/http` (a `chan.http_in`) serves `www/index.html` at `http://localhost:8090/`.
+Open that address in a browser while the example runs. The page's slider sends `/trail`, which
+`/fade` `brightness` follows. Holding its button sends `/clear`, which switches `/loop` `reset`
+on until you let go. Below, the page shows what came back: the values `/http` received and the
+LFOs `/x` and `/y` (its input, through `/xy`). To use the page from a phone, set `/http` `bind`
+to `lan` and open `http://<this computer's address>:8090/` on the phone; `http.status` names
+the address.
+
 Try:
 
 - `/fade` `brightness` closer to 1 for longer trails, lower for shorter ones.

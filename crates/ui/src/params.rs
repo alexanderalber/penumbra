@@ -2119,10 +2119,12 @@ fn bind_menu(
         ui.separator();
         let listening = input.net.nodes().any(|n| {
             n.kind == penumbra_ops::osc::OSC_IN
+                || n.kind == penumbra_ops::http::HTTP_IN
                 || n.kind == penumbra_ops::keyboard::KEYBOARD_IN
                 || n.kind == penumbra_ops::spacemouse::SPACEMOUSE_IN
         });
-        let needs = "Needs a chan.osc_in, chan.keyboard_in or chan.spacemouse_in node: Tab > chan > osc_in";
+        let needs =
+            "Needs a chan.osc_in, chan.http_in, chan.keyboard_in or chan.spacemouse_in node: Tab > chan > osc_in";
         let r = ui
             .add_enabled(listening && input.can_edit, egui::Button::new("learn from OSC"))
             .on_hover_text(if listening {

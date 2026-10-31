@@ -122,7 +122,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-component-ports">Component ports</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-http">http</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -385,6 +385,19 @@ moss = #1b4332 #52b788
 <h4 id="concepts-mouse-and-3d-mouse">Mouse and 3D mouse</h4>
 <p><a class="ref" href="#chan.mouse_in"><code>chan.mouse_in</code></a> turns the mouse pointer into channels, wherever it is on the desktop, inside penumbra or not: <code>x</code> and <code>y</code> are shares of a display, 0 to 1 from its bottom left (<code>y</code> is 1 at the top); <code>inside</code> is 1 while the pointer is on that display; <code>left</code>, <code>right</code> and <code>middle</code> are 1 while held. Its <code>display</code> names the display as an output's <code>display</code> does (or <code>\\.\DISPLAY2</code>); empty, it is the display the pointer is on. On a named display <code>x</code> and <code>y</code> keep following the pointer past 0 and 1 when it leaves. Name a projector's display, and the pointer over the projection is a position in the projector's picture. <code>wheel</code> sums the notches turned anywhere (up positive); headless runs have no wheel. The node reads the pointer once a frame, so a click shorter than a frame can be missed. From the control channel: <a class="ref" href="#mouse.status"><code>mouse.status</code></a> (pointer, displays, wheel) and <a class="ref" href="#mouse.fake"><code>mouse.fake {x, y, buttons?}</code></a> (desktop pixels; <code>{real: true}</code> ends it; <code>{wheel}</code> turns the wheel).</p>
 <p><a class="ref" href="#chan.spacemouse_in"><code>chan.spacemouse_in</code></a> turns the 3D mouse (see <a href="#navigation">navigation</a>) into channels, each -1 to 1: <code>right</code>, <code>up</code>, <code>forward</code> (slide, lift, push the cap away), <code>pitch</code>, <code>yaw</code>, <code>roll</code> (tilt it nose up, twist it clockwise, tilt it to the right), <code>button_left</code> and <code>button_right</code> (1 while held), <code>connected</code>. A viewer flying a free view and the node both follow the cap at the same time. <strong>learn from OSC</strong> also takes the 3D mouse while such a node exists: press a button, or push the cap clearly along one axis.</p>
+<h4 id="concepts-a-control-page-in-the-browser">A control page in the browser</h4>
+<p><a class="ref" href="#chan.http_in"><code>chan.http_in</code></a> makes a web page a control surface: a phone or tablet on the same network, or another program. <strong>Where the page lives:</strong> the node serves the files in its <code>folder</code> (<code>www</code> in the project), so <code>www/index.html</code> opens at <code>http://localhost:8090/</code>. With <code>bind</code> at <code>lan</code>, other devices reach it at <code>http://&lt;this computer's address&gt;:8090/</code>; <a class="ref" href="#http.status"><code>http.status</code></a> names the address. <strong>Messages:</strong> a JSON object of addresses and values, sent over a WebSocket at <code>/ws</code>, as <code>POST /set</code>, or as <code>GET /set?fader=0.5</code>. <code>{&quot;/fader&quot;: 0.5}</code> makes channel <code>fader</code>; an array of numbers makes one channel per number (<code>xy_0</code>, <code>xy_1</code>); an array of arrays or of objects is a table on the <code>table</code> output. Bind params to the channels as for OSC. <strong>Show controls:</strong> with <code>params</code> at <code>controls</code> (the default), <code>{&quot;/fade/value&quot;: 0.3}</code> moves the <a class="ref" href="#chan.slider"><code>chan.slider</code></a> <code>/fade</code> flagged <code>show</code>. <strong>What comes back:</strong> a WebSocket gets <code>{&quot;in&quot;: {...}, &quot;chans&quot;: {...}, &quot;controls&quot;: [...]}</code> whenever something changed, at most <code>rate</code> times a second: what the node received, the channels at its input, and the show controls with their values. A page from another site or a file cannot send. From the control channel: <a class="ref" href="#http.send"><code>http.send {message}</code></a> sends as a page does, <a class="ref" href="#http.status"><code>http.status</code></a> lists clients and drops.</p>
+<pre><code class="lang-html">&lt;input id=&quot;f&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;1&quot; step=&quot;0.01&quot;&gt;
+&lt;pre id=&quot;back&quot;&gt;&lt;/pre&gt;
+&lt;script&gt;
+  const ws = new WebSocket(&quot;ws://&quot; + location.host + &quot;/ws&quot;);
+  document.getElementById(&quot;f&quot;).oninput = (e) =&gt;
+    ws.send(JSON.stringify({ &quot;/fader&quot;: Number(e.target.value) }));
+  ws.onmessage = (e) =&gt;
+    (document.getElementById(&quot;back&quot;).textContent = JSON.stringify(JSON.parse(e.data).in));
+&lt;/script&gt;
+</code></pre>
+<p>The <a href="../examples/feedback/README.md">feedback</a> example has a fuller page.</p>
 <h4 id="concepts-a-clock-per-piece">A clock per piece</h4>
 <p><a class="ref" href="#chan.clock"><code>chan.clock</code></a> counts the seconds since it was switched on. Its <code>run</code> is on from 0.5 up; each time it turns on, the clock starts over from 0, and while it is off the clock stands at 0. With <code>equals</code> set, <code>run</code> is on while it equals that number instead: bind <code>run</code> to the channel that says which piece plays (<code>last</code> of a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a>, or the <a class="ref" href="#chan.constant"><code>chan.constant</code></a> bound to it) and set <code>equals</code> to the piece's number, and the piece has a clock that starts with it, with one binding. <code>mode</code> says what happens after <code>length</code> seconds: <code>once</code> holds at the end, <code>loop</code> starts over, <code>free</code> runs on. Its channels are <code>seconds</code>, <code>fraction</code> (of <code>length</code>) and <code>done</code> (1 once a full length has passed). A seek back starts every clock over. To compare channels elsewhere, <a class="ref" href="#chan.math"><code>chan.math</code></a> has <code>op</code> <code>equal</code>: 1 where a equals b, else 0.</p>
 <p><code>run</code> is the only way a clock starts over: a clock left at <code>run</code> 1 runs on while its piece is not shown. A clock cooks in every frame, shown or not, so it sees its <code>run</code> turn off and on again even while a <a class="ref" href="#tex.switch"><code>tex.switch</code></a> or <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> skips the piece it drives, and it behaves the same with the editor's thumbnails on or off and headless.</p>
@@ -1778,7 +1791,7 @@ def cook(cx):
 </div></details>
 <details class="entry guide" id="control"><summary><span class="name">Control</span></summary>
 <div class="body">
-<p>Everything the UI does is a command, and every command is reachable over a local control channel. That is how Claude Code builds and changes networks, and how a script, a test or another program can drive penumbra. The full list is the <a href="#commands">command reference</a>; <code>commands</code> on the channel returns the same list from the running app. This page is about that channel; OSC from a desk, QLab or a phone is in <a href="#helpers-osc">Helpers</a> and <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a>.</p>
+<p>Everything the UI does is a command, and every command is reachable over a local control channel. That is how Claude Code builds and changes networks, and how a script, a test or another program can drive penumbra. The full list is the <a href="#commands">command reference</a>; <code>commands</code> on the channel returns the same list from the running app. This page is about that channel; OSC from a desk, QLab or a phone is in <a href="#helpers-osc">Helpers</a> and <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a>; a control page in the browser is in <a href="#concepts-a-control-page-in-the-browser">concepts</a> and <a class="ref" href="#chan.http_in"><code>chan.http_in</code></a>.</p>
 <h3 id="control-penumbra-cli-ctl"><code>penumbra-cli ctl</code></h3>
 <p><code>penumbra-cli</code> sends one request to the running app and prints the reply:</p>
 <pre><code>cargo run -p penumbra-cli -- ctl node.list
@@ -3372,7 +3385,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_analysis"><summary><code class="name">chan.audio_analysis</code><span class="sum">Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</span></summary>
 <div class="body">
 <p>Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</p>
@@ -3687,6 +3700,34 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+<details class="entry node" id="chan.http_in"><summary><code class="name">chan.http_in</code><span class="sum">A control page in the browser (a phone on the LAN) or another program sends JSON over HTTP or a WebSocket: every address a channel</span></summary>
+<div class="body">
+<p>A control page in the browser (a phone on the LAN) or another program sends JSON over HTTP or a WebSocket: every address a channel</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>chans</code> <span class="kind">chan</span>: Channels sent back to the page with every state message, under <code>chans</code></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: A channel per address (per number), holding its latest value</li>
+<li><code>messages</code> <span class="kind">table</span>: What arrived: address, count, values</li>
+<li><code>table</code> <span class="kind">table</span>: A table a message sent as an array of arrays or of objects</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>port</code></td><td>int</td><td><code>8090</code></td><td>1024 to 65535 (soft)</td><td>TCP port to listen on. The page opens at <code>http://localhost:8090/</code> for the default; http.status names the address and the port it got<ul><li>0: any free port</li></ul></td></tr>
+<tr><td><code>bind</code></td><td>localhost | lan</td><td><code>&quot;localhost&quot;</code></td><td></td><td>Who may connect<ul><li><code>localhost</code>: this machine only</li><li><code>lan</code>: other devices too (a phone on the same network); Windows may ask to allow it</li></ul></td></tr>
+<tr><td><code>addresses</code></td><td>text</td><td><code>&quot;*&quot;</code></td><td></td><td>Space-separated OSC patterns of the addresses to keep as channels: <code>/1/* /xy</code>; <code>*</code> all; <code>^/ping</code> leaves an address out</td></tr>
+<tr><td><code>params</code></td><td>controls | off | all</td><td><code>&quot;controls&quot;</code></td><td></td><td>Which params the addresses may set (live, outside the undo history)<ul><li><code>controls</code>: the value of a chan.slider or chan.button flagged <code>show</code>: <code>/fader/value 0.5</code></li><li><code>off</code>: no param: the messages make channels only</li><li><code>all</code>: any param the address names, as chan.osc_in's <code>params</code>: <code>/scene/speed 0.5</code></li></ul></td></tr>
+<tr><td><code>folder</code></td><td>text</td><td><code>&quot;www&quot;</code></td><td></td><td>Folder in the project whose files the page and its scripts come from; / opens its index.html. Empty: no files</td></tr>
+<tr><td><code>rate</code></td><td>float</td><td><code>30</code></td><td>1 to 60 Hz (soft)</td><td>State messages per second to each WebSocket client, at most (only when something changed)</td></tr>
+<tr><td><code>table</code></td><td>text</td><td></td><td></td><td>The address whose table the <code>table</code> output holds: <code>/cues</code>. Empty: the table that came last</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-a-control-page-in-the-browser">Concepts › A control page in the browser</a>, <a href="#control">Control</a></p>
 </div></details>
 <details class="entry node" id="chan.integrator"><summary><code class="name">chan.integrator</code><span class="sum">Turns a speed into a position: adds up each channel over time, for steady turning, scrolling or drifting</span></summary>
 <div class="body">
@@ -4027,7 +4068,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>name</code></td><td>text</td><td><code>&quot;value&quot;</code></td><td></td><td>Name of the channel it makes, as bindings and other nodes see it</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a>, <a href="#concepts-a-control-page-in-the-browser">Concepts › A control page in the browser</a></p>
 </div></details>
 <details class="entry node" id="chan.spacemouse_in"><summary><code class="name">chan.spacemouse_in</code><span class="sum">The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show</span></summary>
 <div class="body">
@@ -5549,6 +5590,23 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p class="mentions">Mentioned in: <a href="#concepts-undo-and-the-change-log">Concepts › Undo and the change log</a></p>
 </div></details>
 </div>
+<div class="group" id="group-http">
+<h3>http</h3>
+<details class="entry command" id="http.config"><summary><code class="name">http.config</code><span class="sum">HTTP settings for this run: {enabled?, max_body?, rate?, burst?, max_connections?, max_per_client?, max_addresses?, timeout?, idle?}</span></summary>
+<div class="body">
+<p>HTTP settings for this run: {enabled?, max_body?, rate?, burst?, max_connections?, max_per_client?, max_addresses?, timeout?, idle?}</p>
+</div></details>
+<details class="entry command" id="http.send"><summary><code class="name">http.send</code><span class="sum">Take in a message on a chan.http_in's port as if a page had sent it: {message: {&quot;/fader&quot;: 0.5}, port?} (port as the node's <code>port</code> param; may be left out when one listens)</span></summary>
+<div class="body">
+<p>Take in a message on a chan.http_in's port as if a page had sent it: {message: {&quot;/fader&quot;: 0.5}, port?} (port as the node's <code>port</code> param; may be left out when one listens)</p>
+<p class="mentions">Mentioned in: <a href="#concepts-a-control-page-in-the-browser">Concepts › A control page in the browser</a></p>
+</div></details>
+<details class="entry command" id="http.status"><summary><code class="name">http.status</code><span class="sum">HTTP listeners of chan.http_in nodes: port, bound, the page's address for a phone, connections, WebSocket clients, messages per second, the last addresses, drops by cause</span></summary>
+<div class="body">
+<p>HTTP listeners of chan.http_in nodes: port, bound, the page's address for a phone, connections, WebSocket clients, messages per second, the last addresses, drops by cause</p>
+<p class="mentions">Mentioned in: <a href="#concepts-a-control-page-in-the-browser">Concepts › A control page in the browser</a></p>
+</div></details>
+</div>
 <div class="group" id="group-job">
 <h3>job</h3>
 <details class="entry command" id="job.cancel"><summary><code class="name">job.cancel</code><span class="sum">Stop the helper job going on (projector.match, projector.flatfield before their next picture; scan.blend between its steps). Nothing is applied</span></summary>
@@ -5713,9 +5771,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>OSC settings for this run: {enabled?, max_packet?, rate?, burst?, pattern_rate?, max_addresses?}</p>
 </div></details>
-<details class="entry command" id="osc.learn"><summary><code class="name">osc.learn</code><span class="sum">Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists)</span></summary>
+<details class="entry command" id="osc.learn"><summary><code class="name">osc.learn</code><span class="sum">Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists)</span></summary>
 <div class="body">
-<p>Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}</p>
+<p>Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}</p>
 </div></details>
 <details class="entry command" id="osc.send"><summary><code class="name">osc.send</code><span class="sum">Send one OSC message</span></summary>
 <div class="body">

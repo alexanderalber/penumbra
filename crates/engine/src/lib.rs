@@ -19,6 +19,7 @@ pub mod dmx;
 pub mod engine;
 pub mod file_out;
 pub mod flatfield;
+pub mod http;
 pub mod hubs;
 pub mod jobs;
 pub mod keyboard;
@@ -81,6 +82,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     calib::register(&mut registry);
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
+    http::register(&mut registry, engine);
     keyboard::register(&mut registry, engine);
     buttons::register(&mut registry, engine);
     mouse::register(&mut registry, engine);

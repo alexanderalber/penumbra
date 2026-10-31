@@ -17,6 +17,7 @@ penumbra-graph.workspace = true
 penumbra-project.workspace = true
 penumbra-record.workspace = true
 penumbra-gpu.workspace = true
+penumbra-http.workspace = true
 penumbra-ops.workspace = true
 penumbra-osc.workspace = true
 penumbra-script.workspace = true

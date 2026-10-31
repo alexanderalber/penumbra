@@ -20,6 +20,7 @@ penumbra-dmx = { path = "crates/dmx" }
 penumbra-engine = { path = "crates/engine" }
 penumbra-gpu = { path = "crates/gpu" }
 penumbra-graph = { path = "crates/graph" }
+penumbra-http = { path = "crates/http" }
 penumbra-mesh = { path = "crates/mesh" }
 penumbra-ops = { path = "crates/ops" }
 penumbra-ndi = { path = "crates/ndi" }

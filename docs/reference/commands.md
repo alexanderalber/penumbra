@@ -117,6 +117,14 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `history.redo` | Redo one history entry |
 | `history.undo` | Undo one history entry |
 
+## http
+
+| command | |
+|---|---|
+| `http.config` | HTTP settings for this run: {enabled?, max_body?, rate?, burst?, max_connections?, max_per_client?, max_addresses?, timeout?, idle?} |
+| `http.send` | Take in a message on a chan.http_in's port as if a page had sent it: {message: {"/fader": 0.5}, port?} (port as the node's `port` param; may be left out when one listens) |
+| `http.status` | HTTP listeners of chan.http_in nodes: port, bound, the page's address for a phone, connections, WebSocket clients, messages per second, the last addresses, drops by cause |
+
 ## job
 
 | command | |
@@ -182,7 +190,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `osc.config` | OSC settings for this run: {enabled?, max_packet?, rate?, burst?, pattern_rate?, max_addresses?} |
-| `osc.learn` | Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true} |
+| `osc.learn` | Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true} |
 | `osc.send` | Send one OSC message; {host?, port, address, args?: [numbers, strings, booleans]} |
 | `osc.status` | OSC listeners (port, bound, packets, drops, sources), senders, recent messages, params set by address, learn |
 

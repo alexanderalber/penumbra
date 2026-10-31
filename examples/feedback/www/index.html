@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>feedback: control page</title>
+<style>
+  body { font: 16px system-ui, sans-serif; background: #111; color: #eee; margin: 0; padding: 1.2em; max-width: 34em; }
+  h1 { font-size: 1.2em; margin: 0 0 1em; }
+  label { display: block; margin: 1.4em 0 0.4em; }
+  input[type=range] { width: 100%; height: 2.4em; }
+  button { font: inherit; width: 100%; padding: 1em; border: 0; border-radius: 0.4em; background: #e8731a; color: #111; touch-action: none; }
+  button.down { background: #fff; }
+  pre { background: #222; padding: 0.8em; border-radius: 0.4em; white-space: pre-wrap; }
+  #state { color: #9c9; }
+  #state.off { color: #c66; }
+</style>
+</head>
+<body>
+<h1>feedback</h1>
+
+<label for="trail">trail <span id="trail-value"></span></label>
+<input id="trail" type="range" min="0.9" max="0.995" step="0.001" value="0.98">
+
+<label>&nbsp;</label>
+<button id="clear">hold to clear</button>
+
+<div id="controls"></div>
+
+<p id="state" class="off">connecting</p>
+<pre id="back"></pre>
+
+<script>
+// One WebSocket to the chan.http_in that served this page. Every message is a JSON object of
+// addresses and values: {"/trail": 0.97}. Each address becomes a channel of the node.
+let socket = null;
+let pending = {};
+
+function connect() {
+  socket = new WebSocket("ws://" + location.host + "/ws");
+  socket.onopen = () => { show("connected", true); };
+  socket.onclose = () => { show("not connected, trying again", false); setTimeout(connect, 1000); };
+  socket.onmessage = (e) => receive(JSON.parse(e.data));
+}
+
+function show(text, ok) {
+  const s = document.getElementById("state");
+  s.textContent = text;
+  s.className = ok ? "" : "off";
+}
+
+// Sends at most once per animation frame; a fast slider sends only its latest value.
+function send(address, value) {
+  pending[address] = value;
+  requestAnimationFrame(flush);
+}
+
+function flush() {
+  if (Object.keys(pending).length === 0 || !socket || socket.readyState !== 1) return;
+  socket.send(JSON.stringify(pending));
+  pending = {};
+}
+
+// What comes back: "in" (what the node received), "chans" (its input's channels),
+// "controls" (the controls flagged show), and "error" when a message did not parse.
+function receive(state) {
+  if (state.error) { show(state.error, false); return; }
+  const lines = [];
+  for (const [address, v] of Object.entries(state.in || {})) lines.push(address + " = " + v);
+  for (const [name, v] of Object.entries(state.chans || {})) lines.push(name + " = " + v.toFixed(3));
+  document.getElementById("back").textContent = lines.join("\n");
+  showControls(state.controls || []);
+}
+
+// Sliders for the controls flagged `show` (a chan.slider): moving one sets its value.
+function showControls(list) {
+  const box = document.getElementById("controls");
+  for (const c of list) {
+    if (c.kind !== "chan.slider") continue;
+    let input = document.getElementById("c:" + c.path);
+    if (!input) {
+      const label = document.createElement("label");
+      label.textContent = c.label;
+      input = document.createElement("input");
+      Object.assign(input, { type: "range", id: "c:" + c.path, min: c.min, max: c.max, step: "any" });
+      input.oninput = () => send(c.address, Number(input.value));
+      box.append(label, input);
+    }
+    if (document.activeElement !== input) input.value = c.value;
+    input.disabled = c.bound;
+  }
+}
+
+const trail = document.getElementById("trail");
+trail.oninput = () => {
+  document.getElementById("trail-value").textContent = trail.value;
+  send("/trail", Number(trail.value));
+};
+
+const clear = document.getElementById("clear");
+const press = (down) => { clear.classList.toggle("down", down); send("/clear", down ? 1 : 0); };
+clear.onpointerdown = (e) => { clear.setPointerCapture(e.pointerId); press(true); };
+clear.onpointerup = () => press(false);
+clear.onpointercancel = () => press(false);
+
+connect();
+</script>
+</body>
+</html>

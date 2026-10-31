@@ -2,18 +2,21 @@
 //! calls [`penumbra_ops::osc::wants`] when the network changes), and the **osc thread** turns what
 //! arrives into edits:
 //!
-//! - **Params by address** (on ports whose `chan.osc_in` has `params` on): `/scene/speed 0.5`
-//!   sets `/scene.speed` (an exposed param of a component, or any node's param by its path;
-//!   `/n/translate/0 0.5` sets one component; `/n/translate 1 2 3` the whole vector). Patterns
-//!   in the address (`/lights/*/dim 0`) match nodes and params with a step budget. What arrives
-//!   within one frame becomes one edit. The values are live control, as in TouchDesigner: they
-//!   do not enter the history, and undo or redo of other edits keeps them
-//!   ([`penumbra_graph::History::live`]). OSC edits pass the gate as the user's (refused
-//!   while Claude holds the claim) and are refused on locked nodes and bound params.
+//! - **Params by address** (on ports whose `chan.osc_in` has `params` on, and from a
+//!   `chan.http_in` whose `params` is `all`, or `controls` for the show screen's controls only):
+//!   `/scene/speed 0.5` sets `/scene.speed` (an exposed param of a component, or any node's
+//!   param by its path; `/n/translate/0 0.5` sets one component; `/n/translate 1 2 3` the
+//!   whole vector). Patterns in the address (`/lights/*/dim 0`) match nodes and params with a
+//!   step budget. What arrives within one frame becomes one edit. The values are live
+//!   control, as in TouchDesigner: they do not enter the history, and undo or redo of other
+//!   edits keeps them ([`penumbra_graph::History::live`]). OSC edits pass the gate as the
+//!   user's (refused while Claude holds the claim) and are refused on locked nodes and bound
+//!   params.
 //! - **Learn** (`osc.learn`): the next address with a number binds the param to that address's
-//!   channel on the `chan.osc_in` that takes it; one undo step. A key pressed meanwhile that a
-//!   `chan.keyboard_in` lists counts too: the param is bound to that key's gate. So does the 3D
-//!   mouse while a `chan.spacemouse_in` exists: a button pressed, or an axis pushed past half
+//!   channel on the `chan.osc_in` that takes it (or the `chan.http_in`, for a message that came
+//!   over HTTP or a WebSocket: the HTTP hub hands its messages to the OSC hub); one undo step.
+//!   A key pressed meanwhile that a `chan.keyboard_in` lists counts too: the param is bound to
+//!   that key's gate. So does the 3D mouse while a `chan.spacemouse_in` exists: a button pressed, or an axis pushed past half
 //!   way, binds the param to that channel.
 //!
 //! Commands: `osc.status`, `osc.config`, `osc.learn`, `osc.send`.
@@ -25,11 +28,12 @@ use std::time::{Duration, Instant};
 
 use penumbra_core::{Name, NodeId, NodePath, ParamKind, ParamPath, ParamSpec, Value, lock};
 use penumbra_graph::{Network, NodeDef, NodeTypes, Op};
+use penumbra_ops::http::HTTP_IN;
 use penumbra_ops::keyboard::{DEFAULT_KEYS, KEYBOARD_IN, Key, Keyboard, parse_keys};
 use penumbra_ops::osc::{Filter, OSC_IN, channels_of};
 use penumbra_ops::spacemouse::{SPACEMOUSE_IN, heard as spacemouse_heard};
 use penumbra_osc::codec::{self, Arg, Message};
-use penumbra_osc::hub::{self, Config, Hub, Incoming};
+use penumbra_osc::hub::{self, Config, Heard, Hub, Incoming, Via};
 use penumbra_osc::{Budget, Pattern};
 use penumbra_project::{Actor, Session};
 use penumbra_spacenav::{BUTTONS, SpaceNav};
@@ -387,6 +391,17 @@ pub fn value_for(
     }
 }
 
+/// Whether `param` is the `value` of a `chan.slider` or toggle `chan.button` on the show screen:
+/// the one param a listener whose `params` is `controls` may set.
+fn is_control_value(types: &NodeTypes, node: &NodeDef, param: &ParamPath) -> bool {
+    use penumbra_ops::chan::controls::{BUTTON, TOGGLE};
+    let toggle =
+        || types.desc(BUTTON).and_then(|d| node.param(d, "mode")).and_then(Value::as_str) == Some(TOGGLE);
+    param.param().as_str() == "value"
+        && crate::buttons::on_show_screen(types, node)
+        && (node.kind != BUTTON || toggle())
+}
+
 fn refuse(stats: &mut ParamStats, why: String) {
     stats.refused += 1;
     stats.last_refused = Some(why);
@@ -414,6 +429,16 @@ fn apply(session: &Session, shared: &OscShared, incoming: &[Incoming], now: Inst
                 Some(c) => format!("{}.{c}", t.param),
                 None => t.param.to_string(),
             };
+            if m.controls_only && !is_control_value(types, node, &t.param) {
+                refuse(
+                    &mut stats,
+                    format!(
+                        "{label} from {}: this listener sets only the value of a control flagged `show`                          (its `params` is `controls`)",
+                        m.address
+                    ),
+                );
+                continue;
+            }
             if node.locked {
                 refuse(&mut stats, format!("{} from {}: the node is locked", label, m.address));
                 continue;
@@ -542,7 +567,7 @@ fn learn_step(session: &Session, shared: &OscShared, now: Instant) {
         }
         return;
     };
-    let result = bind_learned(session, &learning, &heard.address, heard.port, heard.values);
+    let result = bind_learned(session, &learning, &heard);
     let (from, channels, error) = match result {
         Ok((from, channels)) => (Some(from), channels, None),
         Err(e) => (None, Vec::new(), Some(e)),
@@ -550,19 +575,25 @@ fn learn_step(session: &Session, shared: &OscShared, now: Instant) {
     finish(Learned { param: learning.param.clone(), address: Some(heard.address), from, channels, error });
 }
 
+/// Binds the learning param to what `heard` names: a channel of the first `chan.osc_in` (or
+/// `chan.http_in`, for a message that came over HTTP) by path on that port that keeps the
+/// address.
 fn bind_learned(
     session: &Session,
     learning: &Learning,
-    address: &str,
-    port: u16,
-    values: usize,
+    heard: &Heard,
 ) -> Result<(String, Vec<String>), String> {
+    let (address, port, values) = (heard.address.as_str(), heard.port, heard.values);
+    let kind = match heard.via {
+        Via::Osc => OSC_IN,
+        Via::Http => HTTP_IN,
+    };
     let net = session.doc().snapshot();
     let types = session.types();
-    let desc = types.desc(OSC_IN).ok_or("no chan.osc_in node type")?;
+    let desc = types.desc(kind).ok_or_else(|| format!("no {kind} node type"))?;
     let mut nodes: Vec<(NodePath, &Arc<NodeDef>)> = net
         .nodes()
-        .filter(|n| n.kind == OSC_IN)
+        .filter(|n| n.kind == kind)
         .filter(|n| n.param(desc, "port").and_then(Value::as_i64) == Some(i64::from(port)))
         .filter(|n| {
             Filter::parse(n.param(desc, "addresses").and_then(Value::as_str).unwrap_or("*")).admits(address)
@@ -571,7 +602,7 @@ fn bind_learned(
         .collect();
     nodes.sort_by(|a, b| a.0.cmp(&b.0));
     let Some((from, _)) = nodes.first() else {
-        return Err(format!("no chan.osc_in on port {port} keeps {address} (see its addresses)"));
+        return Err(format!("no {kind} on port {port} keeps {address} (see its addresses)"));
     };
     let (param, component) = &learning.target;
     let target = net.resolve_alias(types, param).map_err(|e| e.0)?;
@@ -698,7 +729,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "osc.learn",
-        "Bind a param to the next OSC address that arrives with a number (or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}",
+        "Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}",
         osc_learn,
     );
     add(

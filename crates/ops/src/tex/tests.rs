@@ -118,6 +118,9 @@ impl Rig {
         cooker.provide(gpu.clone());
         let hub = penumbra_osc::Hub::new();
         hub.set_wanted(&crate::osc::wants(&net, &types));
+        let http = penumbra_http::Hub::new(hub.clone());
+        http.set_wanted(&crate::http::wants(&net, &types));
+        cooker.provide(http);
         cooker.provide(hub);
         let audio = penumbra_audio::Hub::new();
         audio.feed("test", 48_000, 2, &[0.0; 2]).unwrap();
@@ -639,7 +642,7 @@ fn every_builtin_cooks_without_warnings() {
             "geo.file" => params.push(("file", "box.obj".into())),
             "tex.layer" => params.push(("file", "poster.psd".into())),
             // Any free port, so the test never collides with something listening on 8000.
-            "chan.osc_in" => params.push(("port", Value::Int(0))),
+            "chan.osc_in" | "chan.http_in" => params.push(("port", Value::Int(0))),
             "light.environment" => params.push(("size", Value::Int(64))),
             "audio.device_in" => params.push(("device", "test".into())),
             "out.dmx" => params.extend([("protocol", "art_net".into()), ("host", dmx_host.as_str().into())]),
