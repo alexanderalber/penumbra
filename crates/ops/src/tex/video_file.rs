@@ -94,6 +94,9 @@ struct Video {
     ring: TexRing,
     /// Seconds into the clip (not wrapped).
     playhead: f64,
+    /// The first cook found no GPU, and the playhead has moved since then: the file opened
+    /// next keeps it.
+    early: bool,
     /// Show time of the last cook.
     last_time: Option<f64>,
     /// Late frames counted so far, and the show time the count last grew.
@@ -166,22 +169,6 @@ impl Operator for Video {
     }
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let gpu = super::gpu(cx)?;
-        let path = cx.resolve_path(cx.text("file")?)?;
-        let moved = self.watch.as_ref().is_none_or(|w| w.path() != path);
-        let changed = self.watch.as_ref().is_some_and(FileWatch::take_changed);
-        if moved || changed || self.player.is_none() {
-            if moved {
-                self.watch = Some(cx.watch_file(&path));
-            }
-            let limits = Limits { max_side: gpu.max_texture_size(), ..Limits::default() };
-            let waker = cx.waker();
-            let on_frame: penumbra_video::OnFrame = std::sync::Arc::new(move || waker.wake());
-            self.player = Some(Player::new(&path, limits, Some(on_frame)).map_err(CookError::failed)?);
-            self.playhead = cx.float("start")?;
-            self.failed = None;
-            self.late = (0, 0.0);
-        }
         let start = cx.float("start")?;
         let restart = self.restart_due(cx)?;
         let now = cx.time().seconds();
@@ -191,11 +178,42 @@ impl Operator for Video {
             Some(_) => f64::from(cx.rate().den()) / f64::from(cx.rate().num().max(1)),
             None => 0.0,
         };
+        let first = self.last_time.is_none();
         self.last_time = Some(now);
-        if restart {
+        if first || restart {
             self.playhead = start;
         } else if cx.bool("play")? {
             self.playhead += dt * cx.float("speed")?.clamp(0.0, 16.0);
+        }
+        let gpu = match super::gpu(cx) {
+            Ok(gpu) => gpu,
+            Err(e) => {
+                // The first passes after the app starts have no GPU yet. The playhead moves on
+                // meanwhile, so the clip stays in step with an audio.file that plays from the
+                // first pass.
+                self.early |= first;
+                return Err(e);
+            }
+        };
+        let path = cx.resolve_path(cx.text("file")?).inspect_err(|_| self.early = false)?;
+        let moved = self.watch.as_ref().is_none_or(|w| w.path() != path);
+        let changed = self.watch.as_ref().is_some_and(FileWatch::take_changed);
+        if moved || changed || self.player.is_none() {
+            if moved {
+                self.watch = Some(cx.watch_file(&path));
+            }
+            let limits = Limits { max_side: gpu.max_texture_size(), ..Limits::default() };
+            let waker = cx.waker();
+            let on_frame: penumbra_video::OnFrame = std::sync::Arc::new(move || waker.wake());
+            let player = Player::new(&path, limits, Some(on_frame)).map_err(CookError::failed);
+            // A file opened while the GPU was missing keeps the playhead it has had since the
+            // first cook; any other opening starts at `start`.
+            if !std::mem::take(&mut self.early) {
+                self.playhead = start;
+            }
+            self.player = Some(player?);
+            self.failed = None;
+            self.late = (0, 0.0);
         }
         let looping = cx.bool("loop")?;
         let Some(player) = self.player.as_mut() else {

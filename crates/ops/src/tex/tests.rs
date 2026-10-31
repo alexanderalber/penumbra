@@ -1706,6 +1706,42 @@ fn video_file_restarts_on_an_edge_a_request_and_coming_back() {
     assert_eq!(info(&rig, "restarts"), Some(3.0));
 }
 
+/// The first passes after the app starts have no GPU. `tex.video_file` cooks them all the same,
+/// and its playhead moves on meanwhile, as an `audio.file`'s does: the picture does not start
+/// behind the sound by the time the GPU took to come.
+#[test]
+fn video_file_moves_on_while_the_gpu_is_not_there_yet() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("video_early");
+    std::fs::copy(manifest().join("../video/tests/fixtures/ramp30.mp4"), dir.join("ramp30.mp4")).unwrap();
+    let ops =
+        [create("/v", "tex.video_file", &[("file", "ramp30.mp4".into()), ("loop", Value::Bool(false))])];
+    let types = Arc::new(builtin_types().unwrap());
+    let net = Arc::new(Network::new().apply(&types, &ops).unwrap().network);
+    let mut cooker = Cooker::new(types, Arc::new(JobPool::new(2).unwrap()));
+    cooker.set_base_dir(Some(dir.to_path_buf()));
+    let id = net.resolve(&"/v".parse().unwrap()).unwrap();
+    let mut clock = ShowClock::new(Rate::FPS_60, LatePolicy::Realtime);
+    // 0.4 s of show time without a GPU.
+    for _ in 0..24 {
+        cooker.cook(&net, clock.now(), &[id], &[]);
+        clock.advance(1);
+    }
+    cooker.provide(gpu);
+    // The clock stands still until the first frame shows: 0.4 s in, frame 12 of the ramp.
+    let frame = |cooker: &Cooker| {
+        let port = Port { node: id, output: 1 };
+        cooker.output(port).and_then(|d| d.get::<penumbra_core::Chans>()?.value(Some("frame")))
+    };
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while frame(&cooker).is_none() {
+        cooker.cook(&net, clock.now(), &[id], &[]);
+        assert!(Instant::now() < deadline, "no frame");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(frame(&cooker), Some(12.0));
+}
+
 #[test]
 fn a_switch_that_skips_cooks_only_what_it_shows() {
     let Some(gpu) = gpu() else { return };

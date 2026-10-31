@@ -216,7 +216,10 @@ impl Player {
         let d = info.duration();
         let t = if t.is_finite() { t.max(0.0) } else { 0.0 };
         let (iter, local) = if looping {
-            let k = (t / d).floor();
+            // The hair of tolerance `index_at` has, in passes: a playhead summed from frame times
+            // lands a little short of the end of a pass as often as on it. Without it the last
+            // frame shows twice and the next pass's first frame not at all.
+            let k = (t / d + 1e-6 / info.frames.max(1) as f64).floor();
             (self.epoch.saturating_add(k as u64), t - k * d)
         } else {
             (self.epoch, t.min(d))

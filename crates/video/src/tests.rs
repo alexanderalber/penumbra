@@ -334,7 +334,8 @@ fn player_loops_onto_a_decoded_start_without_seeking() {
     let start = Instant::now();
     let mut seen = Vec::new();
     for step in 1..=180 {
-        let t = f64::from(step) / 60.0;
+        // A hair short of each frame's time, as a playhead summed from frame times may be.
+        let t = f64::from(step) / 60.0 - 1e-12;
         let due = start + Duration::from_secs_f64(t);
         if let Some(wait) = due.checked_duration_since(Instant::now()) {
             std::thread::sleep(wait);
