@@ -187,6 +187,12 @@ impl Lost {
 /// The longest [`Gpu::hold`] keeps one submission waiting, however often it is renewed.
 const MAX_HOLD: Duration = Duration::from_millis(400);
 
+/// One submission at a time across every software device (WARP) in the process. WARP compiles
+/// shaders while a submission runs. Two devices compiling at once can crash the whole process
+/// inside `d3d10warp.dll` (seen with 10.0.26100.9711: a null read while it frees a pixel shader).
+/// Only tests and headless tools run several WARP devices; hardware devices never wait here.
+static SOFTWARE_SUBMIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The longest [`Gpu::quiet`] keeps one submission waiting. Longer than [`MAX_HOLD`]: under a
 /// heavy load wgpu's wait for an idle GPU can take that long, and a submission going on before
 /// the call ends fails the configure. Only a safety net; the call normally ends long before.
@@ -414,6 +420,8 @@ impl Gpu {
     /// waits for an idle GPU.
     pub fn submit(&self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) -> wgpu::SubmissionIndex {
         let _shared = self.shared();
+        let _software =
+            (self.inner.info.device_type == wgpu::DeviceType::Cpu).then(|| lock(&SOFTWARE_SUBMIT));
         self.inner.queue.submit(buffers)
     }
 

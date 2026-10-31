@@ -31,6 +31,11 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// Seconds a `wait_for` line waits unless it says.
 const WAIT_FOR_TIMEOUT: f64 = 30.0;
 
+/// One software run at a time in the process. Two WARP devices compiling shaders at once can
+/// crash the process inside `d3d10warp.dll`. `penumbra_gpu::Gpu::submit` keeps the engine's
+/// submissions apart, but egui renders its frame on the queue directly, so a whole run waits here.
+static SOFTWARE_RUN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub struct Options {
     /// Window size in points.
     pub size: [f32; 2],
@@ -73,6 +78,7 @@ fn setup(software: bool) -> egui_wgpu::WgpuSetup {
 /// Runs `script` against `engine` in a headless app. Returns the method and the reply envelope
 /// (`{"ok", "result" | "error"}`) of every request; a failing request does not stop the script.
 pub fn run(engine: Arc<Engine>, script: &str, options: &Options) -> Result<Vec<(String, Json)>, String> {
+    let _software = options.software.then(|| penumbra_core::lock(&SOFTWARE_RUN));
     let here = engine.session().dir().display().to_string().replace('\\', "/");
     let lines: Vec<Json> = script
         .lines()
