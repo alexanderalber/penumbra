@@ -180,9 +180,7 @@ for the film):
 [![Two photos of the same corner of crates with a pumpkin. Left: vertical stripes from one projector, bent by the pumpkin. Right: a cyan grid projected on every crate face, each following its own face, and an orange grid wrapped around the pumpkin](assets/photos/scan.jpg)](https://www.youtube.com/watch?v=KsELIfs2M8Y)
 
 On a wall, three projectors become one picture: blend weights from the scan, colours matched
-by the camera. A dot crossing all three, filmed by the camera:
-
-![A white dot gliding across three overlapping projector pictures on a wall, with no step at the seams](assets/photos/dot-crossing.gif)
+by the camera, brightness evened out by a flat field.
 
 [Scanning](docs/scanning.md) has the whole chain; the examples
 [projection-onto-objects](examples/projection-onto-objects/README.md) and
