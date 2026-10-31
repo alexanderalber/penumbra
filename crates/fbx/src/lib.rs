@@ -13,8 +13,10 @@
 //!    indices, with FBX's mapping and reference modes resolved.
 //! 5. [`anim`]: takes, layers and curves, and the models' transform properties at any time,
 //!    which [`Hierarchy::evaluate`] turns into world transforms per frame.
-//! 6. [`Scene`]: the meshes placed in the world, materials, textures, the animation and the
-//!    file's units and axes. Most users start here.
+//! 6. [`skin`]: skins, their clusters and weights, and the matrices that move each control
+//!    point with its bones at any time.
+//! 7. [`Scene`]: the meshes placed in the world, materials, textures, the animation, skins and
+//!    the file's units and axes. Most users start here.
 //!
 //! Every file is treated as hostile. Each count is checked against [`Limits`] before memory is
 //! allocated for it, offsets use checked arithmetic, and nothing panics. A zlib array cannot
@@ -22,19 +24,22 @@
 //! certainty against bugs should still run the reader inside `catch_unwind`.
 //!
 //! Not read: ASCII FBX, big-endian files and versions below 7000 (each is refused with an
-//! error that says so), skins, blend shapes, cameras, lights, NURBS.
+//! error that says so), blend shapes, geometry caches, cameras, lights, NURBS. Dual quaternion
+//! skins are blended linearly, with a warning.
 //!
 //! The format knowledge follows ufbx (Samuli Raivio, MIT or Unlicense,
 //! <https://github.com/ufbx/ufbx>) and fbxcel (YOSHIOKA Takuma, MIT or Apache-2.0,
 //! <https://github.com/lo48576/fbxcel>). The transform composition and the handling of the
 //! inherit types are ported from ufbx's `ufbxi_get_transform` and `ufbxi_update_node`, the
 //! animation curves and layer blending from ufbx's curve reading and evaluation (see [`anim`]),
-//! all taken under the Unlicense. No code is taken from fbxcel.
+//! the skin clusters and their blending from ufbx's cluster reading and
+//! `ufbx_get_skin_vertex_matrix` (see [`skin`]), all taken under the Unlicense. No code is taken from fbxcel.
 
 pub mod anim;
 pub mod document;
 pub mod geometry;
 pub mod scene;
+pub mod skin;
 pub mod transform;
 pub mod tree;
 pub mod write;
@@ -45,6 +50,7 @@ pub use anim::{Animation, Curve, Interpolation, Key, Layer, Take};
 pub use document::{Connection, ConnectionKind, Document, Object, Properties, Property};
 pub use geometry::{Attribute, Geometry, Polygon};
 pub use scene::{Axes, Axis, MaterialInfo, MeshInstance, Scene, TextureInfo};
+pub use skin::{Cluster, Influence, Skin, SkinningMethod};
 pub use transform::{Hierarchy, Inherit, Mat4, NodeWorld, RotationOrder, TransformProps};
 pub use tree::{Array, Node, Value};
 
@@ -95,6 +101,8 @@ pub struct Limits {
     /// Animation curves, and their keys together.
     pub max_curves: usize,
     pub max_keys: usize,
+    /// Weights of one skin, all its clusters together.
+    pub max_skin_weights: usize,
 }
 
 impl Default for Limits {
@@ -111,6 +119,7 @@ impl Default for Limits {
             max_polygon_vertices: 32 << 20,
             max_curves: 1 << 20,
             max_keys: 16 << 20,
+            max_skin_weights: 32 << 20,
         }
     }
 }

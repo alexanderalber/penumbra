@@ -393,3 +393,126 @@ pub fn animated_scene() -> Vec<Node> {
     }
     nodes
 }
+
+/// 16 numbers, column after column, as FBX stores a matrix: a translation by `t`.
+fn translation_array(t: [f64; 3]) -> Value {
+    let [x, y, z] = t;
+    let m = vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, x, y, z, 1.0];
+    Value::Array(Array::F64(m))
+}
+
+/// A skinned column for tests and examples, y up, in centimetres, with a take of 2 seconds at
+/// 30 frames per second.
+///
+/// The model `body` places [`cube_geometry`] scaled to 1 x 2 x 1 m (by its geometric scaling),
+/// centred at the origin. Two bones carry it: `hip` at y -100 cm and its child `knee` at the
+/// origin. The bottom four control points follow `hip`, the top four `knee`, except point 7
+/// (top, x and z positive), which has weights 0.5 for `hip` and 1.5 for `knee` (a quarter and
+/// three quarters once divided by their sum). The `knee` cluster stores `Transform` and
+/// `TransformLink`; the `hip` cluster stores neither, so its bind matrix comes from the
+/// `BindPose`. In the take, `knee` turns from 0 to 90 degrees about z (linear).
+pub fn skinned_scene() -> Vec<Node> {
+    let mut nodes = example_scene();
+    let ticks = |s: f64| Value::I64((s * crate::anim::TICKS_PER_SECOND as f64).round() as i64);
+    let model =
+        |id: i64, name: &str, sub: &str, props: Vec<Node>| object("Model", id, name, sub, props, Vec::new());
+    let body = model(10, "body", "Mesh", vec![prop3("GeometricScaling", "Vector3D", [100.0, 200.0, 100.0])]);
+    let hip =
+        model(12, "hip", "LimbNode", vec![prop3("Lcl Translation", "Lcl Translation", [0.0, -100.0, 0.0])]);
+    let knee =
+        model(13, "knee", "LimbNode", vec![prop3("Lcl Translation", "Lcl Translation", [0.0, 100.0, 0.0])]);
+    let mut skin = object("Deformer", 50, "skin", "Skin", Vec::new(), Vec::new());
+    skin.children.push(leaf("SkinningType", Value::String("Linear".into())));
+    let cluster = |id: i64,
+                   name: &str,
+                   indexes: Vec<i32>,
+                   weights: Vec<f64>,
+                   matrices: Option<([f64; 3], [f64; 3])>| {
+        let mut c = object("Deformer", id, name, "Cluster", Vec::new(), Vec::new());
+        c.children.push(leaf("Indexes", Value::Array(Array::I32(indexes))));
+        c.children.push(leaf("Weights", Value::Array(Array::F64(weights))));
+        if let Some((transform, link)) = matrices {
+            c.children.push(leaf("Transform", translation_array(transform)));
+            c.children.push(leaf("TransformLink", translation_array(link)));
+        }
+        c
+    };
+    let hip_cluster = cluster(51, "hip", vec![0, 1, 4, 5, 7], vec![1.0, 1.0, 1.0, 1.0, 0.5], None);
+    let knee_cluster =
+        cluster(52, "knee", vec![2, 3, 6, 7], vec![1.0, 1.0, 1.0, 1.5], Some(([0.0; 3], [0.0; 3])));
+    let mut pose = object("Pose", 60, "BindPose", "BindPose", Vec::new(), Vec::new());
+    pose.children.push(leaf("Type", Value::String("BindPose".into())));
+    pose.children.push(Node::new(
+        "PoseNode",
+        Vec::new(),
+        vec![leaf("Node", Value::I64(12)), leaf("Matrix", translation_array([0.0, -100.0, 0.0]))],
+    ));
+    let stack = object(
+        "AnimationStack",
+        40,
+        "Take 001",
+        "",
+        vec![prop("LocalStart", "KTime", vec![ticks(0.0)]), prop("LocalStop", "KTime", vec![ticks(2.0)])],
+        Vec::new(),
+    );
+    let layer = object("AnimationLayer", 41, "BaseLayer", "", Vec::new(), Vec::new());
+    let turn = object(
+        "AnimationCurveNode",
+        43,
+        "R",
+        "",
+        vec![
+            prop("d|X", "Number", vec![Value::F64(0.0)]),
+            prop("d|Y", "Number", vec![Value::F64(0.0)]),
+            prop("d|Z", "Number", vec![Value::F64(0.0)]),
+        ],
+        Vec::new(),
+    );
+    let objects = vec![
+        body,
+        hip,
+        knee,
+        cube_geometry(20, "body_mesh"),
+        skin,
+        hip_cluster,
+        knee_cluster,
+        pose,
+        stack,
+        layer,
+        turn,
+        curve(45, &[0.0, 2.0], &[0.0, 90.0], KEY_LINEAR),
+    ];
+    let links = vec![
+        connection("OO", 10, 0, None),
+        connection("OO", 12, 0, None),
+        connection("OO", 13, 12, None),
+        connection("OO", 20, 10, None),
+        connection("OO", 30, 10, None),
+        connection("OO", 50, 20, None),
+        connection("OO", 51, 50, None),
+        connection("OO", 52, 50, None),
+        connection("OO", 12, 51, None),
+        connection("OO", 13, 52, None),
+        connection("OO", 41, 40, None),
+        connection("OO", 43, 41, None),
+        connection("OP", 43, 13, Some("Lcl Rotation")),
+        connection("OP", 45, 43, Some("d|Z")),
+    ];
+    for n in &mut nodes {
+        match n.name.as_str() {
+            "Objects" => {
+                // Keep the material of the example scene, replace its models and geometry.
+                n.children.retain(|c| c.name == "Material");
+                n.children.extend(objects.clone());
+            }
+            "Connections" => n.children = links.clone(),
+            "GlobalSettings" => {
+                if let Some(p) = n.children.first_mut() {
+                    p.children.push(prop("TimeMode", "enum", vec![Value::I32(6)]));
+                }
+            }
+            _ => {}
+        }
+    }
+    nodes
+}

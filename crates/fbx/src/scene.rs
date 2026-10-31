@@ -4,6 +4,7 @@
 use crate::anim::Animation;
 use crate::document::{Document, Object, Properties};
 use crate::geometry::Geometry;
+use crate::skin::{Skin, skins_of};
 use crate::transform::{Hierarchy, Mat4, NodeWorld};
 use crate::tree::Value;
 use crate::{Error, Limits};
@@ -199,6 +200,28 @@ impl Scene {
         let obj = self.document.object(id).ok_or_else(|| Error::new(format!("no object {id}")))?;
         let node = self.document.node(obj).ok_or_else(|| Error::new(format!("no record for object {id}")))?;
         Geometry::read(node, limits).map_err(|e| e.context(format!("geometry `{}`", obj.name)))
+    }
+
+    /// The skin of geometry `id`, if it has one, read against the first model that places the
+    /// geometry. A geometry with several skins gets the first, with a warning.
+    pub fn skin(&self, id: i64, limits: &Limits) -> Result<Option<Skin>, Error> {
+        let doc = &self.document;
+        let mut skins = skins_of(doc, id);
+        let Some(first) = skins.next() else { return Ok(None) };
+        let more = skins.next().is_some();
+        let geometry = doc.object(id).and_then(|g| doc.node(g));
+        let points = geometry.and_then(|g| g.child_array("Vertices")).map_or(0, |a| a.len() / 3);
+        let node =
+            doc.destinations(id, "Model").find_map(|m| self.hierarchy.index_of(m.id)).unwrap_or(usize::MAX);
+        let mut skin = Skin::read(doc, &self.hierarchy, &self.worlds, first, node, points, limits)?;
+        if more {
+            skin.warnings.push(format!(
+                "geometry `{}` has several skins; only `{}` is used",
+                doc.object(id).map_or("", |g| g.name.as_str()),
+                skin.name
+            ));
+        }
+        Ok(Some(skin))
     }
 
     pub fn material(&self, id: i64) -> Option<MaterialInfo> {

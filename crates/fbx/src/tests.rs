@@ -532,3 +532,108 @@ fn animation_budgets_and_broken_curves() {
         }
     }
 }
+
+/// The skinned scene's skin, and its geometry's control points in file space.
+fn skinned() -> (Scene, Skin, Vec<[f64; 3]>) {
+    let scene = Scene::parse(&to_bytes(7400, &write::skinned_scene(), true), &Limits::default()).unwrap();
+    let skin = scene.skin(20, &Limits::default()).unwrap().expect("a skin");
+    let g = scene.geometry(20, &Limits::default()).unwrap();
+    let points = g.positions.clone();
+    (scene, skin, points)
+}
+
+#[test]
+fn skins_move_their_points_with_the_bones() {
+    let (scene, skin, points) = skinned();
+    assert!(skin.warnings.is_empty(), "{:?}", skin.warnings);
+    assert_eq!(skin.method, SkinningMethod::Linear);
+    assert_eq!(skin.points(), 8);
+    assert_eq!(skin.clusters.len(), 2);
+    assert_eq!(skin.max_influences(), 2);
+    // Point 7 has both bones, the heavier first, as stored.
+    let w: Vec<(u32, f64)> = skin.influences(7).iter().map(|i| (i.cluster, i.weight)).collect();
+    assert_eq!(w, vec![(1, 1.5), (0, 0.5)]);
+    // The hip cluster's bind matrix came from the bind pose, its Transform from that.
+    let hip = &skin.clusters[0];
+    assert!(near([hip.bind_to_world[1][3], 0.0, 0.0], [-100.0, 0.0, 0.0]));
+    let body = scene.hierarchy.index_of(10).unwrap();
+    // At bind time every point sits where the body places it.
+    let rest = scene.worlds[body].geometry;
+    let mats = skin.cluster_matrices(&scene.worlds);
+    for (p, q) in points.iter().enumerate() {
+        let m = skin.point_matrix(p, &mats).unwrap();
+        assert!(near(transform_point(&m, *q), transform_point(&rest, *q)), "point {p}");
+    }
+    // Two seconds in, the knee has turned 90 degrees about z: the top points swing over to
+    // x -100; point 7 goes a quarter with the hip and three quarters with the knee.
+    let worlds = scene.animation.worlds(&scene.hierarchy, 0, 2.0);
+    let mats = skin.cluster_matrices(&worlds);
+    let at = |p: usize| transform_point(&skin.point_matrix(p, &mats).unwrap(), points[p]);
+    assert!(near(at(0), [-50.0, -100.0, -50.0]));
+    assert!(near(at(2), [-100.0, -50.0, -50.0]));
+    assert!(near(at(7), [-62.5, 62.5, 50.0]), "{:?}", at(7));
+}
+
+#[test]
+fn broken_skins_are_read_safely() {
+    let edit = |f: &dyn Fn(&mut Node)| {
+        let mut nodes = write::skinned_scene();
+        for n in nodes.iter_mut().filter(|n| n.name == "Objects") {
+            for c in &mut n.children {
+                f(c);
+            }
+        }
+        Scene::parse(&to_bytes(7400, &nodes, false), &Limits::default()).unwrap()
+    };
+    // Weights and indexes of different lengths: that cluster's weights are left out.
+    let scene = edit(&|c| {
+        if c.value(0) == Some(&Value::I64(52))
+            && let Some(w) = c.children.iter_mut().find(|w| w.name == "Weights")
+        {
+            w.values = vec![Value::Array(Array::F64(vec![1.0]))];
+        }
+    });
+    let skin = scene.skin(20, &Limits::default()).unwrap().unwrap();
+    assert!(skin.warnings.iter().any(|w| w.contains("as many weights")));
+    assert!(skin.influences(2).is_empty());
+    let mats = skin.cluster_matrices(&scene.worlds);
+    assert!(skin.point_matrix(2, &mats).is_none());
+    // Indexes beyond the geometry and negative ones are dropped.
+    let scene = edit(&|c| {
+        if c.value(0) == Some(&Value::I64(51))
+            && let Some(i) = c.children.iter_mut().find(|i| i.name == "Indexes")
+        {
+            i.values = vec![Value::Array(Array::I32(vec![0, -1, 8, 1 << 30, 7]))];
+        }
+    });
+    let skin = scene.skin(20, &Limits::default()).unwrap().unwrap();
+    assert_eq!(skin.influences(0).len(), 1);
+    assert_eq!(skin.influences(7).len(), 2);
+    // Dual quaternion skins are blended linearly, with a warning.
+    let scene = edit(&|c| {
+        if let Some(t) = c.children.iter_mut().find(|t| t.name == "SkinningType") {
+            t.values = vec![Value::String("DualQuaternion".into())];
+        }
+    });
+    let skin = scene.skin(20, &Limits::default()).unwrap().unwrap();
+    assert!(skin.dual_quaternion);
+    assert!(skin.warnings.iter().any(|w| w.contains("dual quaternion")));
+    // The weight budget.
+    let bytes = to_bytes(7400, &write::skinned_scene(), false);
+    let scene = Scene::parse(&bytes, &Limits::default()).unwrap();
+    let few = Limits { max_skin_weights: 6, ..Limits::default() };
+    assert!(scene.skin(20, &few).unwrap_err().0.contains("weights"));
+    // Every truncation: an error or a scene whose skin reads and poses at any time.
+    for n in (0..bytes.len()).step_by(5) {
+        if let Ok(s) = Scene::parse(&bytes[..n], &Limits::default())
+            && let Ok(Some(skin)) = s.skin(20, &Limits::default())
+        {
+            for t in [-1.0, 0.5, f64::NAN, 1e300] {
+                let mats = skin.cluster_matrices(&s.animation.worlds(&s.hierarchy, 0, t));
+                for p in 0..skin.points() + 2 {
+                    let _ = skin.point_matrix(p, &mats);
+                }
+            }
+        }
+    }
+}
