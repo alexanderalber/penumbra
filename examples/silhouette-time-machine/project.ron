@@ -1,0 +1,15 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 2,
+    nodes: {
+        "/age": (kind: "tex.shader", params: {"file": "age.wgsl"}, inputs: {"in0": "seen"}, pos: [800.0, 142.0]),
+        "/black": (kind: "tex.constant", params: {"height": 720, "width": 1280}, pos: [200.0, 142.0]),
+        "/loop": (kind: "tex.feedback", inputs: {"initial": "black", "previous": "seen"}, pos: [400.0, 142.0]),
+        "/out": (kind: "tex.shader", params: {"file": "show.wgsl"}, inputs: {"in0": "tm", "in1": "seen", "in2": "person"}, pos: [1200.0, 0.0]),
+        "/pattern": (kind: "tex.shader", params: {"file": "pattern.wgsl", "height": 720, "width": 1280}, pos: [800.0, 0.0]),
+        "/person": (kind: "tex.shader", params: {"file": "person.wgsl", "height": 720, "width": 1280}, pos: [0.0, 0.0]),
+        "/seen": (kind: "tex.shader", params: {"file": "seen.wgsl"}, inputs: {"in0": "person", "in1": "loop"}, pos: [600.0, 142.0]),
+        "/tm": (kind: "tex.time_machine", params: {"blend": false, "length": 1200, "scale": 0.5, "step": 4}, inputs: {"in": "pattern", "map": "age"}, pos: [1000.0, 0.0]),
+    },
+)
