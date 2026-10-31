@@ -31,6 +31,7 @@ pub mod projects;
 mod regions;
 mod scope;
 mod shapes;
+mod show_screen;
 pub mod textures;
 pub mod theme;
 pub mod titlebar;
@@ -155,5 +156,7 @@ impl Action {
 mod node_controls_tests;
 #[cfg(test)]
 mod reference;
+#[cfg(test)]
+mod show_screen_tests;
 #[cfg(test)]
 mod tests;

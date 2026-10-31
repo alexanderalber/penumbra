@@ -94,3 +94,86 @@ fn a_slider_keeps_its_value_in_range_and_saves_it() {
     f.call("node.bind", json!({"param": "/c.value0", "from": "/s"}));
     assert_eq!(value(&f, "/c"), 2.5);
 }
+
+#[test]
+fn in_show_mode_flagged_controls_change_without_history_and_are_saved_after_unlock() {
+    let f = Fixture::new("show_controls");
+    let show = json!({"show": true});
+    f.call(
+        "node.create",
+        json!({"path": "/t", "kind": "chan.button", "params": {"mode": "toggle", "show": true}}),
+    );
+    f.call("node.create", json!({"path": "/m", "kind": "chan.button", "params": show}));
+    f.call("node.create", json!({"path": "/s", "kind": "chan.slider", "params": show}));
+    f.call("node.create", json!({"path": "/plain", "kind": "chan.slider"}));
+    f.call("node.create", json!({"path": "/c", "kind": "comp.base"}));
+    f.call(
+        "node.create",
+        json!({"path": "/c/inner", "kind": "chan.slider", "params": {"show": true, "label": "fade"}}),
+    );
+    // Top to bottom, then left to right; inside the component at the component's place.
+    let at = json!({"/t": [0, 0], "/m": [200, 0], "/s": [-100, 100], "/plain": [0, 300], "/c": [0, 200], "/c/inner": [0, 0]});
+    f.call("node.place", json!({"nodes": at}));
+    eventually("autosave", || f.file().contains("\"/c/inner\""));
+    let before = entries(&f);
+    let file = f.file();
+    f.call("show.lock", json!({}));
+
+    // The flagged controls change; no entry, nothing written.
+    let r = f.call("chan.press", json!({"path": "/t"}));
+    assert_eq!((r["value"].clone(), r["history"].clone()), (json!(true), json!("none_in_show_mode")), "{r}");
+    let r = f.call("node.set", json!({"path": "/s", "params": {"value": 0.7}}));
+    assert_eq!(r["history"], "none_in_show_mode", "{r}");
+    f.call("node.set", json!({"path": "/c/inner", "params": {"value": 0.25}}));
+    let r = f.call("chan.press", json!({"path": "/m"}));
+    assert_eq!(r["presses"], 1, "a momentary press works as always: {r}");
+    assert_eq!(value(&f, "/t"), 1.0);
+    assert_eq!(value(&f, "/s"), 0.7);
+
+    // Anything else stays refused: an unflagged control, another param, a mix.
+    for (path, params) in [
+        ("/plain", json!({"value": 0.5})),
+        ("/s", json!({"min": -1.0})),
+        ("/s", json!({"value": 0.1, "max": 2.0})),
+        ("/s", json!({"value": null})),
+    ] {
+        let e = f.fail("node.set", json!({"path": path, "params": params}));
+        assert!(e.contains("show mode is on"), "{path} {params}: {e}");
+    }
+    f.fail("history.undo", json!({}));
+    assert_eq!(entries(&f), before, "no history entry");
+    let info = f.call("project.info", json!({}));
+    assert_eq!((info["locked"].clone(), info["unsaved"].clone()), (json!(true), json!(true)), "{info}");
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    assert_eq!(f.file(), file, "not written while locked");
+
+    // show.status lists them, in order of position, with their values.
+    let status = f.call("show.status", json!({}));
+    let listed: Vec<(String, String, f64)> = status["controls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["path"].as_str().unwrap().into(),
+                c["label"].as_str().unwrap().into(),
+                c["value"].as_f64().unwrap(),
+            )
+        })
+        .collect();
+    let expected = [("/t", "t", 1.0), ("/m", "m", 0.0), ("/s", "s", 0.7), ("/c/inner", "c/fade", 0.25)];
+    let expected: Vec<(String, String, f64)> =
+        expected.iter().map(|(p, l, v)| (p.to_string(), l.to_string(), *v)).collect();
+    assert_eq!(listed, expected, "{status}");
+
+    // After unlock the values count: autosave writes them; undo leaves them alone.
+    f.call("show.unlock", json!({}));
+    eventually("autosave after unlock", || f.file().contains(r#""value": 0.7"#));
+    assert!(f.file().contains(r#""value": true"#), "{}", f.file());
+    assert_eq!(entries(&f), before, "still no entry for them");
+    f.call("history.undo", json!({}));
+    assert_eq!(value(&f, "/s"), 0.7, "undo takes back the last create, not the show's values");
+    // Unlocked, a change is an edit again.
+    let r = f.call("node.set", json!({"path": "/s", "params": {"value": 0.2}}));
+    assert_eq!(r["history"], "new", "{r}");
+}

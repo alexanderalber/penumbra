@@ -1,17 +1,21 @@
 //! The controls drawn on the body of a `chan.button` or `chan.slider` in the editor: what they
-//! show, where they sit and how a pointer position becomes a value. The editor does the
-//! interaction ([`crate::editor`]); this module only reads the network.
+//! show, where they sit, how a pointer position becomes a value and what a press does
+//! ([`interact`]). The node editor ([`crate::editor`]) and the show screen both draw and press
+//! them through this module; they only place them.
 //!
 //! The body has two parts: a line with the channel's value on top, the control below it. The
 //! top line stays free, so a click on the node's centre (where `ui.click {id: node./b}` lands)
 //! still selects the node instead of pressing the button.
 
-use egui::{Align2, Color32, CornerRadius, FontId, Painter, Rect, Stroke, StrokeKind, pos2, vec2};
-use penumbra_core::Value;
-use penumbra_graph::{DataKind, NodeDef, NodeStatus, NodeTypes};
+use egui::{
+    Align2, Color32, CornerRadius, CursorIcon, FontId, Painter, PointerButton, Rect, Response, Stroke,
+    StrokeKind, Ui, pos2, vec2,
+};
+use penumbra_core::{GroupId, NodeId, ParamPath, Value};
+use penumbra_graph::{DataKind, NodeDef, NodeStatus, NodeTypes, Op};
 use penumbra_ops::chan::controls::{BUTTON, SLIDER, TOGGLE, slider_value};
 
-use crate::theme;
+use crate::{Action, theme};
 
 /// Body height of a node with a control, in graph units: the value line and the control.
 pub const BODY: f32 = 46.0;
@@ -195,24 +199,169 @@ pub fn draw(
     }
 }
 
-/// The value line's text: the channel's name and value (a lone `value` shows just the number).
+/// A press on a control, from the primary button going down on it until it goes up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Press {
+    pub node: NodeId,
+    pub what: Pressed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Pressed {
+    /// A momentary button, held in the engine until the release.
+    Button,
+    /// A toggle: it switches on the click.
+    Toggle,
+    /// A slider being dragged: every edit of the drag joins `group`; `value` is the last one set.
+    Slider { group: GroupId, value: f64 },
+}
+
+/// What the pointer does to a control this frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pointer {
+    /// The primary button is down on it now.
+    pub down: bool,
+    /// Drawn pressed in: down on it, or a hold or drag that started on it goes on.
+    pub pressed: bool,
+}
+
+/// One frame of the pointer on `control` of `node`, whose response `resp` covers `rect`. A
+/// momentary button is held in the engine ([`Action::PressButton`]); a toggle's click and a
+/// slider's drag set `param` (one history group per drag, from `new_group`). `control` shows
+/// the new value at once. `press` is the press going on: kept by the caller across frames and
+/// ended by [`release`]. Nothing happens unless `active`.
+#[allow(clippy::too_many_arguments)]
+pub fn interact(
+    ui: &Ui,
+    resp: &Response,
+    rect: Rect,
+    node: NodeId,
+    control: &mut Control,
+    param: Option<ParamPath>,
+    active: bool,
+    press: &mut Option<Press>,
+    new_group: &dyn Fn() -> GroupId,
+    actions: &mut Vec<Action>,
+) -> Pointer {
+    let primary = ui.input(|i| i.pointer.button_down(PointerButton::Primary) && !i.pointer.secondary_down());
+    let down = resp.is_pointer_button_down_on() && primary;
+    let mine = press.filter(|p| p.node == node).map(|p| p.what);
+    if active {
+        match control {
+            Control::Button { toggle: false, .. } => {
+                if down && mine.is_none() {
+                    actions.push(Action::PressButton { node, down: true });
+                    *press = Some(Press { node, what: Pressed::Button });
+                } else if resp.clicked() && mine.is_none() {
+                    // Pressed and released within one frame: a tap.
+                    actions.push(Action::PressButton { node, down: true });
+                    actions.push(Action::PressButton { node, down: false });
+                }
+            }
+            Control::Button { on, .. } => {
+                if down && mine.is_none() {
+                    *press = Some(Press { node, what: Pressed::Toggle });
+                }
+                if resp.clicked()
+                    && let Some(param) = param
+                {
+                    actions.push(Action::edit(vec![Op::Set { param, value: Value::Bool(!*on) }]));
+                    *on = !*on;
+                }
+            }
+            Control::Slider { value, min, max, .. } => {
+                if down && let Some(p) = resp.interact_pointer_pos() {
+                    let v = slider_at(rect, p.x, *min, *max);
+                    let (group, last) = match mine {
+                        Some(Pressed::Slider { group, value }) => (group, Some(value)),
+                        _ => (new_group(), None),
+                    };
+                    let changed = match last {
+                        Some(last) => last != v,
+                        None => *value != v,
+                    };
+                    if changed && let Some(param) = param {
+                        actions.push(Action::Edit {
+                            ops: vec![Op::Set { param, value: Value::Float(v) }],
+                            label: String::new(),
+                            group: Some(group),
+                        });
+                    }
+                    *press = Some(Press { node, what: Pressed::Slider { group, value: v } });
+                    *value = v;
+                }
+            }
+        }
+    }
+    let pressed = down || matches!(mine, Some(Pressed::Button | Pressed::Slider { .. }));
+    Pointer { down, pressed }
+}
+
+/// The primary button went up: a momentary button held from a control is let go, a slider's
+/// drag ends (its next drag is a new undo step).
+pub fn release(ui: &Ui, press: &mut Option<Press>, actions: &mut Vec<Action>) {
+    let Some(p) = *press else { return };
+    if ui.input(|i| i.pointer.button_down(PointerButton::Primary)) {
+        return;
+    }
+    if p.what == Pressed::Button {
+        actions.push(Action::PressButton { node: p.node, down: false });
+    }
+    *press = None;
+}
+
+/// The cursor over a control: a hand on a button, arrows on a slider, "not allowed" when a
+/// press would do nothing.
+pub fn cursor(ui: &Ui, resp: &Response, control: &Control, active: bool) {
+    if resp.hovered() {
+        let icon = match (control, active) {
+            (_, false) => CursorIcon::NotAllowed,
+            (Control::Slider { .. }, true) => CursorIcon::ResizeHorizontal,
+            (Control::Button { .. }, true) => CursorIcon::PointingHand,
+        };
+        ui.ctx().set_cursor_icon(icon);
+    }
+}
+
+/// The value the control's channel shows: 1 or 0 for a button (a momentary one also while
+/// `pressed`), the slider's value.
+pub fn shown_value(control: &Control, pressed: bool) -> f64 {
+    match control {
+        Control::Button { on, toggle, .. } => {
+            if *on || (pressed && !*toggle) {
+                1.0
+            } else {
+                0.0
+            }
+        }
+        Control::Slider { value, .. } => *value,
+    }
+}
+
+/// The value line's text:the channel's name and value (a lone `value` shows just the number).
 pub fn line(name: &str, value: f64) -> String {
     let v = crate::editor::format_value(value);
     if name == "value" { v } else { format!("{name} {v}") }
 }
 
-/// The hover text of a control.
-pub fn tip(control: &Control, can_edit: bool) -> String {
+/// The hover text of a control. `show`: on the show screen, where a change makes no history
+/// entry.
+pub fn tip(control: &Control, can_edit: bool, show: bool) -> String {
+    let kept = "Kept without an undo step and saved when show mode ends";
     match control {
         _ if control.bound() => "value follows a channel: unbind it to set it here".to_string(),
         _ if control.edits() && !can_edit => "Claude is editing: wait to set it".to_string(),
         Control::Button { toggle: false, .. } => "1 while the mouse button is held here".to_string(),
+        Control::Button { .. } if show => format!("A click switches between on (1) and off (0). {kept}"),
         Control::Button { .. } => "A click switches between on (1) and off (0)".to_string(),
-        Control::Slider { min, max, .. } => format!(
-            "Drag to set the value between {} and {}. One drag is one undo step",
-            crate::editor::format_value(*min),
-            crate::editor::format_value(*max)
-        ),
+        Control::Slider { min, max, .. } => {
+            let undo = if show { kept } else { "One drag is one undo step" };
+            format!(
+                "Drag to set the value between {} and {}. {undo}",
+                crate::editor::format_value(*min),
+                crate::editor::format_value(*max)
+            )
+        }
     }
 }
 

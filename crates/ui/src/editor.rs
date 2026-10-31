@@ -112,24 +112,7 @@ pub struct Editor {
     /// The wires of the level shown, routed in graph units, kept while nothing moves.
     routes: RouteCache,
     /// The control on a node body the primary button went down on, until it goes up.
-    body_press: Option<BodyPress>,
-}
-
-/// A press on the control of a node body ([`node_controls`]).
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct BodyPress {
-    node: NodeId,
-    what: Pressed,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-enum Pressed {
-    /// A momentary button, held in the engine until the release.
-    Button,
-    /// A toggle: it switches on the click.
-    Toggle,
-    /// A slider being dragged: every edit of the drag joins `group`; `value` is the last one set.
-    Slider { group: GroupId, value: f64 },
+    body_press: Option<node_controls::Press>,
 }
 
 /// A node's body control as drawn this frame: the control, held by the pointer, hovered.
@@ -1279,101 +1262,41 @@ impl Editor {
         let resp = ui.interact(rect, ui.id().with(("control", g.id)), Sense::click_and_drag());
         auto.add(format!("control.{path}"), rect, node.kind.clone());
         let active = !control.bound() && (input.can_edit || !control.edits());
-        let primary =
-            ui.input(|i| i.pointer.button_down(PointerButton::Primary) && !i.pointer.secondary_down());
-        let down = resp.is_pointer_button_down_on() && primary;
-        let mine = self.body_press.filter(|p| p.node == g.id).map(|p| p.what);
         let param = net_param(input, g.id, "value");
-        if active {
-            match &mut control {
-                Control::Button { toggle: false, .. } => {
-                    if down && mine.is_none() {
-                        actions.push(Action::PressButton { node: g.id, down: true });
-                        self.body_press = Some(BodyPress { node: g.id, what: Pressed::Button });
-                    } else if resp.clicked() && mine.is_none() {
-                        // Pressed and released within one frame: a tap.
-                        actions.push(Action::PressButton { node: g.id, down: true });
-                        actions.push(Action::PressButton { node: g.id, down: false });
-                    }
-                }
-                Control::Button { on, .. } => {
-                    if down && mine.is_none() {
-                        self.body_press = Some(BodyPress { node: g.id, what: Pressed::Toggle });
-                    }
-                    if resp.clicked()
-                        && let Some(param) = param
-                    {
-                        actions.push(Action::edit(vec![Op::Set { param, value: Value::Bool(!*on) }]));
-                        *on = !*on;
-                    }
-                }
-                Control::Slider { value, min, max, .. } => {
-                    if down && let Some(p) = resp.interact_pointer_pos() {
-                        let v = node_controls::slider_at(rect, p.x, *min, *max);
-                        let (group, last) = match mine {
-                            Some(Pressed::Slider { group, value }) => (group, Some(value)),
-                            _ => ((input.new_group)(), None),
-                        };
-                        let changed = match last {
-                            Some(last) => last != v,
-                            None => *value != v,
-                        };
-                        if changed && let Some(param) = param {
-                            actions.push(Action::Edit {
-                                ops: vec![Op::Set { param, value: Value::Float(v) }],
-                                label: String::new(),
-                                group: Some(group),
-                            });
-                        }
-                        self.body_press =
-                            Some(BodyPress { node: g.id, what: Pressed::Slider { group, value: v } });
-                        *value = v;
-                    }
-                }
-            }
-        }
-        let pressed = down || matches!(mine, Some(Pressed::Button | Pressed::Slider { .. }));
+        let pointer = node_controls::interact(
+            ui,
+            &resp,
+            rect,
+            g.id,
+            &mut control,
+            param,
+            active,
+            &mut self.body_press,
+            input.new_group,
+            actions,
+        );
+        let pressed = pointer.pressed;
         let name = input
             .types
             .desc(&node.kind)
             .and_then(|d| node.param(d, "name"))
             .and_then(Value::as_str)
             .unwrap_or("value");
-        let shown_value = match &control {
-            Control::Button { on, toggle, .. } => {
-                if *on || (pressed && !*toggle) {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            Control::Slider { value, .. } => *value,
-        };
-        let line = node_controls::line(name, shown_value);
+        let line = node_controls::line(name, node_controls::shown_value(&control, pressed));
         let hovered = resp.hovered() || pressed;
-        if resp.hovered() {
-            let icon = match (&control, active) {
-                (_, false) => CursorIcon::NotAllowed,
-                (Control::Slider { .. }, true) => CursorIcon::ResizeHorizontal,
-                (Control::Button { .. }, true) => CursorIcon::PointingHand,
-            };
-            ui.ctx().set_cursor_icon(icon);
-        }
-        let resp = if down { resp } else { resp.on_hover_text(node_controls::tip(&control, input.can_edit)) };
+        node_controls::cursor(ui, &resp, &control, active);
+        let resp = if pointer.down {
+            resp
+        } else {
+            resp.on_hover_text(node_controls::tip(&control, input.can_edit, false))
+        };
         Some((resp, Shown { control, line, pressed, hovered, active }))
     }
 
     /// The primary button went up: a momentary button held from a node body is let go, a
     /// slider's drag ends (its next drag is a new undo step).
     fn end_body_press(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
-        let Some(p) = self.body_press else { return };
-        if ui.input(|i| i.pointer.button_down(PointerButton::Primary)) {
-            return;
-        }
-        if p.what == Pressed::Button {
-            actions.push(Action::PressButton { node: p.node, down: false });
-        }
-        self.body_press = None;
+        node_controls::release(ui, &mut self.body_press, actions);
     }
 
     #[allow(clippy::too_many_arguments)]

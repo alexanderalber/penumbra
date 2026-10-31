@@ -169,14 +169,16 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add(
         "show.lock",
         "Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; \
-         OSC, DMX and the control channel stay live; after a crash (exit code 3) the app starts again with the clock running. \
+         OSC, DMX and the control channel stay live, and so do the values of the show screen's controls \
+         (no history entry, saved after unlock); after a crash (exit code 3) the app starts again with the clock running. \
          Kept across restarts",
         show_lock,
     );
     add("show.unlock", "Show mode off: editing, saving and reloading as usual", show_unlock);
     add(
         "show.status",
-        "Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes",
+        "Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes, \
+         and the controls on the show screen (chan.button and chan.slider with `show` on) with their values",
         show_status,
     );
 }
@@ -207,6 +209,12 @@ fn show_status(e: &Engine, p: &Json) -> CmdResult<Json> {
         "restarts_recent": restarts,
         "restarts_left": MAX_RESTARTS.saturating_sub(restarts),
         "kept_in": file.map(|f| f.display().to_string()),
+        "controls": crate::buttons::show_controls(
+            &e.session().doc().snapshot(),
+            e.types(),
+            e.buttons(),
+            Some(&e.view().status),
+        ),
     }))
 }
 

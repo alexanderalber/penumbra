@@ -217,6 +217,11 @@ While show mode is on:
   cameras keep driving the show.
 - **The editor:** shows a plain screen instead of the network. Without thumbnails and viewer
   the cook pass gets shorter.
+- **Controls on the show screen:** every `chan.button` and `chan.slider` with `show` ticked
+  appears below Unlock, named by its `label` or its node name. Pressing, switching and
+  dragging work there as on the node. `chan.press` and `node.set` on their `value` work too.
+  These changes make no undo step and are not saved during the show. After `show.unlock` they
+  stay and are saved about a second later. `show.status` lists the controls with their values.
 - **After a crash:** when the GPU device is lost or the editor fails (exit code 3), penumbra
   starts again at once, without a message, and the clock runs on where it would be. After 3
   restarts within 10 minutes it stops trying and ends as usual.

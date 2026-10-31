@@ -8,6 +8,9 @@
 //!   while the button is held, in the editor or by `chan.press`; that is live state in the
 //!   [`Buttons`] hub, never an edit, so it works while Claude edits and leaves no history. A
 //!   press shorter than a frame still shows for one cook.
+//! - **`show`** (both): the control also appears on the show screen while show mode locks the
+//!   project. There a toggle's or a slider's `value` still changes, without a history entry and
+//!   unsaved until show mode ends.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -22,6 +25,8 @@ use serde::Serialize;
 pub const BUTTON: &str = "chan.button";
 /// Kind of the slider node.
 pub const SLIDER: &str = "chan.slider";
+/// The param that puts a control on the show screen.
+pub const SHOW: &str = "show";
 /// The button's `mode` choices.
 pub const MOMENTARY: &str = "momentary";
 pub const TOGGLE: &str = "toggle";
@@ -150,7 +155,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("On or off in mode toggle. A click on the button flips it")
                 .applies_when("mode", &[TOGGLE]),
         )
-        .param(ParamSpec::text("label", "").doc("Text on the button. Empty: \"press\", or \"on\" and \"off\""))
+        .param(
+            ParamSpec::text("label", "")
+                .doc("Text on the button. Empty: \"press\", or \"on\" and \"off\". On the show screen it also names the button; empty: the node's name"),
+        )
+        .param(show_param())
         .param(super::name_param())
         .output("out", DataKind::Chan)
         .describe_output("out", "One channel: 1 while pressed or on, else 0"),
@@ -168,12 +177,23 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(ParamSpec::float("min", 0.0).range(-10.0, 10.0).doc("The value at the slider's left end"))
         .param(ParamSpec::float("max", 1.0).range(-10.0, 10.0).doc("The value at the slider's right end"))
+        .param(
+            ParamSpec::text("label", "").doc("The slider's name on the show screen. Empty: the node's name"),
+        )
+        .param(show_param())
         .param(super::name_param())
         .output("out", DataKind::Chan)
         .describe_output("out", "One channel: `value`, kept between min and max"),
         || Box::new(Slider::default()) as Box<dyn Operator>,
     ))?;
     Ok(())
+}
+
+fn show_param() -> ParamSpec {
+    ParamSpec::bool(SHOW, false).doc(
+        "The control also appears on the show screen while show mode is on. There it steers the show \
+         without the editor. A change there makes no history entry and is saved when show mode ends",
+    )
 }
 
 /// `value` kept between `min` and `max` (either order); a non-finite value is `min`.

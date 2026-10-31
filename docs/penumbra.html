@@ -229,6 +229,8 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong>The editor:</strong> shows a plain screen instead of the network. Without thumbnails and viewer the cook pass gets shorter.
 </li>
+<li><strong>Controls on the show screen:</strong> every <a class="ref" href="#chan.button"><code>chan.button</code></a> and <a class="ref" href="#chan.slider"><code>chan.slider</code></a> with <code>show</code> ticked appears below Unlock, named by its <code>label</code> or its node name. Pressing, switching and dragging work there as on the node. <a class="ref" href="#chan.press"><code>chan.press</code></a> and <a class="ref" href="#node.set"><code>node.set</code></a> on their <code>value</code> work too. These changes make no undo step and are not saved during the show. After <a class="ref" href="#show.unlock"><code>show.unlock</code></a> they stay and are saved about a second later. <a class="ref" href="#show.status"><code>show.status</code></a> lists the controls with their values.
+</li>
 <li><strong>After a crash:</strong> when the GPU device is lost or the editor fails (exit code 3), penumbra starts again at once, without a message, and the clock runs on where it would be. After 3 restarts within 10 minutes it stops trying and ends as usual.
 </li>
 </ul>
@@ -364,7 +366,7 @@ moss = #1b4332 #52b788
 <p>A param can follow a channel instead of its stored value: drag a wire from a <code>chan</code> output onto the param's row, or use the link button at the end of the row, which also offers a specific channel by name. A vector or colour binds per component: drop the wire on one field.</p>
 <p>A bound row shows its name in the channel colour, the live value, and the source. The stored value stays and comes back when the binding is removed; it is also used, with a warning, while the channel is missing. Integers round, booleans are on from 0.5, hard ranges clamp. The editor draws every binding as a dashed green line into the top of the node. With &quot;All binding lines&quot; unticked in the editor's right-click menu, a binding shows as a short stub on the bound node, and as a line only while the source or the bound node is selected or under the pointer.</p>
 <h4 id="concepts-buttons-and-sliders-on-the-node">Buttons and sliders on the node</h4>
-<p><a class="ref" href="#chan.button"><code>chan.button</code></a> and <a class="ref" href="#chan.slider"><code>chan.slider</code></a> are steered right on their node in the network editor, without selecting it. <strong>Button:</strong> with <code>mode</code> <code>momentary</code> its channel is 1 while the mouse button is held on it; with <code>mode</code> <code>toggle</code> each click switches it between 1 and 0. <strong>Slider:</strong> dragging on it sets <code>value</code> between <code>min</code> and <code>max</code>. One drag is one undo step. A toggle's state and a slider's value are params, saved with the project. A momentary press is no edit: it leaves no history and works while Claude edits. Bind params to their channel like to any other. From the control channel: <a class="ref" href="#chan.press"><code>chan.press {path}</code></a> (or <code>{path, down}</code> to hold and let go) presses a button, <a class="ref" href="#node.set"><code>node.set</code></a> moves a slider.</p>
+<p><a class="ref" href="#chan.button"><code>chan.button</code></a> and <a class="ref" href="#chan.slider"><code>chan.slider</code></a> are steered right on their node in the network editor, without selecting it. <strong>Button:</strong> with <code>mode</code> <code>momentary</code> its channel is 1 while the mouse button is held on it; with <code>mode</code> <code>toggle</code> each click switches it between 1 and 0. <strong>Slider:</strong> dragging on it sets <code>value</code> between <code>min</code> and <code>max</code>. One drag is one undo step. A toggle's state and a slider's value are params, saved with the project. A momentary press is no edit: it leaves no history and works while Claude edits. Bind params to their channel like to any other. From the control channel: <a class="ref" href="#chan.press"><code>chan.press {path}</code></a> (or <code>{path, down}</code> to hold and let go) presses a button, <a class="ref" href="#node.set"><code>node.set</code></a> moves a slider. With <code>show</code> ticked, the control also appears on the show screen while <a href="#getting-started-show-mode">show mode</a> is on. There it still works, but a change makes no undo step and is saved only after show mode ends.</p>
 <h4 id="concepts-keys">Keys</h4>
 <p><a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a> turns keys into channels: with <code>keys</code> at <code>1 2 3 4</code> (the default) it has <code>key_1</code> to <code>key_4</code>, each 1 while its key is held, and <code>last</code>, the index in <code>keys</code> (from 0) of the key pressed last, which stays until another listed key is pressed and starts at 0 when the project opens. Bind a switch's <code>index</code> (or a <a class="ref" href="#chan.constant"><code>chan.constant</code></a> that several switches follow) to <code>last</code>, and the number keys switch the show's pieces. Keys count only while a penumbra window has the focus: the editor, the viewer's own window or a projector output (click it once). A key typed into a text field and a key held with Ctrl, Alt or the Windows key do not count. The number pad's digits are the digits; letters are named as the keyboard layout labels them. <strong>learn from OSC</strong> in a param's link menu also takes a key a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a> lists, and binds its gate. From the control channel: <a class="ref" href="#keyboard.press"><code>keyboard.press {key}</code></a> (or <code>{key, down}</code> to hold and let go) and <a class="ref" href="#keyboard.status"><code>keyboard.status</code></a>.</p>
 <h4 id="concepts-mouse-and-3d-mouse">Mouse and 3D mouse</h4>
@@ -1803,7 +1805,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </li>
 </ul>
 <p>Commands that only look (<a class="ref" href="#node.info"><code>node.info</code></a>, <a class="ref" href="#node.snapshot"><code>node.snapshot</code></a>, <a class="ref" href="#chan.read"><code>chan.read</code></a>, <a class="ref" href="#ui.screenshot"><code>ui.screenshot</code></a>, ...) work at any time.</p>
-<p>In <a href="#getting-started-show-mode">show mode</a> (<a class="ref" href="#show.lock"><code>show.lock</code></a>) every editing command is refused until <a class="ref" href="#show.unlock"><code>show.unlock</code></a>, and so are commands that write into the project folder or switch projects. Commands that only look, <a class="ref" href="#cook.play"><code>cook.play</code></a> and OSC/DMX keep working.</p>
+<p>In <a href="#getting-started-show-mode">show mode</a> (<a class="ref" href="#show.lock"><code>show.lock</code></a>) every editing command is refused until <a class="ref" href="#show.unlock"><code>show.unlock</code></a>, and so are commands that write into the project folder or switch projects. Commands that only look, <a class="ref" href="#cook.play"><code>cook.play</code></a> and OSC/DMX keep working. The exception among the edits: <a class="ref" href="#chan.press"><code>chan.press</code></a> and <a class="ref" href="#node.set"><code>node.set</code></a> still set the <code>value</code> of a control shown on the show screen (<code>show</code> ticked), without an undo step; the reply says <code>&quot;history&quot;: &quot;none_in_show_mode&quot;</code>.</p>
 <h3 id="control-looking-at-results">Looking at results</h3>
 <ul>
 <li><a class="ref" href="#node.snapshot"><code>node.snapshot {path, file?}</code></a> cooks a <code>tex</code> node (or the picture of a <code>geo</code> node) and writes a PNG.
@@ -3461,11 +3463,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tbody>
 <tr><td><code>mode</code></td><td>momentary | toggle</td><td><code>&quot;momentary&quot;</code></td><td></td><td>What a click on the button does<ul><li><code>momentary</code>: 1 while the mouse button is held on it, 0 again on release</li><li><code>toggle</code>: each click switches between 1 and 0, kept in <code>value</code> and saved with the project</li></ul></td></tr>
 <tr><td><code>value</code></td><td>bool</td><td><code>false</code></td><td></td><td>On or off in mode toggle. A click on the button flips it</td></tr>
-<tr><td><code>label</code></td><td>text</td><td></td><td></td><td>Text on the button. Empty: &quot;press&quot;, or &quot;on&quot; and &quot;off&quot;</td></tr>
+<tr><td><code>label</code></td><td>text</td><td></td><td></td><td>Text on the button. Empty: &quot;press&quot;, or &quot;on&quot; and &quot;off&quot;. On the show screen it also names the button; empty: the node's name</td></tr>
+<tr><td><code>show</code></td><td>bool</td><td><code>false</code></td><td></td><td>The control also appears on the show screen while show mode is on. There it steers the show without the editor. A change there makes no history entry and is saved when show mode ends</td></tr>
 <tr><td><code>name</code></td><td>text</td><td><code>&quot;value&quot;</code></td><td></td><td>Name of the channel it makes, as bindings and other nodes see it</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a></p>
 </div></details>
 <details class="entry node" id="chan.clock"><summary><code class="name">chan.clock</code><span class="sum">A stopwatch: counts seconds from when <code>run</code> turns on, once, looping or on and on. Gives each piece of a show a clock that starts with it</span></summary>
 <div class="body">
@@ -3997,10 +4000,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>value</code></td><td>float</td><td><code>0</code></td><td>0 to 1 (soft)</td><td>Where the slider stands, between min and max. Dragging on the node's body sets it</td></tr>
 <tr><td><code>min</code></td><td>float</td><td><code>0</code></td><td>-10 to 10 (soft)</td><td>The value at the slider's left end</td></tr>
 <tr><td><code>max</code></td><td>float</td><td><code>1</code></td><td>-10 to 10 (soft)</td><td>The value at the slider's right end</td></tr>
+<tr><td><code>label</code></td><td>text</td><td></td><td></td><td>The slider's name on the show screen. Empty: the node's name</td></tr>
+<tr><td><code>show</code></td><td>bool</td><td><code>false</code></td><td></td><td>The control also appears on the show screen while show mode is on. There it steers the show without the editor. A change there makes no history entry and is saved when show mode ends</td></tr>
 <tr><td><code>name</code></td><td>text</td><td><code>&quot;value&quot;</code></td><td></td><td>Name of the channel it makes, as bindings and other nodes see it</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a></p>
 </div></details>
 <details class="entry node" id="chan.spacemouse_in"><summary><code class="name">chan.spacemouse_in</code><span class="sum">The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show</span></summary>
 <div class="body">
@@ -5383,7 +5388,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="chan.press"><summary><code class="name">chan.press</code><span class="sum">Press a chan.button as a click on its node does: {path, down?}. Momentary: without <code>down</code> a tap (1 for one frame), <code>down: true</code> holds it until <code>down: false</code>; no history entry. Toggle: a press flips <code>value</code> (an edit), <code>down: false</code> does nothing</span></summary>
 <div class="body">
 <p>Press a chan.button as a click on its node does: {path, down?}. Momentary: without <code>down</code> a tap (1 for one frame), <code>down: true</code> holds it until <code>down: false</code>; no history entry. Toggle: a press flips <code>value</code> (an edit), <code>down: false</code> does nothing</p>
-<p class="mentions">Mentioned in: <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 <details class="entry command" id="chan.read"><summary><code class="name">chan.read</code><span class="sum">Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block</span></summary>
 <div class="body">
@@ -5663,7 +5668,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="node.set"><summary><code class="name">node.set</code><span class="sum">Set params, null resets to the default</span></summary>
 <div class="body">
 <p>Set params, null resets to the default; {path, params: {name: value}}</p>
-<p class="mentions">Mentioned in: <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a>, <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a>, <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
 <details class="entry command" id="node.snapshot"><summary><code class="name">node.snapshot</code><span class="sum">Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB)</span></summary>
 <div class="body">
@@ -5923,14 +5928,14 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="group-show">
 <h3>show</h3>
-<details class="entry command" id="show.lock"><summary><code class="name">show.lock</code><span class="sum">Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live; after a crash (exit code 3) the app starts again with the clock running. Kept across restarts</span></summary>
+<details class="entry command" id="show.lock"><summary><code class="name">show.lock</code><span class="sum">Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live, and so do the values of the show screen's controls (no history entry, saved after unlock); after a crash (exit code 3) the app starts again with the clock running. Kept across restarts</span></summary>
 <div class="body">
-<p>Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live; after a crash (exit code 3) the app starts again with the clock running. Kept across restarts</p>
+<p>Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live, and so do the values of the show screen's controls (no history entry, saved after unlock); after a crash (exit code 3) the app starts again with the clock running. Kept across restarts</p>
 <p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#control-taking-turns">Control › Taking turns</a></p>
 </div></details>
-<details class="entry command" id="show.status"><summary><code class="name">show.status</code><span class="sum">Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes</span></summary>
+<details class="entry command" id="show.status"><summary><code class="name">show.status</code><span class="sum">Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes, and the controls on the show screen (chan.button and chan.slider with <code>show</code> on) with their values</span></summary>
 <div class="body">
-<p>Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes</p>
+<p>Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes, and the controls on the show screen (chan.button and chan.slider with <code>show</code> on) with their values</p>
 <p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a></p>
 </div></details>
 <details class="entry command" id="show.unlock"><summary><code class="name">show.unlock</code><span class="sum">Show mode off: editing, saving and reloading as usual</span></summary>

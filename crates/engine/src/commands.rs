@@ -718,6 +718,9 @@ fn node_set(e: &Engine, p: &Json) -> Result<Json> {
     if ops.is_empty() {
         return Err("`params` is empty".into());
     }
+    if crate::buttons::set_in_show(&e.session(), &ops)? {
+        return Ok(json!({"history": crate::buttons::SHOW_HISTORY, "created": []}));
+    }
     Ok(outcome(&edit(e, &ops, "")?))
 }
 

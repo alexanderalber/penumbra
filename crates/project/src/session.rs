@@ -30,8 +30,9 @@
 //!
 //! - **Locked for a show** ([`Session::set_locked`]): edits, undo and redo are refused with
 //!   [`LOCKED`], the file is neither read nor written, and `project.save` is refused. Param
-//!   values from OSC ([`Session::edit_live`]) still arrive. Unlocking picks up whatever changed
-//!   on disk meanwhile at the next poll, as an external edit.
+//!   values from OSC ([`Session::edit_live`]) still arrive, and so do the values of the show
+//!   screen's controls ([`Session::edit_locked`]); neither makes a history entry. Unlocking
+//!   picks up whatever changed on disk meanwhile at the next poll, as an external edit.
 //!
 //! File IO happens outside the state lock, so a slow disk never stalls an edit from the UI.
 
@@ -347,6 +348,18 @@ impl Session {
     pub fn edit_live(&self, ops: &[Op], now: Instant) -> Result<Arc<Network>, Error> {
         let mut state = lock(&self.state);
         state.gate.user_edit(now)?;
+        self.doc.edit_live(ops)
+    }
+
+    /// Sets param values outside the history while the session is locked
+    /// ([`Session::set_locked`]): the one change show mode allows, for the controls on its show
+    /// screen. Not gated, since nobody else may edit then. The values are written to the file
+    /// by the first autosave after the session is unlocked. Refused while unlocked: an edit
+    /// then belongs in the history.
+    pub fn edit_locked(&self, ops: &[Op]) -> Result<Arc<Network>, Error> {
+        if !self.locked() {
+            return Err(Error::new("the project is not locked; edit it as usual"));
+        }
         self.doc.edit_live(ops)
     }
 

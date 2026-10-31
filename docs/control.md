@@ -93,7 +93,9 @@ at any time.
 
 In [show mode](getting-started.md#show-mode) (`show.lock`) every editing command is refused
 until `show.unlock`, and so are commands that write into the project folder or switch projects.
-Commands that only look, `cook.play` and OSC/DMX keep working.
+Commands that only look, `cook.play` and OSC/DMX keep working. The exception among the edits:
+`chan.press` and `node.set` still set the `value` of a control shown on the show screen
+(`show` ticked), without an undo step; the reply says `"history": "none_in_show_mode"`.
 
 ## Looking at results
 

@@ -1209,7 +1209,8 @@ Outputs:
 |---|---|---|---|---|
 | `mode` | momentary \| toggle | `"momentary"` |  | What a click on the button does; momentary: 1 while the mouse button is held on it, 0 again on release; toggle: each click switches between 1 and 0, kept in `value` and saved with the project |
 | `value` | bool | `false` |  | On or off in mode toggle. A click on the button flips it. Does something only with mode toggle. |
-| `label` | text |  |  | Text on the button. Empty: "press", or "on" and "off" |
+| `label` | text |  |  | Text on the button. Empty: "press", or "on" and "off". On the show screen it also names the button; empty: the node's name |
+| `show` | bool | `false` |  | The control also appears on the show screen while show mode is on. There it steers the show without the editor. A change there makes no history entry and is saved when show mode ends |
 | `name` | text | `"value"` |  | Name of the channel it makes, as bindings and other nodes see it |
 
 ### chan.clock
@@ -1569,6 +1570,8 @@ Outputs:
 | `value` | float | `0` | 0 to 1 (soft) | Where the slider stands, between min and max. Dragging on the node's body sets it |
 | `min` | float | `0` | -10 to 10 (soft) | The value at the slider's left end |
 | `max` | float | `1` | -10 to 10 (soft) | The value at the slider's right end |
+| `label` | text |  |  | The slider's name on the show screen. Empty: the node's name |
+| `show` | bool | `false` |  | The control also appears on the show screen while show mode is on. There it steers the show without the editor. A change there makes no history entry and is saved when show mode ends |
 | `name` | text | `"value"` |  | Name of the channel it makes, as bindings and other nodes see it |
 
 ### chan.spacemouse_in

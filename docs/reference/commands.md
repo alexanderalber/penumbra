@@ -275,8 +275,8 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
-| `show.lock` | Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live; after a crash (exit code 3) the app starts again with the clock running. Kept across restarts |
-| `show.status` | Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes |
+| `show.lock` | Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; OSC, DMX and the control channel stay live, and so do the values of the show screen's controls (no history entry, saved after unlock); after a crash (exit code 3) the app starts again with the clock running. Kept across restarts |
+| `show.status` | Whether show mode is on, since when, the project it locks, restarts after crashes in the last 10 minutes, and the controls on the show screen (chan.button and chan.slider with `show` on) with their values |
 | `show.unlock` | Show mode off: editing, saving and reloading as usual |
 
 ## spacenav

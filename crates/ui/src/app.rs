@@ -133,6 +133,8 @@ pub struct PenumbraApp {
     /// When the show screen's Unlock was clicked once; a second click within
     /// [`UNLOCK_CONFIRM`] ends show mode.
     unlock_armed: Option<Instant>,
+    /// The show screen's control the primary button went down on, until it goes up.
+    show_press: Option<crate::node_controls::Press>,
     /// The folder button with the project menu.
     projects: crate::projects::ProjectMenu,
     /// The project shown, and the engine's generation it belongs to: when another project
@@ -236,6 +238,7 @@ impl PenumbraApp {
             to_clipboard: None,
             projects: crate::projects::ProjectMenu::default(),
             unlock_armed: None,
+            show_press: None,
             shown: (engine.generation(), engine.session()),
             flown: Instant::now(),
             starts_fresh: penumbra_engine::projects::starts_fresh(engine.session().dir()),
@@ -311,12 +314,18 @@ impl PenumbraApp {
         let session = self.engine.session().clone();
         for action in actions {
             let result = match action {
+                // In show mode the show screen's controls still set their values, outside the
+                // history.
                 Action::Edit { ops, label, group } => {
-                    session.edit(Actor::User, &ops, group, &label, now).map(|out| {
-                        if let Some(id) = out.created.first() {
-                            self.editor.select([*id]);
-                        }
-                    })
+                    match penumbra_engine::buttons::set_in_show(&session, &ops) {
+                        Ok(true) => Ok(()),
+                        Ok(false) => session.edit(Actor::User, &ops, group, &label, now).map(|out| {
+                            if let Some(id) = out.created.first() {
+                                self.editor.select([*id]);
+                            }
+                        }),
+                        Err(e) => Err(e),
+                    }
                 }
                 Action::Undo => self.undo(now),
                 Action::Redo => self.redo(now),
@@ -684,19 +693,23 @@ impl PenumbraApp {
     }
 
     /// What the editor shows in show mode instead of the network: what is locked, what stays
-    /// live, and Unlock (two clicks, so a stray one on the show machine does not end it).
+    /// live, Unlock (two clicks, so a stray one on the show machine does not end it), and below
+    /// it the controls flagged `show` ([`crate::show_screen`]).
     fn show_screen(
         &mut self,
         ui: &mut Ui,
         session: &penumbra_project::Session,
+        net: &penumbra_graph::Network,
+        view: &ViewFrame,
         now: Instant,
         actions: &mut Vec<Action>,
     ) {
         if self.unlock_armed.is_some_and(|t| now.saturating_duration_since(t) > UNLOCK_CONFIRM) {
             self.unlock_armed = None;
         }
+        let any = penumbra_engine::buttons::any_on_show_screen(net, session.types());
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.add_space(ui.available_height() * 0.25);
+            ui.add_space(ui.available_height() * if any { 0.12 } else { 0.25 });
             ui.vertical_centered(|ui| {
                 ui.label(RichText::new("Show mode").size(32.0).strong().color(theme::WARNING));
                 ui.add_space(8.0);
@@ -708,6 +721,10 @@ impl PenumbraApp {
                     "OSC, DMX and the control channel stay live, and so do the inputs the project reads.",
                     "After a crash the app starts again by itself with the clock running.",
                 ] {
+                    ui.label(RichText::new(line).color(theme::TEXT_WEAK));
+                }
+                if any {
+                    let line = "The controls below still work. Their changes make no undo step and are saved after Unlock.";
                     ui.label(RichText::new(line).color(theme::TEXT_WEAK));
                 }
                 ui.add_space(16.0);
@@ -723,6 +740,22 @@ impl PenumbraApp {
                     }
                 }
             });
+            if any {
+                // Well clear of Unlock, so a press meant for a control cannot reach it.
+                ui.add_space(48.0);
+                let doc = session.doc();
+                let new_group = || doc.new_group();
+                let input = crate::show_screen::Inputs {
+                    net,
+                    types: session.types(),
+                    status: &view.status,
+                    buttons: self.engine.buttons(),
+                    new_group: &new_group,
+                };
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    crate::show_screen::controls(ui, &input, &mut self.show_press, &mut self.auto, actions);
+                });
+            }
         });
         if self.unlock_armed.is_some() {
             ui.ctx().request_repaint_after(Duration::from_millis(250));
@@ -866,7 +899,7 @@ impl PenumbraApp {
         if status.locked {
             // Show mode: no network, no viewer, no thumbnails, so the editor asks the cook
             // thread for nothing and draws little next to the outputs.
-            self.show_screen(ui, &session, now, &mut actions);
+            self.show_screen(ui, &session, &net, &view, now, &mut actions);
             self.apply(actions, now);
             self.engine.set_view(ViewRequest::default());
             let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
@@ -874,6 +907,12 @@ impl PenumbraApp {
             return;
         }
         self.unlock_armed = None;
+        if let Some(p) = self.show_press.take()
+            && p.what == crate::node_controls::Pressed::Button
+        {
+            // Unlocked while a show screen button was held: let go of it.
+            actions.push(Action::PressButton { node: p.node, down: false });
+        }
 
         let selected = self.selected();
         let detail =

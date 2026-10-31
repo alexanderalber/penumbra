@@ -232,6 +232,9 @@ value are params, saved with the project. A momentary press is no edit: it leave
 and works while Claude edits. Bind params to their channel like to any other. From the control
 channel: `chan.press {path}` (or `{path, down}` to hold and let go) presses a button,
 `node.set` moves a slider.
+With `show` ticked, the control also appears on the show screen while
+[show mode](getting-started.md#show-mode) is on. There it still works, but a change makes no
+undo step and is saved only after show mode ends.
 
 ### Keys
 
