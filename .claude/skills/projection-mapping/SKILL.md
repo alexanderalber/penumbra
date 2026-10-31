@@ -53,7 +53,8 @@ Before every scan:
    range (Sony DRO, auto HDR): these cannot be read over HDMI, so ask the person to confirm
    them. A camera that adjusts itself between patterns gives garbage decodes.
 5. **Not clipping:** a projector at full white on the scene should not saturate the camera.
-   If it does, lower the exposure on the camera, or scan with two levels (below).
+   If it does, lower the exposure on the camera, or scan with two levels (below). The
+   `projector-setup` skill measures this per projector, with target numbers.
 6. Projectors in focus: a sharp pattern edge in the camera picture; ask the person to
    refocus when it is soft.
 
