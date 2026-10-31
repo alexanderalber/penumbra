@@ -111,15 +111,19 @@ pub struct Editor {
 }
 
 /// Routes for one arrangement of wires and nodes, recomputed when either changes. While nodes
-/// are dragged, each wire is routed on its own (quick). Once they rest, all wires are routed
-/// together, keeping them off each other; on a large level that takes a few hundred
+/// are dragged, the wires they move are routed each on its own (quick). Once they rest, those
+/// are routed with care, keeping off the other wires; on a large level that takes a few hundred
 /// milliseconds, so it runs on a thread of its own and the quick routes stand in meanwhile.
+/// A wire whose ends stayed put keeps its route, so moving a node leaves the wires of others
+/// where they were; it is routed anew only when a moved node now lies across it.
 #[derive(Default)]
 struct RouteCache {
     key: Option<RouteKey>,
     routes: Vec<Route>,
     /// The careful routing running, for the arrangement in its key.
     pending: Option<(RouteKey, std::sync::mpsc::Receiver<Vec<Route>>)>,
+    /// The last careful routes, with their wires and nodes: what unchanged wires keep.
+    base: Option<(Vec<Ends>, Vec<Rect>, Vec<Route>)>,
 }
 
 /// Wires, nodes and whether the routes are quick ones.
@@ -135,6 +139,7 @@ impl RouteCache {
                     if !quick && same(key) {
                         self.routes = routes;
                         self.key = Some((wires.to_vec(), nodes.to_vec(), false));
+                        self.base = Some((wires.to_vec(), nodes.to_vec(), self.routes.clone()));
                     }
                     self.pending = None;
                 }
@@ -149,7 +154,14 @@ impl RouteCache {
             Some(_) if quick => return &self.routes,
             Some(_) => {}
             None => {
-                self.routes = wires::route_each(wires, nodes);
+                let keep = self.keep(wires, nodes);
+                self.routes = wires
+                    .iter()
+                    .zip(keep)
+                    .map(|(w, kept)| {
+                        kept.unwrap_or_else(|| wires::wire_route(w.a, w.b, w.from, w.to, nodes, 1.0))
+                    })
+                    .collect();
                 self.key = Some((wires.to_vec(), nodes.to_vec(), true));
                 if quick {
                     return &self.routes;
@@ -159,11 +171,12 @@ impl RouteCache {
         // The quick routes stand in; a careful run starts unless one is under way (one at a
         // time: a stale run finishes, and the next frame starts the one for now).
         if self.pending.is_none() {
+            let keep = self.keep(wires, nodes);
             let (tx, rx) = std::sync::mpsc::channel();
-            let (w, n) = (wires.to_vec(), nodes.to_vec());
+            let (w, n, k) = (wires.to_vec(), nodes.to_vec(), keep.clone());
             let repaint = ctx.clone();
             let started = std::thread::Builder::new().name("wire routes".into()).spawn(move || {
-                let routes = wires::route_all(&w, &n);
+                let routes = wires::route_around(&w, &n, &k);
                 // The editor may be gone; then nobody waits for the routes.
                 let _ = tx.send(routes);
                 repaint.request_repaint();
@@ -172,12 +185,30 @@ impl RouteCache {
                 Ok(_) => self.pending = Some(((wires.to_vec(), nodes.to_vec(), false), rx)),
                 Err(e) => {
                     log::warn!("routing wires on a thread: {e}; routing here");
-                    self.routes = wires::route_all(wires, nodes);
+                    self.routes = wires::route_around(wires, nodes, &keep);
                     self.key = Some((wires.to_vec(), nodes.to_vec(), false));
+                    self.base = Some((wires.to_vec(), nodes.to_vec(), self.routes.clone()));
                 }
             }
         }
         &self.routes
+    }
+
+    /// For each wire, the careful route it keeps: one with the same ends was routed with care,
+    /// and no node that moved or came since lies across it.
+    fn keep(&self, wires: &[Ends], nodes: &[Rect]) -> Vec<Option<Route>> {
+        let Some((was_wires, was_nodes, routes)) = &self.base else {
+            return vec![None; wires.len()];
+        };
+        let moved: Vec<Rect> = nodes.iter().filter(|r| !was_nodes.contains(r)).copied().collect();
+        wires
+            .iter()
+            .map(|w| {
+                let i = was_wires.iter().position(|was| was == w)?;
+                let route = routes.get(i)?;
+                (!wires::runs_through(route, &moved)).then(|| route.clone())
+            })
+            .collect()
     }
 }
 
@@ -2584,11 +2615,69 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(2));
             cache.get(&ctx, &wires, &nodes, false);
         }
-        assert_eq!(cache.get(&ctx, &wires, &nodes, false), wires::route_all(&wires, &nodes).as_slice());
-        // A drag routes quickly again; resting brings a new careful run.
+        let careful = wires::route_all(&wires, &nodes);
+        assert_eq!(cache.get(&ctx, &wires, &nodes, false), careful.as_slice());
+        // Dragging the middle node down re-routes its own wires quickly; the wire past it
+        // keeps its careful route, during the drag and after the drop.
         let moved = [nodes[0], nodes[1].translate(vec2(0.0, 60.0)), nodes[2]];
-        let dragged = cache.get(&ctx, &wires, &moved, true).to_vec();
-        assert_eq!(dragged, wires::route_each(&wires, &moved));
+        let moved_wires = ends(&moved, &[(0, 2), (0, 1), (1, 2)]);
+        let dragged = cache.get(&ctx, &moved_wires, &moved, true).to_vec();
+        let each = wires::route_each(&moved_wires, &moved);
+        assert_eq!(dragged, vec![careful[0].clone(), each[1].clone(), each[2].clone()]);
         assert!(cache.pending.is_none());
+        let rested = settle(&ctx, &mut cache, &moved_wires, &moved);
+        assert_eq!(rested[0], careful[0], "the wire past the moved node stays put");
+        assert_eq!(
+            rested,
+            wires::route_around(&moved_wires, &moved, &[Some(careful[0].clone()), None, None])
+        );
+    }
+
+    fn ends(nodes: &[Rect], pairs: &[(usize, usize)]) -> Vec<Ends> {
+        pairs
+            .iter()
+            .map(|&(f, t)| Ends {
+                a: nodes[f].right_center(),
+                b: nodes[t].left_center(),
+                from: nodes[f],
+                to: nodes[t],
+                source: (NodeId(f as u64), 0),
+            })
+            .collect()
+    }
+
+    /// Asks for careful routes until they arrive.
+    fn settle(ctx: &egui::Context, cache: &mut RouteCache, wires: &[Ends], nodes: &[Rect]) -> Vec<Route> {
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let routes = cache.get(ctx, wires, nodes, false).to_vec();
+            if cache.key.as_ref().is_some_and(|k| !k.2) {
+                return routes;
+            }
+            assert!(Instant::now() < deadline, "the careful routes never came");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn a_wire_reroutes_when_a_moved_node_lands_on_it() {
+        let ctx = egui::Context::default();
+        let nodes = [
+            Rect::from_min_size(pos2(0.0, 0.0), vec2(80.0, 40.0)),
+            Rect::from_min_size(pos2(400.0, 0.0), vec2(80.0, 40.0)),
+            Rect::from_min_size(pos2(200.0, 200.0), vec2(80.0, 40.0)),
+        ];
+        let wires = ends(&nodes, &[(0, 1)]);
+        let mut cache = RouteCache::default();
+        let before = settle(&ctx, &mut cache, &wires, &nodes);
+        assert_eq!(before, wires::route_all(&wires, &nodes));
+        // The unwired node dragged onto the wire: the wire goes around it.
+        let moved = [nodes[0], nodes[1], nodes[2].translate(vec2(0.0, -200.0))];
+        let dragged = cache.get(&ctx, &wires, &moved, true).to_vec();
+        assert_ne!(dragged, before);
+        assert!(!wires::runs_through(&dragged[0], &moved[2..]));
+        // Dragged elsewhere, away from the wire: it stays.
+        let aside = [nodes[0], nodes[1], nodes[2].translate(vec2(0.0, 100.0))];
+        assert_eq!(cache.get(&ctx, &wires, &aside, true).to_vec(), before);
     }
 }

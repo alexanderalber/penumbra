@@ -293,9 +293,25 @@ fn pieces(line: &[Pos2]) -> Vec<(Pos2, Pos2)> {
 /// before it; wires from one output may share their way. The wires whose plain curve is free go
 /// first (they have the least choice), then the others from the longest down.
 pub(crate) fn route_all(wires: &[Ends], nodes: &[Rect]) -> Vec<Route> {
+    route_around(wires, nodes, &[])
+}
+
+/// Like [`route_all`], except that each wire with a route in `keep` keeps it: the others are
+/// routed with care around them. So a moved node changes its own wires and leaves the rest.
+pub(crate) fn route_around(wires: &[Ends], nodes: &[Rect], keep: &[Option<Route>]) -> Vec<Route> {
+    let mut routes: Vec<Route> = wires.iter().map(|w| vec![wire_points(w.a, w.b, 1.0)]).collect();
+    let mut taken = Taken::default();
+    for (i, w) in wires.iter().enumerate() {
+        if let (Some(Some(route)), Some(slot)) = (keep.get(i), routes.get_mut(i)) {
+            taken.add(&flatten(route), w.source);
+            slot.clone_from(route);
+        }
+    }
+    let kept = |i: usize| keep.get(i).is_some_and(Option::is_some);
     let mut first: Vec<(usize, bool, f32)> = wires
         .iter()
         .enumerate()
+        .filter(|&(i, _)| !kept(i))
         .map(|(i, w)| {
             let plain = [wire_points(w.a, w.b, 1.0)];
             let free = w.b.x >= w.a.x - 20.0
@@ -304,8 +320,6 @@ pub(crate) fn route_all(wires: &[Ends], nodes: &[Rect]) -> Vec<Route> {
         })
         .collect();
     first.sort_by(|x, y| y.1.cmp(&x.1).then(y.2.total_cmp(&x.2)).then(x.0.cmp(&y.0)));
-    let mut routes: Vec<Route> = wires.iter().map(|w| vec![wire_points(w.a, w.b, 1.0)]).collect();
-    let mut taken = Taken::default();
     let lanes = fan_lanes(wires);
     let mut work = 0usize;
     for (i, _, _) in first {
@@ -358,9 +372,18 @@ pub(crate) fn route_all(wires: &[Ends], nodes: &[Rect]) -> Vec<Route> {
 }
 
 /// Routes for all `wires`, each on its own as if the others were not there: quicker than
-/// [`route_all`], for while nodes are being dragged.
+/// [`route_all`]. What a drag shows for the wires it moves.
+#[cfg(test)]
 pub(crate) fn route_each(wires: &[Ends], nodes: &[Rect]) -> Vec<Route> {
     wires.iter().map(|w| wire_route(w.a, w.b, w.from, w.to, nodes, 1.0)).collect()
+}
+
+/// Whether `route` runs through or grazes any of `nodes` (beyond its own ends).
+pub(crate) fn runs_through(route: &[[Pos2; 4]], nodes: &[Rect]) -> bool {
+    // A cubic stays inside the box of its control points, so most nodes are ruled out at once.
+    let hull = Rect::from_points(&route.iter().flatten().copied().collect::<Vec<_>>()).expand(10.0);
+    let near: Vec<Rect> = nodes.iter().copied().filter(|r| r.intersects(hull)).collect();
+    !near.is_empty() && route_cost(route, &near, 1.0) > route_cost(route, &[], 1.0) * 1.001
 }
 
 /// How much routing [`route_all`] does with care (roughly, points of wire checked against nodes
