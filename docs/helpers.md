@@ -95,6 +95,8 @@ always in their own colours.
 Under the outputs, this section runs the three jobs that make several projectors look like one:
 blend weights from the scans, the colour match and the flat field. Each has a button and its few
 options; the rest keeps the commands' defaults, and the files go where the commands put them.
+The example **projector-wall** (status bar folder button, **Examples**) has the network these
+jobs fill in, for three projectors on a wall, with the measurements of a real one.
 
 - **Scans** lists every folder in the project that holds a scan's maps (`cam_to_proj.exr` and
   `proj_to_cam.exr`, up to four folders deep), with the projector it belongs to, whether it was

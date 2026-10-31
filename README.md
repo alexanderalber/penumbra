@@ -48,7 +48,9 @@ lists every one.
   soft-edge blending, drawn masks, all by eye when there is no camera
   ([mapping without a camera](docs/mapping-without-camera.md)). Test patterns on every projector at once (alignment, focus,
   frame drops, dead pixels). Projectors of different models matched in colour and brightness
-  from camera measurements, and evened out across each picture.
+  from camera measurements, and evened out across each picture. The
+  [projector-wall](examples/projector-wall/README.md) example shows three projectors as one
+  picture on a wall, with the measurements of a real setup.
 - **Scanned objects:** structured light from each projector, filmed by a camera
   ([scanning](docs/scanning.md)). The scan lines the projectors up (side by side or stacked),
   blends them, finds the flat faces and the objects of a scene (crates, a floor, a pumpkin) and
