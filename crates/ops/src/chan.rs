@@ -14,6 +14,7 @@ use penumbra_graph::{
 
 use crate::{Null, waiting};
 
+pub mod controls;
 mod filter;
 
 /// Registers the `chan` node types.
@@ -168,6 +169,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Math) as Box<dyn Operator>,
     ))?;
     filter::register(types)?;
+    controls::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             "chan.integrator",

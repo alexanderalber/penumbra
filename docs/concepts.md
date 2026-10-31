@@ -222,6 +222,17 @@ draws every binding as a dashed green line into the top of the node. With "All b
 unticked in the editor's right-click menu, a binding shows as a short stub on the bound node,
 and as a line only while the source or the bound node is selected or under the pointer.
 
+### Buttons and sliders on the node
+
+`chan.button` and `chan.slider` are steered right on their node in the network editor, without
+selecting it. **Button:** with `mode` `momentary` its channel is 1 while the mouse button is held
+on it; with `mode` `toggle` each click switches it between 1 and 0. **Slider:** dragging on it
+sets `value` between `min` and `max`. One drag is one undo step. A toggle's state and a slider's
+value are params, saved with the project. A momentary press is no edit: it leaves no history
+and works while Claude edits. Bind params to their channel like to any other. From the control
+channel: `chan.press {path}` (or `{path, down}` to hold and let go) presses a button,
+`node.set` moves a slider.
+
 ### Keys
 
 `chan.keyboard_in` turns keys into channels: with `keys` at `1 2 3 4` (the default) it has

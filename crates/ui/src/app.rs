@@ -399,6 +399,10 @@ impl PenumbraApp {
                         None => Err(penumbra_core::Error::new("the node is gone")),
                     }
                 }
+                Action::PressButton { node, down } => {
+                    self.engine.buttons().hold(node, penumbra_ops::chan::controls::Holder::Editor, down);
+                    Ok(())
+                }
                 Action::PlayInstrument(node) => {
                     let net = self.engine.session().doc().snapshot();
                     match net.path_of(node) {
@@ -1125,6 +1129,8 @@ impl PenumbraApp {
         let (thumbnails, passive) = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(ui, |ui| {
+                let doc = session.doc();
+                let new_group = || doc.new_group();
                 let input = editor::Inputs {
                     net: &net,
                     types: session.types(),
@@ -1145,6 +1151,7 @@ impl PenumbraApp {
                     recent: &recent,
                     now,
                     library: &self.library.0,
+                    new_group: &new_group,
                 };
                 self.editor.show(
                     ui,

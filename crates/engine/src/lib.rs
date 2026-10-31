@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod audio_file_out;
 pub mod blob_track;
+pub mod buttons;
 pub mod calib;
 pub mod clipboard;
 pub mod command;
@@ -81,6 +82,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
     keyboard::register(&mut registry, engine);
+    buttons::register(&mut registry, engine);
     mouse::register(&mut registry, engine);
     palettes::register(&mut registry, engine);
     audio::register(&mut registry, engine);

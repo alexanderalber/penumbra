@@ -1090,6 +1090,9 @@ mod osc_tests;
 #[path = "keyboard_tests.rs"]
 mod keyboard_tests;
 
+#[path = "buttons_tests.rs"]
+mod buttons_tests;
+
 #[path = "mouse_tests.rs"]
 mod mouse_tests;
 

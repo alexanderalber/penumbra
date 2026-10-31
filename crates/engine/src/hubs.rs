@@ -1,6 +1,6 @@
 //! The device hubs: what outlives a project and talks to hardware or the network on threads of
 //! its own (OSC, audio, DMX out and in, cameras, recordings, scans, the 3D mouse), and the
-//! keyboard and mouse the windows pass on.
+//! keyboard, mouse and node-body buttons the windows pass on.
 //!
 //! The engine drives every hub through [`DeviceHub`]: provided to each new cooker, told when the
 //! network changes, told when a project closes, shut down when the app closes. [`Hubs`] holds
@@ -17,6 +17,7 @@ use penumbra_dmx::Hub as DmxHub;
 use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_graph::{Cooker, Network, NodeTypes};
 use penumbra_ops::audio::file::SoundFiles;
+use penumbra_ops::chan::controls::Buttons;
 use penumbra_ops::keyboard::Keyboard;
 use penumbra_ops::mouse::Mouse;
 use penumbra_ops::tex::scan::Scans;
@@ -63,6 +64,8 @@ pub struct Hubs {
     pub mouse: Mouse,
     /// How the `audio.file` nodes stand: their files' codec, rate and length, their playheads.
     pub sound_files: SoundFiles,
+    /// The momentary `chan.button`s held in the editor or by `chan.press`.
+    pub buttons: Buttons,
 }
 
 impl Hubs {
@@ -83,13 +86,14 @@ impl Hubs {
             keyboard,
             mouse: Mouse::new(),
             sound_files: SoundFiles::new(),
+            buttons: Buttons::new(),
         }
     }
 
     /// Every hub, in the order they shut down. Recordings come first: when the app closes, the
     /// cook thread has dropped its nodes and every recording is finishing its file, which the
     /// shutdown waits for.
-    pub fn all(&self) -> [&dyn DeviceHub; 12] {
+    pub fn all(&self) -> [&dyn DeviceHub; 13] {
         // Destructured so that a field missing here does not compile.
         let Hubs {
             osc,
@@ -104,6 +108,7 @@ impl Hubs {
             keyboard,
             mouse,
             sound_files,
+            buttons,
         } = self;
         [
             record,
@@ -118,6 +123,7 @@ impl Hubs {
             keyboard,
             mouse,
             sound_files,
+            buttons,
         ]
     }
 }
@@ -270,6 +276,22 @@ impl DeviceHub for Keyboard {
     }
 
     /// The next project starts with no key pressed, so its `last` channels are 0.
+    fn project_closing(&self) {
+        self.reset();
+    }
+}
+
+impl DeviceHub for Buttons {
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    fn network_changed(&self, net: &Network, _types: &NodeTypes) {
+        let button = penumbra_ops::chan::controls::BUTTON;
+        self.prune(|id| net.node(id).is_some_and(|n| n.kind == button));
+    }
+
+    /// The next project starts with every button up.
     fn project_closing(&self) {
         self.reset();
     }

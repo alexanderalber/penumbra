@@ -363,6 +363,8 @@ moss = #1b4332 #52b788
 <h3 id="concepts-bindings">Bindings</h3>
 <p>A param can follow a channel instead of its stored value: drag a wire from a <code>chan</code> output onto the param's row, or use the link button at the end of the row, which also offers a specific channel by name. A vector or colour binds per component: drop the wire on one field.</p>
 <p>A bound row shows its name in the channel colour, the live value, and the source. The stored value stays and comes back when the binding is removed; it is also used, with a warning, while the channel is missing. Integers round, booleans are on from 0.5, hard ranges clamp. The editor draws every binding as a dashed green line into the top of the node. With &quot;All binding lines&quot; unticked in the editor's right-click menu, a binding shows as a short stub on the bound node, and as a line only while the source or the bound node is selected or under the pointer.</p>
+<h4 id="concepts-buttons-and-sliders-on-the-node">Buttons and sliders on the node</h4>
+<p><a class="ref" href="#chan.button"><code>chan.button</code></a> and <a class="ref" href="#chan.slider"><code>chan.slider</code></a> are steered right on their node in the network editor, without selecting it. <strong>Button:</strong> with <code>mode</code> <code>momentary</code> its channel is 1 while the mouse button is held on it; with <code>mode</code> <code>toggle</code> each click switches it between 1 and 0. <strong>Slider:</strong> dragging on it sets <code>value</code> between <code>min</code> and <code>max</code>. One drag is one undo step. A toggle's state and a slider's value are params, saved with the project. A momentary press is no edit: it leaves no history and works while Claude edits. Bind params to their channel like to any other. From the control channel: <a class="ref" href="#chan.press"><code>chan.press {path}</code></a> (or <code>{path, down}</code> to hold and let go) presses a button, <a class="ref" href="#node.set"><code>node.set</code></a> moves a slider.</p>
 <h4 id="concepts-keys">Keys</h4>
 <p><a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a> turns keys into channels: with <code>keys</code> at <code>1 2 3 4</code> (the default) it has <code>key_1</code> to <code>key_4</code>, each 1 while its key is held, and <code>last</code>, the index in <code>keys</code> (from 0) of the key pressed last, which stays until another listed key is pressed and starts at 0 when the project opens. Bind a switch's <code>index</code> (or a <a class="ref" href="#chan.constant"><code>chan.constant</code></a> that several switches follow) to <code>last</code>, and the number keys switch the show's pieces. Keys count only while a penumbra window has the focus: the editor, the viewer's own window or a projector output (click it once). A key typed into a text field and a key held with Ctrl, Alt or the Windows key do not count. The number pad's digits are the digits; letters are named as the keyboard layout labels them. <strong>learn from OSC</strong> in a param's link menu also takes a key a <a class="ref" href="#chan.keyboard_in"><code>chan.keyboard_in</code></a> lists, and binds its gate. From the control channel: <a class="ref" href="#keyboard.press"><code>keyboard.press {key}</code></a> (or <code>{key, down}</code> to hold and let go) and <a class="ref" href="#keyboard.status"><code>keyboard.status</code></a>.</p>
 <h4 id="concepts-mouse-and-3d-mouse">Mouse and 3D mouse</h4>
@@ -3346,7 +3348,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_analysis">chan.audio_analysis</a> <a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_analysis"><summary><code class="name">chan.audio_analysis</code><span class="sum">Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</span></summary>
 <div class="body">
 <p>Listens to sound and turns it into numbers to animate with: loudness, bass, mid and treble, hits, tempo and beat</p>
@@ -3443,6 +3445,27 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-spectrum">Audio › Spectrum</a></p>
+</div></details>
+<details class="entry node" id="chan.button"><summary><code class="name">chan.button</code><span class="sum">A button on the node itself, pressed with the mouse in the editor: 1 while held, or on and off with each click</span></summary>
+<div class="body">
+<p>A button on the node itself, pressed with the mouse in the editor: 1 while held, or on and off with each click</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: One channel: 1 while pressed or on, else 0</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>mode</code></td><td>momentary | toggle</td><td><code>&quot;momentary&quot;</code></td><td></td><td>What a click on the button does<ul><li><code>momentary</code>: 1 while the mouse button is held on it, 0 again on release</li><li><code>toggle</code>: each click switches between 1 and 0, kept in <code>value</code> and saved with the project</li></ul></td></tr>
+<tr><td><code>value</code></td><td>bool</td><td><code>false</code></td><td></td><td>On or off in mode toggle. A click on the button flips it</td></tr>
+<tr><td><code>label</code></td><td>text</td><td></td><td></td><td>Text on the button. Empty: &quot;press&quot;, or &quot;on&quot; and &quot;off&quot;</td></tr>
+<tr><td><code>name</code></td><td>text</td><td><code>&quot;value&quot;</code></td><td></td><td>Name of the channel it makes, as bindings and other nodes see it</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a></p>
 </div></details>
 <details class="entry node" id="chan.clock"><summary><code class="name">chan.clock</code><span class="sum">A stopwatch: counts seconds from when <code>run</code> turns on, once, looping or on and on. Gives each piece of a show a clock that starts with it</span></summary>
 <div class="body">
@@ -3957,6 +3980,27 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#concepts-shows">Concepts › Shows</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#glossary">Glossary</a></p>
+</div></details>
+<details class="entry node" id="chan.slider"><summary><code class="name">chan.slider</code><span class="sum">A slider on the node itself, dragged with the mouse in the editor: a number between min and max</span></summary>
+<div class="body">
+<p>A slider on the node itself, dragged with the mouse in the editor: a number between min and max</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: One channel: <code>value</code>, kept between min and max</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>value</code></td><td>float</td><td><code>0</code></td><td>0 to 1 (soft)</td><td>Where the slider stands, between min and max. Dragging on the node's body sets it</td></tr>
+<tr><td><code>min</code></td><td>float</td><td><code>0</code></td><td>-10 to 10 (soft)</td><td>The value at the slider's left end</td></tr>
+<tr><td><code>max</code></td><td>float</td><td><code>1</code></td><td>-10 to 10 (soft)</td><td>The value at the slider's right end</td></tr>
+<tr><td><code>name</code></td><td>text</td><td><code>&quot;value&quot;</code></td><td></td><td>Name of the channel it makes, as bindings and other nodes see it</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a></p>
 </div></details>
 <details class="entry node" id="chan.spacemouse_in"><summary><code class="name">chan.spacemouse_in</code><span class="sum">The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show</span></summary>
 <div class="body">
@@ -5336,6 +5380,11 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="group-chan">
 <h3>chan</h3>
+<details class="entry command" id="chan.press"><summary><code class="name">chan.press</code><span class="sum">Press a chan.button as a click on its node does: {path, down?}. Momentary: without <code>down</code> a tap (1 for one frame), <code>down: true</code> holds it until <code>down: false</code>; no history entry. Toggle: a press flips <code>value</code> (an edit), <code>down: false</code> does nothing</span></summary>
+<div class="body">
+<p>Press a chan.button as a click on its node does: {path, down?}. Momentary: without <code>down</code> a tap (1 for one frame), <code>down: true</code> holds it until <code>down: false</code>; no history entry. Toggle: a press flips <code>value</code> (an edit), <code>down: false</code> does nothing</p>
+<p class="mentions">Mentioned in: <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a></p>
+</div></details>
 <details class="entry command" id="chan.read"><summary><code class="name">chan.read</code><span class="sum">Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block</span></summary>
 <div class="body">
 <p>Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block; {samples: true} for all); {path, output?, samples?}</p>
@@ -5614,7 +5663,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="node.set"><summary><code class="name">node.set</code><span class="sum">Set params, null resets to the default</span></summary>
 <div class="body">
 <p>Set params, null resets to the default; {path, params: {name: value}}</p>
-<p class="mentions">Mentioned in: <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a>, <a href="#mapping-without-camera-from-the-control-channel">Mapping without a camera › From the control channel</a></p>
 </div></details>
 <details class="entry command" id="node.snapshot"><summary><code class="name">node.snapshot</code><span class="sum">Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB)</span></summary>
 <div class="body">

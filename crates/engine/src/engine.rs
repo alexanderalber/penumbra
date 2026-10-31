@@ -1205,6 +1205,11 @@ impl Engine {
         &self.hubs.keyboard
     }
 
+    /// The momentary `chan.button`s held now, in the editor or by `chan.press`.
+    pub fn buttons(&self) -> &penumbra_ops::chan::controls::Buttons {
+        &self.hubs.buttons
+    }
+
     /// The mouse: the wheel the output windows pass on while a `chan.mouse_in` exists.
     pub fn mouse(&self) -> &penumbra_ops::mouse::Mouse {
         &self.hubs.mouse

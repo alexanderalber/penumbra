@@ -24,6 +24,7 @@ pub mod layout;
 mod mapping;
 pub mod meters;
 pub mod navigate;
+mod node_controls;
 pub mod params;
 pub mod plot;
 pub mod projects;
@@ -113,6 +114,12 @@ pub enum Action {
     },
     /// A `tex.video_file` starts its clip over (`video_file.restart`).
     RestartVideo(NodeId),
+    /// A momentary `chan.button` goes down or up, held by the editor (`chan.press`); live
+    /// state, no edit.
+    PressButton {
+        node: NodeId,
+        down: bool,
+    },
     /// An `audio.instrument` plays one note on lane 0 at its next frame, an `audio.file` starts
     /// over (`audio.play`).
     PlayInstrument(NodeId),
@@ -144,6 +151,8 @@ impl Action {
     }
 }
 
+#[cfg(test)]
+mod node_controls_tests;
 #[cfg(test)]
 mod reference;
 #[cfg(test)]

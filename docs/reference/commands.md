@@ -50,6 +50,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 
 | command | |
 |---|---|
+| `chan.press` | Press a chan.button as a click on its node does: {path, down?}. Momentary: without `down` a tap (1 for one frame), `down: true` holds it until `down: false`; no history entry. Toggle: a press flips `value` (an edit), `down: false` does nothing |
 | `chan.read` | Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block; {samples: true} for all); {path, output?, samples?} |
 
 ## comp

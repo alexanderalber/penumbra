@@ -20,12 +20,13 @@ use egui::{
     Align2, Color32, CornerRadius, CursorIcon, FontId, Key, Modifiers, PointerButton, Pos2, Rect, Sense,
     Shape, Stroke, StrokeKind, Ui, Vec2, pos2, vec2,
 };
-use penumbra_core::{NodeId, NodePath};
+use penumbra_core::{GroupId, NodeId, NodePath, ParamPath, Value};
 use penumbra_graph::{Data, DataKind, Network, NodeDesc, NodeStatus, NodeTypes, Op};
 
 use crate::add_dialog::{AddDialog, Outcome};
 use crate::automation;
 use crate::layout::{Layout, NODE_SIZE, View, ZOOM};
+use crate::node_controls::{self, Control};
 use crate::textures::Textures;
 use crate::wires::{self, Ends, Route, flatten, wire_points};
 use crate::{Action, theme};
@@ -67,6 +68,8 @@ pub struct Inputs<'a> {
     pub now: Instant,
     /// Names of the component files on offer in the add dialog.
     pub library: &'a [crate::add_dialog::Offered],
+    /// A fresh history group: one slider drag on a node body is one undo step.
+    pub new_group: &'a dyn Fn() -> GroupId,
 }
 
 enum Drag {
@@ -108,6 +111,34 @@ pub struct Editor {
     menu_wire: Option<WireKey>,
     /// The wires of the level shown, routed in graph units, kept while nothing moves.
     routes: RouteCache,
+    /// The control on a node body the primary button went down on, until it goes up.
+    body_press: Option<BodyPress>,
+}
+
+/// A press on the control of a node body ([`node_controls`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BodyPress {
+    node: NodeId,
+    what: Pressed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Pressed {
+    /// A momentary button, held in the engine until the release.
+    Button,
+    /// A toggle: it switches on the click.
+    Toggle,
+    /// A slider being dragged: every edit of the drag joins `group`; `value` is the last one set.
+    Slider { group: GroupId, value: f64 },
+}
+
+/// A node's body control as drawn this frame: the control, held by the pointer, hovered.
+struct Shown {
+    control: Control,
+    line: String,
+    pressed: bool,
+    hovered: bool,
+    active: bool,
 }
 
 /// Routes for one arrangement of wires and nodes, recomputed when either changes. While nodes
@@ -271,6 +302,7 @@ impl Default for Editor {
             hovered_wire: None,
             menu_wire: None,
             routes: RouteCache::default(),
+            body_press: None,
         }
     }
 }
@@ -289,7 +321,9 @@ fn to_graph(canvas: Rect, view: View, p: Pos2) -> Pos2 {
 fn body_height(desc: Option<&NodeDesc>, ports: usize) -> f32 {
     let Some(d) = desc else { return 28.0 };
     let ports = d.outputs.len().max(ports) as f32;
-    let content = if d.sampled
+    let content = if node_controls::has_control(&d.kind) {
+        node_controls::BODY
+    } else if d.sampled
         || d.outputs.first().is_some_and(|o| matches!(o.kind, DataKind::Tex | DataKind::Geo | DataKind::Mat))
     {
         NODE_SIZE.x * 9.0 / 16.0
@@ -769,6 +803,7 @@ impl Editor {
         if released {
             self.finish_wire(net, input.types, geos, pointer, actions);
         }
+        self.end_body_press(ui, actions);
 
         // Empty canvas: box selection, clicks, menus.
         self.box_select(ui, &painter, &canvas_resp, geos, pointer, released);
@@ -955,11 +990,17 @@ impl Editor {
                     actions.push(Action::Help(node.kind.clone()));
                 }
             }
-            self.node_interaction(ui, &resp, g.id, input, layout, auto, actions, &mut clicked_node);
+            let control = self.body_control(ui, g, input, &path, auto, actions);
+            if control.as_ref().is_some_and(|(r, _)| r.hovered()) {
+                self.hovered = Some(g.id);
+            }
+            let menu_too = control.as_ref().map(|(r, _)| r);
+            self.node_interaction(ui, &resp, menu_too, g.id, input, layout, auto, actions, &mut clicked_node);
             let on_port = pointer.is_some_and(|q| {
                 g.inputs.iter().chain(&g.outputs).any(|port| q.distance(port.pos) <= PORT_PICK)
             });
-            self.draw_node(ui, painter, g, input, textures, &path, &resp, on_port);
+            let shown = control.map(|(_, s)| s);
+            self.draw_node(ui, painter, g, input, textures, &path, &resp, on_port, shown.as_ref());
             for (i, port) in g.inputs.iter().enumerate() {
                 let r = Rect::from_center_size(port.pos, Vec2::splat(PORT_PICK * 2.0));
                 auto.add(format!("port.in.{path}.{i}"), r, format!("{:?}", port.kind));
@@ -1207,11 +1248,140 @@ impl Editor {
         layout.set_view(view, now);
     }
 
+    /// The control on the body of a `chan.button` or `chan.slider` ([`node_controls`]). It lies
+    /// on top of the node: a press there holds the button or moves the slider, and neither
+    /// selects nor moves the node. A momentary press is live state in the engine; a toggle's
+    /// click and a slider's drag are edits, one undo step each. Returns the control's response
+    /// and what to draw.
+    fn body_control(
+        &mut self,
+        ui: &Ui,
+        g: &Geo,
+        input: &Inputs<'_>,
+        path: &str,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) -> Option<(egui::Response, Shown)> {
+        let node = input.net.node(g.id)?;
+        if !node_controls::has_control(&node.kind) {
+            return None;
+        }
+        let zoom = g.rect.width() / NODE_SIZE.x;
+        if zoom <= 0.4 {
+            return None;
+        }
+        let chans =
+            input.outputs.get(&g.id).and_then(|o| o.first()).and_then(|d| d.get::<penumbra_core::Chans>());
+        let first = chans.and_then(|c| c.channels().first()).map(|c| c.value());
+        let mut control = node_controls::of(node, input.types, input.status.get(&g.id), first)?;
+        let body = Rect::from_min_max(pos2(g.rect.min.x, g.rect.min.y + HEADER * zoom), g.rect.max);
+        let rect = node_controls::rect(body, zoom, PORT_PICK);
+        let resp = ui.interact(rect, ui.id().with(("control", g.id)), Sense::click_and_drag());
+        auto.add(format!("control.{path}"), rect, node.kind.clone());
+        let active = !control.bound() && (input.can_edit || !control.edits());
+        let primary =
+            ui.input(|i| i.pointer.button_down(PointerButton::Primary) && !i.pointer.secondary_down());
+        let down = resp.is_pointer_button_down_on() && primary;
+        let mine = self.body_press.filter(|p| p.node == g.id).map(|p| p.what);
+        let param = net_param(input, g.id, "value");
+        if active {
+            match &mut control {
+                Control::Button { toggle: false, .. } => {
+                    if down && mine.is_none() {
+                        actions.push(Action::PressButton { node: g.id, down: true });
+                        self.body_press = Some(BodyPress { node: g.id, what: Pressed::Button });
+                    } else if resp.clicked() && mine.is_none() {
+                        // Pressed and released within one frame: a tap.
+                        actions.push(Action::PressButton { node: g.id, down: true });
+                        actions.push(Action::PressButton { node: g.id, down: false });
+                    }
+                }
+                Control::Button { on, .. } => {
+                    if down && mine.is_none() {
+                        self.body_press = Some(BodyPress { node: g.id, what: Pressed::Toggle });
+                    }
+                    if resp.clicked()
+                        && let Some(param) = param
+                    {
+                        actions.push(Action::edit(vec![Op::Set { param, value: Value::Bool(!*on) }]));
+                        *on = !*on;
+                    }
+                }
+                Control::Slider { value, min, max, .. } => {
+                    if down && let Some(p) = resp.interact_pointer_pos() {
+                        let v = node_controls::slider_at(rect, p.x, *min, *max);
+                        let (group, last) = match mine {
+                            Some(Pressed::Slider { group, value }) => (group, Some(value)),
+                            _ => ((input.new_group)(), None),
+                        };
+                        let changed = match last {
+                            Some(last) => last != v,
+                            None => *value != v,
+                        };
+                        if changed && let Some(param) = param {
+                            actions.push(Action::Edit {
+                                ops: vec![Op::Set { param, value: Value::Float(v) }],
+                                label: String::new(),
+                                group: Some(group),
+                            });
+                        }
+                        self.body_press =
+                            Some(BodyPress { node: g.id, what: Pressed::Slider { group, value: v } });
+                        *value = v;
+                    }
+                }
+            }
+        }
+        let pressed = down || matches!(mine, Some(Pressed::Button | Pressed::Slider { .. }));
+        let name = input
+            .types
+            .desc(&node.kind)
+            .and_then(|d| node.param(d, "name"))
+            .and_then(Value::as_str)
+            .unwrap_or("value");
+        let shown_value = match &control {
+            Control::Button { on, toggle, .. } => {
+                if *on || (pressed && !*toggle) {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            Control::Slider { value, .. } => *value,
+        };
+        let line = node_controls::line(name, shown_value);
+        let hovered = resp.hovered() || pressed;
+        if resp.hovered() {
+            let icon = match (&control, active) {
+                (_, false) => CursorIcon::NotAllowed,
+                (Control::Slider { .. }, true) => CursorIcon::ResizeHorizontal,
+                (Control::Button { .. }, true) => CursorIcon::PointingHand,
+            };
+            ui.ctx().set_cursor_icon(icon);
+        }
+        let resp = if down { resp } else { resp.on_hover_text(node_controls::tip(&control, input.can_edit)) };
+        Some((resp, Shown { control, line, pressed, hovered, active }))
+    }
+
+    /// The primary button went up: a momentary button held from a node body is let go, a
+    /// slider's drag ends (its next drag is a new undo step).
+    fn end_body_press(&mut self, ui: &Ui, actions: &mut Vec<Action>) {
+        let Some(p) = self.body_press else { return };
+        if ui.input(|i| i.pointer.button_down(PointerButton::Primary)) {
+            return;
+        }
+        if p.what == Pressed::Button {
+            actions.push(Action::PressButton { node: p.node, down: false });
+        }
+        self.body_press = None;
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn node_interaction(
         &mut self,
         ui: &Ui,
         resp: &egui::Response,
+        control: Option<&egui::Response>,
         id: NodeId,
         input: &Inputs<'_>,
         layout: &mut Layout,
@@ -1252,7 +1422,8 @@ impl Editor {
         if resp.double_clicked() && is_comp {
             self.enter(Some(id), layout, input.now);
         }
-        resp.context_menu(|ui| {
+        // The node's menu opens from its body control too: a right-click there is no press.
+        let mut menu = |ui: &mut Ui| {
             let Some(node) = net.node(id) else { return };
             let path = net.path_of(id);
             if is_comp {
@@ -1268,7 +1439,8 @@ impl Editor {
             let has_outputs = input.types.desc(&node.kind).is_some_and(|d| !d.outputs.is_empty());
             let paused = self.paused.contains(&id);
             let label = if paused { "Resume thumbnail" } else { "Pause thumbnail" };
-            let tip = "No cooking for this thumbnail. The picture shows only while the node is up to date anyway";
+            let tip =
+                "No cooking for this thumbnail. The picture shows only while the node is up to date anyway";
             if has_outputs && ui.button(label).on_hover_text(tip).clicked() {
                 if !self.paused.remove(&id) {
                     self.paused.insert(id);
@@ -1337,7 +1509,11 @@ impl Editor {
                     ui.close();
                 }
             }
-        });
+        };
+        resp.context_menu(&mut menu);
+        if let Some(c) = control {
+            c.context_menu(&mut menu);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1351,6 +1527,7 @@ impl Editor {
         path: &str,
         resp: &egui::Response,
         on_port: bool,
+        control: Option<&Shown>,
     ) {
         let Some(node) = input.net.node(g.id) else { return };
         let zoom = (g.rect.width() / NODE_SIZE.x).max(0.01);
@@ -1374,7 +1551,14 @@ impl Editor {
         // Content: a thumbnail for textures, the value for channels.
         let shown = input.pictures.contains(&g.id).then(|| input.outputs.get(&g.id)).flatten();
         let has_outputs = input.types.desc(&node.kind).is_some_and(|d| !d.outputs.is_empty());
+        if let Some(c) = control {
+            node_controls::draw(
+                painter, body_rect, &c.control, &c.line, c.pressed, c.hovered, c.active, zoom, PORT_PICK,
+            );
+        }
+        let shown = if control.is_some() { None } else { shown };
         if shown.is_none()
+            && control.is_none()
             && has_outputs
             && input.thumbnail_mode != penumbra_graph::ThumbnailMode::Never
             && zoom > 0.45
@@ -1908,6 +2092,12 @@ fn auto_connect(input: &Inputs<'_>, source: NodeId, new: &NodePath, create: Opti
 }
 
 /// The port within pick distance of `p`: `(is_input, node, index)`.
+/// The path of param `name` of node `id`, for an edit.
+fn net_param(input: &Inputs<'_>, id: NodeId, name: &str) -> Option<ParamPath> {
+    let path = input.net.path_of(id)?;
+    ParamPath::new(path, penumbra_core::Name::new(name).ok()?).ok()
+}
+
 fn nearest_port(geos: &[Geo], p: Pos2) -> Option<(bool, NodeId, u32)> {
     let mut best: Option<(f32, (bool, NodeId, u32))> = None;
     for g in geos {

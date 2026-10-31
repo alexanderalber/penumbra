@@ -568,6 +568,11 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
     {
         o.insert("keyboard".into(), k);
     }
+    if let Some(b) = crate::buttons::info(e, &node)
+        && let Some(o) = info.as_object_mut()
+    {
+        o.insert("button".into(), b);
+    }
     Ok(info)
 }
 

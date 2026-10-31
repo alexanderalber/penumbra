@@ -1109,7 +1109,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_analysis](#chanaudio_analysis), [chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.trail](#chantrail)
+[chan.audio_analysis](#chanaudio_analysis), [chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
 *in:* [chan.dmx_in](#chandmx_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
@@ -1194,6 +1194,23 @@ Outputs:
 | `unit` | level \| linear \| db | `"level"` |  | What number a band gives; level: 0 at floor to 1 at full scale, even in dB: ready to drive a param; linear: the amplitude: 1 is full scale, a sine at -20 dBFS reads 0.1. 0 below floor; db: dBFS: 0 is full scale, -20 a tenth of it. Never below floor |
 | `floor` | float | `-60` | -120 to -20 dB (soft) | Quieter than this counts as silence: 0 in linear and level, the floor itself in db |
 | `history` *(texture)* | int | `1` | 1 to 512 (soft) | Rows of texture: 1 is the spectrum now; more keep that many blocks of the past below it, newest at the top, as a scrolling spectrogram |
+
+### chan.button
+
+A button on the node itself, pressed with the mouse in the editor: 1 while held, or on and off with each click
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): One channel: 1 while pressed or on, else 0
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `mode` | momentary \| toggle | `"momentary"` |  | What a click on the button does; momentary: 1 while the mouse button is held on it, 0 again on release; toggle: each click switches between 1 and 0, kept in `value` and saved with the project |
+| `value` | bool | `false` |  | On or off in mode toggle. A click on the button flips it. Does something only with mode toggle. |
+| `label` | text |  |  | Text on the button. Empty: "press", or "on" and "off" |
+| `name` | text | `"value"` |  | Name of the channel it makes, as bindings and other nodes see it |
 
 ### chan.clock
 
@@ -1536,6 +1553,23 @@ Outputs:
 | `run` | float | `1` | 0 to 1 (soft) | On from 0.5 up (with `equals` set: while it equals that number). Each time it turns on the show starts from its beginning; while it is off it shows black and every run gate is 0 |
 | `equals` | int | `-1` (off) | -1 to 20 (soft) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the show's own number. While off, `run` is on from 0.5 up; -1: off |
 | `mode` | once \| loop | `"once"` |  | What the show does after its last step; once: it ends in black and stays there; loop: it starts over from its lead-in, round after round |
+
+### chan.slider
+
+A slider on the node itself, dragged with the mouse in the editor: a number between min and max
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): One channel: `value`, kept between min and max
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `value` | float | `0` | 0 to 1 (soft) | Where the slider stands, between min and max. Dragging on the node's body sets it |
+| `min` | float | `0` | -10 to 10 (soft) | The value at the slider's left end |
+| `max` | float | `1` | -10 to 10 (soft) | The value at the slider's right end |
+| `name` | text | `"value"` |  | Name of the channel it makes, as bindings and other nodes see it |
 
 ### chan.spacemouse_in
 
