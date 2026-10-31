@@ -1,0 +1,12 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 2,
+    nodes: {
+        "/clip": (kind: "tex.video_file", params: {"file": "clip.mp4"}, pos: [0.0, 0.0]),
+        "/record": (kind: "out.video", inputs: {"in": "clip"}, pos: [300.0, 142.0]),
+        "/screen": (kind: "out.projector", inputs: {"in": "clip"}, pos: [300.0, 0.0]),
+        "/sound": (kind: "audio.file", params: {"file": "clip.mp4"}, pos: [0.0, 284.0]),
+        "/speakers": (kind: "out.audio", inputs: {"in": "sound"}, pos: [300.0, 284.0]),
+    },
+)

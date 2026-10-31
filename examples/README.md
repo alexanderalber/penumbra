@@ -19,6 +19,7 @@ saves into it.)
 | [control-page](control-page/README.md) | a web page that moves the project's sliders and switches from a phone or a browser, made to be copied into your own project | `/show` | (for a phone: the same network as this computer) |
 | [audio-reactive](audio-reactive/README.md) | sound turned into channels that move the picture: level, kick, bar | `/show` | a microphone |
 | [pendulum-wave](pendulum-wave/README.md) | 121 pendulums seen from above, drifting apart and back into sync, each striking a note as it passes its rest point, over a hi-hat and kick | `/out` | speakers or headphones |
+| [clips](clips/README.md) | a video file looped with its sound in step, the result recorded as a movie with sound; the clip made by penumbra itself | `/clip` | speakers or headphones |
 | [blob-tracking](blob-tracking/README.md) | finding and following spots of light, with ids that stay | `/view`, `/track` | |
 | [python-script](python-script/README.md) | a Python script that keeps state: a bouncing ball | `/view` | Python 3.12 or later |
 | [channels-and-pictures](channels-and-pictures/README.md) | a picture turned into channels and back | `/view` | |

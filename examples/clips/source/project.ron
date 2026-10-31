@@ -1,0 +1,16 @@
+// penumbra project. Written by the app about a second after each change; while the app
+// runs, edits to this file are merged into the open project.
+(
+    version: 2,
+    nodes: {
+        "/groups": (kind: "chan.merge", inputs: {"in0": "swing0", "in1": "swing1", "in2": "swing2"}, pos: [250.0, 100.0]),
+        "/notes": (kind: "audio.instrument", params: {"key": "A", "level": -10.0, "octave": 4, "preset": "mallet", "scale": "minor", "spread": 2, "trigger": "both"}, inputs: {"play": "groups"}, pos: [500.0, 100.0]),
+        "/out": (kind: "tex.shader", params: {"file": "swing.wgsl", "height": 540, "keep_size": true, "resolution": "custom", "width": 540}, pos: [500.0, -150.0]),
+        "/record": (kind: "out.video", params: {"codec": "prores_422", "file": "render/take.mov", "rate": 60.0}, inputs: {"in": "out"}, binds: {"record": "take:record"}, pos: [750.0, -150.0]),
+        "/speakers": (kind: "out.audio", params: {"reverb": 0.0}, inputs: {"in": "notes"}, pos: [750.0, 100.0]),
+        "/swing0": (kind: "chan.lfo", params: {"name": "group0", "phase": 0.998287037037037, "rate": 0.2777777777777778}, pos: [0.0, 0.0]),
+        "/swing1": (kind: "chan.lfo", params: {"name": "group1", "phase": 0.33162037037037034, "rate": 0.2777777777777778}, pos: [0.0, 100.0]),
+        "/swing2": (kind: "chan.lfo", params: {"name": "group2", "phase": 0.6649537037037037, "rate": 0.2777777777777778}, pos: [0.0, 200.0]),
+        "/take": (kind: "chan.lfo", params: {"name": "record", "phase": 0.6667, "rate": 0.046296296296296294, "shape": "square"}, pos: [500.0, -300.0]),
+    },
+)
