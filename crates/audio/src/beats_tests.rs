@@ -675,3 +675,186 @@ fn study_full_mix_bars() {
         assert_eq!(part[..k], full[..k], "{f} frames");
     }
 }
+
+/// The numbers after `"key": ` in `text`, in order.
+fn json_numbers(text: &str, key: &str) -> Vec<f64> {
+    let pat = format!("\"{key}\": ");
+    text.match_indices(&pat)
+        .filter_map(|(i, _)| {
+            let rest = &text[i + pat.len()..];
+            let end = rest.find([',', '}', ']']).unwrap_or(rest.len());
+            rest[..end].trim().parse().ok()
+        })
+        .collect()
+}
+
+/// Adjusted Rand index of two labelings.
+fn adjusted_rand(a: &[usize], b: &[usize]) -> f64 {
+    let ka = a.iter().max().map_or(0, |m| m + 1);
+    let kb = b.iter().max().map_or(0, |m| m + 1);
+    let mut table = vec![vec![0f64; kb]; ka];
+    for (x, y) in a.iter().zip(b) {
+        table[*x][*y] += 1.0;
+    }
+    let c2 = |n: f64| n * (n - 1.0) / 2.0;
+    let sum_ij: f64 = table.iter().flatten().map(|n| c2(*n)).sum();
+    let sum_a: f64 = table.iter().map(|r| c2(r.iter().sum())).sum();
+    let sum_b: f64 = (0..kb).map(|j| c2(table.iter().map(|r| r[j]).sum())).sum();
+    let expected = sum_a * sum_b / c2(a.len() as f64);
+    (sum_ij - expected) / (0.5 * (sum_a + sum_b) - expected)
+}
+
+/// Sections of the 2 h mix against the Python prototype (`E:/misc/temp/beat-sections`, its
+/// `sections.json`): boundaries found within 2 bars either way, labels compared second by
+/// second. Needs the torch logits and the mix; the envelopes are cached in
+/// `E:/misc/temp/s138/cache`.
+#[test]
+#[ignore]
+fn study_full_mix_sections() {
+    let d = Path::new(STUDY);
+    let (b, dn) = deinterleave(&read_f32(&d.join("logits_torch_final0_full_cpu.f32")));
+    let grid = BeatGrid::from_beats(&pick(&b, &dn));
+    let t = std::time::Instant::now();
+    let env = analyze_envelopes(
+        Path::new("E:/misc/temp/beat-study/track.mp3"),
+        Some(Path::new("E:/misc/temp/s138/cache")),
+        None,
+        &mut |_| {},
+        &mut |_| {},
+    )
+    .unwrap();
+    eprintln!(
+        "envelopes in {:.1} s: {} hops, {} spectrum frames, {:.1} MB in memory",
+        t.elapsed().as_secs_f64(),
+        env.len(),
+        env.spectrum_len(),
+        env.bytes() as f64 / 1e6
+    );
+    let t = std::time::Instant::now();
+    let s = Sections::of(&grid, &env).unwrap();
+    let took = t.elapsed().as_secs_f64();
+    let again = Sections::of(&grid, &env).unwrap();
+    assert_eq!(s, again);
+    let list = s.list();
+    let bars = s.bars();
+    eprintln!(
+        "sections in {took:.2} s: {} bars, {} tracks, {} sections, {} kinds",
+        bars.len(),
+        s.tracks(),
+        list.len(),
+        s.kinds()
+    );
+    let mut lens: Vec<usize> = list.iter().map(|x| x.bars).collect();
+    lens.sort_unstable();
+    let track_starts: Vec<f64> =
+        list.iter().filter(|x| x.track_start && x.first_bar > 0).map(|x| x.start).collect();
+    let mut gaps: Vec<f64> = track_starts.windows(2).map(|w| (w[1] - w[0]) / 60.0).collect();
+    gaps.sort_by(f64::total_cmp);
+    eprintln!(
+        "section bars: median {}, min {}, max {}; track gap median {:.1} min",
+        lens[lens.len() / 2],
+        lens[0],
+        lens[lens.len() - 1],
+        gaps.get(gaps.len() / 2).copied().unwrap_or(0.0)
+    );
+    let on_phrase = list
+        .iter()
+        .filter(|x| x.first_bar > 0)
+        .filter(|x| s.at(x.start + 0.01).unwrap().phrase_bar == 0)
+        .count();
+    eprintln!("section starts on a phrase start: {on_phrase} of {}", list.len() - 1);
+    let mut widths: Vec<f64> = list.iter().skip(1).map(|x| (x.zone.1 - x.zone.0) / 2.0).collect();
+    widths.sort_by(f64::total_cmp);
+    let zoned = widths.iter().filter(|w| **w > 0.0).count();
+    let track_zones: Vec<f64> =
+        list.iter().filter(|x| x.track_start && x.first_bar > 0).map(|x| x.zone.1 - x.zone.0).collect();
+    eprintln!(
+        "zones (s): {zoned} of {} wider than 0, median {:.1} s, 90 % {:.1} s; track changes: {} wider than 0, median {:.1} s",
+        widths.len(),
+        2.0 * widths[widths.len() / 2],
+        2.0 * widths[widths.len() * 9 / 10],
+        track_zones.iter().filter(|w| **w > 0.0).count(),
+        {
+            let mut z = track_zones.clone();
+            z.sort_by(f64::total_cmp);
+            z.get(z.len() / 2).copied().unwrap_or(0.0)
+        }
+    );
+
+    // Against the prototype.
+    let text = std::fs::read_to_string("E:/misc/temp/beat-sections/sections.json").unwrap();
+    let coarse_part = &text[text.find("\"coarse\": [").unwrap()..text.find("\"segments\"").unwrap()];
+    let seg_part = &text[text.find("\"segments\"").unwrap()..];
+    let proto_tracks = json_numbers(coarse_part, "t");
+    let proto_starts = json_numbers(seg_part, "t0");
+    let proto_t1 = json_numbers(seg_part, "t1");
+    let proto_cluster: Vec<usize> = json_numbers(seg_part, "cluster").iter().map(|c| *c as usize).collect();
+    // A time in bars of this grid, with the fraction.
+    let bar_at = |t: f64| {
+        let i = bars.partition_point(|b| *b <= t).saturating_sub(1);
+        let next = bars.get(i + 1).copied().unwrap_or(s.end());
+        i as f64 + (t - bars[i]) / (next - bars[i]).max(1e-6)
+    };
+    let found = |want: &[f64], got: &[f64], tol: f64| {
+        want.iter().filter(|w| got.iter().any(|g| (bar_at(*g) - bar_at(**w)).abs() <= tol)).count()
+    };
+    let ours_all: Vec<f64> = list.iter().skip(1).map(|x| x.start).collect();
+    let proto_all: Vec<f64> = proto_starts.iter().skip(1).copied().collect();
+    for tol in [2.0, 4.0] {
+        eprintln!(
+            "within {tol} bars: tracks: prototype's {} of {} found, ours {} of {} in the prototype's; \
+             sections (all boundaries): prototype's {} of {}, ours {} of {}",
+            found(&proto_tracks, &track_starts, tol),
+            proto_tracks.len(),
+            found(&track_starts, &proto_tracks, tol),
+            track_starts.len(),
+            found(&proto_all, &ours_all, tol),
+            proto_all.len(),
+            found(&ours_all, &proto_all, tol),
+            ours_all.len()
+        );
+    }
+    // Labels second by second.
+    let (mut ours, mut theirs) = (Vec::new(), Vec::new());
+    let mut t = proto_starts[0];
+    while t < *proto_t1.last().unwrap() && t < s.end() {
+        let k = proto_starts.partition_point(|x| *x <= t).saturating_sub(1);
+        theirs.push(proto_cluster[k]);
+        ours.push(s.at(t).unwrap().section_label);
+        t += 1.0;
+    }
+    eprintln!(
+        "labels against the prototype's clusters, second by second: adjusted Rand {:.3}",
+        adjusted_rand(&ours, &theirs)
+    );
+    let track_of = |t: f64, starts: &[f64]| starts.partition_point(|x| *x <= t);
+    let (mut a, mut b2) = (Vec::new(), Vec::new());
+    let mut t = 0.0;
+    while t < s.end() {
+        a.push(track_of(t, &track_starts));
+        b2.push(track_of(t, &proto_tracks));
+        t += 1.0;
+    }
+    eprintln!(
+        "tracks against the prototype's, second by second: adjusted Rand {:.3}",
+        adjusted_rand(&a, &b2)
+    );
+    // For a listen: every track boundary with its zone and the prototype's nearest.
+    for x in list.iter().filter(|x| x.track_start && x.first_bar > 0) {
+        let near = proto_tracks
+            .iter()
+            .map(|p| p - x.start)
+            .min_by(|a, b| a.abs().total_cmp(&b.abs()))
+            .unwrap_or(f64::NAN);
+        eprintln!(
+            "track {:>2} at {:>2}:{:04.1} zone {:>5.1} s .. {:>5.1} s, strength {:.2}, prototype's nearest {:+.1} s",
+            x.track,
+            (x.start / 60.0).floor(),
+            x.start % 60.0,
+            x.zone.0 - x.start,
+            x.zone.1 - x.start,
+            x.strength,
+            near
+        );
+    }
+}

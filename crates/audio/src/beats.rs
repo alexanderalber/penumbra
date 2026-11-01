@@ -20,6 +20,8 @@
 //!   the downbeats marked one by one make irregular bars on DJ material.
 //! - **Position:** a [`BeatGrid`] answers, for any time, which beat and bar it falls in and
 //!   how far through them it is, also in a looped piece ([`BeatGrid::at_looped`]).
+//! - **Sections:** [`Sections`] finds the tracks and sections of a whole file from its bars and
+//!   envelopes, labels the ones that sound alike, and answers where a moment stands among them.
 //!
 //! [`track`] runs the whole chain on one block of samples. [`analyze_file`] runs it on a sound
 //! file with the shipped network ([`BeatModel`]), its chunks in parallel, and keeps the result
@@ -33,6 +35,7 @@ mod cache;
 mod envelopes;
 mod fold;
 mod meter;
+mod sections;
 
 pub use analyze::{
     BeatModel, IN_FLIGHT, MAX_SECONDS, MODEL_FILE, Progress, analyze_file, analyze_file_with, f_measure,
@@ -40,10 +43,15 @@ pub use analyze::{
 };
 pub use envelopes::{
     ENVELOPE_RATE, EnvelopeBuilder, Envelopes, Hop, KICK_LAG_HOPS, LEVEL_LAG_HOPS, ONSET_LAG_HOPS, Reading,
-    analyze_envelopes, envelopes_of,
+    SPECTRUM_BANDS, SPECTRUM_HOPS, analyze_envelopes, envelopes_of,
 };
 pub use fold::{Folded, fold, fold_prefix};
 pub use meter::{HOLD, LOGIT_LIMIT, THREE_LEAD, THREE_MIN_LEAD, WINDOW as METER_WINDOW, bars, bars_decided};
+pub use sections::{
+    BLEND_BARS, BLEND_RISE, BUILD_BARS, COARSE_GAP, COARSE_KERNEL, FINE_GAP, FINE_KERNEL, KINDS,
+    LETTER_DISTANCE, MAX_BARS, MERGE_BARS, PEAK_LIFT, PHRASE_BARS, SAME_KIND, Section, SectionPosition,
+    Sections, ZONE_HIGH, ZONE_LOW, ZONE_REACH,
+};
 
 use crate::fft::{Complex, Fft};
 use crate::resample::{CLIP, Kernel, MAX_CHANNELS, MAX_RATE, MIN_RATE, dot};

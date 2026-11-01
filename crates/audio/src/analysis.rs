@@ -576,6 +576,13 @@ impl Analyzer {
         [(low * low + mid * mid + high * high).sqrt(), low, mid, high]
     }
 
+    /// The spectrum band amplitudes of the last block that completed a frame, after the trim
+    /// and before any normalising, low to high, linear (full scale is 1): as many as the
+    /// settings' `bands` asked for, none before the first frame.
+    pub fn raw_spectrum(&self) -> &[f64] {
+        &self.last_amps.1
+    }
+
     /// Samples per analysis frame: four hops.
     pub fn frame_len(&self) -> usize {
         self.size()

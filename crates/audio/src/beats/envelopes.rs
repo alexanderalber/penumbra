@@ -6,7 +6,7 @@
 //!   [`ENVELOPE_RATE`] (the rate an `audio.file` plays at unless told otherwise) and fed to an
 //!   [`Analyzer`] with the default [`Settings`], one hop at a time. Each hop's normalised levels,
 //!   its raw levels and its onset and kick flags are kept: 13 bytes per hop, about 10 kB per
-//!   second, 9 MB for two hours.
+//!   second, 8.6 MB for two hours.
 //! - **Time:** the live analysis reports a hop when it ends. Its levels describe the middle of
 //!   the frame, [`LEVEL_LAG_HOPS`] earlier; an onset is known [`ONSET_LAG_HOPS`] after the
 //!   attack that caused it, a kick [`KICK_LAG_HOPS`]. [`Envelopes::read`] takes both lags out, so the reading at a moment
@@ -14,6 +14,10 @@
 //! - **Raw levels** (dBFS before normalising) stay comparable across the whole file, unlike the
 //!   normalised ones, which follow the last four seconds. [`Envelopes::energy_db`] averages them
 //!   over any span, a beat or a bar.
+//! - **Coarse spectrum:** [`SPECTRUM_BANDS`] log-spaced bands from 30 Hz to 16 kHz in dBFS, the
+//!   mean power of every [`SPECTRUM_HOPS`] hops (about 43 ms), 32 bytes each: about 0.75 kB per
+//!   second, 5.3 MB for two hours. Enough to tell a section's sound from another's
+//!   ([`super::Sections`]); the three bands alone are not.
 //! - **Partial results:** the hops come in blocks of [`BLOCK_HOPS`], each shared, so handing on
 //!   the envelopes so far costs no copy. A moment not analysed yet reads 0.
 //! - **Cache:** one binary file per sound file beside the beat cache, keyed by the sound
@@ -48,8 +52,17 @@ pub const KICK_LAG_HOPS: f64 = 2.0;
 const MAX_READ_SECONDS: f64 = 2.0;
 /// First word of a cache file.
 const MAGIC: &str = "penumbra-envelopes";
-/// Raised whenever the analysis, the resampling or the file's layout changes what a hop holds.
-const VERSION: u32 = 1;
+/// Raised whenever the analysis, the resampling or the file's layout changes what a hop holds
+/// (2: the coarse spectrum).
+const VERSION: u32 = 2;
+/// Bands of the coarse spectrum, log-spaced from [`crate::analysis::SPECTRUM_LOW`] to
+/// [`crate::analysis::SPECTRUM_HIGH`].
+pub const SPECTRUM_BANDS: usize = 32;
+/// Hops averaged into one frame of the coarse spectrum.
+pub const SPECTRUM_HOPS: usize = 4;
+/// One frame of the coarse spectrum: per band, the mean power in [`RAW_STEP_DB`] steps above
+/// [`RAW_FLOOR_DB`], as the raw levels.
+type Frame = [u8; SPECTRUM_BANDS];
 /// Bytes per hop in a cache file.
 const HOP_BYTES: usize = 13;
 /// The raw levels as stored: steps of this many dB above [`RAW_FLOOR_DB`]; code 0 is that
@@ -143,6 +156,21 @@ pub struct Reading {
     pub known: bool,
 }
 
+/// A power (full scale 1) as a code of [`RAW_STEP_DB`] steps above [`RAW_FLOOR_DB`].
+fn power_code(p: f64) -> u8 {
+    if !(p.is_finite() && p > 0.0) {
+        return 0;
+    }
+    // `as`: clamped to the code range first.
+    ((10.0 * p.log10() - RAW_FLOOR_DB) / RAW_STEP_DB).round().clamp(0.0, 255.0) as u8
+}
+
+/// A code of [`power_code`] in dBFS.
+fn code_db(c: u8) -> f32 {
+    // `as`: a few hundred dB in steps of 0.5, exact in f32.
+    (RAW_FLOOR_DB + f64::from(c) * RAW_STEP_DB) as f32
+}
+
 /// A sound file's envelopes, as far as they are known.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Envelopes {
@@ -150,13 +178,24 @@ pub struct Envelopes {
     hop: usize,
     blocks: Vec<Arc<[Hop]>>,
     len: usize,
+    /// The coarse spectrum, one block per block of hops ([`BLOCK_HOPS`] / [`SPECTRUM_HOPS`]
+    /// frames each).
+    spectra: Vec<Arc<[Frame]>>,
+    frames: usize,
     complete: bool,
 }
 
 impl Envelopes {
-    fn new(rate: f64, hop: usize, blocks: Vec<Arc<[Hop]>>, complete: bool) -> Self {
+    fn new(
+        rate: f64,
+        hop: usize,
+        blocks: Vec<Arc<[Hop]>>,
+        spectra: Vec<Arc<[Frame]>>,
+        complete: bool,
+    ) -> Self {
         let len = blocks.iter().map(|b| b.len()).sum();
-        Envelopes { rate, hop, blocks, len, complete }
+        let frames = spectra.iter().map(|b| b.len()).sum();
+        Envelopes { rate, hop, blocks, len, spectra, frames, complete }
     }
 
     /// Samples per second the hops are counted at.
@@ -188,9 +227,50 @@ impl Envelopes {
         self.complete
     }
 
-    /// Bytes the hops take in memory.
+    /// Bytes the hops and the coarse spectrum take in memory.
     pub fn bytes(&self) -> usize {
-        self.len * std::mem::size_of::<Hop>()
+        self.len * std::mem::size_of::<Hop>() + self.frames * SPECTRUM_BANDS
+    }
+
+    /// Frames of the coarse spectrum known.
+    pub fn spectrum_len(&self) -> usize {
+        self.frames
+    }
+
+    /// Seconds per frame of the coarse spectrum.
+    pub fn spectrum_seconds(&self) -> f64 {
+        SPECTRUM_HOPS as f64 * self.hop_seconds()
+    }
+
+    /// The moment frame `i` of the coarse spectrum describes, seconds into the file: the mean
+    /// of its hops' moments (each hop's frame middle).
+    pub fn spectrum_time(&self, i: usize) -> f64 {
+        // Hop n's moment is (n + 1 - LEVEL_LAG_HOPS) hops; frame i holds hops 4i to 4i + 3.
+        // `as`: hop counts to hops.
+        let first = (i * SPECTRUM_HOPS) as f64 + 1.0 - LEVEL_LAG_HOPS;
+        (first + (SPECTRUM_HOPS as f64 - 1.0) / 2.0) * self.hop_seconds()
+    }
+
+    /// The frames of the coarse spectrum whose moment lies from `from` (included) to `to`
+    /// seconds (excluded); empty for times that are no numbers.
+    pub fn spectrum_range(&self, from: f64, to: f64) -> std::ops::Range<usize> {
+        let step = self.spectrum_seconds();
+        let zero = self.spectrum_time(0);
+        if !(from.is_finite() && to.is_finite() && step > 0.0) {
+            return 0..0;
+        }
+        // `as`: saturates, and the bounds are clamped to the frames known.
+        let index = |t: f64| (((t - zero) / step).ceil().max(0.0) as usize).min(self.frames);
+        let (a, b) = (index(from), index(to));
+        a..b.max(a)
+    }
+
+    /// Frame `i` of the coarse spectrum: per band, low to high, the mean power of its hops in
+    /// dBFS, -120 for silence.
+    pub fn spectrum(&self, i: usize) -> Option<[f32; SPECTRUM_BANDS]> {
+        let per = BLOCK_HOPS / SPECTRUM_HOPS;
+        let frame = self.spectra.get(i / per)?.get(i % per)?;
+        Some(frame.map(code_db))
     }
 
     /// Hop `i`, counted from the file's start.
@@ -318,10 +398,10 @@ impl Envelopes {
     }
 }
 
-/// The settings the envelopes are measured with: `chan.beat_analysis`'s defaults, one spectrum
-/// band (the spectrum is not kept).
+/// The settings the envelopes are measured with: `chan.beat_analysis`'s defaults, with
+/// [`SPECTRUM_BANDS`] spectrum bands.
 fn settings() -> Settings {
-    Settings { bands: 1, ..Settings::default() }
+    Settings { bands: SPECTRUM_BANDS, ..Settings::default() }
 }
 
 /// Builds the envelopes from decoded samples pushed in blocks of any length. Splitting the sound
@@ -339,6 +419,12 @@ pub struct EnvelopeBuilder {
     settings: Settings,
     blocks: Vec<Arc<[Hop]>>,
     current: Vec<Hop>,
+    /// The coarse spectrum: the power summed over the hops of the frame being built, and how
+    /// many there are so far.
+    spectrum_sum: [f64; SPECTRUM_BANDS],
+    spectrum_hops: usize,
+    spectra: Vec<Arc<[Frame]>>,
+    spectrum_current: Vec<Frame>,
 }
 
 impl EnvelopeBuilder {
@@ -367,6 +453,10 @@ impl EnvelopeBuilder {
             analyzer,
             settings: settings(),
             blocks: Vec::new(),
+            spectrum_sum: [0.0; SPECTRUM_BANDS],
+            spectrum_hops: 0,
+            spectra: Vec::new(),
+            spectrum_current: Vec::with_capacity(BLOCK_HOPS / SPECTRUM_HOPS),
         })
     }
 
@@ -401,7 +491,7 @@ impl EnvelopeBuilder {
 
     /// The envelopes of the full blocks so far, sharing them.
     pub fn snapshot(&self) -> Envelopes {
-        Envelopes::new(ENVELOPE_RATE, self.analyzer.hop(), self.blocks.clone(), false)
+        Envelopes::new(ENVELOPE_RATE, self.analyzer.hop(), self.blocks.clone(), self.spectra.clone(), false)
     }
 
     /// Ends the sound. A last piece shorter than a hop is not analysed, as live.
@@ -410,10 +500,25 @@ impl EnvelopeBuilder {
         self.resample.finish(&mut out);
         self.pending = out;
         self.hops();
+        if self.spectrum_hops > 0 {
+            self.end_frame();
+        }
         if !self.current.is_empty() {
             self.blocks.push(Arc::from(std::mem::take(&mut self.current)));
         }
-        Envelopes::new(ENVELOPE_RATE, self.analyzer.hop(), self.blocks, true)
+        if !self.spectrum_current.is_empty() {
+            self.spectra.push(Arc::from(std::mem::take(&mut self.spectrum_current)));
+        }
+        Envelopes::new(ENVELOPE_RATE, self.analyzer.hop(), self.blocks, self.spectra, true)
+    }
+
+    /// Ends the frame of the coarse spectrum being built.
+    fn end_frame(&mut self) {
+        let n = self.spectrum_hops.max(1) as f64;
+        let frame = self.spectrum_sum.map(|s| power_code(s / n));
+        self.spectrum_current.push(frame);
+        self.spectrum_sum = [0.0; SPECTRUM_BANDS];
+        self.spectrum_hops = 0;
     }
 
     /// Analyses the whole hops waiting.
@@ -424,9 +529,24 @@ impl EnvelopeBuilder {
             let f = self.analyzer.process(block, &self.settings);
             let raw = self.analyzer.raw_levels();
             self.current.push(Hop::new([f.level, f.low, f.mid, f.high], raw, f.onset, f.kick));
+            for (s, a) in self.spectrum_sum.iter_mut().zip(self.analyzer.raw_spectrum()) {
+                if a.is_finite() {
+                    *s += a * a;
+                }
+            }
+            self.spectrum_hops += 1;
+            if self.spectrum_hops == SPECTRUM_HOPS {
+                self.end_frame();
+            }
             if self.current.len() == BLOCK_HOPS {
                 let full = std::mem::replace(&mut self.current, Vec::with_capacity(BLOCK_HOPS));
                 self.blocks.push(Arc::from(full));
+                // BLOCK_HOPS is a multiple of SPECTRUM_HOPS: the block's frames are done too.
+                let frames = std::mem::replace(
+                    &mut self.spectrum_current,
+                    Vec::with_capacity(BLOCK_HOPS / SPECTRUM_HOPS),
+                );
+                self.spectra.push(Arc::from(frames));
             }
             done += hop;
         }
@@ -545,7 +665,8 @@ fn max_hops() -> usize {
 
 fn load(key: &Key) -> Option<Envelopes> {
     let file = std::fs::File::open(&key.file).ok()?;
-    let limit = key.header.len() + 8 + 8 + max_hops() * HOP_BYTES + 8 + 4;
+    let limit =
+        key.header.len() + 8 + 8 + max_hops() * HOP_BYTES + frames_of(max_hops()) * SPECTRUM_BANDS + 8 + 4;
     let mut bytes = Vec::new();
     // `as`: a limit of some tens of MB.
     file.take(limit as u64 + 1).read_to_end(&mut bytes).ok()?;
@@ -555,10 +676,16 @@ fn load(key: &Key) -> Option<Envelopes> {
     parse(&bytes, &key.header)
 }
 
-/// Header line, hop size and count (u64 each, little endian), the hops, an FNV-1a hash of the
-/// hops' bytes, `end\n`.
+/// Frames of the coarse spectrum for `hops` hops.
+fn frames_of(hops: usize) -> usize {
+    hops.div_ceil(SPECTRUM_HOPS)
+}
+
+/// Header line, hop size and count (u64 each, little endian), the hops, the frames of the
+/// coarse spectrum ([`frames_of`] the hop count), an FNV-1a hash of the hops' and frames'
+/// bytes, `end\n`.
 fn format(env: &Envelopes, header: &str) -> Vec<u8> {
-    let mut out = Vec::with_capacity(header.len() + 28 + env.len() * HOP_BYTES);
+    let mut out = Vec::with_capacity(header.len() + 28 + env.len() * HOP_BYTES + env.frames * SPECTRUM_BANDS);
     out.extend_from_slice(header.as_bytes());
     out.extend_from_slice(&(env.hop as u64).to_le_bytes());
     out.extend_from_slice(&(env.len as u64).to_le_bytes());
@@ -566,6 +693,11 @@ fn format(env: &Envelopes, header: &str) -> Vec<u8> {
     for block in &env.blocks {
         for h in block.iter() {
             h.write(&mut out);
+        }
+    }
+    for block in &env.spectra {
+        for f in block.iter() {
+            out.extend_from_slice(f);
         }
     }
     let hash = fnv1a(out.get(start..).unwrap_or(&[]));
@@ -584,20 +716,26 @@ fn parse(bytes: &[u8], header: &str) -> Option<Envelopes> {
         return None;
     }
     let body = count.checked_mul(HOP_BYTES)?;
-    if rest.len() != body + 8 + 4 {
+    let spectrum = frames_of(count).checked_mul(SPECTRUM_BANDS)?;
+    if rest.len() != body + spectrum + 8 + 4 {
         return None;
     }
-    let (hops, tail) = rest.split_at(body);
+    let (data, tail) = rest.split_at(body + spectrum);
     let (hash, end) = tail.split_first_chunk::<8>()?;
-    if u64::from_le_bytes(*hash) != fnv1a(hops) || end != b"end\n" {
+    if u64::from_le_bytes(*hash) != fnv1a(data) || end != b"end\n" {
         return None;
     }
+    let (hops, frames) = data.split_at(body);
     let mut blocks = Vec::with_capacity(count.div_ceil(BLOCK_HOPS));
     for chunk in hops.chunks(BLOCK_HOPS * HOP_BYTES) {
         let block: Option<Vec<Hop>> = chunk.as_chunks::<HOP_BYTES>().0.iter().map(Hop::read).collect();
         blocks.push(Arc::from(block?));
     }
-    Some(Envelopes::new(ENVELOPE_RATE, hop, blocks, true))
+    let spectra = frames
+        .chunks(BLOCK_HOPS / SPECTRUM_HOPS * SPECTRUM_BANDS)
+        .map(|chunk| Arc::from(chunk.as_chunks::<SPECTRUM_BANDS>().0.to_vec()))
+        .collect();
+    Some(Envelopes::new(ENVELOPE_RATE, hop, blocks, spectra, true))
 }
 
 fn store(key: &Key, env: &Envelopes) -> Result<(), String> {
@@ -697,7 +835,7 @@ mod tests {
         // Before the file and beyond the analysed part.
         assert!(env.read(None, -1.0, None).known);
         assert_eq!(env.read(None, -1.0, None).level, 0.0);
-        let partial = Envelopes::new(env.rate, env.hop, env.blocks[..0].to_vec(), false);
+        let partial = Envelopes::new(env.rate, env.hop, env.blocks[..0].to_vec(), Vec::new(), false);
         assert_eq!(partial.read(None, 1.0, None), Reading::default());
     }
 
@@ -713,6 +851,52 @@ mod tests {
         let a = env.read(None, 0.7, Some(length));
         let b = env.read(None, 4.7, Some(length));
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn the_coarse_spectrum_holds_the_tone_in_its_band() {
+        let x = signal(8.0);
+        let env = envelopes_of(&x, 1, ENVELOPE_RATE).unwrap();
+        assert_eq!(env.spectrum_len(), env.len().div_ceil(SPECTRUM_HOPS));
+        assert!((env.spectrum_seconds() - 4.0 * 512.0 / 48_000.0).abs() < 1e-12);
+        // The band holding 1 kHz: log-spaced from 30 Hz to 16 kHz.
+        let ratio: f64 = 16_000.0 / 30.0;
+        let band = ((1000.0f64 / 30.0).ln() / ratio.ln() * SPECTRUM_BANDS as f64) as usize;
+        let mean = |from: f64, to: f64, k: usize| {
+            let r = env.spectrum_range(from, to);
+            let n = r.len() as f64;
+            r.map(|i| f64::from(env.spectrum(i).unwrap()[k])).sum::<f64>() / n
+        };
+        let (burst, before) = (mean(3.1, 3.9, band), mean(2.1, 2.9, band));
+        assert!(burst > before + 20.0, "{burst} vs {before}");
+        // A band far above stays.
+        let top = SPECTRUM_BANDS - 2;
+        assert!((mean(3.1, 3.9, top) - mean(2.1, 2.9, top)).abs() < 3.0);
+        // The frames' moments: the burst's frames lie between 3 and 4 s.
+        let r = env.spectrum_range(3.0, 4.0);
+        assert!(env.spectrum_time(r.start) >= 3.0 && env.spectrum_time(r.end - 1) < 4.0);
+        assert!(env.spectrum_time(r.start - 1) < 3.0 && env.spectrum_time(r.end) >= 4.0);
+        let rise = (0..env.spectrum_len())
+            .find(|i| f64::from(env.spectrum(*i).unwrap()[band]) > before + 10.0)
+            .unwrap();
+        assert!(
+            (env.spectrum_time(rise) - 3.0).abs() <= env.spectrum_seconds(),
+            "{}",
+            env.spectrum_time(rise)
+        );
+        // Out of range and no numbers.
+        assert!(env.spectrum(env.spectrum_len()).is_none());
+        assert_eq!(env.spectrum_range(f64::NAN, 1.0), 0..0);
+        assert_eq!(env.spectrum_range(100.0, 200.0).len(), 0);
+        assert_eq!(env.spectrum_range(-5.0, 1e300).len(), env.spectrum_len());
+        // Partial results carry the frames of their blocks.
+        // (The test signal is the same from its start, however long.)
+        let mut b = EnvelopeBuilder::new(ENVELOPE_RATE, 1).unwrap();
+        b.push_interleaved(&signal(45.0));
+        let part = b.snapshot();
+        assert_eq!(part.len(), BLOCK_HOPS);
+        assert_eq!(part.spectrum_len(), BLOCK_HOPS / SPECTRUM_HOPS);
+        assert_eq!(part.spectrum(5), env.spectrum(5));
     }
 
     #[test]
