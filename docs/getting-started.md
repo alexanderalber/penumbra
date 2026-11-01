@@ -241,12 +241,16 @@ While show mode is on:
   stay and are saved at once. `show.status` lists the controls with their values.
 - **After a crash:** when the GPU device is lost or the editor fails (exit code 3), penumbra
   starts again at once, without a message, and the clock runs on where it would be. The show
-  screen's switches and sliders keep the values they had. After 3 restarts within 10 minutes
-  it stops trying and ends as usual.
+  screen's switches and sliders keep the values they had. So do params a desk or a page set
+  by address over OSC or HTTP, even when the desk sends nothing new. A `chan.sequence` goes on
+  at the cue that was playing. After 3 restarts within 10 minutes it stops trying and ends as
+  usual.
 
 A copied or tagged project folder plus show mode is then the frozen state for a performance.
 Show mode survives a restart; it is kept in `%LOCALAPPDATA%\penumbra\show-mode.json`. The
-show screen's values wait beside it in `show-values.json` until show mode ends. They are set
-again at the next start in show mode, also after closing the app. Values for another project,
-or for a `project.ron` edited meanwhile, are ignored.
+show screen's values, the params set by address and the cue lists' places wait beside it in
+`show-values.json` until show mode ends. They are set again at the next start in show mode,
+also after closing the app. Values for another project, or for a `project.ron` edited
+meanwhile, are ignored. So is a value that no longer fits its param, or a param that is bound
+or locked now.
 `show.status` says whether it is on and how many restarts are left.

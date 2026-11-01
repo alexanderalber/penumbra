@@ -533,6 +533,8 @@ struct Runtime {
     gpu_bytes: u64,
     /// State restored before the operator existed, handed to it before its first cook.
     restored: Option<Vec<StateItem>>,
+    /// A show place restored before the operator existed ([`Cooker::restore_show_place`]).
+    restored_place: Option<String>,
     /// The next cook sees nothing on inputs that read a previous result, so a loop whose
     /// state was forgotten starts from its initial input ([`Cooker::forget_state`]).
     blank_previous: bool,
@@ -557,6 +559,7 @@ impl Runtime {
     /// nothing on its inputs that read a previous result.
     fn start_over(&mut self) {
         self.restored = None;
+        self.restored_place = None;
         self.op = None;
         self.notified = true;
         self.blank_previous = true;
@@ -607,10 +610,14 @@ impl Runtime {
             gpu_bytes: 0,
             blank_previous: false,
             restored: None,
+            restored_place: None,
             seen_wanted: Vec::new(),
         }
     }
 }
+
+/// Show places waiting for nodes the cooker has not seen yet, at most.
+const MAX_PENDING_PLACES: usize = 10_000;
 
 /// Owns the runtime state of every node and cooks on request. Lives on the cook thread.
 pub struct Cooker {
@@ -619,6 +626,8 @@ pub struct Cooker {
     services: Services,
     done: Receiver<NodeId>,
     runtimes: BTreeMap<NodeId, Runtime>,
+    /// Show places restored for nodes the cooker has not seen yet ([`Cooker::restore_show_place`]).
+    pending_places: BTreeMap<NodeId, String>,
     last_net: Option<Arc<Network>>,
     pass: u64,
     next_version: u64,
@@ -647,6 +656,7 @@ impl Cooker {
             services: Services { resources: BTreeMap::new(), base_dir: None, watcher },
             done: rx,
             runtimes: BTreeMap::new(),
+            pending_places: BTreeMap::new(),
             last_net: None,
             pass: 0,
             next_version: 0,
@@ -822,10 +832,13 @@ impl Cooker {
                     rt.def = def.clone();
                 }
                 _ => {
-                    self.runtimes.insert(def.id, Runtime::new(def.clone(), &self.types));
+                    let mut rt = Runtime::new(def.clone(), &self.types);
+                    rt.restored_place = self.pending_places.remove(&def.id);
+                    self.runtimes.insert(def.id, rt);
                 }
             }
         }
+        self.pending_places.retain(|id, _| net.node(*id).is_some());
         self.eager = self
             .runtimes
             .iter()
@@ -1080,6 +1093,17 @@ impl Cooker {
                 Err(p) => Some(format!("restoring the saved state panicked: {}", panic_message(p.as_ref()))),
             }
         });
+        if let Some(place) = rt.restored_place.take() {
+            match catch_unwind(AssertUnwindSafe(|| op.restore_show_place(&place))) {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    log::info!("node {id}: the place kept from before the restart was not taken: {e}")
+                }
+                Err(p) => {
+                    log::error!("node {id}: restore_show_place panicked: {}", panic_message(p.as_ref()))
+                }
+            }
+        }
         let cx = CookContext {
             node: id,
             def: &rt.def,
@@ -1482,6 +1506,54 @@ impl Cooker {
             }
         }
         kept
+    }
+
+    /// Where the operators that keep one stand in a show ([`Operator::show_place`]). Cheap: one
+    /// call per operator, most of which answer `None`.
+    pub fn show_places(&self) -> Vec<(NodeId, String)> {
+        let mut places = Vec::new();
+        for (&id, rt) in &self.runtimes {
+            if let Some(place) = &rt.restored_place {
+                places.push((id, place.clone()));
+                continue;
+            }
+            let Some(op) = rt.op.as_ref() else { continue };
+            match catch_unwind(AssertUnwindSafe(|| op.show_place())) {
+                Ok(Some(place)) => places.push((id, place)),
+                Ok(None) => {}
+                Err(p) => log::error!("node {id}: show_place panicked: {}", panic_message(p.as_ref())),
+            }
+        }
+        places
+    }
+
+    /// Gives node `id` back its place in a show from before a restart
+    /// ([`Operator::restore_show_place`]): now, or before its first cook when it has not cooked
+    /// yet (also when the cooker has not seen the node yet). The node cooks again at the next
+    /// pass.
+    pub fn restore_show_place(&mut self, id: NodeId, place: String) -> Result<(), String> {
+        let Some(rt) = self.runtimes.get_mut(&id) else {
+            if self.pending_places.len() < MAX_PENDING_PLACES {
+                self.pending_places.insert(id, place);
+            }
+            return Ok(());
+        };
+        if rt.def.locked {
+            return Err("the node is locked".into());
+        }
+        match rt.op.as_mut() {
+            None => rt.restored_place = Some(place),
+            Some(op) => match catch_unwind(AssertUnwindSafe(|| op.restore_show_place(&place))) {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => return Err(e),
+                Err(p) => {
+                    rt.op = None;
+                    return Err(format!("restoring panicked: {}", panic_message(p.as_ref())));
+                }
+            },
+        }
+        rt.notified = true;
+        Ok(())
     }
 
     /// Forgets what operators hold beyond their params (a feedback loop's frame, a held cache,

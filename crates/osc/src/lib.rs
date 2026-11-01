@@ -16,7 +16,7 @@ pub mod pattern;
 
 pub use codec::{Arg, Limits, Message, Packet};
 pub use hub::{Config, Entry, Heard, Hub, Incoming, Sender, Status, Store, Via, Want, Watch};
-pub use pattern::{Budget, Pattern};
+pub use pattern::{Budget, Pattern, is_pattern};
 
 /// The channel name for an address: the parts joined by `_` (`/1/fader1` becomes `_1_fader1`,
 /// a leading `_` where the name would start with a digit), anything but letters, digits and `_`

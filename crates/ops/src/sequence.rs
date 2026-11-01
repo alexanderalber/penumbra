@@ -9,8 +9,15 @@
 //!
 //! A step may hold (`hold` instead of seconds): the show's clock stops just before the step's
 //! way out until `go` rises, as a cue list waits for GO. `go` also cuts a timed step short.
+//!
+//! In show mode the place in the show (seconds, the holds already let go, the rounds) is kept
+//! across a crash restart ([`Operator::show_place`]): the show goes on where it was instead of
+//! starting over at its first cue. The place names the show it belongs to, so a show edited
+//! meanwhile starts over as usual.
 
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
 
 use penumbra_core::{Channel, Chans, Error, Name, ParamSpec, Tick, Unit};
 use penumbra_graph::{
@@ -81,7 +88,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(ParamSpec::float("go", 0.0).range(0.0, 1.0).doc(
             "Each time it rises past 0.5 the step on screen moves on: a holding step starts its \
              transition, a timed one cuts its time short. Ignored while a transition plays. Bind it \
-             to a key's gate or an OSC address",
+             to a key's gate, or to an OSC address listed under `triggers` on a chan.osc_in",
         ))
         .param(
             ParamSpec::choice("mode", &["once", "loop"])
@@ -496,6 +503,46 @@ struct Source {
     lead_in: f64,
 }
 
+impl Source {
+    /// A hash of the source (FNV-1a, the same in every build), so a place kept before a restart
+    /// is taken only by the same show.
+    fn fingerprint(&self) -> String {
+        let bytes = self
+            .text
+            .as_bytes()
+            .iter()
+            .chain([0u8].iter())
+            .chain(self.names.as_bytes())
+            .chain([0u8].iter())
+            .copied()
+            .chain(self.lead_in.to_bits().to_le_bytes())
+            .collect::<Vec<u8>>();
+        let hash = bytes
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325_u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+        format!("{hash:016x}")
+    }
+}
+
+/// Where a running show stands, as kept across a crash restart.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Place {
+    /// [`Source::fingerprint`] of the show.
+    show: String,
+    /// Seconds into the show (loop: into the round).
+    seconds: f64,
+    /// Steps before this one no longer hold.
+    free: usize,
+    /// A looping show has been round once.
+    round: bool,
+}
+
+/// Longest show a kept place may name, in seconds (about 30 years).
+const MAX_PLACE_SECONDS: f64 = 1e9;
+/// Largest kept place read.
+const MAX_PLACE_BYTES: usize = 4096;
+
 /// `chan.sequence`: the show's clock (its seconds at a tick, running on from there), when it
 /// last cooked, the show and its steps file.
 #[derive(Default)]
@@ -509,6 +556,10 @@ struct Sequence {
     /// Whether a looping show has been round once.
     round: bool,
     last: Option<Tick>,
+    /// Seconds into the show at the last cook while it ran.
+    seconds: Option<f64>,
+    /// A place from before a restart, taken at the next cook if the show is the same and on.
+    resume: Option<Place>,
     show: Option<(Source, Arc<Show>)>,
     slot: AsyncSlot<String>,
     watch: Option<FileWatch>,
@@ -575,9 +626,10 @@ impl Operator for Sequence {
         // A seek back starts it over.
         let back = self.last.is_some_and(|last| now.0 < last.0);
         self.last = Some(now);
+        let resumed = self.resume(on, &show);
         if !on {
             self.anchor = None;
-        } else if self.anchor.is_none() || back {
+        } else if !resumed && (self.anchor.is_none() || back) {
             self.anchor = Some((now, 0.0));
             self.free = 0;
             self.round = false;
@@ -607,6 +659,7 @@ impl Operator for Sequence {
             }
             seconds = t.min(length);
         }
+        self.seconds = self.anchor.is_some().then_some(seconds);
         let done = on && (self.round || seconds >= length);
         let moment = if on { show.at(seconds) } else { Moment::OFF };
 
@@ -634,6 +687,59 @@ impl Operator for Sequence {
 
     fn job_status(&self) -> Option<JobStatus> {
         self.watch.as_ref().map(|_| self.slot.status())
+    }
+
+    fn show_place(&self) -> Option<String> {
+        if let Some(waiting) = &self.resume {
+            // Not taken yet (the steps file is still loading): keep it for the next restart.
+            return serde_json::to_string(waiting).ok();
+        }
+        let ((_, base), seconds) = (self.anchor?, self.seconds?);
+        let (source, _) = self.show.as_ref()?;
+        // Whole seconds while the clock runs, so the place changes about once a second; never
+        // before the last jump (a start, a hold, a `go`), and exact while a step holds.
+        let place = Place {
+            show: source.fingerprint(),
+            seconds: seconds.floor().max(base.min(seconds)),
+            free: self.free,
+            round: self.round,
+        };
+        serde_json::to_string(&place).ok()
+    }
+
+    fn restore_show_place(&mut self, place: &str) -> Result<(), String> {
+        if place.len() > MAX_PLACE_BYTES {
+            return Err(format!("a place of {} bytes is not a cue list's", place.len()));
+        }
+        let p: Place = serde_json::from_str(place).map_err(|e| format!("not a cue list's place: {e}"))?;
+        if !(p.seconds.is_finite() && (0.0..=MAX_PLACE_SECONDS).contains(&p.seconds)) {
+            return Err(format!("{} seconds is no place in a show", p.seconds));
+        }
+        self.resume = Some(p);
+        Ok(())
+    }
+}
+
+impl Sequence {
+    /// Takes the place kept before a restart, once: when the show is on and is still the show the
+    /// place was kept for. Returns whether it did; otherwise the show starts as usual.
+    fn resume(&mut self, on: bool, show: &Show) -> bool {
+        let Some(p) = self.resume.take() else { return false };
+        let same = self.show.as_ref().is_some_and(|(s, _)| s.fingerprint() == p.show);
+        if !on || !same {
+            log::info!(
+                "chan.sequence: the place kept from before the restart is not taken ({})",
+                if on { "the show has changed" } else { "the show is off" }
+            );
+            return false;
+        }
+        let Some(now) = self.last else { return false };
+        self.anchor = Some((now, p.seconds.min(show.length())));
+        self.free = p.free.min(show.steps.len());
+        self.round = p.round;
+        // A `go` that is up after the restart is no press.
+        self.go_up = true;
+        true
     }
 }
 
@@ -871,5 +977,90 @@ mod tests {
         assert_eq!(run(&net, 300), (2.0, 2.0, 0.0));
         go(&mut net, 0.0);
         assert_eq!(run(&net, 300), (2.0, 2.0, 0.0));
+    }
+
+    /// The place in a show is kept and taken back by a new operator (a restart): it goes on at
+    /// the same cue, with the holds let go before still let go; a place for another show, or
+    /// one that does not parse, is not taken.
+    #[test]
+    fn a_kept_place_goes_on_at_the_same_cue() {
+        use penumbra_core::{NodePath, ParamPath, Rate, ShowClock, Value};
+        use penumbra_graph::{Cooker, JobPool, Network, Op, Port};
+        let types = Arc::new(crate::builtin_types().unwrap());
+        let set = |p: &str, v: Value| Op::Set { param: ParamPath::parse(p).unwrap(), value: v };
+        let net = |go: f64| {
+            let create = Op::Create {
+                path: NodePath::parse("/s").unwrap(),
+                kind: SEQUENCE.into(),
+                params: Default::default(),
+            };
+            Arc::new(
+                Network::new()
+                    .apply(
+                        &types,
+                        &[
+                            create,
+                            set(
+                                "/s.steps",
+                                "a hold
+b 5
+c hold"
+                                    .into(),
+                            ),
+                            set("/s.lead_in", Value::Float(0.0)),
+                            set("/s.go", Value::Float(go)),
+                        ],
+                    )
+                    .unwrap()
+                    .network,
+            )
+        };
+        let (up, down) = (net(1.0), net(0.0));
+        let id = down.resolve(&"/s".parse().unwrap()).unwrap();
+        let cook = |cooker: &mut Cooker, clock: &mut ShowClock, net: &Arc<Network>, frames: u64| {
+            for _ in 0..frames {
+                clock.advance(1);
+                cooker.cook(net, clock.now(), &[id], &[]);
+            }
+            let c = cooker.output(Port { node: id, output: 0 }).unwrap().get::<Chans>().unwrap().clone();
+            (c.value(Some("step")).unwrap(), c.value(Some("seconds")).unwrap())
+        };
+        let mut cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
+        let mut clock = ShowClock::new(Rate::FPS_60, Default::default());
+        cook(&mut cooker, &mut clock, &down, 60);
+        cook(&mut cooker, &mut clock, &up, 1);
+        // 2.5 s into b's 5 s.
+        let (step, seconds) = cook(&mut cooker, &mut clock, &down, 150);
+        assert_eq!(step, 1.0);
+        let places = cooker.show_places();
+        let (_, place) = places.iter().find(|(n, _)| *n == id).unwrap().clone();
+        let p: Place = serde_json::from_str(&place).unwrap();
+        assert_eq!(p.free, 1);
+        assert!(p.seconds <= seconds && p.seconds >= seconds - 1.0, "whole seconds while it runs: {p:?}");
+
+        // A restart: a new cooker and clock, the place given back before the first cook.
+        let restarted = |place: &str| {
+            let mut cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
+            let mut clock = ShowClock::new(Rate::FPS_60, Default::default());
+            cooker.restore_show_place(id, place.to_string()).unwrap();
+            let first = cook(&mut cooker, &mut clock, &up, 1);
+            (cooker, clock, first)
+        };
+        let (mut again, mut clock2, (step, at)) = restarted(&place);
+        assert_eq!(step, 1.0, "b again, not a; `go` up after the restart is no press");
+        assert!((at - p.seconds).abs() < 0.1);
+        // b runs out by itself and c holds.
+        assert_eq!(cook(&mut again, &mut clock2, &down, 400).0, 2.0);
+        // Another show's place, or none that parses: from the start.
+        let other = place.replace(&p.show, "0000000000000000");
+        assert_eq!(restarted(&other).2.0, 0.0);
+        let mut bad = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
+        let mut clock3 = ShowClock::new(Rate::FPS_60, Default::default());
+        cook(&mut bad, &mut clock3, &down, 1);
+        assert!(bad.restore_show_place(id, r#"{"seconds": -1}"#.into()).is_err());
+        assert!(bad.restore_show_place(id, "[nan".into()).is_err());
+        let huge = format!(r#"{{"show": "{}", "seconds": 1e300, "free": 0, "round": false}}"#, p.show);
+        assert!(bad.restore_show_place(id, huge).is_err());
+        assert_eq!(cook(&mut bad, &mut clock3, &down, 1).0, 0.0);
     }
 }

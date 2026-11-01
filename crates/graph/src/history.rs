@@ -137,6 +137,12 @@ impl History {
         self.live.len()
     }
 
+    /// Which params are set live and still kept out of the history (their values are in
+    /// [`History::current`]).
+    pub fn live_keys(&self) -> Vec<(NodeId, Name)> {
+        self.live.keys().cloned().collect()
+    }
+
     /// Before recording `snapshot`: live params it changes go back to the history.
     fn take_back(&mut self, snapshot: &Network) {
         let current = self.current().clone();

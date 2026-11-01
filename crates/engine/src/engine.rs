@@ -808,11 +808,20 @@ impl Engine {
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let project_session = session.clone();
         let show_values = self.show_values.clone();
+        let places_tx = lock(&self.cook).clone();
         let project = std::thread::Builder::new()
             .name("project".into())
             .spawn(move || {
                 while let Err(RecvTimeoutError::Timeout) = stop_rx.recv_timeout(POLL_INTERVAL) {
                     project_session.poll(Instant::now());
+                    if project_session.locked() {
+                        // The cue lists' places for the next tick, collected between two frames
+                        // without waiting for them.
+                        let keeper = show_values.clone();
+                        let collect: CookTask =
+                            Box::new(move |st| keeper.set_places(st.cooker.show_places()));
+                        places_tx.send(CookMsg::Run(collect)).ok();
+                    }
                     show_values.tick(&project_session);
                 }
                 // The last change before the project closes (or the app ends in show mode).
@@ -1043,13 +1052,50 @@ impl Engine {
             // kept ones first.
             if let Some(values) = values.as_deref().filter(|v| v.exists()) {
                 match crate::show_values::restore(values, &session) {
-                    Ok(n) => log::info!("show mode: {n} values of the show screen set as before the restart"),
-                    Err(e) => log::warn!("show mode: the show screen's kept values are not used: {e}"),
+                    Ok(r) => {
+                        log::info!(
+                            "show mode: as before the restart, {} values of the show screen, {} params set                              by address and {} places in the show",
+                            r.values,
+                            r.live,
+                            r.places.len()
+                        );
+                        self.restore_places(r.places);
+                    }
+                    Err(e) => log::warn!("show mode: the show's kept values and cues are not used: {e}"),
                 }
             }
         }
         self.show_values.set_file(values);
         on
+    }
+
+    /// Gives nodes back their places in the show from before a restart, on the cook thread
+    /// between two frames ([`Cooker::restore_show_place`]).
+    fn restore_places(&self, places: Vec<(NodeId, String)>) {
+        if places.is_empty() {
+            return;
+        }
+        let net = self.session().doc().snapshot();
+        let restored = self.on_cook(move |st| {
+            places
+                .into_iter()
+                .filter_map(|(id, place)| {
+                    let failed = st.cooker.restore_show_place(id, place).err()?;
+                    Some(format!(
+                        "{}: {failed}",
+                        net.path_of(id).map_or_else(|| id.to_string(), |p| p.to_string())
+                    ))
+                })
+                .collect::<Vec<_>>()
+        });
+        match restored {
+            Ok(failed) => {
+                for f in failed {
+                    log::info!("show mode: a kept place is not taken: {f}");
+                }
+            }
+            Err(e) => log::warn!("show mode: the places in the show are not given back: {e}"),
+        }
     }
 
     /// The file show mode is kept in, if any.

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use arc_swap::ArcSwap;
-use penumbra_core::{Error, GroupId, NodeId, lock};
+use penumbra_core::{Error, GroupId, Name, NodeId, lock};
 
 use crate::history::{History, Recorded, Source};
 use crate::network::{Network, Op, Params};
@@ -98,6 +98,12 @@ impl Document {
             self.current.store(history.current().clone());
         }
         Ok(history.current().clone())
+    }
+
+    /// The params set live ([`Document::edit_live`]) that no recorded edit has taken back into
+    /// the history: OSC values, the show screen's values in show mode.
+    pub fn live_params(&self) -> Vec<(NodeId, Name)> {
+        self.lock().live_keys()
     }
 
     /// Gives the nodes in `at` that have no position yet the one listed, outside the history

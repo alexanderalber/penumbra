@@ -33,14 +33,15 @@ middle. Any picture can be a cue.
 **GO.** `/show`'s `go` param is bound to `/go`. Each time `go` rises past 0.5, a holding cue
 starts its transition, and a timed cue ends early. A GO during a transition does nothing, so a
 double press does not skip a cue. `/go` (a `chan.math` with `op` `max`) is 1 while the space
-key (`/keys`) or the OSC address `/go` is 1.
+key (`/keys`) is down, and for one frame per press of the OSC address `/go`.
 
 **OSC.** `/go_button` is a `chan.button` named `go`. `/desk` (a `chan.osc_out`) sends it as
 `/go` to port 8000 on this machine, and `/osc` (a `chan.osc_in`) receives it there. This loop
-stands in for a lighting desk or QLab: anything that sends `/go 1` and then `/go 0` to port
-8000 moves the show on. Helpers > OSC lists what arrives. To send from another computer, turn
-on `lan` in `/osc`. `/osc` keeps only `/go` as a channel, so other addresses cannot steer the
-show. **learn from OSC** in a param's link menu binds that param to the next address that
+stands in for a lighting desk or QLab. `/osc` lists `/go` under `triggers`, so every
+message `/go 1` (or `/go` alone) to port 8000 is one press and moves the show on. `/go 0`
+counts as a release, not a press. Two presses within one frame still count as two. Helpers >
+OSC lists what arrives. To send from another computer, turn on `lan` in `/osc`. `/osc` keeps
+no other address as a channel, so other addresses cannot steer the show. **learn from OSC** in a param's link menu binds that param to the next address that
 arrives: start it, then press GO, and the param follows `/go`.
 
 **Caption.** `/cues` is a `table.text` with one row per cue: `cue`, `hour` and `rain_db`.
@@ -60,8 +61,8 @@ Edits, saving and project switches are then refused. Keys, OSC and the GO button
 Show mode also restarts penumbra by itself after a crash (exit code 3: the GPU device lost or
 the editor failed), at most 3 times within 10 minutes. Test that once with the show
 running: `penumbra-cli ctl gpu.simulate_loss confirm=true`. The app closes and opens again
-within a few seconds, with the clock running on. The cue list starts over at its first cue
-after such a restart. Press GO until you are back at the cue that was playing.
+within a few seconds, with the clock running on. The cue list goes on at the cue that was
+playing, and a holding cue still waits for GO. A timed cue may repeat up to a second.
 `show.unlock`, or **Unlock** clicked twice, ends show mode. See
 [show mode](../../docs/getting-started.md#show-mode).
 

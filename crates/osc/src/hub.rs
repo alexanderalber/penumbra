@@ -126,6 +126,9 @@ pub struct Entry {
     pub text: Option<String>,
     /// Messages received for it.
     pub count: u64,
+    /// Of those, the presses: messages without a number, or whose first number is 0.5 or more
+    /// (a desk's GO, a button going down; its release is no press).
+    pub presses: u64,
     #[serde(skip)]
     pub at: Option<Instant>,
 }
@@ -157,12 +160,16 @@ impl Store {
                     values: Vec::new(),
                     text: None,
                     count: 0,
+                    presses: 0,
                     at: None,
                 });
                 self.entries.len() - 1
             }
         };
         if let Some(e) = self.entries.get_mut(i) {
+            if values.first().is_none_or(|v| *v >= 0.5) {
+                e.presses += 1;
+            }
             e.values = values;
             e.text = text;
             e.count += 1;
@@ -1057,6 +1064,17 @@ fn remember(inner: &Inner, port: u16, from: SocketAddr, msg: &Message, now: Inst
 mod tests {
     use super::*;
     use crate::codec::{Message, message_packet, packets};
+
+    #[test]
+    fn a_store_counts_presses_apart_from_releases() {
+        let mut store = Store::default();
+        for args in
+            [vec![Arg::Float(1.0)], vec![Arg::Float(0.0)], vec![], vec![Arg::Int(1)], vec![Arg::Float(0.4)]]
+        {
+            assert!(store.set("/go", &args, 8));
+        }
+        assert_eq!((store.entries[0].count, store.entries[0].presses), (5, 3));
+    }
 
     fn hub_on_any_port(params: bool) -> (Hub, u16) {
         let hub = Hub::new();

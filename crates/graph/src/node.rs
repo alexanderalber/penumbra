@@ -763,6 +763,23 @@ pub trait Operator: Send {
         Err("this node keeps no state".into())
     }
 
+    /// Where the operator stands in a show, in its own encoding (a cue list's step and seconds),
+    /// or `None` when there is nothing to keep. Show mode asks a few times per second and keeps
+    /// the answer across a crash restart, so it must be cheap, small and change seldom: at most
+    /// about once a second while nothing happens.
+    fn show_place(&self) -> Option<String> {
+        None
+    }
+
+    /// Takes back what [`Operator::show_place`] returned before a crash restart. The text comes
+    /// from a file on disk and may not fit (another version, a show edited meanwhile): an error,
+    /// never a panic. Called before the operator's first cook or between two cooks; the node
+    /// cooks again afterwards.
+    fn restore_show_place(&mut self, place: &str) -> Result<(), String> {
+        let _ = place;
+        Err("this node keeps no place in a show".into())
+    }
+
     /// Lets go of what the operator only needs while it cooks often: spare textures it would
     /// render the next result into, intermediate pictures. Its outputs and its state stay as
     /// they are, and the next cook makes what it needs anew. Called on the cook thread once

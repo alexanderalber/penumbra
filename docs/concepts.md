@@ -400,8 +400,18 @@ between them. Two kinds of node make it:
   **Cues by hand.** `hold` instead of seconds keeps a step on screen until `go` rises past 0.5;
   then its transition plays: `faces hold fade 2`. In a timed step, `go` ends the step early. A
   `go` during a transition does nothing, so a double press skips no cue. Bind `go` to a key's
-  gate or an OSC address: the [show](../examples/show/README.md) example steps five cues with
+  gate or to an OSC trigger: the [show](../examples/show/README.md) example steps five cues with
   the space key, a button on the show screen and OSC.
+
+  **GO from a desk.** List the desk's GO address under `triggers` on the `chan.osc_in`
+  (`/go`), and bind `go` to its channel. Each message is then one press: `/go 1` or `/go`
+  alone, as QLab sends it. `/go 0` is a release and not a press. The channel is 1 for one
+  frame per press, so a desk that never sends 0 moves the show on each time. Two presses
+  within one frame come out one after the other.
+
+  **After a crash in show mode** the cue list goes on at the cue that was playing. A holding cue
+  still holds, and the cues let go before stay let go. A timed cue may repeat up to a second.
+  When the steps changed meanwhile, the show starts from its beginning.
 
   `run` (with `equals`, as for a clock) starts the show from its beginning each time it turns
   on; while it is off the show is black. `mode` `loop` plays it round after round. Its channels:

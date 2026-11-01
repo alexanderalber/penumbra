@@ -342,7 +342,12 @@ Two ways to control a param from OSC:
 - **By address:** with `params` on, a `chan.osc_in` also sets the params its addresses name:
   `/scene/speed 0.5` sets `/scene.speed`, `/n/translate/0 0.5` one component. These values are
   live: they do not enter the undo history. File params and a script's code are never set
-  this way, so whoever can send OSC cannot make penumbra load a file or run a program.
+  this way, so whoever can send OSC cannot make penumbra load a file or run a program. In show
+  mode they survive a crash restart.
+
+An address listed under a `chan.osc_in`'s `triggers` is a press, as a desk's GO: its channel is
+1 for one frame per message with 0.5 or more (or with no number), then 0. Bind a cue list's
+`go` to it.
 
 ## Audio
 

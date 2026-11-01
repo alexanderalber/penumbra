@@ -56,13 +56,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 "Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; \
                  `^/ping` leaves an address out",
             ))
+            .param(ParamSpec::text("triggers", "").doc(
+                "Space-separated OSC patterns of addresses that are presses, such as a desk's GO:                  `/go`. Their channel is 1 for one frame per press, then 0. A press is a message                  without a number or with 0.5 or more, so `/go 1` and `/go` count and `/go 0` does                  not. Two presses within one frame come out one after the other",
+            ))
             .param(ParamSpec::bool("params", false).doc(
                 "Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, \
                  outside the undo history). For continuous control, bind params to the channels instead",
             ))
             .output("out", DataKind::Chan)
             .output("messages", DataKind::Table)
-            .describe_output("out", "A channel per address (per number), holding its latest value")
+            .describe_output(
+                "out",
+                "A channel per address (per number), holding its latest value; a trigger address's                  channel is 1 for one frame per press",
+            )
             .describe_output("messages", "What arrived: address, count, values"),
         || Box::new(OscIn::default()) as Box<dyn Operator>,
     ))?;
@@ -187,11 +193,50 @@ fn port_of(cx: &CookContext<'_>) -> Result<u16, CookError> {
     u16::try_from(cx.int("port")?).map_err(|_| CookError::failed("`port` is 0 to 65535"))
 }
 
+/// Presses of one trigger address waiting to come out, at most: a desk's double press is two.
+const MAX_QUEUED_PRESSES: u32 = 8;
+
+/// One trigger address's presses as one-frame pulses.
+#[derive(Clone, Debug, Default)]
+struct Trigger {
+    /// The address's press count in the store when last looked at.
+    seen: u64,
+    /// Presses not yet sent out as a pulse.
+    queued: u32,
+    /// The channel was 1 at the last cook: the next is 0.
+    high: bool,
+}
+
+impl Trigger {
+    /// The channel's value at this cook, from the store's press count now.
+    fn step(&mut self, presses: u64) -> f64 {
+        // A store that started over (the listener moved) counts from there.
+        let new = presses.saturating_sub(self.seen);
+        self.seen = presses;
+        self.queued =
+            self.queued.saturating_add(u32::try_from(new).unwrap_or(u32::MAX)).min(MAX_QUEUED_PRESSES);
+        if self.high {
+            self.high = false;
+        } else if self.queued > 0 {
+            self.queued -= 1;
+            self.high = true;
+        }
+        if self.high { 1.0 } else { 0.0 }
+    }
+
+    /// Whether the node has to cook at the next frame for this trigger.
+    fn busy(&self) -> bool {
+        self.high || self.queued > 0
+    }
+}
+
 #[derive(Default)]
 struct OscIn {
     watch: Option<Watch>,
-    /// The store version and filter text of the last cook.
-    seen: Option<(u64, String)>,
+    /// The store version and filter texts of the last cook.
+    seen: Option<(u64, String, String)>,
+    /// Per trigger address, its pulses; started anew when `triggers` changes.
+    triggers: BTreeMap<String, Trigger>,
 }
 
 impl Operator for OscIn {
@@ -218,17 +263,48 @@ impl Operator for OscIn {
         }
         let store = hub.read(port).unwrap_or_default();
         let text = cx.text("addresses")?;
+        let trigger_text = cx.text("triggers")?;
+        let busy = self.triggers.values().any(Trigger::busy);
         if !cx.params_changed()
             && !cx.first_cook()
-            && self.seen.as_ref().is_some_and(|(v, t)| *v == store.version && t == text)
+            && !busy
+            && self
+                .seen
+                .as_ref()
+                .is_some_and(|(v, t, g)| *v == store.version && t == text && g == trigger_text)
         {
             return Ok(Cooked::Unchanged);
         }
-        self.seen = Some((store.version, text.to_string()));
+        let retriggered = self.seen.as_ref().is_none_or(|(_, _, g)| g != trigger_text);
+        self.seen = Some((store.version, text.to_string(), trigger_text.to_string()));
         let filter = Filter::parse(text);
+        let trigger_filter = Filter::parse(trigger_text);
+        if retriggered {
+            // Presses that came before the address was a trigger are not played out.
+            self.triggers = store
+                .entries
+                .iter()
+                .filter(|e| trigger_filter.admits(&e.address))
+                .map(|e| (e.address.clone(), Trigger { seen: e.presses, ..Trigger::default() }))
+                .collect();
+        }
         let mut channels: Vec<Channel> = Vec::new();
         let mut taken: BTreeMap<String, String> = BTreeMap::new();
         let mut clashes = Vec::new();
+        // A trigger written out in full has its channel (at 0) before its first press, so a
+        // binding finds it.
+        for address in
+            trigger_text.split_whitespace().filter(|a| a.starts_with('/') && !penumbra_osc::is_pattern(a))
+        {
+            if store.entries.iter().any(|e| e.address == address) {
+                continue;
+            }
+            let Some(name) = channel_name(address) else { continue };
+            let Ok(n) = Name::new(&name) else { continue };
+            if taken.insert(name, address.to_string()).is_none() {
+                channels.push(Channel { name: n, samples: vec![0.0] });
+            }
+        }
         let mut rows = vec![vec!["address".to_string(), "count".to_string(), "values".to_string()]];
         for e in &store.entries {
             let mut row = vec![e.address.clone(), e.count.to_string()];
@@ -237,6 +313,18 @@ impl Operator for OscIn {
                 row.push(t.clone());
             }
             rows.push(row);
+            if trigger_filter.admits(&e.address) {
+                let value = self.triggers.entry(e.address.clone()).or_default().step(e.presses);
+                let Some(name) = channel_name(&e.address) else { continue };
+                if let Some(first) = taken.get(&name) {
+                    clashes.push(format!("{} and {first} both make `{name}`", e.address));
+                    continue;
+                }
+                let Ok(n) = Name::new(&name) else { continue };
+                taken.insert(name, e.address.clone());
+                channels.push(Channel { name: n, samples: vec![value] });
+                continue;
+            }
             if !filter.admits(&e.address) {
                 continue;
             }
@@ -250,7 +338,12 @@ impl Operator for OscIn {
                 channels.push(Channel { name: n, samples: vec![if v.is_finite() { *v } else { 0.0 }] });
             }
         }
+        if self.triggers.values().any(Trigger::busy) {
+            // The pulse has to fall again (or the next press come out) at the next frame.
+            cx.waker().wake();
+        }
         let mut warnings = filter.bad.clone();
+        warnings.extend(trigger_filter.bad.iter().cloned());
         if let Some(c) = clashes.first() {
             warnings.push(format!("{c}; the first is kept"));
         }
@@ -381,5 +474,32 @@ impl Operator for OscOut {
             cx.warn(format!("sending to {target}: {e}"));
         }
         Ok(Cooked::Outputs(Vec::new()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Trigger;
+
+    #[test]
+    fn presses_become_one_frame_pulses_one_after_the_other() {
+        let mut t = Trigger { seen: 4, ..Trigger::default() };
+        // Nothing new: 0, and nothing to do at the next frame.
+        assert_eq!(t.step(4), 0.0);
+        assert!(!t.busy());
+        // Two presses within one frame: 1, 0, 1, 0.
+        let pulses: Vec<f64> = [6, 6, 6, 6, 6].iter().map(|&p| t.step(p)).collect();
+        assert_eq!(pulses, [1.0, 0.0, 1.0, 0.0, 0.0]);
+        assert!(!t.busy());
+        // A press while the pulse is up comes out after it falls.
+        assert_eq!(t.step(7), 1.0);
+        assert_eq!(t.step(8), 0.0);
+        assert_eq!(t.step(8), 1.0);
+        assert_eq!(t.step(8), 0.0);
+        // A burst is capped; a store that started over counts from its new count.
+        t.step(1000);
+        assert!(t.queued < super::MAX_QUEUED_PRESSES);
+        assert_eq!(t.step(2), 0.0);
+        assert_eq!(t.seen, 2);
     }
 }

@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use penumbra_osc::Arg;
+use penumbra_osc::{Arg, Message};
 use serde_json::{Value as Json, json};
 
 use super::{Fixture, eventually};
@@ -240,4 +240,159 @@ fn osc_does_not_set_a_scripts_code() {
     assert_eq!(param_value(&f, "/py", "code"), code);
     let why = f.call("osc.status", json!({}))["params"]["last_refused"].clone();
     assert!(why.as_str().is_some_and(|w| w.contains("is code")), "{why}");
+}
+
+/// Channel `name` of the node at `path`, as `chan.read` reads it.
+fn channel(registry: &crate::Registry, path: &str, name: &str) -> Json {
+    let r = registry.dispatch("chan.read", &json!({"path": path}));
+    let channels = r["result"]["channels"].as_array().cloned().unwrap_or_default();
+    channels.into_iter().find(|c| c["name"] == name).map(|c| c["value"].clone()).unwrap_or(Json::Null)
+}
+
+/// The UDP port the engine's listener for `chan.osc_in` port 0 got.
+fn bound_port(e: &crate::Engine) -> u16 {
+    let mut port = 0;
+    eventually("the OSC listener to bind", || {
+        let bound = e.osc().hub().listener(0).and_then(|s| s.bound);
+        port = bound.and_then(|b| b.rsplit(':').next().and_then(|p| p.parse().ok())).unwrap_or(0);
+        port != 0
+    });
+    port
+}
+
+/// A cue list of holding steps, its `go` bound to the trigger `/go` of `/in`.
+fn cue_list(f: &Fixture, params: bool) {
+    f.call(
+        "node.create",
+        json!({"path": "/in", "kind": "chan.osc_in", "params": {"port": 0, "triggers": "/go", "params": params}}),
+    );
+    f.call(
+        "node.create",
+        json!({"path": "/s", "kind": "chan.sequence", "params": {
+            "steps": "a hold\nb hold\nc hold\nd hold\ne hold\nf hold", "lead_in": 0}}),
+    );
+    f.call("node.bind", json!({"param": "/s.go", "from": "/in", "channel": "go"}));
+}
+
+fn param_of(registry: &crate::Registry, path: &str, name: &str) -> Option<Json> {
+    let info = registry.dispatch("node.info", &json!({"path": path}));
+    info["result"]["params"]
+        .as_array()
+        .and_then(|p| p.iter().find(|p| p["name"] == name).map(|p| p["value"].clone()))
+}
+
+#[test]
+fn a_trigger_address_counts_every_press() {
+    let f = Fixture::new("osc_trigger");
+    cue_list(&f, false);
+    let port = osc_port(&f, 0);
+    let step = || channel(&f.registry, "/s", "step");
+    eventually("the first cue", || step() == 0.0);
+    assert_eq!(channel(&f.registry, "/in", "go"), 0.0, "a trigger written out has its channel at once");
+    // A desk that sends only `/go 1` per press moves the show on each time.
+    send(port, "/go", vec![Arg::Float(1.0)]);
+    eventually("the second cue", || step() == 1.0);
+    send(port, "/go", vec![Arg::Float(1.0)]);
+    eventually("the third cue", || step() == 2.0);
+    // A release is no press; nor is a level below a half. A GO without a number is one.
+    send(port, "/go", vec![Arg::Float(0.0)]);
+    send(port, "/go", vec![Arg::Float(0.25)]);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(step(), 2.0);
+    send(port, "/go", vec![]);
+    eventually("the fourth cue", || step() == 3.0);
+    // Two presses in one packet arrive within one frame: two GOs, one after the other.
+    let twice = vec![Message::new("/go", vec![Arg::Float(1.0)]), Message::new("/go", vec![Arg::Int(1)])];
+    let packets = penumbra_osc::codec::packets(&twice, 1400, true);
+    assert_eq!(packets.len(), 1);
+    let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    s.send_to(&packets[0], ("127.0.0.1", port)).unwrap();
+    eventually("two cues on", || step() == 5.0);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(step(), 5.0, "no more than two");
+    assert_eq!(channel(&f.registry, "/in", "go"), 0.0, "the pulse fell again");
+}
+
+#[test]
+fn a_cue_list_and_values_set_by_address_survive_a_restart_in_show_mode() {
+    let f = Fixture::new("osc_show_restart");
+    let data = f._dir.join("data");
+    let show_file = data.join(crate::show::FILE);
+    let kept = data.join(crate::show_values::FILE);
+    f.engine.set_show_file(Some(show_file.clone()));
+    cue_list(&f, true);
+    f.call("node.create", json!({"path": "/lfo", "kind": "chan.lfo"}));
+    eventually("autosave", || f.file().contains("\"/lfo\""));
+    let file = f.file();
+    f.call("show.lock", json!({}));
+    let port = osc_port(&f, 0);
+    let step = |r: &crate::Registry| channel(r, "/s", "step");
+    send(port, "/go", vec![Arg::Float(1.0)]);
+    eventually("the second cue", || step(&f.registry) == 1.0);
+    send(port, "/go", vec![Arg::Float(1.0)]);
+    eventually("the third cue", || step(&f.registry) == 2.0);
+    send(port, "/lfo/rate", vec![Arg::Float(3.0)]);
+    eventually("the rate set by address", || param_value(&f, "/lfo", "rate") == 3.0);
+    eventually("the cue and the rate kept", || {
+        std::fs::read_to_string(&kept).is_ok_and(|t| {
+            let k: Json = serde_json::from_str(&t).unwrap_or_default();
+            k["live"]["/lfo.rate"] == 3.0 && k["places"]["/s"]["place"]["free"] == 2
+        })
+    });
+    let text = std::fs::read_to_string(&kept).unwrap();
+    assert!(text.contains("chan.sequence"), "{text}");
+    // A crash: the app ends without unlocking, project.ron still holds the old values.
+    f.engine.shutdown();
+    assert_eq!(f.file(), file, "project.ron untouched");
+
+    let restart = || {
+        let types = std::sync::Arc::new(penumbra_ops::builtin_types().unwrap());
+        let session = penumbra_project::Session::open(
+            f._dir.path(),
+            types,
+            &penumbra_project::content::Content::default(),
+        )
+        .unwrap();
+        let e = crate::Engine::start(std::sync::Arc::new(session)).unwrap();
+        assert!(e.set_show_file(Some(show_file.clone())));
+        let r = crate::engine_registry(&e);
+        (e, r)
+    };
+    let (g, r) = restart();
+    assert_eq!(param_of(&r, "/lfo", "rate"), Some(json!(3.0)), "back before the desk sends again");
+    eventually("the cue list at its third cue", || step(&r) == 2.0);
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(step(&r), 2.0, "it holds there, and nothing counted as a GO");
+    // It goes on from there.
+    send(bound_port(&g), "/go", vec![Arg::Float(1.0)]);
+    eventually("the fourth cue", || step(&r) == 3.0);
+    eventually("the fourth cue kept", || {
+        std::fs::read_to_string(&kept).is_ok_and(|t| t.contains("\"free\": 3"))
+    });
+    g.shutdown();
+
+    // A hostile place (seconds that are no number), a place for a node of another kind, values
+    // that do not fit: all left out, the cue list starts over, the rate still comes back.
+    let mut k: Json = serde_json::from_str(&std::fs::read_to_string(&kept).unwrap()).unwrap();
+    k["places"]["/s"]["place"]["seconds"] = json!("soon");
+    k["places"]["/lfo"] = json!({"kind": "chan.sequence", "place": {"seconds": 1}});
+    k["live"]["/lfo.shape"] = json!(42);
+    k["live"]["/nobody.rate"] = json!(1);
+    std::fs::write(&kept, serde_json::to_string(&k).unwrap()).unwrap();
+    let (h, r) = restart();
+    eventually("the first cue", || step(&r) == 0.0);
+    assert_eq!(param_of(&r, "/lfo", "rate"), Some(json!(3.0)));
+    assert_eq!(param_of(&r, "/lfo", "shape"), Some(json!("sine")), "a value that does not fit is skipped");
+    h.shutdown();
+
+    // A place kept for another show (its steps edited) does not move this one either.
+    let mut k: Json = serde_json::from_str(&std::fs::read_to_string(&kept).unwrap()).unwrap();
+    k["places"]["/s"]["place"] =
+        json!({"show": "0000000000000000", "seconds": 0.5, "free": 3, "round": false});
+    std::fs::write(&kept, serde_json::to_string(&k).unwrap()).unwrap();
+    let (i, r) = restart();
+    eventually("the first cue", || step(&r) == 0.0);
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(step(&r), 0.0);
+    i.shutdown();
 }

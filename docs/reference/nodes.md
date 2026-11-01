@@ -1519,7 +1519,7 @@ Inputs: none.
 
 Outputs:
 
-- `out` (chan): A channel per address (per number), holding its latest value
+- `out` (chan): A channel per address (per number), holding its latest value; a trigger address's                  channel is 1 for one frame per press
 - `messages` (table): What arrived: address, count, values
 
 | param | type | default | range | meaning |
@@ -1527,6 +1527,7 @@ Outputs:
 | `port` | int | `8000` | 1024 to 65535 (soft) | UDP port to listen on; osc.status says which port it got; 0: any free port |
 | `lan` | bool | `false` |  | Also take OSC from other devices (phones, other computers): listens on every network interface. Off: this machine only |
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
+| `triggers` | text |  |  | Space-separated OSC patterns of addresses that are presses, such as a desk's GO: `/go`. Their channel is 1 for one frame per press, then 0. A press is a message without a number or with 0.5 or more, so `/go 1` and `/go` count and `/go 0` does not. Two presses within one frame come out one after the other |
 | `params` | bool | `false` |  | Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, outside the undo history). For continuous control, bind params to the channels instead |
 
 ### chan.osc_out
@@ -1599,7 +1600,7 @@ Outputs:
 | `lead_in` | float | `1` | 0 to 10 s (soft) | Black before the first step, so its piece starts over when the show starts |
 | `run` | float | `1` | 0 to 1 (soft) | On from 0.5 up (with `equals` set: while it equals that number). Each time it turns on the show starts from its beginning; while it is off it shows black and every run gate is 0 |
 | `equals` | int | `-1` (off) | -1 to 20 (soft) | When set, `run` is on while it equals this number: bind `run` to the channel that says which piece plays and set this to the show's own number. While off, `run` is on from 0.5 up; -1: off |
-| `go` | float | `0` | 0 to 1 (soft) | Each time it rises past 0.5 the step on screen moves on: a holding step starts its transition, a timed one cuts its time short. Ignored while a transition plays. Bind it to a key's gate or an OSC address |
+| `go` | float | `0` | 0 to 1 (soft) | Each time it rises past 0.5 the step on screen moves on: a holding step starts its transition, a timed one cuts its time short. Ignored while a transition plays. Bind it to a key's gate, or to an OSC address listed under `triggers` on a chan.osc_in |
 | `mode` | once \| loop | `"once"` |  | What the show does after its last step; once: it ends in black and stays there; loop: it starts over from its lead-in, round after round |
 
 ### chan.slider
