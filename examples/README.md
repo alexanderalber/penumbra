@@ -18,6 +18,7 @@ saves into it.)
 | [show](show/README.md) | a show as a list of cues: five looks with fades, stepped by the space key, a GO button on the show screen or OSC, a caption per cue from a table | `/out` | |
 | [control-page](control-page/README.md) | a web page that moves the project's sliders and switches from a phone or a browser, made to be copied into your own project | `/show` | (for a phone: the same network as this computer) |
 | [audio-reactive](audio-reactive/README.md) | sound turned into channels that move the picture: level, kick, bar | `/show` | a microphone |
+| [beat-grid](beat-grid/README.md) | the beats and bars of a sound file, found ahead of time, beside the live beat tracker on the same music: flashes on the beat, a ring on each bar's first beat, a line over the bar | `/out` | speakers or headphones |
 | [pendulum-wave](pendulum-wave/README.md) | 121 pendulums seen from above, drifting apart and back into sync, each striking a note as it passes its rest point, over a hi-hat and kick | `/out` | speakers or headphones |
 | [clips](clips/README.md) | a video file looped with its sound in step, the result recorded as a movie with sound; the clip made by penumbra itself | `/clip` | speakers or headphones |
 | [blob-tracking](blob-tracking/README.md) | finding and following spots of light, with ids that stay | `/view`, `/track` | |

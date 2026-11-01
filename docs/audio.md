@@ -425,7 +425,7 @@ another beat; `bar_beat` and `bar` are then counted from there.
 
 **Timing.** The grid is known ahead, so `offset` (milliseconds) makes `tick` come exactly that early, without guessing. Set it to the projector's delay.
 
-**Cues.** The `grid` output is a table with one row per beat: time in the file, beat, bar, beat in bar, downbeat. `beats.grid {path}` gives the same over the control channel; `beats.status` and `beats.analyze` show and start an analysis.
+**Cues.** The `grid` output is a table with one row per beat: time in the file, beat, bar, beat in bar, downbeat. `beats.grid {path}` gives the same over the control channel; `beats.status` and `beats.analyze` show and start an analysis. The example [beat-grid](../examples/beat-grid/README.md) shows the grid beside the live tracker on the same music.
 
 ## Tips
 
