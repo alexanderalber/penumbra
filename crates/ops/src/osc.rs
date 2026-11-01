@@ -57,7 +57,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                  `^/ping` leaves an address out",
             ))
             .param(ParamSpec::text("triggers", "").doc(
-                "Space-separated OSC patterns of addresses that are presses, such as a desk's GO:                  `/go`. Their channel is 1 for one frame per press, then 0. A press is a message                  without a number or with 0.5 or more, so `/go 1` and `/go` count and `/go 0` does                  not. Two presses within one frame come out one after the other",
+                "Space-separated OSC patterns of addresses that are presses, such as a desk's GO: \
+                 `/go`. Their channel is 1 for one frame per press, then 0. A press is a message \
+                 without a number or with 0.5 or more, so `/go 1` and `/go` count and `/go 0` does \
+                 not. A sender that also sends `/go 0` presses again only after its next `/go 0`, so \
+                 a held button that is sent again counts once. Two presses within one frame come out \
+                 one after the other",
             ))
             .param(ParamSpec::bool("params", false).doc(
                 "Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, \
@@ -67,7 +72,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .output("messages", DataKind::Table)
             .describe_output(
                 "out",
-                "A channel per address (per number), holding its latest value; a trigger address's                  channel is 1 for one frame per press",
+                "A channel per address (per number), holding its latest value; a trigger address's \
+                 channel is 1 for one frame per press",
             )
             .describe_output("messages", "What arrived: address, count, values"),
         || Box::new(OscIn::default()) as Box<dyn Operator>,

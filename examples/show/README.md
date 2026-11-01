@@ -39,7 +39,9 @@ key (`/keys`) is down, and for one frame per press of the OSC address `/go`.
 `/go` to port 8000 on this machine, and `/osc` (a `chan.osc_in`) receives it there. This loop
 stands in for a lighting desk or QLab. `/osc` lists `/go` under `triggers`, so every
 message `/go 1` (or `/go` alone) to port 8000 is one press and moves the show on. `/go 0`
-counts as a release, not a press. Two presses within one frame still count as two. Helpers >
+counts as a release, not a press. `/desk` sends the button again once a second while it is
+held; after a `/go 0` from the same sender, a repeated `/go 1` is no new press, so a long press
+on GO skips no cue. Two presses within one frame still count as two. Helpers >
 OSC lists what arrives. To send from another computer, turn on `lan` in `/osc`. `/osc` keeps
 no other address as a channel, so other addresses cannot steer the show. **learn from OSC** in a param's link menu binds that param to the next address that
 arrives: start it, then press GO, and the param follows `/go`.

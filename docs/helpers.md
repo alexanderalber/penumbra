@@ -346,8 +346,9 @@ Two ways to control a param from OSC:
   mode they survive a crash restart.
 
 An address listed under a `chan.osc_in`'s `triggers` is a press, as a desk's GO: its channel is
-1 for one frame per message with 0.5 or more (or with no number), then 0. Bind a cue list's
-`go` to it.
+1 for one frame per message with 0.5 or more (or with no number), then 0. A sender that also
+sends 0 to the address counts a press only after its 0, so a held button sent again is one press.
+Bind a cue list's `go` to it.
 
 ## HTTP
 

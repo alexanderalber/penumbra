@@ -416,8 +416,10 @@ between them. Two kinds of node make it:
   **GO from a desk.** List the desk's GO address under `triggers` on the `chan.osc_in`
   (`/go`), and bind `go` to its channel. Each message is then one press: `/go 1` or `/go`
   alone, as QLab sends it. `/go 0` is a release and not a press. The channel is 1 for one
-  frame per press, so a desk that never sends 0 moves the show on each time. Two presses
-  within one frame come out one after the other.
+  frame per press, so a desk that never sends 0 moves the show on each time. A sender that does
+  send `/go 0` counts its next `/go 1` only after a `/go 0`. A button held while it is sent again
+  (a `chan.osc_out` resends every channel once a second) is then one press. Two presses within
+  one frame come out one after the other.
 
   **After a crash in show mode** the cue list goes on at the cue that was playing. A holding cue
   still holds, and the cues let go before stay let go. A timed cue may repeat up to a second.

@@ -1520,7 +1520,7 @@ Inputs: none.
 
 Outputs:
 
-- `out` (chan): A channel per address (per number), holding its latest value; a trigger address's                  channel is 1 for one frame per press
+- `out` (chan): A channel per address (per number), holding its latest value; a trigger address's channel is 1 for one frame per press
 - `messages` (table): What arrived: address, count, values
 
 | param | type | default | range | meaning |
@@ -1528,7 +1528,7 @@ Outputs:
 | `port` | int | `8000` | 1024 to 65535 (soft) | UDP port to listen on; osc.status says which port it got; 0: any free port |
 | `lan` | bool | `false` |  | Also take OSC from other devices (phones, other computers): listens on every network interface. Off: this machine only |
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
-| `triggers` | text |  |  | Space-separated OSC patterns of addresses that are presses, such as a desk's GO: `/go`. Their channel is 1 for one frame per press, then 0. A press is a message without a number or with 0.5 or more, so `/go 1` and `/go` count and `/go 0` does not. Two presses within one frame come out one after the other |
+| `triggers` | text |  |  | Space-separated OSC patterns of addresses that are presses, such as a desk's GO: `/go`. Their channel is 1 for one frame per press, then 0. A press is a message without a number or with 0.5 or more, so `/go 1` and `/go` count and `/go 0` does not. A sender that also sends `/go 0` presses again only after its next `/go 0`, so a held button that is sent again counts once. Two presses within one frame come out one after the other |
 | `params` | bool | `false` |  | Also set the params the addresses name: `/scene/speed 0.5` sets /scene.speed (live, outside the undo history). For continuous control, bind params to the channels instead |
 
 ### chan.osc_out

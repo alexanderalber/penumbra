@@ -45,6 +45,9 @@ pub const MAX_SOURCES: usize = 256;
 pub const RECENT: usize = 32;
 /// Numbers kept per address.
 pub const MAX_VALUES: usize = 64;
+/// Senders per address whose releases are remembered (see [`Entry::presses`]); past that the
+/// one heard from longest ago is forgotten.
+const MAX_SENDERS: usize = 16;
 /// Steps one message with a pattern address may take to match.
 pub const PATTERN_STEPS: u64 = 200_000;
 /// Distinct addresses waiting for the engine ([`Hub::take_params`]).
@@ -127,10 +130,42 @@ pub struct Entry {
     /// Messages received for it.
     pub count: u64,
     /// Of those, the presses: messages without a number, or whose first number is 0.5 or more
-    /// (a desk's GO, a button going down; its release is no press).
+    /// (a desk's GO, a button going down; its release is no press). A sender that has sent a
+    /// release (a number below 0.5) to the address presses again only after the next release:
+    /// a held button that is resent (`chan.osc_out` sends everything once a second) is one
+    /// press. A sender that never sends a release counts each 1 it sends.
     pub presses: u64,
     #[serde(skip)]
     pub at: Option<Instant>,
+    /// The senders that have sent a release here, and whether their last number held the
+    /// address down; the one heard from last at the end.
+    #[serde(skip)]
+    senders: Vec<(SocketAddr, bool)>,
+}
+
+impl Entry {
+    /// Whether a message from `from` whose first number is `first` is a press, and notes the
+    /// sender's state.
+    fn press(&mut self, from: SocketAddr, first: Option<f64>) -> bool {
+        let known = self.senders.iter().position(|(a, _)| *a == from);
+        let held = known.and_then(|i| self.senders.get(i)).map(|(_, down)| *down);
+        let (press, down) = match first {
+            // A message without a number is a press of its own, held by nothing.
+            None => (true, false),
+            Some(v) if v >= 0.5 => (held != Some(true), true),
+            Some(_) => (false, false),
+        };
+        if let Some(i) = known {
+            self.senders.remove(i);
+        }
+        if known.is_some() || first.is_some_and(|v| v < 0.5) {
+            if self.senders.len() >= MAX_SENDERS {
+                self.senders.remove(0);
+            }
+            self.senders.push((from, down));
+        }
+        press
+    }
 }
 
 /// What a port received: the latest per address, in the order the addresses first came.
@@ -143,9 +178,9 @@ pub struct Store {
 }
 
 impl Store {
-    /// Takes in one message for `address`: its numbers and first string become the entry's
-    /// latest. `false` when the address is new and the store already holds `max`.
-    pub fn set(&mut self, address: &str, args: &[Arg], max: usize) -> bool {
+    /// Takes in one message for `address` from `from`: its numbers and first string become the
+    /// entry's latest. `false` when the address is new and the store already holds `max`.
+    pub fn set(&mut self, address: &str, args: &[Arg], max: usize, from: SocketAddr) -> bool {
         let values: Vec<f64> = args.iter().filter_map(Arg::as_f64).take(MAX_VALUES).collect();
         let text = args.iter().find_map(|a| a.as_str().map(str::to_string));
         let i = match self.index.get(address) {
@@ -162,12 +197,13 @@ impl Store {
                     count: 0,
                     presses: 0,
                     at: None,
+                    senders: Vec::new(),
                 });
                 self.entries.len() - 1
             }
         };
         if let Some(e) = self.entries.get_mut(i) {
-            if values.first().is_none_or(|v| *v >= 0.5) {
+            if e.press(from, values.first().copied()) {
                 e.presses += 1;
             }
             e.values = values;
@@ -180,7 +216,13 @@ impl Store {
     }
 
     /// Sets every known address `pattern` matches; how many.
-    fn set_matching(&mut self, pattern: &Pattern, args: &[Arg], budget: &mut Budget) -> usize {
+    fn set_matching(
+        &mut self,
+        pattern: &Pattern,
+        args: &[Arg],
+        budget: &mut Budget,
+        from: SocketAddr,
+    ) -> usize {
         let hits: Vec<String> = self
             .entries
             .iter()
@@ -188,7 +230,7 @@ impl Store {
             .map(|e| e.address.clone())
             .collect();
         for a in &hits {
-            self.set(a, args, usize::MAX);
+            self.set(a, args, usize::MAX, from);
         }
         hits.len()
     }
@@ -933,7 +975,7 @@ fn receive(inner: &Inner, l: &Listener, want: Want, data: &[u8], from: SocketAdd
             match (ok, compiled) {
                 (true, Ok(p)) => {
                     let mut budget = Budget(PATTERN_STEPS);
-                    let hits = lock(&l.store).set_matching(&p, &msg.args, &mut budget);
+                    let hits = lock(&l.store).set_matching(&p, &msg.args, &mut budget, from);
                     if budget.exhausted() {
                         pattern_dropped += 1;
                     }
@@ -944,7 +986,7 @@ fn receive(inner: &Inner, l: &Listener, want: Want, data: &[u8], from: SocketAdd
                     continue;
                 }
             }
-        } else if lock(&l.store).set(&msg.address, &msg.args, config.max_addresses) {
+        } else if lock(&l.store).set(&msg.address, &msg.args, config.max_addresses, from) {
             changed = true;
         } else {
             full += 1;
@@ -1067,13 +1109,54 @@ mod tests {
 
     #[test]
     fn a_store_counts_presses_apart_from_releases() {
+        let desk: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         let mut store = Store::default();
         for args in
             [vec![Arg::Float(1.0)], vec![Arg::Float(0.0)], vec![], vec![Arg::Int(1)], vec![Arg::Float(0.4)]]
         {
-            assert!(store.set("/go", &args, 8));
+            assert!(store.set("/go", &args, 8, desk));
         }
         assert_eq!((store.entries[0].count, store.entries[0].presses), (5, 3));
+    }
+
+    /// `(count, presses)` of `/go` after `sends`: `(sender's port, first number)`, `None` for a
+    /// message without one.
+    fn presses_after(sends: &[(u16, Option<f32>)]) -> (u64, u64) {
+        let mut store = Store::default();
+        for (port, v) in sends {
+            let from = SocketAddr::from(([127, 0, 0, 1], *port));
+            let args: Vec<Arg> = v.iter().map(|v| Arg::Float(*v)).collect();
+            assert!(store.set("/go", &args, 8, from));
+        }
+        (store.entries[0].count, store.entries[0].presses)
+    }
+
+    #[test]
+    fn a_held_button_that_is_resent_is_one_press() {
+        // A button sent with its releases, held over three resends: one press, then a second.
+        let held =
+            [(1, Some(0.0)), (1, Some(1.0)), (1, Some(1.0)), (1, Some(1.0)), (1, Some(0.0)), (1, Some(1.0))];
+        assert_eq!(presses_after(&held), (6, 2));
+        // A press, its release and the next press in one bundle: still two.
+        assert_eq!(presses_after(&[(1, Some(1.0)), (1, Some(0.0)), (1, Some(1.0))]), (3, 2));
+        // A desk that sends only `/go 1`: every one counts, also after another sender's release.
+        let ones = [(1, Some(1.0)), (1, Some(1.0)), (2, Some(0.0)), (1, Some(1.0))];
+        assert_eq!(presses_after(&ones), (4, 3));
+        // Another sender's release does not let a held button press again.
+        let two = [(1, Some(0.0)), (1, Some(1.0)), (2, Some(0.0)), (1, Some(1.0)), (2, Some(1.0))];
+        assert_eq!(presses_after(&two), (5, 2));
+        // `/go` alone always counts, also from a sender that holds.
+        assert_eq!(presses_after(&[(1, Some(0.0)), (1, Some(1.0)), (1, None), (1, None)]), (4, 3));
+    }
+
+    #[test]
+    fn a_store_remembers_releases_of_a_bounded_number_of_senders() {
+        let mut store = Store::default();
+        for port in 0..100u16 {
+            store.set("/go", &[Arg::Float(0.0)], 8, SocketAddr::from(([127, 0, 0, 1], port)));
+        }
+        assert_eq!(store.entries[0].senders.len(), MAX_SENDERS);
+        assert_eq!(store.entries[0].senders.last().map(|(a, _)| a.port()), Some(99));
     }
 
     fn hub_on_any_port(params: bool) -> (Hub, u16) {

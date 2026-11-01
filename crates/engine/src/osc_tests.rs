@@ -314,6 +314,44 @@ fn a_trigger_address_counts_every_press() {
 }
 
 #[test]
+fn a_go_button_held_over_a_resend_is_one_press() {
+    // As the example `show`: a button sent by `chan.osc_out`, which resends everything once a
+    // second, into a trigger. Held for over two seconds, it moves the show on once.
+    let f = Fixture::new("osc_trigger_held");
+    cue_list(&f, false);
+    let port = osc_port(&f, 0);
+    f.call("node.create", json!({"path": "/b", "kind": "chan.button", "params": {"name": "go"}}));
+    f.call(
+        "node.create",
+        json!({"path": "/desk", "kind": "chan.osc_out", "params": {"port": port, "rate": 60.0}}),
+    );
+    f.call("node.connect", json!({"from": "/b", "to": "/desk", "input": "chans"}));
+    let step = || channel(&f.registry, "/s", "step");
+    let presses = || {
+        f.engine
+            .osc()
+            .hub()
+            .read(0)
+            .and_then(|s| s.entries.iter().find(|e| e.address == "/go").map(|e| (e.count, e.presses)))
+    };
+    eventually("the released button sent", || presses().is_some());
+    f.call("chan.press", json!({"path": "/b", "down": true}));
+    eventually("the second cue", || step() == 1.0);
+    let before = presses().map_or(0, |p| p.0);
+    std::thread::sleep(Duration::from_millis(2500));
+    let held = presses().unwrap();
+    assert!(held.0 >= before + 2, "resent while held: {held:?}");
+    assert_eq!(held.1, 1, "one press: {held:?}");
+    assert_eq!(step(), 1.0, "no cue skipped");
+    f.call("chan.press", json!({"path": "/b", "down": false}));
+    eventually("the release sent", || channel(&f.registry, "/b", "go") == 0.0);
+    std::thread::sleep(Duration::from_millis(200));
+    f.call("chan.press", json!({"path": "/b", "down": true}));
+    eventually("the third cue", || step() == 2.0);
+    f.call("chan.press", json!({"path": "/b", "down": false}));
+}
+
+#[test]
 fn a_cue_list_and_values_set_by_address_survive_a_restart_in_show_mode() {
     let f = Fixture::new("osc_show_restart");
     let data = f._dir.join("data");
