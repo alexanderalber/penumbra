@@ -620,8 +620,8 @@ mod tests {
         assert!(p.beats.beats.len() >= 55, "{} beats", p.beats.beats.len());
         assert_eq!(p.beats.beats[..], want.beats[..p.beats.beats.len()]);
         assert_eq!(p.beats.downbeats[..], want.downbeats[..p.beats.downbeats.len()]);
-        // The bars of the last 32 beats known wait for the beats after them.
-        assert!(p.final_until.is_some_and(|t| t > 11.0 && t < 14.0), "{:?}", p.final_until);
+        // Nothing is final yet: the tempo the beats are folded onto takes a minute after them.
+        assert_eq!(p.final_until, None);
         assert_eq!(last.fraction(), 1.0);
         assert_eq!((last.chunks_done, last.chunks), (2, 2));
         // The second run reads the cache.

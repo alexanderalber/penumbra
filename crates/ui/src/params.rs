@@ -2715,7 +2715,7 @@ fn beat_grid_row(ui: &mut Ui, input: &Inputs<'_>, node: &NodeDef, auto: &mut aut
         let (text, colour) = match (&s.error, &s.grid) {
             (Some(e), _) => (format!("no beats: {e}"), theme::WARNING),
             (None, Some(g)) if complete => {
-                let n = g.beats.beats.len();
+                let n = g.grid.beats().len();
                 let found = format!("{n} beats, {} bars, found in {:.1} s", g.bars.len(), s.seconds);
                 match &s.envelope_error {
                     Some(e) => (format!("{found}; no levels: {e}"), theme::WARNING),

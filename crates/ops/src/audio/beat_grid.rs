@@ -13,6 +13,9 @@
 //! cancelled, and when the app closes. A finished one stays in memory for the next node that
 //! wants the same file, until the file changes on disk.
 //!
+//! **Folding:** passages the network counted at twice or half the tempo of the minute around
+//! them come back to that tempo before anything reads the grid ([`beats::fold`]).
+//!
 //! **Bars** are voted over 64 beats from the network's downbeat logits ([`beats::bars`]), so
 //! they hold on DJ mixes, where the downbeats the network marks one by one do not.
 //!
@@ -163,9 +166,9 @@ impl Grid {
 
     /// The grid as a table: a header row, then one row per beat.
     pub fn table(&self) -> Result<Table, Error> {
-        let mut rows = Vec::with_capacity(self.beats.beats.len() + 1);
+        let mut rows = Vec::with_capacity(self.grid.beats().len() + 1);
         rows.push(["time", "beat", "bar", "beat_in_bar", "downbeat"].map(str::to_string).to_vec());
-        for t in &self.beats.beats {
+        for t in self.grid.beats() {
             let Some(p) = self.grid.at(*t) else { continue };
             rows.push(vec![
                 format!("{t:.3}"),

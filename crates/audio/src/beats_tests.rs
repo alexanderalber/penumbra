@@ -284,9 +284,11 @@ fn check_partial(b: &[f32], d: &[f32], step: usize) -> usize {
 
 #[test]
 fn partial_beats_begin_the_final_ones() {
-    // Real logits.
-    let (b, d) = deinterleave(&read_f32(&fixture("post.logits.f32")));
-    let n = check_partial(&b, &d, 7);
+    // Real logits, a minute of them four times over: the folded beats' tempo needs a minute
+    // after each beat, so a single minute is never final before its end.
+    let (b1, d1) = deinterleave(&read_f32(&fixture("post.logits.f32")));
+    let (b, d): (Vec<f32>, Vec<f32>) = (b1.repeat(4), d1.repeat(4));
+    let n = check_partial(&b, &d, 23);
     assert!(n > 100, "final_until was set {n} times");
     // The whole piece known but the last few frames: nearly every beat is final.
     let p = pick_final(&b, &d);
@@ -294,7 +296,7 @@ fn partial_beats_begin_the_final_ones() {
     // Random logits with plateaus (merged peaks), beats and downbeats close together.
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     for _ in 0..4 {
-        let len = 600 + rng.below(400);
+        let len = 6000 + rng.below(1000);
         let mut b = vec![-3.0f32; len];
         let mut d = vec![-3.0f32; len];
         let mut i = rng.below(10);
@@ -308,7 +310,7 @@ fn partial_beats_begin_the_final_ones() {
             }
             i += 3 + rng.below(30);
         }
-        check_partial(&b, &d, 1);
+        assert!(check_partial(&b, &d, 13) > 0);
     }
     // Nothing yet.
     assert_eq!(pick_final(&[], &[]), Partial::default());
@@ -636,8 +638,33 @@ fn study_full_mix_bars() {
     eprintln!("{} beats, voted in {:.1} ms", got.beats.len(), t.elapsed().as_secs_f64() * 1e3);
     bar_stats("marked downbeats", &marked, &marked);
     bar_stats("voted bars", &voted, &marked);
-    // Partial results over the whole mix, every 50th chunk's worth of frames.
+    let t = std::time::Instant::now();
+    let folded = fold(&got.beats, &got.downbeat_logits);
+    eprintln!(
+        "folded in {:.1} ms: {} beats to {}, {} dropped, {} inserted",
+        t.elapsed().as_secs_f64() * 1e3,
+        got.beats.len(),
+        folded.beats.len(),
+        folded.dropped(got.beats.len()),
+        folded.inserted()
+    );
+    let marked_folded: Vec<usize> = folded
+        .found
+        .iter()
+        .enumerate()
+        .filter_map(|(k, f)| f.filter(|i| marked.binary_search(i).is_ok()).map(|_| k))
+        .collect();
+    bar_stats("folded, voted bars", &bars(&folded.logits), &marked_folded);
+    let raw = BeatGrid::new(
+        &got.beats,
+        &voted.iter().filter_map(|i| got.beats.get(*i)).copied().collect::<Vec<_>>(),
+    );
     let full = BeatGrid::from_beats(&got);
+    for t in [20.0, 30.0, 230.0, 236.0, 2150.0, 2165.0, 6990.0, 7020.0] {
+        let bpm = |g: &BeatGrid| g.at(t).map_or(0.0, |p| p.bpm);
+        eprintln!("bpm at {t:>6} s: found {:6.1}, folded {:6.1}", bpm(&raw), bpm(&full));
+    }
+    // Partial results over the whole mix, every 50th chunk's worth of frames.
     for f in (0..b.len()).step_by(1488 * 50).skip(1) {
         let p = pick_final(&b[..f], &dn[..f]);
         let part = BeatGrid::from_beats(&p.beats);

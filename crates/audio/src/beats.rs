@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 mod analyze;
 mod cache;
 mod envelopes;
+mod fold;
 mod meter;
 
 pub use analyze::{
@@ -41,6 +42,7 @@ pub use envelopes::{
     ENVELOPE_RATE, EnvelopeBuilder, Envelopes, Hop, KICK_LAG_HOPS, LEVEL_LAG_HOPS, ONSET_LAG_HOPS, Reading,
     analyze_envelopes, envelopes_of,
 };
+pub use fold::{Folded, fold, fold_prefix};
 pub use meter::{HOLD, LOGIT_LIMIT, THREE_LEAD, THREE_MIN_LEAD, WINDOW as METER_WINDOW, bars, bars_decided};
 
 use crate::fft::{Complex, Fft};
@@ -994,9 +996,12 @@ pub fn pick_final(beat: &[f32], downbeat: &[f32]) -> Partial {
             downbeats.push(at);
         }
     }
-    let starts = bars_decided(&downbeat_logits, known.saturating_sub(meter::WINDOW / 2));
+    // The grid folds the beats first (`BeatGrid::from_beats`), so its bars are final where
+    // the folded beats are, less the vote's window.
+    let folded = fold_prefix(&beats, &downbeat_logits);
+    let starts = bars_decided(&folded.logits, folded.final_count.saturating_sub(meter::WINDOW / 2));
     let final_until =
-        (starts.len() >= 2).then(|| starts.last().and_then(|i| beats.get(*i)).copied()).flatten();
+        (starts.len() >= 2).then(|| starts.last().and_then(|i| folded.beats.get(*i)).copied()).flatten();
     Partial { beats: Beats { beats, downbeats, downbeat_logits }, final_until }
 }
 
@@ -1110,15 +1115,18 @@ impl BeatGrid {
         Self { beats: b, downs, tempo }
     }
 
-    /// The grid of a tracked piece: the bars [`bars`] votes from the downbeat logits, or the
-    /// marked downbeats when there are no logits for every beat.
+    /// The grid of a tracked piece: its beats folded onto the tempo around them ([`fold`]:
+    /// passages counted at twice or half the tempo come back to it), then the bars [`bars`]
+    /// votes from the downbeat logits, or the marked downbeats when there are no logits for
+    /// every beat.
     pub fn from_beats(b: &Beats) -> Self {
-        if b.downbeat_logits.len() != b.beats.len() {
-            return Self::new(&b.beats, &b.downbeats);
+        let folded = fold(&b.beats, &b.downbeat_logits);
+        if folded.logits.len() != folded.beats.len() || folded.beats.is_empty() {
+            return Self::new(&folded.beats, &b.downbeats);
         }
         let starts: Vec<f64> =
-            bars(&b.downbeat_logits).into_iter().filter_map(|i| b.beats.get(i)).copied().collect();
-        Self::new(&b.beats, &starts)
+            bars(&folded.logits).into_iter().filter_map(|i| folded.beats.get(i)).copied().collect();
+        Self::new(&folded.beats, &starts)
     }
 
     pub fn beats(&self) -> &[f64] {

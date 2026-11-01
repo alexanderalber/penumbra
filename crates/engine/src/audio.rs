@@ -85,8 +85,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "beats.grid",
-        "The beats found in a sound file: {path or file, from? to? (s)} gives beats, downbeats (the bar starts \
-         chan.beat_grid uses, voted over 64 beats) and marked_downbeats (those the network marks one by one; \
+        "The beats found in a sound file: {path or file, from? to? (s)} gives beats (those chan.beat_grid \
+         uses: passages the network counted at twice or half the tempo around them are folded back to it), \
+         downbeats (the bar starts chan.beat_grid uses, voted over 64 beats), found_beats (the network's beats \
+         before folding) and marked_downbeats (those the network marks one by one; \
          irregular on DJ mixes), s into the file, between from and to, and final_until and complete as \
          beats.status. Does not start an analysis",
         beats_grid,
@@ -320,7 +322,7 @@ fn sound_file(e: &Engine, w: &Which) -> CmdResult<PathBuf> {
 /// One analysis as `beats.status` reports it.
 fn beats_json(file: &Path, s: &State) -> Json {
     let grid = s.grid.as_ref();
-    let beats = grid.map(|g| g.beats.beats.as_slice()).unwrap_or(&[]);
+    let beats = grid.map(|g| g.grid.beats()).unwrap_or(&[]);
     let mut gaps: Vec<f64> = beats.windows(2).filter_map(|w| Some(w.get(1)? - w.first()?)).collect();
     gaps.sort_by(f64::total_cmp);
     let bpm = gaps.get(gaps.len() / 2).filter(|g| **g > 0.0).map(|g| 60.0 / g);
@@ -429,7 +431,8 @@ fn beats_grid(e: &Engine, p: &Json) -> CmdResult<Json> {
     let grid = s.grid.as_ref();
     Ok(json!({
         "file": file.display().to_string(),
-        "beats": grid.map(|g| within(&g.beats.beats)).unwrap_or_default(),
+        "beats": grid.map(|g| within(g.grid.beats())).unwrap_or_default(),
+        "found_beats": grid.map(|g| within(&g.beats.beats)).unwrap_or_default(),
         "downbeats": grid.map(|g| within(&g.bars)).unwrap_or_default(),
         "marked_downbeats": grid.map(|g| within(&g.beats.downbeats)).unwrap_or_default(),
         "final_until": grid.map(|g| g.final_until).filter(|t| t.is_finite()),
