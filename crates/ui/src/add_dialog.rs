@@ -405,20 +405,24 @@ fn tab(
     let name = tab_name(families);
     let named = families.len() > 1;
     // While searching: which families have a match?
+    let mut any_bright = false;
     let segments: Vec<(&String, bool, Option<Arc<egui::Galley>>)> = families
         .iter()
         .map(|f| {
             let kinds = kinds_of(usable.types, f, library);
             let hit = !filter.is_empty() && kinds.iter().any(|k| usable.hit(k, filter));
             let bright = if filter.is_empty() { !kinds.is_empty() } else { hit };
+            any_bright |= bright;
             let text = if bright { Color32::WHITE } else { theme::TEXT_WEAK };
             let galley =
                 (!named).then(|| ui.painter().layout_no_wrap(f.clone(), FontId::proportional(14.0), text));
             (f, hit, galley)
         })
         .collect();
+    // A named tab is bright when any of its families is.
+    let title_text = if any_bright { Color32::WHITE } else { theme::TEXT_WEAK };
     let title =
-        named.then(|| ui.painter().layout_no_wrap(name.clone(), FontId::proportional(14.0), Color32::WHITE));
+        named.then(|| ui.painter().layout_no_wrap(name.clone(), FontId::proportional(14.0), title_text));
     // A named tab shares its width out evenly among its families.
     let even = title.as_ref().map_or(0.0, |t| (t.size().x + 24.0) / segments.len() as f32);
     let widths: Vec<f32> = segments
