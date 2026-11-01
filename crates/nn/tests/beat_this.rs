@@ -98,3 +98,49 @@ fn real_checkpoints_match_pytorch() {
         assert!(diff < 1e-3, "{name}: max |logit diff| {diff}");
     }
 }
+
+fn shipped() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/models/beat_this-final0-q6.safetensors")
+}
+
+/// The quantized model in `assets/models` loads as the full network and runs.
+#[test]
+fn shipped_model_loads() {
+    let st = SafeTensors::read(&shipped()).unwrap();
+    assert_eq!(st.metadata().get("model_id").map(String::as_str), Some("beat_this-final0-q6"));
+    assert_eq!(st.metadata().keys().filter(|k| k.starts_with("quant.")).count(), 66);
+    let model = BeatThis::from_safetensors(&st).unwrap();
+    let c = model.config();
+    assert_eq!((c.transformer_dim, c.n_layers, c.n_heads, c.ff_dim), (512, 6, 16, 2048));
+    let out = model.forward(&Tensor::new(vec![40, 128], vec![1.0; 40 * 128]).unwrap()).unwrap();
+    assert!(out.beat.iter().chain(&out.downbeat).all(|v| v.is_finite()));
+}
+
+/// The quantized model against the F32 one on the chunk of `final0_io.safetensors`, and
+/// against PyTorch running the same quantized weights (`final0q6_io.safetensors`, written by
+/// the study's script) when that file is there. Set `BEAT_THIS_DIR` as for
+/// `real_checkpoints_match_pytorch`.
+#[test]
+#[ignore]
+fn shipped_model_against_f32() {
+    let Some(dir) = std::env::var_os("BEAT_THIS_DIR") else {
+        println!("BEAT_THIS_DIR is not set");
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    let q6 = BeatThis::load(&shipped()).unwrap();
+    let f32 = BeatThis::load(&dir.join("beat_this-final0.safetensors")).unwrap();
+    let io = SafeTensors::read(&dir.join("final0_io.safetensors")).unwrap();
+    let spect = io.get("spect").unwrap();
+    let (a, b) = (q6.forward(spect).unwrap(), f32.forward(spect).unwrap());
+    let diff = max_diff(&a.beat, &b.beat).max(max_diff(&a.downbeat, &b.downbeat));
+    let mean = a.beat.iter().zip(&b.beat).map(|(x, y)| (x - y).abs()).sum::<f32>() / a.beat.len() as f32;
+    println!("q6 vs f32 in Rust: max |logit diff| {diff:.3}, mean beat {mean:.4}");
+    assert!(diff < 5.0, "{diff}");
+    let torch = dir.join("final0q6_io.safetensors");
+    if torch.is_file() {
+        let diff = compare(&q6, &SafeTensors::read(&torch).unwrap());
+        println!("q6 in Rust vs q6 in PyTorch: max |logit diff| {diff:.2e}");
+        assert!(diff < 1e-3, "{diff}");
+    }
+}

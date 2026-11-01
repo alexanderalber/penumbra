@@ -1,0 +1,47 @@
+beat_this-final0-q6.safetensors
+===============================
+
+The beat and downbeat tracker Beat This! by Francesco Foscarin, Jan Schlüter and Gerhard
+Widmer (ISMIR 2024), https://github.com/CPJKU/beat_this. The weights are those of the
+published checkpoint "final0", quantized. Upstream's README states that the code and the
+published weights are under the MIT licence below. It also notes that some of the training
+data has more restrictive licences and leaves that assessment to the user.
+
+How the file was made:
+
+- Source checkpoint: beat_this-final0.ckpt, as the beat_this package (version 1.1.0)
+  downloads it into torch hub's cache.
+  SHA-256 8c328b45f59d8dd3dff219253ff6a8d6482be57d0133a29140e2febbf8eb8331
+- Converter: tools/beat_this_convert.py in the penumbra repository, run with no arguments.
+  It writes the same bytes on every run:
+  SHA-256 562e2bc9a18f9c05df1de8387711065cd83e577cda9a31074be701439e59734c
+- Quantization: the Linear weights of the six RoFormer blocks as int6 (symmetric, levels
+  -31..31, one float16 scale per group of 32 inputs); every other Linear and Conv weight as
+  int8 (symmetric, levels -127..127, one float16 scale per output channel); biases, norm
+  gains, BatchNorm statistics and rotary frequencies unchanged as float32. The file is a
+  safetensors file; its metadata describes each quantized weight. On a 2-hour DJ mix the
+  beats agree with the float32 checkpoint's to an F-measure of 0.999 (downbeats 0.995) within
+  20 ms.
+
+
+MIT License
+
+Copyright (c) 2024 Institute of Computational Perception, JKU Linz, Austria
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
