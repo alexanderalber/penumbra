@@ -16,17 +16,18 @@ pub const VRAM_FULL_PERCENT: f64 = CREATE_PERCENT as f64;
 
 const BAR_HEIGHT: f32 = 16.0;
 
-/// A number of bytes with three significant digits in binary units: `512 B`, `12.3 KiB`,
-/// `3.62 GiB`, `128 MiB`.
+/// A number of bytes with three significant digits in decimal units, as Task Manager shows them:
+/// `512 B`, `12.6 KB`, `3.89 GB`, `134 MB`.
 pub fn bytes(n: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
-    if n < 1024 {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    if n < 1000 {
         return format!("{n} B");
     }
     let mut v = n as f64;
     let mut unit = 0;
-    while v >= 1024.0 && unit + 1 < UNITS.len() {
-        v /= 1024.0;
+    // 999.5 and up would print as "1000", so it moves to the next unit.
+    while v >= 999.5 && unit + 1 < UNITS.len() {
+        v /= 1000.0;
         unit += 1;
     }
     let digits = if v < 9.995 {
@@ -36,7 +37,7 @@ pub fn bytes(n: u64) -> String {
     } else {
         0
     };
-    format!("{v:.digits$} {}", UNITS.get(unit).copied().unwrap_or("TiB"))
+    format!("{v:.digits$} {}", UNITS.get(unit).copied().unwrap_or("TB"))
 }
 
 /// The colour of a video memory share: the weak text colour while there is room, the warning
@@ -191,13 +192,14 @@ mod tests {
     #[test]
     fn bytes_read_with_three_digits() {
         assert_eq!(bytes(0), "0 B");
-        assert_eq!(bytes(1023), "1023 B");
-        assert_eq!(bytes(1024), "1.00 KiB");
-        assert_eq!(bytes(12_595), "12.3 KiB");
-        assert_eq!(bytes(128 << 20), "128 MiB");
-        assert_eq!(bytes(3_886_000_000), "3.62 GiB");
-        assert_eq!(bytes(24 << 30), "24.0 GiB");
-        assert_eq!(bytes(u64::MAX), "16777216 TiB");
+        assert_eq!(bytes(999), "999 B");
+        assert_eq!(bytes(1000), "1.00 KB");
+        assert_eq!(bytes(12_595), "12.6 KB");
+        assert_eq!(bytes(999_600), "1.00 MB");
+        assert_eq!(bytes(128 << 20), "134 MB");
+        assert_eq!(bytes(3_886_000_000), "3.89 GB");
+        assert_eq!(bytes(24 << 30), "25.8 GB");
+        assert_eq!(bytes(u64::MAX), "18446744 TB");
     }
 
     #[test]
