@@ -1014,6 +1014,52 @@ fn a_float_map_remaps_to_a_fraction_of_a_pixel() {
 }
 
 #[test]
+fn image_file_as_data_keeps_every_channel_where_alpha_is_0() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("image-data");
+    // Positions and normals, with alpha 0 on every other pixel and a fraction no half float holds.
+    let rgba: Vec<[f32; 4]> = (0..64)
+        .map(|x| {
+            let v = x as f32 / 7.0 + 1.0e-4;
+            [v, -0.5 * v, 1234.567 + v, if x % 2 == 0 { 0.0 } else { 0.25 }]
+        })
+        .collect();
+    std::fs::write(dir.join("data.exr"), penumbra_gpu::image::encode_exr_rgba32f(64, 1, &rgba).unwrap())
+        .unwrap();
+    // A 16-bit PNG: as colour its samples are sRGB and premultiplied, as data they are n / 65535.
+    let samples: Vec<u16> = (0..64u16).flat_map(|x| [x * 1000 + 7, 65535 - x, 12345, 0]).collect();
+    let img =
+        photocraft_codecs::Image::from_u16(64, 1, photocraft_codecs::ChannelLayout::Rgba, &samples).unwrap();
+    let png = photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &Default::default()).unwrap();
+    std::fs::write(dir.join("data.png"), png).unwrap();
+    let mut rig = Rig::new(
+        gpu,
+        Some(&dir),
+        &[
+            create("/exr", "tex.image_file", &[("file", "data.exr".into()), ("values", "data".into())]),
+            create("/png", "tex.image_file", &[("file", "data.png".into()), ("values", "data".into())]),
+        ],
+    );
+    let exr = rig.cook_until_new("/exr", 0);
+    assert_eq!(exr.format(), penumbra_gpu::FLOAT_FORMAT);
+    assert_eq!(rig.gpu.read(&exr).unwrap().data, rgba, "every channel exactly as written");
+    let png = rig.cook_until_new("/png", 0);
+    assert_eq!(png.format(), penumbra_gpu::FLOAT_FORMAT, "16 bits do not fit half floats");
+    let read = rig.gpu.read(&png).unwrap().data;
+    for (px, s) in read.iter().zip(samples.as_chunks::<4>().0) {
+        assert_eq!(*px, s.map(|v| f32::from(v) / 65535.0));
+    }
+    // As colour (the default) the same EXR is premultiplied: nothing left where alpha is 0.
+    let version = rig.version("/exr");
+    rig.edit(&[set("/exr.values", "color".into())]);
+    let colour = rig.cook_until_new("/exr", version);
+    let px = rig.gpu.read(&colour).unwrap().data;
+    assert_eq!(px[0], [0.0; 4]);
+    let [r, g, b, a] = rgba[1];
+    assert_eq!(px[1], [r * a, g * a, b * a, a]);
+}
+
+#[test]
 fn without_a_gpu_tex_nodes_fail_cleanly() {
     let types = Arc::new(builtin_types().unwrap());
     let net = Arc::new(Network::new().apply(&types, &[create("/c", "tex.constant", &[])]).unwrap().network);

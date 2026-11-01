@@ -410,7 +410,7 @@ Outputs: `out` (tex).
 
 ### tex.image_file
 
-A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it. Files of 32-bit floats, such as a scan's maps, keep their precision
+A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it. Files of 32-bit floats, such as a scan's maps, keep their precision. `values` data reads maps from other programs as stored
 
 Inputs: none.
 
@@ -419,6 +419,7 @@ Outputs: `out` (tex).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `file` | file (png, jpg, jpeg, tif, tiff, exr, hdr, webp, bmp, tga, gif, qoi, pfm, ppm, pgm) |  |  | The picture file, relative to the project directory; saving it again reloads the node |
+| `values` | color \| data | `"color"` |  | How the file's samples become the picture; color: a picture: 8- and 16-bit files are sRGB, colour is multiplied by alpha; data: every channel as stored, for maps, positions and normals: no sRGB decode, colour kept where alpha is 0; 16-bit files keep their precision |
 
 ### tex.layer
 

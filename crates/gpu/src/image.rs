@@ -3,7 +3,7 @@
 //!
 //! Integer samples are taken as sRGB-encoded and linearised; float samples (EXR, HDR, PFM) as
 //! linear already. Alpha is premultiplied on the way in. ICC profiles are ignored
-//! (no colour management).
+//! (no colour management). [`decode_data`] reads a file as data instead: samples as stored.
 //!
 //! Decoding runs off the cook thread (the image node's job). Memory is the real risk with
 //! hostile files, not panics: [`limits`] rejects anything too large from the header before a
@@ -123,6 +123,45 @@ pub fn decode_picture(bytes: &[u8], max_side: u32) -> Result<Picture, Error> {
         return Err(Error::new(format!("decoded {} pixels, expected {width} x {height}", pixels.len())));
     }
     Ok(Picture::Float(FloatImage { width, height, rgba: pixels, source }))
+}
+
+/// Reads `path` as data for a texture ([`decode_data`]).
+pub fn decode_file_data(path: &std::path::Path, max_side: u32) -> Result<Picture, Error> {
+    let bytes = read_file(path)?;
+    decode_data(&bytes, max_side).map_err(|e| e.context(path.display()))
+}
+
+/// An image as data for a texture: every channel as stored (integers scaled to 0..1, no sRGB
+/// decode, alpha neither premultiplied nor clamped), so positions, normals and other maps come
+/// back exactly where alpha is 0. 16-bit integer and 32-bit float files become
+/// [`Picture::Float`], since half floats would round their values; 8-bit and half-float files
+/// fit half floats exactly. Non-finite samples become 0, as in [`decode`].
+pub fn decode_data(bytes: &[u8], max_side: u32) -> Result<Picture, Error> {
+    let opts = DecodeOptions { limits: limits(max_side), keep_orientation: false };
+    let image = photocraft_codecs::decode_with(bytes, &opts).map_err(|e| Error::new(e.to_string()))?;
+    let (width, height) = image.dimensions();
+    let sample = image.sample_type();
+    let source = format!(
+        "{} {} as data",
+        format!("{:?}", image.layout()).to_lowercase(),
+        match sample {
+            SampleType::U8 => "8-bit",
+            SampleType::U16 => "16-bit",
+            SampleType::F16 => "half float",
+            SampleType::F32 => "float",
+        }
+    );
+    let finite = |c: f32| if c.is_finite() { c } else { 0.0 };
+    let flat = image.to_rgba_f32();
+    let rgba: Vec<[f32; 4]> = flat.as_chunks::<4>().0.iter().map(|c| c.map(finite)).collect();
+    if rgba.len() as u64 != u64::from(width) * u64::from(height) {
+        return Err(Error::new(format!("decoded {} pixels, expected {width} x {height}", rgba.len())));
+    }
+    let float = FloatImage { width, height, rgba, source };
+    Ok(match sample {
+        SampleType::U16 | SampleType::F32 => Picture::Float(float),
+        SampleType::U8 | SampleType::F16 => Picture::Half(float.to_half()),
+    })
 }
 
 pub fn decode(bytes: &[u8], max_side: u32) -> Result<Decoded, Error> {
@@ -426,6 +465,21 @@ mod tests {
         assert_eq!(v[..4], [0.25, -1.0, 0.75, 1.0]);
         assert_eq!(v[4..], [2.5, 0.5, 0.0, 1.0]);
         assert_eq!(d.source, "rgba float");
+    }
+
+    #[test]
+    fn data_keeps_colour_under_alpha_0_and_skips_srgb() {
+        let px = [[0.3, -2.0, 7.25, 0.0], [f32::NAN, 0.5, 1.0e-4, 0.5]];
+        let Picture::Float(f) = decode_data(&encode_exr_rgba32f(2, 1, &px).unwrap(), 64).unwrap() else {
+            panic!("a float file stays 32-bit")
+        };
+        assert_eq!(f.rgba, [[0.3, -2.0, 7.25, 0.0], [0.0, 0.5, 1.0e-4, 0.5]]);
+        assert_eq!(f.source, "rgba float as data");
+        let Picture::Float(f) = decode_data(&png16(1, 1, &[32768, 0, 65535, 0]), 64).unwrap() else {
+            panic!("16 bits stay 32-bit")
+        };
+        assert_eq!(f.rgba, [[32768.0 / 65535.0, 0.0, 1.0, 0.0]]);
+        assert!(decode_data(b"not an image", 64).is_err());
     }
 
     #[test]

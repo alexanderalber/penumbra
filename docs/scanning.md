@@ -170,6 +170,12 @@ The maps keep this precision on the GPU. `tex.scan` loads its map as 32-bit floa
 In half floats, a position near the right edge of a 1920-pixel map would be off by up to half a
 pixel. A 1920 x 1080 map takes 33 MB of video memory instead of 17 MB.
 
+**Maps from other programs.** By default `tex.image_file` reads a file as a picture: 8- and
+16-bit files as sRGB, colour multiplied by alpha. A map with alpha 0 in places (positions,
+normals, a uv map from a renderer) then loses its values there. Set `values` to `data`: every
+channel comes in as stored, integers as n / 255 or n / 65535, alpha untouched. 16-bit files then
+load as 32-bit floats too.
+
 Kept frames of several levels merge again with `scan.decode` and a list:
 `"frames": ["scan/proj_a/frames", "scan/proj_a/frames_1"]`.
 

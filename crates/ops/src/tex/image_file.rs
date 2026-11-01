@@ -18,11 +18,20 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "tex.image_file",
-            "A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it. Files of 32-bit floats, such as a scan's maps, keep their precision",
+            "A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it. Files of 32-bit floats, such as a scan's maps, keep their precision. `values` data reads maps from other programs as stored",
         )
         .param(
             ParamSpec::file("file", EXTENSIONS)
                 .doc("The picture file, relative to the project directory; saving it again reloads the node"),
+        )
+        .param(
+            ParamSpec::choice("values", &["color", "data"])
+                .doc("How the file's samples become the picture")
+                .choice_doc("color", "a picture: 8- and 16-bit files are sRGB, colour is multiplied by alpha")
+                .choice_doc(
+                    "data",
+                    "every channel as stored, for maps, positions and normals: no sRGB decode, colour kept where alpha is 0; 16-bit files keep their precision",
+                ),
         )
         .output("out", DataKind::Tex),
         || Box::new(Image::default()) as Box<dyn Operator>,
@@ -33,6 +42,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 struct Image {
     slot: AsyncSlot<Tex>,
     watch: Option<FileWatch>,
+    /// Whether the loaded file was read as data.
+    data: bool,
 }
 
 impl Operator for Image {
@@ -46,8 +57,11 @@ impl Operator for Image {
         // load started, or the file never loads once it is there.
         let gpu = super::gpu(cx)?;
         let path = cx.resolve_path(cx.text("file")?)?;
+        let data = cx.text("values")? == "data";
         let moved = self.watch.as_ref().is_none_or(|w| w.path() != path);
-        if moved || self.watch.as_ref().is_some_and(FileWatch::take_changed) {
+        let changed = self.watch.as_ref().is_some_and(FileWatch::take_changed);
+        if moved || changed || data != self.data {
+            self.data = data;
             if moved {
                 self.watch = Some(cx.watch_file(&path));
             }
@@ -56,8 +70,13 @@ impl Operator for Image {
             let p = path.clone();
             self.slot.start(cx.spawn(move |_job| {
                 // Files of 32-bit floats (a scan's maps) stay 32-bit on the GPU.
-                let picture =
-                    penumbra_gpu::image::decode_file_picture(&p, gpu.max_texture_size()).map_err(|e| e.0)?;
+                let max = gpu.max_texture_size();
+                let picture = if data {
+                    penumbra_gpu::image::decode_file_data(&p, max)
+                } else {
+                    penumbra_gpu::image::decode_file_picture(&p, max)
+                }
+                .map_err(|e| e.0)?;
                 gpu.upload_picture(&picture, &label).map_err(|e| e.0)
             }));
         }
