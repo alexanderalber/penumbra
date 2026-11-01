@@ -102,6 +102,8 @@ pub struct ProjectorFrame {
     /// The display id as set (`EPSON PJ [SECA519] @ target 168194`); empty when none is chosen.
     pub display: String,
     pub active: bool,
+    /// Shown in a window of its own on the desktop instead of fullscreen on `display`.
+    pub window: bool,
     /// x, y, width, height in display sizes (0..1).
     pub viewport: [f64; 4],
     pub fit: Fit,
@@ -178,8 +180,11 @@ pub struct WindowInfo {
 /// What the output side reports about one projector node.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct ProjectorState {
-    /// The display it is shown on (resolved id).
+    /// The display it is shown on (resolved id); for a projector in a window, the window's key.
     pub display: Option<String>,
+    /// The size of the window it is shown in, for a projector in a window (`window` on): the
+    /// picture's size follows the window, not a display.
+    pub size: Option<[u32; 2]>,
     pub error: Option<String>,
     pub warning: Option<String>,
 }
@@ -235,7 +240,7 @@ impl OutputBoard {
 
 /// Registers the `out` node types.
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
-    let desc = NodeDesc::new(PROJECTOR, "Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors")
+    let desc = NodeDesc::new(PROJECTOR, "Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors; or in a window on the desktop, as a preview")
         .param(
             ParamSpec::text("display", "")
                 .doc("Display id from output.list, e.g. `EPSON PJ [SECA519] @ target 168194` (model and connector) or `AW3225QF [DELA246 #BY4BYZ3]` (model and serial number). The monitor name alone works when unique"),
@@ -244,6 +249,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ParamSpec::bool("active", true)
                 .doc("Open the output window on its display. Off closes the window and the node does nothing"),
         )
+        .param(ParamSpec::bool("window", false).doc(
+            "Show the picture in a window of its own on the desktop instead of fullscreen on              `display`: a preview beside the editor, also on the editor's display. It keeps              running smoothly while the editor is minimised. Move and resize it like any window;              closing it turns `active` off. `display` and `viewport` do not apply",
+        ))
         .param(
             ParamSpec::choice("fit", &["fit", "fill", "stretch"])
                 .doc("How the picture sits in the viewport when their aspects differ")
@@ -327,6 +335,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 /// The size of a projector's image: its viewport of the display it is shown on, as the
 /// output side reported it; [`DEFAULT_RASTER`] while unknown.
 pub fn raster(board: Option<&BoardState>, node: NodeId, viewport: [f64; 4]) -> (u32, u32) {
+    // A projector in a window fills the window.
+    if let Some([w, h]) = board.and_then(|b| b.projectors.get(&node)?.size) {
+        return (w.max(1), h.max(1));
+    }
     let display = board.and_then(|b| {
         let id = b.projectors.get(&node)?.display.as_ref()?;
         b.displays.iter().find(|d| &d.id == id).map(|d| (d.size[0], d.size[1]))
@@ -353,7 +365,7 @@ impl Operator for Projector {
         }
         // A broken text is an error here; the outputs keep the last good correction.
         correct::correction(|name| cx.param(name)).map_err(CookError::Failed)?;
-        if cx.text("display")?.trim().is_empty() {
+        if !cx.bool("window")? && cx.text("display")?.trim().is_empty() {
             cx.warn("no display chosen (see output.list)");
             return Ok(Cooked::Outputs(Vec::new()));
         }
@@ -533,6 +545,7 @@ pub fn collect(
             path: net.path_of(node.id).map(|p| p.to_string()).unwrap_or_default(),
             display: text("display").trim().to_string(),
             active: !matches!(param("active"), Some(Value::Bool(false))),
+            window: matches!(param("window"), Some(Value::Bool(true))),
             viewport,
             fit,
             source,
@@ -773,6 +786,45 @@ mod tests {
         assert_eq!(frames[0].fit, Fit::Fill);
         assert_eq!(frames[0].viewport, [0.0, 0.0, 1.0, 1.0]);
         assert!(frames[0].active && frames[0].source.is_none());
+    }
+
+    #[test]
+    fn a_projector_in_a_window_needs_no_display_and_takes_the_windows_size() {
+        let types = Arc::new(builtin_types().unwrap());
+        let set = |p: &str, v: Value| Op::Set { param: ParamPath::parse(p).unwrap(), value: v };
+        let ops = [
+            Op::Create {
+                path: NodePath::parse("/p").unwrap(),
+                kind: PROJECTOR.into(),
+                params: Default::default(),
+            },
+            set("/p.window", Value::Bool(true)),
+            set("/p.viewport", Value::Vec4([0.5, 0.0, 0.5, 0.5])),
+        ];
+        let net = Arc::new(Network::new().apply(&types, &ops).unwrap().network);
+        let p = net.resolve(&"/p".parse().unwrap()).unwrap();
+        let mut cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
+        let board = OutputBoard::new();
+        board.update(|s| {
+            s.managed = true;
+            s.projectors.insert(
+                p,
+                ProjectorState {
+                    display: Some("window 1".into()),
+                    size: Some([800, 450]),
+                    ..Default::default()
+                },
+            );
+        });
+        cooker.provide(board.clone());
+        let clock = ShowClock::new(Rate::FPS_60, LatePolicy::Realtime);
+        cooker.cook(&net, clock.now(), &[p], &[]);
+        let status = cooker.status(p).unwrap();
+        assert!(!status.warning.as_deref().unwrap_or("").contains("display"), "{status:?}");
+        // The window's size, whatever the viewport says.
+        assert_eq!(raster(Some(&board.state()), p, [0.5, 0.0, 0.5, 0.5]), (800, 450));
+        let frames = collect(&net, &types, &cooker, &mut Mappings::default());
+        assert!(frames[0].window && frames[0].active);
     }
 
     #[test]

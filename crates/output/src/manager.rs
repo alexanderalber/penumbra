@@ -7,6 +7,10 @@
 //! the projector nodes and `output.list` read it. While windows are open the displays are kept
 //! from sleeping.
 //!
+//! A projector with `window` on gets a desktop window of its own instead, keyed by the node
+//! ([`WINDOW`]): decorated, resizable, allowed on the editor's display, never pacing the show
+//! clock. Its close button turns the node's `active` off.
+//!
 //! A projector whose display cannot be found for certain shows nothing: a show must not end up
 //! on another wall. Its node gets the error, and every change of what a projector is shown on
 //! (or why not) is logged once. A display that drops out for a moment (a glitch in the
@@ -36,6 +40,16 @@ pub const TICK: Duration = Duration::from_millis(250);
 const PACE_TOLERANCE: f64 = 0.01;
 /// How many ticks a projector stays on its window after its display stopped resolving.
 pub const GRACE_TICKS: u32 = 4;
+/// The start of the key of a projector's own desktop window (`window` on), in place of a
+/// display id.
+pub const WINDOW: &str = "window ";
+/// The size a projector's desktop window opens at, in logical pixels.
+const WINDOW_SIZE: (f64, f64) = (960.0, 540.0);
+
+/// Whether `key` names a projector's desktop window rather than a display.
+fn is_window(key: &str) -> bool {
+    key.starts_with(WINDOW)
+}
 
 /// Where a projector was last shown.
 #[derive(Clone, Debug, PartialEq)]
@@ -102,6 +116,14 @@ impl Outputs {
         let Some(w) = self.windows.iter().find(|w| w.window.id() == id) else { return false };
         match event {
             WindowEvent::Resized(size) => w.resized(size.width, size.height),
+            // A projector's desktop window closes like any window: its node turns inactive.
+            WindowEvent::CloseRequested if is_window(&w.display) => {
+                for node in w.nodes() {
+                    if let Err(e) = penumbra_engine::projector::close_window(&self.engine, node) {
+                        log::warn!("output {}: cannot close: {e}", w.display);
+                    }
+                }
+            }
             // Alt+F4 on a projector during a show must not close it; projectors close by
             // deactivating or deleting their node.
             WindowEvent::CloseRequested => log::info!("output {}: close ignored", w.display),
@@ -153,8 +175,19 @@ impl Outputs {
         let frame = self.engine.output();
         let mut states: BTreeMap<NodeId, ProjectorState> = BTreeMap::new();
         let mut wanted: BTreeMap<String, Vec<NodeId>> = BTreeMap::new();
-        for p in frame.projectors.iter().filter(|p| p.active && !p.display.is_empty()) {
+        // The title of each desktop window.
+        let mut titles: BTreeMap<String, String> = BTreeMap::new();
+        for p in frame.projectors.iter().filter(|p| p.active && (p.window || !p.display.is_empty())) {
             let mut state = ProjectorState::default();
+            if p.window {
+                let key = format!("{WINDOW}{}", p.path);
+                state.display = Some(key.clone());
+                titles.insert(key.clone(), format!("penumbra {}", p.path));
+                wanted.entry(key).or_default().push(p.node);
+                self.shown.remove(&p.node);
+                states.insert(p.node, state);
+                continue;
+            }
             let resolved = penumbra_system::resolve(&p.display, &details);
             match resolved.problem(&p.display, &details) {
                 Some(Problem::Error(e)) => state.error = Some(e),
@@ -212,7 +245,9 @@ impl Outputs {
         while let Some(w) = self.windows.get(i) {
             let on_its_display =
                 w.window.current_monitor().and_then(|m| m.name()).is_none_or(|n| n == w.os_name);
-            let keep = wanted.contains_key(&w.display) && on_its_display && w.failed().is_none();
+            let keep = wanted.contains_key(&w.display)
+                && (is_window(&w.display) || on_its_display)
+                && w.failed().is_none();
             if keep {
                 i += 1;
                 continue;
@@ -228,6 +263,20 @@ impl Outputs {
         // Open the missing ones.
         for (display, nodes) in &wanted {
             if self.windows.iter().any(|w| &w.display == display) || self.failed.contains_key(display) {
+                continue;
+            }
+            if let Some(title) = titles.get(display) {
+                match self.open_window(event_loop, display, title) {
+                    Ok(w) => {
+                        log::info!("output {display}: open as a window");
+                        w.set_nodes(nodes.clone());
+                        self.windows.push(w);
+                    }
+                    Err(e) => {
+                        log::error!("output {display}: {e}");
+                        self.failed.insert(display.clone(), e);
+                    }
+                }
                 continue;
             }
             let Some(info) = infos.iter().find(|d| &d.id == display) else { continue };
@@ -254,6 +303,14 @@ impl Outputs {
             if let Some(e) = state.display.as_ref().and_then(|d| self.failed.get(d)) {
                 state.error = Some(format!("the output window failed: {e}"));
             }
+            // A desktop window's picture is as large as the window.
+            if let Some(w) =
+                state.display.as_ref().and_then(|d| self.windows.iter().find(|w| &w.display == d))
+                && is_window(&w.display)
+            {
+                let s = w.window.inner_size();
+                state.size = Some([s.width.max(1), s.height.max(1)]);
+            }
         }
         self.report(&frame.projectors, &states, &infos);
 
@@ -262,6 +319,7 @@ impl Outputs {
         let pacer = self
             .windows
             .iter()
+            .filter(|w| !is_window(&w.display))
             .filter(|w| {
                 infos.iter().any(|d| {
                     d.id == w.display
@@ -379,6 +437,38 @@ impl Outputs {
             info.id.clone(),
             info.os_name.clone(),
             info.refresh_hz.unwrap_or(60.0),
+            instance,
+            gpu.clone(),
+            Arc::clone(&self.engine),
+        )
+    }
+
+    /// A projector's desktop window: decorated and resizable, at [`WINDOW_SIZE`] where the
+    /// system puts new windows, presenting at the primary display's refresh rate.
+    fn open_window(
+        &self,
+        event_loop: &ActiveEventLoop,
+        key: &str,
+        title: &str,
+    ) -> Result<OutputWindow, String> {
+        let Some((instance, gpu)) = &self.gpu else {
+            return Err("no GPU yet".into());
+        };
+        let attrs = winit::window::Window::default_attributes()
+            .with_title(title)
+            .with_inner_size(winit::dpi::LogicalSize::new(WINDOW_SIZE.0, WINDOW_SIZE.1))
+            .with_active(false);
+        let window =
+            Arc::new(event_loop.create_window(attrs).map_err(|e| format!("cannot open the window: {e}"))?);
+        let refresh = event_loop
+            .primary_monitor()
+            .and_then(|m| m.refresh_rate_millihertz())
+            .map_or(60.0, |mhz| f64::from(mhz) / 1000.0);
+        OutputWindow::start(
+            window,
+            key.to_string(),
+            String::new(),
+            refresh,
             instance,
             gpu.clone(),
             Arc::clone(&self.engine),

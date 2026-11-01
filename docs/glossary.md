@@ -105,7 +105,7 @@ half transparent white is `0.5, 0.5, 0.5, 0.5`. For you this matters in shaders:
 picker shows them. Fully transparent pixels are black.
 
 **Projector.** An `out.projector` node: it shows its picture fullscreen on a display. Its
-`display` names which one. Each projector has colour correction and test patterns of its own.
+`display` names which one. With `window` on it shows it in a window on the desktop instead. Each projector has colour correction and test patterns of its own.
 See [Helpers](helpers.md#outputs).
 
 **Region.** Faces of a scan grouped into one part of the scene, the way a person sees it: one

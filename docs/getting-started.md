@@ -116,7 +116,9 @@ it.
    (see [bindings](concepts.md#bindings)).
 6. **Show it on a projector:** add `system` > `projector`, wire the level into it and pick a
    `display` (the [Helpers window](helpers.md#outputs) lists them). With `active` on, a
-   fullscreen window opens on that display. For projection mapping, put a `tex.mapper`
+   fullscreen window opens on that display. Without a second display, turn `window` on: the
+   picture opens in a window of its own beside the editor. It keeps running smoothly while the
+   editor is minimised, which the viewer's window does not. For projection mapping, put a `tex.mapper`
    between the content and the projector: its corners and mesh are dragged in the viewer (see
    [Mapping without a camera](mapping-without-camera.md)).
 

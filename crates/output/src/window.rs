@@ -1,6 +1,6 @@
-//! One output window: borderless fullscreen on its display, presented from its own thread on
-//! the shared device (decided by measurement), so vsync on one display blocks neither the editor
-//! nor another output.
+//! One output window, borderless fullscreen on its display (or a desktop window for a projector
+//! with `window` on), presented from its own thread on the shared device (decided by
+//! measurement), so vsync on one display blocks neither the editor nor another output.
 //!
 //! Every frame the thread waits for the display (acquiring the next surface texture blocks
 //! until a buffer is free, right after a vsync), then draws whatever the cook thread published
@@ -141,6 +141,11 @@ impl OutputWindow {
         if *current != nodes {
             *current = nodes;
         }
+    }
+
+    /// The projector nodes it shows.
+    pub fn nodes(&self) -> Vec<NodeId> {
+        lock(&self.shared.nodes).clone()
     }
 
     pub fn set_paces(&self, paces: bool) {
@@ -292,7 +297,9 @@ fn present_loop(
             .iter()
             .filter(shown)
             .filter_map(|p| {
-                let [x, y, w, h] = p.viewport.map(|v| v.clamp(0.0, 1.0) as f32);
+                // A projector in a window fills it; `viewport` is a part of a display.
+                let viewport = if p.window { [0.0, 0.0, 1.0, 1.0] } else { p.viewport };
+                let [x, y, w, h] = viewport.map(|v| v.clamp(0.0, 1.0) as f32);
                 item(p, &blank, [x * fw, y * fh, w * fw, h * fh], &clock)
             })
             .collect();

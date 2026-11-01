@@ -73,6 +73,18 @@ const REFINED: f64 = 0.005;
 /// Widest camera picture measured; larger frames are sampled every few pixels.
 pub(crate) const MAX_WIDTH: usize = 640;
 
+/// Turns a projector's `active` off as the user would, for the close button of its window (an
+/// `out.projector` shown in a window). Refused like any user edit while Claude holds the claim
+/// or show mode is on.
+pub fn close_window(e: &Engine, node: NodeId) -> Result<(), String> {
+    let session = e.session();
+    let path = session.doc().snapshot().path_of(node).ok_or("the projector is gone")?;
+    let name = Name::new("active").map_err(|e| e.0)?;
+    let param = ParamPath::new(path, name).map_err(|e| e.0)?;
+    let ops = [Op::Set { param, value: Value::Bool(false) }];
+    edit_as(&session, Actor::User, &ops, "close the projector's window").map(|_| ()).map_err(|e| e.0)
+}
+
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(

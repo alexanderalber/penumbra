@@ -2327,7 +2327,7 @@ Outputs: none.
 
 ### out.projector
 
-Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors
+Shows a picture fullscreen on a projector or display, or in a part of it, with colour correction to match projectors; or in a window on the desktop, as a preview
 
 Follows the show clock: cooks again whenever time moves.
 
@@ -2343,6 +2343,7 @@ Outputs: none.
 |---|---|---|---|---|
 | `display` | text |  |  | Display id from output.list, e.g. `EPSON PJ [SECA519] @ target 168194` (model and connector) or `AW3225QF [DELA246 #BY4BYZ3]` (model and serial number). The monitor name alone works when unique |
 | `active` | bool | `true` |  | Open the output window on its display. Off closes the window and the node does nothing |
+| `window` | bool | `false` |  | Show the picture in a window of its own on the desktop instead of fullscreen on `display`: a preview beside the editor, also on the editor's display. It keeps running smoothly while the editor is minimised. Move and resize it like any window; closing it turns `active` off. `display` and `viewport` do not apply |
 | `fit` | fit \| fill \| stretch | `"fit"` |  | How the picture sits in the viewport when their aspects differ; fit: all visible, black bars; fill: covered, cropped; stretch: covered, distorted |
 | `viewport` *(more)* | vec4 | `[0, 0, 1, 1]` | 0 to 1 | x, y, width, height inside the display, in display sizes (a quarter of a 4K splitter: 0, 0, 0.5, 0.5) |
 | `test` | bool | `false` |  | A test pattern in the projector's own pixels instead of the input, in this projector's colour (white when it is the only one showing a test pattern, else one that keeps overlapping projectors apart): see `test_pattern`. projector.test switches every projector at once |

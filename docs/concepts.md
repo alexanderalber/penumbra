@@ -152,7 +152,8 @@ The families:
   4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
 - **`script`**: Python that turns channels and tables into channels and a table (see
   [Scripts](scripts.md)).
-- **`out`**: sinks. `out.projector` shows a picture fullscreen on a display.
+- **`out`**: sinks. `out.projector` shows a picture fullscreen on a display, or with `window`
+  on in a window on the desktop.
 - **`comp`**: components, nodes that hold nodes (see [Components](#components)).
 
 Every type, with every param, is in the [node reference](reference/nodes.md). When each node
