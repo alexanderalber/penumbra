@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Instant, SystemTime};
 
 use penumbra_audio::beats::{self, BeatError, BeatGrid, BeatModel, Beats, Partial};
@@ -42,6 +42,28 @@ const JUMP_SECONDS: f64 = 0.5;
 const KEEP_DONE: usize = 32;
 /// Progress steps that wake the nodes.
 const WAKE_STEP: f64 = 0.01;
+/// Cores the analysis leaves free for sound, pictures and the rest of the app.
+const SPARE_CORES: usize = 4;
+
+/// The threads every analysis runs its network on: fewer than the cores and at the lowest
+/// priority, so a long analysis never starves the sound output. `None` when the pool cannot be
+/// built; the analysis then runs on the calling thread alone.
+fn pool() -> Option<&'static rayon::ThreadPool> {
+    static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(cores.saturating_sub(SPARE_CORES).max(1))
+            .thread_name(|i| format!("beats-{i}"))
+            .start_handler(|_| {
+                penumbra_system::process::lower_thread_priority();
+            })
+            .build()
+            .map_err(|e| log::warn!("beat analysis threads: {e}"))
+            .ok()
+    })
+    .as_ref()
+}
 
 /// The channels `chan.beat_grid` outputs, in order. The first eight mean what they mean on
 /// `chan.beat_analysis`, so a binding keeps working when one node replaces the other.
@@ -363,8 +385,13 @@ impl BeatFiles {
         }
         let (inner, path, cancel) = (self.0.clone(), file.to_path_buf(), a.cancel.clone());
         let spawned = std::thread::Builder::new().name("beats".into()).spawn(move || {
-            let result = catch_unwind(AssertUnwindSafe(|| run(&inner, &path, &cancel, &shared)))
-                .unwrap_or_else(|_| Err(BeatError::Network("the beat analysis failed".into())));
+            penumbra_system::process::lower_thread_priority();
+            let work = || run(&inner, &path, &cancel, &shared);
+            let result = catch_unwind(AssertUnwindSafe(|| match pool() {
+                Some(p) => p.install(work),
+                None => work(),
+            }))
+            .unwrap_or_else(|_| Err(BeatError::Network("the beat analysis failed".into())));
             shared.update(|s| {
                 s.running = false;
                 match result {

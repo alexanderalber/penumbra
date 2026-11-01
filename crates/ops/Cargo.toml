@@ -27,6 +27,7 @@ penumbra-system.workspace = true
 penumbra-track.workspace = true
 penumbra-video.workspace = true
 log.workspace = true
+rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 half.workspace = true

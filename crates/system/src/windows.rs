@@ -301,6 +301,16 @@ pub fn raise_thread_priority() -> bool {
     unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST) != 0 }
 }
 
+/// Lowers the calling thread to `THREAD_PRIORITY_LOWEST`; false when Windows refuses.
+pub fn lower_thread_priority() -> bool {
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_LOWEST,
+    };
+
+    // SAFETY: as in `raise_thread_priority`: a pseudo handle for the calling thread, only read.
+    unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST) != 0 }
+}
+
 /// Whether this process is the only one attached to its console. A terminal attaches itself (or
 /// its shell) too, so a count of one means the console was created for this process alone.
 pub fn own_console() -> bool {

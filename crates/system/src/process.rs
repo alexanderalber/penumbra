@@ -60,6 +60,21 @@ pub fn raise_thread_priority() -> bool {
     }
 }
 
+/// Lowers the calling thread's scheduling priority below the normal threads' (Windows:
+/// `THREAD_PRIORITY_LOWEST`), for long background work that must not take time from sound,
+/// pictures or input while every core is busy. Returns whether it worked; false outside
+/// Windows.
+pub fn lower_thread_priority() -> bool {
+    #[cfg(windows)]
+    {
+        crate::windows::lower_thread_priority()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 /// Waits until the process `pid` has ended, at most `timeout`. Returns whether it ended (or was
 /// gone already). A restarted app waits so for the one it replaces: that one still holds the
 /// control channel's port and the output windows until it exits. Outside Windows it only waits
