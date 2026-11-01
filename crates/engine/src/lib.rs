@@ -24,6 +24,7 @@ pub mod http;
 pub mod hubs;
 pub mod jobs;
 pub mod keyboard;
+pub mod memory;
 pub mod mesh_out;
 pub mod meter;
 pub mod mouse;

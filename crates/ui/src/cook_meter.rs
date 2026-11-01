@@ -1,15 +1,18 @@
 //! The cook time in the status bar: the smoothed pass time as a button, and on click the last
 //! seconds' passes as a plot with the numbers behind them and the machine's CPU and GPU load,
-//! on NVIDIA GPUs also the GPU's power, temperature, clock and what holds the clock back.
+//! on NVIDIA GPUs also the GPU's power, temperature, clock and what holds the clock back. Beside
+//! the cook time the status bar shows the video memory share, the popup ends with the memory
+//! section ([`crate::memory`]).
 
 use std::time::Instant;
 
+use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, PopupCloseBehavior, RectAlign, RichText, Sense, Shape, Stroke, Ui, pos2, vec2};
 use penumbra_engine::Engine;
 use penumbra_engine::meter::{CookMeter, WINDOW};
 use penumbra_system::GpuSensors;
 
-use crate::{automation, theme};
+use crate::{automation, memory, theme};
 
 const PLOT_SIZE: egui::Vec2 = vec2(360.0, 120.0);
 const PASS: Color32 = Color32::from_gray(120);
@@ -23,14 +26,21 @@ pub fn status(ui: &mut Ui, engine: &Engine, fps: f64, auto: &mut automation::Reg
         Some(ms) => format!("cook {ms:>6.2} ms"),
         None => "cook      - ms".to_string(),
     };
-    let r = ui
-        .add(
-            egui::Button::new(RichText::new(text).monospace().color(theme::TEXT_WEAK))
-                .frame_when_inactive(false),
-        )
-        .on_hover_text(
-            "Time per cook pass, smoothed over about a second. Click for the last seconds and the load",
+    let mut hint = "Time per cook pass, smoothed over about a second. Click for the last seconds, the load                     and the memory"
+        .to_string();
+    let mut job = LayoutJob::default();
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    job.append(&text, 0.0, TextFormat::simple(font.clone(), theme::TEXT_WEAK));
+    if let Some((vram, colour)) = memory::status_text(&engine.memory()) {
+        job.append(&vram, font.size, TextFormat::simple(font, colour));
+        hint = format!(
+            "{hint}
+
+{}",
+            memory::status_hint()
         );
+    }
+    let r = ui.add(egui::Button::new(job).frame_when_inactive(false)).on_hover_text(hint);
     auto.add("status.cook", r.rect, "cook time");
     egui::Popup::from_toggle_button_response(&r)
         .align(RectAlign::TOP_START)
@@ -86,7 +96,8 @@ fn details(ui: &mut Ui, engine: &Engine, fps: f64, auto: &mut automation::Regist
              work: a slow GPU shows here, not in the pass times",
         ),
     ];
-    egui::Grid::new("cook_numbers").num_columns(2).spacing(vec2(16.0, 2.0)).show(ui, |ui| {
+    let grid = egui::Grid::new("cook_numbers").num_columns(2).min_col_width(memory::NAME_WIDTH);
+    grid.spacing(vec2(16.0, 2.0)).show(ui, |ui| {
         for (name, value, hint) in rows {
             ui.label(RichText::new(name).color(theme::TEXT_WEAK)).on_hover_text(hint);
             ui.label(RichText::new(value).monospace());
@@ -108,6 +119,7 @@ fn details(ui: &mut Ui, engine: &Engine, fps: f64, auto: &mut automation::Regist
                 .small(),
         );
     }
+    memory::section(ui, &engine.memory(), PLOT_SIZE.x, auto);
 }
 
 /// The NVIDIA GPU's rows; a value the GPU did not report gets no row.

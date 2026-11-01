@@ -634,6 +634,8 @@ pub struct Engine {
     ticker: Arc<Ticker>,
     /// CPU and GPU load, sampled while asked for.
     load: LoadMeter,
+    /// Video memory, wgpu's allocator and the working set, read while asked for.
+    memory: crate::memory::MemoryMeter,
     /// A measurement (`projector.match`, `scan.capture`, `projector.flatfield`) is running: one
     /// at a time, two would fight over the projectors.
     measuring: AtomicBool,
@@ -711,6 +713,7 @@ impl Engine {
             hubs: Arc::new(Hubs::new()),
             ticker: Arc::new(Ticker::default()),
             load: LoadMeter::new(),
+            memory: crate::memory::MemoryMeter::new(),
             measuring: AtomicBool::new(false),
             jobs: crate::jobs::Jobs::default(),
             shut: AtomicBool::new(false),
@@ -1225,6 +1228,12 @@ impl Engine {
         &self.load
     }
 
+    /// The latest memory reading ([`crate::memory`]), a few seconds old at most; cheap enough
+    /// for every frame.
+    pub fn memory(&self) -> crate::memory::Memory {
+        self.memory.latest(self.gpu())
+    }
+
     /// The pass times of the last seconds ([`crate::meter`]).
     pub fn cook_meter(&self) -> CookMeter {
         lock(&self.view.meter).clone()
@@ -1470,6 +1479,7 @@ impl Engine {
             hub.shutdown();
         }
         self.load.shutdown();
+        self.memory.shutdown();
     }
 }
 

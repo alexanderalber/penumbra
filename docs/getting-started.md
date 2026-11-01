@@ -77,7 +77,9 @@ else runs without it.
 - **The status bar**: the project menu (the folder, with **Show mode** at its end), play and
   pause of the show clock, the frame and the time, how long the last cook pass took (click it for the last seconds as a
   plot, the CPU and GPU load and, on NVIDIA GPUs, power draw, temperature, clock and what
-  holds the clock back), the outputs (hover for details), the control channel's port, the GPU,
+  holds the clock back), the share of video memory in use (yellow from 80 %, red from 90 %;
+  the popup shows it as a bar with what wgpu holds and the working set), the outputs (hover
+  for details), the control channel's port, the GPU,
   and whether `project.ron` is written yet.
 
 Each section of the right column folds by its header; the open state is kept with the project.
@@ -192,7 +194,8 @@ into regions there ([Scanning](scanning.md#51-regions-scanregions)).
 
 penumbra stops creating GPU memory at 90 % of what Windows grants it, so a node asking for too
 much gets an error (or, for `tex.time_machine`, fewer frames and a warning) instead of taking
-the driver down. Should the GPU device still be lost (a driver reset, another program filling
+the driver down. The status bar's `VRAM` share counts against that grant: at 90 %
+new textures fail. The grant shrinks while other programs hold video memory. Should the GPU device still be lost (a driver reset, another program filling
 the GPU), penumbra saves the project file but no state, shows a message and exits with code 3.
 The next start opens the project with the show clock stopped and says why in the status bar;
 press play once the cause is fixed. The record of that lives in

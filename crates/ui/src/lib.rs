@@ -22,6 +22,7 @@ pub mod icons;
 mod keyboard;
 pub mod layout;
 mod mapping;
+pub mod memory;
 pub mod meters;
 pub mod navigate;
 mod node_controls;
