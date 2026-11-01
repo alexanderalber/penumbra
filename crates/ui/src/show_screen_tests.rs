@@ -96,3 +96,15 @@ fn controls_on_the_show_screen_change_values_without_history() {
     assert_eq!(after["controls"][2]["value"], 1.0, "the values set in show mode stay: {after}");
     engine.shutdown();
 }
+
+#[test]
+fn a_button_with_a_label_has_no_caption_above_its_face() {
+    use crate::node_controls::Control;
+    let button = |label: &str| Control::Button { toggle: true, on: false, label: label.into(), bound: false };
+    let slider = Control::Slider { value: 0.5, min: 0.0, max: 1.0, bound: false };
+    assert_eq!(crate::show_screen::caption("/go", "go", &button("")), "go");
+    assert_eq!(crate::show_screen::caption("/go", "GO", &button("GO")), "");
+    assert_eq!(crate::show_screen::caption("/stage/go", "stage/GO", &button("GO")), "stage");
+    assert_eq!(crate::show_screen::caption("/stage/a/go", "stage/a/GO", &button("GO")), "stage/a");
+    assert_eq!(crate::show_screen::caption("/s", "speed", &slider), "speed");
+}

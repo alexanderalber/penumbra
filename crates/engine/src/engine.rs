@@ -633,6 +633,8 @@ pub struct Engine {
     show: AtomicBool,
     /// Where show mode is kept across restarts; `None` keeps it in memory only (headless, tests).
     show_file: Mutex<Option<std::path::PathBuf>>,
+    /// Keeps the show screen's values across a crash ([`crate::show_values`]).
+    show_values: Arc<crate::show_values::Keeper>,
     state: Arc<StateShared>,
     /// OSC, audio, DMX, cameras, recordings, scans, the 3D mouse.
     hubs: Arc<Hubs>,
@@ -715,6 +717,7 @@ impl Engine {
             notice: Mutex::new(None),
             show: AtomicBool::new(false),
             show_file: Mutex::new(None),
+            show_values: Arc::default(),
             state: Arc::new(StateShared::default()),
             hubs: Arc::new(Hubs::new()),
             ticker: Arc::new(Ticker::default()),
@@ -800,12 +803,16 @@ impl Engine {
 
         let (stop_tx, stop_rx) = mpsc::channel::<()>();
         let project_session = session.clone();
+        let show_values = self.show_values.clone();
         let project = std::thread::Builder::new()
             .name("project".into())
             .spawn(move || {
                 while let Err(RecvTimeoutError::Timeout) = stop_rx.recv_timeout(POLL_INTERVAL) {
                     project_session.poll(Instant::now());
+                    show_values.tick(&project_session);
                 }
+                // The last change before the project closes (or the app ends in show mode).
+                show_values.tick(&project_session);
             })
             .map_err(spawn_error)?;
         *lock(&self.stop_project) = Some(stop_tx);
@@ -999,6 +1006,8 @@ impl Engine {
     /// ending on an error of its own.
     pub fn record_crash(&self, reason: &str) {
         let file = lock(&self.crash_marker).clone();
+        // Before anything that may hang on the lost device: the show screen's last values.
+        self.show_values.tick(&self.session());
         let Some(file) = file else { return };
         let project = self.session().dir().to_path_buf();
         let time = self.output().time.or(self.view().time);
@@ -1015,14 +1024,27 @@ impl Engine {
     }
 
     /// Where show mode is kept across restarts. Reads it: when the file says show mode is on,
-    /// it is on from now (the project locked). Returns whether it is.
+    /// it is on from now (the project locked), and the values the show screen's controls had
+    /// before a crash or close are set again ([`crate::show_values`], kept beside `file`).
+    /// Returns whether it is on.
     pub fn set_show_file(&self, file: Option<std::path::PathBuf>) -> bool {
         let on = file.as_deref().is_some_and(|f| crate::show::read(f).on);
+        let values = file.as_deref().map(|f| f.with_file_name(crate::show_values::FILE));
         *lock(&self.show_file) = file;
         if on {
             self.show.store(true, Ordering::Release);
-            self.session().set_locked(true);
+            let session = self.session();
+            session.set_locked(true);
+            // Before the keeper knows its file, so it cannot write the file's values over the
+            // kept ones first.
+            if let Some(values) = values.as_deref().filter(|v| v.exists()) {
+                match crate::show_values::restore(values, &session) {
+                    Ok(n) => log::info!("show mode: {n} values of the show screen set as before the restart"),
+                    Err(e) => log::warn!("show mode: the show screen's kept values are not used: {e}"),
+                }
+            }
         }
+        self.show_values.set_file(values);
         on
     }
 
@@ -1048,6 +1070,11 @@ impl Engine {
         }
         session.set_locked(on);
         self.show.store(on, Ordering::Release);
+        if !on {
+            // The values the show screen set reach the file at once, not a second later: show
+            // mode no longer restores them after a crash.
+            session.flush(Instant::now());
+        }
         log::info!("show mode {}", if on { "on" } else { "off" });
         Ok(())
     }

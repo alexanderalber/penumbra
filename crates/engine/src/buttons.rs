@@ -222,6 +222,17 @@ pub fn show_controls(
     found.into_iter().map(|(_, c)| c).collect()
 }
 
+/// The values that may change in show mode, by node path: the `value` of every toggle button
+/// and slider flagged `show` whose `value` follows no channel. A momentary button has no value
+/// to keep (it is held, not set). Show mode keeps these across a crash ([`crate::show_values`]).
+pub fn kept_values(net: &Network, types: &NodeTypes) -> BTreeMap<String, Value> {
+    net.nodes()
+        .filter(|n| on_show_screen(types, n) && !n.is_bound("value"))
+        .filter(|n| n.kind == SLIDER || param(types, n, "mode").and_then(Value::as_str) == Some(TOGGLE))
+        .filter_map(|n| Some((net.path_of(n.id)?.to_string(), param(types, n, "value")?.clone())))
+        .collect()
+}
+
 /// While show mode locks `session`, sets the values `ops` set if each sets the `value` of a
 /// toggle button or slider flagged `show`: live, without a history entry, written to the file
 /// after show mode ends. Returns `Ok(false)` and does nothing when the project is not locked

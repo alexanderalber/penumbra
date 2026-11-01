@@ -47,6 +47,7 @@ pub mod scan_scene;
 pub mod scan_synthetic;
 pub mod shapes;
 pub mod show;
+pub mod show_values;
 pub mod spout;
 pub mod state;
 pub mod state_commands;

@@ -80,10 +80,18 @@ pub fn read(file: &Path) -> Kept {
 
 pub fn write(file: &Path, kept: &Kept) -> Result<(), Error> {
     let text = serde_json::to_string_pretty(kept).map_err(|e| Error::new(e.to_string()))?;
+    write_atomic(file, &text)
+}
+
+/// Writes `text` into `file` through a temporary file beside it, so a crash in the middle
+/// leaves the old content or the new, never half of it.
+pub fn write_atomic(file: &Path, text: &str) -> Result<(), Error> {
     if let Some(dir) = file.parent() {
         std::fs::create_dir_all(dir).map_err(|e| Error::new(format!("{}: {e}", dir.display())))?;
     }
-    let tmp = file.with_extension("json.tmp");
+    let mut tmp = file.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
     std::fs::write(&tmp, text).map_err(|e| Error::new(format!("{}: {e}", tmp.display())))?;
     std::fs::rename(&tmp, file).map_err(|e| Error::new(format!("{}: {e}", file.display())))
 }
@@ -170,7 +178,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "show.lock",
         "Show mode on: the project is locked against edits and moves, not written and not reloaded from disk; \
          OSC, DMX and the control channel stay live, and so do the values of the show screen's controls \
-         (no history entry, saved after unlock); after a crash (exit code 3) the app starts again with the clock running. \
+         (no history entry, kept across restarts, saved at unlock); after a crash (exit code 3) the app starts again with the clock running. \
          Kept across restarts",
         show_lock,
     );

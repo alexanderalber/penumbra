@@ -277,7 +277,7 @@ channel: `chan.press {path}` (or `{path, down}` to hold and let go) presses a bu
 `node.set` moves a slider.
 With `show` ticked, the control also appears on the show screen while
 [show mode](getting-started.md#show-mode) is on. There it still works, but a change makes no
-undo step and is saved only after show mode ends.
+undo step and is saved only after show mode ends. A crash restart in show mode keeps it.
 
 ### Keys
 

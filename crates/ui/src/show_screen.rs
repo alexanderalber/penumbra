@@ -1,7 +1,8 @@
 //! The controls on the show screen: every `chan.button` and `chan.slider` with `show` on, as a
 //! row of widgets below Unlock ([`controls`]). They are drawn and pressed like the controls on
-//! a node body ([`node_controls`]), only larger and with a name above each. The engine lists
-//! them and sets their values while show mode locks the project
+//! a node body ([`node_controls`]), only larger and with a name above ([`caption`]). The
+//! order is the network's: top to bottom, then left to right. The engine lists them and sets
+//! their values while show mode locks the project
 //! ([`penumbra_engine::buttons::show_controls`], [`penumbra_engine::buttons::set_in_show`]).
 
 use std::collections::BTreeMap;
@@ -22,6 +23,18 @@ const ZOOM: f32 = 1.5;
 const GAP: f32 = 16.0;
 /// Height of the name above a control, in points.
 const CAPTION: f32 = 20.0;
+
+/// The name above a control: its label from the list. A button with a `label` shows that on its
+/// face already, so only the component it sits in stays above it (nothing at the top level).
+/// The cell keeps its height either way, so the controls of a row stay level.
+pub fn caption<'a>(path: &'a str, label: &'a str, control: &node_controls::Control) -> &'a str {
+    match control {
+        node_controls::Control::Button { label: face, .. } if !face.is_empty() => {
+            path.rsplit_once('/').map_or("", |(parent, _)| parent.trim_start_matches('/'))
+        }
+        _ => label,
+    }
+}
 
 /// What [`controls`] reads.
 pub struct Inputs<'a> {
@@ -70,13 +83,16 @@ pub fn controls(
         else {
             continue;
         };
-        painter.text(
-            pos2(x + WIDTH / 2.0, y + CAPTION / 2.0),
-            Align2::CENTER_CENTER,
-            &shown.label,
-            FontId::proportional(14.0),
-            theme::TEXT,
-        );
+        let caption = caption(&shown.path, &shown.label, &control);
+        if !caption.is_empty() {
+            painter.text(
+                pos2(x + WIDTH / 2.0, y + CAPTION / 2.0),
+                Align2::CENTER_CENTER,
+                caption,
+                FontId::proportional(14.0),
+                theme::TEXT,
+            );
+        }
         let body = Rect::from_min_size(pos2(x, y + CAPTION), vec2(WIDTH, body_h));
         painter.rect_filled(body, CornerRadius::same(6), Color32::from_gray(38));
         let rect = node_controls::rect(body, ZOOM, 0.0);

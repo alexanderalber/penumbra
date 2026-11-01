@@ -227,14 +227,20 @@ While show mode is on:
 - **The editor:** shows a plain screen instead of the network. Without thumbnails and viewer
   the cook pass gets shorter.
 - **Controls on the show screen:** every `chan.button` and `chan.slider` with `show` ticked
-  appears below Unlock, named by its `label` or its node name. Pressing, switching and
-  dragging work there as on the node. `chan.press` and `node.set` on their `value` work too.
-  These changes make no undo step and are not saved during the show. After `show.unlock` they
-  stay and are saved about a second later. `show.status` lists the controls with their values.
+  appears below Unlock, top to bottom, then left to right as the nodes sit in the network.
+  A slider and a button without a `label` have their name above them (`label` or node name);
+  a button with a `label` shows it on its face. Pressing, switching and dragging work there as
+  on the node. `chan.press` and `node.set` on their `value` work too. These changes make no
+  undo step and are not written into `project.ron` during the show. After `show.unlock` they
+  stay and are saved at once. `show.status` lists the controls with their values.
 - **After a crash:** when the GPU device is lost or the editor fails (exit code 3), penumbra
-  starts again at once, without a message, and the clock runs on where it would be. After 3
-  restarts within 10 minutes it stops trying and ends as usual.
+  starts again at once, without a message, and the clock runs on where it would be. The show
+  screen's switches and sliders keep the values they had. After 3 restarts within 10 minutes
+  it stops trying and ends as usual.
 
 A copied or tagged project folder plus show mode is then the frozen state for a performance.
-Show mode survives a restart; it is kept in `%LOCALAPPDATA%\penumbra\show-mode.json`.
+Show mode survives a restart; it is kept in `%LOCALAPPDATA%\penumbra\show-mode.json`. The
+show screen's values wait beside it in `show-values.json` until show mode ends. They are set
+again at the next start in show mode, also after closing the app. Values for another project,
+or for a `project.ron` edited meanwhile, are ignored.
 `show.status` says whether it is on and how many restarts are left.

@@ -177,3 +177,77 @@ fn in_show_mode_flagged_controls_change_without_history_and_are_saved_after_unlo
     let r = f.call("node.set", json!({"path": "/s", "params": {"value": 0.2}}));
     assert_eq!(r["history"], "new", "{r}");
 }
+
+/// A second engine on the project folder of `f`, as the app after a restart.
+fn restarted(f: &Fixture) -> std::sync::Arc<crate::Engine> {
+    let types = std::sync::Arc::new(penumbra_ops::builtin_types().unwrap());
+    let session =
+        penumbra_project::Session::open(f._dir.path(), types, &penumbra_project::content::Content::default())
+            .unwrap();
+    crate::Engine::start(std::sync::Arc::new(session)).unwrap()
+}
+
+fn param(e: &crate::Engine, path: &str) -> penumbra_core::Value {
+    let net = e.session().doc().snapshot();
+    let node = net.node(net.resolve(&path.parse().unwrap()).unwrap()).unwrap();
+    let desc = e.types().desc(&node.kind).unwrap();
+    node.param(desc, "value").unwrap().clone()
+}
+
+#[test]
+fn show_screen_values_survive_a_restart_in_show_mode() {
+    use penumbra_core::Value;
+    let f = Fixture::new("show_values");
+    let data = f._dir.join("data");
+    let show_file = data.join(crate::show::FILE);
+    let kept = data.join(crate::show_values::FILE);
+    f.engine.set_show_file(Some(show_file.clone()));
+    f.call(
+        "node.create",
+        json!({"path": "/t", "kind": "chan.button", "params": {"mode": "toggle", "show": true}}),
+    );
+    f.call("node.create", json!({"path": "/s", "kind": "chan.slider", "params": {"show": true}}));
+    f.call("node.create", json!({"path": "/m", "kind": "chan.button", "params": {"show": true}}));
+    f.call("node.create", json!({"path": "/plain", "kind": "chan.slider", "params": {"value": 0.3}}));
+    eventually("autosave", || f.file().contains("\"/plain\""));
+    let file = f.file();
+    f.call("show.lock", json!({}));
+    f.call("chan.press", json!({"path": "/t"}));
+    f.call("node.set", json!({"path": "/s", "params": {"value": 0.7}}));
+    eventually("the values kept", || std::fs::read_to_string(&kept).is_ok_and(|t| t.contains("0.7")));
+    let text = std::fs::read_to_string(&kept).unwrap();
+    assert!(text.contains(r#""/t": true"#) && !text.contains("/m") && !text.contains("/plain"), "{text}");
+    // A crash: the app ends without unlocking, project.ron still holds the old values.
+    f.engine.shutdown();
+    assert_eq!(f.file(), file, "project.ron untouched");
+
+    let g = restarted(&f);
+    assert!(g.set_show_file(Some(show_file.clone())));
+    assert_eq!(param(&g, "/t"), Value::Bool(true));
+    assert_eq!(param(&g, "/s"), Value::Float(0.7));
+    assert_eq!(param(&g, "/plain"), Value::Float(0.3));
+    assert!(g.session().status(std::time::Instant::now()).unsaved, "live values, not yet in the file");
+    g.shutdown();
+    assert!(kept.exists(), "still kept while show mode is on");
+
+    // project.ron edited meanwhile: the kept values do not fit it any more.
+    std::fs::write(g.session().file(), file.replace("0.3", "0.4")).unwrap();
+    let h = restarted(&f);
+    assert!(h.set_show_file(Some(show_file.clone())));
+    assert_eq!(param(&h, "/s"), Value::Float(0.0), "ignored after an external edit");
+    h.shutdown();
+
+    // A broken file is ignored; unlocking writes the project and deletes the file.
+    std::fs::write(&kept, "{ values: nope").unwrap();
+    let i = restarted(&f);
+    assert!(i.set_show_file(Some(show_file.clone())));
+    assert_eq!(param(&i, "/t"), Value::Bool(false));
+    let registry = crate::engine_registry(&i);
+    registry.dispatch("node.set", &json!({"path": "/s", "params": {"value": 0.9}}));
+    eventually("kept again", || std::fs::read_to_string(&kept).is_ok_and(|t| t.contains("0.9")));
+    assert_eq!(registry.dispatch("show.unlock", &json!({}))["ok"], true);
+    let saved = std::fs::read_to_string(i.session().file()).unwrap();
+    assert!(saved.contains(r#""value": 0.9"#), "written at unlock: {saved}");
+    eventually("deleted after unlock", || !kept.exists());
+    i.shutdown();
+}
