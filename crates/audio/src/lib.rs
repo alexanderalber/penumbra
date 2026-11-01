@@ -19,9 +19,15 @@
 //! - [`reverb`]: the room [`Reverb`] of every output, a feedback delay network.
 //! - [`resample`]: a streaming [`Resampler`] between any two sample rates, and the kernel the
 //!   playback engine shares.
+//! - [`beats`]: the signal chain around the Beat This! beat and downbeat network (offline):
+//!   its spectrogram, its chunks, the beat times from its output and a [`BeatGrid`] to look
+//!   up beat and bar phase.
 //! - [`measure`]: measures the delay from a push to the sound arriving back at an input.
 
 pub mod analysis;
+pub mod beats;
+#[cfg(test)]
+mod beats_tests;
 pub mod capture;
 pub mod envelope;
 pub mod fft;
@@ -41,6 +47,7 @@ mod reverb_tests;
 pub mod spectrum;
 
 pub use analysis::{Analyzer, Features, Settings};
+pub use beats::BeatGrid;
 pub use capture::{Block, Cursor, DeviceInfo, Hub, StreamStatus, Watch};
 pub use envelope::{Detect, Envelope};
 pub use file::SoundFile;
