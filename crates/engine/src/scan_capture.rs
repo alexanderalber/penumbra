@@ -43,7 +43,7 @@ use serde_json::{Value as Json, json};
 use crate::command::{CommandError, FnCommand, Registry, args};
 use crate::engine::Engine;
 use crate::projector::{CameraStream, Claim, projector_list, settle_of, timeout_of, wait_shown};
-use crate::scan::{Decoded, coding_of, fill_of, ms, write_decoded};
+use crate::scan::{CodingRecord, Decoded, coding_of, fill_of, ms, write_coding, write_decoded};
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
 
@@ -92,13 +92,13 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          level? (signal of the lit stripes, 1), levels? (instead of level: a scan per level, e.g. [1, 0.4], \
          merged per camera pixel, the surest decode winning, so the dim pass decodes where the bright one \
          clips; the first level's colour; 1 to 4 levels), frames? (keep the camera frames as PNG in \
-         out/<projector>/frames, frames_1, ... per level, false), verify? (take a picture only when two frames agree, true), \
+         out/<projector>/frames, frames_1, ... per level, each with coding.json, the record scan.decode reads; false), verify? (take a picture only when two frames agree, true), \
          retries? (frames that may disagree, 3), fill? (projector px, 32), options?: {min_contrast?, \
          saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture), \
          epipolar? (px a decoded pixel may lie off the geometry the decode as a whole obeys, else it is dropped: light thrown on by the walls decodes wrong, 4; 0 off)}, \
          coding? (gray: Gray code alone, 46 pictures at 1080p, good to about a projector pixel; gray_phase: \
          the Gray code down to stripes of half a period, then sines per axis, 54 pictures, good to a tenth of a \
-         pixel where the camera sees the sines; gray), period? (gray_phase: the sines' period, 8, 16, 32 or 64 \
+         pixel where the camera sees the sines; gray_phase), period? (gray_phase: the sines' period, 8, 16, 32 or 64 \
          projector px; 16), steps? (gray_phase: sines per axis, 3 to 16; 8), gamma? (gray_phase: the \
          projector's response, light = signal ^ gamma, so the sines leave it as sines; measure it or leave \
          2.2; 1 to 3)}",
@@ -619,6 +619,7 @@ fn scan_projector(
             std::fs::remove_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
         }
         std::fs::create_dir_all(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+        write_coding(dir, &CodingRecord::new(s.coding, Some(s.gamma), size))?;
     }
     let mut c = Collect {
         decoder: None,
@@ -943,6 +944,7 @@ pub fn capture_watched(e: &Engine, a: &CaptureArgs, watch: Option<&Watch<'_>>) -
             passes.push(Pass { level: *level, scanned, margins });
         }
         let decoded = write_decoded(&decoders, &a.options, fill, &folder)?;
+        write_coding(&folder, &CodingRecord::new(coding, Some(gamma), patterns.size()))?;
         warnings.extend(decoded.warnings.iter().map(|w| format!("{path}: {w}")));
         let first = passes.first().ok_or("no scan")?;
         let (rise, fall) = (first.scanned.rise, first.scanned.fall);

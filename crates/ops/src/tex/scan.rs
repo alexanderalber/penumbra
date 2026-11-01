@@ -90,7 +90,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("Projector pixels the decode fills in from measured neighbours"),
         )
         .param(
-            ParamSpec::choice("coding", &["gray", "gray_phase"])
+            ParamSpec::choice("coding", &["gray_phase", "gray"])
                 .more()
                 .doc("How the scan tells the projector's pixels apart")
                 .choice_doc("gray", "Gray-code stripes alone: 46 pictures at 1080p, good to about a projector pixel")

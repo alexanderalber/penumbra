@@ -237,8 +237,8 @@ fn plan(e: &Engine, nodes: Option<&[NodePath]>) -> CmdResult<Plan> {
             fill: number(&net, e, id, "fill")
                 .map_or(crate::scan::DEFAULT_FILL, |f| f.clamp(0.0, 1024.0) as u32),
             coding: match text(&net, e, id, "coding") {
-                "gray_phase" => "gray_phase".to_string(),
-                _ => "gray".to_string(),
+                "gray" => "gray".to_string(),
+                _ => "gray_phase".to_string(),
             },
             gamma: number(&net, e, id, "gamma").map_or(crate::scan_capture::DEFAULT_GAMMA, |g| g as f32),
         });

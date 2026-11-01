@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use penumbra_calib::objects;
 use penumbra_calib::scan::{self, Coding, Decoder, Options, Patterns, Status};
 use penumbra_gpu::Pixels;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, FnCommand, Registry, args};
@@ -96,9 +96,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Decode a structured light scan from the camera's pictures of tex.scan_pattern 0, 1, 2, ... \
          (files in a folder, sorted by name, numbers by value). Writes cam_to_proj.exr and \
          proj_to_cam.exr (maps for tex.remap), scene.png (the scene as the projector sees it) and \
-         quality.png; {frames (folder, relative to the project; or a list of folders: scans of one projector \
-         at different levels of light, merged per camera pixel, the surest decode winning, the first's colour), projector?: [w, h] (1920, 1080), \
-         coding?, period?, steps? (as scan.capture took them), out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, \
+         quality.png, and coding.json (how the scan was coded); {frames (folder, relative to the project; or a list of folders: scans of one projector \
+         at different levels of light, merged per camera pixel, the surest decode winning, the first's colour), projector?: [w, h] (the recorded size, else 1920, 1080), \
+         coding?, period?, steps? (as scan.capture took them; by default what coding.json in the frames folder or the one above records, \
+         else plain Gray or the default gray_phase by the number of pictures), out? (folder, default frames/decoded), fill? (projector px, 32), options?: {min_contrast?, \
          saturation?, min_confidence?, tolerance?, window? (camera px round a pixel over which the bits it resolves are judged, 7; 0 the whole picture), \
          epipolar? (px a decoded pixel may lie off the geometry the decode as a whole obeys, else it is dropped: light thrown on by the walls decodes wrong, 4; 0 off)}}",
         move |p| {
@@ -167,10 +168,10 @@ pub enum Frames {
 /// Most frame folders `scan.decode` merges.
 const MAX_LEVELS: usize = 4;
 
-/// The coding the scan commands' `coding`, `period` and `steps` ask for: plain Gray code unless
-/// `coding` is `gray_phase`, whose sines are 16 pixels and 8 steps unless given.
+/// The coding the scan commands' `coding`, `period` and `steps` ask for: Gray code plus sines
+/// (16 pixels, 8 steps unless given) unless `coding` is `gray`.
 pub(crate) fn coding_of(coding: Option<&str>, period: Option<u32>, steps: Option<u32>) -> CmdResult<Coding> {
-    let coding = match coding.unwrap_or("gray") {
+    let coding = match coding.unwrap_or("gray_phase") {
         "gray" if period.is_some() || steps.is_some() => {
             return Err("`period` and `steps` are for `coding: gray_phase`".into());
         }
@@ -185,13 +186,126 @@ pub(crate) fn coding_of(coding: Option<&str>, period: Option<u32>, steps: Option
     Ok(coding)
 }
 
+/// The file that records how a scan was coded, in the folder of its kept frames and in the
+/// folder of its maps: `{coding, period?, steps?, gamma?, projector}`.
+pub const CODING_FILE: &str = "coding.json";
+
+/// What [`CODING_FILE`] holds.
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct CodingRecord {
+    pub coding: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub period: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub steps: Option<u32>,
+    /// The projector's gamma the sines assumed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gamma: Option<f32>,
+    /// The projector's size in pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projector: Option<[u32; 2]>,
+}
+
+impl CodingRecord {
+    pub(crate) fn new(coding: Coding, gamma: Option<f32>, (w, h): (u32, u32)) -> Self {
+        let (period, steps) = match coding {
+            Coding::Gray => (None, None),
+            Coding::GrayPhase { period, steps } => (Some(period), Some(steps)),
+        };
+        let gamma = gamma.filter(|_| period.is_some());
+        Self { coding: coding.name().into(), period, steps, gamma, projector: Some([w, h]) }
+    }
+
+    /// The coding recorded, checked like a command's.
+    pub(crate) fn coding(&self) -> CmdResult<Coding> {
+        coding_of(Some(&self.coding), self.period, self.steps)
+    }
+}
+
+/// Writes `record` as [`CODING_FILE`] into `folder`.
+pub(crate) fn write_coding(folder: &Path, record: &CodingRecord) -> CmdResult<()> {
+    let text = serde_json::to_string_pretty(record).map_err(|e| format!("{CODING_FILE}: {e}"))?;
+    write_file(&folder.join(CODING_FILE), text.into_bytes())?;
+    Ok(())
+}
+
+/// Largest [`CODING_FILE`] read; a real one is under 200 bytes.
+const MAX_CODING_BYTES: u64 = 4096;
+
+/// The record of a scan's frames in `frames` or, failing that, in the folder above (where a
+/// scan with kept frames wrote its maps); `None` when neither has one. A record that cannot be
+/// read is an error that says so.
+pub(crate) fn read_coding(frames: &Path) -> CmdResult<Option<CodingRecord>> {
+    let candidates = [Some(frames), frames.parent()];
+    for folder in candidates.into_iter().flatten() {
+        let file = folder.join(CODING_FILE);
+        let Ok(meta) = std::fs::metadata(&file) else { continue };
+        if meta.len() > MAX_CODING_BYTES {
+            return Err(format!("{} is too large for a coding record", file.display()).into());
+        }
+        let bad =
+            |e: String| CommandError(format!("{}: {e} (give `coding` to decode anyway)", file.display()));
+        let text = std::fs::read_to_string(&file).map_err(|e| bad(e.to_string()))?;
+        let record: CodingRecord = serde_json::from_str(&text).map_err(|e| bad(e.to_string()))?;
+        return Ok(Some(record));
+    }
+    Ok(None)
+}
+
+/// How a decode knows the coding of its frames, as its reply's `coding_from` says.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CodingFrom {
+    /// The command's `coding`, `period` or `steps`.
+    Asked,
+    /// The scan folder's [`CODING_FILE`].
+    Recorded,
+    /// The number of pictures: plain Gray (scans from before the record) or the default sines.
+    Counted,
+}
+
+impl CodingFrom {
+    fn name(self) -> &'static str {
+        match self {
+            CodingFrom::Asked => "asked",
+            CodingFrom::Recorded => "recorded",
+            CodingFrom::Counted => "picture count",
+        }
+    }
+}
+
+/// The coding and projector size a decode of `frames` uses: what `a` asks for, else what the
+/// folder recorded, else what the number of pictures says (plain Gray or the default sines).
+/// The record's gamma comes along for the record of the maps.
+fn decode_coding(a: &DecodeArgs, frames: &Path) -> CmdResult<(Coding, [u32; 2], Option<f32>, CodingFrom)> {
+    if a.coding.is_some() || a.period.is_some() || a.steps.is_some() {
+        let coding = coding_of(a.coding.as_deref(), a.period, a.steps)?;
+        return Ok((coding, a.projector.unwrap_or(DEFAULT_PROJECTOR), None, CodingFrom::Asked));
+    }
+    if let Some(record) = read_coding(frames)? {
+        let projector = a.projector.or(record.projector).unwrap_or(DEFAULT_PROJECTOR);
+        return Ok((record.coding()?, projector, record.gamma, CodingFrom::Recorded));
+    }
+    let [pw, ph] = a.projector.unwrap_or(DEFAULT_PROJECTOR);
+    let count = pictures(frames)?.len();
+    let mut counts = Vec::new();
+    for coding in [Coding::Gray, Coding::gray_phase()] {
+        let n = Patterns::with_coding(pw, ph, coding).map_err(CommandError)?.count();
+        if n == count {
+            return Ok((coding, [pw, ph], None, CodingFrom::Counted));
+        }
+        counts.push(format!("{n} ({})", coding.name()));
+    }
+    Err(CommandError(format!(
+        "{} holds {count} picture(s) and no {CODING_FILE}; a scan of a {pw} x {ph} projector has {}: give `coding`, `period` and `steps` as the scan took them",
+        frames.display(),
+        counts.join(" or ")
+    )))
+}
+
 /// Decodes the pictures in `a.frames` (relative to `dir`) and writes the results; the reply
 /// counts what was found.
 pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
     let started = Instant::now();
-    let [pw, ph] = a.projector.unwrap_or(DEFAULT_PROJECTOR);
-    let coding = coding_of(a.coding.as_deref(), a.period, a.steps)?;
-    let patterns = Patterns::with_coding(pw, ph, coding).map_err(CommandError)?;
     a.options.check().map_err(CommandError)?;
     let fill = fill_of(a.fill)?;
     let folders: Vec<PathBuf> = match &a.frames {
@@ -201,18 +315,22 @@ pub fn decode(dir: &Path, a: &DecodeArgs) -> CmdResult<Json> {
     if folders.is_empty() || folders.len() > MAX_LEVELS {
         return Err(format!("`frames` is a folder or a list of 1 to {MAX_LEVELS}").into());
     }
+    let first = folders.first().ok_or("no frames")?;
+    let (coding, [pw, ph], gamma, from) = decode_coding(a, first)?;
+    let patterns = Patterns::with_coding(pw, ph, coding).map_err(CommandError)?;
     let mut decoders = Vec::with_capacity(folders.len());
     for frames in &folders {
         decoders.push(decode_folder(frames, patterns)?);
     }
     let read = started.elapsed();
-    let first = folders.first().ok_or("no frames")?;
     let out = match &a.out {
         Some(o) => dir.join(o),
         None => first.join("decoded"),
     };
     let decoded = write_decoded(&decoders, &a.options, fill, &out)?;
+    write_coding(&out, &CodingRecord::new(coding, gamma, (pw, ph)))?;
     let mut reply = decoded.fields.clone();
+    reply.insert("coding_from".into(), json!(from.name()));
     reply.insert("message".into(), json!(decoded.message()));
     reply.insert("warnings".into(), json!(decoded.warnings));
     reply.insert("notes".into(), json!(decoded.notes));
@@ -1102,8 +1220,9 @@ mod tests {
 
     #[test]
     fn coding_args() {
-        assert_eq!(coding_of(None, None, None).unwrap(), Coding::Gray);
-        assert_eq!(coding_of(Some("gray_phase"), None, None).unwrap(), Coding::gray_phase());
+        assert_eq!(coding_of(None, None, None).unwrap(), Coding::gray_phase());
+        assert_eq!(coding_of(Some("gray"), None, None).unwrap(), Coding::Gray);
+        assert_eq!(coding_of(None, Some(32), None).unwrap(), Coding::GrayPhase { period: 32, steps: 8 });
         assert_eq!(
             coding_of(Some("gray_phase"), Some(32), Some(4)).unwrap(),
             Coding::GrayPhase { period: 32, steps: 4 }
@@ -1112,6 +1231,29 @@ mod tests {
         assert!(coding_of(Some("gray_phase"), Some(12), None).unwrap_err().0.contains("`period`"));
         assert!(coding_of(Some("gray_phase"), None, Some(2)).unwrap_err().0.contains("`steps`"));
         assert!(coding_of(Some("sine"), None, None).unwrap_err().0.contains("gray or gray_phase"));
+    }
+
+    #[test]
+    fn a_coding_record_round_trips_and_a_broken_one_says_so() {
+        let dir = std::env::temp_dir().join(format!("penumbra-coding-record-{}", std::process::id()));
+        let frames = dir.join("frames");
+        std::fs::create_dir_all(&frames).unwrap();
+        assert_eq!(read_coding(&frames).unwrap(), None);
+        // The folder above counts too: a scan's maps lie beside its frames.
+        let phase = CodingRecord::new(Coding::GrayPhase { period: 32, steps: 4 }, Some(1.8), (1280, 800));
+        write_coding(&dir, &phase).unwrap();
+        let read = read_coding(&frames).unwrap().unwrap();
+        assert_eq!(read, phase);
+        assert_eq!(read.coding().unwrap(), Coding::GrayPhase { period: 32, steps: 4 });
+        let gray = CodingRecord::new(Coding::Gray, Some(2.2), (640, 480));
+        assert_eq!((gray.period, gray.steps, gray.gamma), (None, None, None));
+        write_coding(&frames, &gray).unwrap();
+        assert_eq!(read_coding(&frames).unwrap().unwrap().coding().unwrap(), Coding::Gray);
+        std::fs::write(frames.join(CODING_FILE), "{\"coding\": 7}").unwrap();
+        assert!(read_coding(&frames).unwrap_err().0.contains("give `coding`"));
+        std::fs::write(frames.join(CODING_FILE), "{\"coding\": \"sine\"}").unwrap();
+        assert!(read_coding(&frames).unwrap().unwrap().coding().is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

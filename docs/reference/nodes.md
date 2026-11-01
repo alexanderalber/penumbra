@@ -792,7 +792,7 @@ Outputs:
 | `level` *(more)* | float | `1` | 0.05 to 1 | Brightness of the lit stripes; lower it only if the camera clips even with its exposure turned down |
 | `second_level` *(more)* | float | `0` | 0 to 1 | A second pass at this brightness, merged per camera pixel with the first, the surer decode winning: a dimmer one decodes where the first clips (white surfaces, highlights). 0: one pass |
 | `fill` *(more)* | int | `32` | 0 to 128 (soft) | Projector pixels the decode fills in from measured neighbours |
-| `coding` *(more)* | gray \| gray_phase | `"gray"` |  | How the scan tells the projector's pixels apart; gray: Gray-code stripes alone: 46 pictures at 1080p, good to about a projector pixel; gray_phase: Gray-code stripes down to 8 pixels, then 8 sines across and 8 down: 54 pictures, good to a tenth of a pixel where the camera sees the sines |
+| `coding` *(more)* | gray_phase \| gray | `"gray_phase"` |  | How the scan tells the projector's pixels apart; gray_phase: Gray-code stripes down to 8 pixels, then 8 sines across and 8 down: 54 pictures, good to a tenth of a pixel where the camera sees the sines; gray: Gray-code stripes alone: 46 pictures at 1080p, good to about a projector pixel |
 | `gamma` *(more)* | float | `2.2` | 1 to 3 | The projector's response to its signal (light = signal ^ gamma), so its sines stay sines; measure it or leave 2.2. Does something only with coding gray_phase. |
 
 ### tex.scan_pattern

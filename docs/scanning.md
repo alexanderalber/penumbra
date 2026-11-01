@@ -75,8 +75,9 @@ listed, whose light would fall on the scene); what they show is replaced on
 the output board, the network is not changed, and when the command ends (however it ends) they
 show their pictures again. The patterns are drawn in the projector's own pixels, past its
 colour correction (a projector dimmed by `projector.match` still shows full contrast). Each
-projector takes 2 + 2 (log2 width + log2 height) pictures, 46 at 1920 x 1080, about a quarter
-of a second each.
+projector takes 54 pictures at 1920 x 1080, about a quarter of a second each: Gray-code
+stripes plus sines (see "Finer than a pixel" below). Plain Gray code (`"coding": "gray"`) takes
+2 + 2 (log2 width + log2 height) pictures, 46 at 1920 x 1080.
 
 A picture is taken once the pattern was presented, the camera's latency (measured below, plus a
 frame) and `settle` (s, 0.05) passed, the camera's picture changed from the one taken before
@@ -98,7 +99,8 @@ The results go into `out` (default `scan/`), one folder per projector named by i
 | `proj_to_cam.exr` | projector size; per projector pixel the camera position, blue 1 where measured, 0.5 where filled in from a neighbour, -1 where none |
 | `scene.png` | the scene as the projector sees it |
 | `quality.png` | per camera pixel what was decoded (grey by confidence; black: not reached; magenta: clipped; blue: ambiguous; red: outliers) |
-| `frames/00.png` ... | the camera's pictures, with `frames: true` only (`frames_1/` ... for further `levels`) |
+| `coding.json` | how the scan was coded: `coding`, `period`, `steps`, `gamma` and the projector's size |
+| `frames/00.png` ... | the camera's pictures, with `frames: true` only (`frames_1/` ... for further `levels`), each folder with its own `coding.json` |
 
 The reply has per projector the camera pixels decoded, the projector pixels measured, the bits
 the camera resolves (`resolved_bits` of `bits`), the median margin of every bit's pattern
@@ -135,32 +137,40 @@ own epipolar geometry and drops pixels further than `options.epipolar` (4 projec
 turns it off) from it; the reply's `off_geometry` counts them. Maps decoded before this check
 keep their wrong pixels: decode the kept frames again.
 
-**Finer than a pixel: `coding: gray_phase`.** Plain Gray code places a camera pixel to about
-one projector pixel. A camera that sees the projector coarser than its own pixels loses the
-finest stripes to grey, and the map gets coarser still. `"coding": "gray_phase"` stops the Gray
-code at stripes 8 pixels wide and adds 8 sines across and 8 down, 16 projector pixels long
+**Finer than a pixel: `coding: gray_phase`, the default.** Plain Gray code places a camera
+pixel to about one projector pixel. A camera that sees the projector coarser than its own pixels
+loses the finest stripes to grey, and the map gets coarser still. So a scan stops the Gray code
+at stripes 8 pixels wide and adds 8 sines across and 8 down, 16 projector pixels long
 (`period`, `steps`). The camera sees those sines clearly, and their phase places a pixel to a
-tenth of a projector pixel. A scan takes 54 pictures per projector at 1920 x 1080 instead of
-46. On a synthetic scene of crates and a pumpkin, with the camera at 0.57 pixels
-per projector pixel, the median error fell from 0.5 to 0.04 projector pixels, and the share off
-by more than a pixel from 17 % to 0.2 %.
+fraction of a projector pixel. A scan takes 54 pictures per projector at 1920 x 1080 instead of
+46, about 3 s more per projector. On a real wall and the lid of a box, flat faces fitted 4 to 8
+times closer than with plain Gray code (0.2 to 0.5 projector pixels instead of about 2). The
+sines also showed a step of a few millimetres between the lid's panel and its rim, which plain
+Gray code merged into one plane. On a synthetic scene of crates and a pumpkin, the median error
+fell from 0.5 to 0.04 projector pixels.
 
-Use it where the position matters below a pixel: `scan.relief`, smooth surfaces, fine relief
-such as a pumpkin's ribs. Masks, faces and blends gain little. The sines are grey levels, so the
-projector's response bends them: `gamma` (2.2) is that response, light = signal ^ gamma.
-Measure it or leave 2.2. On the synthetic scene, a `gamma` of 1 for a projector of 2.2 changed
-nothing measurable with 8 steps; 4 steps (`"steps": 4`, 46 pictures) are more sensitive to it.
-Camera pixels on the edge between a near and a far surface get a position between the two. The
-reply's `sine_amplitude` says how clearly the camera saw the sines, 0 to 1; under 0.3 is a
-warning (focus, or a longer `period`). `scan.decode` of kept frames needs the same `coding`,
-`period` and `steps`. `tex.scan_pattern` shows plain Gray code only.
+Plain Gray code (`"coding": "gray"`) is for cameras that do not resolve the Gray code's stripes
+down to 8 projector pixels: the decode warns then, since the sines land in the wrong period. A
+longer `period` (32 or 64) is the other way out. Scans made with `tex.scan_pattern` by hand are
+plain Gray code too. The sines are grey levels, so the projector's response bends them: `gamma`
+(2.2) is that response, light = signal ^ gamma. Measure it or leave 2.2. On the synthetic scene,
+a `gamma` of 1 for a projector of 2.2 changed nothing measurable with 8 steps; 4 steps
+(`"steps": 4`, 46 pictures) are more sensitive to it. Camera pixels on the edge between a near
+and a far surface get a position between the two. The reply's `sine_amplitude` says how clearly
+the camera saw the sines, 0 to 1; under 0.3 is a warning (focus, or a longer `period`).
+
+`scan.decode` of kept frames reads their coding from `coding.json` in the frames folder. A folder
+without one (scans from before the record, photos taken by hand) decodes as plain Gray code when
+it holds 46 pictures (at 1920 x 1080), as the default sines when it holds 54; otherwise give
+`coding`, `period` and `steps`. The reply's `coding_from` says which: `recorded`, `picture count`
+or `asked`.
 
 Kept frames of several levels merge again with `scan.decode` and a list:
 `"frames": ["scan/proj_a/frames", "scan/proj_a/frames_1"]`.
 
 Without a camera node (photos from another camera), the same files come from the pictures in a
 folder: a `tex.scan_pattern` into the projector, stepped through its `pattern` 0, 1, 2, ...
-(`scan.patterns` lists them), one picture of each, then
+(plain Gray code; `scan.patterns {"coding": "gray"}` lists them), one picture of each, then
 
     penumbra-cli ctl scan.decode '{"frames": "scan/a"}'
 

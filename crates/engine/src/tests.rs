@@ -1571,7 +1571,8 @@ fn live_traced_shapes_survive_a_rewritten_project_file_and_a_restart() {
 #[test]
 fn decode_a_scan_from_pictures_in_a_folder() {
     let f = Fixture::new("scan");
-    let r = f.call("scan.patterns", json!({}));
+    assert_eq!(f.call("scan.patterns", json!({}))["count"], 54);
+    let r = f.call("scan.patterns", json!({"coding": "gray"}));
     assert_eq!(r["count"], 46);
     assert_eq!(r["patterns"][3], "column 0 inverse");
     // A camera seeing a 40 x 24 projector at twice its size, shifted by (6, 4) camera pixels, in
@@ -1596,8 +1597,11 @@ fn decode_a_scan_from_pictures_in_a_folder() {
         // Numbered without padding: the sort must take 10 after 9.
         std::fs::write(frames.join(format!("shot{k}.png")), png).unwrap();
     }
+    // No record in the folder: the number of pictures says plain Gray code, as scans from before
+    // the record are.
     let r = f.call("scan.decode", json!({"frames": "captures", "projector": [pw, ph], "fill": 4}));
     assert_eq!(r["camera"], json!([96, 64]), "{r}");
+    assert_eq!((&r["coding"], &r["coding_from"]), (&json!("gray"), &json!("picture count")), "{r}");
     assert_eq!(r["camera_pixels"]["valid"], 80 * 48, "{r}");
     assert_eq!(r["camera_pixels"]["dark"], 96 * 64 - 80 * 48, "{r}");
     assert_eq!(r["projector_pixels"]["measured"], pw * ph, "{r}");
@@ -1665,8 +1669,11 @@ fn decode_a_gray_phase_scan_to_a_fraction_of_a_pixel() {
         let png = penumbra_gpu::encode_png_rgba8(cw, ch, rgba).unwrap();
         std::fs::write(frames.join(format!("{k:02}.png")), png).unwrap();
     }
-    // Plain Gray code expects another number of pictures.
-    assert!(f.fail("scan.decode", json!({"frames": "captures", "projector": [pw, ph]})).contains("picture"));
+    // Plain Gray code expects another number of pictures; without a coding the number tells.
+    let e = f.fail("scan.decode", json!({"frames": "captures", "projector": [pw, ph], "coding": "gray"}));
+    assert!(e.contains("picture"), "{e}");
+    let r = f.call("scan.decode", json!({"frames": "captures", "projector": [pw, ph], "out": "counted"}));
+    assert_eq!((&r["coding"], &r["coding_from"]), (&json!("gray_phase"), &json!("picture count")), "{r}");
     let r = f.call(
         "scan.decode",
         json!({"frames": "captures", "projector": [pw, ph], "coding": "gray_phase", "fill": 4}),

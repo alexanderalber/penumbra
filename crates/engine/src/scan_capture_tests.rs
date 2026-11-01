@@ -241,7 +241,8 @@ fn scan_capture_and_align_with_a_simulated_camera() {
         json!({"camera": "/cam", "projectors": ["/proj_a", "/proj_b"], "frames": true, "settle": 0.0}),
     );
     assert_eq!(r["scans"], json!(["scan/proj_a", "scan/proj_b"]), "{r}");
-    let pictures = Patterns::new(PW, PH).unwrap().count();
+    // Gray code plus sines unless asked otherwise.
+    let pictures = Patterns::with_coding(PW, PH, Coding::gray_phase()).unwrap().count();
     for p in r["projectors"].as_array().unwrap() {
         assert_eq!(p["projector"], json!([PW, PH]), "{r}");
         assert_eq!(p["camera"], json!([W, H]), "{r}");
@@ -259,13 +260,28 @@ fn scan_capture_and_align_with_a_simulated_camera() {
     }
     assert!(f.engine.board().state().stripes.is_empty() && f.engine.board().state().flat.is_empty());
     let dir = f.engine.session().dir().to_path_buf();
-    for file in ["cam_to_proj.exr", "proj_to_cam.exr", "scene.png", "quality.png"] {
+    for file in ["cam_to_proj.exr", "proj_to_cam.exr", "scene.png", "quality.png", "coding.json"] {
         assert!(dir.join("scan/proj_b").join(file).exists(), "{file}");
     }
-    // The frames kept decode alike.
+    // The frames kept decode alike: their folder records the coding, gamma and projector size.
+    let record: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("scan/proj_a/frames/coding.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        record,
+        json!({"coding": "gray_phase", "period": 16, "steps": 8, "gamma": 2.2, "projector": [PW, PH]})
+    );
     let frames = std::fs::read_dir(dir.join("scan/proj_a/frames")).unwrap().count();
-    assert_eq!(frames, pictures);
+    assert_eq!(frames, pictures + 1);
+    let d = f.call("scan.decode", json!({"frames": "scan/proj_a/frames"}));
+    assert_eq!(d["coding_from"], "recorded", "{d}");
+    assert_eq!((&d["coding"], &d["projector"]), (&json!("gray_phase"), &json!([PW, PH])), "{d}");
+    assert_eq!(d["camera_pixels"]["valid"], r["projectors"][0]["camera_pixels"]["valid"], "{d}");
+    // Without the record the number of pictures tells the coding.
+    std::fs::remove_file(dir.join("scan/proj_a/frames/coding.json")).unwrap();
+    std::fs::remove_file(dir.join("scan/proj_a/coding.json")).unwrap();
     let d = f.call("scan.decode", json!({"frames": "scan/proj_a/frames", "projector": [PW, PH]}));
+    assert_eq!((&d["coding_from"], &d["coding"]), (&json!("picture count"), &json!("gray_phase")), "{d}");
     assert_eq!(d["camera_pixels"]["valid"], r["projectors"][0]["camera_pixels"]["valid"], "{d}");
 
     // A scan of B alone: A, overlapping it, shows black meanwhile instead of its content.
@@ -354,7 +370,9 @@ fn scan_capture_with_sines_places_each_camera_pixel_to_a_fraction_of_a_pixel() {
     let id = net.resolve(&"/proj_a".parse().unwrap()).unwrap();
     let _camera = Camera::start(f.engine.clone(), key, vec![id]);
 
-    assert!(f.fail("scan.capture", json!({"camera": "/cam", "gamma": 2.0})).contains("`gamma`"));
+    assert!(
+        f.fail("scan.capture", json!({"camera": "/cam", "coding": "gray", "gamma": 2.0})).contains("`gamma`")
+    );
     let e = f.fail("scan.capture", json!({"camera": "/cam", "coding": "gray_phase", "gamma": 5.0}));
     assert!(e.contains("`gamma` is 1 to 3"), "{e}");
     let r = f.call(
@@ -458,7 +476,8 @@ fn scan_capture_keeps_in_step_through_a_flickering_late_camera() {
         ..Flaws::default()
     };
     let _camera = Camera::with(f.engine.clone(), key, vec![a], flaws);
-    let r = f.call("scan.capture", json!({"camera": "/cam", "settle": 0.05, "retries": 6}));
+    // Plain Gray: the simulated camera flickers on stripes only, not on sines.
+    let r = f.call("scan.capture", json!({"camera": "/cam", "settle": 0.05, "retries": 6, "coding": "gray"}));
     let p = &r["projectors"][0];
     // Every pair of pattern and inverse in step: one picture of the pattern before would shift
     // all after it, and the codes would no longer fit together.
@@ -490,13 +509,17 @@ fn scan_capture_at_two_levels_decodes_where_the_bright_one_clips() {
     let valid = |r: &serde_json::Value| r["projectors"][0]["camera_pixels"]["valid"].as_u64().unwrap();
 
     // The full level alone clips on the camera's left 34 of A's 80 columns.
-    let bright = f.call("scan.capture", json!({"camera": "/cam", "out": "bright", "settle": 0.0}));
+    // Plain Gray: the simulated camera has its glare on stripes only, not on sines.
+    let bright =
+        f.call("scan.capture", json!({"camera": "/cam", "out": "bright", "settle": 0.0, "coding": "gray"}));
     let clipped = bright["projectors"][0]["camera_pixels"]["clipped"].as_u64().unwrap();
     assert!(clipped > 1500, "{bright}");
     assert!(valid(&bright) < 2300, "{bright}");
 
-    let r = f
-        .call("scan.capture", json!({"camera": "/cam", "levels": [1.0, 0.4], "frames": true, "settle": 0.0}));
+    let r = f.call(
+        "scan.capture",
+        json!({"camera": "/cam", "levels": [1.0, 0.4], "frames": true, "settle": 0.0, "coding": "gray"}),
+    );
     let p = &r["projectors"][0];
     assert!((3700..=3840).contains(&valid(&r)), "{r}");
     assert!(p["camera_pixels"]["clipped"].as_u64().unwrap() < 50, "{r}");

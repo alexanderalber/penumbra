@@ -64,7 +64,11 @@ One projector at a time, into a fresh folder per scan (never overwrite the last 
 
     penumbra-cli ctl scan.capture '{"camera": "/cam", "projectors": ["/proj_a"], "out": "scans/scan1", "levels": [1, 0.5], "frames": true, "options": {"min_contrast": 0.01}}'
 
-then the same for every further projector. Each takes 45 to 60 s at full HD with two levels.
+then the same for every further projector. Each takes 50 to 70 s at full HD with two levels.
+The scan is Gray code plus sines (`coding: gray_phase`, the default, 54 pictures): it places
+camera pixels to a fraction of a projector pixel. `"coding": "gray"` (46 pictures, about a
+pixel) is for a camera that does not resolve the stripes down to 8 projector pixels; the reply
+warns then. A scan folder records its coding in `coding.json`, and `scan.decode` reads it.
 `levels: [1, 0.5]` scans twice and merges (the dim pass fills where the bright one clipped);
 list the bright level first. `frames: true` keeps the camera pictures, so a scan can be decoded
 again later without the hardware. `min_contrast` 0.01 lets dark faces decode at the dim level.
@@ -74,7 +78,8 @@ Check each projector's reply and files:
 | look at | good | bad, and what to do |
 |---|---|---|
 | decoded camera pixels | a large share of where the projector visibly lands | far fewer than last time: something moved, the room got brighter, or the projector was dimmed; check the hardware again |
-| `resolved_bits` of `bits` | 9 to 10 of 11 is normal for a full HD camera (the finest stripes are finer than it resolves) | 7 or fewer: out of focus, camera too far, or exposure wrong |
+| `resolved_bits` of `bits` | with the default sines every bit (9 of 9 at full HD); plain Gray: 9 to 10 of 11 is normal for a full HD camera | a bit missing with sines: a warning, the sines land in the wrong period; refocus, `"period": 32`, or `"coding": "gray"`. 7 or fewer with plain Gray: out of focus, camera too far, or exposure wrong |
+| `sine_amplitude` | 0.5 or more (the laptop day's pumpkin: 0.57 to 0.91) | under 0.3 warns: focus the projector and the camera, or a longer `period` |
 | `quality.png` | grey where the projector lands | magenta: clipped, lower exposure or add a dim level; blue: ambiguous; red: outliers; black on a surface the projector lights: too dark, add `min_contrast` 0.01 or a brighter level |
 | `off_geometry` | small (under a few percent) | large: light bounced off nearby light walls was decoded; the epipolar check drops it, but if most of the decode is off, rearrange or darken the walls |
 | warnings | read them all | a frame that never settled, a pair that had to be retaken: scan again |
