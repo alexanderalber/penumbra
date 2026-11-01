@@ -39,6 +39,8 @@ use serde_json::Value;
 
 fn main() -> std::process::ExitCode {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    // The commit the build script found, for the About window and `app.about`.
+    penumbra_ui::about::set_build(option_env!("PENUMBRA_COMMIT"), option_env!("PENUMBRA_COMMIT_DATE"));
     match run() {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {

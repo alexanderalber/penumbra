@@ -4,6 +4,7 @@
 //!
 //! Layering: this is the only crate besides the apps that may use egui/eframe.
 
+pub mod about;
 pub mod add_dialog;
 pub mod app;
 pub mod arrange;

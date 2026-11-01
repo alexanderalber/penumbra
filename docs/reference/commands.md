@@ -11,6 +11,12 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `ping` | Check that the control channel answers |
 
+## app
+
+| command | |
+|---|---|
+| `app.about` | What the About window shows: version, commit, licence, the third-party notices (their file and each licence with its number of crates), trademarks; {notices?}. notices: true opens the notices in the browser (not in headless runs) |
+
 ## audio
 
 | command | |

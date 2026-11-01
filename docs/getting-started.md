@@ -25,7 +25,10 @@ bar opens the project menu: **New project** (pick or make an empty folder), **Op
 opened projects, the demo, the examples that come with penumbra, and the project's folder in the
 file manager. The project that was open is written first; the window and the outputs stay. The
 same from the [control channel](control.md): `project.new`, `project.open`, `project.save_as`,
-`project.demo`, `project.examples`, `project.example`, `project.recent`.
+`project.demo`, `project.examples`, `project.example`, `project.recent`. **About penumbra** at
+the end of the menu shows the version, the commit it was built from, penumbra's licence, the
+licences of the crates it is built from and the trademarks. **Third-party notices** there opens
+the full licence texts in the browser. Escape closes the window; `app.about` answers the same.
 
 The demo and the examples start fresh on every open, also when the app starts with one of them
 as the last project: changes, saved node state and node positions from before are gone. Within
@@ -74,7 +77,7 @@ else runs without it.
 - **Changes** (bottom right): every edit, newest first, with who made it (you, Claude, the
   project file). Hover an entry to outline the nodes it touched, click it to select them.
   Undo and Redo sit in its header.
-- **The status bar**: the project menu (the folder, with **Show mode** at its end), play and
+- **The status bar**: the project menu (the folder, with **Show mode** and **About penumbra** at its end), play and
   pause of the show clock, the frame and the time, how long the last cook pass took (click it for the last seconds as a
   plot, the CPU and GPU load and, on NVIDIA GPUs, power draw, temperature, clock and what
   holds the clock back), the share of video memory in use (yellow from 80 %, red from 90 %;

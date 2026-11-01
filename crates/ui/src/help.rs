@@ -96,7 +96,7 @@ fn redirect_page(url: &str) -> String {
 
 /// Opens `file` with the program the system has for it (the default browser for `.html`),
 /// waited for on a thread so it leaves no zombie.
-fn open_with_system(file: &Path) -> Result<(), String> {
+pub(crate) fn open_with_system(file: &Path) -> Result<(), String> {
     let program = if cfg!(windows) {
         "explorer"
     } else if cfg!(target_os = "macos") {

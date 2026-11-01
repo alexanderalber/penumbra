@@ -23,6 +23,7 @@
 //!
 //! `help.open {kind?, open?}` is registered here too but answers on the calling thread: it needs
 //! nothing of the UI, only whether this run may open a browser ([`Bridge::allow_browser`]).
+//! `app.about {notices?}` likewise ([`crate::about`]).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -139,10 +140,18 @@ pub fn register(registry: &mut Registry, bridge: &Arc<Bridge>) {
         let bridge = Arc::clone(bridge);
         registry.register(FnCommand::new(id, summary, move |p| bridge.call(id, p)));
     }
+    let about = Arc::clone(bridge);
     let bridge = Arc::clone(bridge);
     registry.register(FnCommand::new(
         "help.open",
         "The documentation page (docs/penumbra.html) in the default browser, at the entry of a node kind,          a command or a guide; {kind?, open?}. Answers with its file and URL; open: false, and headless runs,          open nothing",
         move |p| crate::help::command(p, bridge.browser()).map_err(CommandError),
+    ));
+    registry.register(FnCommand::new(
+        "app.about",
+        "What the About window shows: version, commit, licence, the third-party notices (their file and \
+         each licence with its number of crates), trademarks; {notices?}. notices: true opens the notices \
+         in the browser (not in headless runs)",
+        move |p| crate::about::command(p, about.browser()).map_err(CommandError),
     ));
 }

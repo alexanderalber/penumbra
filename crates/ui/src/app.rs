@@ -121,6 +121,8 @@ pub struct PenumbraApp {
     /// Nudges since the window was last quiet for [`HEAL_WINDOW`], and when the last one began.
     heals: (u32, Option<Instant>),
     helpers: crate::helpers::Helpers,
+    /// The About window, opened from the project menu.
+    about: crate::about::About,
     /// The window's place on the desktop as last told to the outputs.
     editor_rect: Option<[i32; 4]>,
     /// Puts the window back where it was last time and keeps its place.
@@ -231,6 +233,7 @@ impl PenumbraApp {
             resized: None,
             heals: (0, None),
             helpers: crate::helpers::Helpers::default(),
+            about: crate::about::About::default(),
             editor_rect: None,
             place,
             library: (Vec::new(), None),
@@ -781,15 +784,18 @@ impl PenumbraApp {
                 let save_layout = || layout.save_if_due(now, true);
                 // Show mode is an entry of the project menu: a button of its own beside Play
                 // was hit by accident.
-                let mut lock = false;
+                let mut picked = crate::projects::Chosen::default();
                 let projects = ui.add_enabled_ui(!status.locked, |ui| {
-                    self.projects.show(ui, &self.engine, &mut self.auto, save_layout, &mut lock)
+                    self.projects.show(ui, &self.engine, &mut self.auto, save_layout, &mut picked)
                 });
                 if let Some(m) = projects.inner {
                     self.message = Some((m, now));
                 }
-                if lock {
+                if picked.show_mode {
                     actions.push(Action::Show(true));
+                }
+                if picked.about {
+                    self.about.open();
                 }
                 let playing = view.playing;
                 let r = if playing {
@@ -1221,6 +1227,8 @@ impl PenumbraApp {
         self.helpers.show(&ctx, &helpers, &mut self.auto, &mut actions);
         self.viewer_window(&ctx, &net, &view, can_edit, picture, &mut actions);
         self.fly(&ctx, &net, &view, can_edit, now, &mut actions);
+        // Last of the windows, so a dialog open over it takes Escape first.
+        self.about.show(&ctx, self.browser, &mut self.auto);
         let scale = self.layout.options.chan_scale;
         if let Some(changed) =
             [self.viewer.chan_scale, self.window_viewer.chan_scale].into_iter().find(|s| *s != scale)

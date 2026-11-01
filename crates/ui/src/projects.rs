@@ -1,6 +1,6 @@
 //! The project menu behind the folder button at the left end of the status bar: a new project,
-//! open one, save a copy, the recent ones, the demo, the shipped examples, and the project's
-//! folder in the file manager. The demo and the examples open afresh every time, also the one
+//! open one, save a copy, the recent ones, the demo, the shipped examples, the project's
+//! folder in the file manager, show mode and the About window. The demo and the examples open afresh every time, also the one
 //! that is open (it starts over).
 //!
 //! Opening runs on a thread of its own, since the old project's state is saved first, which can
@@ -9,7 +9,7 @@
 //!
 //! Automation ids: `button.project`, then in the menu `project.new`, `project.open`,
 //! `project.save_as`, `project.recent.<i>` (newest first), `project.demo`, `project.examples` (a
-//! submenu with `project.example.<name>`), `project.folder`.
+//! submenu with `project.example.<name>`), `project.folder`, `project.show_mode`, `project.about`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -59,6 +59,15 @@ fn name_of(dir: &Path) -> String {
     dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned())
 }
 
+/// What the menu asks the app for besides opening projects.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Chosen {
+    /// "Show mode": lock the project.
+    pub show_mode: bool,
+    /// "About penumbra": open the About window.
+    pub about: bool,
+}
+
 /// The keys that turn show mode on (Ctrl+Shift+L), beside the entry in the project menu.
 pub const SHOW_MODE_KEYS: egui::KeyboardShortcut =
     egui::KeyboardShortcut::new(egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT), egui::Key::L);
@@ -71,14 +80,15 @@ impl ProjectMenu {
 
     /// Draws the button and its menu. Returns a message for the status bar when something
     /// starts, finishes or fails. `save_layout` writes the editor layout now, so a copy of the
-    /// project takes the latest one. `lock` turns true when the menu's "Show mode" was chosen.
+    /// project takes the latest one. `picked` says whether "Show mode" or "About penumbra" was
+    /// picked.
     pub fn show(
         &mut self,
         ui: &mut Ui,
         engine: &Arc<Engine>,
         auto: &mut automation::Registry,
         save_layout: impl FnOnce(),
-        lock: &mut bool,
+        picked: &mut Chosen,
     ) -> Option<String> {
         let mut message = self.poll(engine, save_layout);
         let current = engine.session().dir().to_path_buf();
@@ -201,7 +211,16 @@ impl ProjectMenu {
             );
             auto.add("project.show_mode", b.rect, "Show mode");
             if b.clicked() {
-                *lock = true;
+                picked.show_mode = true;
+                ui.close();
+            }
+            ui.separator();
+            let b = ui.button("About penumbra").on_hover_text(
+                "The version, the licences of penumbra and of what it is built from, trademarks",
+            );
+            auto.add("project.about", b.rect, "About penumbra");
+            if b.clicked() {
+                picked.about = true;
                 ui.close();
             }
         });
