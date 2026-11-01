@@ -3325,6 +3325,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "penumbra-nn"
+version = "0.6.0"
+dependencies = [
+ "rayon",
+ "serde_json",
+]
+
+[[package]]
 name = "penumbra-ops"
 version = "0.6.0"
 dependencies = [

@@ -25,6 +25,7 @@ penumbra-http = { path = "crates/http" }
 penumbra-mesh = { path = "crates/mesh" }
 penumbra-ops = { path = "crates/ops" }
 penumbra-ndi = { path = "crates/ndi" }
+penumbra-nn = { path = "crates/nn" }
 penumbra-osc = { path = "crates/osc" }
 penumbra-output = { path = "crates/output" }
 penumbra-project = { path = "crates/project" }
@@ -167,6 +168,10 @@ opt-level = 2
 opt-level = 2
 
 [profile.dev.package.penumbra-ops]
+opt-level = 2
+
+# Neural network inference: one 30 s chunk of Beat This! is about 90 GFLOP.
+[profile.dev.package.penumbra-nn]
 opt-level = 2
 
 [profile.dev.package.penumbra-track]
