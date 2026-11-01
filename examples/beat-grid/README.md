@@ -21,6 +21,10 @@ so the next open has the grid at once. While the analysis runs, `analyzing` is 1
 rises from 0 to 1, and the node's panel shows a progress bar. `ready` is 1 where the grid under
 the playhead is final. Beyond that, `coasting` is 1 and the beat runs on at the last tempo.
 
+**Levels.** `/grid` also gives `level`, `low`, `mid`, `high`, `onset` and `kick`, the values
+`/live` gives. It measures them over the whole file once, beside the beats, and keeps them in
+the same cache. A binding moved from `/live` to `/grid` keeps its channel and loses the lag.
+
 **Offset.** A projector shows each frame some milliseconds late. `offset` on `/grid` moves the
 grid that much ahead. The beats are known, so `tick` comes exactly that early, with no guessing.
 `/live` has an `offset` too, but it has to predict.
@@ -41,6 +45,8 @@ breaks.
   half's width.
 - `beat 1` to `beat 4` is `bar_beat` plus 1 (`/grid_count`).
 - The thin line under the left title is `progress`, shown while `analyzing` is 1.
+- The yellow bar at each half's right edge is `low`, the bass. Both nodes give it, and they
+  agree. `/live` reports it about 20 ms after the sound; `/grid` has it on time.
 
 **Table.** `/beats` shows the grid's second output, `grid`: one row per beat with `time`
 (seconds into the file), `beat`, `bar`, `beat_in_bar` and `downbeat`. An `out.table` writes it

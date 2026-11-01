@@ -6,7 +6,7 @@ params can be bound to:
 - `chan.audio_envelope` for loudness: one number per channel, how loud it is now.
 - `chan.audio_spectrum` for frequency bands: the spectrum as numbers and as a texture.
 - `chan.beat_analysis` for music: beat, bar and tempo, with levels and hits.
-- `chan.beat_grid` for a sound file: beat and bar of what an `audio.file` plays, found ahead of time.
+- `chan.beat_grid` for a sound file: beat, bar, levels and hits of what an `audio.file` plays, found ahead of time.
 
 The energy of one band is an `audio.filter` (`bandpass`) into a `chan.audio_envelope`.
 
@@ -419,11 +419,13 @@ another beat; `bar_beat` and `bar` are then counted from there.
 
 `chan.beat_grid` gives beat and bar for the file an `audio.file` plays. Wire the file's `out` into its `audio` input, the same wire a `chan.beat_analysis` takes. Its channels mean the same as the analysis's (`beat`, `tick`, `bar`, `bar_beat`, `bpm`, `beats_per_bar`, `locked`, `coasting`), so bindings keep working when one node replaces the other. It adds `downbeat` (1 in the frame a bar begins), `beat_index` and `bar_index`.
 
-**Finding the beats.** The node finds the beats of the whole file once, in the background, with the Beat This! network (Foscarin, Schlüter and Widmer, JKU Linz, ISMIR 2024; [github.com/CPJKU/beat_this](https://github.com/CPJKU/beat_this)). A 4 minute track takes a few seconds, a 2 hour mix a few minutes. The result is kept in a cache, so the next time the file opens the grid is there at once. While the analysis runs, `progress` rises from 0 to 1, `analyzing` reads 1, and the panel shows a progress bar with `cancel`.
+**Levels and hits.** `level`, `low`, `mid`, `high`, `onset` and `kick` are the analysis's too, with its default settings. The node measures them over the whole file beside the beats and reads them at the playhead. The live analysis reports them 20 to 30 ms after the sound; the grid has them on time. So a binding moved from `chan.beat_analysis` to `chan.beat_grid` gets the same values, early by that lag. `offset` moves them ahead with the beat. The levels take about 40 seconds for a 2 hour mix and keep about 9 MB in memory and in the cache. Until they reach the playhead, they read 0.
+
+**Finding the beats.** The node finds the beats of the whole file once, in the background, with the Beat This! network (Foscarin, Schlüter and Widmer, JKU Linz, ISMIR 2024; [github.com/CPJKU/beat_this](https://github.com/CPJKU/beat_this)). A 4 minute track takes a few seconds, a 2 hour mix a few minutes. The result is kept in a cache, so the next time the file opens the grid is there at once. While the analysis runs, `progress` rises from 0 to 1, `analyzing` reads 1, and the panel shows a progress bar with `cancel`. Both count the levels too.
 
 **Bars.** The network marks each beat that may begin a bar. On DJ mixes these marks alone give bars of one, two or five beats, so the node does not take them one by one. Each beat looks at the 64 beats around it, and the pattern of 4 (or 3) beats that the marks favour there sets the bars. On a 2 hour mix this made 98 % of the bars four beats long, against 79 % from the marks alone. Where the mix shifts by a beat, one bar of 3, 5, 6 or 7 beats takes up the change. A waltz gets bars of 3. `beats.grid` gives both: `downbeats` are the bars the node uses, `marked_downbeats` the network's marks.
 
-**Loops.** When the `audio.file` loops, the last beat of the file runs on into the first beat of the next pass, and `beat_index` and `bar_index` start again from there.
+**Loops.** When the `audio.file` loops, the last beat of the file runs on into the first beat of the next pass, and `beat_index` and `bar_index` start again from there. Levels and hits run on across the end too; a hit at the file's very start counts in every pass.
 
 **Using it early.** The grid fills from the start of the file. `ready` reads 1 where the grid under the playhead is final. The bars of the last 32 beats found wait for the beats after them, about 15 seconds of music. Further on, `coasting` reads 1 and the beat runs on at the last tempo found. The panel says how far the grid is ready.
 

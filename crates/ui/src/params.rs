@@ -2665,7 +2665,8 @@ fn sound_file_row(
 }
 
 /// How the beat analysis of a `chan.beat_grid`'s file stands: a progress bar and cancel while it
-/// runs, then the beats found; analyze again after a cancel or a failure (`beats.analyze`).
+/// runs (the beats, then the levels if they take longer), then the beats found; analyze again
+/// after a cancel or a failure (`beats.analyze`).
 fn beat_grid_row(ui: &mut Ui, input: &Inputs<'_>, node: &NodeDef, auto: &mut automation::Registry) {
     let source = node.inputs.first().copied().flatten();
     let Some(file) =
@@ -2678,7 +2679,7 @@ fn beat_grid_row(ui: &mut Ui, input: &Inputs<'_>, node: &NodeDef, auto: &mut aut
     let s = analysis.state();
     let weak = theme::TEXT_WEAK;
     ui.horizontal(|ui| {
-        if s.running {
+        if s.busy() {
             let r = ui.button("cancel").on_hover_text(
                 "Stops finding the beats. The beats found so far stay; analyze starts over (beats.cancel)",
             );
@@ -2690,9 +2691,14 @@ fn beat_grid_row(ui: &mut Ui, input: &Inputs<'_>, node: &NodeDef, auto: &mut aut
                 Some(t) if t.is_finite() => format!(", ready to {}", clock(t)),
                 _ => String::new(),
             };
+            let (what, progress) = if s.running {
+                ("finding beats", s.progress)
+            } else {
+                ("measuring levels", s.envelope_progress)
+            };
             // `as`: a fraction for the bar.
-            let bar = egui::ProgressBar::new(s.progress as f32)
-                .text(RichText::new(format!("finding beats {:.0} %{ready}", s.progress * 100.0)).small())
+            let bar = egui::ProgressBar::new(progress as f32)
+                .text(RichText::new(format!("{what} {:.0} %{ready}", progress * 100.0)).small())
                 .desired_width(ui.available_width());
             let r = ui.add(bar);
             auto.add("param.beats_progress", r.rect, "beat analysis progress");
@@ -2710,7 +2716,11 @@ fn beat_grid_row(ui: &mut Ui, input: &Inputs<'_>, node: &NodeDef, auto: &mut aut
             (Some(e), _) => (format!("no beats: {e}"), theme::WARNING),
             (None, Some(g)) if complete => {
                 let n = g.beats.beats.len();
-                (format!("{n} beats, {} bars, found in {:.1} s", g.bars.len(), s.seconds), weak)
+                let found = format!("{n} beats, {} bars, found in {:.1} s", g.bars.len(), s.seconds);
+                match &s.envelope_error {
+                    Some(e) => (format!("{found}; no levels: {e}"), theme::WARNING),
+                    None => (found, weak),
+                }
             }
             (None, Some(g)) => (format!("cancelled after {} beats", g.beats.beats.len()), theme::WARNING),
             (None, None) => ("cancelled".to_string(), theme::WARNING),

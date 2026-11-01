@@ -36,14 +36,34 @@ impl Key {
     /// The key of `sound` with `model_id` in `dir`. `None` when the file's size or
     /// modification time cannot be read: then there is no caching.
     pub(super) fn of(sound: &Path, model_id: &str, dir: &Path) -> Option<Key> {
-        let meta = fs::metadata(sound).ok()?;
-        let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
-        let full = fs::canonicalize(sound).unwrap_or_else(|_| sound.to_path_buf());
-        let name = format!("{:016x}.beats", fnv1a(full.as_os_str().as_encoded_bytes()));
+        let (file, size, mtime) = place(sound, dir, "beats")?;
         let model: String = model_id.chars().map(|c| if c.is_whitespace() { '_' } else { c }).collect();
-        let header = format!("{MAGIC} {VERSION} {} {mtime} {model}", meta.len());
-        Some(Key { file: dir.join(name), header })
+        let header = format!("{MAGIC} {VERSION} {size} {mtime} {model}");
+        Some(Key { file, header })
     }
+}
+
+/// Where the cache keeps a result of kind `ext` for `sound` in `dir` (named by a hash of the
+/// sound file's full path), with the sound file's size and modification time (ns since 1970).
+/// `None` when those cannot be read.
+pub(super) fn place(sound: &Path, dir: &Path, ext: &str) -> Option<(PathBuf, u64, u128)> {
+    let meta = fs::metadata(sound).ok()?;
+    let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+    let full = fs::canonicalize(sound).unwrap_or_else(|_| sound.to_path_buf());
+    let name = format!("{:016x}.{ext}", fnv1a(full.as_os_str().as_encoded_bytes()));
+    Some((dir.join(name), meta.len(), mtime))
+}
+
+/// Writes `bytes` to `file`, through a temporary file so a reader never sees half of it.
+pub(super) fn write_whole(file: &Path, bytes: &[u8]) -> Result<(), String> {
+    let dir = file.parent().ok_or("the cache file has no directory")?;
+    fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let tmp = file.with_extension(format!("tmp{}", std::process::id()));
+    fs::write(&tmp, bytes).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    fs::rename(&tmp, file).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("cannot write {}: {e}", file.display())
+    })
 }
 
 /// The cached result, `None` when there is none that fits the key.
@@ -117,15 +137,7 @@ fn format(beats: &Beats, header: &str) -> String {
 
 /// Writes the result, through a temporary file so a reader never sees half of it.
 pub(super) fn store(key: &Key, beats: &Beats) -> Result<(), String> {
-    let dir = key.file.parent().ok_or("the cache file has no directory")?;
-    fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let tmp = key.file.with_extension(format!("tmp{}", std::process::id()));
-    fs::write(&tmp, format(beats, &key.header))
-        .map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
-    fs::rename(&tmp, &key.file).map_err(|e| {
-        let _ = fs::remove_file(&tmp);
-        format!("cannot write {}: {e}", key.file.display())
-    })
+    write_whole(&key.file, format(beats, &key.header).as_bytes())
 }
 
 #[cfg(test)]

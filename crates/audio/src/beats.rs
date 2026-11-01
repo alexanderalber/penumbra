@@ -30,11 +30,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 mod analyze;
 mod cache;
+mod envelopes;
 mod meter;
 
 pub use analyze::{
     BeatModel, IN_FLIGHT, MAX_SECONDS, MODEL_FILE, Progress, analyze_file, analyze_file_with, f_measure,
     model_path, run_parallel,
+};
+pub use envelopes::{
+    ENVELOPE_RATE, EnvelopeBuilder, Envelopes, Hop, KICK_LAG_HOPS, LEVEL_LAG_HOPS, ONSET_LAG_HOPS, Reading,
+    analyze_envelopes, envelopes_of,
 };
 pub use meter::{HOLD, LOGIT_LIMIT, THREE_LEAD, THREE_MIN_LEAD, WINDOW as METER_WINDOW, bars, bars_decided};
 
@@ -143,7 +148,7 @@ pub struct Frontend {
     carry: Vec<f32>,
     mono: Vec<f32>,
     resampled: Vec<f32>,
-    resample: ToModelRate,
+    resample: ToRate,
     mel: Mel,
 }
 
@@ -166,31 +171,14 @@ impl Frontend {
             carry: Vec::new(),
             mono: Vec::new(),
             resampled: Vec::new(),
-            resample: ToModelRate::new(rate),
+            resample: ToRate::new(rate, SAMPLE_RATE),
             mel: Mel::new(),
         })
     }
 
     /// Adds interleaved samples. A block may end inside a frame; the rest waits for the next.
     pub fn push_interleaved(&mut self, samples: &[f32]) {
-        let ch = self.channels;
-        self.mono.clear();
-        let mut rest = samples;
-        if !self.carry.is_empty() {
-            let need = ch - self.carry.len();
-            let (head, tail) = rest.split_at(need.min(rest.len()));
-            self.carry.extend_from_slice(head);
-            rest = tail;
-            if self.carry.len() < ch {
-                return;
-            }
-            self.mono.push(mean(&self.carry));
-            self.carry.clear();
-        }
-        let frames = rest.chunks_exact(ch);
-        let tail = frames.remainder();
-        self.mono.extend(frames.map(mean));
-        self.carry.extend_from_slice(tail);
+        mix_down(self.channels, &mut self.carry, samples, &mut self.mono);
         self.feed();
     }
 
@@ -259,6 +247,29 @@ impl Frontend {
     }
 }
 
+/// Interleaved samples of `channels` channels to their mean, into `mono` (cleared first). A
+/// block may end inside a frame: its samples wait in `carry` for the next block.
+pub(crate) fn mix_down(channels: usize, carry: &mut Vec<f32>, samples: &[f32], mono: &mut Vec<f32>) {
+    let ch = channels.max(1);
+    mono.clear();
+    let mut rest = samples;
+    if !carry.is_empty() {
+        let need = ch.saturating_sub(carry.len());
+        let (head, tail) = rest.split_at(need.min(rest.len()));
+        carry.extend_from_slice(head);
+        rest = tail;
+        if carry.len() < ch {
+            return;
+        }
+        mono.push(mean(carry));
+        carry.clear();
+    }
+    let frames = rest.chunks_exact(ch);
+    let tail = frames.remainder();
+    mono.extend(frames.map(mean));
+    carry.extend_from_slice(tail);
+}
+
 /// A sample as the front end reads it: non-numbers count as 0, the rest is clipped to
 /// [`CLIP`] so no later sum overflows.
 fn clean(v: f32) -> f32 {
@@ -272,11 +283,11 @@ fn mean(frame: &[f32]) -> f32 {
     (sum / frame.len().max(1) as f64) as f32
 }
 
-/// Mono samples at any rate to [`SAMPLE_RATE`]: output sample `n` is the kernel read at the
-/// exact source position `n * from / SAMPLE_RATE`, with silence before the start and after
-/// the end. The streaming [`crate::resample::Resampler`] lags by half its kernel; reading at
-/// the position itself has no lag at all.
-struct ToModelRate {
+/// Mono samples at any rate to another rate ([`SAMPLE_RATE`] for the network): output sample
+/// `n` is the kernel read at the exact source position `n * from / to`, with silence before
+/// the start and after the end. The streaming [`crate::resample::Resampler`] lags by half its
+/// kernel; reading at the position itself has no lag at all.
+pub(crate) struct ToRate {
     from: f64,
     /// `None` when the input is at the model's rate already: the samples pass unchanged.
     kernel: Option<Kernel>,
@@ -291,15 +302,15 @@ struct ToModelRate {
     window: Vec<f32>,
 }
 
-impl ToModelRate {
-    fn new(from: f64) -> Self {
-        let same = (from - SAMPLE_RATE).abs() < 1e-9;
-        let kernel = (!same).then(|| Kernel::new(from, SAMPLE_RATE));
+impl ToRate {
+    pub(crate) fn new(from: f64, to: f64) -> Self {
+        let same = (from - to).abs() < 1e-9;
+        let kernel = (!same).then(|| Kernel::new(from, to));
         let taps = kernel.as_ref().map_or(0, Kernel::taps);
         Self {
             from,
             kernel,
-            step: from / SAMPLE_RATE,
+            step: from / to,
             buf: Vec::new(),
             buf_start: 0,
             received: 0,
@@ -318,7 +329,7 @@ impl ToModelRate {
         (start, x - whole)
     }
 
-    fn push(&mut self, x: &[f32], out: &mut Vec<f32>) {
+    pub(crate) fn push(&mut self, x: &[f32], out: &mut Vec<f32>) {
         self.received += x.len() as u64;
         let Some(kernel) = self.kernel.take() else {
             out.extend_from_slice(x);
@@ -340,7 +351,7 @@ impl ToModelRate {
         self.kernel = Some(kernel);
     }
 
-    fn finish(&mut self, out: &mut Vec<f32>) {
+    pub(crate) fn finish(&mut self, out: &mut Vec<f32>) {
         let Some(kernel) = self.kernel.take() else {
             return;
         };
@@ -396,7 +407,7 @@ impl ToModelRate {
 /// The front end's conversion to [`SAMPLE_RATE`] alone, for tests.
 #[cfg(test)]
 pub(crate) fn resample_for_tests(x: &[f32], from: f64) -> Vec<f32> {
-    let mut r = ToModelRate::new(from);
+    let mut r = ToRate::new(from, SAMPLE_RATE);
     let mut out = Vec::new();
     for b in x.chunks(1000) {
         r.push(b, &mut out);

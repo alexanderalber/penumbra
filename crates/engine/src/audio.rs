@@ -64,8 +64,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "beats.analyze",
-        "Finds the beats and downbeats of a sound file with the Beat This! network, in the background, and keeps them \
-         in a cache: {path (an audio.file or chan.beat_grid) or file (relative to the project), wait? (default true: \
+        "Finds the beats and downbeats of a sound file with the Beat This! network, and its envelopes (level, bands, \
+         onsets) as chan.beat_analysis measures them, in the background, and keeps both in a cache: {path (an audio.file or chan.beat_grid) or file (relative to the project), wait? (default true: \
          answers when done, at most 600 s), again? (default false: starts over)}. A 4 minute track takes seconds, \
          a 2 hour mix about 3 minutes. Replies as beats.status",
         beats_analyze,
@@ -74,7 +74,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "beats.status",
         "How the beat analyses stand: {path or file} for one, nothing for all held. Per file: running, progress \
          (0 to 1), beats, downbeats, final_until (s; the grid before it is final, null for none yet), complete, \
-         bpm (median), error, cancelled, seconds",
+         bpm (median), error, cancelled, seconds, and envelopes {running, progress, known_until (s), complete, \
+         bytes, error}",
         beats_status,
     );
     add(
@@ -87,8 +88,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "beats.cancel",
-        "Stops a sound file's beat analysis: {path or file}. Its chan.beat_grid nodes keep the beats found so far; \
-         beats.analyze starts it again",
+        "Stops a sound file's beat analysis and the measuring of its levels: {path or file}. Its chan.beat_grid \
+         nodes keep the beats and levels found so far; beats.analyze starts it again",
         beats_cancel,
     );
     add(
@@ -330,6 +331,20 @@ fn beats_json(file: &Path, s: &State) -> Json {
         "error": s.error,
         "cancelled": s.cancelled,
         "seconds": s.seconds,
+        "envelopes": envelopes_json(s),
+    })
+}
+
+/// How the envelopes of one analysis stand.
+fn envelopes_json(s: &State) -> Json {
+    let env = s.envelopes.as_ref();
+    json!({
+        "running": s.envelopes_running,
+        "progress": s.envelope_progress,
+        "known_until": env.map(|e| e.known_until()).filter(|t| t.is_finite()),
+        "complete": env.is_some_and(|e| e.complete()),
+        "bytes": env.map_or(0, |e| e.bytes()),
+        "error": s.envelope_error,
     })
 }
 
@@ -370,7 +385,7 @@ fn beats_analyze(e: &Engine, p: &Json) -> CmdResult<Json> {
     let analysis = files.hold(&file);
     if a.wait.unwrap_or(true) {
         let deadline = Instant::now() + ANALYZE_WAIT;
-        while analysis.state().running && Instant::now() < deadline {
+        while analysis.state().busy() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }
     }

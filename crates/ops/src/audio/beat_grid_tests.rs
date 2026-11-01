@@ -153,7 +153,7 @@ fn a_looped_file_ticks_on_across_its_end() {
     let mut f = fixture(&grid_ops(&file), &dir.join("cache"));
     analysed(&mut f);
     // 11 to 13 s: a tick every half second, at 12 s too, and the beats count from 0 again.
-    let (mut beats, mut index) = (Vec::new(), Vec::new());
+    let (mut beats, mut index, mut onsets) = (Vec::new(), Vec::new(), Vec::new());
     for i in 0..780u64 {
         f.clock.advance(1);
         let c = cook(&mut f).0.unwrap();
@@ -161,7 +161,13 @@ fn a_looped_file_ticks_on_across_its_end() {
             beats.push(i);
             index.push(value(&c, "beat_index"));
         }
+        if i >= 660 && value(&c, "onset") == 1.0 {
+            onsets.push(i);
+        }
     }
+    // The envelopes run on across the end too: the click at 0 s of the next pass is an onset.
+    assert!(onsets.iter().any(|o| o.abs_diff(719) <= 1), "{onsets:?}");
+    assert!((3..=5).contains(&onsets.len()), "{onsets:?}");
     assert_eq!(beats.len(), 4, "{beats:?}");
     for w in beats.windows(2) {
         assert!((w[1] - w[0]).abs_diff(30) <= 1, "{beats:?}");
@@ -240,5 +246,79 @@ fn analyses_are_shared_and_stop_when_unwanted() {
     let d = files.want(&file);
     assert!(!std::sync::Arc::ptr_eq(&d, &c) && d.state().running);
     files.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The value of channel `name` of node `path`'s first output.
+fn read(f: &F, path: &str, name: &str) -> f64 {
+    let id = f.net.resolve(&path.parse().unwrap()).unwrap();
+    let c = f.cooker.output(Port { node: id, output: 0 }).and_then(|d| d.get::<Chans>()).cloned().unwrap();
+    value(&c, name)
+}
+
+#[test]
+fn the_envelopes_are_the_live_analysis_without_its_lag() {
+    // The example track through an audio.file at 48 kHz into a chan.beat_analysis, and into
+    // grids whose offset puts back the live analysis' lag: each grid then reads what the live
+    // node reads in the same frame.
+    use penumbra_audio::beats::{ENVELOPE_RATE, KICK_LAG_HOPS, LEVEL_LAG_HOPS, ONSET_LAG_HOPS};
+    let dir = temp_dir("envelopes");
+    let music = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
+    let hop_ms = 512.0 / ENVELOPE_RATE * 1000.0;
+    let mut ops = grid_ops(&music.to_string_lossy());
+    ops.push(set("/g.offset", -LEVEL_LAG_HOPS * hop_ms));
+    for (path, lag) in [("/h", ONSET_LAG_HOPS), ("/k", KICK_LAG_HOPS)] {
+        ops.push(create(path, BEAT_GRID));
+        ops.push(connect("/p", path, 0));
+        ops.push(set(&format!("{path}.offset"), -lag * hop_ms));
+    }
+    ops.push(create("/a", "chan.beat_analysis"));
+    ops.push(connect("/p", "/a", 0));
+    let mut f = fixture(&ops, &dir.join("cache"));
+    analysed(&mut f);
+    let ids: Vec<_> =
+        ["/g", "/h", "/k", "/a"].iter().map(|p| f.net.resolve(&p.parse().unwrap()).unwrap()).collect();
+    let (mut diff, mut n) = ([0.0f64; 4], 0usize);
+    let (mut hits, mut matched) = ([0usize; 2], [0usize; 2]);
+    let mut series: Vec<[bool; 4]> = Vec::new();
+    // 30 s at 60 frames per second, from the file's start; the first 5 s let the live
+    // analysis' ranges fill.
+    for i in 0..1800 {
+        f.clock.advance(1);
+        f.cooker.cook_showing(&f.net, f.clock.now(), &ids, &[], &[]);
+        let onsets = [
+            read(&f, "/h", "onset"),
+            read(&f, "/a", "onset"),
+            read(&f, "/k", "kick"),
+            read(&f, "/a", "kick"),
+        ];
+        series.push(onsets.map(|v| v == 1.0));
+        if i < 300 {
+            continue;
+        }
+        for (d, name) in diff.iter_mut().zip(["level", "low", "mid", "high"]) {
+            *d += (read(&f, "/g", name) - read(&f, "/a", name)).abs();
+        }
+        n += 1;
+    }
+    let mean = diff.map(|d| d / n as f64);
+    // The live analysis cuts its hops where its first block began; the file's are cut from its
+    // first sample. Hops 6 ms apart read alike within a hundredth on the mean (measured: 0.003
+    // to 0.007).
+    assert!(mean.iter().all(|m| *m < 0.015), "mean differences level, low, mid, high: {mean:?}");
+    // Onsets and kicks: each live one has a grid one within a frame.
+    for (k, (grid, live)) in [(0usize, 1usize), (2, 3)].into_iter().enumerate() {
+        for (i, s) in series.iter().enumerate().skip(300) {
+            if s[live] {
+                hits[k] += 1;
+                let near = series.get(i.saturating_sub(1)..(i + 2).min(series.len())).unwrap();
+                if near.iter().any(|x| x[grid]) {
+                    matched[k] += 1;
+                }
+            }
+        }
+        assert!(hits[k] > 30, "{hits:?}");
+        assert!(matched[k] * 100 >= hits[k] * 97, "matched {matched:?} of {hits:?}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

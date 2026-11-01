@@ -568,6 +568,19 @@ impl Analyzer {
         self.hop
     }
 
+    /// The amplitudes of the last block that completed a frame, after the trim and before any
+    /// normalising: level, low, mid and high, linear (full scale is 1). With blocks of one hop
+    /// each, these are the frame's own.
+    pub fn raw_levels(&self) -> [f64; 4] {
+        let [low, mid, high] = self.last_amps.0;
+        [(low * low + mid * mid + high * high).sqrt(), low, mid, high]
+    }
+
+    /// Samples per analysis frame: four hops.
+    pub fn frame_len(&self) -> usize {
+        self.size()
+    }
+
     /// Whether the lock was lost lately while onsets still come at the tempo, so ticks go on.
     fn coasting(&self) -> bool {
         // `as`: a hop count to seconds.

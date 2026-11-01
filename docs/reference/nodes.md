@@ -1208,7 +1208,7 @@ Inputs:
 
 Outputs:
 
-- `out` (chan): Channels to bind: beat and bar rise from 0 to 1, tick and downbeat are 1 in the frame a beat or bar begins, bar_beat counts the beats in the bar from 0, beat_index and bar_index count from the first beat and the first downbeat; also bpm, beats_per_bar, locked, coasting. ready is 1 where the grid is final, progress goes from 0 to 1 while the file is analysed, analyzing is 1 meanwhile
+- `out` (chan): Channels to bind: beat and bar rise from 0 to 1, tick and downbeat are 1 in the frame a beat or bar begins, bar_beat counts the beats in the bar from 0, beat_index and bar_index count from the first beat and the first downbeat; also bpm, beats_per_bar, locked, coasting. level, low, mid, high, onset and kick are what chan.beat_analysis gives for this sound, without its lag of 20 to 30 ms. ready is 1 where the grid is final, progress goes from 0 to 1 while the file is analysed, analyzing is 1 meanwhile
 - `grid` (table): One row per beat found so far, under a header row: time (seconds into the file), beat, bar, beat_in_bar, downbeat (1 or 0)
 
 | param | type | default | range | meaning |

@@ -16,10 +16,16 @@
 //! **Bars** are voted over 64 beats from the network's downbeat logits ([`beats::bars`]), so
 //! they hold on DJ mixes, where the downbeats the network marks one by one do not.
 //!
+//! **Envelopes:** `level`, `low`, `mid`, `high`, `onset` and `kick` are what a
+//! `chan.beat_analysis` with its default settings gives for the same sound, measured over the
+//! whole file once beside the beats ([`beats::analyze_envelopes`]) and read with the analysis'
+//! own lag taken out: the reading at the playhead is what the live node reports some 20 to 30
+//! ms later. A moment not analysed yet reads 0.
+//!
 //! **Time:** the grid is known ahead, so `offset` moves the lookup itself: a tick comes exactly
 //! `offset` early, with no prediction. A looped file's grid runs from its last beat into the
 //! first beat of the next pass ([`BeatGrid::at_looped`]). Per cook the node costs one binary
-//! search.
+//! search and a few hops of envelopes.
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -28,7 +34,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Instant, SystemTime};
 
-use penumbra_audio::beats::{self, BeatError, BeatGrid, BeatModel, Beats, Partial};
+use penumbra_audio::beats::{self, BeatError, BeatGrid, BeatModel, Beats, Envelopes, Partial};
 use penumbra_core::{Channel, Chans, Error, Name, NodeId, ParamSpec, Table, lock};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc, NodeTypes,
@@ -70,9 +76,10 @@ fn pool() -> Option<&'static rayon::ThreadPool> {
     .as_ref()
 }
 
-/// The channels `chan.beat_grid` outputs, in order. The first eight mean what they mean on
-/// `chan.beat_analysis`, so a binding keeps working when one node replaces the other.
-pub const CHANNELS: [&str; 14] = [
+/// The channels `chan.beat_grid` outputs, in order. The first eight and the last six mean what
+/// they mean on `chan.beat_analysis`, so a binding keeps working when one node replaces the
+/// other. New channels go at the end.
+pub const CHANNELS: [&str; 20] = [
     "beat",
     "tick",
     "bar",
@@ -87,7 +94,15 @@ pub const CHANNELS: [&str; 14] = [
     "ready",
     "progress",
     "analyzing",
+    "level",
+    "low",
+    "mid",
+    "high",
+    "onset",
+    "kick",
 ];
+/// Where the envelopes begin in [`CHANNELS`].
+const LEVEL: usize = 14;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -110,6 +125,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "out",
             "Channels to bind: beat and bar rise from 0 to 1, tick and downbeat are 1 in the frame a beat or bar begins, bar_beat counts the beats in the bar from 0, \
              beat_index and bar_index count from the first beat and the first downbeat; also bpm, beats_per_bar, locked, coasting. \
+             level, low, mid, high, onset and kick are what chan.beat_analysis gives for this sound, without its lag of 20 to 30 ms. \
              ready is 1 where the grid is final, progress goes from 0 to 1 while the file is analysed, analyzing is 1 meanwhile",
         )
         .describe_output(
@@ -176,6 +192,25 @@ pub struct State {
     pub cancelled: bool,
     /// Seconds it ran (so far).
     pub seconds: f64,
+    /// The envelopes known so far; complete once their analysis ended.
+    pub envelopes: Option<Arc<Envelopes>>,
+    /// The envelopes' analysis is running.
+    pub envelopes_running: bool,
+    /// 0 to 1.
+    pub envelope_progress: f64,
+    pub envelope_error: Option<String>,
+}
+
+impl State {
+    /// Either analysis is running.
+    pub fn busy(&self) -> bool {
+        self.running || self.envelopes_running
+    }
+
+    /// The share of both analyses done: the lesser of the two, leaving out one that failed.
+    pub fn progress_all(&self) -> f64 {
+        if self.envelope_error.is_some() { self.progress } else { self.progress.min(self.envelope_progress) }
+    }
 }
 
 /// What the thread and the handles share.
@@ -220,10 +255,16 @@ impl Analysis {
         lock(&self.shared.state).clone()
     }
 
-    /// The grid so far, the progress, whether it runs, and the error once it ended in one.
+    /// The grid so far, the progress of both analyses, whether either runs, and the error once
+    /// the beats ended in one.
     fn grid(&self) -> (Option<Arc<Grid>>, f64, bool, Option<String>) {
         let s = lock(&self.shared.state);
-        (s.grid.clone(), s.progress, s.running, s.error.clone().filter(|_| !s.running))
+        (s.grid.clone(), s.progress_all(), s.busy(), s.error.clone().filter(|_| !s.running))
+    }
+
+    /// The envelopes so far.
+    fn envelopes(&self) -> Option<Arc<Envelopes>> {
+        lock(&self.shared.state).envelopes.clone()
     }
 
     /// Stops it before its next chunk.
@@ -243,9 +284,9 @@ impl Analysis {
 
     fn job_status(&self) -> JobStatus {
         let s = lock(&self.shared.state);
-        if s.running {
+        if s.busy() {
             // `as`: a fraction for the progress bar.
-            JobStatus::Running { progress: Some(s.progress as f32) }
+            JobStatus::Running { progress: Some(s.progress_all() as f32) }
         } else if let Some(e) = &s.error {
             JobStatus::Failed { error: e.clone() }
         } else if s.grid.is_some() {
@@ -255,8 +296,9 @@ impl Analysis {
         }
     }
 
+    /// Both analyses ended.
     fn ended(&self) -> bool {
-        !lock(&self.shared.state).running
+        !lock(&self.shared.state).busy()
     }
 }
 
@@ -373,7 +415,7 @@ impl BeatFiles {
         }
         files.retain(|_, w| w.strong_count() > 0);
         let shared = Arc::new(Shared {
-            state: Mutex::new(State { running: true, ..State::default() }),
+            state: Mutex::new(State { running: true, envelopes_running: true, ..State::default() }),
             wakers: Mutex::new(BTreeMap::new()),
             started: Instant::now(),
         });
@@ -388,10 +430,12 @@ impl BeatFiles {
         if self.0.stopped.load(Ordering::Relaxed) {
             shared.update(|s| {
                 s.running = false;
+                s.envelopes_running = false;
                 s.cancelled = true;
             });
             return a;
         }
+        self.begin_envelopes(file, &a);
         let (inner, path, cancel) = (self.0.clone(), file.to_path_buf(), a.cancel.clone());
         let spawned = std::thread::Builder::new().name("beats".into()).spawn(move || {
             penumbra_system::process::lower_thread_priority();
@@ -422,6 +466,58 @@ impl BeatFiles {
             });
         }
         a
+    }
+
+    /// The envelopes' analysis of `a`'s file, on a thread of its own at the lowest priority:
+    /// one core, beside the network's pool.
+    fn begin_envelopes(&self, file: &Path, a: &Analysis) {
+        let (inner, path, cancel, shared) =
+            (self.0.clone(), file.to_path_buf(), a.cancel.clone(), a.shared.clone());
+        let spawned = std::thread::Builder::new().name("envelopes".into()).spawn(move || {
+            penumbra_system::process::lower_thread_priority();
+            let mut woke = 0.0;
+            let mut progress = |f: f64| {
+                shared.update(|s| s.envelope_progress = f);
+                if f - woke >= WAKE_STEP {
+                    woke = f;
+                    shared.wake();
+                }
+            };
+            let mut partial = |e: &Envelopes| {
+                let e = Arc::new(e.clone());
+                shared.update(|s| s.envelopes = Some(e));
+                shared.wake();
+            };
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                beats::analyze_envelopes(
+                    &path,
+                    inner.cache.as_deref(),
+                    Some(&cancel),
+                    &mut progress,
+                    &mut partial,
+                )
+            }))
+            .unwrap_or_else(|_| Err(BeatError::Input("the envelope analysis failed".into())));
+            shared.update(|s| {
+                s.envelopes_running = false;
+                match result {
+                    Ok(e) => {
+                        s.envelopes = Some(Arc::new(e));
+                        s.envelope_progress = 1.0;
+                    }
+                    Err(BeatError::Cancelled) => {}
+                    Err(e) => s.envelope_error = Some(e.to_string()),
+                }
+            });
+            shared.wake();
+            inner.keep(&path, &shared);
+        });
+        if let Err(e) = spawned {
+            a.shared.update(|s| {
+                s.envelopes_running = false;
+                s.envelope_error = Some(format!("cannot start the envelope analysis: {e}"));
+            });
+        }
     }
 }
 
@@ -487,6 +583,8 @@ struct GridNode {
     /// The pass through a looped file, beat and bar at the last lookup and its time, for the
     /// ticks.
     last: Option<(i64, i64, i64, f64)>,
+    /// The time the envelopes were last read at, for the hops since.
+    last_read: Option<f64>,
     names: Vec<Name>,
     /// The `grid` output and the grid it was made from.
     table: Option<(Arc<Grid>, Data)>,
@@ -514,6 +612,7 @@ impl GridNode {
         a.wake_on_change(cx.node(), cx.waker());
         self.analysis = Some(a.clone());
         self.last = None;
+        self.last_read = None;
         self.table = None;
         Ok(a)
     }
@@ -596,6 +695,17 @@ impl Operator for GridNode {
         }
         self.last = lookup.map(|(p, pass)| (pass, p.beat, p.bar, t));
 
+        // The envelopes run on through a loop whether or not the grid is complete: a moment
+        // not analysed yet reads 0.
+        let env_loop = status.looping && status.duration > 0.0;
+        let te = if env_loop { status.position + offset } else { status.in_file + offset };
+        let since = self.last_read.filter(|before| te > *before && te - before <= JUMP_SECONDS);
+        let reading = analysis
+            .envelopes()
+            .map(|e| e.read(since, te, env_loop.then_some(status.duration)))
+            .unwrap_or_default();
+        self.last_read = Some(te);
+
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
         let values = match pos {
             Some(p) => [
@@ -613,6 +723,12 @@ impl Operator for GridNode {
                 flag(ready),
                 progress,
                 flag(running),
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
             ],
             None => {
                 let mut v = [0.0; CHANNELS.len()];
@@ -625,6 +741,12 @@ impl Operator for GridNode {
                 v
             }
         };
+        let mut values = values;
+        let envelopes =
+            [reading.level, reading.low, reading.mid, reading.high, flag(reading.onset), flag(reading.kick)];
+        for (v, e) in values.iter_mut().skip(LEVEL).zip(envelopes) {
+            *v = e;
+        }
         if self.names.len() != CHANNELS.len() {
             self.names = CHANNELS.iter().filter_map(|n| Name::new(n).ok()).collect();
         }
