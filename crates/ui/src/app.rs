@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use egui::{Color32, Key, Modifiers, Pos2, Rect, RichText, Sense, Ui, Vec2, vec2};
+use egui::{Color32, Key, Modifiers, Rect, RichText, Sense, Ui, Vec2, vec2};
 use penumbra_core::NodeId;
 use penumbra_engine::{Engine, ViewFrame, ViewRequest};
 use penumbra_graph::Port;
@@ -91,8 +91,6 @@ pub struct PenumbraApp {
     window_viewer_shown: bool,
     /// The viewer's panel and its picture area last frame, for the height of its header rows.
     viewer_frame: Option<(Rect, Rect)>,
-    /// Whether the pointer went down on the viewer's edge and has not been released since.
-    viewer_drag: bool,
     changes: Changes,
     auto: automation::Registry,
     requests: Option<Receiver<UiRequest>>,
@@ -212,7 +210,6 @@ impl PenumbraApp {
             window_viewer: Viewer::default(),
             window_viewer_shown: false,
             viewer_frame: None,
-            viewer_drag: false,
             changes: Changes::default(),
             auto: automation::Registry::default(),
             requests: options.requests,
@@ -1008,20 +1005,16 @@ impl PenumbraApp {
                     ),
                     None => (VIEWER_OVERHEAD, None),
                 };
-                let on_edge = |p: Option<Pos2>| p.zip(edge).is_some_and(|(p, e)| e.contains(p));
                 if viewer_open && let Some(edge) = edge {
                     self.auto.add("viewer.edge", edge, "viewer height: drag, double-click for 16:9");
-                    let (pressed, double) = ui.input(|i| {
-                        let on = on_edge(i.pointer.interact_pos());
-                        (
-                            i.pointer.primary_pressed() && on,
-                            i.pointer.button_double_clicked(egui::PointerButton::Primary) && on,
-                        )
-                    });
-                    self.viewer_drag |= pressed;
-                    if double {
-                        self.layout.set_viewer_aspect(None, now);
-                    }
+                }
+                // egui's own handle on the edge says whether it is being dragged. It takes a
+                // press within its interact radius beside the strip, and in a slow frame the
+                // press arrives with the first moves, so a hit test of our own on the strip
+                // missed some drags that egui still followed: the edge went back on release.
+                let handle = ui.ctx().read_response(viewer_resize_id(viewer_id));
+                if viewer_open && handle.as_ref().is_some_and(egui::Response::double_clicked) {
+                    self.layout.set_viewer_aspect(None, now);
                 }
                 let aspect = self.layout.viewer_aspect.unwrap_or(crate::layout::VIEWER_ASPECT);
                 let viewer_height = crate::layout::viewer_height(
@@ -1108,18 +1101,20 @@ impl PenumbraApp {
                     }
                 });
                 if viewer_open && let Some(picture) = self.viewer.picture {
-                    // A height other than the one set is the user dragging the edge.
+                    // A height other than the one set is the user dragging the edge, up to and
+                    // including the frame of the release, which egui sizes by the last position.
                     let shown = shown.response.rect;
-                    if self.viewer_drag
+                    let dragging = ui
+                        .ctx()
+                        .read_response(viewer_resize_id(viewer_id))
+                        .is_some_and(|r| r.dragged() || r.drag_stopped());
+                    if dragging
                         && (shown.height() - viewer_height).abs() > 1.0
                         && let Some(aspect) = crate::layout::viewer_aspect(picture.size())
                     {
                         self.layout.set_viewer_aspect(Some(aspect), now);
                     }
                     self.viewer_frame = Some((shown, picture));
-                }
-                if !ui.input(|i| i.pointer.primary_down()) {
-                    self.viewer_drag = false;
                 }
 
                 egui::CentralPanel::default().show(ui, |ui| {
@@ -1750,6 +1745,12 @@ fn save_png(file: &std::path::Path, image: &egui::ColorImage) -> Reply {
     }
     std::fs::write(file, png).map_err(|e| format!("{}: {e}", file.display()))?;
     Ok(json!({"file": file.display().to_string(), "width": w, "height": h}))
+}
+
+/// The id of the resize handle egui gives the bottom panel `panel`. egui does not expose it;
+/// `a_drag_grabbed_beside_the_viewer_edge_keeps_its_height` fails when an egui update changes it.
+fn viewer_resize_id(panel: egui::Id) -> egui::Id {
+    panel.with("__resize")
 }
 
 /// Project name, directory, app: the project is its directory.

@@ -596,6 +596,61 @@ fn the_viewer_follows_the_column_until_its_edge_is_dragged() {
     assert!(!layout.contains("viewer_aspect: Some"), "back to automatic: {layout}");
 }
 
+/// egui takes a press up to its interact radius beside the resize strip as a grab of the edge.
+/// A drag from there resizes the viewer like one from the line itself, and the height has to
+/// stay after the release. When the press arrives in the same frame as the first moves (a slow
+/// frame), the pointer egui sees is already that far off the line.
+#[test]
+fn a_drag_grabbed_beside_the_viewer_edge_keeps_its_height() {
+    // One headless run per engine: the first finds the edge, the second drags beside it in a
+    // fresh project that lays out the same.
+    let run = |name: &str, script: &[Json]| {
+        let dir = ScratchDir::unborn(name);
+        let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+        let content = penumbra_project::parse(PROJECT, &types).unwrap();
+        let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+        let engine = Engine::start(session).unwrap();
+        let options = headless::Options { size: [1400.0, 900.0], pixels_per_point: 1.0, software: true };
+        let script: Vec<String> = script.iter().map(Json::to_string).collect();
+        let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+        engine.shutdown();
+        replies
+    };
+    let elements = json!({"method": "ui.elements", "params": {"prefix": "viewer"}});
+    let first = run(
+        "ui-viewer-edge",
+        &[
+            json!({"method": "ui.select", "params": {"paths": ["/noise1"]}}),
+            json!({"wait": 0.3}),
+            elements.clone(),
+        ],
+    );
+    let edge = reply(&first, "ui.elements", 0)["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "viewer.edge")
+        .expect("the viewer's edge is on screen")["rect"]
+        .clone();
+    let [x, y, w, h] = [0, 1, 2, 3].map(|i| edge[i].as_f64().unwrap());
+    let (x, line) = (x + w / 2.0, y + h / 2.0);
+    let second = run(
+        "ui-viewer-grab",
+        &[
+            json!({"method": "ui.select", "params": {"paths": ["/noise1"]}}),
+            json!({"wait": 0.3}),
+            json!({"method": "ui.drag", "params": {"from": {"x": x, "y": line - 6.0}, "to": {"x": x, "y": line - 200.0}}}),
+            json!({"wait": 0.3}),
+            elements,
+            json!({"method": "ui.options", "params": {}}),
+        ],
+    );
+    let aspect = reply(&second, "ui.options", 0)["viewer_aspect"].clone();
+    assert!(aspect.is_number(), "the dragged height is kept: {aspect}");
+    let after = viewer_aspect(&second, 0);
+    assert!(after < 1.5, "the viewer is taller after the drag: {after}");
+}
+
 #[test]
 fn backward_wires_go_around_nodes() {
     use egui::{Rect, pos2};
