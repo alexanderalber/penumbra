@@ -9,8 +9,10 @@ publish.workspace = true
 
 [dependencies]
 penumbra-core.workspace = true
+penumbra-nn.workspace = true
 cpal.workspace = true
 log.workspace = true
+rayon.workspace = true
 serde.workspace = true
 symphonia.workspace = true
 

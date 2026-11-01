@@ -19,8 +19,8 @@
 //!   `target/THIRD-PARTY-NOTICES.html` by cargo-about (`about.toml`, `about.hbs`). Fails when a
 //!   dependency's licence is not accepted in `about.toml` or cannot be determined.
 //! - `dist`: a release build for Windows, zipped with everything it needs beside the exe, the
-//!   documentation, the examples and the content library: `target/dist/penumbra-VERSION-windows-x64.zip`. Not part
-//!   of `ci`.
+//!   documentation, the examples, the content library and the beat network (`assets/models`):
+//!   `target/dist/penumbra-VERSION-windows-x64.zip`. Not part of `ci`.
 //! - `mcp`: a release build of `penumbra-cli` copied to `target/mcp/`, the place an MCP client
 //!   configuration should point at. A running MCP server locks its exe, and every Claude Code
 //!   session runs one, so a server started from `target/release/` blocks every later release
@@ -325,6 +325,9 @@ fn dist() -> Result<(), String> {
     let shot = root.join("assets").join("screenshot.png");
     std::fs::copy(&shot, stage.join("assets").join("screenshot.png"))
         .map_err(|e| format!("cannot copy {}: {e}", shot.display()))?;
+    // The beat tracker's network and its licence, found at run time in `assets/models` beside
+    // the executable.
+    copy_dir(&root.join("assets").join("models"), &stage.join("assets").join("models"))?;
 
     // Windows' own tar (bsdtar) writes zip archives, `-a` picks the format from the extension.
     // Named by full path: the GNU tar of Git for Windows may come first on PATH and cannot.

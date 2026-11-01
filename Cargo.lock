@@ -3172,6 +3172,8 @@ dependencies = [
  "cpal",
  "log",
  "penumbra-core",
+ "penumbra-nn",
+ "rayon",
  "serde",
  "symphonia",
 ]
@@ -3328,6 +3330,7 @@ dependencies = [
 name = "penumbra-nn"
 version = "0.6.0"
 dependencies = [
+ "half",
  "rayon",
  "serde_json",
 ]

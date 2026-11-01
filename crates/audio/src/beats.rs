@@ -19,10 +19,20 @@
 //! - **Position:** a [`BeatGrid`] answers, for any time, which beat and bar it falls in and
 //!   how far through them it is.
 //!
-//! [`track`] runs the whole chain on one block of samples.
+//! [`track`] runs the whole chain on one block of samples. [`analyze_file`] runs it on a sound
+//! file with the shipped network ([`BeatModel`]), its chunks in parallel, and keeps the result
+//! in a cache.
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+mod analyze;
+mod cache;
+
+pub use analyze::{
+    BeatModel, IN_FLIGHT, MAX_SECONDS, MODEL_FILE, Progress, analyze_file, f_measure, model_path,
+    run_parallel,
+};
 
 use crate::fft::{Complex, Fft};
 use crate::resample::{CLIP, Kernel, MAX_CHANNELS, MAX_RATE, MIN_RATE, dot};
@@ -217,6 +227,12 @@ impl Frontend {
     /// Spectrogram frames finished so far.
     pub fn frames(&self) -> usize {
         self.mel.frames()
+    }
+
+    /// The rows of the frames finished so far, `frames() * N_MELS` values. They stay as they
+    /// are: [`Frontend::finish`] only adds frames.
+    pub fn rows(&self) -> &[f32] {
+        &self.mel.out
     }
 
     /// Seconds of input taken so far (at the input rate).

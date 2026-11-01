@@ -266,6 +266,40 @@ impl SoundFile {
     }
 }
 
+/// Decodes a whole file once, on the calling thread, keeping nothing: for an analysis that
+/// reads the sound from start to end. `sink` gets the file's [`Info`] and each block of
+/// interleaved samples as it is decoded (non-numbers already 0), and returns `false` to stop.
+/// The returned info has the length decoded, `exact` when the end was reached. The checks of
+/// [`SoundFile`] apply, and a panic inside the decoder is an error.
+pub fn decode_each(path: &Path, sink: &mut dyn FnMut(&Info, &[f32]) -> bool) -> Result<Info, String> {
+    let run = || -> Result<Info, String> {
+        let (mut source, mut info) = Source::open(path)?;
+        let mut block = Vec::new();
+        let mut frames = 0u64;
+        let mut ended = false;
+        loop {
+            block.clear();
+            match source.next(&mut block)? {
+                Next::Frames(0) => {}
+                Next::Frames(n) => {
+                    frames += n as u64;
+                    if !sink(&info, &block) {
+                        break;
+                    }
+                }
+                Next::End => {
+                    ended = true;
+                    break;
+                }
+            }
+        }
+        info.frames = Some(frames);
+        info.exact = ended;
+        Ok(info)
+    };
+    catch_unwind(AssertUnwindSafe(run)).unwrap_or_else(|_| Err("the decoder failed on this file".to_string()))
+}
+
 impl Drop for SoundFile {
     fn drop(&mut self) {
         lock(&self.shared.0).stop = true;
