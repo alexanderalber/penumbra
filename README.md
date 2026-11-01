@@ -18,7 +18,7 @@ TouchDesigner Python API, its own node names.
 - **Plain files.** A project is a folder of text files that can be diffed and edited by hand.
 - **Free and open source** (MIT or Apache-2.0).
 
-![The penumbra window: the curl-noise example's network on the left, the selected shader's parameters and the rendered output on the right](assets/screenshot.png)
+![The penumbra window: the curl-noise example's network with its notes on the left, the selected shader's parameters and the rendered output on the right](assets/screenshot.png)
 
 **Status:** work in progress, used for its author's installations. There will be breaking
 changes before 1.0 ([scope](#scope)). The current version is on

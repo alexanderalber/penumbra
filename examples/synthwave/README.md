@@ -1,8 +1,8 @@
 # synthwave
 
 A glider flies over a city of wireframe blocks, between a floor grid and a ceiling grid. Behind
-it lies a nebula, tinted warm and then cold. Everything is made in the network: no pictures, no
-meshes from files.
+it lies a nebula, tinted warm and then cold. Everything but the glider is made in the network,
+without pictures. The glider comes from two mesh files, `courier.obj` and `fan.obj`.
 
 - **Grid:** `/grid_plane` is a plane split into 80 by 80 `cells`. `/grid_lines`
   (mat.wireframe) draws it as a grid. `/floor` lays it flat and moves it one cell per beat,
