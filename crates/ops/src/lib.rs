@@ -88,6 +88,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("chan.beat_analysis", &["audio analysis"]),
     ("chan.clock", &["timer"]),
     ("chan.derivative", &["slope"]),
+    ("chan.envelope", &["trigger", "adsr"]),
     ("chan.filter", &["lag"]),
     ("chan.from_table", &["dat to"]),
     ("chan.from_tex", &["top to"]),

@@ -15,6 +15,7 @@ use penumbra_graph::{
 use crate::{Null, waiting};
 
 pub mod controls;
+mod envelope;
 mod filter;
 
 /// Registers the `chan` node types.
@@ -169,6 +170,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Math) as Box<dyn Operator>,
     ))?;
     filter::register(types)?;
+    envelope::register(types)?;
     controls::register(types)?;
     types.register(FnNodeType::new(
         NodeDesc::new(
@@ -1557,6 +1559,58 @@ mod tests {
             let v = f.value("/f");
             assert!((v - before).abs() < 0.1, "{kind}: {before} to {v}");
             assert!(v >= before - 1e-9, "{kind} went back from {before} to {v}");
+        }
+    }
+
+    #[test]
+    fn envelope_follows_a_gate_in_one_jump_as_frame_by_frame() {
+        // A gate from a constant: on, then off after a second; attack 0.5 s bound to a channel.
+        for jump in [false, true] {
+            let mut f = F::new(&[
+                create("/gate", "chan.constant"),
+                create("/times", "chan.constant"),
+                set("/times.name0", "attack"),
+                set("/times.value0", 0.5),
+                create("/e", "chan.envelope"),
+                set("/e.decay", 0.5),
+                set("/e.sustain", 0.5),
+                set("/e.release", 1.0),
+                Op::Bind {
+                    param: ParamPath::parse("/e.attack").unwrap(),
+                    component: None,
+                    from: "/times".parse().unwrap(),
+                    channel: Some(penumbra_core::Name::new("attack").unwrap()),
+                    cell: None,
+                    format: None,
+                },
+                connect("/gate", "/e", 0),
+            ]);
+            assert_eq!(f.value("/e"), 0.0);
+            f.edit(&[set("/gate.value0", 1.0)]);
+            assert_eq!(f.value("/e"), 0.0, "the gate opens now; the attack runs from here");
+            let run = |f: &mut F, frames: u64| {
+                if jump {
+                    f.clock.advance(frames);
+                } else {
+                    for _ in 0..frames {
+                        f.clock.advance(1);
+                        f.value("/e");
+                    }
+                }
+                f.value("/e")
+            };
+            // 0.25 s: half way up.
+            let v = run(&mut f, 15);
+            assert!((v - 0.5).abs() < 1e-9, "jump {jump}: {v}");
+            // 0.75 s: 0.25 s into the decay, half way down to 0.5.
+            assert!((run(&mut f, 30) - 0.75).abs() < 1e-9);
+            // 1.25 s: at sustain.
+            assert!((run(&mut f, 30) - 0.5).abs() < 1e-9);
+            f.edit(&[set("/gate.value0", 0.0)]);
+            f.value("/e");
+            // Half the release.
+            assert!((run(&mut f, 30) - 0.25).abs() < 1e-9);
+            assert_eq!(run(&mut f, 60), 0.0);
         }
     }
 

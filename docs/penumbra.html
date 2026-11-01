@@ -873,6 +873,8 @@ water      15
 </li>
 <li><a class="ref" href="#chan.filter"><code>chan.filter</code></a> smooths a channel; <a class="ref" href="#chan.math"><code>chan.math</code></a> scales it.
 </li>
+<li><a class="ref" href="#chan.envelope"><code>chan.envelope</code></a> in <code>trigger</code> mode turns <code>onset</code>, <code>kick</code> or a beat's <code>tick</code> into a flash: attack, decay, <code>hold</code>, release, each in seconds.
+</li>
 <li><a class="ref" href="#chan.trail"><code>chan.trail</code></a> after the analysis keeps its last seconds as samples; the viewer and the trail's own body plot them with a lane per channel, so <code>bpm</code> does not flatten the levels.
 </li>
 <li>The level meters in Helpers should stay out of the red. A microphone close to the speakers clips; turn down its gain.
@@ -3449,7 +3451,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.envelope">chan.envelope</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_envelope"><summary><code class="name">chan.audio_envelope</code><span class="sum">How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</span></summary>
 <div class="body">
 <p>How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</p>
@@ -3689,6 +3691,33 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#dmx">DMX</a>, <a href="#dmx-trying-it-without-a-light">DMX › Trying it without a light</a>, <a href="#dmx-receiving">DMX › Receiving</a></p>
+</div></details>
+<details class="entry node" id="chan.envelope"><summary><code class="name">chan.envelope</code><span class="sum">Turns a gate or a trigger into a rise and fall (attack, decay, sustain, release): a flash on a beat, a light that swells while a button is held</span></summary>
+<div class="body">
+<p>Turns a gate or a trigger into a rise and fall (attack, decay, sustain, release): a flash on a beat, a light that swells while a button is held</p>
+<p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">chan</span>: Gates or triggers, one envelope per channel</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: One envelope per input channel, 0 to 1, with the input's names</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>mode</code></td><td>gate | trigger</td><td><code>&quot;gate&quot;</code></td><td></td><td>What the input means<ul><li><code>gate</code>: on while above <code>threshold</code>: attack and decay, sustain while on, release when it drops</li><li><code>trigger</code>: each rise above <code>threshold</code> starts the whole envelope: attack, decay, <code>hold</code> at sustain, release. For one-frame presses and beats</li></ul></td></tr>
+<tr><td><code>attack</code></td><td>float</td><td><code>0.05</code></td><td>0 to 5 s (soft)</td><td>Time from 0 to 1 after the gate opens; 0 jumps to 1</td></tr>
+<tr><td><code>decay</code></td><td>float</td><td><code>0.2</code></td><td>0 to 5 s (soft)</td><td>Time from 1 down to <code>sustain</code></td></tr>
+<tr><td><code>sustain</code></td><td>float</td><td><code>0.7</code></td><td>0 to 1 (soft)</td><td>The level held while the gate stays on (in trigger mode: for <code>hold</code>)</td></tr>
+<tr><td><code>release</code></td><td>float</td><td><code>0.5</code></td><td>0 to 5 s (soft)</td><td>Time from the level at release down to 0</td></tr>
+<tr><td><code>hold</code></td><td>float</td><td><code>0</code></td><td>0 to 5 s (soft)</td><td>Trigger mode: how long the level stays at <code>sustain</code> before the release</td></tr>
+<tr><td><code>threshold</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1 (soft)</td><td>The input counts as on above this value</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio-tips">Audio › Tips</a></p>
 </div></details>
 <details class="entry node" id="chan.filter"><summary><code class="name">chan.filter</code><span class="sum">Smooths jumpy numbers over time: calms a sensor, softens a jump. From a plain lag to steeper filters, averages, a speed limit and an adaptive filter for tracking</span></summary>
 <div class="body">

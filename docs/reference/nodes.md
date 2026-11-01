@@ -1113,7 +1113,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
 *inputs:* [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
@@ -1308,6 +1308,30 @@ Outputs:
 | `values` | unit \| byte | `"unit"` |  | What the channels hold; unit: 0 to 1, from 0 to 255; byte: 0 to 255, as the slots are |
 | `interface` *(more)* | text |  |  | IP address of this machine's network card to listen on; empty listens on all (sACN multicast then joins on the system's default one) |
 | `port` *(more)* | int | `0` (the protocol's port) | 1024 to 65535 (soft) | UDP port to listen on; 0 is the protocol's own (Art-Net 6454, sACN 5568); 0: the protocol's port |
+
+### chan.envelope
+
+Turns a gate or a trigger into a rise and fall (attack, decay, sustain, release): a flash on a beat, a light that swells while a button is held
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs:
+
+- `in` (chan): Gates or triggers, one envelope per channel
+
+Outputs:
+
+- `out` (chan): One envelope per input channel, 0 to 1, with the input's names
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `mode` | gate \| trigger | `"gate"` |  | What the input means; gate: on while above `threshold`: attack and decay, sustain while on, release when it drops; trigger: each rise above `threshold` starts the whole envelope: attack, decay, `hold` at sustain, release. For one-frame presses and beats |
+| `attack` | float | `0.05` | 0 to 5 s (soft) | Time from 0 to 1 after the gate opens; 0 jumps to 1 |
+| `decay` | float | `0.2` | 0 to 5 s (soft) | Time from 1 down to `sustain` |
+| `sustain` | float | `0.7` | 0 to 1 (soft) | The level held while the gate stays on (in trigger mode: for `hold`) |
+| `release` | float | `0.5` | 0 to 5 s (soft) | Time from the level at release down to 0 |
+| `hold` | float | `0` | 0 to 5 s (soft) | Trigger mode: how long the level stays at `sustain` before the release |
+| `threshold` | float | `0.5` | 0 to 1 (soft) | The input counts as on above this value |
 
 ### chan.filter
 
