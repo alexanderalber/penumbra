@@ -999,6 +999,39 @@ pub struct Position {
     /// The moment lies between the first and the last beat. Outside them, beats continue at
     /// the spacing of the first two (before) or the last two (after).
     pub inside: bool,
+    /// The tempo around the moment, beats per minute: the spacing of the beats nearby, a few
+    /// on either side, so it holds steady where single beats sit a frame early or late.
+    pub bpm: f64,
+}
+
+/// Beat spacings on each side that the tempo averages over.
+const TEMPO_SPAN: usize = 8;
+/// How far a spacing may stray from the median of its neighbours and still count for the
+/// tempo, as a fraction: a missed or an extra beat strays far more.
+const TEMPO_STRAY: f64 = 0.15;
+
+/// The tempo at each spacing between two beats, beats per minute. Each takes the spacings up
+/// to [`TEMPO_SPAN`] on either side, drops those far from their median (missed or extra
+/// beats) and averages the rest. The beats sit on frames of 20 ms, so a single spacing alone
+/// would make the tempo jump by several beats per minute.
+fn tempi(beats: &[f64]) -> Vec<f64> {
+    let gaps: Vec<f64> = beats.iter().zip(beats.iter().skip(1)).map(|(a, b)| b - a).collect();
+    let mut near = Vec::with_capacity(2 * TEMPO_SPAN + 1);
+    (0..gaps.len())
+        .map(|i| {
+            let lo = i.saturating_sub(TEMPO_SPAN);
+            let hi = (i + TEMPO_SPAN + 1).min(gaps.len());
+            near.clear();
+            near.extend(gaps.get(lo..hi).unwrap_or_default().iter().copied());
+            near.sort_by(f64::total_cmp);
+            let median = near.get(near.len() / 2).copied().unwrap_or(0.0);
+            let (sum, n) = near
+                .iter()
+                .filter(|g| (**g - median).abs() <= TEMPO_STRAY * median)
+                .fold((0.0, 0usize), |(s, n), g| (s + g, n + 1));
+            if n > 0 && sum > 0.0 { 60.0 * n as f64 / sum } else { 0.0 }
+        })
+        .collect()
 }
 
 /// Beat and downbeat times arranged for fast lookup of a [`Position`] (binary search).
@@ -1013,6 +1046,8 @@ pub struct BeatGrid {
     beats: Vec<f64>,
     /// Indices into `beats` of the downbeats, ascending, no repeats.
     downs: Vec<i64>,
+    /// The tempo at each spacing: `tempo[i]` lies between beats `i` and `i + 1`.
+    tempo: Vec<f64>,
 }
 
 impl BeatGrid {
@@ -1030,7 +1065,8 @@ impl BeatGrid {
             .collect();
         downs.sort_unstable();
         downs.dedup();
-        Self { beats: b, downs }
+        let tempo = tempi(&b);
+        Self { beats: b, downs, tempo }
     }
 
     pub fn beats(&self) -> &[f64] {
@@ -1072,6 +1108,9 @@ impl BeatGrid {
         };
         let phase = phase.clamp(0.0, 1.0 - f64::EPSILON);
         let (bar, beat_in_bar, beats_in_bar) = self.bar_of(beat);
+        // Outside the beats the spacing is the first's or the last's, and so is the tempo.
+        let gap = usize::try_from(beat).unwrap_or(0).min(self.tempo.len().saturating_sub(1));
+        let bpm = self.tempo.get(gap).copied().unwrap_or(0.0);
         Some(Position {
             beat,
             beat_phase: phase,
@@ -1082,6 +1121,7 @@ impl BeatGrid {
             beats_in_bar,
             bar_phase: (beat_in_bar as f64 + phase) / beats_in_bar.max(1) as f64,
             inside,
+            bpm,
         })
     }
 

@@ -268,7 +268,9 @@ fn check_partial(b: &[f32], d: &[f32], step: usize) -> usize {
         let part = BeatGrid::new(&p.beats.beats, &p.beats.downbeats);
         let mut t = -2.0;
         while t < until {
-            assert_eq!(part.at(t), grid.at(t), "t {t} with {f} frames final");
+            // The tempo near the end of a part still lacks the beats after it.
+            let no_bpm = |p: Option<Position>| p.map(|p| Position { bpm: 0.0, ..p });
+            assert_eq!(no_bpm(part.at(t)), no_bpm(grid.at(t)), "t {t} with {f} frames final");
             t += 0.013;
         }
     }
@@ -511,4 +513,25 @@ fn front_end_speed() {
         let secs = t.elapsed().as_secs_f64();
         eprintln!("{rate} Hz stereo: {} frames, {:.3} s per audio minute", s.frames(), secs / minutes);
     }
+}
+
+#[test]
+fn tempo_holds_steady_on_beats_snapped_to_frames() {
+    // 124 beats per minute, each beat snapped to the 20 ms frames the network sees, one
+    // beat missed and one extra beat between two others.
+    let period = 60.0 / 124.0;
+    let mut beats: Vec<f64> =
+        (0..200).map(|k| (1.0 + k as f64 * period) * FPS).map(|f| f.round() / FPS).collect();
+    beats.remove(100);
+    beats.push(beats[50] + 0.5 * period);
+    let g = BeatGrid::new(&beats, &[]);
+    let mut t = 1.0;
+    while t < 90.0 {
+        let p = g.at(t).unwrap();
+        assert!((p.bpm - 124.0).abs() < 0.8, "t {t}: {} bpm", p.bpm);
+        t += 0.05;
+    }
+    // Single spacings alone would jump by several beats per minute.
+    let one = |i: usize| 60.0 / (beats[i + 1] - beats[i]);
+    assert!((0..40).map(one).any(|b| (b - 124.0).abs() > 2.0));
 }

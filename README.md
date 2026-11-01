@@ -327,6 +327,11 @@ gate. It also builds directly on several of their crates: `photocraft-codecs` an
 The FBX reader follows the format knowledge of [ufbx](https://github.com/ufbx/ufbx) (Samuli
 Raivio) and [fbxcel](https://github.com/lo48576/fbxcel) (YOSHIOKA Takuma), and ufbx's test
 files check it.
+`chan.beat_grid` finds beats and downbeats with [Beat This!](https://github.com/CPJKU/beat_this)
+by Francesco Foscarin, Jan Schlüter and Gerhard Widmer (Institute of Computational Perception,
+JKU Linz; "Beat This! Accurate Beat Tracking Without DBN Postprocessing", ISMIR 2024). penumbra
+runs its published weights (MIT) in its own inference code; `assets/models/` holds them with
+their licence.
 penumbra is an independent project and not affiliated with the storytold team.
 
 ## Contributing

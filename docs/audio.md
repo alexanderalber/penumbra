@@ -419,7 +419,7 @@ another beat; `bar_beat` and `bar` are then counted from there.
 
 `chan.beat_grid` gives beat and bar for the file an `audio.file` plays. Wire the file's `out` into its `audio` input, the same wire a `chan.beat_analysis` takes. Its channels mean the same as the analysis's (`beat`, `tick`, `bar`, `bar_beat`, `bpm`, `beats_per_bar`, `locked`, `coasting`), so bindings keep working when one node replaces the other. It adds `downbeat` (1 in the frame a bar begins), `beat_index` and `bar_index`.
 
-**Finding the beats.** The node finds the beats of the whole file once, in the background, with the Beat This! network. A 4 minute track takes a few seconds, a 2 hour mix a few minutes. The result is kept in a cache, so the next time the file opens the grid is there at once. While the analysis runs, `progress` rises from 0 to 1, `analyzing` reads 1, and the panel shows a progress bar with `cancel`.
+**Finding the beats.** The node finds the beats of the whole file once, in the background, with the Beat This! network (Foscarin, Schlüter and Widmer, JKU Linz, ISMIR 2024; [github.com/CPJKU/beat_this](https://github.com/CPJKU/beat_this)). A 4 minute track takes a few seconds, a 2 hour mix a few minutes. The result is kept in a cache, so the next time the file opens the grid is there at once. While the analysis runs, `progress` rises from 0 to 1, `analyzing` reads 1, and the panel shows a progress bar with `cancel`.
 
 **Using it early.** The grid fills from the start of the file. `ready` reads 1 where the grid under the playhead is final. Further on, `coasting` reads 1 and the beat runs on at the last tempo found. The panel says how far the grid is ready.
 

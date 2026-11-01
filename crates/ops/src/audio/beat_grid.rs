@@ -584,7 +584,7 @@ impl Operator for GridNode {
                 flag(tick),
                 p.bar_phase,
                 p.beat_in_bar as f64,
-                if p.beat_seconds > 0.0 { 60.0 / p.beat_seconds } else { 0.0 },
+                p.bpm,
                 p.beats_in_bar as f64,
                 flag(ready && p.inside),
                 flag(!(ready && p.inside)),
