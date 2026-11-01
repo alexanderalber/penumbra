@@ -130,4 +130,34 @@ mod tests {
         pictures.prune(|_| false);
         assert!(pictures.shown.is_empty());
     }
+
+    #[test]
+    fn pictures_share_one_set_of_attachments() {
+        let gpu = match Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+            Ok(g) => g,
+            Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+            Err(_) => return,
+        };
+        let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
+        let model = Arc::new(Model::upload(&gpu, cube, "cube").unwrap().0);
+        let geo = || Data::new(DataKind::Geo, Geo::single(model.clone()));
+        let mut pictures = GeoPictures::default();
+        let mut out = vec![geo()];
+        pictures.attach(&gpu, NodeId(1), &mut out, 1, 1);
+        let one = gpu.render_attachment_bytes();
+        assert!(one > 0);
+        let before = pictures.gpu_bytes();
+        for k in 2..10 {
+            let mut out = vec![geo()];
+            pictures.attach(&gpu, NodeId(k), &mut out, 1, 1);
+        }
+        // Nine pictures, one set of attachments; each picture adds its own small part only.
+        assert_eq!(gpu.render_attachment_bytes(), one);
+        assert!(pictures.gpu_bytes() < before * 9 + 1, "{} vs {before}", pictures.gpu_bytes());
+        assert!(before < one, "a picture's own part ({before}) is smaller than the attachments ({one})");
+        // Gone with the last renderer holding them.
+        pictures.prune(|_| false);
+        assert_eq!(gpu.render_attachment_bytes(), 0);
+        assert_eq!(gpu.errors().count, 0);
+    }
 }

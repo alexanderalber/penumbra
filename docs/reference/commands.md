@@ -197,7 +197,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `node.kinds` | Node types with their params, inputs, outputs and tags. With a param: its help (what it does, type, default, range, unit, what each choice does). With search: the types whose name contains the text or a tag starts with it (TouchDesigner names, file extensions), as the add dialog finds them; {kind?, param?, search?} |
 | `node.list` | Nodes under a path; {path?, recursive?} |
 | `node.lock` | Lock (hold outputs) or unlock a node; {path, locked?} |
-| `node.memory` | Video memory per node, largest first, with the total against what wgpu has allocated, and wgpu's allocations by label; {limit?} (default 30 of each) |
+| `node.memory` | Video memory per node, largest first. Also what the editor holds (pictures of geometry, display copies) and the render attachments that renderers of one size share. All of it against what wgpu has allocated, and wgpu's allocations by label; {limit?} (default 30 of each) |
 | `node.paste` | Paste the nodes copied last (or `text`) into a component or the root; {into?, text?} |
 | `node.place` | Move nodes in the editor; top left corner, graph units on their component's plane, one undo step. null leaves a node to the editor to place; {nodes: {path: [x, y]}} |
 | `node.rename` | Rename a node; the expose lines and node references that name it follow, in the same undo step; {path, name} |

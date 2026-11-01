@@ -205,6 +205,11 @@ impl Textures {
         Some(id)
     }
 
+    /// Bytes of the display copies.
+    pub fn bytes(&self) -> u64 {
+        self.entries.values().map(|e| penumbra_gpu::texture_bytes(&e.display)).sum()
+    }
+
     /// Frees every entry (another project opened).
     pub fn clear(&mut self) {
         for e in self.entries.values_mut() {

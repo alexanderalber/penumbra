@@ -634,6 +634,8 @@ pub struct Engine {
     notice: Mutex<Option<String>>,
     /// Show mode ([`Engine::set_show`]).
     show: AtomicBool,
+    /// Bytes of the editor's display copies of node pictures ([`Engine::set_display_bytes`]).
+    display_bytes: AtomicU64,
     /// Where show mode is kept across restarts; `None` keeps it in memory only (headless, tests).
     show_file: Mutex<Option<std::path::PathBuf>>,
     /// Keeps the show screen's values across a crash ([`crate::show_values`]).
@@ -719,6 +721,7 @@ impl Engine {
             crash_marker: Mutex::new(None),
             notice: Mutex::new(None),
             show: AtomicBool::new(false),
+            display_bytes: AtomicU64::new(0),
             show_file: Mutex::new(None),
             show_values: Arc::default(),
             state: Arc::new(StateShared::default()),
@@ -1028,6 +1031,17 @@ impl Engine {
             Ok(()) => log::info!("recorded how this run ended in {}", file.display()),
             Err(e) => log::error!("cannot record how this run ended: {e}"),
         }
+    }
+
+    /// Tells the engine how many bytes the editor holds in display copies of node pictures
+    /// (8-bit copies egui draws), so `node.memory` can count them.
+    pub fn set_display_bytes(&self, bytes: u64) {
+        self.display_bytes.store(bytes, Ordering::Relaxed);
+    }
+
+    /// What [`Engine::set_display_bytes`] said last.
+    pub fn display_bytes(&self) -> u64 {
+        self.display_bytes.load(Ordering::Relaxed)
     }
 
     /// Whether show mode is on: the project is locked against edits and not written, the

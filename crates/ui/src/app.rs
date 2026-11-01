@@ -1279,6 +1279,7 @@ impl PenumbraApp {
             free,
         });
         self.textures.end_frame();
+        self.engine.set_display_bytes(self.textures.bytes());
         self.layout.save_if_due(now, false);
         // A line under the title bar, like the one the status bar draws above itself. Painted last,
         // over whatever panel sits at the top.

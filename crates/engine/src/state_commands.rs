@@ -64,7 +64,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "node.memory",
-        "Video memory per node, largest first, with the total against what wgpu has allocated, and wgpu's allocations by label; {limit?} (default 30 of each)",
+        "Video memory per node, largest first. Also what the editor holds (pictures of geometry, display copies) and the render attachments that renderers of one size share. All of it against what wgpu has allocated, and wgpu's allocations by label; {limit?} (default 30 of each)",
         node_memory,
     );
     add(
@@ -273,8 +273,10 @@ fn node_memory(e: &Engine, p: &Json) -> Result<Json> {
     nodes.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
     let total: u64 = nodes.iter().map(|n| n.2).sum();
     let (free_views, geo_pictures) = views;
-    let counted = total + free_views + geo_pictures;
     let gpu = e.gpu();
+    let attachments = gpu.map_or(0, penumbra_gpu::Gpu::render_attachment_bytes);
+    let display = e.display_bytes();
+    let counted = total + free_views + geo_pictures + attachments + display;
     let memory = gpu.and_then(|g| g.memory());
     let vram = gpu.and_then(|g| g.vram());
     let labels: Option<Vec<Json>> = gpu.and_then(|g| g.allocations_by_label()).map(|v| {
@@ -294,6 +296,8 @@ fn node_memory(e: &Engine, p: &Json) -> Result<Json> {
         "nodes_bytes": total,
         "free_views_bytes": free_views,
         "geometry_pictures_bytes": geo_pictures,
+        "render_attachments_bytes": attachments,
+        "display_copies_bytes": display,
         "counted_bytes": counted,
         "allocated": memory.map(|m| m.allocated),
         "reserved": memory.map(|m| m.reserved),
@@ -301,7 +305,7 @@ fn node_memory(e: &Engine, p: &Json) -> Result<Json> {
         "vram_usage": vram.map(|v| v.usage),
         "vram_budget": vram.map(|v| v.budget),
         "allocations_by_label": labels,
-        "not_counted": "the editor's thumbnail copies, output windows, the window's own textures, shader pipelines, uniform buffers; allocations_by_label shows them by the label they were created with",
+        "not_counted": "output windows, the window's own textures, shader pipelines, uniform buffers; allocations_by_label shows them by the label they were created with",
     }))
 }
 

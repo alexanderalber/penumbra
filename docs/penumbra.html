@@ -5946,9 +5946,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>Lock (hold outputs) or unlock a node; {path, locked?}</p>
 </div></details>
-<details class="entry command" id="node.memory"><summary><code class="name">node.memory</code><span class="sum">Video memory per node, largest first, with the total against what wgpu has allocated, and wgpu's allocations by label</span></summary>
+<details class="entry command" id="node.memory"><summary><code class="name">node.memory</code><span class="sum">Video memory per node, largest first. Also what the editor holds (pictures of geometry, display copies) and the render attachments that renderers of one size share. All of it against what wgpu has allocated, and wgpu's allocations by label</span></summary>
 <div class="body">
-<p>Video memory per node, largest first, with the total against what wgpu has allocated, and wgpu's allocations by label; {limit?} (default 30 of each)</p>
+<p>Video memory per node, largest first. Also what the editor holds (pictures of geometry, display copies) and the render attachments that renderers of one size share. All of it against what wgpu has allocated, and wgpu's allocations by label; {limit?} (default 30 of each)</p>
 <p class="mentions">Mentioned in: <a href="#getting-started-when-the-gpu-gives-up">Getting started › When the GPU gives up</a></p>
 </div></details>
 <details class="entry command" id="node.paste"><summary><code class="name">node.paste</code><span class="sum">Paste the nodes copied last (or <code>text</code>) into a component or the root</span></summary>

@@ -169,6 +169,8 @@ struct Inner {
     /// The threads inside [`Gpu::quiet`]; submissions and presents from other threads wait
     /// while there is one.
     quiet: Mutex<Vec<std::thread::ThreadId>>,
+    /// Render attachments that renderers of one size share (see [`render::Attachments`]).
+    attachments: render::Attachments,
 }
 
 /// Whether the device is lost, why, and who wants to know (see [`Gpu::on_lost`]). Shared with
@@ -293,6 +295,7 @@ impl Gpu {
                 submit_lock: RwLock::new(()),
                 held_until: Mutex::new(None),
                 quiet: Mutex::new(Vec::new()),
+                attachments: render::Attachments::default(),
             }),
         }
     }

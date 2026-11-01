@@ -280,7 +280,7 @@ pub(super) struct MeasureTargets {
     padded: u64,
     target: wgpu::Texture,
     view: wgpu::TextureView,
-    depth: wgpu::TextureView,
+    depth: std::sync::Arc<wgpu::TextureView>,
     buffer: wgpu::Buffer,
 }
 

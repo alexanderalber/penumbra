@@ -779,13 +779,71 @@ impl Gpu {
     }
 }
 
-/// The attachments one render node keeps between frames (depth and multisampled targets of
-/// its size) and its uniform buffers.
+/// Size, format and samples of a render attachment.
+type AttachmentKey = (u32, u32, wgpu::TextureFormat, u32);
+
+/// The multisampled colour and the depth attachments of every renderer, one per size, format
+/// and sample count. A render clears them at its start and discards them at its end, and the
+/// queue runs renders one after another, so renderers of one size can share them: 37 pictures
+/// of geometry in the editor need one set instead of 37 (each 4x multisampled set takes 12 MiB
+/// at 512 x 288). An attachment lives as long as a renderer holds it.
+#[derive(Default)]
+pub(crate) struct Attachments {
+    live: std::sync::Mutex<HashMap<AttachmentKey, std::sync::Weak<wgpu::TextureView>>>,
+}
+
+impl Attachments {
+    /// The attachment of `key`, made when no renderer holds one.
+    fn get(&self, gpu: &Gpu, key: AttachmentKey) -> Arc<wgpu::TextureView> {
+        let mut live = lock(&self.live);
+        live.retain(|_, v| v.strong_count() > 0);
+        if let Some(view) = live.get(&key).and_then(std::sync::Weak::upgrade) {
+            return view;
+        }
+        let (width, height, format, samples) = key;
+        let view = Arc::new(
+            gpu.device()
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("render attachment"),
+                    size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: samples,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    view_formats: &[],
+                })
+                .create_view(&wgpu::TextureViewDescriptor::default()),
+        );
+        live.insert(key, Arc::downgrade(&view));
+        view
+    }
+
+    /// Bytes of the attachments renderers hold, each counted once.
+    fn bytes(&self) -> u64 {
+        lock(&self.live)
+            .values()
+            .filter_map(std::sync::Weak::upgrade)
+            .map(|v| crate::tex::view_bytes(&v))
+            .sum()
+    }
+}
+
+impl Gpu {
+    /// Bytes of the render attachments renderers share (multisampled colour and depth, one set
+    /// per size). [`Renderer::bytes`] leaves them out.
+    pub fn render_attachment_bytes(&self) -> u64 {
+        self.inner.attachments.bytes()
+    }
+}
+
+/// What one render node keeps between frames: shadow, tint and occlusion maps, mip chains and
+/// uniform buffers, and its hold on the shared attachments of its size (see [`Attachments`]).
 pub struct Renderer {
     size: (u32, u32),
-    msaa_color: Option<wgpu::TextureView>,
-    depth: Option<(u32, wgpu::TextureView)>,
-    depth_data: Option<wgpu::TextureView>,
+    msaa_color: Option<Arc<wgpu::TextureView>>,
+    depth: Option<(u32, Arc<wgpu::TextureView>)>,
+    depth_data: Option<Arc<wgpu::TextureView>>,
     frame: Option<wgpu::Buffer>,
     draws: Option<wgpu::Buffer>,
     white: Option<Tex>,
@@ -995,16 +1053,15 @@ impl Default for Renderer {
 }
 
 impl Renderer {
-    /// Bytes on the GPU of what the renderer keeps between renders: attachments, shadow and
-    /// occlusion targets, mip chains, buffers. The pictures it renders into belong to the caller.
+    /// Bytes on the GPU of what the renderer keeps between renders: shadow and occlusion
+    /// targets, mip chains, buffers. The pictures it renders into belong to the caller; the
+    /// attachments it shares with renderers of its size count in
+    /// [`Gpu::render_attachment_bytes`].
     pub fn bytes(&self) -> u64 {
         use crate::tex::view_bytes;
         let buffers =
             self.frame.iter().chain(&self.draws).chain(&self.shadow_frames).chain(&self.ao_uniforms);
-        self.msaa_color.as_ref().map_or(0, view_bytes)
-            + self.depth.as_ref().map_or(0, |(_, v)| view_bytes(v))
-            + self.depth_data.as_ref().map_or(0, view_bytes)
-            + self.white.as_ref().map_or(0, Tex::bytes)
+        self.white.as_ref().map_or(0, Tex::bytes)
             + self.shadows.as_ref().map_or(0, |s| view_bytes(&s.array))
             + self.tints.as_ref().map_or(0, |s| view_bytes(&s.array))
             + self.ao.as_ref().map_or(0, |a| {
@@ -1042,19 +1099,8 @@ impl Renderer {
         size: (u32, u32),
         format: wgpu::TextureFormat,
         samples: u32,
-    ) -> wgpu::TextureView {
-        gpu.device()
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("render attachment"),
-                size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: samples,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            })
-            .create_view(&wgpu::TextureViewDescriptor::default())
+    ) -> Arc<wgpu::TextureView> {
+        gpu.inner.attachments.get(gpu, (size.0, size.1, format, samples))
     }
 
     /// Draws `geo` seen through `view` and lit by `lights` (the first [`MAX_LIGHTS`]) into
