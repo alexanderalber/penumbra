@@ -131,7 +131,7 @@ project opens. The status bar pauses and runs it. See [Time](concepts.md#time).
 
 **Show mode.** A lock for a performance: no edits, no saving, no project switches, while OSC,
 DMX, keys and cameras keep driving the show. When the GPU or the editor fails, the app starts
-again by itself. **Show mode** in the project menu or Ctrl+Shift+L turns it on. See
+again by itself. **Show mode** in the editor's menu (right-click on empty canvas) or Ctrl+Shift+L turns it on. See
 [Show mode](getting-started.md#show-mode).
 
 **State.** What a node builds up over time: a feedback loop's last frame, a cache's frames, a

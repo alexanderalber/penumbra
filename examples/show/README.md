@@ -54,7 +54,7 @@ screen with the GO button below **Unlock**, and a click on it moves the show on.
 
 ## Before the show
 
-Lock the project: **Show mode** in the project menu (the folder in the status bar), Ctrl+Shift+L,
+Lock the project: **Show mode** in the editor's menu (right-click on empty canvas), Ctrl+Shift+L,
 or `show.lock` over the control channel.
 Edits, saving and project switches are then refused. Keys, OSC and the GO button keep working.
 Show mode also restarts penumbra by itself after a crash (exit code 3: the GPU device lost or

@@ -133,7 +133,9 @@ pub fn take_restart(file: &Path, now: u64) -> bool {
 
 /// The commands show mode refuses: those that write into the project folder, switch the
 /// project or start editing. Edits themselves (`node.*`, `history.*`, ...) are refused by the
-/// locked project, so they need no entry here.
+/// locked project, so they need no entry here. `cook.play` is allowed on purpose: the editor's
+/// Play/Pause button is locked in show mode, so a mistaken click cannot stop the show, while
+/// a script or cue software can still pause and run the clock deliberately.
 pub fn refuses(method: &str) -> bool {
     const REFUSED: &[&str] = &[
         "project.save",

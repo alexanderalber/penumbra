@@ -597,7 +597,7 @@ impl PenumbraApp {
         let (undo, redo, lock) = ctx.input_mut(|i| {
             let redo = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
                 || i.consume_key(Modifiers::COMMAND, Key::Y);
-            let lock = i.consume_shortcut(&crate::projects::SHOW_MODE_KEYS);
+            let lock = i.consume_shortcut(&crate::editor::SHOW_MODE_KEYS);
             (i.consume_key(Modifiers::COMMAND, Key::Z), redo, lock)
         });
         if lock {
@@ -782,27 +782,33 @@ impl PenumbraApp {
             ui.horizontal(|ui| {
                 let layout = &mut self.layout;
                 let save_layout = || layout.save_if_due(now, true);
-                // Show mode is an entry of the project menu: a button of its own beside Play
-                // was hit by accident.
-                let mut picked = crate::projects::Chosen::default();
+                // Show mode starts from the canvas menu: a button of its own beside Play was hit
+                // by accident.
+                let mut about = false;
                 let projects = ui.add_enabled_ui(!status.locked, |ui| {
-                    self.projects.show(ui, &self.engine, &mut self.auto, save_layout, &mut picked)
+                    self.projects.show(ui, &self.engine, &mut self.auto, save_layout, &mut about)
                 });
                 if let Some(m) = projects.inner {
                     self.message = Some((m, now));
                 }
-                if picked.show_mode {
-                    actions.push(Action::Show(true));
-                }
-                if picked.about {
+                if about {
                     self.about.open();
                 }
+                // A click by mistake must not stop the show. A desk or cue software can still
+                // pause on purpose with `cook.play`.
                 let playing = view.playing;
-                let r = if playing {
-                    icons::button(ui, Icon::Pause, "Pause")
-                } else {
-                    icons::button(ui, Icon::Play, "Play")
-                };
+                let r = ui
+                    .add_enabled_ui(!status.locked, |ui| {
+                        if playing {
+                            icons::button(ui, Icon::Pause, "Pause")
+                        } else {
+                            icons::button(ui, Icon::Play, "Play")
+                        }
+                    })
+                    .inner
+                    .on_disabled_hover_text(
+                        "Locked in show mode. Unlock on the show screen, or send cook.play over the control channel",
+                    );
                 self.auto.add("button.play", r.rect, "Play/Pause");
                 if r.clicked() {
                     actions.push(Action::Play(!playing));

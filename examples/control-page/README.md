@@ -33,4 +33,4 @@ Try:
 
 - `min` and `max` of `/size`: the page's slider follows.
 - `show` off on `/round`: its switch leaves the page.
-- Show mode (in the project menu): the page keeps working, and the show screen shows the same controls.
+- Show mode (right-click on empty canvas): the page keeps working, and the show screen shows the same controls.

@@ -25,10 +25,15 @@
 //!
 //! Separate parts of a network are packed in rows, in the order they were in, so the whole is
 //! wider than tall; single unconnected nodes go in rows below them.
+//!
+//! Notes ([`penumbra_ops::note`]) take no part in the drawing, so they never change where a node
+//! goes. Each note goes along with the nodes it overlapped when arranging started, else with
+//! its nearest node: it keeps its offset to their top left corner. A note that would then cover
+//! a node, or another note, moves the shortest way to a free place ([`notes_along`]).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use egui::{Pos2, pos2};
+use egui::{Pos2, Rect, Vec2, pos2, vec2};
 use penumbra_core::NodeId;
 use penumbra_graph::{Network, NodeTypes};
 
@@ -144,7 +149,123 @@ pub fn level(
     let old: HashMap<NodeId, Pos2> =
         g.nodes.iter().filter_map(|(id, _)| Some((*id, layout.get(*id)?))).collect();
     let origin = old.values().fold(None::<Pos2>, |acc, p| Some(acc.map_or(*p, |a| a.min(*p))));
-    arrange(&g, &old, origin.unwrap_or(Pos2::ZERO))
+    let mut to = arrange(&g, &old, origin.unwrap_or(Pos2::ZERO));
+    let notes = notes_along(net, types, layout, level, only, &g, &to);
+    to.extend(notes);
+    to
+}
+
+/// Space a note keeps from nodes and other notes when it has to move, in graph units.
+const NOTE_MARGIN: f32 = 20.0;
+
+/// New places for the notes of `level` (only those in `only` when given), after the nodes of
+/// `g` were arranged to `to`. A note moves with the nodes of `g` it overlaps where they were
+/// (else with the nearest one), keeping its offset to their top left corner. Where that covers
+/// a node or a note already placed, it takes the nearest free place instead. Computed afresh on
+/// every arrangement, nothing is stored: when the nodes stay where they are, a note that covers
+/// nothing stays too, so arranging an arrangement still changes nothing.
+fn notes_along(
+    net: &Network,
+    types: &NodeTypes,
+    layout: &Layout,
+    level: Option<NodeId>,
+    only: Option<&BTreeSet<NodeId>>,
+    g: &Graph,
+    to: &HashMap<NodeId, Pos2>,
+) -> HashMap<NodeId, Pos2> {
+    let height: HashMap<NodeId, f32> = g.nodes.iter().copied().collect();
+    let node_rect = |p: Pos2, h: f32| Rect::from_min_size(p, vec2(NODE_SIZE.x, h));
+    // Where the arranged nodes were, for the assignment.
+    let before: Vec<(NodeId, Rect)> =
+        g.nodes.iter().filter_map(|(id, h)| Some((*id, node_rect(layout.get(*id)?, *h)))).collect();
+    let mut notes: Vec<(NodeId, Rect)> = Vec::new();
+    // What a moved note must not cover: every other node of the level where it ends up, and
+    // the notes that stay.
+    let mut taken: Vec<Rect> = Vec::new();
+    for node in net.children(level) {
+        let Some(at) = layout.get(node.id) else { continue };
+        if let Some([w, h]) = penumbra_ops::note::size(node) {
+            let r = Rect::from_min_size(at, vec2(w, h));
+            if only.is_none_or(|s| s.contains(&node.id)) {
+                notes.push((node.id, r));
+            } else {
+                taken.push(r);
+            }
+        } else if let Some(h) = height.get(&node.id) {
+            taken.push(node_rect(to.get(&node.id).copied().unwrap_or(at), *h));
+        } else {
+            taken.push(node_rect(at, crate::editor::node_ports(net, types, node).0));
+        }
+    }
+    let mut out = HashMap::new();
+    for (id, r) in notes {
+        let mut group: Vec<NodeId> =
+            before.iter().filter(|(_, n)| n.intersects(r)).map(|(id, _)| *id).collect();
+        if group.is_empty() {
+            let nearest = before.iter().min_by(|a, b| rect_gap(a.1, r).total_cmp(&rect_gap(b.1, r)));
+            group.extend(nearest.map(|(id, _)| *id));
+        }
+        let corner = |at: &dyn Fn(NodeId) -> Option<Pos2>| {
+            group.iter().filter_map(|id| at(*id)).reduce(|a, b| a.min(b))
+        };
+        let was = corner(&|id| layout.get(id));
+        let is = corner(&|id| to.get(&id).copied());
+        let want = match (was, is) {
+            (Some(was), Some(is)) => (r.min + (is - was)).round(),
+            _ => r.min,
+        };
+        let p = free_spot(want, r.size(), &taken);
+        taken.push(Rect::from_min_size(p, r.size()));
+        out.insert(id, p);
+    }
+    out
+}
+
+/// How far apart `a` and `b` are: 0 when they touch or overlap.
+fn rect_gap(a: Rect, b: Rect) -> f32 {
+    let dx = (a.min.x - b.max.x).max(b.min.x - a.max.x).max(0.0);
+    let dy = (a.min.y - b.max.y).max(b.min.y - a.max.y).max(0.0);
+    dx.hypot(dy)
+}
+
+/// The place nearest to `want` where a box of `size` keeps [`NOTE_MARGIN`] from every rect in
+/// `taken`: `want` itself when free, else a place beside one of the rects in the way (up, down,
+/// left or right, then once more from there), else below all of them.
+fn free_spot(want: Pos2, size: Vec2, taken: &[Rect]) -> Pos2 {
+    let walls: Vec<Rect> = taken.iter().map(|t| t.expand(NOTE_MARGIN)).collect();
+    let blocking = |p: Pos2| {
+        let r = Rect::from_min_size(p, size);
+        walls.iter().filter(move |w| w.intersects(r))
+    };
+    let mut tried = vec![want];
+    let mut from = vec![want];
+    for _ in 0..3 {
+        let mut next = Vec::new();
+        for p in &from {
+            for w in blocking(*p) {
+                // One unit beyond the wall: rects that only touch count as overlapping.
+                next.extend([
+                    pos2(p.x, w.min.y - size.y - 1.0),
+                    pos2(p.x, w.max.y + 1.0),
+                    pos2(w.min.x - size.x - 1.0, p.y),
+                    pos2(w.max.x + 1.0, p.y),
+                ]);
+            }
+        }
+        next.retain(|p| !tried.contains(p));
+        next.truncate(512);
+        tried.extend(&next);
+        from = next;
+    }
+    let free = tried
+        .into_iter()
+        .filter(|p| blocking(*p).next().is_none())
+        .min_by(|a, b| a.distance_sq(want).total_cmp(&b.distance_sq(want)));
+    free.unwrap_or_else(|| {
+        let bottom = walls.iter().map(|w| w.max.y).fold(want.y, f32::max);
+        pos2(want.x, bottom + 1.0)
+    })
+    .round()
 }
 
 /// The arranged places of every level of the network (each component's inside is a plane of its
@@ -1513,5 +1634,66 @@ mod tests {
             let once = arrange_times(&chains, &start, 1);
             assert_eq!(arrange_times(&chains, &start, 3), once);
         }
+    }
+
+    #[test]
+    fn notes_go_along_cover_no_node_and_arranging_again_moves_nothing() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let text = include_str!("../../../examples/projector-wall/project.ron");
+        let content = penumbra_project::load(text, &types).unwrap();
+        let ops = penumbra_project::diff(&penumbra_project::Content::default(), &content);
+        let mut net = Network::new().apply(&types, &ops).unwrap().network;
+        let mut layout = Layout::load(None);
+        layout.sync(&net);
+        let notes: Vec<NodeId> =
+            net.children(None).filter(|n| penumbra_ops::note::is_note(n)).map(|n| n.id).collect();
+        assert_eq!(notes.len(), 4);
+        // Scrambled, so the nodes move a long way and land where the notes were.
+        let scramble: Vec<penumbra_graph::Op> = net
+            .children(None)
+            .enumerate()
+            .filter(|(_, n)| !penumbra_ops::note::is_note(n))
+            .filter_map(|(i, n)| {
+                let pos = Some([(i * 7 % 5) as f32 * 260.0, (i * 11 % 7) as f32 * 170.0]);
+                Some(penumbra_graph::Op::Place { path: net.path_of(n.id)?, pos })
+            })
+            .collect();
+        net = net.apply(&types, &scramble).unwrap().network;
+        layout.sync(&net);
+        for round in 0..3 {
+            let to = level(&net, &types, &layout, None, None);
+            let ops = crate::layout::place_ops(&net, &to);
+            if round > 0 {
+                assert!(ops.is_empty(), "arranging again moved {ops:?}");
+            }
+            net = net.apply(&types, &ops).unwrap().network;
+            layout.sync(&net);
+        }
+        let rect = |id: NodeId| {
+            let node = net.node(id).unwrap();
+            let size = penumbra_ops::note::size(node).map_or(NODE_SIZE, |[w, h]| egui::vec2(w, h));
+            Rect::from_min_size(layout.get(id).unwrap(), size)
+        };
+        for note in &notes {
+            for other in net.children(None).filter(|n| n.id != *note) {
+                assert!(
+                    !rect(*note).intersects(rect(other.id)),
+                    "{:?} covers {:?}",
+                    net.path_of(*note),
+                    net.path_of(other.id)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_free_spot_is_the_nearest_place_beside_what_is_in_the_way() {
+        let size = egui::vec2(100.0, 50.0);
+        assert_eq!(free_spot(pos2(0.0, 0.0), size, &[]), pos2(0.0, 0.0));
+        // A node right under the note's lower edge: up is the shortest way out.
+        let node = Rect::from_min_size(pos2(0.0, 40.0), egui::vec2(150.0, 118.0));
+        let p = free_spot(pos2(0.0, 0.0), size, &[node]);
+        assert_eq!(p, pos2(0.0, 40.0 - NOTE_MARGIN - 50.0 - 1.0));
+        assert!(!Rect::from_min_size(p, size).intersects(node.expand(NOTE_MARGIN)));
     }
 }

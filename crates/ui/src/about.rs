@@ -37,12 +37,9 @@ const LICENCE_APACHE: &str = include_str!("../../../LICENSE-APACHE");
 /// Where the source is.
 pub const REPOSITORY: &str = "https://github.com/alexanderalber/penumbra";
 
-/// Trademarks the app names: NDI's terms ask for their line in an About box, and the add dialog
-/// finds node types by TouchDesigner's names.
-pub const TRADEMARKS: &[&str] = &[
-    "NDI\u{ae} is a registered trademark of Vizrt NDI AB.",
-    "TouchDesigner is a trademark of Derivative Inc. penumbra is independent of Derivative.",
-];
+/// Trademarks the app names: NDI's terms ask for their line in an About box. TouchDesigner's
+/// trademark is acknowledged in the README.
+pub const TRADEMARKS: &[&str] = &["NDI\u{ae} is a registered trademark of Vizrt NDI AB."];
 
 /// The commit the app was built from, when its build knew it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

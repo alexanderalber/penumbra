@@ -1,7 +1,7 @@
 //! `ui.note`: a comment on the network canvas. It holds text and a size, has no inputs and no
 //! outputs and never cooks anything. The editor draws it as a box of text, without header,
-//! ports or thumbnail ([`text_lines`] says how the text reads), and leaves it out of wire routing
-//! and arrangement. Being a node, a note is created, edited, moved, copied and saved like any
+//! ports or thumbnail ([`text_lines`] says how the text reads), and leaves it out of wire routing.
+//! Arranging moves a note along with its nodes. Being a node, a note is created, edited, moved, copied and saved like any
 //! other node, by the same commands.
 
 use penumbra_core::{Error, ParamSpec, Value};
@@ -28,7 +28,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(ParamSpec::text(TEXT, "").lines(8).doc(
             "What the note says. A line starting with \"# \" is a heading, one starting with \"- \" a bullet. \
-             A name in backticks stands out. Long lines wrap at the note's width",
+             A name in backticks stands out. Long lines wrap at the note's width. Double-click the note on the canvas to write in it there",
         ))
         .param(
             ParamSpec::int(WIDTH, DEFAULT_SIZE[0] as i64)

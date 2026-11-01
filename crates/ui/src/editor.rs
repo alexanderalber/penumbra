@@ -7,7 +7,8 @@
 //! wire or binding line one to delete it, on empty space the editor's options; a double-click on
 //! empty space (or Tab) the "add node" dialog
 //! ([`crate::add_dialog`]), a double-click on a component enters it (on other nodes it does
-//! nothing; pinning to the viewer is in the node menu). Drag from an output to an input
+//! nothing; pinning to the viewer is in the node menu), a double-click on a note edits its text
+//! in place. Drag from an output to an input
 //! connects; dragging a connected input picks its wire up (drop on nothing to disconnect).
 //! Ports are named beside them on nodes with several, and a tooltip says what each holds.
 //! Keys: Tab adds a node, Delete deletes, F frames, L arranges ([`crate::arrange`]).
@@ -39,6 +40,10 @@ const PORT_R: f32 = 5.0;
 const PORT_PICK: f32 = 11.0;
 /// Text size in a note, in graph units: larger than a node's name, since a note is there to be read.
 const NOTE_TEXT: f32 = 16.0;
+
+/// The keys that turn show mode on (Ctrl+Shift+L), beside the entry in the canvas menu.
+pub const SHOW_MODE_KEYS: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT), Key::L);
 
 /// What the editor needs from the app each frame.
 pub struct Inputs<'a> {
@@ -117,6 +122,18 @@ pub struct Editor {
     body_press: Option<node_controls::Press>,
     /// The note whose size is being dragged.
     resize: Option<NoteResize>,
+    /// The note whose text is being written on the canvas.
+    note_edit: Option<NoteEdit>,
+}
+
+/// Writing a note's text in place: the text so far, whether the text field has had the focus,
+/// frames without it before that, and whether the note was drawn this frame.
+struct NoteEdit {
+    node: NodeId,
+    text: String,
+    had_focus: bool,
+    waited: u32,
+    shown: bool,
 }
 
 /// A drag of a note's resize handle: one history group, the size it started from, how far the
@@ -303,6 +320,7 @@ impl Default for Editor {
             routes: RouteCache::default(),
             body_press: None,
             resize: None,
+            note_edit: None,
         }
     }
 }
@@ -977,7 +995,7 @@ impl Editor {
     #[allow(clippy::too_many_arguments)]
     fn nodes(
         &mut self,
-        ui: &Ui,
+        ui: &mut Ui,
         painter: &egui::Painter,
         geos: &[Geo],
         canvas: Rect,
@@ -992,6 +1010,9 @@ impl Editor {
         let mut clicked_node = false;
         let mut hovered_port: Option<PortHit> = None;
         self.hovered = None;
+        if let Some(e) = self.note_edit.as_mut() {
+            e.shown = false;
+        }
         // Notes first: a node lying on a note is drawn over it and takes the pointer.
         for g in geos.iter().filter(|g| g.note).chain(geos.iter().filter(|g| !g.note)) {
             if !g.rect.expand(PORT_PICK).intersects(canvas) {
@@ -1004,7 +1025,22 @@ impl Editor {
             if g.note {
                 let handle = self.note_resize(ui, g, input, &path, auto, actions);
                 self.node_interaction(ui, &resp, None, g.id, input, layout, auto, actions, &mut clicked_node);
+                let editing = self.note_edit.as_ref().is_some_and(|e| e.node == g.id);
                 self.draw_note(ui, painter, g, input, node, resp.hovered() || handle);
+                if editing {
+                    self.edit_note(ui, g, input, &path, auto, actions);
+                } else if resp.double_clicked() && input.can_edit {
+                    // One note at a time: the one written in before gets its text now.
+                    self.commit_note(input, actions);
+                    self.note_edit = Some(NoteEdit {
+                        node: g.id,
+                        text: penumbra_ops::note::text(node).to_string(),
+                        had_focus: false,
+                        waited: 0,
+                        shown: true,
+                    });
+                    self.edit_note(ui, g, input, &path, auto, actions);
+                }
                 continue;
             }
             if resp.hovered() {
@@ -1049,7 +1085,94 @@ impl Editor {
                 }
             }
         }
+        // A note written in that is no longer drawn (deleted, scrolled away, another level)
+        // keeps what was written.
+        if self.note_edit.as_ref().is_some_and(|e| !e.shown) {
+            self.commit_note(input, actions);
+        }
         (clicked_node, hovered_port)
+    }
+
+    /// How much taller than note `g` (in points) its text is while it is written in: the box
+    /// grows downwards by that much, so the last line stays in sight. Its `height` stays.
+    fn note_overflow(&self, ui: &Ui, g: &Geo) -> f32 {
+        let Some(edit) = self.note_edit.as_ref().filter(|e| e.node == g.id) else { return 0.0 };
+        let zoom = (g.rect.width() / g.graph.width().max(1.0)).max(0.01);
+        let inner = g.rect.shrink(8.0 * zoom);
+        let size = NOTE_TEXT * zoom;
+        let mut job = note_edit_job(&edit.text, size);
+        job.wrap.max_width = inner.width().max(1.0);
+        let need = ui.painter().layout_job(job).size().y + size;
+        (need - inner.height()).max(0.0)
+    }
+
+    /// The text field over a note being written in, in the note's font and size, so the text
+    /// does not jump. Escape or a click elsewhere ends it ([`Self::commit_note`]). The editor's
+    /// keys stay off while it has the focus.
+    fn edit_note(
+        &mut self,
+        ui: &mut Ui,
+        g: &Geo,
+        input: &Inputs<'_>,
+        path: &str,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) {
+        let grow = self.note_overflow(ui, g);
+        let Some(edit) = self.note_edit.as_mut() else { return };
+        edit.shown = true;
+        let zoom = (g.rect.width() / g.graph.width().max(1.0)).max(0.01);
+        let inner = g.rect.shrink(8.0 * zoom);
+        if inner.width() <= 1.0 || inner.height() <= 1.0 {
+            return;
+        }
+        let size = NOTE_TEXT * zoom;
+        let inner = Rect { max: pos2(inner.max.x, inner.max.y + grow), ..inner };
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+        child.set_clip_rect(inner.intersect(ui.clip_rect()).intersect(self.canvas));
+        let mut layouter = |ui: &Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+            let mut job = note_edit_job(text.as_str(), size);
+            job.wrap.max_width = wrap;
+            ui.painter().layout_job(job)
+        };
+        let out = egui::TextEdit::multiline(&mut edit.text)
+            .id(ui.id().with(("note_edit", g.id)))
+            .frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .font(FontId::proportional(size))
+            .text_color(theme::TEXT)
+            .desired_width(inner.width())
+            .desired_rows(1)
+            .min_size(inner.size())
+            .lock_focus(true)
+            .layouter(&mut layouter)
+            .show(&mut child);
+        let r = out.response;
+        auto.add(format!("note_text.{path}"), r.rect, "note text");
+        if r.has_focus() {
+            edit.had_focus = true;
+        } else if !edit.had_focus && edit.waited < 3 {
+            edit.waited += 1;
+            r.request_focus();
+        } else {
+            self.commit_note(input, actions);
+        }
+    }
+
+    /// Ends writing in a note: its new text as one edit, none when it did not change.
+    fn commit_note(&mut self, input: &Inputs<'_>, actions: &mut Vec<Action>) {
+        let Some(edit) = self.note_edit.take() else { return };
+        let Some(node) = input.net.node(edit.node) else { return };
+        if penumbra_ops::note::text(node) == edit.text {
+            return;
+        }
+        if let Some(param) = net_param(input, edit.node, penumbra_ops::note::TEXT) {
+            actions.push(Action::Edit {
+                ops: vec![Op::Set { param, value: Value::Text(edit.text) }],
+                label: String::new(),
+                group: None,
+            });
+        }
     }
 
     /// Ports draw over nodes; the one under the pointer and compatible targets light up.
@@ -1735,7 +1858,7 @@ impl Editor {
             painter.rect_filled(r, CornerRadius::ZERO, theme::ACCENT);
         }
 
-        self.outline(ui, painter, g, input, radius);
+        self.outline(ui, painter, g, input, g.rect, radius);
 
         // Over a port, the port's own tooltip shows instead (see `port_tooltip`).
         if resp.hovered() && matches!(self.drag, Drag::None) && !on_port {
@@ -1765,7 +1888,15 @@ impl Editor {
     }
 
     /// The outline of node `g`: selection, change-log highlight, recent outside edits, errors.
-    fn outline(&self, ui: &Ui, painter: &egui::Painter, g: &Geo, input: &Inputs<'_>, radius: CornerRadius) {
+    fn outline(
+        &self,
+        ui: &Ui,
+        painter: &egui::Painter,
+        g: &Geo,
+        input: &Inputs<'_>,
+        rect: Rect,
+        radius: CornerRadius,
+    ) {
         let status = input.status.get(&g.id);
         let selected = self.selection.contains(&g.id);
         let recent = input.recent.get(&g.id).map(|t| input.now.saturating_duration_since(*t).as_secs_f32());
@@ -1783,7 +1914,7 @@ impl Editor {
             None
         };
         if let Some(s) = outline {
-            painter.rect_stroke(g.rect, radius, s, StrokeKind::Outside);
+            painter.rect_stroke(rect, radius, s, StrokeKind::Outside);
         }
         if recent.is_some_and(|a| a < theme::RECENT_SECONDS) {
             ui.ctx().request_repaint();
@@ -1865,12 +1996,17 @@ impl Editor {
         use penumbra_ops::note::{Line, spans, text_lines};
         let zoom = (g.rect.width() / g.graph.width().max(1.0)).max(0.01);
         let radius = CornerRadius::same((4.0 * zoom).round().clamp(0.0, 255.0) as u8);
-        painter.rect_filled(g.rect, radius, theme::NOTE_FILL);
-        painter.rect_stroke(g.rect, radius, Stroke::new(1.0, theme::NOTE_EDGE), StrokeKind::Inside);
+        // While written in, the box grows to the text (see `note_overflow`).
+        let editing = self.note_edit.as_ref().is_some_and(|e| e.node == g.id);
+        let grow = self.note_overflow(ui, g);
+        let rect = Rect { max: pos2(g.rect.max.x, g.rect.max.y + grow), ..g.rect };
+        painter.rect_filled(rect, radius, theme::NOTE_FILL);
+        painter.rect_stroke(rect, radius, Stroke::new(1.0, theme::NOTE_EDGE), StrokeKind::Inside);
         let inner = g.rect.shrink(8.0 * zoom);
         let size = NOTE_TEXT * zoom;
         // Below about 4 points the text is a grey smear; the box alone says a note is there.
-        if size >= 4.0 && inner.width() > 0.0 && inner.height() > 0.0 {
+        // While the note is written in, its text field draws the text.
+        if !editing && size >= 4.0 && inner.width() > 0.0 && inner.height() > 0.0 {
             let text = penumbra_ops::note::text(node);
             let mut job = LayoutJob::default();
             job.wrap.max_width = inner.width();
@@ -1882,7 +2018,7 @@ impl Editor {
                 ..Default::default()
             };
             if text.trim().is_empty() {
-                let hint = "Empty note. Write its text in the param panel";
+                let hint = "Empty note. Double-click it to write";
                 job.append(hint, 0.0, TextFormat { color: theme::TEXT_WEAK, ..plain.clone() });
             } else {
                 for (i, line) in text_lines(text).into_iter().enumerate() {
@@ -1919,7 +2055,7 @@ impl Editor {
                 painter.line_segment([c - vec2(d * scale, 0.0), c - vec2(0.0, d * scale)], stroke);
             }
         }
-        self.outline(ui, painter, g, input, radius);
+        self.outline(ui, painter, g, input, rect, radius);
     }
 
     /// Names next to the ports, inside the node's edge: always for the inputs and for the outputs
@@ -2211,6 +2347,35 @@ fn auto_connect(input: &Inputs<'_>, source: NodeId, new: &NodePath, create: Opti
 
 /// The port within pick distance of `p`: `(is_input, node, index)`.
 /// The path of param `name` of node `id`, for an edit.
+/// The text of a note being written in, laid out as [`Editor::draw_note`] draws it, so it does not
+/// jump: the same size, a `# ` line larger and brighter, names in backticks in their colour. The
+/// markup stays visible, since the text field edits it.
+fn note_edit_job(text: &str, size: f32) -> egui::text::LayoutJob {
+    use egui::text::{LayoutJob, TextFormat};
+    let plain = TextFormat { font_id: FontId::proportional(size), color: theme::TEXT, ..Default::default() };
+    let heading = TextFormat {
+        font_id: FontId::proportional(size * 1.35),
+        color: Color32::WHITE,
+        ..Default::default()
+    };
+    let mut job = LayoutJob::default();
+    for line in text.split_inclusive('\n') {
+        let format = if line.starts_with("# ") { heading.clone() } else { plain.clone() };
+        let body = line.trim_end_matches(['\n', '\r']);
+        let mut rest = body;
+        while let Some(open) = rest.find('`') {
+            let Some(len) = rest[open + 1..].find('`') else { break };
+            let end = open + len + 2;
+            job.append(&rest[..open], 0.0, format.clone());
+            job.append(&rest[open..end], 0.0, TextFormat { color: theme::NOTE_NAME, ..format.clone() });
+            rest = &rest[end..];
+        }
+        job.append(rest, 0.0, format.clone());
+        job.append(&line[body.len()..], 0.0, format);
+    }
+    job
+}
+
 fn net_param(input: &Inputs<'_>, id: NodeId, name: &str) -> Option<ParamPath> {
     let path = input.net.path_of(id)?;
     ParamPath::new(path, penumbra_core::Name::new(name).ok()?).ok()
@@ -2340,7 +2505,7 @@ fn options_menu(
     use penumbra_graph::ThumbnailMode;
     let label = if selected > 1 { "Arrange selection" } else { "Arrange" };
     let r = ui.button(format!("{label}  (L)")).on_hover_text(
-        "Moves the nodes so wires cross less and run straight. With two or more nodes selected, only the selection moves; else every node shown. Ctrl+Z puts them back",
+        "Moves the nodes so wires cross less and run straight. A note goes along with the nodes it lies on or next to, and no node ends up under it. With two or more nodes selected, only the selection moves; else every node shown. Ctrl+Z puts them back",
     );
     auto.add("options.arrange", r.rect, label);
     let arrange = r.clicked();
@@ -2362,12 +2527,23 @@ fn options_menu(
     );
     auto.add("options.binding_lines", r.rect, "All binding lines");
     layout.set_options(options, input.now);
+    ui.separator();
     let r = ui.button("Helpers").on_hover_text(
         "Displays, output windows, what paces the show clock, resolution, state, OSC, audio, show-machine checks",
     );
     auto.add("options.helpers", r.rect, "Helpers");
     if r.clicked() {
         actions.push(Action::OpenHelpers);
+        ui.close();
+    }
+    // Show mode lives here, away from the status bar: a button beside Play was hit by accident.
+    let keys = egui::RichText::new(ui.ctx().format_shortcut(&SHOW_MODE_KEYS)).color(theme::TEXT_WEAK);
+    let r = ui.add(egui::Button::new("Show mode").shortcut_text(keys)).on_hover_text(
+        "Locks the project for a performance: no edits, nothing written or reloaded, a restart by itself after a crash. Unlock takes two clicks on the show screen",
+    );
+    auto.add("options.show_mode", r.rect, "Show mode");
+    if r.clicked() {
+        actions.push(Action::Show(true));
         ui.close();
     }
     ui.separator();

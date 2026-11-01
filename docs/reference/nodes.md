@@ -2449,7 +2449,7 @@ Outputs: none.
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
-| `text` | text |  |  | What the note says. A line starting with "# " is a heading, one starting with "- " a bullet. A name in backticks stands out. Long lines wrap at the note's width |
+| `text` | text |  |  | What the note says. A line starting with "# " is a heading, one starting with "- " a bullet. A name in backticks stands out. Long lines wrap at the note's width. Double-click the note on the canvas to write in it there |
 | `width` | int | `300` | 60 to 4000 | Width of the note on the canvas, in the units of the network (a node is 150 wide). The handle at its lower right corner drags it |
 | `height` | int | `140` | 60 to 4000 | Height of the note on the canvas, in the units of the network. Text beyond it is cut off |
 

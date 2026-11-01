@@ -77,8 +77,8 @@ else runs without it.
 - **Changes** (bottom right): every edit, newest first, with who made it (you, Claude, the
   project file). Hover an entry to outline the nodes it touched, click it to select them.
   Undo and Redo sit in its header.
-- **The status bar**: the project menu (the folder, with **Show mode** and **About penumbra** at its end), play and
-  pause of the show clock, the frame and the time, how long the last cook pass took (click it for the last seconds as a
+- **The status bar**: the project menu (the folder, with **About penumbra** at its end), play and
+  pause of the show clock (locked in show mode), the frame and the time, how long the last cook pass took (click it for the last seconds as a
   plot, the CPU and GPU load and, on NVIDIA GPUs, power draw, temperature, clock and what
   holds the clock back), the share of video memory in use (yellow from 80 %, red from 90 %;
   the popup shows it as a bar with what wgpu holds and the working set), the outputs (hover
@@ -149,7 +149,8 @@ an entry is the page's address with `#` and the kind or command: `penumbra.html#
 | right-click a node | its menu: view (pin), pause thumbnail, lock, replace (another kind under the same name, keeping the params, wires and bindings that fit), delete, cut, copy, group |
 | right-click a wire | delete the connection; on a binding line, remove the binding |
 | point at a port | its name, data kind and what it holds |
-| right-click empty canvas | the editor's options: arrange, channel bars, the viewer as background, all binding lines, thumbnails and their rate, Helpers |
+| right-click empty canvas | the editor's options: arrange, channel bars, the viewer as background, all binding lines, Helpers, Show mode, thumbnails and their rate |
+| double-click a note | write in it; Escape or a click outside ends writing |
 | Tab, double-click on canvas | add a node |
 | Delete or Backspace | delete the selection |
 | F | frame all nodes |
@@ -210,7 +211,7 @@ In show mode the app starts again by itself instead, see below.
 ## Show mode
 
 Show mode keeps penumbra from touching a project during a performance. Switch it on with
-**Show mode** in the project menu (the folder at the left of the status bar), with Ctrl+Shift+L,
+**Show mode** in the editor's menu (right-click on empty canvas), with Ctrl+Shift+L,
 or with `show.lock` over the control channel (`penumbra-cli ctl show.lock`). `show.unlock`, or
 **Unlock** clicked twice, ends it.
 
@@ -224,6 +225,9 @@ While show mode is on:
   loads it. Node state (the `state` folder) is still saved.
 - **Live:** OSC and DMX values, the control channel's other commands, keys, mouse, audio and
   cameras keep driving the show.
+- **The clock:** the Play/Pause button in the status bar is locked, so a click by mistake
+  cannot stop the show. `cook.play` over the control channel still pauses and runs the clock,
+  for a script or cue software that does it on purpose.
 - **The editor:** shows a plain screen instead of the network. Without thumbnails and viewer
   the cook pass gets shorter.
 - **Controls on the show screen:** every `chan.button` and `chan.slider` with `show` ticked
