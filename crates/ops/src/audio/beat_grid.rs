@@ -29,6 +29,10 @@
 //! `offset` early, with no prediction. A looped file's grid runs from its last beat into the
 //! first beat of the next pass ([`BeatGrid::at_looped`]). Per cook the node costs one binary
 //! search and a few hops of envelopes.
+//!
+//! **Overview:** the `overview` output is the whole file as a picture ([`super::overview`]):
+//! waveform, bars, sections and playhead, the same the viewer shows. It is drawn only while
+//! something reads it.
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -40,16 +44,23 @@ use std::time::{Instant, SystemTime};
 use penumbra_audio::beats::{self, BeatError, BeatGrid, BeatModel, Beats, Envelopes, Partial};
 use penumbra_core::{Channel, Chans, Error, Name, NodeId, ParamSpec, Table, lock};
 use penumbra_graph::{
-    CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc, NodeTypes,
-    Operator, Waker,
+    CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDef, NodeDesc,
+    NodeTypes, Operator, Waker,
 };
 
 use super::file::SoundFiles;
+use super::overview::{self, ColumnCache, Overview};
+use crate::meters::{Palette, Rect};
+use crate::tex::meters_picture::{self, ShapePicture};
 
 /// Kind of the grid node.
 pub const BEAT_GRID: &str = "chan.beat_grid";
 /// The index of the `grid` output.
 const GRID: usize = 1;
+/// The index of the `overview` output.
+const OVERVIEW: usize = 2;
+/// The params' section of the overview.
+const OVERVIEW_GROUP: &str = "overview";
 /// A lookup that moved further than this since the last cook is a jump, not a beat passing.
 const JUMP_SECONDS: f64 = 0.5;
 /// Finished analyses kept for nodes to come.
@@ -108,6 +119,7 @@ pub const CHANNELS: [&str; 20] = [
 const LEVEL: usize = 14;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
+    let [width, height, keep_size] = meters_picture::size_params(OVERVIEW_GROUP, "overview");
     types.register(FnNodeType::new(
         NodeDesc::new(
             BEAT_GRID,
@@ -119,11 +131,25 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(-200.0, 200.0)
                 .doc("Milliseconds to move beat and bar ahead by, to make up for the projector's delay. Ticks come exactly this much early. Negative values move them later"),
         )
+        .param(
+            ParamSpec::float("span", overview::DEFAULT_SPAN)
+                .clamp(overview::MIN_SPAN, overview::MAX_SPAN)
+                .range(10.0, 600.0)
+                .curve(penumbra_core::Curve::Log)
+                .unit(penumbra_core::Unit::Seconds)
+                .group(OVERVIEW_GROUP)
+                .doc("Seconds the lower lane of the overview shows around the playhead, in the viewer and in the overview output"),
+        )
+        .param(width)
+        .param(height)
+        .param(keep_size)
         .input("audio", DataKind::Audio)
         .describe_input("audio", "The out of an audio.file, wired straight from it")
         .output("out", DataKind::Chan)
         .output("grid", DataKind::Table)
         .lazy_output("grid")
+        .output("overview", DataKind::Tex)
+        .lazy_output("overview")
         .describe_output(
             "out",
             "Channels to bind: beat and bar rise from 0 to 1, tick and downbeat are 1 in the frame a beat or bar begins, bar_beat counts the beats in the bar from 0, \
@@ -134,9 +160,54 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .describe_output(
             "grid",
             "One row per beat found so far, under a header row: time (seconds into the file), beat, bar, beat_in_bar, downbeat (1 or 0)",
+        )
+        .describe_output(
+            "overview",
+            "The whole file as a picture, as the viewer shows it: the level as a waveform coloured by bass (red), mid (green) and treble (blue), bars, sections and the playhead. \
+             The lower lane shows span seconds around the playhead. Grey: levels not measured yet. Veiled: grid not final yet. Drawn only while something reads this output",
         ),
         || Box::new(GridNode::default()) as Box<dyn Operator>,
-    ))
+    )
+    .warm_up(crate::on_gpu(meters_picture::warm_up)))
+}
+
+/// A line on how the analysis of a file stands, for the overview: `None` once both analyses
+/// ended well.
+pub fn status_line(s: &State) -> Option<String> {
+    let complete = s.grid.as_ref().is_some_and(|g| g.complete());
+    if s.running {
+        Some(format!("finding beats {:.0} %", s.progress * 100.0))
+    } else if let Some(e) = &s.error {
+        Some(format!("no beats: {e}"))
+    } else if !complete {
+        Some("beat analysis cancelled".to_string())
+    } else if s.envelopes_running {
+        Some(format!("measuring levels {:.0} %", s.envelope_progress * 100.0))
+    } else {
+        s.envelope_error.as_ref().map(|e| format!("no levels: {e}"))
+    }
+}
+
+/// The overview of a file as [`overview::shapes`] wants it, from its analysis and its player.
+pub fn overview_of<'a>(
+    grid: Option<&'a Grid>,
+    envelopes: Option<&'a Envelopes>,
+    duration: f64,
+    playhead: Option<f64>,
+    span: f64,
+    status: Option<&'a str>,
+) -> Overview<'a> {
+    Overview {
+        duration,
+        playhead,
+        beats: grid.map_or(&[], |g| g.grid.beats()),
+        bars: grid.map_or(&[], |g| g.bars.as_slice()),
+        final_until: grid.map(|g| g.final_until),
+        envelopes,
+        sections: &[],
+        span,
+        status,
+    }
 }
 
 /// The beats of a file as far as they are known.
@@ -591,6 +662,15 @@ struct GridNode {
     names: Vec<Name>,
     /// The `grid` output and the grid it was made from.
     table: Option<(Arc<Grid>, Data)>,
+    /// The `overview` output's drawing state, made when it is first read.
+    picture: Option<Box<OverviewPicture>>,
+}
+
+/// What drawing the overview keeps between cooks.
+#[derive(Default)]
+struct OverviewPicture {
+    picture: ShapePicture,
+    columns: ColumnCache,
 }
 
 impl GridNode {
@@ -618,6 +698,32 @@ impl GridNode {
         self.last_read = None;
         self.table = None;
         Ok(a)
+    }
+
+    /// The `overview` output: drawn while something reads it, else [`Data::skipped`]. A
+    /// failure to draw is a warning, so the channels keep flowing.
+    fn overview(&mut self, cx: &CookContext<'_>, o: &Overview<'_>) -> Data {
+        let p = self.picture.get_or_insert_with(Box::default);
+        let drawn = (|| {
+            p.picture.take_glyphs(cx)?;
+            let (w, h) = (pixels(cx, "width")?, pixels(cx, "height")?);
+            let k = meters_picture::layout_scale(w, h);
+            let room = Rect::from_min_size([0.0, 0.0], [w as f32 / k, h as f32 / k]);
+            let (_, shapes) =
+                overview::shapes(room, o, k, &mut p.columns, &Palette::STANDARD, p.picture.measure());
+            p.picture.render(cx, w, h, k, shapes, "chan.beat_grid overview")
+        })();
+        match drawn {
+            Ok(tex) => Data::new(DataKind::Tex, tex),
+            Err(e) => {
+                let why = match e {
+                    CookError::Failed(m) => m,
+                    CookError::Pending => "not ready".to_string(),
+                };
+                cx.warn(format!("the overview output is not drawn: {why}"));
+                Data::skipped(DataKind::Tex)
+            }
+        }
     }
 
     fn table(&mut self, cx: &CookContext<'_>, grid: Option<&Arc<Grid>>) -> Data {
@@ -761,10 +867,41 @@ impl Operator for GridNode {
             .collect();
         let out = Data::new(DataKind::Chan, Chans::new(cx.rate().as_f64(), channels)?);
         let table = self.table(cx, grid.as_ref());
-        Ok(Cooked::Outputs(vec![out, table]))
+        let picture = if cx.output_wanted(OVERVIEW) {
+            let line = status_line(&analysis.state());
+            let envelopes = analysis.envelopes();
+            let span = cx.float("span")?;
+            let o = overview_of(
+                grid.as_deref(),
+                envelopes.as_deref(),
+                status.duration,
+                Some(status.in_file),
+                span,
+                line.as_deref(),
+            );
+            self.overview(cx, &o)
+        } else {
+            // Nobody reads it: the textures and the glyph atlas go too.
+            self.picture = None;
+            Data::skipped(DataKind::Tex)
+        };
+        Ok(Cooked::Outputs(vec![out, table, picture]))
     }
 
     fn job_status(&self) -> Option<JobStatus> {
         self.analysis.as_ref().map(|a| a.job_status())
     }
+
+    fn gpu_bytes(&self) -> u64 {
+        self.picture.as_ref().map_or(0, |p| p.picture.gpu_bytes())
+    }
+
+    fn sets_size(&self, _def: &NodeDef, _desc: &NodeDesc) -> bool {
+        true
+    }
+}
+
+/// A size param in pixels.
+fn pixels(cx: &CookContext<'_>, name: &str) -> Result<u32, CookError> {
+    u32::try_from(cx.int(name)?).map_err(|_| CookError::failed(format!("`{name}` must be positive")))
 }

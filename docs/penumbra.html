@@ -867,6 +867,7 @@ water      15
 <p><strong>Loops.</strong> When the <a class="ref" href="#audio.file"><code>audio.file</code></a> loops, the last beat of the file runs on into the first beat of the next pass, and <code>beat_index</code> and <code>bar_index</code> start again from there. Levels and hits run on across the end too; a hit at the file's very start counts in every pass.</p>
 <p><strong>Using it early.</strong> The grid fills from the start of the file. <code>ready</code> reads 1 where the grid under the playhead is final. The grid is final about a minute of music behind the last beat found: the tempo the beats are folded onto takes the minute after each beat, and the bars of the last 32 beats wait for the beats after them. At the analysis's speed that minute takes a second or two. Further on, <code>coasting</code> reads 1 and the beat runs on at the last tempo found. The panel says how far the grid is ready.</p>
 <p><strong>Timing.</strong> The grid is known ahead, so <code>offset</code> (milliseconds) makes <code>tick</code> come exactly that early, without guessing. Set it to the projector's delay.</p>
+<p><strong>Overview.</strong> The viewer shows the whole sound file above and <code>span</code> seconds around the playhead below. Switch between it and the curves with <code>view: overview</code> and <code>view: plot</code>. The waveform's colour mixes bass (red), mid (green) and treble (blue). Grey lines are bars and ticks are beats. The red line is the playhead, and the box in the upper lane is what the lower lane shows. Grey stretches have no levels measured yet. A veil with an orange line marks where the grid is not final yet. A click or a drag plays from there (<a class="ref" href="#audio.seek"><code>audio.seek</code></a>). While the <a class="ref" href="#audio.file"><code>audio.file</code></a>'s <code>position</code> is bound to a channel, the status bar says so instead. The <code>overview</code> output is the same picture as a texture (<code>width</code>, <code>height</code>), drawn only while something reads it.</p>
 <p><strong>Cues.</strong> The <code>grid</code> output is a table with one row per beat: time in the file, beat, bar, beat in bar, downbeat. <a class="ref" href="#beats.grid"><code>beats.grid {path}</code></a> gives the same over the control channel; <a class="ref" href="#beats.status"><code>beats.status</code></a> and <a class="ref" href="#beats.analyze"><code>beats.analyze</code></a> show and start an analysis. The example <a href="../examples/beat-grid/README.md">beat-grid</a> shows the grid beside the live tracker on the same music.</p>
 <h3 id="audio-tips">Tips</h3>
 <ul>
@@ -3573,12 +3574,18 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><code>out</code> <span class="kind">chan</span>: Channels to bind: beat and bar rise from 0 to 1, tick and downbeat are 1 in the frame a beat or bar begins, bar_beat counts the beats in the bar from 0, beat_index and bar_index count from the first beat and the first downbeat; also bpm, beats_per_bar, locked, coasting. level, low, mid, high, onset and kick are what chan.beat_analysis gives for this sound, without its lag of 20 to 30 ms. ready is 1 where the grid is final, progress goes from 0 to 1 while the file is analysed, analyzing is 1 meanwhile</li>
 <li><code>grid</code> <span class="kind">table</span>: One row per beat found so far, under a header row: time (seconds into the file), beat, bar, beat_in_bar, downbeat (1 or 0)</li>
+<li><code>overview</code> <span class="kind">tex</span>: The whole file as a picture, as the viewer shows it: the level as a waveform coloured by bass (red), mid (green) and treble (blue), bars, sections and the playhead. The lower lane shows span seconds around the playhead. Grey: levels not measured yet. Veiled: grid not final yet. Drawn only while something reads this output</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
 <thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
 <tbody>
 <tr><td><code>offset</code></td><td>float</td><td><code>0</code></td><td>-200 to 200 (soft)</td><td>Milliseconds to move beat and bar ahead by, to make up for the projector's delay. Ticks come exactly this much early. Negative values move them later</td></tr>
+<tr class="section"><th colspan="5">overview</th></tr>
+<tr><td><code>span</code></td><td>float</td><td><code>60</code></td><td>10 to 600 s (soft)</td><td>Seconds the lower lane of the overview shows around the playhead, in the viewer and in the overview output</td></tr>
+<tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the overview output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
+<tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the overview output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
+<tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves the width and height of the overview output alone</td></tr>
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
@@ -5633,7 +5640,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="audio.seek"><summary><code class="name">audio.seek</code><span class="sum">An audio.file jumps to <code>seconds</code> into its file at the next frame and plays on from there, with short fades (a looping file stays in its pass): {path, seconds}. Not while its position is bound to a channel</span></summary>
 <div class="body">
 <p>An audio.file jumps to <code>seconds</code> into its file at the next frame and plays on from there, with short fades (a looping file stays in its pass): {path, seconds}. Not while its position is bound to a channel</p>
-<p class="mentions">Mentioned in: <a href="#audio-playing-sound-files">Audio › Playing sound files</a></p>
+<p class="mentions">Mentioned in: <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
 </div></details>
 <details class="entry command" id="audio.status"><summary><code class="name">audio.status</code><span class="sum">Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) and          output buses (device, open, error, rate, latency_ms with fill_ms and device_ms, underruns, overruns,          glitches, limiter reduction per node and of the sum, muted)</span></summary>
 <div class="body">

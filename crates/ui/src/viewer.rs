@@ -2,8 +2,9 @@
 //! the panel; channels show their values and a short history (or all samples when a channel
 //! carries many) on labelled axes, on one scale or a lane each ([`crate::plot`]); tables show
 //! their first rows; geometry and materials their pictures, lights a line each. An audio
-//! analysis shows its meters ([`crate::meters`]) unless the plot is chosen; sound shows as a
-//! waveform with peak meters ([`crate::scope`]).
+//! analysis shows its meters ([`crate::meters`]) and a beat grid the overview of its sound file
+//! ([`crate::overview`]) unless the plot is chosen; sound shows as a waveform with peak meters
+//! ([`crate::scope`]).
 
 use std::collections::{BTreeMap, VecDeque};
 
@@ -20,6 +21,7 @@ use crate::layout::{AudioView, ChanScale};
 use crate::mapping::{MapEditor, MapInputs};
 use crate::meters::{AudioMeters, AudioNode};
 use crate::navigate::{Mode, Move, Navigation, Scene};
+use crate::overview::{BeatSources, GridNode, OverviewView};
 use crate::plot::{self, Scale, Series, XAxis};
 use crate::regions::{RegionEditor, RegionInputs};
 use crate::shapes::{ShapeEditor, ShapeInputs};
@@ -63,6 +65,11 @@ pub struct Viewer {
     /// below does not).
     audio: Option<AudioNode>,
     meters: AudioMeters,
+    /// Where a beat grid's overview reads its file's analysis; set by the app before drawing.
+    pub beat_sources: Option<BeatSources>,
+    /// The beat grid shown, as the header found it.
+    grid: Option<GridNode>,
+    overview: OverviewView,
     /// The recent blocks of a sound shown.
     scope: crate::scope::Scope,
 }
@@ -139,23 +146,31 @@ impl Viewer {
                 }
             }
             self.audio = target.and_then(|id| AudioNode::of(net, id));
+            self.grid = target.and_then(|id| GridNode::of(net, id));
             let data = outputs.and_then(|o| o.get(self.output as usize));
             // The meters view stands for the analysis' channel outputs; its `meters` output is
-            // a texture and shows as one.
+            // a texture and shows as one. A beat grid's overview likewise.
             let on_chan = data.is_none_or(|d| d.kind() == DataKind::Chan);
-            let meters = self.audio.is_some() && self.audio_view == AudioView::Meters && on_chan;
-            if self.audio.is_some() && on_chan {
+            let pictured = self.audio.is_some() || self.grid.is_some();
+            let meters = pictured && self.audio_view == AudioView::Meters && on_chan;
+            if pictured && on_chan {
                 let short = ui.available_width() < 150.0;
+                let picture = if self.grid.is_some() { "overview" } else { "meters" };
                 let text = match (self.audio_view, short) {
-                    (AudioView::Meters, false) => "view: meters",
-                    (AudioView::Plot, false) => "view: plot",
-                    (AudioView::Meters, true) => "meters",
-                    (AudioView::Plot, true) => "plot",
+                    (AudioView::Meters, false) => format!("view: {picture}"),
+                    (AudioView::Plot, false) => "view: plot".to_string(),
+                    (AudioView::Meters, true) => picture.to_string(),
+                    (AudioView::Plot, true) => "plot".to_string(),
                 };
-                let r = ui.button(text).on_hover_text(
+                let tip = if self.grid.is_some() {
+                    "Click to switch. overview: the whole sound file with its level, bars and sections, \
+                     and the time around the playhead below; click in it to play from there. plot: the \
+                     grid's channels as curves"
+                } else {
                     "Click to switch. meters: levels, beat and bar, tempo, hits and spectrum at a \
-                     glance. plot: the analysis channels as curves",
-                );
+                     glance. plot: the analysis channels as curves"
+                };
+                let r = ui.button(text.as_str()).on_hover_text(tip);
                 auto.add("viewer.audio_view", r.rect, text);
                 if r.clicked() {
                     self.audio_view = self.audio_view.next();
@@ -395,6 +410,10 @@ impl Viewer {
                     let now = ui.input(|i| i.time);
                     let outputs = outputs.map(Vec::as_slice).unwrap_or_default();
                     self.meters.draw(&painter, rect, &node, outputs.first(), outputs.get(1), now);
+                } else if self.audio_view == AudioView::Meters
+                    && let Some(node) = self.grid.filter(|g| g.id == id)
+                {
+                    self.overview.draw(ui, rect, &node, self.beat_sources.as_ref(), auto, actions);
                 } else if let Some(chans) = data.get::<Chans>() {
                     self.channels(&painter, rect, id, chans, time);
                 }

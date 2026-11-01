@@ -44,16 +44,21 @@ const MAX_CHARS: usize = 512;
 /// The params that size the picture: `width`, `height` and `keep_size`, in a section of their
 /// own.
 pub(crate) fn params() -> [ParamSpec; 3] {
+    size_params(GROUP, "meters")
+}
+
+/// `width`, `height` and `keep_size` for the texture output `output`, in the section `group`.
+pub(crate) fn size_params(group: &str, output: &str) -> [ParamSpec; 3] {
     [
-        ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).group(GROUP).doc(
-            "Width of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on",
+        ParamSpec::int("width", 1920).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).group(group).doc(
+            &format!("Width of the {output} output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on"),
         ),
-        ParamSpec::int("height", 1080).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).group(GROUP).doc(
-            "Height of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on",
+        ParamSpec::int("height", 1080).clamp(1.0, MAX_SIDE).curve(Curve::Log).unit(Unit::Pixels).group(group).doc(
+            &format!("Height of the {output} output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on"),
         ),
         ParamSpec::bool(KEEP_SIZE, false)
-            .group(GROUP)
-            .doc("res.optimize leaves the width and height of the meters output alone"),
+            .group(group)
+            .doc(&format!("res.optimize leaves the width and height of the {output} output alone")),
     ]
 }
 
@@ -139,18 +144,12 @@ impl Shelf {
     }
 }
 
-/// What drawing the meters keeps between cooks: their memory (peaks, hits), the canvas with its
-/// glyph atlas, the textures drawn into. Made on the first draw, so an analysis whose meters
-/// nobody reads holds none of it.
+/// What drawing the meters keeps between cooks: their memory (peaks, hits) and the picture they
+/// are drawn into. Made on the first draw, so an analysis whose meters nobody reads holds none
+/// of it.
 pub(crate) struct MetersPicture {
     meters: Meters,
-    canvas: Canvas,
-    ring: TexRing,
-    font: Font,
-    glyphs: HashMap<(char, u32), Glyph>,
-    shelf: Shelf,
-    /// The glyph job in flight, if any.
-    job: Option<Job<Batch>>,
+    picture: ShapePicture,
     /// The meters' clock (peaks falling, flashes fading): steady, like the viewer's, since the
     /// analysis follows the audio rather than the show clock.
     started: Instant,
@@ -158,28 +157,19 @@ pub(crate) struct MetersPicture {
 
 impl Default for MetersPicture {
     fn default() -> Self {
-        Self {
-            meters: Meters::default(),
-            canvas: Canvas::default(),
-            ring: TexRing::default(),
-            font: Font::default(),
-            glyphs: HashMap::new(),
-            shelf: Shelf::default(),
-            job: None,
-            started: Instant::now(),
-        }
+        Self { meters: Meters::default(), picture: ShapePicture::default(), started: Instant::now() }
     }
 }
 
 impl MetersPicture {
     /// Bytes on the GPU: the pictures and the canvas's atlas and buffers.
     pub(crate) fn gpu_bytes(&self) -> u64 {
-        self.ring.bytes() + self.canvas.bytes()
+        self.picture.gpu_bytes()
     }
 
     /// Whether the glyph job has finished (its text is worth drawing).
     pub(crate) fn job_done(&self) -> bool {
-        self.job.as_ref().is_some_and(|j| matches!(j.status(), JobStatus::Done | JobStatus::Failed { .. }))
+        self.picture.job_done()
     }
 
     /// Draws the meters of `out` (the analysis' channels; `fresh` when just made rather than
@@ -191,19 +181,12 @@ impl MetersPicture {
         spectrum: Option<&[f64]>,
         fresh: bool,
     ) -> Result<Tex, CookError> {
-        let gpu = gpu(cx)?;
-        if let Some(done) = self.job.as_ref().and_then(Job::take) {
-            self.job = None;
-            match done {
-                Ok(batch) => self.take(gpu, batch)?,
-                Err(e) => cx.warn(format!("cannot set the meters' text: {e}")),
-            }
-        }
+        self.picture.take_glyphs(cx)?;
         let (w, h) = (side(cx, "width")?, side(cx, "height")?);
         let now = self.started.elapsed().as_secs_f64();
         let reading = self.meters.update(Some(out), fresh, now);
         // As the viewer at about 640 x 360 points, enlarged.
-        let k = (w as f32 / LAYOUT[0]).min(h as f32 / LAYOUT[1]).max(1.0);
+        let k = layout_scale(w, h);
         let room = Rect::from_min_size([0.0, 0.0], [w as f32 / k, h as f32 / k]);
         let shapes = self.meters.shapes(
             room,
@@ -211,9 +194,75 @@ impl MetersPicture {
             spectrum,
             !out.is_empty(),
             &Palette::STANDARD,
-            &self.font,
+            &self.picture.font,
             now,
         );
+        self.picture.render(cx, w, h, k, shapes, "chan.beat_analysis meters")
+    }
+}
+
+/// How much a picture of `w` x `h` pixels enlarges the layout: as the viewer would draw it at
+/// about 640 x 360 points.
+pub(crate) fn layout_scale(w: u32, h: u32) -> f32 {
+    (w as f32 / LAYOUT[0]).min(h as f32 / LAYOUT[1]).max(1.0)
+}
+
+/// A list of [`Shape`]s drawn into a texture: the canvas with its glyph atlas and the textures
+/// drawn into. Any picture laid out as shapes (the meters, a sound file's overview) draws
+/// through one.
+#[derive(Default)]
+pub(crate) struct ShapePicture {
+    canvas: Canvas,
+    ring: TexRing,
+    font: Font,
+    glyphs: HashMap<(char, u32), Glyph>,
+    shelf: Shelf,
+    /// The glyph job in flight, if any.
+    job: Option<Job<Batch>>,
+}
+
+impl ShapePicture {
+    /// Bytes on the GPU: the pictures and the canvas's atlas and buffers.
+    pub(crate) fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes() + self.canvas.bytes()
+    }
+
+    /// Whether the glyph job has finished (its text is worth drawing).
+    pub(crate) fn job_done(&self) -> bool {
+        self.job.as_ref().is_some_and(|j| matches!(j.status(), JobStatus::Done | JobStatus::Failed { .. }))
+    }
+
+    /// Text measured as this picture sets it.
+    pub(crate) fn measure(&self) -> &dyn Measure {
+        &self.font
+    }
+
+    /// Takes in the glyphs a finished job brought. Call before laying out, so the layout
+    /// measures with them.
+    pub(crate) fn take_glyphs(&mut self, cx: &CookContext<'_>) -> Result<(), CookError> {
+        let gpu = gpu(cx)?;
+        if let Some(done) = self.job.as_ref().and_then(Job::take) {
+            self.job = None;
+            match done {
+                Ok(batch) => self.take(gpu, batch)?,
+                Err(e) => cx.warn(format!("cannot set the picture's text: {e}")),
+            }
+        }
+        Ok(())
+    }
+
+    /// Draws `shapes` (layout units, `k` pixels each) into a new `w` x `h` texture on
+    /// transparent black; characters without a glyph yet are asked for and left out.
+    pub(crate) fn render(
+        &mut self,
+        cx: &CookContext<'_>,
+        w: u32,
+        h: u32,
+        k: f32,
+        shapes: Vec<Shape>,
+        label: &str,
+    ) -> Result<Tex, CookError> {
+        let gpu = gpu(cx)?;
         let mut paints = Vec::with_capacity(shapes.len() + 64);
         let mut wanted = HashSet::new();
         for shape in shapes {
@@ -222,11 +271,10 @@ impl MetersPicture {
         if !wanted.is_empty() && self.job.is_none() {
             self.request(cx, wanted);
         }
-        let target = self.ring.next(gpu, w, h, "chan.beat_analysis meters")?;
+        let target = self.ring.next(gpu, w, h, label)?;
         self.canvas.render(gpu, &target, [0.0; 4], &paints)?;
         Ok(target)
     }
-
     /// Adds the paints of one shape (in pixels); characters without a glyph yet go to `wanted`.
     fn paint(&self, shape: Shape, paints: &mut Vec<Paint>, wanted: &mut HashSet<(char, u32)>) {
         let rgba = |c: Color| c.map(|v| f32::from(v) / 255.0);

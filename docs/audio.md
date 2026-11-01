@@ -451,6 +451,8 @@ another beat; `bar_beat` and `bar` are then counted from there.
 
 **Timing.** The grid is known ahead, so `offset` (milliseconds) makes `tick` come exactly that early, without guessing. Set it to the projector's delay.
 
+**Overview.** The viewer shows the whole sound file above and `span` seconds around the playhead below. Switch between it and the curves with `view: overview` and `view: plot`. The waveform's colour mixes bass (red), mid (green) and treble (blue). Grey lines are bars and ticks are beats. The red line is the playhead, and the box in the upper lane is what the lower lane shows. Grey stretches have no levels measured yet. A veil with an orange line marks where the grid is not final yet. A click or a drag plays from there (`audio.seek`). While the `audio.file`'s `position` is bound to a channel, the status bar says so instead. The `overview` output is the same picture as a texture (`width`, `height`), drawn only while something reads it.
+
 **Cues.** The `grid` output is a table with one row per beat: time in the file, beat, bar, beat in bar, downbeat. `beats.grid {path}` gives the same over the control channel; `beats.status` and `beats.analyze` show and start an analysis. The example [beat-grid](../examples/beat-grid/README.md) shows the grid beside the live tracker on the same music.
 
 ## Tips

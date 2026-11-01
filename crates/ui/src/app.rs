@@ -400,6 +400,19 @@ impl PenumbraApp {
                 Action::Reset(ids) => self.engine.reset_nodes(&ids).map(|report| {
                     self.message = Some((report.message(), now));
                 }),
+                Action::SeekAudio { node, seconds } => {
+                    let net = self.engine.session().doc().snapshot();
+                    match net.path_of(node) {
+                        Some(path) => penumbra_engine::video_file::seek(
+                            &self.engine,
+                            &path,
+                            penumbra_ops::audio::file::FILE,
+                            seconds,
+                        )
+                        .map_err(|e| penumbra_core::Error::new(e.0)),
+                        None => Err(penumbra_core::Error::new("the node is gone")),
+                    }
+                }
                 Action::RestartVideo(node) => {
                     let net = self.engine.session().doc().snapshot();
                     match net.path_of(node) {
@@ -870,6 +883,12 @@ impl PenumbraApp {
         self.window_viewer.chan_scale = self.layout.options.chan_scale;
         self.viewer.audio_view = self.layout.options.audio_view;
         self.window_viewer.audio_view = self.layout.options.audio_view;
+        let sources = crate::overview::BeatSources {
+            beat_files: self.engine.beat_files().clone(),
+            sound_files: self.engine.sound_files().clone(),
+        };
+        self.viewer.beat_sources = Some(sources.clone());
+        self.window_viewer.beat_sources = Some(sources);
         let session = self.engine.session();
         let status = session.status(now);
         let net = session.doc().snapshot();

@@ -85,7 +85,7 @@ impl AudioMeters {
 }
 
 /// Text measured as egui sets it.
-struct EguiMeasure<'a>(&'a Painter);
+pub(crate) struct EguiMeasure<'a>(pub(crate) &'a Painter);
 
 impl Measure for EguiMeasure<'_> {
     fn text_size(&self, text: &str, size: f32) -> [f32; 2] {
@@ -118,7 +118,7 @@ fn align(fraction: f32) -> Align {
     }
 }
 
-fn paint(painter: &Painter, shape: Shape) {
+pub(crate) fn paint(painter: &Painter, shape: Shape) {
     match shape {
         Shape::Rect { rect: r, radius, color: c } => {
             painter.rect_filled(rect(r), corner(radius), color(c));

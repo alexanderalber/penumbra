@@ -57,6 +57,7 @@ pub mod mix;
 #[cfg(test)]
 mod mix_tests;
 pub mod oscillator;
+pub mod overview;
 pub mod pitch;
 pub mod spectrum;
 #[cfg(test)]

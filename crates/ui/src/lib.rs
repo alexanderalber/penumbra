@@ -27,6 +27,7 @@ pub mod memory;
 pub mod meters;
 pub mod navigate;
 mod node_controls;
+mod overview;
 pub mod params;
 pub mod plot;
 pub mod projects;
@@ -73,6 +74,11 @@ pub enum Action {
     OpenHelpers,
     /// Show a message in the status bar.
     Message(String),
+    /// An `audio.file` jumps to `seconds` into its file (`audio.seek`).
+    SeekAudio {
+        node: NodeId,
+        seconds: f64,
+    },
     /// Group these nodes (side by side) into a new component beside them.
     Group(Vec<NodeId>),
     /// Dissolve a component: its nodes move up beside it.
