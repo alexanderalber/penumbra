@@ -74,8 +74,8 @@ else runs without it.
 - **Changes** (bottom right): every edit, newest first, with who made it (you, Claude, the
   project file). Hover an entry to outline the nodes it touched, click it to select them.
   Undo and Redo sit in its header.
-- **The status bar**: the project menu (the folder), play and pause of the show clock, the
-  frame and the time, how long the last cook pass took (click it for the last seconds as a
+- **The status bar**: the project menu (the folder, with **Show mode** at its end), play and
+  pause of the show clock, the frame and the time, how long the last cook pass took (click it for the last seconds as a
   plot, the CPU and GPU load and, on NVIDIA GPUs, power draw, temperature, clock and what
   holds the clock back), the outputs (hover for details), the control channel's port, the GPU,
   and whether `project.ron` is written yet.
@@ -201,9 +201,10 @@ In show mode the app starts again by itself instead, see below.
 
 ## Show mode
 
-Show mode keeps penumbra from touching a project during a performance. Switch it on with the
-padlock in the status bar, or with `show.lock` over the control channel
-(`penumbra-cli ctl show.lock`). `show.unlock`, or **Unlock** clicked twice, ends it.
+Show mode keeps penumbra from touching a project during a performance. Switch it on with
+**Show mode** in the project menu (the folder at the left of the status bar), with Ctrl+Shift+L,
+or with `show.lock` over the control channel (`penumbra-cli ctl show.lock`). `show.unlock`, or
+**Unlock** clicked twice, ends it.
 
 While show mode is on:
 

@@ -14,6 +14,7 @@ pub mod mapping;
 pub mod mat;
 pub mod meters;
 pub mod mouse;
+pub mod note;
 pub mod osc;
 pub mod out;
 pub mod palette;
@@ -47,6 +48,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     light::register(types)?;
     mat::register(types)?;
     mouse::register(types)?;
+    note::register(types)?;
     osc::register(types)?;
     out::register(types)?;
     script::register(types)?;
@@ -107,6 +109,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("out.projector", &["window"]),
     ("out.spout", &["syphon spout out"]),
     ("out.video", &["movie file out"]),
+    ("ui.note", &["comment", "annotate", "sticky note"]),
 ];
 
 /// Kinds that were renamed, old name first. A project, component or copied node that still

@@ -422,7 +422,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("penumbra-app-demo-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let session = Session::open(&dir, types, &demo).unwrap();
-        assert_eq!(session.doc().snapshot().len(), 21);
+        assert_eq!(session.doc().snapshot().len(), 24, "21 nodes and 3 notes");
         assert_eq!(session.status(Instant::now()).file_error, None);
         drop(session);
         std::fs::remove_dir_all(&dir).unwrap();

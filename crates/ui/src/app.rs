@@ -591,11 +591,15 @@ impl PenumbraApp {
         if ctx.text_edit_focused() || self.viewer.regions.has_pointer(ctx) {
             return;
         }
-        let (undo, redo) = ctx.input_mut(|i| {
+        let (undo, redo, lock) = ctx.input_mut(|i| {
             let redo = i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)
                 || i.consume_key(Modifiers::COMMAND, Key::Y);
-            (i.consume_key(Modifiers::COMMAND, Key::Z), redo)
+            let lock = i.consume_shortcut(&crate::projects::SHOW_MODE_KEYS);
+            (i.consume_key(Modifiers::COMMAND, Key::Z), redo, lock)
         });
+        if lock {
+            actions.push(Action::Show(true));
+        }
         if undo {
             actions.push(Action::Undo);
         }
@@ -775,21 +779,17 @@ impl PenumbraApp {
             ui.horizontal(|ui| {
                 let layout = &mut self.layout;
                 let save_layout = || layout.save_if_due(now, true);
+                // Show mode is an entry of the project menu: a button of its own beside Play
+                // was hit by accident.
+                let mut lock = false;
                 let projects = ui.add_enabled_ui(!status.locked, |ui| {
-                    self.projects.show(ui, &self.engine, &mut self.auto, save_layout)
+                    self.projects.show(ui, &self.engine, &mut self.auto, save_layout, &mut lock)
                 });
                 if let Some(m) = projects.inner {
                     self.message = Some((m, now));
                 }
-                if !status.locked {
-                    let r = icons::button(ui, Icon::Lock, "").on_hover_text(
-                        "Show mode: lock the project against edits, stop writing and reloading it, \
-                         start again by itself after a crash",
-                    );
-                    self.auto.add("button.show", r.rect, "Show mode");
-                    if r.clicked() {
-                        actions.push(Action::Show(true));
-                    }
+                if lock {
+                    actions.push(Action::Show(true));
                 }
                 let playing = view.playing;
                 let r = if playing {

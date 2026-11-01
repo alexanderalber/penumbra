@@ -3,6 +3,8 @@
 (
     version: 2,
     nodes: {
+        "/about_caption": (kind: "ui.note", params: {"height": 100, "text": "# Caption\n`cue` reads the row of `cues` that `show` is at. `caption` shows its `hour`.", "width": 380}, pos: [1100.0, 300.0]),
+        "/about_cues": (kind: "ui.note", params: {"height": 150, "text": "# Cues\n`show` lists the cues in `steps`, one per line. A cue with `hold` waits for GO; one with seconds moves on by itself.\n- GO: the space key, the `GO` button or the OSC address `/go`\n- `screen` shows the picture of the cue: `in0` for the first name in `names`, `in1` for the second", "width": 540}, pos: [0.0, 300.0]),
         "/caption": (kind: "tex.text", params: {"color": [1.0, 1.0, 1.0, 0.85], "position": [0.5, 0.9], "size": 72.0, "style": "Light"}, binds: {"text": (node: "cue", channel: "hour", format: "{.0}:00")}, pos: [1100.0, 142.0]),
         "/cue": (kind: "chan.from_table", inputs: {"in": "cues"}, binds: {"row": "show:step"}, pos: [850.0, 426.0]),
         "/cues": (kind: "table.text", params: {"format": "csv", "text": "cue,hour,rain_db\n1,6,-60\n2,12,-60\n3,17,-10\n4,22,-24\n5,0,-60"}, pos: [850.0, 284.0]),

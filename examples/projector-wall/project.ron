@@ -3,6 +3,10 @@
 (
     version: 2,
     nodes: {
+        "/about_content": (kind: "ui.note", params: {"height": 110, "text": "# Content\nDrawn once, in the camera's picture: `clouds` coloured by `colours`, with the bright bar `sweep` on top. All three projectors take their share of `content`.", "width": 550}, pos: [0.0, 100.0]),
+        "/about_preview": (kind: "ui.note", params: {"height": 110, "text": "# Preview\n`wall` shows the picture as it lands on the wall, seen from the camera. `unblended` is the same without the blend weights: there the overlaps are twice as bright.", "width": 560}, pos: [1400.0, -200.0]),
+        "/about_projectors": (kind: "ui.note", params: {"height": 100, "text": "# Per projector\n`share_a` takes projector A's part of `content` through its map `map_a`. `blend_a` fades it in the overlaps by `weight_a`. `proj_a` shows it, evened out by its flat field. B and C below work the same way.", "width": 750}, pos: [600.0, -200.0]),
+        "/about_scans": (kind: "ui.note", params: {"height": 90, "text": "# Your own wall\n`scan_a`, `scan_b` and `scan_c` measure the maps on your wall. The steps are in the example's README, under \"Your own wall\".", "width": 520}, pos: [1200.0, 1400.0]),
         "/blend_a": (kind: "tex.blend_weight", inputs: {"in": "share_a", "weight": "weight_a"}, pos: [1000.0, 0.0]),
         "/blend_b": (kind: "tex.blend_weight", inputs: {"in": "share_b", "weight": "weight_b"}, pos: [1000.0, 450.0]),
         "/blend_c": (kind: "tex.blend_weight", inputs: {"in": "share_c", "weight": "weight_c"}, pos: [1000.0, 900.0]),

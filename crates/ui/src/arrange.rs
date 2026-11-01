@@ -77,7 +77,12 @@ pub fn graph(
     let mut g = Graph::default();
     let mut in_at: HashMap<(NodeId, u32), (NodeId, f32)> = HashMap::new();
     let mut out_at: HashMap<(NodeId, u32), (NodeId, f32)> = HashMap::new();
-    for node in net.children(level).filter(|n| only.is_none_or(|s| s.contains(&n.id))) {
+    // Notes stay where they were put: they explain a part of the network and have no wires.
+    for node in net
+        .children(level)
+        .filter(|n| only.is_none_or(|s| s.contains(&n.id)))
+        .filter(|n| !penumbra_ops::note::is_note(n))
+    {
         let (height, ins, outs) = node_ports(net, types, node);
         in_at.extend(ins.into_iter().map(|(target, y)| (target, (node.id, y))));
         out_at.extend(outs.into_iter().map(|(target, y)| (target, (node.id, y))));

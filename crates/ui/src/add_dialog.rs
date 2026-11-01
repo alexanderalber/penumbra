@@ -44,7 +44,7 @@ const GROUPS: [&[&str]; 7] = [
     &["table"],
     &["geo", "mat", "light", "view"],
     &["out"],
-    &["script", "comp"],
+    &["script", "comp", "ui"],
 ];
 /// The tab of the component files on offer: penumbra's library, the user's and the project's
 /// `components/`. Not a family of node types; it takes the colour of `comp`.
@@ -53,13 +53,14 @@ pub const LIBRARY: &str = "library";
 /// by it.
 const NAMES: [(&str, &str); 2] = [("geo", "rendering"), ("script", "system")];
 /// The headings over the families of a shared tab; a family missing here is headed by its name.
-const HEADINGS: [(&str, &str); 6] = [
+const HEADINGS: [(&str, &str); 7] = [
     ("geo", "geometry"),
     ("mat", "materials"),
     ("light", "lights"),
     ("view", "cameras"),
     ("script", "scripts"),
     ("comp", "components"),
+    ("ui", "notes"),
 ];
 /// Height of the heading row.
 const HEADING: f32 = 18.0;

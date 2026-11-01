@@ -37,6 +37,8 @@ const HEADER_TEXT_ZOOM: f32 = 0.35;
 const PORT_R: f32 = 5.0;
 /// Pick radius of a port, in points.
 const PORT_PICK: f32 = 11.0;
+/// Text size in a note, in graph units: larger than a node's name, since a note is there to be read.
+const NOTE_TEXT: f32 = 16.0;
 
 /// What the editor needs from the app each frame.
 pub struct Inputs<'a> {
@@ -113,6 +115,18 @@ pub struct Editor {
     routes: RouteCache,
     /// The control on a node body the primary button went down on, until it goes up.
     body_press: Option<node_controls::Press>,
+    /// The note whose size is being dragged.
+    resize: Option<NoteResize>,
+}
+
+/// A drag of a note's resize handle: one history group, the size it started from, how far the
+/// pointer moved (graph units) and the size last sent.
+struct NoteResize {
+    node: NodeId,
+    group: GroupId,
+    start: Vec2,
+    moved: Vec2,
+    sent: Vec2,
 }
 
 /// A node's body control as drawn this frame: the control, held by the pointer, hovered.
@@ -262,6 +276,8 @@ struct Geo {
     inputs: Vec<PortGeo>,
     outputs: Vec<PortGeo>,
     comp: bool,
+    /// A note ([`penumbra_ops::note`]): sized by its params, drawn as text, no obstacle for wires.
+    note: bool,
 }
 
 fn find_port(geos: &[Geo], is_input: bool, target: (NodeId, u32)) -> Option<&PortGeo> {
@@ -286,6 +302,7 @@ impl Default for Editor {
             menu_wire: None,
             routes: RouteCache::default(),
             body_press: None,
+            resize: None,
         }
     }
 }
@@ -369,7 +386,7 @@ pub(crate) fn measure(
             ends.push(Ends { a: out.at, b: port_in.at, from: from.graph, to: to.graph, source: out.target });
         }
     }
-    let rects: Vec<Rect> = placed.geos.iter().map(|g| g.graph).collect();
+    let rects: Vec<Rect> = placed.geos.iter().filter(|g| !g.note).map(|g| g.graph).collect();
     wires::measure(&rects, &ends)
 }
 
@@ -487,7 +504,11 @@ impl<'a> Placed<'a> {
             let Some(p) = layout.get(node.id) else { continue };
             let desc = types.desc(&node.kind);
             let (mut ins, mut outs) = ports_of(net, types, node);
-            let size = vec2(NODE_SIZE.x, HEADER + body_height(desc, ins.len().max(outs.len())));
+            let note = penumbra_ops::note::size(node);
+            let size = note.map_or_else(
+                || vec2(NODE_SIZE.x, HEADER + body_height(desc, ins.len().max(outs.len()))),
+                |[w, h]| vec2(w, h),
+            );
             let rect = Rect::from_min_size(to_screen(canvas, view, p), size * view.zoom);
             let graph = Rect::from_min_size(p, size);
             let body_top = rect.min.y + HEADER * view.zoom;
@@ -503,7 +524,15 @@ impl<'a> Placed<'a> {
                 port.at = pos2(graph.max.x, port_y(graph.min.y + HEADER, body, i, n_out));
             }
             let comp = desc.is_some_and(|d| d.container);
-            geos.push(Geo { id: node.id, rect, graph, inputs: ins, outputs: outs, comp });
+            geos.push(Geo {
+                id: node.id,
+                rect,
+                graph,
+                inputs: ins,
+                outputs: outs,
+                comp,
+                note: note.is_some(),
+            });
         }
         let geo_of = geos.iter().enumerate().map(|(i, g)| (g.id, i)).collect();
         let out_at = geos
@@ -923,7 +952,8 @@ impl Editor {
                 });
             }
         }
-        let rects: Vec<Rect> = geos.iter().map(|g| g.graph).collect();
+        // Notes lie under the wires: a wire may cross one rather than go around.
+        let rects: Vec<Rect> = geos.iter().filter(|g| !g.note).map(|g| g.graph).collect();
         let quick = matches!(self.drag, Drag::Nodes);
         let routes = self.routes.get(painter.ctx(), &ends, &rects, quick);
         for (&(key, color, previous, hot), route) in shown.iter().zip(routes) {
@@ -962,7 +992,8 @@ impl Editor {
         let mut clicked_node = false;
         let mut hovered_port: Option<PortHit> = None;
         self.hovered = None;
-        for g in geos {
+        // Notes first: a node lying on a note is drawn over it and takes the pointer.
+        for g in geos.iter().filter(|g| g.note).chain(geos.iter().filter(|g| !g.note)) {
             if !g.rect.expand(PORT_PICK).intersects(canvas) {
                 continue;
             }
@@ -970,6 +1001,12 @@ impl Editor {
             let path = net.path_of(g.id).map(|p| p.to_string()).unwrap_or_default();
             let resp = ui.interact(g.rect, ui.id().with(("node", g.id)), Sense::click_and_drag());
             auto.add(format!("node.{path}"), g.rect, node.kind.clone());
+            if g.note {
+                let handle = self.note_resize(ui, g, input, &path, auto, actions);
+                self.node_interaction(ui, &resp, None, g.id, input, layout, auto, actions, &mut clicked_node);
+                self.draw_note(ui, painter, g, input, node, resp.hovered() || handle);
+                continue;
+            }
             if resp.hovered() {
                 self.hovered = Some(g.id);
             }
@@ -1140,7 +1177,11 @@ impl Editor {
             if released {
                 let add = ui.input(|i| i.modifiers.shift || i.modifiers.command);
                 let kept = if add { self.selection.clone() } else { BTreeSet::new() };
-                let boxed = geos.iter().filter(|g| r.intersects(g.rect)).map(|g| g.id);
+                // A note only when the box holds all of it: notes are large and lie behind nodes.
+                let boxed = geos
+                    .iter()
+                    .filter(|g| if g.note { r.contains_rect(g.rect) } else { r.intersects(g.rect) })
+                    .map(|g| g.id);
                 self.select(kept.into_iter().chain(boxed));
                 self.drag = Drag::None;
             }
@@ -1353,6 +1394,7 @@ impl Editor {
         }
         let net = input.net;
         let is_comp = net.node(id).and_then(|n| input.types.desc(&n.kind)).is_some_and(|d| d.container);
+        let is_note = net.node(id).is_some_and(|n| penumbra_ops::note::is_note(n));
         // A double-click enters a component and does nothing on other nodes (pinning by
         // double-click happened by accident; it stays in the node menu).
         if resp.double_clicked() && is_comp {
@@ -1367,7 +1409,7 @@ impl Editor {
                     self.enter(Some(id), layout, input.now);
                     ui.close();
                 }
-            } else if ui.button("View (pin to viewer)").clicked() {
+            } else if !is_note && ui.button("View (pin to viewer)").clicked() {
                 actions.push(Action::Pin(Some(id)));
                 ui.close();
             }
@@ -1391,7 +1433,7 @@ impl Editor {
                             .push(Action::edit(vec![Op::Lock { path: path.clone(), locked: !node.locked }]));
                         ui.close();
                     }
-                    if !is_comp {
+                    if !is_comp && !is_note {
                         let tip =
                             "Swap this node for another kind. Params, wires and bindings that fit the new kind stay";
                         let r = ui.button("Replace node...").on_hover_text(tip);
@@ -1693,28 +1735,7 @@ impl Editor {
             painter.rect_filled(r, CornerRadius::ZERO, theme::ACCENT);
         }
 
-        // Outline: selection, change-log highlight, recent outside edits, errors.
-        let selected = self.selection.contains(&g.id);
-        let recent = input.recent.get(&g.id).map(|t| input.now.saturating_duration_since(*t).as_secs_f32());
-        let outline = if selected {
-            Some(Stroke::new(2.0, Color32::WHITE))
-        } else if input.highlight.contains(&g.id) {
-            Some(Stroke::new(2.0, theme::CLAUDE))
-        } else if let Some(age) = recent.filter(|a| *a < theme::RECENT_SECONDS) {
-            Some(Stroke::new(2.0, theme::CLAUDE.gamma_multiply(1.0 - age / theme::RECENT_SECONDS)))
-        } else if status.is_some_and(|s| s.error.is_some()) {
-            Some(Stroke::new(1.5, theme::ERROR))
-        } else if input.viewer == Some(g.id) {
-            Some(Stroke::new(1.0, theme::TEXT_WEAK))
-        } else {
-            None
-        };
-        if let Some(s) = outline {
-            painter.rect_stroke(g.rect, radius, s, StrokeKind::Outside);
-        }
-        if recent.is_some_and(|a| a < theme::RECENT_SECONDS) {
-            ui.ctx().request_repaint();
-        }
+        self.outline(ui, painter, g, input, radius);
 
         // Over a port, the port's own tooltip shows instead (see `port_tooltip`).
         if resp.hovered() && matches!(self.drag, Drag::None) && !on_port {
@@ -1738,6 +1759,164 @@ impl Editor {
             }
             resp.clone().on_hover_text_at_pointer(tip);
         }
+    }
+
+    /// The outline of node `g`: selection, change-log highlight, recent outside edits, errors.
+    fn outline(&self, ui: &Ui, painter: &egui::Painter, g: &Geo, input: &Inputs<'_>, radius: CornerRadius) {
+        let status = input.status.get(&g.id);
+        let selected = self.selection.contains(&g.id);
+        let recent = input.recent.get(&g.id).map(|t| input.now.saturating_duration_since(*t).as_secs_f32());
+        let outline = if selected {
+            Some(Stroke::new(2.0, Color32::WHITE))
+        } else if input.highlight.contains(&g.id) {
+            Some(Stroke::new(2.0, theme::CLAUDE))
+        } else if let Some(age) = recent.filter(|a| *a < theme::RECENT_SECONDS) {
+            Some(Stroke::new(2.0, theme::CLAUDE.gamma_multiply(1.0 - age / theme::RECENT_SECONDS)))
+        } else if status.is_some_and(|s| s.error.is_some()) {
+            Some(Stroke::new(1.5, theme::ERROR))
+        } else if input.viewer == Some(g.id) {
+            Some(Stroke::new(1.0, theme::TEXT_WEAK))
+        } else {
+            None
+        };
+        if let Some(s) = outline {
+            painter.rect_stroke(g.rect, radius, s, StrokeKind::Outside);
+        }
+        if recent.is_some_and(|a| a < theme::RECENT_SECONDS) {
+            ui.ctx().request_repaint();
+        }
+    }
+
+    /// The handle at the lower right corner of note `g`: dragging it sets the note's `width`
+    /// and `height`, the whole drag one undo step. Returns whether the pointer is on it or
+    /// dragging it.
+    fn note_resize(
+        &mut self,
+        ui: &Ui,
+        g: &Geo,
+        input: &Inputs<'_>,
+        path: &str,
+        auto: &mut automation::Registry,
+        actions: &mut Vec<Action>,
+    ) -> bool {
+        use penumbra_ops::note::{HEIGHT, MAX_SIZE, MIN_SIZE, WIDTH};
+        let zoom = (g.rect.width() / g.graph.width().max(1.0)).max(0.01);
+        let side = (14.0 * zoom).clamp(8.0, 20.0);
+        let rect = Rect::from_min_max(g.rect.max - vec2(side, side), g.rect.max);
+        let resp = ui.interact(rect, ui.id().with(("note_size", g.id)), Sense::drag());
+        auto.add(format!("resize.{path}"), rect, "note size");
+        let hot = resp.hovered() || resp.dragged();
+        if !input.can_edit {
+            return hot;
+        }
+        if hot {
+            ui.ctx().set_cursor_icon(CursorIcon::ResizeNwSe);
+        }
+        if resp.drag_started_by(PointerButton::Primary) {
+            self.resize = Some(NoteResize {
+                node: g.id,
+                group: (input.new_group)(),
+                start: g.graph.size(),
+                moved: Vec2::ZERO,
+                sent: g.graph.size(),
+            });
+        }
+        if resp.dragged_by(PointerButton::Primary)
+            && let Some(r) = self.resize.as_mut().filter(|r| r.node == g.id)
+        {
+            r.moved += resp.drag_delta() / zoom;
+            let (min, max) = (Vec2::splat(MIN_SIZE as f32), Vec2::splat(MAX_SIZE as f32));
+            let size = (r.start + r.moved).round().clamp(min, max);
+            if size != r.sent
+                && let (Some(w), Some(h)) = (net_param(input, g.id, WIDTH), net_param(input, g.id, HEIGHT))
+            {
+                actions.push(Action::Edit {
+                    ops: vec![
+                        Op::Set { param: w, value: Value::Int(size.x as i64) },
+                        Op::Set { param: h, value: Value::Int(size.y as i64) },
+                    ],
+                    label: String::new(),
+                    group: Some(r.group),
+                });
+                r.sent = size;
+            }
+        }
+        if resp.drag_stopped() {
+            self.resize = None;
+        }
+        hot
+    }
+
+    /// Draws note `g`: a box with its text, headings and bullets set apart, cut off at the box.
+    /// `hot`: the pointer is on it, so the resize handle shows.
+    fn draw_note(
+        &self,
+        ui: &Ui,
+        painter: &egui::Painter,
+        g: &Geo,
+        input: &Inputs<'_>,
+        node: &penumbra_graph::NodeDef,
+        hot: bool,
+    ) {
+        use egui::text::{LayoutJob, TextFormat};
+        use penumbra_ops::note::{Line, spans, text_lines};
+        let zoom = (g.rect.width() / g.graph.width().max(1.0)).max(0.01);
+        let radius = CornerRadius::same((4.0 * zoom).round().clamp(0.0, 255.0) as u8);
+        painter.rect_filled(g.rect, radius, theme::NOTE_FILL);
+        painter.rect_stroke(g.rect, radius, Stroke::new(1.0, theme::NOTE_EDGE), StrokeKind::Inside);
+        let inner = g.rect.shrink(8.0 * zoom);
+        let size = NOTE_TEXT * zoom;
+        // Below about 4 points the text is a grey smear; the box alone says a note is there.
+        if size >= 4.0 && inner.width() > 0.0 && inner.height() > 0.0 {
+            let text = penumbra_ops::note::text(node);
+            let mut job = LayoutJob::default();
+            job.wrap.max_width = inner.width();
+            let plain =
+                TextFormat { font_id: FontId::proportional(size), color: theme::TEXT, ..Default::default() };
+            let heading = TextFormat {
+                font_id: FontId::proportional(size * 1.35),
+                color: Color32::WHITE,
+                ..Default::default()
+            };
+            if text.trim().is_empty() {
+                let hint = "Empty note. Write its text in the param panel";
+                job.append(hint, 0.0, TextFormat { color: theme::TEXT_WEAK, ..plain.clone() });
+            } else {
+                for (i, line) in text_lines(text).into_iter().enumerate() {
+                    let (line, format, bullet) = match line {
+                        Line::Heading(t) => (t, heading.clone(), false),
+                        Line::Bullet(t) => (t, plain.clone(), true),
+                        Line::Plain(t) => (t, plain.clone(), false),
+                    };
+                    if i > 0 {
+                        job.append("\n", 0.0, format.clone());
+                    }
+                    if bullet {
+                        job.append("\u{2022} ", 0.0, format.clone());
+                    }
+                    for (piece, name) in spans(line) {
+                        let color = if name { theme::NOTE_NAME } else { format.color };
+                        job.append(piece, 0.0, TextFormat { color, ..format.clone() });
+                    }
+                }
+            }
+            let galley = painter.layout_job(job);
+            painter.with_clip_rect(inner.intersect(painter.clip_rect())).galley(
+                inner.min,
+                galley,
+                theme::TEXT,
+            );
+        }
+        if hot && input.can_edit {
+            // Two short diagonal lines in the corner: the resize handle.
+            let scale = zoom.clamp(0.6, 1.4);
+            let c = g.rect.max - vec2(3.0, 3.0) * scale;
+            let stroke = Stroke::new(1.2, theme::TEXT_WEAK);
+            for d in [6.0, 11.0] {
+                painter.line_segment([c - vec2(d * scale, 0.0), c - vec2(0.0, d * scale)], stroke);
+            }
+        }
+        self.outline(ui, painter, g, input, radius);
     }
 
     /// Names next to the ports, inside the node's edge: always for the inputs and for the outputs

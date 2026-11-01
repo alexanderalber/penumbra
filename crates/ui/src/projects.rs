@@ -59,6 +59,10 @@ fn name_of(dir: &Path) -> String {
     dir.file_name().map_or_else(|| dir.display().to_string(), |n| n.to_string_lossy().into_owned())
 }
 
+/// The keys that turn show mode on (Ctrl+Shift+L), beside the entry in the project menu.
+pub const SHOW_MODE_KEYS: egui::KeyboardShortcut =
+    egui::KeyboardShortcut::new(egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT), egui::Key::L);
+
 impl ProjectMenu {
     /// A dialog is open or a project is being opened.
     pub fn busy(&self) -> bool {
@@ -67,13 +71,14 @@ impl ProjectMenu {
 
     /// Draws the button and its menu. Returns a message for the status bar when something
     /// starts, finishes or fails. `save_layout` writes the editor layout now, so a copy of the
-    /// project takes the latest one.
+    /// project takes the latest one. `lock` turns true when the menu's "Show mode" was chosen.
     pub fn show(
         &mut self,
         ui: &mut Ui,
         engine: &Arc<Engine>,
         auto: &mut automation::Registry,
         save_layout: impl FnOnce(),
+        lock: &mut bool,
     ) -> Option<String> {
         let mut message = self.poll(engine, save_layout);
         let current = engine.session().dir().to_path_buf();
@@ -186,6 +191,17 @@ impl ProjectMenu {
                 if let Err(e) = reveal(&current) {
                     message = Some(e);
                 }
+                ui.close();
+            }
+            ui.separator();
+            let keys = RichText::new(ui.ctx().format_shortcut(&SHOW_MODE_KEYS)).color(theme::TEXT_WEAK);
+            let b = ui.add(egui::Button::new("Show mode").shortcut_text(keys)).on_hover_text(
+                "Locks the project for a performance: no edits, nothing written or reloaded, a restart \
+                 by itself after a crash. Unlock takes two clicks on the show screen",
+            );
+            auto.add("project.show_mode", b.rect, "Show mode");
+            if b.clicked() {
+                *lock = true;
                 ui.close();
             }
         });

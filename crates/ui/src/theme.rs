@@ -149,10 +149,19 @@ pub fn family_color(family: &str) -> Color32 {
         // tex's violet (the two looked alike).
         // The library tab of the add dialog holds component files: their colour.
         "comp" | "library" => Color32::from_rgb(60, 190, 180),
+        // Notes: the sand of their box.
+        "ui" => Color32::from_rgb(200, 180, 120),
         _ => Color32::from_gray(120),
     };
     c.gamma_multiply(0.55)
 }
+
+/// A note's box on the canvas: warm and half transparent, so the grid and wires show through.
+pub const NOTE_FILL: Color32 = Color32::from_rgba_premultiplied(52, 47, 32, 210);
+/// A name in backticks in a note's text.
+pub const NOTE_NAME: Color32 = Color32::from_rgb(240, 210, 140);
+/// A note's edge.
+pub const NOTE_EDGE: Color32 = Color32::from_rgb(105, 94, 62);
 
 /// A node body that costs nothing, and what the half-transparent header colour lies on.
 pub const NODE_BODY: Color32 = Color32::from_gray(44);

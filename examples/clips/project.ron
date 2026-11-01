@@ -3,6 +3,7 @@
 (
     version: 2,
     nodes: {
+        "/about": (kind: "ui.note", params: {"height": 130, "text": "# In step\n`clip` and `sound` play the same file and start together. A change of `speed` or `start` on only one of them moves them apart.\nSelect `record` and press its record button to record a movie with the sound.", "width": 460}, pos: [0.0, 440.0]),
         "/clip": (kind: "tex.video_file", params: {"file": "clip.mp4"}, pos: [0.0, 0.0]),
         "/record": (kind: "out.video", inputs: {"in": "clip"}, pos: [300.0, 142.0]),
         "/screen": (kind: "out.projector", inputs: {"in": "clip"}, pos: [300.0, 0.0]),

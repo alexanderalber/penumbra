@@ -84,6 +84,8 @@ impl Viewer {
         let id = self.pinned.filter(|id| net.node(*id).is_some()).or(selected)?;
         // A sink (`out` family) has nothing to show itself; show what it sends out.
         match net.node(id) {
+            // A note has no picture: the viewer stays empty rather than saying "no output yet".
+            Some(n) if penumbra_ops::note::is_note(n) => None,
             Some(n) if n.kind.starts_with("out.") => {
                 n.inputs.first().copied().flatten().map(|p| p.node).or(Some(id))
             }

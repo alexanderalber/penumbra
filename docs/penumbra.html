@@ -121,7 +121,7 @@ details.target { outline: 2px solid var(--accent); }
 </section>
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
-<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-component-ports">Component ports</a></p>
+<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-ui">ui</a> <a href="#family-component-ports">Component ports</a></p>
 <p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-camera">camera</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-http">http</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
@@ -160,7 +160,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong>Changes</strong> (bottom right): every edit, newest first, with who made it (you, Claude, the project file). Hover an entry to outline the nodes it touched, click it to select them. Undo and Redo sit in its header.
 </li>
-<li><strong>The status bar</strong>: the project menu (the folder), play and pause of the show clock, the frame and the time, how long the last cook pass took (click it for the last seconds as a plot, the CPU and GPU load and, on NVIDIA GPUs, power draw, temperature, clock and what holds the clock back), the outputs (hover for details), the control channel's port, the GPU, and whether <code>project.ron</code> is written yet.
+<li><strong>The status bar</strong>: the project menu (the folder, with <strong>Show mode</strong> at its end), play and pause of the show clock, the frame and the time, how long the last cook pass took (click it for the last seconds as a plot, the CPU and GPU load and, on NVIDIA GPUs, power draw, temperature, clock and what holds the clock back), the outputs (hover for details), the control channel's port, the GPU, and whether <code>project.ron</code> is written yet.
 </li>
 </ul>
 <p>Each section of the right column folds by its header; the open state is kept with the project. The column keeps its share of the window's width when the window is resized; drag its edge to change the share (also kept with the project).</p>
@@ -218,7 +218,7 @@ details.target { outline: 2px solid var(--accent); }
 <h3 id="getting-started-when-the-gpu-gives-up">When the GPU gives up</h3>
 <p>penumbra stops creating GPU memory at 90 % of what Windows grants it, so a node asking for too much gets an error (or, for <a class="ref" href="#tex.time_machine"><code>tex.time_machine</code></a>, fewer frames and a warning) instead of taking the driver down. Should the GPU device still be lost (a driver reset, another program filling the GPU), penumbra saves the project file but no state, shows a message and exits with code 3. The next start opens the project with the show clock stopped and says why in the status bar; press play once the cause is fixed. The record of that lives in <code>%LOCALAPPDATA%\penumbra\gpu-lost.json</code> until the next start reads it. In show mode the app starts again by itself instead, see below.</p>
 <h3 id="getting-started-show-mode">Show mode</h3>
-<p>Show mode keeps penumbra from touching a project during a performance. Switch it on with the padlock in the status bar, or with <a class="ref" href="#show.lock"><code>show.lock</code></a> over the control channel (<code>penumbra-cli ctl show.lock</code>). <a class="ref" href="#show.unlock"><code>show.unlock</code></a>, or <strong>Unlock</strong> clicked twice, ends it.</p>
+<p>Show mode keeps penumbra from touching a project during a performance. Switch it on with <strong>Show mode</strong> in the project menu (the folder at the left of the status bar), with Ctrl+Shift+L, or with <a class="ref" href="#show.lock"><code>show.lock</code></a> over the control channel (<code>penumbra-cli ctl show.lock</code>). <a class="ref" href="#show.unlock"><code>show.unlock</code></a>, or <strong>Unlock</strong> clicked twice, ends it.</p>
 <p>While show mode is on:</p>
 <ul>
 <li><strong>Locked:</strong> edits, node moves, undo and redo are refused, from the editor and the control channel alike, with a message that names <a class="ref" href="#show.unlock"><code>show.unlock</code></a>. So are saving, switching projects, scans, palettes, components and OSC learn.
@@ -477,6 +477,7 @@ water      15
 <p><strong>Errors keep the last good result.</strong> A node that fails (a shader that does not compile, a file that does not load) shows the error and keeps putting out what it made last, so a typo during a show does not black out a projector.</p>
 <p><strong>Thumbnails</strong> follow the editor's options (right-click on empty canvas): always live, only when free (nothing is cooked just for a thumbnail), or never. A live thumbnail cooks every frame by default; the same menu lowers that to every 2nd, 3rd or 6th frame for large networks. Both are project settings (<code>thumbnails</code> and <code>thumbnail_every</code> in <code>project.ron</code>), so a change is undoable and travels with the project; <a class="ref" href="#cook.thumbnails"><code>cook.thumbnails</code></a> over the control channel sets the same. A picture is only shown while it is up to date; an outdated one would be misleading. &quot;Pause thumbnail&quot; in a node's menu does the same for one node.</p>
 <p><strong>Locking</strong> a node (node menu, or the lock in the param panel) holds its current outputs: it no longer cooks, whatever happens upstream, and its inputs may even be removed. Locked outputs are kept across restarts. Use it for calibration results and anything expensive to make again.</p>
+<p><strong>Notes</strong> are comments on the canvas: a sand-coloured box of text, added as <a class="ref" href="#ui.note"><code>ui.note</code></a> from the add dialog's <code>system</code> tab. Its <code>text</code> param holds what it says. A line starting with <code># </code> is a heading, one starting with <code>- </code> a bullet, and a name in backticks stands out. Drag a note to move it; drag its lower right corner to size it (<code>width</code> and <code>height</code>). A note has no ports and changes nothing in the show. Arranging (L) leaves notes where they are, and wires run across them. The demo and the examples use notes to explain their networks.</p>
 <h3 id="concepts-the-project-directory">The project directory</h3>
 <table>
 <thead><tr><th></th><th></th></tr></thead>
@@ -528,7 +529,7 @@ water      15
 <p><strong>Scan.</strong> A camera films each projector's stripe patterns, and penumbra learns which camera pixel each projector pixel lands on. From that it finds faces and objects, blends projectors and puts content on things. One scan takes about 20 seconds per projector in a dark room. See <a href="#scanning">Scanning</a>.</p>
 <p><strong>Scene.</strong> Two meanings. In scanning, the folder <a class="ref" href="#scan.scene"><code>scan.scene</code></a> writes: the faces and objects of one scan, which <a class="ref" href="#scan.regions"><code>scan.regions</code></a>, <a class="ref" href="#scan.face_template"><code>scan.face_template</code></a> and the content read. In 3D, the geometry, materials, lights and camera that a <a class="ref" href="#tex.render"><code>tex.render</code></a> draws.</p>
 <p><strong>Show clock.</strong> The time every animation reads: frames at 60 a second, starting at 0 when a project opens. The status bar pauses and runs it. See <a href="#concepts-time">Time</a>.</p>
-<p><strong>Show mode.</strong> A lock for a performance: no edits, no saving, no project switches, while OSC, DMX, keys and cameras keep driving the show. When the GPU or the editor fails, the app starts again by itself. The padlock in the status bar turns it on. See <a href="#getting-started-show-mode">Show mode</a>.</p>
+<p><strong>Show mode.</strong> A lock for a performance: no edits, no saving, no project switches, while OSC, DMX, keys and cameras keep driving the show. When the GPU or the editor fails, the app starts again by itself. <strong>Show mode</strong> in the project menu or Ctrl+Shift+L turns it on. See <a href="#getting-started-show-mode">Show mode</a>.</p>
 <p><strong>State.</strong> What a node builds up over time: a feedback loop's last frame, a cache's frames, a learned background. It is lost on restart unless <strong>keep node state across restarts</strong> is on in the Helpers window. R starts the selected nodes over. See <a href="#helpers-state">State</a>.</p>
 <p><strong>Surface.</strong> The picture that the <a class="ref" href="#tex.mapper"><code>tex.mapper</code></a> nodes fed by one node share between them. Each mapper shows a <code>region</code> of it, and mappers of one surface blend where their regions overlap. <a class="ref" href="#tex.shapes"><code>tex.shapes</code></a> draws its masks in the surface's coordinates.</p>
 <p><strong>Thumbnail.</strong> The small live picture in a node's body. Thumbnails cook with the time left in a frame, after the outputs. The editor's right-click menu sets them to always live, only when free or never, for a large network. See <a href="#concepts-what-the-editor-shows">What the editor shows</a>.</p>
@@ -5159,6 +5160,28 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-the-project-directory">Concepts › The project directory</a></p>
+</div></details>
+</div>
+<div class="group" id="family-ui">
+<h3>ui</h3>
+<p class="kinds"><a href="#ui.note">ui.note</a></p>
+<details class="entry node" id="ui.note"><summary><code class="name">ui.note</code><span class="sum">A comment on the canvas: text in a box you place and size freely. It has no ports and changes nothing in the show</span></summary>
+<div class="body">
+<p>A comment on the canvas: text in a box you place and size freely. It has no ports and changes nothing in the show</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<p>none</p>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>text</code></td><td>text</td><td></td><td></td><td>What the note says. A line starting with &quot;# &quot; is a heading, one starting with &quot;- &quot; a bullet. A name in backticks stands out. Long lines wrap at the note's width</td></tr>
+<tr><td><code>width</code></td><td>int</td><td><code>300</code></td><td>60 to 4000</td><td>Width of the note on the canvas, in the units of the network (a node is 150 wide). The handle at its lower right corner drags it</td></tr>
+<tr><td><code>height</code></td><td>int</td><td><code>140</code></td><td>60 to 4000</td><td>Height of the note on the canvas, in the units of the network. Text beyond it is cut off</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-what-the-editor-shows">Concepts › What the editor shows</a></p>
 </div></details>
 </div>
 <div class="group" id="family-component-ports">

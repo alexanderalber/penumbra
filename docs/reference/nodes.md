@@ -4,7 +4,7 @@
 
 Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param panel. A param that does something only with some setting of another param, or only while an input is wired, says so; the panel greys it out while it does nothing. A soft range limits only the slider; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
 
-Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp), [node](#node), [Component ports](#component-ports)
+Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp), [node](#node), [ui](#ui), [Component ports](#component-ports)
 
 ## tex
 
@@ -2434,6 +2434,24 @@ Outputs: none.
 | `entry` | text |  |  | The node's entry from the project file, written back unchanged on every save |
 | `error` | text |  |  | Why the entry did not load as a node |
 | `outputs` | text |  |  | Names of the outputs other nodes read from this one, one per line |
+
+## ui
+
+[ui.note](#uinote)
+
+### ui.note
+
+A comment on the canvas: text in a box you place and size freely. It has no ports and changes nothing in the show
+
+Inputs: none.
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `text` | text |  |  | What the note says. A line starting with "# " is a heading, one starting with "- " a bullet. A name in backticks stands out. Long lines wrap at the note's width |
+| `width` | int | `300` | 60 to 4000 | Width of the note on the canvas, in the units of the network (a node is 150 wide). The handle at its lower right corner drags it |
+| `height` | int | `140` | 60 to 4000 | Height of the note on the canvas, in the units of the network. Text beyond it is cut off |
 
 ## Component ports
 

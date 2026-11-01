@@ -3,6 +3,7 @@
 (
     version: 2,
     nodes: {
+        "/about": (kind: "ui.note", params: {"height": 165, "text": "# Stripes where a person has been\n- `person` stands in for a depth camera's mask: white where the person is\n- `seen` and `loop` remember when the person was last at each pixel\n- `age` turns that into a map: black where the person is, white `span` seconds after they left\n- `tm` shows each pixel of `pattern` from as long ago as `age` says\n- `out` adds stripes around the person and picks the colours. Look at `out`", "width": 800}, pos: [0.0, 300.0]),
         "/age": (kind: "tex.shader", params: {"file": "age.wgsl"}, inputs: {"in0": "seen"}, pos: [800.0, 142.0]),
         "/black": (kind: "tex.constant", params: {"height": 720, "width": 1280}, pos: [200.0, 142.0]),
         "/loop": (kind: "tex.feedback", inputs: {"initial": "black", "previous": "seen"}, pos: [400.0, 142.0]),

@@ -155,6 +155,8 @@ impl Action {
 #[cfg(test)]
 mod node_controls_tests;
 #[cfg(test)]
+mod note_tests;
+#[cfg(test)]
 mod reference;
 #[cfg(test)]
 mod show_screen_tests;

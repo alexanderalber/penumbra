@@ -551,6 +551,13 @@ thumbnail" in a node's menu does the same for one node.
 longer cooks, whatever happens upstream, and its inputs may even be removed. Locked outputs are
 kept across restarts. Use it for calibration results and anything expensive to make again.
 
+**Notes** are comments on the canvas: a sand-coloured box of text, added as `ui.note` from the
+add dialog's `system` tab. Its `text` param holds what it says. A line starting with `# ` is a
+heading, one starting with `- ` a bullet, and a name in backticks stands out. Drag a note to
+move it; drag its lower right corner to size it (`width` and `height`). A note has no ports and
+changes nothing in the show. Arranging (L) leaves notes where they are, and wires run across
+them. The demo and the examples use notes to explain their networks.
+
 ## The project directory
 
 | | |

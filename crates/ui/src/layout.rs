@@ -287,6 +287,9 @@ pub struct Layout {
     /// Each node's parent: positions are per component (each component's inside has a plane of
     /// its own), so overlap checks and bounds look at one level only.
     parents: HashMap<NodeId, Option<NodeId>>,
+    /// The size of each node drawn larger or smaller than [`NODE_SIZE`] (a note), for overlap
+    /// checks and bounds.
+    sizes: HashMap<NodeId, Vec2>,
     /// The component whose inside the editor shows (`None`: the top level); `visible` and
     /// `bounds` refer to it. The one place that says which level is shown ([`Layout::enter`]).
     level: Option<NodeId>,
@@ -324,6 +327,7 @@ impl Layout {
             file: file.clone(),
             pos: HashMap::new(),
             parents: HashMap::new(),
+            sizes: HashMap::new(),
             level: None,
             level_views: HashMap::new(),
             view: View::default(),
@@ -498,9 +502,13 @@ impl Layout {
         self.dragged.retain(|id, _| net.node(*id).is_some());
         self.pos.clear();
         self.parents.clear();
+        self.sizes.clear();
         let mut fresh: Vec<NodeId> = Vec::new();
         for node in net.nodes() {
             self.parents.insert(node.id, node.parent);
+            if let Some([w, h]) = penumbra_ops::note::size(node) {
+                self.sizes.insert(node.id, vec2(w, h));
+            }
             let at = self
                 .dragged
                 .get(&node.id)
@@ -569,6 +577,11 @@ impl Layout {
         self.parents.get(&id).copied().flatten()
     }
 
+    /// The rect of node `id` placed at `p`, in graph units: [`NODE_SIZE`], or a note's own size.
+    fn rect_of(&self, id: NodeId, p: Pos2) -> Rect {
+        Rect::from_min_size(p, self.sizes.get(&id).copied().unwrap_or(NODE_SIZE))
+    }
+
     /// The first free place in `area` (graph units), by columns from the left, top to bottom,
     /// keeping a margin from its edges.
     fn free_in(&self, area: Rect, level: Option<NodeId>) -> Option<Pos2> {
@@ -590,7 +603,7 @@ impl Layout {
         self.pos
             .iter()
             .filter(|(id, _)| self.parent_of(**id) == level)
-            .any(|(_, q)| Rect::from_min_size(*q, NODE_SIZE).expand2(GAP * 0.4).intersects(r))
+            .any(|(id, q)| self.rect_of(*id, *q).expand2(GAP * 0.4).intersects(r))
     }
 
     /// The first place at or below `p` where a node overlaps nothing.
@@ -614,7 +627,7 @@ impl Layout {
         self.pos
             .iter()
             .filter(|(id, _)| self.parent_of(**id) == level)
-            .map(|(_, p)| Rect::from_min_size(*p, NODE_SIZE))
+            .map(|(id, p)| self.rect_of(*id, *p))
             .reduce(|a, b| a.union(b))
     }
 

@@ -38,7 +38,7 @@ const RECENT_MAX_BYTES: u64 = 256 * 1024;
 /// Content of a new demo project: reaction-diffusion growing around the title. Noise seeds a
 /// feedback loop of blur and sharpen, which grows spots and stripes; the title, blurred into a
 /// shield, keeps the pattern out of the letters.
-pub const DEMO: &str = r#"(
+pub const DEMO: &str = r##"(
     version: 2,
     nodes: {
         "/noise": (kind: "tex.noise", params: {"width": 640, "height": 360, "keep_size": true, "frequency": 1.27, "octaves": 1, "speed": 0.05}, pos: [600.0, 0.0]),
@@ -62,8 +62,11 @@ pub const DEMO: &str = r#"(
         "/palette3": (kind: "tex.ramp", params: {"width": 256, "height": 1, "keys": "0 0.0296 0.0 0.0296\n0.1 0.0296 0.0 0.0296\n0.3 0.0648 0.0 0.0648\n0.5 0.117 0.0091 0.0648\n0.7 0.521 0.0648 0.0648\n0.9 0.8632 0.1683 0.0529\n1 0.8632 0.1683 0.0529"}, pos: [0.0, 426.0]),
         "/palettes": (kind: "tex.switch", params: {"blend": true}, inputs: {"in0": "palette0", "in1": "palette1", "in2": "palette2", "in3": "palette3"}, pos: [200.0, 0.0]),
         "/show": (kind: "tex.lookup", inputs: {"in": "full", "lut": "palettes"}, pos: [2400.0, 0.0]),
+        "/about_loop": (kind: "ui.note", params: {"text": "# Reaction-diffusion\nEvery frame, the loop from `loop` to `drift` blurs and sharpens its own last picture. Spots and stripes grow out of the noise in `seed`.\n- `amount` on `sharpen` sets the pattern: try 1 or 0.97\n- `cross` on `mix` sets how much of `seed` comes back each frame", "width": 790, "height": 130}, pos: [1000.0, -170.0]),
+        "/about_title": (kind: "ui.note", params: {"text": "# The title stays clear\n`shield` is black inside the letters and white around them. `seed` and `keep` are multiplied by it, so no pattern grows in the letters. Change the word in `title`.", "width": 390, "height": 115}, pos: [800.0, 568.0]),
+        "/about_colours": (kind: "ui.note", params: {"text": "# Colours\n`palettes` holds four colour ramps. `show` colours the grey pattern with the ramp that `index` on `palettes` picks; between two whole numbers it blends them.", "width": 330, "height": 115}, pos: [200.0, 142.0]),
     },
-)"#;
+)"##;
 
 /// The demo's shader, written next to the project when missing.
 pub const DEMO_SHADER: &str =
