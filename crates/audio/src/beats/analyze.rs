@@ -17,8 +17,8 @@ use penumbra_nn::models::BeatThis;
 
 use super::cache;
 use super::{
-    BORDER_FRAMES, BeatError, Beats, CHUNK_FRAMES, ChunkPlan, FPS, Frontend, Logits, N_MELS, Spectrogram,
-    cancelled, pick,
+    BORDER_FRAMES, BeatError, Beats, CHUNK_FRAMES, ChunkPlan, FPS, Frontend, Logits, N_MELS, NO_BEAT,
+    Partial, Spectrogram, cancelled, pick, pick_final,
 };
 use crate::file;
 
@@ -180,6 +180,20 @@ pub fn analyze_file(
     cancel: Option<&AtomicBool>,
     progress: &mut dyn FnMut(&Progress),
 ) -> Result<Beats, BeatError> {
+    analyze_file_with(path, model, cache_dir, cancel, progress, &mut |_| {})
+}
+
+/// [`analyze_file`], and `partial` hears the beats that are final so far ([`pick_final`]) each
+/// time the run of chunks done from the start of the file grows. A result from the cache
+/// gives no partial results.
+pub fn analyze_file_with(
+    path: &Path,
+    model: &BeatModel,
+    cache_dir: Option<&Path>,
+    cancel: Option<&AtomicBool>,
+    progress: &mut dyn FnMut(&Progress),
+    partial: &mut dyn FnMut(&Partial),
+) -> Result<Beats, BeatError> {
     let key = cache_dir.and_then(|dir| cache::Key::of(path, model.id(), dir));
     if let Some(key) = &key
         && let Some(beats) = cache::load(key)
@@ -187,7 +201,7 @@ pub fn analyze_file(
         progress(&Progress { decode_done: true, ..Progress::default() });
         return Ok(beats);
     }
-    let beats = compute(path, model, cancel, progress)?;
+    let beats = compute(path, model, cancel, progress, partial)?;
     if let Some(key) = &key
         && let Err(e) = cache::store(key, &beats)
     {
@@ -206,8 +220,47 @@ pub fn run_parallel(
 ) -> Result<Logits, BeatError> {
     rayon::in_place_scope(|scope| {
         let mut jobs = Jobs::new(scope, model);
-        jobs.finish(spect, cancel, progress)
+        jobs.finish(spect, cancel, progress, &mut |_| {})
     })
+}
+
+/// The logits that are final while chunks are still running: those of the first chunks in a
+/// row, each one's frames without its borders. Only chunks of [`CHUNK_FRAMES`] rows at the
+/// regular places (`k * step - BORDER_FRAMES`) count. Every plan of a longer piece has them,
+/// and where the moved last chunk overlaps them, they win, as in [`super::Stitcher::finish`].
+#[derive(Default)]
+struct Prefix {
+    beat: Vec<f32>,
+    downbeat: Vec<f32>,
+    /// The next chunk to add.
+    next: usize,
+}
+
+impl Prefix {
+    fn key(k: usize) -> (isize, usize) {
+        // `as`: frame offsets are far below isize::MAX.
+        ((k * (CHUNK_FRAMES - 2 * BORDER_FRAMES)) as isize - BORDER_FRAMES as isize, CHUNK_FRAMES)
+    }
+
+    /// Adds the chunks done next in a row. With the final `plan`, only its chunks before the
+    /// last count. Whether it grew.
+    fn grow(&mut self, done: &Outputs, plan: Option<&ChunkPlan>) -> bool {
+        let before = self.next;
+        loop {
+            let key = Self::key(self.next);
+            let in_plan = plan.is_none_or(|p| {
+                self.next + 1 < p.len()
+                    && p.chunks().get(self.next).is_some_and(|c| (c.start, c.frames) == key)
+            });
+            let Some((b, d)) = done.get(&key).filter(|_| in_plan) else { break };
+            let keep = BORDER_FRAMES..CHUNK_FRAMES - BORDER_FRAMES;
+            let clean = |v: &f32| if v.is_nan() { NO_BEAT } else { *v };
+            self.beat.extend(b.get(keep.clone()).unwrap_or(&[]).iter().map(clean));
+            self.downbeat.extend(d.get(keep).unwrap_or(&[]).iter().map(clean));
+            self.next += 1;
+        }
+        self.next > before
+    }
 }
 
 /// The chunks sent to the pool and their outputs, keyed by (first frame, frames).
@@ -217,15 +270,27 @@ struct Jobs<'a, 'scope, 'm> {
     tx: mpsc::Sender<Done>,
     rx: mpsc::Receiver<Done>,
     running: BTreeSet<(isize, usize)>,
-    done: BTreeMap<(isize, usize), (Vec<f32>, Vec<f32>)>,
+    done: Outputs,
+    prefix: Prefix,
 }
+
+/// The chunks' beat and downbeat logits, keyed by (first frame, frames).
+type Outputs = BTreeMap<(isize, usize), (Vec<f32>, Vec<f32>)>;
 
 type Done = ((isize, usize), Result<(Vec<f32>, Vec<f32>), BeatError>);
 
 impl<'a, 'scope, 'm: 'scope> Jobs<'a, 'scope, 'm> {
     fn new(scope: &'a rayon::Scope<'scope>, model: &'m BeatModel) -> Self {
         let (tx, rx) = mpsc::channel();
-        Jobs { scope, model, tx, rx, running: BTreeSet::new(), done: BTreeMap::new() }
+        Jobs {
+            scope,
+            model,
+            tx,
+            rx,
+            running: BTreeSet::new(),
+            done: BTreeMap::new(),
+            prefix: Prefix::default(),
+        }
     }
 
     fn spawn(&mut self, key: (isize, usize), input: Vec<f32>) {
@@ -253,13 +318,20 @@ impl<'a, 'scope, 'm: 'scope> Jobs<'a, 'scope, 'm> {
         Ok(())
     }
 
+    /// The beats final so far, when the chunks done in a row from the start grew.
+    fn grown(&mut self, plan: Option<&ChunkPlan>) -> Option<Partial> {
+        self.prefix.grow(&self.done, plan).then(|| pick_final(&self.prefix.beat, &self.prefix.downbeat))
+    }
+
     /// Runs the chunks of the finished spectrogram that are not done yet and joins all
-    /// outputs. `progress` hears `(chunks done, chunks in all)`.
+    /// outputs. `progress` hears `(chunks done, chunks in all)`, `partial` the beats final so
+    /// far whenever they grow.
     fn finish(
         &mut self,
         spect: &Spectrogram,
         cancel: Option<&AtomicBool>,
         progress: &mut dyn FnMut(usize, usize),
+        partial: &mut dyn FnMut(&Partial),
     ) -> Result<Logits, BeatError> {
         let plan = ChunkPlan::new(spect.frames());
         let keys: Vec<(isize, usize)> = plan.chunks().iter().map(|c| (c.start, c.frames)).collect();
@@ -267,6 +339,9 @@ impl<'a, 'scope, 'm: 'scope> Jobs<'a, 'scope, 'm> {
         let mut next = 0;
         loop {
             self.poll()?;
+            if let Some(p) = self.grown(Some(&plan)) {
+                partial(&p);
+            }
             let done = keys.iter().filter(|k| self.done.contains_key(k)).count();
             progress(done, total);
             if done == total {
@@ -311,6 +386,7 @@ fn compute(
     model: &BeatModel,
     cancel: Option<&AtomicBool>,
     progress: &mut dyn FnMut(&Progress),
+    partial: &mut dyn FnMut(&Partial),
 ) -> Result<Beats, BeatError> {
     let step = CHUNK_FRAMES - 2 * BORDER_FRAMES;
     rayon::in_place_scope(|scope| {
@@ -354,6 +430,9 @@ fn compute(
                 failure = Some(e);
                 return false;
             }
+            if let Some(p) = jobs.grown(None) {
+                partial(&p);
+            }
             while jobs.running.len() < IN_FLIGHT {
                 let end = early * step + CHUNK_FRAMES - BORDER_FRAMES;
                 if fe.frames() < end {
@@ -385,11 +464,16 @@ fn compute(
         let spect = fe.finish();
         state.decode_done = true;
         state.length = Some(spect.seconds());
-        let logits = jobs.finish(&spect, cancel, &mut |done, all| {
-            state.chunks_done = done;
-            state.chunks = all;
-            progress(&state);
-        })?;
+        let logits = jobs.finish(
+            &spect,
+            cancel,
+            &mut |done, all| {
+                state.chunks_done = done;
+                state.chunks = all;
+                progress(&state);
+            },
+            partial,
+        )?;
         Ok(pick(&logits.beat, &logits.downbeat))
     })
 }
@@ -524,8 +608,19 @@ mod tests {
 
         let cache = dir.join("cache");
         let mut last = Progress::default();
-        let got = analyze_file(&sound, &model, Some(&cache), None, &mut |p| last = *p).unwrap();
+        let mut partials: Vec<Partial> = Vec::new();
+        let got = analyze_file_with(&sound, &model, Some(&cache), None, &mut |p| last = *p, &mut |p| {
+            partials.push(p.clone())
+        })
+        .unwrap();
         assert_eq!(got, want);
+        // The first chunk (29.76 s) was final before the second: its beats begin the result.
+        assert_eq!(partials.len(), 1);
+        let p = &partials[0];
+        assert!(p.beats.beats.len() >= 55, "{} beats", p.beats.beats.len());
+        assert_eq!(p.beats.beats[..], want.beats[..p.beats.beats.len()]);
+        assert_eq!(p.beats.downbeats[..], want.downbeats[..p.beats.downbeats.len()]);
+        assert!(p.final_until.is_some_and(|t| t > 25.0 && t < 29.8), "{:?}", p.final_until);
         assert_eq!(last.fraction(), 1.0);
         assert_eq!((last.chunks_done, last.chunks), (2, 2));
         // The second run reads the cache.

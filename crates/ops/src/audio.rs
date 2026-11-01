@@ -24,6 +24,8 @@
 //!   from 30 Hz to 16 kHz. See `penumbra-audio`'s `analysis` module for how. Its third, `meters`,
 //!   is the viewer's meters as a texture ([`crate::tex::meters_picture`]), drawn only while
 //!   something reads it.
+//! - **`chan.beat_grid`** ([`beat_grid`]) is the beat and bar of a sound file at an `audio.file`'s
+//!   playhead, from beats the Beat This! network finds in the whole file ahead of time.
 //! - **`chan.audio_envelope`** ([`envelope`]) is the loudness of every channel now, with an
 //!   attack and a release; **`chan.audio_spectrum`** ([`spectrum`]) the spectrum in bands, as
 //!   one channel and as a texture (a row now, or a scrolling spectrogram).
@@ -34,6 +36,9 @@
 pub mod ambience;
 #[cfg(test)]
 mod ambience_tests;
+pub mod beat_grid;
+#[cfg(test)]
+mod beat_grid_tests;
 pub mod block;
 pub mod envelope;
 #[cfg(test)]
@@ -231,6 +236,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     filter::register(types)?;
     instrument::register(types)?;
     file::register(types)?;
+    beat_grid::register(types)?;
     ambience::register(types)?;
     envelope::register(types)?;
     spectrum::register(types)?;

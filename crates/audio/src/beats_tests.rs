@@ -247,6 +247,66 @@ fn peaks_edge_cases() {
     let _ = pick(&b, &d[..3]);
 }
 
+/// `pick_final` on the first `f` frames against `pick` on all: its beats and downbeats begin
+/// the whole piece's, and its grid gives the whole piece's positions before `final_until`.
+fn check_partial(b: &[f32], d: &[f32], step: usize) -> usize {
+    let full = pick(b, d);
+    let grid = BeatGrid::new(&full.beats, &full.downbeats);
+    let mut with_until = 0;
+    for f in (0..=b.len()).step_by(step) {
+        let p = pick_final(&b[..f], &d[..f]);
+        assert!(p.beats.beats.len() <= full.beats.len(), "{f}");
+        assert_eq!(p.beats.beats[..], full.beats[..p.beats.beats.len()], "beats at {f} frames");
+        assert_eq!(
+            p.beats.downbeats[..],
+            full.downbeats[..p.beats.downbeats.len()],
+            "downbeats at {f} frames"
+        );
+        let Some(until) = p.final_until else { continue };
+        with_until += 1;
+        assert!(until <= f as f64 / FPS, "{until} beyond {f} frames");
+        let part = BeatGrid::new(&p.beats.beats, &p.beats.downbeats);
+        let mut t = -2.0;
+        while t < until {
+            assert_eq!(part.at(t), grid.at(t), "t {t} with {f} frames final");
+            t += 0.013;
+        }
+    }
+    with_until
+}
+
+#[test]
+fn partial_beats_begin_the_final_ones() {
+    // Real logits.
+    let (b, d) = deinterleave(&read_f32(&fixture("post.logits.f32")));
+    let n = check_partial(&b, &d, 7);
+    assert!(n > 100, "final_until was set {n} times");
+    // The whole piece known but the last few frames: nearly every beat is final.
+    let p = pick_final(&b, &d);
+    assert!(p.beats.beats.len() + 1 >= pick(&b, &d).beats.len());
+    // Random logits with plateaus (merged peaks), beats and downbeats close together.
+    let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
+    for _ in 0..4 {
+        let len = 600 + rng.below(400);
+        let mut b = vec![-3.0f32; len];
+        let mut d = vec![-3.0f32; len];
+        let mut i = rng.below(10);
+        while i + 3 < len {
+            let v = 1.0 + rng.below(4) as f32;
+            for k in 0..=rng.below(3) {
+                b[i + k] = v;
+            }
+            if rng.below(3) == 0 {
+                d[i + rng.below(5)] = 2.0;
+            }
+            i += 3 + rng.below(30);
+        }
+        check_partial(&b, &d, 1);
+    }
+    // Nothing yet.
+    assert_eq!(pick_final(&[], &[]), Partial::default());
+}
+
 #[test]
 fn hostile_input_does_not_panic() {
     for (rate, ch) in

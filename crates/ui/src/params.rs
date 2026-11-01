@@ -53,6 +53,8 @@ pub struct Inputs<'a> {
     pub audio_out: &'a penumbra_audio::Outputs,
     /// The engine's sound files: an `audio.file` shows what it plays.
     pub sound_files: &'a penumbra_ops::audio::file::SoundFiles,
+    /// The engine's beat analyses: a `chan.beat_grid` shows how its file's stands.
+    pub beat_files: &'a penumbra_ops::audio::beat_grid::BeatFiles,
     /// The engine's recordings: an `out.video` or `out.audio_file` shows its own and has start
     /// and stop.
     pub record: &'a penumbra_record::Hub,
@@ -238,6 +240,9 @@ impl ParamPanel {
         }
         if node.kind == penumbra_ops::audio::file::FILE {
             sound_file_row(ui, input, auto, actions);
+        }
+        if node.kind == penumbra_ops::audio::beat_grid::BEAT_GRID {
+            beat_grid_row(ui, input, node, auto);
         }
         if node.kind == penumbra_ops::out::video::VIDEO_OUT {
             record_row(ui, input, node, auto, actions);
@@ -2656,6 +2661,61 @@ fn sound_file_row(
             }
         };
         ui.label(RichText::new(text).color(colour).small());
+    });
+}
+
+/// How the beat analysis of a `chan.beat_grid`'s file stands: a progress bar and cancel while it
+/// runs, then the beats found; analyze again after a cancel or a failure (`beats.analyze`).
+fn beat_grid_row(ui: &mut Ui, input: &Inputs<'_>, node: &NodeDef, auto: &mut automation::Registry) {
+    let source = node.inputs.first().copied().flatten();
+    let Some(file) =
+        source.and_then(|p| input.sound_files.get(p.node)).map(|s| s.file).filter(|f| !f.is_empty())
+    else {
+        return;
+    };
+    let file = Path::new(&file);
+    let Some(analysis) = input.beat_files.get(file) else { return };
+    let s = analysis.state();
+    let weak = theme::TEXT_WEAK;
+    ui.horizontal(|ui| {
+        if s.running {
+            let r = ui.button("cancel").on_hover_text(
+                "Stops finding the beats. The beats found so far stay; analyze starts over (beats.cancel)",
+            );
+            auto.add("param.beats_cancel", r.rect, "cancel beat analysis");
+            if r.clicked() {
+                input.beat_files.cancel(file);
+            }
+            let ready = match s.grid.as_ref().map(|g| g.final_until) {
+                Some(t) if t.is_finite() => format!(", ready to {}", clock(t)),
+                _ => String::new(),
+            };
+            // `as`: a fraction for the bar.
+            let bar = egui::ProgressBar::new(s.progress as f32)
+                .text(RichText::new(format!("finding beats {:.0} %{ready}", s.progress * 100.0)).small())
+                .desired_width(ui.available_width());
+            let r = ui.add(bar);
+            auto.add("param.beats_progress", r.rect, "beat analysis progress");
+            return;
+        }
+        let complete = s.grid.as_ref().is_some_and(|g| g.complete());
+        if !complete {
+            let r = ui.button("analyze").on_hover_text("Finds the beats of the file again (beats.analyze)");
+            auto.add("param.beats_analyze", r.rect, "analyze beats");
+            if r.clicked() {
+                input.beat_files.restart(file);
+            }
+        }
+        let (text, colour) = match (&s.error, &s.grid) {
+            (Some(e), _) => (format!("no beats: {e}"), theme::WARNING),
+            (None, Some(g)) if complete => {
+                let n = g.beats.beats.len();
+                (format!("{n} beats, {} bars, found in {:.1} s", g.beats.downbeats.len(), s.seconds), weak)
+            }
+            (None, Some(g)) => (format!("cancelled after {} beats", g.beats.beats.len()), theme::WARNING),
+            (None, None) => ("cancelled".to_string(), theme::WARNING),
+        };
+        ui.add(egui::Label::new(RichText::new(text).color(colour).small()).wrap());
     });
 }
 

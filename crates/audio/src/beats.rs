@@ -30,8 +30,8 @@ mod analyze;
 mod cache;
 
 pub use analyze::{
-    BeatModel, IN_FLIGHT, MAX_SECONDS, MODEL_FILE, Progress, analyze_file, f_measure, model_path,
-    run_parallel,
+    BeatModel, IN_FLIGHT, MAX_SECONDS, MODEL_FILE, Progress, analyze_file, analyze_file_with, f_measure,
+    model_path, run_parallel,
 };
 
 use crate::fft::{Complex, Fft};
@@ -842,8 +842,17 @@ pub struct Beats {
     pub downbeats: Vec<f64>,
 }
 
-/// Peak frames of one logit track, adjacent ones merged, in seconds.
-fn peaks(v: &[f32]) -> Vec<f64> {
+/// Peak frames merged into one: its first and last frame and their mean. A frame joins when it
+/// is at most one frame after the mean so far, so the frames of a group are consecutive.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PeakGroup {
+    first: usize,
+    last: usize,
+    mean: f64,
+}
+
+/// The peak frames of one logit track, adjacent ones merged.
+fn peak_groups(v: &[f32]) -> Vec<PeakGroup> {
     let n = v.len();
     let frames = v.iter().enumerate().filter_map(|(i, x)| {
         let window = v.get(i.saturating_sub(PEAK_RADIUS)..(i + PEAK_RADIUS + 1).min(n))?;
@@ -852,22 +861,29 @@ fn peaks(v: &[f32]) -> Vec<f64> {
     });
     // Peak frames at most one apart become their running mean (upstream `deduplicate_peaks`).
     let mut out = Vec::new();
-    let mut current: Option<(f64, f64)> = None;
+    let mut current: Option<(PeakGroup, f64)> = None;
     for f in frames {
-        let f = f as f64;
+        let x = f as f64;
         current = match current {
-            Some((p, c)) if f - p <= 1.0 => Some((p + (f - p) / (c + 1.0), c + 1.0)),
-            Some((p, _)) => {
-                out.push(p);
-                Some((f, 1.0))
+            Some((g, c)) if x - g.mean <= 1.0 => {
+                Some((PeakGroup { last: f, mean: g.mean + (x - g.mean) / (c + 1.0), ..g }, c + 1.0))
             }
-            None => Some((f, 1.0)),
+            Some((g, _)) => {
+                out.push(g);
+                Some((PeakGroup { first: f, last: f, mean: x }, 1.0))
+            }
+            None => Some((PeakGroup { first: f, last: f, mean: x }, 1.0)),
         };
     }
-    if let Some((p, _)) = current {
-        out.push(p);
+    if let Some((g, _)) = current {
+        out.push(g);
     }
-    out.into_iter().map(|f| f / FPS).collect()
+    out
+}
+
+/// Peak frames of one logit track, adjacent ones merged, in seconds.
+fn peaks(v: &[f32]) -> Vec<f64> {
+    peak_groups(v).into_iter().map(|g| g.mean / FPS).collect()
 }
 
 /// The index of the beat nearest to `t` in ascending `beats`; the earlier one on a tie.
@@ -894,6 +910,53 @@ pub fn pick(beat: &[f32], downbeat: &[f32]) -> Beats {
     downbeats.sort_by(f64::total_cmp);
     downbeats.dedup();
     Beats { beats, downbeats }
+}
+
+/// Beats known for certain while only the start of the piece has been through the network.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Partial {
+    /// A prefix of what [`pick`] gives for the whole piece: the same first beats and the same
+    /// first downbeats.
+    pub beats: Beats,
+    /// Seconds before which a [`BeatGrid`] of `beats` gives the same [`Position`] as the grid
+    /// of the whole piece: the last downbeat known, once two are known. `None` before that.
+    pub final_until: Option<f64>,
+}
+
+/// What [`pick`] will certainly give for a piece whose first `beat.len()` frames of logits
+/// are final (the rest still unknown). A frame's peak depends on [`PEAK_RADIUS`] frames on
+/// either side, and a merged peak is complete once the frame after it is decided, so peaks
+/// ending within `PEAK_RADIUS + 2` frames of the end wait. A downbeat waits while a beat not
+/// known yet could lie nearer to it than the known ones.
+pub fn pick_final(beat: &[f32], downbeat: &[f32]) -> Partial {
+    let frames = beat.len().min(downbeat.len());
+    let (beat, downbeat) = (beat.get(..frames).unwrap_or(&[]), downbeat.get(..frames).unwrap_or(&[]));
+    // A group ending at frame p is complete when frame p + 1 is decided: p + 1 + R < frames.
+    let complete = |g: &PeakGroup| g.last + PEAK_RADIUS + 2 <= frames;
+    let groups = peak_groups(beat);
+    let known = groups.iter().take_while(|g| complete(g)).count();
+    let beats: Vec<f64> = groups.iter().take(known).map(|g| g.mean / FPS).collect();
+    // Every beat found later lies at or after this frame: the first undecided group, or the
+    // first frame whose peak is not decided yet.
+    let undecided = frames.saturating_sub(PEAK_RADIUS);
+    let later = groups.get(known).map_or(undecided, |g| g.first.min(undecided)) as f64 / FPS;
+    let mut downbeats: Vec<f64> = Vec::new();
+    for g in peak_groups(downbeat) {
+        if !complete(&g) {
+            break;
+        }
+        let t = g.mean / FPS;
+        let Some(&at) = nearest(&beats, t).and_then(|i| beats.get(i)) else { break };
+        // A beat found later is at least `later - t` away; a tie would go to the earlier beat.
+        if (at - t).abs() >= later - t {
+            break;
+        }
+        if downbeats.last() != Some(&at) {
+            downbeats.push(at);
+        }
+    }
+    let final_until = (downbeats.len() >= 2).then(|| downbeats.last().copied()).flatten();
+    Partial { beats: Beats { beats, downbeats }, final_until }
 }
 
 /// The whole chain on one block of interleaved samples: front end, every chunk through `net`

@@ -1111,7 +1111,7 @@ Outputs:
 
 ## chan
 
-[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
 *in:* [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
@@ -1197,6 +1197,23 @@ Outputs:
 | `width` *(meters)* | int | `1920` | 1 to 16384 px | Width of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `height` *(meters)* | int | `1080` | 1 to 16384 px | Height of the meters output in pixels. res.optimize may change it to what the projectors need, unless keep_size is on |
 | `keep_size` *(meters)* | bool | `false` |  | res.optimize leaves the width and height of the meters output alone |
+
+### chan.beat_grid
+
+The beats and bars of the sound file an audio.file plays, found ahead of time, as numbers to animate with
+
+Inputs:
+
+- `audio` (audio): The out of an audio.file, wired straight from it
+
+Outputs:
+
+- `out` (chan): Channels to bind: beat and bar rise from 0 to 1, tick and downbeat are 1 in the frame a beat or bar begins, bar_beat counts the beats in the bar from 0, beat_index and bar_index count from the first beat and the first downbeat; also bpm, beats_per_bar, locked, coasting. ready is 1 where the grid is final, progress goes from 0 to 1 while the file is analysed, analyzing is 1 meanwhile
+- `grid` (table): One row per beat found so far, under a header row: time (seconds into the file), beat, bar, beat_in_bar, downbeat (1 or 0)
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `offset` | float | `0` | -200 to 200 (soft) | Milliseconds to move beat and bar ahead by, to make up for the projector's delay. Ticks come exactly this much early. Negative values move them later |
 
 ### chan.button
 

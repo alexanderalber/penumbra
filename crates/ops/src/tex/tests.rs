@@ -137,6 +137,8 @@ impl Rig {
         let record = penumbra_record::Hub::with_planes_timeout(Duration::from_secs(60));
         cooker.provide(record.clone());
         cooker.provide(crate::keyboard::Keyboard::new());
+        cooker.provide(crate::audio::file::SoundFiles::new());
+        cooker.provide(crate::audio::beat_grid::BeatFiles::new(None));
         // A pointer that is always there (a build machine may have no desktop), and a 3D mouse
         // that never opens the real device.
         let mouse = crate::mouse::Mouse::new();
@@ -666,6 +668,12 @@ fn every_builtin_cooks_without_warnings() {
             let family = kind.split_once('.').map_or("", |(f, _)| f);
             let input = kinds.iter().position(|k| *k == format!("{family}.in")).unwrap();
             ops.push(connect(&path_of(input, &kinds[input]), &path, 0));
+            continue;
+        }
+        // The beat grid reads the file of the audio.file it is wired to.
+        if *kind == crate::audio::beat_grid::BEAT_GRID {
+            let file = kinds.iter().position(|k| *k == crate::audio::file::FILE).unwrap();
+            ops.push(connect(&path_of(file, &kinds[file]), &path, 0));
             continue;
         }
         for (input, spec) in desc.inputs.iter().enumerate() {

@@ -384,3 +384,60 @@ fn an_audio_file_plays_and_restarts_on_a_press() {
     f.fail("audio.file_info", json!({"path": "/s", "extra": 1}));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `chan.beat_grid` on an `audio.file`: `beats.analyze` finds the beats (waiting by default),
+/// `beats.status` and `beats.grid` report them, the node's channels read them, `beats.cancel`
+/// has nothing left to stop; files that are not there and nodes of other kinds are errors.
+#[test]
+fn beats_of_a_sound_file_through_the_commands() {
+    use penumbra_audio::file::{WavFormat, wav_bytes};
+    let f = Fixture::new("beat_grid");
+    let dir = std::env::temp_dir().join(format!("penumbra-engine-beat-grid-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // 12 s of clicks at 120 beats per minute.
+    let rate = 44_100usize;
+    let mut clicks = vec![0.0f64; 12 * rate];
+    for beat in 0..24 {
+        for i in 0..400 {
+            clicks[beat * rate / 2 + i] = 0.6 * (-(i as f64) / 60.0).exp() * (i as f64 * 0.35).sin();
+        }
+    }
+    let path = dir.join("clicks.wav");
+    std::fs::write(&path, wav_bytes(44_100, 1, WavFormat::Float32, &clicks)).unwrap();
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/s", "kind": "audio.file", "params": {"file": path.to_string_lossy()}},
+            {"op": "create", "path": "/g", "kind": "chan.beat_grid"},
+            {"op": "connect", "from": "/s", "to": "/g"},
+            {"op": "create", "path": "/o", "kind": "audio.oscillator"},
+        ]}),
+    );
+    let r = f.call("beats.analyze", json!({"path": "/g"}));
+    assert_eq!((r["complete"].as_bool(), r["running"].as_bool()), (Some(true), Some(false)), "{r}");
+    assert!((20..=26).contains(&r["beats"].as_u64().unwrap_or(0)), "{r}");
+    assert!((r["bpm"].as_f64().unwrap_or(0.0) - 120.0).abs() < 2.0, "{r}");
+    let status = f.call("beats.status", json!({}));
+    assert_eq!(status["analyses"].as_array().map(Vec::len), Some(1), "{status}");
+    assert_eq!(f.call("beats.status", json!({"path": "/s"}))["beats"], r["beats"]);
+    let grid = f.call("beats.grid", json!({"path": "/s", "from": 0.9, "to": 2.1}));
+    let beats: Vec<f64> = grid["beats"].as_array().unwrap().iter().filter_map(Json::as_f64).collect();
+    assert_eq!(beats.len(), 3, "{grid}");
+    assert!(beats.iter().zip([1.0, 1.5, 2.0]).all(|(b, w)| (b - w).abs() < 0.03), "{grid}");
+
+    f.call("node.watch", json!({"path": "/g"}));
+    eventually("the grid's channels", || {
+        let read = f.call("chan.read", json!({"path": "/g"}));
+        channel(&read, "ready") == 1.0 && (channel(&read, "bpm") - 120.0).abs() < 2.0
+    });
+    let r = f.call("beats.cancel", json!({"file": path.to_string_lossy()}));
+    assert_eq!(r["cancelled"], false, "{r}");
+
+    assert!(f.fail("beats.analyze", json!({"path": "/o"})).contains("not an audio.file"));
+    assert!(f.fail("beats.analyze", json!({"file": "nothing.wav"})).contains("not a file"));
+    assert!(f.fail("beats.grid", json!({"file": "nothing.wav"})).contains("no beat analysis"));
+    f.fail("beats.analyze", json!({}));
+    f.fail("beats.analyze", json!({"path": "/s", "file": "x.wav"}));
+    f.fail("beats.status", json!({"path": "/s", "extra": 1}));
+    let _ = std::fs::remove_dir_all(&dir);
+}

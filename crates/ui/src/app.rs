@@ -1148,6 +1148,7 @@ impl PenumbraApp {
                                 audio: self.engine.audio(),
                                 audio_out: self.engine.audio_out(),
                                 sound_files: self.engine.sound_files(),
+                                beat_files: self.engine.beat_files(),
                                 record: self.engine.record(),
                                 scans: self.engine.scans(),
                                 show_rate: view.time.map(|t| t.rate.as_f64()),

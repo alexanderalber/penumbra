@@ -1206,6 +1206,11 @@ impl Engine {
         &self.hubs.sound_files
     }
 
+    /// The beat analyses of sound files (`chan.beat_grid`).
+    pub fn beat_files(&self) -> &penumbra_ops::audio::beat_grid::BeatFiles {
+        &self.hubs.beat_files
+    }
+
     /// The DMX outputs.
     pub fn dmx(&self) -> &DmxHub {
         &self.hubs.dmx

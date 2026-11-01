@@ -6,6 +6,7 @@ params can be bound to:
 - `chan.audio_envelope` for loudness: one number per channel, how loud it is now.
 - `chan.audio_spectrum` for frequency bands: the spectrum as numbers and as a texture.
 - `chan.beat_analysis` for music: beat, bar and tempo, with levels and hits.
+- `chan.beat_grid` for a sound file: beat and bar of what an `audio.file` plays, found ahead of time.
 
 The energy of one band is an `audio.filter` (`bandpass`) into a `chan.audio_envelope`.
 
@@ -413,6 +414,18 @@ something on `tick` and raise `offset` until the flash meets the kick.
 The first beat of a bar is a guess: it is the beat where the sound changes most (bass lines
 and chords tend to change there). With the same pattern on every beat the guess may land on
 another beat; `bar_beat` and `bar` are then counted from there.
+
+## Beats of a sound file
+
+`chan.beat_grid` gives beat and bar for the file an `audio.file` plays. Wire the file's `out` into its `audio` input, the same wire a `chan.beat_analysis` takes. Its channels mean the same as the analysis's (`beat`, `tick`, `bar`, `bar_beat`, `bpm`, `beats_per_bar`, `locked`, `coasting`), so bindings keep working when one node replaces the other. It adds `downbeat` (1 in the frame a bar begins), `beat_index` and `bar_index`.
+
+**Finding the beats.** The node finds the beats of the whole file once, in the background, with the Beat This! network. A 4 minute track takes a few seconds, a 2 hour mix a few minutes. The result is kept in a cache, so the next time the file opens the grid is there at once. While the analysis runs, `progress` rises from 0 to 1, `analyzing` reads 1, and the panel shows a progress bar with `cancel`.
+
+**Using it early.** The grid fills from the start of the file. `ready` reads 1 where the grid under the playhead is final. Further on, `coasting` reads 1 and the beat runs on at the last tempo found. The panel says how far the grid is ready.
+
+**Timing.** The grid is known ahead, so `offset` (milliseconds) makes `tick` come exactly that early, without guessing. Set it to the projector's delay.
+
+**Cues.** The `grid` output is a table with one row per beat: time in the file, beat, bar, beat in bar, downbeat. `beats.grid {path}` gives the same over the control channel; `beats.status` and `beats.analyze` show and start an analysis.
 
 ## Tips
 

@@ -119,6 +119,9 @@ pub struct FileStatus {
     pub decoder: Status,
     /// Seconds into the file at the last cook.
     pub position: f64,
+    /// `position` as the `info` output's: within the file while it loops, else at most its
+    /// length.
+    pub in_file: f64,
     pub playing: bool,
     /// Gaps where the decoder had not caught up, since the file was loaded.
     pub gaps: u64,
@@ -212,6 +215,9 @@ struct FilePlayer {
     names: Vec<Name>,
     has_output: bool,
     status: Status,
+    /// `loop` and the file's length in seconds (0 unknown) at the last cook.
+    looping: bool,
+    duration: f64,
 }
 
 impl Operator for FilePlayer {
@@ -384,6 +390,8 @@ impl Operator for FilePlayer {
         );
         self.missing = missing;
         let length = file.length();
+        self.looping = looping;
+        self.duration = length.map_or(0.0, |l| l as f64 / file_rate.max(1.0));
         if gaps > 0 {
             self.gaps += gaps;
             self.gap_time = now;
@@ -422,6 +430,8 @@ impl FilePlayer {
             exact: false,
             in_memory: false,
         };
+        self.looping = false;
+        self.duration = 0.0;
         self.publish(cx);
         let info_chans = self.info_chans(&info, false, None, cx.rate().as_f64())?;
         self.has_output = true;
@@ -433,6 +443,7 @@ impl FilePlayer {
             file: self.path.clone(),
             decoder: self.status.clone(),
             position: self.playhead,
+            in_file: in_file(self.playhead, self.duration, self.looping).0,
             playing: self.mapping.is_some_and(|m| m.speed > 0.0),
             gaps: self.gaps,
             restarts: self.restarts,
@@ -467,13 +478,7 @@ impl FilePlayer {
     ) -> Result<Chans, CookError> {
         let file_rate = f64::from(info.rate.max(1));
         let duration = length.map_or(0.0, |l| l as f64 / file_rate);
-        let head = self.playhead.max(0.0);
-        let (position, loops) = if duration > 0.0 && looping {
-            let pass = (head / duration).floor();
-            (head - pass * duration, pass)
-        } else {
-            (if duration > 0.0 { head.min(duration) } else { head }, 0.0)
-        };
+        let (position, loops) = in_file(self.playhead, duration, looping);
         let progress = if duration > 0.0 { (position / duration).clamp(0.0, 1.0) } else { 0.0 };
         let values = [
             ("position", position),
@@ -491,6 +496,18 @@ impl FilePlayer {
             channels.push(Channel { name: Name::new(name)?, samples: vec![v] });
         }
         Ok(Chans::new(show_rate, channels)?)
+    }
+}
+
+/// Where the unwrapped playhead `head` is in a file of `duration` seconds (0: unknown), and the
+/// passes through it before.
+fn in_file(head: f64, duration: f64, looping: bool) -> (f64, f64) {
+    let head = head.max(0.0);
+    if duration > 0.0 && looping {
+        let pass = (head / duration).floor();
+        (head - pass * duration, pass)
+    } else {
+        (if duration > 0.0 { head.min(duration) } else { head }, 0.0)
     }
 }
 

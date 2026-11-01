@@ -122,7 +122,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-ui">ui</a> <a href="#family-component-ports">Component ports</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-app">app</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-camera">camera</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-http">http</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-app">app</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-beats">beats</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-camera">camera</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-http">http</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -698,6 +698,8 @@ water      15
 </li>
 <li><a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> for music: beat, bar and tempo, with levels and hits.
 </li>
+<li><a class="ref" href="#chan.beat_grid"><code>chan.beat_grid</code></a> for a sound file: beat and bar of what an <a class="ref" href="#audio.file"><code>audio.file</code></a> plays, found ahead of time.
+</li>
 </ul>
 <p>The energy of one band is an <a class="ref" href="#audio.filter"><code>audio.filter</code></a> (<code>bandpass</code>) into a <a class="ref" href="#chan.audio_envelope"><code>chan.audio_envelope</code></a>.</p>
 <h3 id="audio-sound-is-its-own-family">Sound is its own family</h3>
@@ -835,6 +837,12 @@ water      15
 <p>In a loud room, with crowd noise or a fan near the microphone, turn on <code>superflux</code> (in the <code>more</code> section). The onsets then ignore the slow wobble of broadband noise, so the beat locks sooner and holds longer. In clean sound and in reverb it finds the beat a little less well, so it is off by default.</p>
 <p><code>beat</code> is meant to be in time with what is heard. A projector shows a picture a few frames late; <code>offset</code> moves beat and bar ahead by that many milliseconds. Set it by eye: flash something on <code>tick</code> and raise <code>offset</code> until the flash meets the kick.</p>
 <p>The first beat of a bar is a guess: it is the beat where the sound changes most (bass lines and chords tend to change there). With the same pattern on every beat the guess may land on another beat; <code>bar_beat</code> and <code>bar</code> are then counted from there.</p>
+<h3 id="audio-beats-of-a-sound-file">Beats of a sound file</h3>
+<p><a class="ref" href="#chan.beat_grid"><code>chan.beat_grid</code></a> gives beat and bar for the file an <a class="ref" href="#audio.file"><code>audio.file</code></a> plays. Wire the file's <code>out</code> into its <code>audio</code> input, the same wire a <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> takes. Its channels mean the same as the analysis's (<code>beat</code>, <code>tick</code>, <code>bar</code>, <code>bar_beat</code>, <code>bpm</code>, <code>beats_per_bar</code>, <code>locked</code>, <code>coasting</code>), so bindings keep working when one node replaces the other. It adds <code>downbeat</code> (1 in the frame a bar begins), <code>beat_index</code> and <code>bar_index</code>.</p>
+<p><strong>Finding the beats.</strong> The node finds the beats of the whole file once, in the background, with the Beat This! network. A 4 minute track takes a few seconds, a 2 hour mix a few minutes. The result is kept in a cache, so the next time the file opens the grid is there at once. While the analysis runs, <code>progress</code> rises from 0 to 1, <code>analyzing</code> reads 1, and the panel shows a progress bar with <code>cancel</code>.</p>
+<p><strong>Using it early.</strong> The grid fills from the start of the file. <code>ready</code> reads 1 where the grid under the playhead is final. Further on, <code>coasting</code> reads 1 and the beat runs on at the last tempo found. The panel says how far the grid is ready.</p>
+<p><strong>Timing.</strong> The grid is known ahead, so <code>offset</code> (milliseconds) makes <code>tick</code> come exactly that early, without guessing. Set it to the projector's delay.</p>
+<p><strong>Cues.</strong> The <code>grid</code> output is a table with one row per beat: time in the file, beat, bar, beat in bar, downbeat. <a class="ref" href="#beats.grid"><code>beats.grid {path}</code></a> gives the same over the control channel; <a class="ref" href="#beats.status"><code>beats.status</code></a> and <a class="ref" href="#beats.analyze"><code>beats.analyze</code></a> show and start an analysis.</p>
 <h3 id="audio-tips">Tips</h3>
 <ul>
 <li>Analyse one channel with <code>channel</code> (e.g. <code>ch1</code>) when the others carry something else.
@@ -3403,7 +3411,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_envelope"><summary><code class="name">chan.audio_envelope</code><span class="sum">How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</span></summary>
 <div class="body">
 <p>How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</p>
@@ -3500,7 +3508,28 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves the width and height of the meters output alone</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+</div></details>
+<details class="entry node" id="chan.beat_grid"><summary><code class="name">chan.beat_grid</code><span class="sum">The beats and bars of the sound file an audio.file plays, found ahead of time, as numbers to animate with</span></summary>
+<div class="body">
+<p>The beats and bars of the sound file an audio.file plays, found ahead of time, as numbers to animate with</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>audio</code> <span class="kind">audio</span>: The out of an audio.file, wired straight from it</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: Channels to bind: beat and bar rise from 0 to 1, tick and downbeat are 1 in the frame a beat or bar begins, bar_beat counts the beats in the bar from 0, beat_index and bar_index count from the first beat and the first downbeat; also bpm, beats_per_bar, locked, coasting. ready is 1 where the grid is final, progress goes from 0 to 1 while the file is analysed, analyzing is 1 meanwhile</li>
+<li><code>grid</code> <span class="kind">table</span>: One row per beat found so far, under a header row: time (seconds into the file), beat, bar, beat_in_bar, downbeat (1 or 0)</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>offset</code></td><td>float</td><td><code>0</code></td><td>-200 to 200 (soft)</td><td>Milliseconds to move beat and bar ahead by, to make up for the projector's delay. Ticks come exactly this much early. Negative values move them later</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
 </div></details>
 <details class="entry node" id="chan.button"><summary><code class="name">chan.button</code><span class="sum">A button on the node itself, pressed with the mouse in the editor: 1 while held, or on and off with each click</span></summary>
 <div class="body">
@@ -4213,7 +4242,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made, whatever the file's rate. out.audio nodes on one device need the same rate; audio.mix converts between rates</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a></p>
+<p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
 </div></details>
 <details class="entry node" id="audio.filter"><summary><code class="name">audio.filter</code><span class="sum">Shapes a sound by frequency: removes the highs or the lows, picks out or cuts a band, or turns a range up or down. Every channel is filtered on its own</span></summary>
 <div class="body">
@@ -5478,6 +5507,28 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="audio_file_out.stop"><summary><code class="name">audio_file_out.stop</code><span class="sum">Stop an out.audio_file's recording and finish the file: turns record off (an edit)</span></summary>
 <div class="body">
 <p>Stop an out.audio_file's recording and finish the file: turns record off (an edit); {path}; answers with the status</p>
+</div></details>
+</div>
+<div class="group" id="group-beats">
+<h3>beats</h3>
+<details class="entry command" id="beats.analyze"><summary><code class="name">beats.analyze</code><span class="sum">Finds the beats and downbeats of a sound file with the Beat This! network, in the background, and keeps them in a cache: {path (an audio.file or chan.beat_grid) or file (relative to the project), wait? (default true: answers when done, at most 600 s), again? (default false: starts over)}. A 4 minute track takes seconds, a 2 hour mix about 3 minutes. Replies as beats.status</span></summary>
+<div class="body">
+<p>Finds the beats and downbeats of a sound file with the Beat This! network, in the background, and keeps them in a cache: {path (an audio.file or chan.beat_grid) or file (relative to the project), wait? (default true: answers when done, at most 600 s), again? (default false: starts over)}. A 4 minute track takes seconds, a 2 hour mix about 3 minutes. Replies as beats.status</p>
+<p class="mentions">Mentioned in: <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
+</div></details>
+<details class="entry command" id="beats.cancel"><summary><code class="name">beats.cancel</code><span class="sum">Stops a sound file's beat analysis: {path or file}. Its chan.beat_grid nodes keep the beats found so far; beats.analyze starts it again</span></summary>
+<div class="body">
+<p>Stops a sound file's beat analysis: {path or file}. Its chan.beat_grid nodes keep the beats found so far; beats.analyze starts it again</p>
+</div></details>
+<details class="entry command" id="beats.grid"><summary><code class="name">beats.grid</code><span class="sum">The beats found in a sound file: {path or file, from? to? (s)} gives beats and downbeats (s into the file) between from and to, and final_until and complete as beats.status. Does not start an analysis</span></summary>
+<div class="body">
+<p>The beats found in a sound file: {path or file, from? to? (s)} gives beats and downbeats (s into the file) between from and to, and final_until and complete as beats.status. Does not start an analysis</p>
+<p class="mentions">Mentioned in: <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
+</div></details>
+<details class="entry command" id="beats.status"><summary><code class="name">beats.status</code><span class="sum">How the beat analyses stand: {path or file} for one, nothing for all held. Per file: running, progress (0 to 1), beats, downbeats, final_until (s; the grid before it is final, null for none yet), complete, bpm (median), error, cancelled, seconds</span></summary>
+<div class="body">
+<p>How the beat analyses stand: {path or file} for one, nothing for all held. Per file: running, progress (0 to 1), beats, downbeats, final_until (s; the grid before it is final, null for none yet), complete, bpm (median), error, cancelled, seconds</p>
+<p class="mentions">Mentioned in: <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
 </div></details>
 </div>
 <div class="group" id="group-blob_track">

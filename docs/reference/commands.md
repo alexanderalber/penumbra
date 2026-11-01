@@ -38,6 +38,15 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `audio_file_out.status` | Sound recordings: node, recording, finishing, done, file, opened, format, rate, channels, seconds, samples, bytes, gap_samples, cut_samples, refused, dropped, sources (out.audio nodes heard with source all, else null), error; {path?} |
 | `audio_file_out.stop` | Stop an out.audio_file's recording and finish the file: turns record off (an edit); {path}; answers with the status |
 
+## beats
+
+| command | |
+|---|---|
+| `beats.analyze` | Finds the beats and downbeats of a sound file with the Beat This! network, in the background, and keeps them in a cache: {path (an audio.file or chan.beat_grid) or file (relative to the project), wait? (default true: answers when done, at most 600 s), again? (default false: starts over)}. A 4 minute track takes seconds, a 2 hour mix about 3 minutes. Replies as beats.status |
+| `beats.cancel` | Stops a sound file's beat analysis: {path or file}. Its chan.beat_grid nodes keep the beats found so far; beats.analyze starts it again |
+| `beats.grid` | The beats found in a sound file: {path or file, from? to? (s)} gives beats and downbeats (s into the file) between from and to, and final_until and complete as beats.status. Does not start an analysis |
+| `beats.status` | How the beat analyses stand: {path or file} for one, nothing for all held. Per file: running, progress (0 to 1), beats, downbeats, final_until (s; the grid before it is final, null for none yet), complete, bpm (median), error, cancelled, seconds |
+
 ## blob_track
 
 | command | |

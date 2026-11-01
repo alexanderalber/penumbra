@@ -17,6 +17,7 @@ use penumbra_dmx::Hub as DmxHub;
 use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_graph::{Cooker, Network, NodeTypes};
 use penumbra_http::Hub as HttpHub;
+use penumbra_ops::audio::beat_grid::BeatFiles;
 use penumbra_ops::audio::file::SoundFiles;
 use penumbra_ops::chan::controls::Buttons;
 use penumbra_ops::keyboard::Keyboard;
@@ -67,6 +68,9 @@ pub struct Hubs {
     pub mouse: Mouse,
     /// How the `audio.file` nodes stand: their files' codec, rate and length, their playheads.
     pub sound_files: SoundFiles,
+    /// The beat analyses of sound files (`chan.beat_grid`, `beats.*`), kept in the data
+    /// directory's `cache/beats`.
+    pub beat_files: BeatFiles,
     /// The momentary `chan.button`s held in the editor or by `chan.press`.
     pub buttons: Buttons,
 }
@@ -91,6 +95,7 @@ impl Hubs {
             keyboard,
             mouse: Mouse::new(),
             sound_files: SoundFiles::new(),
+            beat_files: BeatFiles::new(beat_cache()),
             buttons: Buttons::new(),
         }
     }
@@ -98,7 +103,7 @@ impl Hubs {
     /// Every hub, in the order they shut down. Recordings come first: when the app closes, the
     /// cook thread has dropped its nodes and every recording is finishing its file, which the
     /// shutdown waits for.
-    pub fn all(&self) -> [&dyn DeviceHub; 14] {
+    pub fn all(&self) -> [&dyn DeviceHub; 15] {
         // Destructured so that a field missing here does not compile.
         let Hubs {
             osc,
@@ -114,6 +119,7 @@ impl Hubs {
             keyboard,
             mouse,
             sound_files,
+            beat_files,
             buttons,
         } = self;
         [
@@ -130,6 +136,7 @@ impl Hubs {
             keyboard,
             mouse,
             sound_files,
+            beat_files,
             buttons,
         ]
     }
@@ -211,6 +218,26 @@ impl DeviceHub for SoundFiles {
     /// Node ids of the next project mean other nodes.
     fn project_closing(&self) {
         self.prune(|_| false);
+    }
+}
+
+/// Where beat analyses are kept: `cache/beats` in the data directory. The engine's own tests
+/// keep theirs apart, in the temp directory.
+fn beat_cache() -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return Some(std::env::temp_dir().join(format!("penumbra-engine-beats-{}", std::process::id())));
+    }
+    crate::projects::data_dir().ok().map(|d| d.join("cache").join("beats"))
+}
+
+impl DeviceHub for BeatFiles {
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    /// Analyses no node wants any more stop by themselves; the app's end stops the rest.
+    fn shutdown(&self) {
+        BeatFiles::shutdown(self);
     }
 }
 
