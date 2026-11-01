@@ -274,7 +274,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .doc("Farthest distance drawn, in metres from the camera; anything beyond is left out"),
     )
     .output("out", DataKind::View);
-    types.register(FnNodeType::new(desc, || Box::new(CameraNode) as Box<dyn Operator>).inactive(inactive))
+    types.register(FnNodeType::new(desc, || Box::new(CameraNode) as Box<dyn Operator>).inactive(inactive))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new("view.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
+            .input("in", DataKind::View)
+            .output("out", DataKind::View),
+        || Box::new(crate::Null) as Box<dyn Operator>,
+    ))?;
+    Ok(())
 }
 
 struct CameraNode;

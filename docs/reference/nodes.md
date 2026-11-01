@@ -1654,7 +1654,7 @@ Outputs:
 
 ## audio
 
-[audio.ambience](#audioambience), [audio.file](#audiofile), [audio.filter](#audiofilter), [audio.instrument](#audioinstrument), [audio.mix](#audiomix), [audio.oscillator](#audiooscillator)
+[audio.ambience](#audioambience), [audio.file](#audiofile), [audio.filter](#audiofilter), [audio.instrument](#audioinstrument), [audio.mix](#audiomix), [audio.null](#audionull), [audio.oscillator](#audiooscillator)
 
 *in:* [audio.device_in](#audiodevice_in)
 
@@ -1803,6 +1803,16 @@ Outputs: `out` (audio).
 | `gain7` *(more)* | float | `1` | 0 to 2 (soft) | Multiplies input in7 before it is added; 0 mutes it |
 | `rate` *(more)* | int | `0` | 0 to 192000 | Samples per second of the mix. 0 takes the rate of the first wired input. Inputs at another rate are converted to it |
 
+### audio.null
+
+Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
+
+Inputs:
+
+- `in` (audio)
+
+Outputs: `out` (audio).
+
 ### audio.oscillator
 
 A test tone or noise as sound: sine, saw, square, triangle, noise
@@ -1864,7 +1874,7 @@ Outputs: `out` (table).
 
 ## geo
 
-[geo.assign_material](#geoassign_material), [geo.file](#geofile), [geo.instance](#geoinstance), [geo.merge](#geomerge), [geo.primitive](#geoprimitive), [geo.tex_instance](#geotex_instance), [geo.transform](#geotransform)
+[geo.assign_material](#geoassign_material), [geo.file](#geofile), [geo.instance](#geoinstance), [geo.merge](#geomerge), [geo.null](#geonull), [geo.primitive](#geoprimitive), [geo.tex_instance](#geotex_instance), [geo.transform](#geotransform)
 
 ### geo.assign_material
 
@@ -1927,6 +1937,16 @@ Outputs:
 
 - `out` (geo): All inputs as one; part ids continue from input to input
 
+### geo.null
+
+Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
+
+Inputs:
+
+- `in` (geo)
+
+Outputs: `out` (geo).
+
 ### geo.primitive
 
 A simple shape: a box, a sphere or a plane, centred on the origin
@@ -1980,7 +2000,7 @@ Outputs: `out` (geo).
 
 ## mat
 
-[mat.constant](#matconstant), [mat.occluder](#matoccluder), [mat.pbr](#matpbr), [mat.phong](#matphong), [mat.wireframe](#matwireframe)
+[mat.constant](#matconstant), [mat.null](#matnull), [mat.occluder](#matoccluder), [mat.pbr](#matpbr), [mat.phong](#matphong), [mat.wireframe](#matwireframe)
 
 ### mat.constant
 
@@ -1995,6 +2015,16 @@ Outputs: `out` (mat).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `color` | colour | `[1, 1, 1, 1]` |  | Linear RGBA, straight alpha; replaces the file's colour; times the texture input |
+
+### mat.null
+
+Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
+
+Inputs:
+
+- `in` (mat)
+
+Outputs: `out` (mat).
 
 ### mat.occluder
 
@@ -2059,7 +2089,7 @@ Outputs: `out` (mat).
 
 ## light
 
-[light.ambient](#lightambient), [light.directional](#lightdirectional), [light.environment](#lightenvironment), [light.merge](#lightmerge), [light.point](#lightpoint), [light.projector](#lightprojector), [light.spot](#lightspot)
+[light.ambient](#lightambient), [light.directional](#lightdirectional), [light.environment](#lightenvironment), [light.merge](#lightmerge), [light.null](#lightnull), [light.point](#lightpoint), [light.projector](#lightprojector), [light.spot](#lightspot)
 
 ### light.ambient
 
@@ -2115,6 +2145,16 @@ Combines several lights for one render
 Inputs:
 
 - `in0 .. in63` (light): The lights. Any number, up to 64: each one wired adds a free slot below it
+
+Outputs: `out` (light).
+
+### light.null
+
+Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
+
+Inputs:
+
+- `in` (light)
 
 Outputs: `out` (light).
 
@@ -2174,7 +2214,7 @@ Outputs: `out` (light).
 
 ## view
 
-[view.camera](#viewcamera)
+[view.camera](#viewcamera), [view.null](#viewnull)
 
 ### view.camera
 
@@ -2196,6 +2236,16 @@ Outputs: `out` (view).
 | `calibration` *(more)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns). When set, the calibration replaces position, target, projection, fov, size, roll and shift |
 | `near` *(more)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn, in metres from the camera; anything closer is cut away (orthographic too: nothing behind the camera is drawn) |
 | `far` *(more)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn, in metres from the camera; anything beyond is left out |
+
+### view.null
+
+Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
+
+Inputs:
+
+- `in` (view)
+
+Outputs: `out` (view).
 
 ## script
 

@@ -13,5 +13,8 @@ network that stays put while everything around it changes.
 
 The input is passed on as it is, without a copy, so a null costs nothing.
 
-`chan.null` and `table.null` do the same for channels and tables. A `chan.null` is the usual
-thing to bind params to: rebuild the chain that makes the numbers, and the bindings stay.
+Every family that runs on wires has its null: `chan.null`, `audio.null`, `table.null`,
+`geo.null`, `mat.null`, `light.null` and `view.null`. Each passes its input on without a copy.
+A `chan.null` is the usual thing to bind params to: rebuild the chain that makes the numbers,
+and the bindings stay. A null shows in the viewer what the node before it shows: the picture of
+the geometry or the material, the scope of the sound, the lights or the camera as lines.

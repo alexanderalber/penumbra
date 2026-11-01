@@ -129,6 +129,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .output("out", DataKind::Light),
         || Box::new(Merge) as Box<dyn Operator>,
     ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new("light.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
+            .input("in", DataKind::Light)
+            .output("out", DataKind::Light),
+        || Box::new(crate::Null) as Box<dyn Operator>,
+    ))?;
     Ok(())
 }
 

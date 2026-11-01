@@ -240,6 +240,13 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     ambience::register(types)?;
     envelope::register(types)?;
     spectrum::register(types)?;
+    types.register(FnNodeType::new(
+        NodeDesc::new("audio.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
+            .input("in", DataKind::Audio)
+            .output("out", DataKind::Audio)
+            .sampled(),
+        || Box::new(crate::Null) as Box<dyn Operator>,
+    ))?;
     Ok(())
 }
 

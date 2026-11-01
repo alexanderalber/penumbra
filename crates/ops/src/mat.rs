@@ -117,6 +117,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .output("out", DataKind::Mat),
         || Box::new(MatNode::new(Shading::Occluder)) as Box<dyn Operator>,
     ))?;
+    types.register(FnNodeType::new(
+        NodeDesc::new("mat.null", "Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes")
+            .input("in", DataKind::Mat)
+            .output("out", DataKind::Mat),
+        || Box::new(crate::Null) as Box<dyn Operator>,
+    ))?;
     Ok(())
 }
 

@@ -180,7 +180,8 @@ pub fn warm_up(types: &NodeTypes, gpu: &Gpu) {
     }
 }
 
-/// Passes its input on as it is (`chan.null`, `table.null`).
+/// Passes its input on as it is, without a copy: the nulls of every family but `tex`
+/// (`chan.null`, `audio.null`, `table.null`, `geo.null`, `mat.null`, `light.null`, `view.null`).
 pub(crate) struct Null;
 
 impl Operator for Null {

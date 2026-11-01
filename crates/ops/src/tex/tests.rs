@@ -753,6 +753,72 @@ fn every_builtin_cooks_without_warnings() {
 }
 
 #[test]
+fn every_family_has_a_null_that_passes_its_input_itself() {
+    let Some(gpu) = gpu() else { return };
+    let types = builtin_types().unwrap();
+    // A family that carries data between nodes has component ports; each also has a null.
+    let families: Vec<&str> = types
+        .kinds()
+        .filter(|k| types.desc(k).is_some_and(|d| d.port == Some(penumbra_graph::PortRole::In)))
+        .filter_map(|k| k.split_once('.').map(|(f, _)| f))
+        .collect();
+    assert!(families.len() >= 8, "{families:?}");
+    let source = |family: &str| match family {
+        "tex" => "tex.constant",
+        "chan" => "chan.constant",
+        "audio" => "audio.oscillator",
+        "table" => "table.text",
+        "geo" => "geo.primitive",
+        "mat" => "mat.constant",
+        "light" => "light.ambient",
+        "view" => "view.camera",
+        other => panic!("no source for the family {other}"),
+    };
+    let mut ops = Vec::new();
+    for family in &families {
+        let null = format!("{family}.null");
+        let desc = types.desc(&null).unwrap_or_else(|| panic!("{null} is missing"));
+        assert_eq!(desc.inputs.len(), 1, "{null}");
+        assert_eq!(desc.outputs.len(), 1, "{null}");
+        assert_eq!(desc.inputs[0].kind, desc.outputs[0].kind, "{null}");
+        assert!(desc.params.is_empty(), "{null}");
+        let params: &[(&str, Value)] = if *family == "tex" { &size() } else { &[] };
+        ops.push(create(&format!("/{family}_src"), source(family), params));
+        ops.push(create(&format!("/{family}_null"), &null, &[]));
+        ops.push(connect(&format!("/{family}_src"), &format!("/{family}_null"), 0));
+    }
+    ops.push(create("/lonely", "geo.null", &[]));
+    let mut rig = Rig::new(gpu, None, &ops);
+    for family in &families {
+        let (src, null) = (format!("/{family}_src"), format!("/{family}_null"));
+        // A few frames, so the audio null hands on every block, each the source's own.
+        for _ in 0..3 {
+            rig.clock.advance(1);
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                rig.cook(&null);
+                let s = rig.cooker.status(rig.id(&null)).unwrap();
+                assert!(s.error.is_none() && s.warning.is_none(), "{null}: {s:?}");
+                if s.has_output {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "{null} produced nothing");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let out =
+                |path: &str| rig.cooker.output(Port { node: rig.id(path), output: 0 }).cloned().unwrap();
+            let (a, b) = (out(&src), out(&null));
+            assert!(a.same(&b), "{null} passes the result itself, not a copy");
+            assert_eq!(b.kind(), a.kind(), "{null}");
+        }
+    }
+    // Nothing wired: a hint to wire something, not a wait.
+    rig.cook("/lonely");
+    let s = rig.cooker.status(rig.id("/lonely")).unwrap();
+    assert!(s.error.as_deref().is_some_and(|e| e.contains("connect")), "{s:?}");
+}
+
+#[test]
 fn noise_is_deterministic_and_only_animated_when_moving() {
     let Some(gpu) = gpu() else { return };
     let ops = [create("/n", "tex.noise", &size())];

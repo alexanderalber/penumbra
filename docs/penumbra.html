@@ -2746,7 +2746,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </li>
 </ul>
 <p>The input is passed on as it is, without a copy, so a null costs nothing.</p>
-<p><a class="ref" href="#chan.null"><code>chan.null</code></a> and <a class="ref" href="#table.null"><code>table.null</code></a> do the same for channels and tables. A <a class="ref" href="#chan.null"><code>chan.null</code></a> is the usual thing to bind params to: rebuild the chain that makes the numbers, and the bindings stay.</p>
+<p>Every family that runs on wires has its null: <a class="ref" href="#chan.null"><code>chan.null</code></a>, <a class="ref" href="#audio.null"><code>audio.null</code></a>, <a class="ref" href="#table.null"><code>table.null</code></a>, <a class="ref" href="#geo.null"><code>geo.null</code></a>, <a class="ref" href="#mat.null"><code>mat.null</code></a>, <a class="ref" href="#light.null"><code>light.null</code></a> and <a class="ref" href="#view.null"><code>view.null</code></a>. Each passes its input on without a copy. A <a class="ref" href="#chan.null"><code>chan.null</code></a> is the usual thing to bind params to: rebuild the chain that makes the numbers, and the bindings stay. A null shows in the viewer what the node before it shows: the picture of the geometry or the material, the scope of the sound, the lights or the camera as lines.</p>
 </div>
 </div></details>
 <details class="entry node" id="tex.optical_flow"><summary><code class="name">tex.optical_flow</code><span class="sum">Measures how each part of the picture moves from frame to frame: motion to stir a fluid or drive a displacement</span></summary>
@@ -4160,7 +4160,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-audio">
 <h3>audio</h3>
-<p class="kinds"><a href="#audio.ambience">audio.ambience</a> <a href="#audio.device_in">audio.device_in</a> <a href="#audio.file">audio.file</a> <a href="#audio.filter">audio.filter</a> <a href="#audio.instrument">audio.instrument</a> <a href="#audio.mix">audio.mix</a> <a href="#audio.oscillator">audio.oscillator</a></p>
+<p class="kinds"><a href="#audio.ambience">audio.ambience</a> <a href="#audio.device_in">audio.device_in</a> <a href="#audio.file">audio.file</a> <a href="#audio.filter">audio.filter</a> <a href="#audio.instrument">audio.instrument</a> <a href="#audio.mix">audio.mix</a> <a href="#audio.null">audio.null</a> <a href="#audio.oscillator">audio.oscillator</a></p>
 <details class="entry node" id="audio.ambience"><summary><code class="name">audio.ambience</code><span class="sum">A sound that holds without notes: a steady tone, a pad, wind-like noise, running water or rain. Its pitch, brightness and level follow the params smoothly; each channel wired into gate switches its own tone on and off</span></summary>
 <div class="body">
 <p>A sound that holds without notes: a steady tone, a pad, wind-like noise, running water or rain. Its pitch, brightness and level follow the params smoothly; each channel wired into gate switches its own tone on and off</p>
@@ -4340,6 +4340,18 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-playing-sound">Audio › Playing sound</a></p>
 </div></details>
+<details class="entry node" id="audio.null"><summary><code class="name">audio.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
+<div class="body">
+<p>Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">audio</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">audio</span></li>
+</ul>
+</div></details>
 <details class="entry node" id="audio.oscillator"><summary><code class="name">audio.oscillator</code><span class="sum">A test tone or noise as sound: sine, saw, square, triangle, noise</span></summary>
 <div class="body">
 <p>A test tone or noise as sound: sine, saw, square, triangle, noise</p>
@@ -4421,7 +4433,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-geo">
 <h3>geo</h3>
-<p class="kinds"><a href="#geo.assign_material">geo.assign_material</a> <a href="#geo.file">geo.file</a> <a href="#geo.instance">geo.instance</a> <a href="#geo.merge">geo.merge</a> <a href="#geo.primitive">geo.primitive</a> <a href="#geo.tex_instance">geo.tex_instance</a> <a href="#geo.transform">geo.transform</a></p>
+<p class="kinds"><a href="#geo.assign_material">geo.assign_material</a> <a href="#geo.file">geo.file</a> <a href="#geo.instance">geo.instance</a> <a href="#geo.merge">geo.merge</a> <a href="#geo.null">geo.null</a> <a href="#geo.primitive">geo.primitive</a> <a href="#geo.tex_instance">geo.tex_instance</a> <a href="#geo.transform">geo.transform</a></p>
 <details class="entry node" id="geo.assign_material"><summary><code class="name">geo.assign_material</code><span class="sum">Gives geometry a material: how it looks when rendered</span></summary>
 <div class="body">
 <p>Gives geometry a material: how it looks when rendered</p>
@@ -4491,6 +4503,18 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <li><code>out</code> <span class="kind">geo</span>: All inputs as one; part ids continue from input to input</li>
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+<details class="entry node" id="geo.null"><summary><code class="name">geo.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
+<div class="body">
+<p>Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">geo</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">geo</span></li>
+</ul>
 </div></details>
 <details class="entry node" id="geo.primitive"><summary><code class="name">geo.primitive</code><span class="sum">A simple shape: a box, a sphere or a plane, centred on the origin</span></summary>
 <div class="body">
@@ -4582,7 +4606,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-mat">
 <h3>mat</h3>
-<p class="kinds"><a href="#mat.constant">mat.constant</a> <a href="#mat.occluder">mat.occluder</a> <a href="#mat.pbr">mat.pbr</a> <a href="#mat.phong">mat.phong</a> <a href="#mat.wireframe">mat.wireframe</a></p>
+<p class="kinds"><a href="#mat.constant">mat.constant</a> <a href="#mat.null">mat.null</a> <a href="#mat.occluder">mat.occluder</a> <a href="#mat.pbr">mat.pbr</a> <a href="#mat.phong">mat.phong</a> <a href="#mat.wireframe">mat.wireframe</a></p>
 <details class="entry node" id="mat.constant"><summary><code class="name">mat.constant</code><span class="sum">A surface in its colour as it is, unaffected by light: the usual choice for projection content</span></summary>
 <div class="body">
 <p>A surface in its colour as it is, unaffected by light: the usual choice for projection content</p>
@@ -4601,6 +4625,18 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>color</code></td><td>colour</td><td><code>[1, 1, 1, 1]</code></td><td></td><td>Linear RGBA, straight alpha; replaces the file's colour; times the texture input</td></tr>
 </tbody>
 </table>
+</div></details>
+<details class="entry node" id="mat.null"><summary><code class="name">mat.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
+<div class="body">
+<p>Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">mat</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">mat</span></li>
+</ul>
 </div></details>
 <details class="entry node" id="mat.occluder"><summary><code class="name">mat.occluder</code><span class="sum">Invisible, but hides what is behind it: a real object in front of a projection; casts shadows</span></summary>
 <div class="body">
@@ -4690,7 +4726,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-light">
 <h3>light</h3>
-<p class="kinds"><a href="#light.ambient">light.ambient</a> <a href="#light.directional">light.directional</a> <a href="#light.environment">light.environment</a> <a href="#light.merge">light.merge</a> <a href="#light.point">light.point</a> <a href="#light.projector">light.projector</a> <a href="#light.spot">light.spot</a></p>
+<p class="kinds"><a href="#light.ambient">light.ambient</a> <a href="#light.directional">light.directional</a> <a href="#light.environment">light.environment</a> <a href="#light.merge">light.merge</a> <a href="#light.null">light.null</a> <a href="#light.point">light.point</a> <a href="#light.projector">light.projector</a> <a href="#light.spot">light.spot</a></p>
 <details class="entry node" id="light.ambient"><summary><code class="name">light.ambient</code><span class="sum">Even light from every side, also on surfaces that face away: lifts the shadows</span></summary>
 <div class="body">
 <p>Even light from every side, also on surfaces that face away: lifts the shadows</p>
@@ -4768,6 +4804,18 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
+<details class="entry node" id="light.null"><summary><code class="name">light.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
+<div class="body">
+<p>Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">light</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">light</span></li>
+</ul>
+</div></details>
 <details class="entry node" id="light.point"><summary><code class="name">light.point</code><span class="sum">Light from a point in every direction, like a bare bulb</span></summary>
 <div class="body">
 <p>Light from a point in every direction, like a bare bulb</p>
@@ -4844,7 +4892,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-view">
 <h3>view</h3>
-<p class="kinds"><a href="#view.camera">view.camera</a></p>
+<p class="kinds"><a href="#view.camera">view.camera</a> <a href="#view.null">view.null</a></p>
 <details class="entry node" id="view.camera"><summary><code class="name">view.camera</code><span class="sum">A viewpoint into the 3D scene (position, target, lens): for tex.render, and as the lens of a light.projector</span></summary>
 <div class="body">
 <p>A viewpoint into the 3D scene (position, target, lens): for tex.render, and as the lens of a light.projector</p>
@@ -4872,6 +4920,18 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#navigation-the-viewers-modes">Looking around in 3D › The viewer's modes</a>, <a href="#navigation-orthographic-cameras">Looking around in 3D › Orthographic cameras</a></p>
+</div></details>
+<details class="entry node" id="view.null"><summary><code class="name">view.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
+<div class="body">
+<p>Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">view</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">view</span></li>
+</ul>
 </div></details>
 </div>
 <div class="group" id="family-script">
