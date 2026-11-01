@@ -9,7 +9,8 @@
 //!   cook thread the frame due at a clip time without ever waiting. While one thread plays an
 //!   iteration of a looping clip, the other has already decoded the start of the next one, so the
 //!   jump from the last frame to the first costs nothing (a seek back to the start takes 4 to 17
-//!   frame periods otherwise).
+//!   frame periods otherwise). [`Player::scrub`] serves a position that moves anywhere instead,
+//!   from a bounded cache of frames around it.
 //!
 //! Frames stay as the decoder made them (Y'CbCr planes, RGBA8 or BC blocks); the GPU converts
 //! them (`penumbra_gpu::video`, `penumbra_gpu::bc`). No GPU and no UI here.
@@ -18,6 +19,7 @@ mod film;
 mod gif;
 mod hap;
 mod player;
+mod scrub;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;

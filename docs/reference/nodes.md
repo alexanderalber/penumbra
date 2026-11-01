@@ -1085,12 +1085,13 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `file` | file (mp4, m4v, mov, mkv, webm, mxf, ts, m2ts, mts, mpg, mpeg, m2v, gif) |  |  | MP4, MOV, MKV, WebM, MXF, MPEG (H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP) or GIF |
-| `play` | bool | `true` |  | Off holds the current frame |
-| `speed` | float | `1` | 0 to 4 (soft) | Playback rate; every frame is still decoded, so high speeds cost CPU |
+| `play` | bool | `true` |  | Off holds the current frame. Does something only while position is not bound. |
+| `speed` | float | `1` | 0 to 4 (soft) | Playback rate; every frame is still decoded, so high speeds cost CPU. Does something only while position is not bound. |
 | `loop` | bool | `true` |  | Off stops on the last frame |
-| `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is loaded and where a restart goes |
-| `restart` | bool | `false` |  | Turning on starts the clip over from `start`; bind a channel to cue it |
-| `restart_on_show` | bool | `false` |  | Starts over whenever the clip comes back into use, such as a switch or sequence picking it |
+| `position` | float | `0` | 0 to 60 s (soft) | Where the clip is. Bind a channel to scrub: the clip follows it and ignores play and speed. Set by hand, the clip jumps there and plays on |
+| `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is loaded and where a restart goes. A change jumps there at once. Does something only while position is not bound. |
+| `restart` | bool | `false` |  | Turning on starts the clip over from `start`; bind a channel to cue it. Does something only while position is not bound. |
+| `restart_on_show` | bool | `false` |  | Starts over whenever the clip comes back into use, such as a switch or sequence picking it. Does something only while position is not bound. |
 
 ### tex.video_in
 
@@ -1718,12 +1719,13 @@ Outputs:
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `file` | file (wav, wave, flac, mp3, ogg, oga, m4a, mp4, mov, aac) |  |  | WAV, FLAC, MP3, Ogg Vorbis, or the AAC sound of an MP4, MOV or M4A |
-| `play` | bool | `true` |  | Off fades the sound out and holds the place; on plays on from there |
-| `speed` | float | `1` | 0 to 4 (soft) | Playback rate, as on tape: 2 plays twice as fast and an octave higher, 0.5 half as fast and an octave lower |
+| `play` | bool | `true` |  | Off fades the sound out and holds the place; on plays on from there. Does something only while position is not bound. |
+| `speed` | float | `1` | 0 to 4 (soft) | Playback rate, as on tape: 2 plays twice as fast and an octave higher, 0.5 half as fast and an octave lower. Does something only while position is not bound. |
 | `loop` | bool | `true` |  | Off plays the file once and then stays silent |
-| `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is loaded and where a restart goes |
-| `restart` | bool | `false` |  | Turning on starts the file over from `start`; bind a channel to cue it. The play button does the same |
-| `restart_on_show` | bool | `false` |  | Starts over whenever the sound comes back into use, such as a switch or sequence picking it |
+| `position` | float | `0` | 0 to 60 s (soft) | Where the file is. Bind a channel to scrub: the sound follows it like a tape moved by hand, ignoring play and speed, silent while it stands or moves faster than 4 times real time. Set by hand, the file jumps there and plays on |
+| `start` *(more)* | float | `0` | 0 to 60 s (soft) | Where playback begins when the file is loaded and where a restart goes. A change jumps there at once. Does something only while position is not bound. |
+| `restart` | bool | `false` |  | Turning on starts the file over from `start`; bind a channel to cue it. The play button does the same. Does something only while position is not bound. |
+| `restart_on_show` | bool | `false` |  | Starts over whenever the sound comes back into use, such as a switch or sequence picking it. Does something only while position is not bound. |
 | `channels` *(more)* | file \| mono \| stereo | `"file"` |  | Which channels come out; file: as many as the file has: mono stays mono; mono: one, the mean of all the file's channels; stereo: two: a mono file on both, else the file's first two |
 | `rate` *(more)* | int | `48000` | 8000 to 192000 | Samples per second of the sound made, whatever the file's rate. out.audio nodes on one device need the same rate; audio.mix converts between rates |
 

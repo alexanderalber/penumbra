@@ -450,6 +450,27 @@ A saved component could hold the same nodes, but the show itself (the steps, the
 entries, the gates) is the native node; a component around a `chan.sequence` and its
 `tex.sequence` nodes is only worth it to reuse a whole show setup.
 
+### Scrubbing a clip
+
+Bind a channel to `position` on a `tex.video_file`, and the channel says where the clip is, in
+seconds. `play`, `speed` and restarts are ignored while it is bound. So a `chan.slider` moves
+the clip by hand, an envelope pushes it forward on each hit, and a `chan.lfo` swings it back
+and forth. A channel that stands still freezes the clip. A looping clip wraps: 5 s in a clip of
+3.6 s shows 1.4 s of the next pass. Unbind `position`, and the clip plays on from where it
+stands. The same channel on an `audio.file` with the same file scrubs its sound in step (see
+[Playing sound files](audio.md#playing-sound-files)).
+
+While scrubbed, the clip keeps up to 256 MB of decoded frames around the position: the whole
+clip when it is short, about 85 frames of 1920 x 1080 (1.4 s at 60 fps), about 20 frames of 4K.
+Moving back and forth within them shows each frame at once. A jump beyond them waits for the
+decoder: about a tenth of a second for 1080p H.264, about half a second for 4K. The last frame
+stays up meanwhile. HAP clips jump fastest, since each of
+their frames stands alone.
+
+**Jumps.** A change of `start` jumps there at once, and so does `position` set by hand. The
+command `video_file.seek {path, seconds}` jumps without an edit. A looping clip stays in its
+pass, so `loops` keeps counting.
+
 ## Paths
 
 Every node has a path: `/noise1` at the top level, `/scene/noise1` inside the component

@@ -458,3 +458,37 @@ fn mp4_descriptors_are_held_to_their_box() {
     assert!(!descriptors_fit(&bad, 0));
     assert!(!descriptors_fit(&[5, 0xFF, 0xFF, 0xFF, 0x7F], 0));
 }
+
+/// Read backwards (a scrub), a streamed file reaches back: after the first seek,
+/// one seek every few seconds, and the reads miss only right after one.
+#[test]
+fn a_stream_read_backwards_reaches_back() {
+    let dir = temp_dir("backwards");
+    let n = 20 * 48_000usize;
+    let samples: Vec<f64> = (0..n).map(|i| (i % 48_000) as f64 / 48_000.0 - 0.5).collect();
+    let path = dir.join("back.wav");
+    std::fs::write(&path, wav_bytes(48_000, 1, WavFormat::Float32, &samples)).unwrap();
+    let mut f = SoundFile::open_with(&path, 0, None);
+    wait(&f);
+    let (mut out, mut found) = (Vec::new(), Vec::new());
+    // Start at 18 s and go back 800 frames per step (a 60 fps frame), for 10 s of the file, at
+    // about five times real time.
+    let mut from = 18 * 48_000i64;
+    let (mut reads, mut missed) = (0, 0);
+    let seeks = f.status().seeks;
+    for _ in 0..600 {
+        std::thread::sleep(Duration::from_millis(3));
+        f.read(from, 832, false, 0, &mut out, &mut found);
+        reads += 1;
+        if found.contains(&Frame::Missing) {
+            missed += 1;
+        } else {
+            assert_eq!(out[0], samples[from as usize] as f32);
+        }
+        from -= 800;
+    }
+    let seeks = f.status().seeks - seeks;
+    // 10 s back with a window reaching 4 s back: about three seeks, not one per half second.
+    assert!(seeks <= 5, "{seeks} seeks");
+    assert!(missed <= 3 * seeks as i32 + 3, "{missed} of {reads} reads missed, {seeks} seeks");
+}

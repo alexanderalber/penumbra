@@ -431,6 +431,9 @@ impl CookState {
         if let Some(t) = self.cooker.resource::<penumbra_ops::tex::video_file::VideoRestarts>() {
             t.prune(|id| net.node(id).is_some());
         }
+        if let Some(t) = self.cooker.resource::<penumbra_ops::seek::Seeks>() {
+            t.prune(|id| net.node(id).is_some());
+        }
         if let Some(t) = self.cooker.resource::<penumbra_ops::audio::instrument::Presses>() {
             t.prune(|id| net.node(id).is_some());
         }
@@ -746,6 +749,7 @@ impl Engine {
         }
         cooker.provide(penumbra_ops::tex::blob_track::BlobTracks::new());
         cooker.provide(penumbra_ops::tex::video_file::VideoRestarts::new());
+        cooker.provide(penumbra_ops::seek::Seeks::new());
         cooker.provide(penumbra_ops::audio::instrument::Presses::new());
         cooker.provide(penumbra_ops::out::table::TableOuts::new());
         cooker.provide(penumbra_ops::out::mesh::MeshOuts::new());

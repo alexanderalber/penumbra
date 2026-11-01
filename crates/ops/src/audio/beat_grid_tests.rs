@@ -322,3 +322,53 @@ fn the_envelopes_are_the_live_analysis_without_its_lag() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A scrubbed `audio.file` (its `position` bound) moves the grid with it: the beat is the one at
+/// the position, a jump or a move back does not tick, moving forward across a beat does.
+#[test]
+fn the_grid_follows_a_scrubbed_position() {
+    let dir = temp_dir("scrub");
+    let file = clicks(&dir);
+    let mut ops = grid_ops(&file);
+    ops.extend([
+        create("/k", "chan.constant"),
+        set("/k.name0", "pos"),
+        set("/k.value0", 3.2),
+        Op::Bind {
+            param: penumbra_core::ParamPath::parse("/p.position").unwrap(),
+            component: None,
+            from: "/k".parse().unwrap(),
+            channel: Some(penumbra_core::Name::new("pos").unwrap()),
+            cell: None,
+            format: None,
+        },
+    ]);
+    let mut f = fixture(&ops, &dir.join("cache"));
+    analysed(&mut f);
+    let at = |f: &mut F, pos: f64| {
+        f.edit(&[set("/k.value0", pos)]);
+        f.clock.advance(1);
+        cook(f).0.unwrap()
+    };
+    let c = at(&mut f, 3.2);
+    assert_eq!(value(&c, "beat_index"), 6.0, "the beat at 3.0 s");
+    // Back and in a jump: the beat follows, no tick.
+    let c = at(&mut f, 1.2);
+    assert_eq!((value(&c, "beat_index"), value(&c, "tick")), (2.0, 0.0));
+    let c = at(&mut f, 9.2);
+    assert_eq!((value(&c, "beat_index"), value(&c, "tick")), (18.0, 0.0));
+    let c = at(&mut f, 1.2);
+    assert_eq!(value(&c, "beat_index"), 2.0);
+    // Forward slowly across 1.5 s: one tick, at the crossing.
+    let mut ticks = Vec::new();
+    for k in 1..=60u32 {
+        let pos = 1.2 + f64::from(k) * 0.01;
+        let c = at(&mut f, pos);
+        if value(&c, "tick") == 1.0 {
+            ticks.push(k);
+        }
+    }
+    assert_eq!(ticks.len(), 1, "{ticks:?}");
+    assert!(ticks[0].abs_diff(30) <= 2, "{ticks:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

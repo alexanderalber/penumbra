@@ -438,6 +438,10 @@ water      15
 <p>The clip shows its first frame at once when the player holds it decoded: always for a clip with <code>loop</code> off, and for a looping clip whose <code>start</code> is 0. Otherwise the first frame takes a seek, a few frames on H.264, none on HAP. With <code>play</code> off, the clip jumps to <code>start</code> and holds there.</p>
 <p><strong>A cue from QLab or a lighting desk.</strong> Add a <a class="ref" href="#chan.osc_in"><code>chan.osc_in</code></a> and send it <code>/scene &lt;number&gt;</code> from the desk. When the desk is another machine, turn on the node's <code>lan</code>. Bind a <a class="ref" href="#tex.switch"><code>tex.switch</code></a>'s <code>index</code> to the <code>scene</code> channel, set <code>inactive: skip</code> and turn on <code>restart_on_show</code> on each clip. A GO then cuts to the clip's scene and the clip plays from its start. For a fade, turn on the switch's <code>blend</code> and bind <code>index</code> through a <a class="ref" href="#chan.filter"><code>chan.filter</code></a>; the incoming clip starts with the fade. To start the clip on screen over, send <code>/restart 1</code> and then <code>/restart 0</code>, and bind the clip's <code>restart</code> to the <code>restart</code> channel. In a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> show, bind <code>restart</code> to the piece's <code>run_&lt;name&gt;</code>, so a clip shown in two steps in a row starts over in each.</p>
 <p>A saved component could hold the same nodes, but the show itself (the steps, the row of entries, the gates) is the native node; a component around a <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> and its <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> nodes is only worth it to reuse a whole show setup.</p>
+<h4 id="concepts-scrubbing-a-clip">Scrubbing a clip</h4>
+<p>Bind a channel to <code>position</code> on a <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a>, and the channel says where the clip is, in seconds. <code>play</code>, <code>speed</code> and restarts are ignored while it is bound. So a <a class="ref" href="#chan.slider"><code>chan.slider</code></a> moves the clip by hand, an envelope pushes it forward on each hit, and a <a class="ref" href="#chan.lfo"><code>chan.lfo</code></a> swings it back and forth. A channel that stands still freezes the clip. A looping clip wraps: 5 s in a clip of 3.6 s shows 1.4 s of the next pass. Unbind <code>position</code>, and the clip plays on from where it stands. The same channel on an <a class="ref" href="#audio.file"><code>audio.file</code></a> with the same file scrubs its sound in step (see <a href="#audio-playing-sound-files">Playing sound files</a>).</p>
+<p>While scrubbed, the clip keeps up to 256 MB of decoded frames around the position: the whole clip when it is short, about 85 frames of 1920 x 1080 (1.4 s at 60 fps), about 20 frames of 4K. Moving back and forth within them shows each frame at once. A jump beyond them waits for the decoder: about a tenth of a second for 1080p H.264, about half a second for 4K. The last frame stays up meanwhile. HAP clips jump fastest, since each of their frames stands alone.</p>
+<p><strong>Jumps.</strong> A change of <code>start</code> jumps there at once, and so does <code>position</code> set by hand. The command <a class="ref" href="#video_file.seek"><code>video_file.seek {path, seconds}</code></a> jumps without an edit. A looping clip stays in its pass, so <code>loops</code> keeps counting.</p>
 <h3 id="concepts-paths">Paths</h3>
 <p>Every node has a path: <code>/noise1</code> at the top level, <code>/scene/noise1</code> inside the component <code>scene</code>. A param is addressed as <code>/scene/noise1.speed</code>, one component of a vector as <code>/t.translate.0</code>.</p>
 <p>Where a path refers to another node (a wire's source in the project file, a binding, the <code>node</code> param of <a class="ref" href="#tex.select"><code>tex.select</code></a>), it is read from the level of the node it belongs to: <code>/a/b</code> is absolute, <code>x</code> is the node <code>x</code> beside it, <code>sub/x</code> is below that, <code>../x</code> one level up. So a component's inside refers to its own nodes by name and keeps working when the component is moved or saved to a file.</p>
@@ -746,7 +750,9 @@ water      15
 <p>Its playhead moves as a <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a>'s does. Playback begins at <code>start</code> and follows the show clock, times <code>speed</code>. So a video and its sound stay together when both nodes get the same file, <code>start</code> and <code>speed</code>. A node that nothing reads holds its place. After a pause of more than half a second it goes on where it was.</p>
 <p><code>speed</code> works as on tape. At 2 the file plays twice as fast and an octave higher; at 0.5, half as fast and an octave lower. <code>play</code> off fades the sound out and holds the place.</p>
 <p>A restart plays the file again from <code>start</code>. You restart with the play button in the panel, with <a class="ref" href="#audio.play"><code>audio.play {path}</code></a>, or by turning <code>restart</code> on (bind a channel to cue it). With <code>loop</code> off, a restart plays the file once, as a one-shot sample. <code>restart_on_show</code> restarts whenever a switch or sequence picks the sound again.</p>
-<p>Short files (up to about 87 s of 48 kHz stereo) are decoded into memory, so loops and restarts are instant. Longer files are decoded a few seconds ahead while they play. A jump far into a long file can leave a moment of silence; the node counts these gaps and warns. A file that is missing or cannot be read plays silence and warns. Ogg files with FLAC or Opus sound, and ALAC, MP1 or MP2 sound, are not played: convert them to FLAC or MP3.</p>
+<p><strong>Jumps.</strong> A change of <code>start</code> jumps there at once, and so does <code>position</code> set by hand. The command <a class="ref" href="#audio.seek"><code>audio.seek {path, seconds}</code></a> does the same without an edit. The old sound fades out and the new place fades in, over 4 ms each. A looping file stays in its pass, so <code>loops</code> keeps counting.</p>
+<p><strong>Scrubbing.</strong> Bind a channel to <code>position</code>, and the channel says where the file is, in seconds. <code>play</code>, <code>speed</code> and restarts are ignored while it is bound. The sound follows like a tape moved by hand. Moving at real time, the file plays as it is; backwards, it plays reversed; faster or slower, the pitch follows. A position that stands still is silent. A position that moves faster than 4 times real time is silent too, so a slider thrown across the file makes no noise and no clicks. The sound comes back, faded in, once it moves slower again. Bind the same channel to the <code>position</code> of a <a class="ref" href="#tex.video_file"><code>tex.video_file</code></a> with the same file, and picture and sound scrub together. A <a class="ref" href="#chan.beat_grid"><code>chan.beat_grid</code></a> on the file follows the position: its beat is the one at the position, and it ticks only while the position moves forward across a beat. Unbind <code>position</code>, and the file plays on from where it stands.</p>
+<p>Short files (up to about 87 s of 48 kHz stereo) are decoded into memory, so loops, restarts, jumps and scrubbing are instant. Longer files are decoded a few seconds ahead while they play. Scrubbed backwards, a longer file is decoded a few seconds behind instead. A jump far into a long file can leave a moment of silence; the node counts these gaps and warns. A file that is missing or cannot be read plays silence and warns. Ogg files with FLAC or Opus sound, and ALAC, MP1 or MP2 sound, are not played: convert them to FLAC or MP3.</p>
 <p>The sound comes out at <code>rate</code> (48000 by default), with as many channels as the file has. <code>channels</code> makes it mono or stereo. <a class="ref" href="#audio.file_info"><code>audio.file_info {path}</code></a> tells the file's codec, rate, channels and length and where the playhead is.</p>
 <h3 id="audio-filter">Filter</h3>
 <p><a class="ref" href="#audio.filter"><code>audio.filter</code></a> filters any sound, every channel on its own, at any sample rate. Wire a sound into <code>in</code>; the output has the same channels and rate.</p>
@@ -3381,13 +3387,14 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>play</code></td><td>bool</td><td><code>true</code></td><td></td><td>Off holds the current frame</td></tr>
 <tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft)</td><td>Playback rate; every frame is still decoded, so high speeds cost CPU</td></tr>
 <tr><td><code>loop</code></td><td>bool</td><td><code>true</code></td><td></td><td>Off stops on the last frame</td></tr>
+<tr><td><code>position</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where the clip is. Bind a channel to scrub: the clip follows it and ignores play and speed. Set by hand, the clip jumps there and plays on</td></tr>
 <tr><td><code>restart</code></td><td>bool</td><td><code>false</code></td><td></td><td>Turning on starts the clip over from <code>start</code>; bind a channel to cue it</td></tr>
 <tr><td><code>restart_on_show</code></td><td>bool</td><td><code>false</code></td><td></td><td>Starts over whenever the clip comes back into use, such as a switch or sequence picking it</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>start</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where playback begins when the file is loaded and where a restart goes</td></tr>
+<tr><td><code>start</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where playback begins when the file is loaded and where a restart goes. A change jumps there at once</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#recording">Recording</a>, <a href="#recording-colour">Recording › Colour</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-time">Concepts › Time</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#concepts-scrubbing-a-clip">Concepts › Scrubbing a clip</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#recording">Recording</a>, <a href="#recording-colour">Recording › Colour</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a></p>
 </div></details>
 <details class="entry node" id="tex.video_in"><summary><code class="name">tex.video_in</code><span class="sum">A live camera or capture card</span></summary>
 <div class="body">
@@ -3532,7 +3539,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>offset</code></td><td>float</td><td><code>0</code></td><td>-200 to 200 (soft)</td><td>Milliseconds to move beat and bar ahead by, to make up for the projector's delay. Ticks come exactly this much early. Negative values move them later</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
+<p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
 </div></details>
 <details class="entry node" id="chan.button"><summary><code class="name">chan.button</code><span class="sum">A button on the node itself, pressed with the mouse in the editor: 1 while held, or on and off with each click</span></summary>
 <div class="body">
@@ -3863,7 +3870,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>phase</code></td><td>float</td><td><code>0</code></td><td>0 to 1 (soft)</td><td>Shift along the wave, in waves: 0.25 is a quarter wave ahead. Sets lfos of one rate apart</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-scrubbing-a-clip">Concepts › Scrubbing a clip</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="chan.math"><summary><code class="name">chan.math</code><span class="sum">Calculates with channels: adds, multiplies or compares two inputs, or one input and a number</span></summary>
 <div class="body">
@@ -4121,7 +4128,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>name</code></td><td>text</td><td><code>&quot;value&quot;</code></td><td></td><td>Name of the channel it makes, as bindings and other nodes see it</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a>, <a href="#concepts-a-control-page-in-the-browser">Concepts › A control page in the browser</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-buttons-and-sliders-on-the-node">Concepts › Buttons and sliders on the node</a>, <a href="#concepts-a-control-page-in-the-browser">Concepts › A control page in the browser</a>, <a href="#concepts-scrubbing-a-clip">Concepts › Scrubbing a clip</a></p>
 </div></details>
 <details class="entry node" id="chan.spacemouse_in"><summary><code class="name">chan.spacemouse_in</code><span class="sum">The 3D mouse (SpaceNavigator) as channels: six axes and two buttons, to steer things by hand during a show</span></summary>
 <div class="body">
@@ -4237,15 +4244,16 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>play</code></td><td>bool</td><td><code>true</code></td><td></td><td>Off fades the sound out and holds the place; on plays on from there</td></tr>
 <tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft)</td><td>Playback rate, as on tape: 2 plays twice as fast and an octave higher, 0.5 half as fast and an octave lower</td></tr>
 <tr><td><code>loop</code></td><td>bool</td><td><code>true</code></td><td></td><td>Off plays the file once and then stays silent</td></tr>
+<tr><td><code>position</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where the file is. Bind a channel to scrub: the sound follows it like a tape moved by hand, ignoring play and speed, silent while it stands or moves faster than 4 times real time. Set by hand, the file jumps there and plays on</td></tr>
 <tr><td><code>restart</code></td><td>bool</td><td><code>false</code></td><td></td><td>Turning on starts the file over from <code>start</code>; bind a channel to cue it. The play button does the same</td></tr>
 <tr><td><code>restart_on_show</code></td><td>bool</td><td><code>false</code></td><td></td><td>Starts over whenever the sound comes back into use, such as a switch or sequence picking it</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
-<tr><td><code>start</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where playback begins when the file is loaded and where a restart goes</td></tr>
+<tr><td><code>start</code></td><td>float</td><td><code>0</code></td><td>0 to 60 s (soft)</td><td>Where playback begins when the file is loaded and where a restart goes. A change jumps there at once</td></tr>
 <tr><td><code>channels</code></td><td>file | mono | stereo</td><td><code>&quot;file&quot;</code></td><td></td><td>Which channels come out<ul><li><code>file</code>: as many as the file has: mono stays mono</li><li><code>mono</code>: one, the mean of all the file's channels</li><li><code>stereo</code>: two: a mono file on both, else the file's first two</li></ul></td></tr>
 <tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made, whatever the file's rate. out.audio nodes on one device need the same rate; audio.mix converts between rates</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-scrubbing-a-clip">Concepts › Scrubbing a clip</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a></p>
 </div></details>
 <details class="entry node" id="audio.filter"><summary><code class="name">audio.filter</code><span class="sum">Shapes a sound by frequency: removes the highs or the lows, picks out or cuts a band, or turns a range up or down. Every channel is filtered on its own</span></summary>
 <div class="body">
@@ -5550,6 +5558,11 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>An audio.instrument plays one note at its next frame, as if channel <code>lane</code> of play had crossed threshold there; wired or not:{path, lane? (default 0)}. An audio.file starts over from its start (lane is ignored). While the show is paused nothing sounds and the press is dropped</p>
 <p class="mentions">Mentioned in: <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a></p>
 </div></details>
+<details class="entry command" id="audio.seek"><summary><code class="name">audio.seek</code><span class="sum">An audio.file jumps to <code>seconds</code> into its file at the next frame and plays on from there, with short fades (a looping file stays in its pass): {path, seconds}. Not while its position is bound to a channel</span></summary>
+<div class="body">
+<p>An audio.file jumps to <code>seconds</code> into its file at the next frame and plays on from there, with short fades (a looping file stays in its pass): {path, seconds}. Not while its position is bound to a channel</p>
+<p class="mentions">Mentioned in: <a href="#audio-playing-sound-files">Audio › Playing sound files</a></p>
+</div></details>
 <details class="entry command" id="audio.status"><summary><code class="name">audio.status</code><span class="sum">Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) and          output buses (device, open, error, rate, latency_ms with fill_ms and device_ms, underruns, overruns,          glitches, limiter reduction per node and of the sum, muted)</span></summary>
 <div class="body">
 <p>Audio input streams (device, rate, channels, open, error, frames, glitches, peak per channel in dBFS) and          output buses (device, open, error, rate, latency_ms with fill_ms and device_ms, underruns, overruns,          glitches, limiter reduction per node and of the sum, muted)</p>
@@ -6397,6 +6410,11 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>A tex.video_file starts its clip over from its <code>start</code>, at the next frame: {path}</p>
 <p class="mentions">Mentioned in: <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a></p>
+</div></details>
+<details class="entry command" id="video_file.seek"><summary><code class="name">video_file.seek</code><span class="sum">A tex.video_file jumps to <code>seconds</code> into its clip at the next frame and plays on from there (a looping clip stays in its pass): {path, seconds}. Not while its position is bound to a channel</span></summary>
+<div class="body">
+<p>A tex.video_file jumps to <code>seconds</code> into its clip at the next frame and plays on from there (a looping clip stays in its pass): {path, seconds}. Not while its position is bound to a channel</p>
+<p class="mentions">Mentioned in: <a href="#concepts-scrubbing-a-clip">Concepts › Scrubbing a clip</a></p>
 </div></details>
 </div>
 <div class="group" id="group-video_in">

@@ -362,3 +362,112 @@ fn bad_files_and_params_play_silence_with_a_warning() {
         assert!(b.iter().flatten().all(|s| s.is_finite() && s.abs() <= 1.0));
     }
 }
+
+/// `position` bound to the channel `pos` of a `chan.constant` at `/k`.
+fn scrubbed(file: &str, at: f64) -> Vec<Op> {
+    let mut ops = player(file);
+    ops.extend([
+        create("/k", "chan.constant"),
+        set("/k.name0", "pos"),
+        set("/k.value0", at),
+        Op::Bind {
+            param: penumbra_core::ParamPath::parse("/p.position").unwrap(),
+            component: None,
+            from: "/k".parse().unwrap(),
+            channel: Some(penumbra_core::Name::new("pos").unwrap()),
+            cell: None,
+            format: None,
+        },
+    ]);
+    ops
+}
+
+/// The ramp's samples from `from` on, as the file holds them (f32).
+fn ramp_from(all: &[f64], from: usize, n: usize) -> Vec<f64> {
+    all[from..from + n].iter().map(|v| f64::from(*v as f32)).collect()
+}
+
+fn max_error(a: &[f64], b: &[f64]) -> f64 {
+    a.iter().zip(b).fold(0.0, |m, (x, y)| m.max((x - y).abs()))
+}
+
+/// A bound position moves the file like a tape moved by hand: standing is silent, real time
+/// forwards plays the file, real time backwards plays it reversed, a throw faster than 4 times
+/// real time is silent after a fade, and unbound the file plays on from there.
+#[test]
+fn a_bound_position_scrubs_like_tape() {
+    let dir = temp_dir("scrub");
+    let n = 96_000;
+    let all = ramp(n);
+    let file = write_wav(&dir, "ramp.wav", 48_000, 1, &all);
+    let mut f = F::new(&scrubbed(&file, 0.5));
+    first(&mut f);
+    // Standing: silence, though the show clock runs and play is on.
+    for _ in 0..3 {
+        assert_eq!(peak(&next(&mut f, 1)[0]), 0.0, "standing");
+    }
+    assert_eq!(info(&f, "position"), 0.5);
+    // Forwards at real time (800 samples per 60 fps frame): the file, after a 4 ms fade in.
+    let mut pos = 24_000usize;
+    for k in 0..10 {
+        pos += 800;
+        f.edit(&[set("/k.value0", pos as f64 / 48_000.0)]);
+        let b = next(&mut f, 1).remove(0);
+        let want = ramp_from(&all, pos - 800, 800);
+        let skip = if k == 0 { 192 } else { 0 };
+        assert!(max_error(&b[skip..], &want[skip..]) < 1e-4, "forwards, frame {k}");
+    }
+    // Backwards at real time: the file reversed.
+    for k in 0..10 {
+        pos -= 800;
+        f.edit(&[set("/k.value0", pos as f64 / 48_000.0)]);
+        let b = next(&mut f, 1).remove(0);
+        let want: Vec<f64> = (0..800).map(|j| f64::from(all[pos + 800 - j] as f32)).collect();
+        assert!(max_error(&b[2..], &want[2..]) < 1e-3, "backwards, frame {k}");
+    }
+    // A throw: the sound fades out over 4 ms and stays silent; no step larger than the ramp's.
+    pos += 30_000;
+    f.edit(&[set("/k.value0", pos as f64 / 48_000.0)]);
+    let b = next(&mut f, 1).remove(0);
+    assert!(b[0] != 0.0 && peak(&b[192..]) == 0.0, "fade out, then silence");
+    assert!(b.windows(2).all(|w| (w[1] - w[0]).abs() < 0.01), "no click");
+    assert_eq!(info(&f, "position"), pos as f64 / 48_000.0);
+    // Unbound: plays on from there at speed 1, faded in.
+    f.edit(&[Op::Unbind { param: penumbra_core::ParamPath::parse("/p.position").unwrap(), component: None }]);
+    next(&mut f, 1);
+    let b = next(&mut f, 1).remove(0);
+    assert_eq!(b, ramp_from(&all, pos + 800, 800), "on from the position");
+}
+
+/// Changing `start`, setting `position` by hand and a seek request jump at once, with the fades
+/// of a restart, and play on from there; restarts are not counted.
+#[test]
+fn start_position_and_seeks_jump_at_once() {
+    let dir = temp_dir("jumps");
+    let n = 96_000;
+    let all = ramp(n);
+    let file = write_wav(&dir, "ramp.wav", 48_000, 1, &all);
+    let mut f = F::new(&player(&file));
+    let seeks = crate::seek::Seeks::new();
+    f.cooker.provide(seeks.clone());
+    first(&mut f);
+    for _ in 0..5 {
+        next(&mut f, 1);
+    }
+    let check = |f: &mut F, at: usize, why: &str| {
+        let b = next(f, 1).remove(0);
+        assert!(b[0] != 0.0 && b[300..].iter().all(|s| *s == 0.0), "{why}: fade out, then wait");
+        let b = next(f, 1).remove(0);
+        assert_eq!(b[192..], ramp_from(&all, at, 800)[192..], "{why}: from there after the fade in");
+        let b = next(f, 1).remove(0);
+        assert_eq!(b, ramp_from(&all, at + 800, 800), "{why}: plays on");
+    };
+    f.edit(&[set("/p.start", 0.5)]);
+    check(&mut f, 24_000, "start");
+    f.edit(&[set("/p.position", 1.25)]);
+    check(&mut f, 60_000, "position");
+    let id = f.net.resolve(&"/p".parse().unwrap()).unwrap();
+    assert!(seeks.request(id, 0.25));
+    check(&mut f, 12_000, "seek");
+    assert_eq!(info(&f, "restarts"), 0.0);
+}

@@ -148,8 +148,25 @@ with `audio.play {path}`, or by turning `restart` on (bind a channel to cue it).
 off, a restart plays the file once, as a one-shot sample. `restart_on_show` restarts whenever
 a switch or sequence picks the sound again.
 
-Short files (up to about 87 s of 48 kHz stereo) are decoded into memory, so loops and restarts
-are instant. Longer files are decoded a few seconds ahead while they play. A jump far into a
+**Jumps.** A change of `start` jumps there at once, and so does `position` set by hand. The
+command `audio.seek {path, seconds}` does the same without an edit. The old sound fades out and
+the new place fades in, over 4 ms each. A looping file stays in its pass, so `loops` keeps
+counting.
+
+**Scrubbing.** Bind a channel to `position`, and the channel says where the file is, in
+seconds. `play`, `speed` and restarts are ignored while it is bound. The sound follows like a
+tape moved by hand. Moving at real time, the file plays as it is; backwards, it plays
+reversed; faster or slower, the pitch follows. A position that stands still is silent. A
+position that moves faster than 4 times real time is silent too, so a slider thrown across the
+file makes no noise and no clicks. The sound comes back, faded in, once it moves slower again.
+Bind the same channel to the `position` of a `tex.video_file` with the same file, and picture
+and sound scrub together. A `chan.beat_grid` on the file follows the position: its beat is the
+one at the position, and it ticks only while the position moves forward across a beat. Unbind
+`position`, and the file plays on from where it stands.
+
+Short files (up to about 87 s of 48 kHz stereo) are decoded into memory, so loops, restarts,
+jumps and scrubbing are instant. Longer files are decoded a few seconds ahead while they play.
+Scrubbed backwards, a longer file is decoded a few seconds behind instead. A jump far into a
 long file can leave a moment of silence; the node counts these gaps and warns. A file that is
 missing or cannot be read plays silence and warns. Ogg files with FLAC or Opus sound, and ALAC,
 MP1 or MP2 sound, are not played: convert them to FLAC or MP3.

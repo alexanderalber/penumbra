@@ -13,11 +13,15 @@
 //! A clip that does not loop has no use for the second thread at its end, so that thread decodes
 //! the *cue* instead: where [`Player::restart`] starts playback over. A restart then is a queue
 //! switch as well. A looping clip whose cue is its start gets the same from the loop's pre-roll.
+//!
+//! [`Player::scrub`] serves a position that a channel moves anywhere: the threads then leave the
+//! queues and fill a cache of frames around the position (see the `scrub` module).
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
+use crate::scrub::{Cache, Role};
 use crate::{ClipInfo, Decoder, Frame, Limits, open};
 use penumbra_core::lock;
 
@@ -28,6 +32,8 @@ const QUEUE_MAX: usize = 16;
 const QUEUE_MIN: usize = 2;
 /// How far ahead of a thread's decoding a wanted frame may be before seeking beats catching up.
 const CATCH_UP_SECONDS: f64 = 2.0;
+/// How long a scrubbing thread with nothing to do waits before it looks at the cache again.
+const SCRUB_IDLE: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// What [`Player::show`] has for the cook thread.
 #[derive(Clone, Debug)]
@@ -73,12 +79,16 @@ struct State {
     run: Option<Run>,
     queue: VecDeque<(usize, Result<Frame, String>)>,
     capacity: usize,
+    /// Scrubbing: the part of the cache's window this thread fills (instead of a run).
+    scrub: Option<Role>,
     quit: bool,
 }
 
 struct Shared {
     state: Mutex<State>,
     wake: Condvar,
+    /// The frames around a scrubbed position, the same for both threads.
+    cache: Arc<Mutex<Cache>>,
     /// Called after every decoded frame (the node's [`Player::new`] `on_frame`).
     on_frame: Option<OnFrame>,
 }
@@ -112,12 +122,18 @@ pub struct Player {
     cue: f64,
     /// A restart happened and no frame was asked for since (so its jump is not a loop).
     restarting: bool,
+    /// The threads fill the cache around a scrubbed position ([`Player::scrub`]).
+    scrubbing: bool,
+    cache: Arc<Mutex<Cache>>,
+    /// The cache's seek count already added to the stats.
+    cache_seeks: u64,
 }
 
 impl Player {
     /// Starts opening `path` on two threads; nothing here blocks. `on_frame` is called from a
     /// decoding thread whenever a frame (or an error) is queued or the clip opened.
     pub fn new(path: &Path, limits: Limits, on_frame: Option<OnFrame>) -> Result<Self, String> {
+        let cache = Arc::new(Mutex::new(Cache::default()));
         let make = || {
             Arc::new(Shared {
                 state: Mutex::new(State {
@@ -125,9 +141,11 @@ impl Player {
                     run: None,
                     queue: VecDeque::new(),
                     capacity: QUEUE_MIN,
+                    scrub: None,
                     quit: false,
                 }),
                 wake: Condvar::new(),
+                cache: cache.clone(),
                 on_frame: on_frame.clone(),
             })
         };
@@ -153,6 +171,9 @@ impl Player {
             last_iter: 0,
             cue: 0.0,
             restarting: false,
+            scrubbing: false,
+            cache,
+            cache_seeks: 0,
         })
     }
 
@@ -213,20 +234,12 @@ impl Player {
         let Some(info) = self.info()?.cloned() else {
             return Ok(Shown::Waiting);
         };
+        if self.scrubbing {
+            self.set_scrubbing(false);
+        }
         let d = info.duration();
-        let t = if t.is_finite() { t.max(0.0) } else { 0.0 };
-        let (iter, local) = if looping {
-            // The hair of tolerance `index_at` has, in passes: a playhead summed from frame times
-            // lands a little short of the end of a pass as often as on it. Without it the last
-            // frame shows twice and the next pass's first frame not at all.
-            let k = (t / d + 1e-6 / info.frames.max(1) as f64).floor();
-            (self.epoch.saturating_add(k as u64), t - k * d)
-        } else {
-            (self.epoch, t.min(d))
-        };
-        self.last_iter = iter;
-        let index = info.index_at(local);
-        let key = (iter, index);
+        let key = self.key(&info, t, looping);
+        let iter = key.0;
         // Without keyframes a seek decodes from the start: catching up is never slower.
         let catch_up = if info.seeks {
             ((CATCH_UP_SECONDS * info.rate()).ceil() as usize).max(QUEUE_MAX)
@@ -241,6 +254,98 @@ impl Player {
         let next = if looping { 0 } else { info.index_at(self.cue.min(d)) };
         self.preroll(iter + 1, next, info.frames);
         result
+    }
+
+    /// (iteration, frame) due `t` seconds into playback.
+    fn key(&mut self, info: &ClipInfo, t: f64, looping: bool) -> (u64, usize) {
+        let d = info.duration();
+        let t = if t.is_finite() { t.max(0.0) } else { 0.0 };
+        let (iter, local) = if looping {
+            // The hair of tolerance `index_at` has, in passes: a playhead summed from frame times
+            // lands a little short of the end of a pass as often as on it. Without it the last
+            // frame shows twice and the next pass's first frame not at all.
+            let k = (t / d + 1e-6 / info.frames.max(1) as f64).floor();
+            (self.epoch.saturating_add(k as u64), t - k * d)
+        } else {
+            (self.epoch, t.min(d))
+        };
+        self.last_iter = iter;
+        (iter, info.index_at(local))
+    }
+
+    /// The frame at `t` seconds into playback, as [`Player::show`], for a position that may move
+    /// anywhere between calls: forwards, backwards, in jumps or not at all. The threads keep the
+    /// frames around it decoded (see the `scrub` module), so moving back and forth over them shows
+    /// each at once; a jump outside them is late until decoded. Calling [`Player::show`] again
+    /// plays on from there and lets the cache go.
+    pub fn scrub(&mut self, t: f64, looping: bool) -> Result<Shown, String> {
+        let Some(info) = self.info()?.cloned() else {
+            return Ok(Shown::Waiting);
+        };
+        if !self.scrubbing {
+            self.set_scrubbing(true);
+        }
+        let key = self.key(&info, t, looping);
+        let (moved, got, seeks) = {
+            let mut c = lock(&self.cache);
+            let moved = c.focus(key.1, info.frames, looping);
+            (moved, c.get(key.1), c.seeks)
+        };
+        self.stats.seeks += seeks.saturating_sub(self.cache_seeks);
+        self.cache_seeks = seeks;
+        if moved {
+            self.poke();
+        }
+        self.restarting = false;
+        if self.current.is_some_and(|(_, i)| i == key.1) {
+            // The frame shown, maybe in another pass of the loop.
+            self.current = Some(key);
+            return Ok(Shown::Same);
+        }
+        match got {
+            Some(Ok(frame)) => {
+                self.current = Some(key);
+                self.late_key = None;
+                self.stats.shown += 1;
+                Ok(Shown::New(frame))
+            }
+            Some(Err(e)) => {
+                // Counted as shown, so the error is reported once.
+                self.current = Some(key);
+                Err(e)
+            }
+            None => Ok(self.not_ready(key)),
+        }
+    }
+
+    /// Bytes and frames the scrub cache holds.
+    pub fn cached(&self) -> (usize, usize) {
+        let c = lock(&self.cache);
+        (c.bytes(), c.len())
+    }
+
+    /// Moves both threads from their runs to the cache, or back.
+    fn set_scrubbing(&mut self, on: bool) {
+        self.scrubbing = on;
+        lock(&self.cache).reset(on);
+        for (i, w) in self.workers.iter().enumerate() {
+            let mut s = w.lock();
+            s.run = None;
+            s.queue.clear();
+            s.scrub = on.then_some(if i == 0 { Role::Ahead } else { Role::Behind });
+            drop(s);
+            w.wake.notify_all();
+        }
+        self.active = None;
+    }
+
+    /// Wakes both threads after the position moved. Each one's lock is taken first, so a thread
+    /// that has just found nothing to do in the cache is waiting by now and gets the wake.
+    fn poke(&self) {
+        for w in &self.workers {
+            drop(w.lock());
+            w.wake.notify_all();
+        }
     }
 
     /// Takes frame `key` from the thread that can deliver it, or sends a thread there.
@@ -365,8 +470,17 @@ fn work(shared: &Shared, path: &Path, limits: &Limits) {
     shared.lock().opened = Some(Ok(decoder.info().clone()));
     notify();
     let mut sized = false;
+    // The frame this thread decoded last, and the chunk it fills behind a scrubbed position.
+    let mut last: Option<usize> = None;
+    let mut chunk = None;
+    // The cache had no room for a scrubbed frame: nothing to do until the position moves.
+    let mut full_at: Option<(u64, usize)> = None;
+    enum Job {
+        Run(u64, usize),
+        Scrub { generation: u64, index: usize, focus: usize },
+    }
     loop {
-        let (id, index) = {
+        let job = {
             let mut s = shared.lock();
             loop {
                 if s.quit {
@@ -376,24 +490,64 @@ fn work(shared: &Shared, path: &Path, limits: &Limits) {
                     && r.next < r.end
                     && s.queue.len() < s.capacity
                 {
-                    break (r.id, r.next);
+                    break Job::Run(r.id, r.next);
+                }
+                if let Some(role) = s.scrub {
+                    let c = lock(&shared.cache);
+                    let stuck = full_at.is_some_and(|at| at == (c.generation, c.focus_frame()));
+                    if !stuck && let Some(i) = c.next(role, &mut chunk) {
+                        break Job::Scrub { generation: c.generation, index: i, focus: c.focus_frame() };
+                    }
+                    drop(c);
+                    // The other thread's frames change what is left to do here, and it does not
+                    // wake this one: look again soon.
+                    s = shared.wake.wait_timeout(s, SCRUB_IDLE).unwrap_or_else(PoisonError::into_inner).0;
+                    continue;
                 }
                 s = shared.wake.wait(s).unwrap_or_else(PoisonError::into_inner);
             }
         };
-        let result = decoder.frame(index);
-        let mut s = shared.lock();
-        if !sized && let Ok(f) = &result {
-            sized = true;
-            s.capacity = (QUEUE_BYTES / f.byte_size().max(1)).clamp(QUEUE_MIN, QUEUE_MAX);
-        }
-        if let Some(r) = s.run.as_mut()
-            && r.id == id
-        {
-            r.next += 1;
-            s.queue.push_back((index, result));
-            drop(s);
-            notify();
+        match job {
+            Job::Run(id, index) => {
+                let result = decoder.frame(index);
+                last = Some(index);
+                let mut s = shared.lock();
+                if !sized && let Ok(f) = &result {
+                    sized = true;
+                    s.capacity = (QUEUE_BYTES / f.byte_size().max(1)).clamp(QUEUE_MIN, QUEUE_MAX);
+                }
+                if let Some(r) = s.run.as_mut()
+                    && r.id == id
+                {
+                    r.next += 1;
+                    s.queue.push_back((index, result));
+                    drop(s);
+                    notify();
+                }
+            }
+            Job::Scrub { generation, index, focus } => {
+                let seek = last.is_none_or(|l| l.checked_add(1) != Some(index));
+                let result = decoder.frame(index);
+                last = Some(index);
+                let mut c = lock(&shared.cache);
+                if c.generation != generation {
+                    continue;
+                }
+                if seek {
+                    c.seeks += 1;
+                }
+                // Refused for the position it was decoded for: the same frame would come next
+                // again. Refused because the position moved meanwhile: the next pick is another.
+                full_at = None;
+                if !c.insert(index, result) {
+                    chunk = None;
+                    if c.focus_frame() == focus {
+                        full_at = Some((generation, focus));
+                    }
+                }
+                drop(c);
+                notify();
+            }
         }
     }
 }

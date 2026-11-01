@@ -1751,18 +1751,26 @@ fn video_file_restarts_on_an_edge_a_request_and_coming_back() {
     rig.edit(&[set("/v.start", Value::Float(0.5)), set("/v.restart", Value::Bool(true))]);
     until(&mut rig, 15.0, "the edge");
     assert_eq!(info(&rig, "restarts"), Some(1.0));
-    // Held on, no further restart; a request does one.
-    rig.edit(&[set("/v.start", Value::Float(0.2))]);
+    // Held on, no further restart; a request does one. (`position` set by hand moves the clip
+    // away first: a jump, not a restart.)
+    rig.edit(&[set("/v.position", Value::Float(0.9))]);
+    until(&mut rig, 27.0, "the jump");
     for _ in 0..5 {
         rig.cook("/sw");
     }
-    assert_eq!(info(&rig, "frame"), Some(15.0), "on is not an edge");
+    assert_eq!(info(&rig, "frame"), Some(27.0), "on is not an edge");
+    assert_eq!(info(&rig, "restarts"), Some(1.0));
     assert!(restarts.request(rig.id("/v")));
-    until(&mut rig, 6.0, "the request");
+    until(&mut rig, 15.0, "the request");
+    // A changed start jumps there at once.
+    rig.edit(&[set("/v.start", Value::Float(0.2))]);
+    until(&mut rig, 6.0, "the changed start");
     // Coming back after a second out of use restarts; staying in use does not.
     rig.edit(&[set("/v.restart_on_show", Value::Bool(true)), set("/v.start", Value::Float(0.1))]);
     rig.clock.advance(1);
-    rig.cook("/sw");
+    until(&mut rig, 3.0, "the changed start");
+    rig.edit(&[set("/v.position", Value::Float(0.6))]);
+    until(&mut rig, 18.0, "the jump");
     rig.edit(&[set("/sw.index", Value::Float(0.0))]);
     for _ in 0..60 {
         rig.clock.advance(1);
@@ -1771,13 +1779,86 @@ fn video_file_restarts_on_an_edge_a_request_and_coming_back() {
     rig.edit(&[set("/sw.index", Value::Float(1.0))]);
     rig.clock.advance(1);
     until(&mut rig, 3.0, "back in use");
-    rig.edit(&[set("/v.start", Value::Float(0.3))]);
+    rig.edit(&[set("/v.position", Value::Float(0.3))]);
+    until(&mut rig, 9.0, "the jump");
     for _ in 0..5 {
         rig.clock.advance(1);
         rig.cook("/sw");
     }
-    assert_eq!(info(&rig, "frame"), Some(3.0), "in use all along");
+    assert_eq!(info(&rig, "frame"), Some(9.0), "in use all along");
     assert_eq!(info(&rig, "restarts"), Some(3.0));
+}
+
+/// A channel bound to `position` scrubs the clip: backwards, in jumps and standing, ignoring
+/// play and speed; unbound, the clip plays on from there. A seek request jumps and plays on.
+#[test]
+fn video_file_follows_a_bound_position_and_seeks() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("video_scrub");
+    std::fs::copy(manifest().join("../video/tests/fixtures/ramp30.mp4"), dir.join("ramp30.mp4")).unwrap();
+    let ops = [
+        create("/k", "chan.constant", &[("name0", "pos".into()), ("value0", Value::Float(0.51))]),
+        create("/v", "tex.video_file", &[("file", "ramp30.mp4".into()), ("speed", Value::Float(2.0))]),
+        bind("/v.position", "/k", "pos"),
+    ];
+    let mut rig = Rig::new(gpu, Some(&dir), &ops);
+    let seeks = crate::seek::Seeks::new();
+    rig.cooker.provide(seeks.clone());
+    let info = |rig: &Rig, name: &str| {
+        let port = Port { node: rig.id("/v"), output: 1 };
+        rig.cooker.output(port).and_then(|d| d.get::<penumbra_core::Chans>()?.value(Some(name)))
+    };
+    // Cooks with the clock running until the video shows `frame`; the frames it took.
+    let until = |rig: &mut Rig, frame: f64, why: &str| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut steps = 0;
+        loop {
+            rig.clock.advance(1);
+            rig.cook("/v");
+            if info(rig, "frame") == Some(frame) {
+                return steps;
+            }
+            steps += 1;
+            assert!(Instant::now() < deadline, "{why}: frame {:?}, not {frame}", info(rig, "frame"));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    until(&mut rig, 15.0, "at the bound position");
+    // The clock runs, the position stands: the frame stands.
+    for _ in 0..10 {
+        rig.clock.advance(1);
+        rig.cook("/v");
+    }
+    assert_eq!(info(&rig, "frame"), Some(15.0), "standing");
+    // Backwards frame by frame: each at once from the cache once it is filled.
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(500) {
+        rig.clock.advance(1);
+        rig.cook("/v");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let late = info(&rig, "late");
+    for k in (0..15).rev() {
+        let t = f64::from(k) / 30.0 + 0.01;
+        rig.edit(&[set("/k.value0", Value::Float(t))]);
+        rig.clock.advance(1);
+        rig.cook("/v");
+        assert_eq!(info(&rig, "frame"), Some(f64::from(k)), "back to {k}");
+    }
+    assert_eq!(info(&rig, "late"), late, "no frame late going back");
+    // Past the end of a looping clip: the next pass.
+    rig.edit(&[set("/k.value0", Value::Float(1.0 + 4.0 / 30.0 + 0.01))]);
+    until(&mut rig, 4.0, "the next pass");
+    assert_eq!(info(&rig, "loops"), Some(1.0));
+    // Unbound: plays on from there at speed 2; a seek jumps and plays on.
+    rig.edit(&[Op::Unbind { param: ParamPath::parse("/v.position").unwrap(), component: None }]);
+    rig.clock.advance(1);
+    rig.cook("/v");
+    let f = info(&rig, "frame").unwrap();
+    assert!((4.0..=6.0).contains(&f), "on from the position: {f}");
+    assert!(seeks.request(rig.id("/v"), 0.7));
+    until(&mut rig, 21.0, "the seek");
+    until(&mut rig, 25.0, "playing on");
 }
 
 /// The first passes after the app starts have no GPU. `tex.video_file` cooks them all the same,

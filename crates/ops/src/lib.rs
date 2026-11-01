@@ -20,6 +20,7 @@ pub mod out;
 pub mod palette;
 pub mod res;
 pub mod script;
+pub mod seek;
 pub mod sequence;
 pub mod shapes;
 pub mod spacemouse;

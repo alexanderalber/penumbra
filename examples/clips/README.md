@@ -28,7 +28,7 @@ both move on with the show clock. The clip's picture and sound are equally long:
 60 fps and 172 800 samples at 48 kHz, 3.6 s each. So the sound stays on the picture through
 every loop. **Pause** in the status bar holds both, and play goes on from there. After a stall
 of more than half a second, or when the show clock jumps back, both go on one frame from where
-they were. A change to only one of the two moves them apart: `speed`, `play`, `start` or
+they were. A change to only one of the two moves them apart: `speed`, `play`, `start`, `position` or
 `restart` on `/clip` alone, for example. To change both at once, bind the param of both to one
 channel, as in the "Try" list below.
 
@@ -63,6 +63,13 @@ the middle swing ends exactly as it begins. Run the script with no arguments to 
   At 0.5 a swing takes 7.2 s and the notes sound an octave lower, as on tape.
 - **Start over together:** add a `chan.button` and bind `restart` in `/clip` and in `/sound` to
   it. A click starts both at their `start`.
+- **Scrub:** add a `chan.slider` with `min` 0, `max` 3.6 and `name` set to `at`. Bind
+  `position` in `/clip` and in `/sound` to `at`. Dragging the slider now moves the clip by hand,
+  forwards and backwards, and the sound follows like a tape. The sound is silent while the
+  slider stands still or moves faster than 4 times real time. For motion by itself, bind both
+  to a `chan.lfo` with `shape` triangle, `rate` 0.25, `amplitude` 1.5 and `offset` 1.8 instead:
+  the pendulums swing forwards and backwards at 1.5 times their speed. Unbind `position` and
+  the clip plays on from where it stands.
 - **An echo:** add a `tex.time_machine` with `/clip` in `in` and `offset` 18 (frames, 0.3 s).
   Add a `tex.composite` with `op` set to `screen`, `/clip` in `in0` and the time machine in
   `in1`, and wire it into `/screen`. Each pendulum gets a copy that follows it 0.3 s later.

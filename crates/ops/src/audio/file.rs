@@ -20,6 +20,20 @@
 //! video shows `start` at that time; what was playing fades out over 4 ms. With `loop` off a
 //! restart plays the file once: a one-shot sample.
 //!
+//! **Scrubbing:** while a channel is bound to `position`, it says where the file is, in seconds,
+//! as on `tex.video_file`, and `play`, `speed` and restarts are ignored. Each block plays the
+//! stretch between the last position and the new one, like a tape moved by hand: forwards,
+//! backwards, faster or slower, with the pitch following. A position that stands still is
+//! silent, and one that moves faster than [`MAX_SCRUB_SPEED`] times real time is a jump: what
+//! was playing fades out and the sound comes back, faded in, once the position moves slower
+//! again. So a fast scratch or a slider thrown across the file makes no noise or clicks, and a
+//! channel that moves at real time plays the file as it is. Unbound, the file plays on from
+//! where the channel left it.
+//!
+//! **Jumps:** setting `position` by hand (unbound), changing `start`, or a request through
+//! [`Seeks`] (`audio.seek`) moves the playhead there at once, with the fades of a restart. A
+//! looping file stays in its pass, so `loops` keeps counting.
+//!
 //! **Silence:** before the file starts, after it ends (`loop` off), with `play` off or speed 0
 //! (after a 4 ms fade), and where the decoder has not caught up (a seek in a long file): such a
 //! gap is counted and warned about, and the sound fades in again over 4 ms. A missing or
@@ -39,6 +53,7 @@ use penumbra_graph::{
 use super::block::{BlockClock, Span, Step};
 use super::instrument::Presses;
 use super::oscillator::{MAX_RATE, MIN_RATE};
+use crate::seek::{Seeks, in_pass};
 
 /// Kind of the file player.
 pub const FILE: &str = "audio.file";
@@ -54,31 +69,42 @@ const CHUNK: usize = 256;
 const MAX_STEP: f64 = 64.0;
 /// Kernels are made for cutoffs in steps of an eighth of an octave.
 const KERNEL_STEPS_PER_OCTAVE: f64 = 8.0;
+/// Kernels kept for the cutoffs used last (scrubbing changes the speed every block).
+const KERNELS_KEPT: usize = 8;
+/// A scrubbed position moving faster than this many times real time is silent.
+pub const MAX_SCRUB_SPEED: f64 = 4.0;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(FILE, "Plays a sound file: music, an atmosphere or a sample, looped or once")
             .param(ParamSpec::file("file", EXTENSIONS).doc("WAV, FLAC, MP3, Ogg Vorbis, or the AAC sound of an MP4, MOV or M4A"))
-            .param(ParamSpec::bool("play", true).doc("Off fades the sound out and holds the place; on plays on from there"))
+            .param(ParamSpec::bool("play", true).applies_unless_bound("position").doc("Off fades the sound out and holds the place; on plays on from there"))
             .param(
-                ParamSpec::float("speed", 1.0)
+                ParamSpec::float("speed", 1.0).applies_unless_bound("position")
                     .clamp(0.0, 16.0)
                     .range(0.0, 4.0)
                     .doc("Playback rate, as on tape: 2 plays twice as fast and an octave higher, 0.5 half as fast and an octave lower"),
             )
             .param(ParamSpec::bool("loop", true).doc("Off plays the file once and then stays silent"))
             .param(
-                ParamSpec::float("start", 0.0)
+                ParamSpec::float("position", 0.0)
+                    .clamp(0.0, 1e7)
+                    .range(0.0, 60.0)
+                    .unit(Unit::Seconds)
+                    .doc("Where the file is. Bind a channel to scrub: the sound follows it like a tape moved by hand, ignoring play and speed, silent while it stands or moves faster than 4 times real time. Set by hand, the file jumps there and plays on"),
+            )
+            .param(
+                ParamSpec::float("start", 0.0).applies_unless_bound("position")
                     .clamp(0.0, 1e7)
                     .range(0.0, 60.0)
                     .unit(Unit::Seconds)
                     .more()
-                    .doc("Where playback begins when the file is loaded and where a restart goes"),
+                    .doc("Where playback begins when the file is loaded and where a restart goes. A change jumps there at once"),
             )
-            .param(ParamSpec::bool("restart", false).doc(
+            .param(ParamSpec::bool("restart", false).applies_unless_bound("position").doc(
                 "Turning on starts the file over from `start`; bind a channel to cue it. The play button does the same",
             ))
-            .param(ParamSpec::bool("restart_on_show", false).doc(
+            .param(ParamSpec::bool("restart_on_show", false).applies_unless_bound("position").doc(
                 "Starts over whenever the sound comes back into use, such as a switch or sequence picking it",
             ))
             .param(
@@ -203,8 +229,8 @@ struct FilePlayer {
     playhead: f64,
     /// The fade-in gain.
     gain: f64,
-    /// The cutoff scale the kernel was made for, and the kernel.
-    kernel: Option<(f64, Kernel)>,
+    /// Kernels by the cutoff scale they were made for, the one used last at the end.
+    kernels: Vec<(f64, Kernel)>,
     scratch: Scratch,
     /// `restart` at the last cook (`None` before the first), for its rising edge.
     restart_was: Option<bool>,
@@ -222,6 +248,11 @@ struct FilePlayer {
     /// `loop` and the file's length in seconds (0 unknown) at the last cook.
     looping: bool,
     duration: f64,
+    /// `start` at the last cook, and `position` while unbound, so a change jumps there.
+    start_was: Option<f64>,
+    position_was: Option<f64>,
+    /// A jump asked for and not played yet (a block rendered again cannot take it).
+    jump_pending: Option<f64>,
 }
 
 impl Operator for FilePlayer {
@@ -232,8 +263,9 @@ impl Operator for FilePlayer {
         let speed = cx.float("speed")?.clamp(0.0, 16.0);
         let speed = if speed.is_finite() { speed } else { 0.0 };
         let looping = cx.bool("loop")?;
-        let start = cx.float("start")?.clamp(0.0, 1e7);
-        let start = if start.is_finite() { start } else { 0.0 };
+        let start = finite(cx.float("start")?);
+        let scrubbing = cx.def().is_bound("position");
+        let position = finite(cx.float("position")?);
         let mode = cx.text("channels")?.to_string();
         let time = cx.time();
         let now = time.seconds();
@@ -252,6 +284,20 @@ impl Operator for FilePlayer {
         }
         let back = cx.bool("restart_on_show")? && cx.since_last_use().is_some_and(|gap| gap > GAP_SECONDS);
         self.restart_pending |= edge || back || !self.pressed.is_empty();
+        // Jumps: a seek asked for, `position` set by hand, `start` changed.
+        let seek = cx.resource::<Seeks>().and_then(|s| s.take(cx.node(), cx.waker()));
+        let position_moved = !scrubbing && self.position_was.is_some_and(|p| p != position);
+        let start_moved = self.start_was.is_some_and(|s| s != start);
+        self.position_was = (!scrubbing).then_some(position);
+        self.start_was = Some(start);
+        if let Some(to) = seek.or(position_moved.then_some(position)).or(start_moved.then_some(start)) {
+            self.jump_pending = Some(to);
+        }
+        if scrubbing {
+            // A channel decides: what was asked for meanwhile does not wait for it to let go.
+            self.restart_pending = false;
+            self.jump_pending = None;
+        }
 
         // The file, opened again when it moves or changes on disk.
         let text = cx.text("file")?.to_string();
@@ -296,21 +342,31 @@ impl Operator for FilePlayer {
         if restart && !reloaded {
             self.restarts += 1;
         }
+        let jump = if advancing && !restart { self.jump_pending.take() } else { None };
         let mut tail = None;
-        let mapping = match self.mapping {
-            None => Mapping::through(span.end, start, moving, start, rate),
-            Some(m) if restart => {
-                if m.speed > 0.0 && !reloaded {
+        let mapping = match (self.mapping, jump) {
+            _ if scrubbing => self.scrub(position, span, rate, reloaded, &mut tail),
+            (None, _) => Mapping::through(span.end, start, moving, start, rate),
+            (Some(m), Some(to)) => {
+                let to = in_pass(self.playhead, to, self.duration, looping);
+                if m.speed != 0.0 {
+                    tail = Some(m);
+                }
+                self.gain = if to > 1e-9 { 0.0 } else { 1.0 };
+                Mapping::through(span.end, to, moving, to, rate)
+            }
+            (Some(m), None) if restart => {
+                if m.speed != 0.0 && !reloaded {
                     tail = Some(m);
                 }
                 Mapping::through(span.end, start, moving, start, rate)
             }
-            Some(_) if span.step == Step::Fresh => {
+            (Some(_), None) if span.step == Step::Fresh => {
                 // A gap or a clock that went back: one show frame on from where it was.
                 self.gain = 0.0;
                 Mapping::through(span.end, self.playhead + frame_sec * moving, moving, 0.0, rate)
             }
-            Some(m) if m.speed != moving || m.rate != rate => {
+            (Some(m), None) if m.speed != moving || m.rate != rate => {
                 let here = m.at(span.start);
                 if moving == 0.0 {
                     tail = Some(m);
@@ -320,9 +376,9 @@ impl Operator for FilePlayer {
                 }
                 Mapping { anchor_s: span.start, anchor_sec: here, speed: moving, floor: m.floor, rate }
             }
-            Some(m) => m,
+            (Some(m), None) => m,
         };
-        if self.mapping.is_none() || restart {
+        if !scrubbing && (self.mapping.is_none() || restart) {
             // Starting inside the file fades in; at its very start the file's own attack stays.
             self.gain = if start > 1e-9 { 0.0 } else { 1.0 };
         }
@@ -347,17 +403,26 @@ impl Operator for FilePlayer {
         let cue = (start * file_rate).floor() as i64;
 
         // The kernel for the cutoff this speed needs.
-        let step = (moving * file_rate / f64::from(rate)).min(MAX_STEP);
+        let step = (mapping.speed.abs() * file_rate / f64::from(rate)).min(MAX_STEP);
         let scale = if step > 1.0 {
             let octaves = (step.log2() * KERNEL_STEPS_PER_OCTAVE).ceil() / KERNEL_STEPS_PER_OCTAVE;
             0.5f64.powf(octaves)
         } else {
             1.0
         };
-        if self.kernel.as_ref().is_none_or(|(s, _)| *s != scale) {
-            self.kernel = Some((scale, Kernel::new(1.0, scale)));
+        match self.kernels.iter().position(|(s, _)| *s == scale) {
+            Some(i) => {
+                let k = self.kernels.remove(i);
+                self.kernels.push(k);
+            }
+            None => {
+                if self.kernels.len() >= KERNELS_KEPT {
+                    self.kernels.remove(0);
+                }
+                self.kernels.push((scale, Kernel::new(1.0, scale)));
+            }
         }
-        let Some((_, kernel)) = self.kernel.as_ref() else { return Err(CookError::Pending) };
+        let Some((_, kernel)) = self.kernels.last() else { return Err(CookError::Pending) };
 
         let n = span.len();
         let mut planes = vec![vec![0.0f64; n]; ch];
@@ -423,6 +488,40 @@ impl Operator for FilePlayer {
 }
 
 impl FilePlayer {
+    /// The mapping of a block while `position` is bound: from where the last block ended to
+    /// `position` at this block's end (see the module docs). A tail to fade out goes to `tail`.
+    fn scrub(
+        &mut self,
+        position: f64,
+        span: Span,
+        rate: u32,
+        reloaded: bool,
+        tail: &mut Option<Mapping>,
+    ) -> Mapping {
+        let standing = Mapping::through(span.end, position, 0.0, 0.0, rate);
+        let Some(m) = self.mapping.filter(|_| !reloaded && span.step != Step::Fresh) else {
+            self.gain = 0.0;
+            return standing;
+        };
+        let here = m.at(span.start);
+        let seconds = span.len() as f64 / f64::from(rate.max(1));
+        let speed = if seconds > 0.0 { (position - here) / seconds } else { 0.0 };
+        if !speed.is_finite() || speed.abs() > MAX_SCRUB_SPEED {
+            if m.speed != 0.0 {
+                *tail = Some(m);
+            }
+            self.gain = 0.0;
+            return standing;
+        }
+        if speed == 0.0 && m.speed != 0.0 {
+            *tail = Some(m);
+        }
+        if m.speed == 0.0 && speed != 0.0 {
+            self.gain = 0.0;
+        }
+        Mapping { anchor_s: span.start, anchor_sec: here, speed, floor: 0.0, rate }
+    }
+
     /// A silent block of one channel, with the info.
     fn silence(&mut self, span: Span, rate: u32, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let out = self.chans(vec![vec![0.0; span.len()]], rate)?;
@@ -450,7 +549,7 @@ impl FilePlayer {
             in_file: in_file(self.playhead, self.duration, self.looping).0,
             duration: self.duration,
             looping: self.looping,
-            playing: self.mapping.is_some_and(|m| m.speed > 0.0),
+            playing: self.mapping.is_some_and(|m| m.speed != 0.0),
             gaps: self.gaps,
             restarts: self.restarts,
         }
@@ -503,6 +602,11 @@ impl FilePlayer {
         }
         Ok(Chans::new(show_rate, channels)?)
     }
+}
+
+/// Seconds from a param: non-numbers are 0.
+fn finite(seconds: f64) -> f64 {
+    if seconds.is_finite() { seconds.clamp(0.0, 1e7) } else { 0.0 }
 }
 
 /// Where the unwrapped playhead `head` is in a file of `duration` seconds (0: unknown), and the
@@ -583,13 +687,15 @@ impl Reader {
         while done < n {
             let len = CHUNK.min(n - done);
             let first = s0 + done as i64;
-            if m.speed <= 0.0 {
+            if m.speed == 0.0 {
                 // Standing still: silent (a stop already faded through the tail).
                 done += len;
                 continue;
             }
-            let xa = m.at(first).max(m.floor) * to_frames;
-            let xb = m.at(first + len as i64 - 1).max(m.floor) * to_frames;
+            // Backwards (scrubbing), the chunk's first sample is its latest in the file.
+            let (a, b) = (m.at(first), m.at(first + len as i64 - 1));
+            let xa = a.min(b).max(m.floor) * to_frames;
+            let xb = a.max(b).max(m.floor) * to_frames;
             if !(xa.is_finite() && xb.is_finite()) {
                 done += len;
                 continue;

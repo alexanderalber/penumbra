@@ -536,6 +536,13 @@ impl NodeDesc {
                     return Err(Error::new(format!("applies while `{input}` is wired, which is no input")));
                 }
             }
+            Condition::Unbound { param } => {
+                if *param == p.name || self.param_spec(param).is_none() {
+                    return Err(Error::new(format!(
+                        "applies while `{param}` is not bound, which is no other param"
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -557,6 +564,7 @@ impl NodeDesc {
         spec.inapplicable(
             |p| bound(p).or_else(|| node.param(self, p).cloned()),
             |input| self.input_index(input).and_then(|i| node.inputs.get(i)).is_some_and(Option::is_some),
+            |p| node.is_bound(p),
         )
     }
 
@@ -1114,6 +1122,9 @@ mod tests {
         assert!(bad(ParamSpec::float("x", 0.0).applies_when("preset", &["bell"])), "no such value");
         assert!(bad(ParamSpec::float("x", 0.0).applies_when("preset", &[])));
         assert!(bad(ParamSpec::float("x", 0.0).applies_when_wired("gate")));
+        assert!(bad(ParamSpec::float("x", 0.0).applies_unless_bound("nope")));
+        assert!(bad(ParamSpec::float("x", 0.0).applies_unless_bound("x")), "itself");
+        assert!(!bad(ParamSpec::float("x", 0.0).applies_unless_bound("note")));
         assert!(!bad(ParamSpec::float("x", 0.0).applies_when("preset", &["kick"])));
     }
 

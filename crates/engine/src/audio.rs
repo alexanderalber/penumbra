@@ -57,6 +57,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         audio_play,
     );
     add(
+        "audio.seek",
+        "An audio.file jumps to `seconds` into its file at the next frame and plays on from there, with short fades (a looping file stays in its pass): {path, seconds}. Not while its position is bound to a channel",
+        |e, p| crate::video_file::seek_command(e, p, FILE),
+    );
+    add(
         "audio.file_info",
         "What an audio.file plays: {path} gives file, codec, rate, channels, duration (s), in_memory, ready, \
          error, position (s), playing, gaps (silences while decoding caught up), seeks, restarts, bad_packets",

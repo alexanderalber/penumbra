@@ -8,6 +8,7 @@
 //! - **Streamed:** a longer file, or one whose length the header does not give, is decoded into
 //!   a window that runs [`AHEAD_SECONDS`] ahead of where the reader last read and keeps
 //!   [`BEHIND_SECONDS`] behind it. Reading far outside the window makes the thread seek there.
+//!   A reader going backwards (scrubbing) swaps the two, so the window reaches back.
 //!   While looping, the thread decodes on through the end into the start again, so the seam
 //!   is in the window like any other frame. A copy of the first second after the cue point
 //!   ([`SoundFile::read`]'s `cue`) is kept as well, so a restart sounds at once.
@@ -144,6 +145,8 @@ struct Shared {
     wanted: i64,
     looping: bool,
     cue_wanted: i64,
+    /// The reader's last move went back in the file.
+    backward: bool,
     stop: bool,
 }
 
@@ -229,6 +232,9 @@ impl SoundFile {
                     read_window(&s, from, looping, channels, out, found);
                 }
                 let moved = s.wanted != from || s.looping != looping || s.cue_wanted != cue;
+                if from != s.wanted {
+                    s.backward = from < s.wanted;
+                }
                 s.wanted = from;
                 s.looping = looping;
                 s.cue_wanted = cue;
@@ -718,13 +724,15 @@ fn stream(
     let mut cue_at: Option<i64> = None;
     let mut buf: Vec<f32> = Vec::new();
     loop {
-        let (wanted, looping, cue_wanted, window_start, length) = {
+        let (wanted, looping, cue_wanted, window_start, length, backward) = {
             let s = lock(&shared.0);
             if s.stop {
                 return Ok(());
             }
-            (s.wanted, s.looping, s.cue_wanted.max(0), s.window.start, s.length.or(info.frames))
+            (s.wanted, s.looping, s.cue_wanted.max(0), s.window.start, s.length.or(info.frames), s.backward)
         };
+        // Going backwards, the window reaches back as far as it otherwise reaches ahead.
+        let (ahead, behind) = if backward { (behind.max(slack), ahead) } else { (ahead, behind) };
         let next_label = base.saturating_add(file_pos as i64);
         let length_i = length.map(|l| l as i64).filter(|l| *l > 0);
 
@@ -761,9 +769,12 @@ fn stream(
 
         // Before the file is the start of it, for the decoder.
         let wanted = wanted.max(0);
-        let outside = wanted < window_start || wanted > next_label.saturating_add(slack);
+        // After a seek backwards the decoding starts that far before the reader.
+        let reach = if backward { behind } else { 0 };
+        let outside = wanted < window_start || wanted > next_label.saturating_add(slack + reach);
         if outside {
-            let target = wanted.max(0);
+            // Backwards, from early enough that the reader stays in the window for a while.
+            let target = if backward && wanted < window_start { wanted - behind } else { wanted }.max(0);
             let (file_frame, new_base) = match (looping, length_i) {
                 (true, Some(l)) => (target.rem_euclid(l), target - target.rem_euclid(l)),
                 _ => (target, 0),

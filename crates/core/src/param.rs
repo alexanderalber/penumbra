@@ -170,6 +170,9 @@ pub enum Condition {
     Choice { param: String, values: Vec<String> },
     /// The input `input` is wired.
     Wired { input: String },
+    /// The param `param` is not bound to a channel (a bound one takes over, such as a clip's
+    /// `position` over its `speed`).
+    Unbound { param: String },
 }
 
 impl Condition {
@@ -179,6 +182,7 @@ impl Condition {
         match self {
             Condition::Choice { param, values } => format!("only with {param} {}", or_list(values)),
             Condition::Wired { input } => format!("only while {input} is wired"),
+            Condition::Unbound { param } => format!("only while {param} is not bound"),
         }
     }
 }
@@ -413,6 +417,12 @@ impl ParamSpec {
         self
     }
 
+    /// Does something only while the param `param` is not bound to a channel ([`Condition`]).
+    pub fn applies_unless_bound(mut self, param: &str) -> Self {
+        self.applies.push(Condition::Unbound { param: param.to_string() });
+        self
+    }
+
     /// Does something only while the input `input` is wired ([`Condition`]).
     pub fn applies_when_wired(mut self, input: &str) -> Self {
         self.applies.push(Condition::Wired { input: input.to_string() });
@@ -427,11 +437,12 @@ impl ParamSpec {
 
     /// Why the param does nothing at the moment, as a sentence for the panel's hover text;
     /// `None` while it does something. `value` gives the current value of another param (a
-    /// bound one as bound), `wired` whether an input is wired.
+    /// bound one as bound), `wired` whether an input is wired, `bound` whether a param is bound.
     pub fn inapplicable(
         &self,
         value: impl Fn(&str) -> Option<Value>,
         wired: impl Fn(&str) -> bool,
+        bound: impl Fn(&str) -> bool,
     ) -> Option<String> {
         let why: Vec<String> = self
             .applies
@@ -450,6 +461,10 @@ impl ParamSpec {
                     Some(format!("Does something only while {input} is wired"))
                 }
                 Condition::Wired { .. } => None,
+                Condition::Unbound { param } if bound(param) => {
+                    Some(format!("Does nothing while {param} is bound"))
+                }
+                Condition::Unbound { .. } => None,
             })
             .collect();
         if why.is_empty() { None } else { Some(why.join(". ")) }

@@ -448,3 +448,92 @@ fn bench() {
     let per = start.elapsed() / n as u32;
     println!("{n} frames: {per:?} each, worst {worst:?}; clip rate {:.2} fps", info.rate());
 }
+
+/// Waits until a scrubbed player has the frame at `t`.
+fn scrub_to(p: &mut Player, t: f64, looping: bool) -> Shown {
+    let start = Instant::now();
+    loop {
+        match p.scrub(t, looping).unwrap() {
+            Shown::Waiting | Shown::Late if start.elapsed() < Duration::from_secs(10) => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            s => return s,
+        }
+    }
+}
+
+#[test]
+fn scrubbing_backwards_shows_each_frame_from_the_cache() {
+    let mut p = Player::new(&ramp(), Limits::default(), None).unwrap();
+    // A jump into the middle of a GOP with B-frames, then wait until the cache holds the clip
+    // (it fits: 30 small frames).
+    let Shown::New(f) = scrub_to(&mut p, 0.5, false) else { panic!("no frame") };
+    assert_eq!(ramp_index(&f), 15);
+    let start = Instant::now();
+    while p.cached().1 < 30 && start.elapsed() < Duration::from_secs(10) {
+        p.scrub(0.5, false).unwrap();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(p.cached().1, 30, "{:?}", p.stats());
+    // Backwards, forwards and in jumps: every frame at once, none late.
+    let late = p.stats().late;
+    let mut order: Vec<usize> = (0..30).rev().collect();
+    order.extend(0..30);
+    order.extend([29, 0, 17, 3, 22]);
+    for i in order {
+        let t = i as f64 / 30.0 + 0.01;
+        match p.scrub(t, false).unwrap() {
+            Shown::New(f) => assert_eq!(ramp_index(&f), i),
+            Shown::Same => {}
+            other => panic!("frame {i}: {other:?}, stats {:?}", p.stats()),
+        }
+    }
+    assert_eq!(p.stats().late, late, "{:?}", p.stats());
+    // Back to playing: on from where the position was, and the cache lets go.
+    let Shown::New(f) = wait_for(&mut p, 23.0 / 30.0 + 0.01, false) else {
+        panic!("no frame after scrubbing")
+    };
+    assert_eq!(ramp_index(&f), 23);
+    assert_eq!(p.cached(), (0, 0));
+}
+
+#[test]
+fn scrubbing_a_loop_wraps_the_position() {
+    let mut p = Player::new(&ramp(), Limits::default(), None).unwrap();
+    let Shown::New(f) = scrub_to(&mut p, 2.2, true) else { panic!("no frame") };
+    assert_eq!(ramp_index(&f), 6);
+    assert_eq!(p.position(), Some((2, 6)));
+    // The same frame one pass later is the same picture.
+    assert!(matches!(p.scrub(1.2, true).unwrap(), Shown::Same));
+    assert_eq!(p.position(), Some((1, 6)));
+    let Shown::New(f) = scrub_to(&mut p, 0.99, true) else { panic!("no frame") };
+    assert_eq!(ramp_index(&f), 29);
+}
+
+#[test]
+fn the_scrub_cache_keeps_the_frames_nearest_the_position() {
+    let mut d = open(&ramp(), &Limits::default()).unwrap();
+    let frame = d.frame(0).unwrap();
+    let mut c = crate::scrub::Cache::default();
+    c.reset(true);
+    c.focus(1000, 5000, false);
+    for i in 0..2000 {
+        let _ = c.insert(i, Ok(frame.clone()));
+    }
+    assert_eq!(c.len(), crate::scrub::CACHE_MAX);
+    assert!(c.bytes() <= crate::scrub::CACHE_BYTES);
+    // The frames kept lie around 1000: nothing farther than half the cache.
+    for i in [1000, 800, 1200, 701, 1299] {
+        assert!(c.get(i).is_some(), "frame {i} was dropped");
+    }
+    for i in [0, 600, 1400, 1999] {
+        assert!(c.get(i).is_none(), "frame {i} was kept");
+    }
+    // Around the loop's seam, frames on both sides are near.
+    c.reset(true);
+    c.focus(0, 5000, true);
+    for i in (4000..5000).chain(0..1000) {
+        let _ = c.insert(i, Ok(frame.clone()));
+    }
+    assert!(c.get(4999).is_some() && c.get(1).is_some() && c.get(4000).is_none());
+}

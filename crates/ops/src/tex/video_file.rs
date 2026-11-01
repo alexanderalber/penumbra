@@ -7,6 +7,16 @@
 //! cooking (nothing downstream wants it) pauses there and resumes where it was, instead of
 //! seeking to wherever the show time has moved meanwhile.
 //!
+//! **Scrubbing:** while a channel is bound to `position`, it says where the clip is, in seconds,
+//! and `play`, `speed` and restarts are ignored. A slider, an envelope or an LFO then moves the
+//! clip back and forth, jumps or freezes it. The player keeps the frames around the position
+//! decoded ([`Player::scrub`]), so going backwards in a long-GOP codec does not stutter.
+//! Unbound, the clip plays on from where the channel left it.
+//!
+//! **Jumps:** setting `position` by hand (unbound), changing `start`, or a request through
+//! [`Seeks`] (`video_file.seek`) moves the playhead there at once; it plays on from there. A
+//! looping clip stays in its pass, so `loops` keeps counting.
+//!
 //! A restart starts the clip over from `start`: a rising edge on the `restart` param (a bound
 //! channel crossing 0.5), a request through [`VideoRestarts`] (`video_file.restart`, the panel's
 //! button), or, with `restart_on_show`, the node coming back into use after half a second or more
@@ -33,6 +43,7 @@ use penumbra_video::{
 };
 
 use crate::on_gpu;
+use crate::seek::{Seeks, in_pass};
 
 /// The node kind.
 pub const VIDEO_FILE: &str = "tex.video_file";
@@ -51,27 +62,34 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                         "MP4, MOV, MKV, WebM, MXF, MPEG (H.264, HEVC, ProRes, DNxHR, VP9, AV1, HAP) or GIF",
                     ),
                 )
-                .param(ParamSpec::bool("play", true).doc("Off holds the current frame"))
+                .param(ParamSpec::bool("play", true).applies_unless_bound("position").doc("Off holds the current frame"))
                 .param(
-                    ParamSpec::float("speed", 1.0)
+                    ParamSpec::float("speed", 1.0).applies_unless_bound("position")
                         .clamp(0.0, 16.0)
                         .range(0.0, 4.0)
                         .doc("Playback rate; every frame is still decoded, so high speeds cost CPU"),
                 )
                 .param(ParamSpec::bool("loop", true).doc("Off stops on the last frame"))
                 .param(
-                    ParamSpec::float("start", 0.0)
+                    ParamSpec::float("position", 0.0)
+                        .clamp(0.0, 1e7)
+                        .range(0.0, 60.0)
+                        .unit(Unit::Seconds)
+                        .doc("Where the clip is. Bind a channel to scrub: the clip follows it and ignores play and speed. Set by hand, the clip jumps there and plays on"),
+                )
+                .param(
+                    ParamSpec::float("start", 0.0).applies_unless_bound("position")
                         .clamp(0.0, 1e7)
                         .range(0.0, 60.0)
                         .unit(Unit::Seconds)
                         .more()
-                        .doc("Where playback begins when the file is loaded and where a restart goes"),
+                        .doc("Where playback begins when the file is loaded and where a restart goes. A change jumps there at once"),
                 )
                 .param(
-                    ParamSpec::bool("restart", false)
+                    ParamSpec::bool("restart", false).applies_unless_bound("position")
                         .doc("Turning on starts the clip over from `start`; bind a channel to cue it"),
                 )
-                .param(ParamSpec::bool("restart_on_show", false).doc(
+                .param(ParamSpec::bool("restart_on_show", false).applies_unless_bound("position").doc(
                     "Starts over whenever the clip comes back into use, such as a switch or sequence picking it",
                 ))
                 .output("out", DataKind::Tex)
@@ -108,6 +126,9 @@ struct Video {
     restart_was: Option<bool>,
     /// Restart requests through [`VideoRestarts`] taken so far (`None` before the first cook).
     requests: Option<u64>,
+    /// `start` at the last cook, and `position` while unbound, so a change jumps there.
+    start_was: Option<f64>,
+    position_was: Option<f64>,
 }
 
 /// Restart requests from outside the cook (`video_file.restart`, the panel's button), by node.
@@ -173,8 +194,16 @@ impl Operator for Video {
     }
 
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
-        let start = cx.float("start")?;
+        let start = finite(cx.float("start")?);
         let restart = self.restart_due(cx)?;
+        let looping = cx.bool("loop")?;
+        let scrubbing = cx.def().is_bound("position");
+        let position = finite(cx.float("position")?);
+        let seek = cx.resource::<Seeks>().and_then(|s| s.take(cx.node(), cx.waker()));
+        let start_moved = self.start_was.is_some_and(|s| s != start);
+        self.start_was = Some(start);
+        let position_moved = !scrubbing && self.position_was.is_some_and(|p| p != position);
+        self.position_was = (!scrubbing).then_some(position);
         let now = cx.time().seconds();
         let dt = match self.last_time {
             Some(last) if (0.0..=GAP_SECONDS).contains(&(now - last)) => now - last,
@@ -184,8 +213,14 @@ impl Operator for Video {
         };
         let first = self.last_time.is_none();
         self.last_time = Some(now);
-        if first || restart {
+        let jump = seek.or(position_moved.then_some(position)).or(start_moved.then_some(start));
+        if scrubbing {
+            self.playhead = position;
+        } else if first || restart {
             self.playhead = start;
+        } else if let Some(to) = jump {
+            let duration = self.player.as_mut().and_then(|p| p.info().ok().flatten().map(|i| i.duration()));
+            self.playhead = in_pass(self.playhead, to, duration.unwrap_or(0.0), looping);
         } else if cx.bool("play")? {
             self.playhead += dt * cx.float("speed")?.clamp(0.0, 16.0);
         }
@@ -212,22 +247,25 @@ impl Operator for Video {
             let player = Player::new(&path, limits, Some(on_frame)).map_err(CookError::failed);
             // A file opened while the GPU was missing keeps the playhead it has had since the
             // first cook; any other opening starts at `start`.
-            if !std::mem::take(&mut self.early) {
+            if !std::mem::take(&mut self.early) && !scrubbing {
                 self.playhead = start;
             }
             self.player = Some(player?);
             self.failed = None;
             self.late = (0, 0.0);
         }
-        let looping = cx.bool("loop")?;
         let Some(player) = self.player.as_mut() else {
             return Err(CookError::Pending);
         };
         player.set_cue(start);
-        if restart {
+        if restart && !scrubbing {
             player.restart();
         }
-        let shown = player.show(self.playhead, looping);
+        let shown = if scrubbing {
+            player.scrub(self.playhead, looping)
+        } else {
+            player.show(self.playhead, looping)
+        };
         let stats = player.stats();
         if stats.late > self.late.0 {
             self.late = (stats.late, now);
@@ -269,6 +307,11 @@ impl Operator for Video {
             _ => JobStatus::Idle,
         })
     }
+}
+
+/// Seconds from a param: non-numbers are 0.
+fn finite(seconds: f64) -> f64 {
+    if seconds.is_finite() { seconds.max(0.0) } else { 0.0 }
 }
 
 /// The `info` channels.

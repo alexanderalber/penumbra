@@ -377,6 +377,30 @@ fn an_audio_file_plays_and_restarts_on_a_press() {
     assert_eq!(r["played"], true, "{r}");
     eventually("the tone again", || out.pushed("")[0].iter().skip(quiet).any(|s| *s != 0.0));
     assert_eq!(f.call("audio.file_info", json!({"path": "/s"}))["restarts"], 1);
+    // A seek into the tone after its end plays its last part again, without a restart.
+    eventually("the end of the tone again", || {
+        f.call("audio.file_info", json!({"path": "/s"}))["position"].as_f64().is_some_and(|p| p >= 0.2)
+    });
+    std::thread::sleep(Duration::from_millis(100));
+    let quiet = len();
+    let r = f.call("audio.seek", json!({"path": "/s", "seconds": 0.1}));
+    assert_eq!(r["seconds"], 0.1, "{r}");
+    eventually("the tone after the seek", || out.pushed("")[0].iter().skip(quiet).any(|s| *s != 0.0));
+    assert_eq!(f.call("audio.file_info", json!({"path": "/s"}))["restarts"], 1);
+    assert!(f.fail("audio.seek", json!({"path": "/o", "seconds": 1.0})).contains("for audio.file nodes"));
+    assert!(f.fail("audio.seek", json!({"path": "/s", "seconds": -1.0})).contains("0 or more"));
+    f.fail("audio.seek", json!({"path": "/s"}));
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/k", "kind": "chan.constant"},
+            {"op": "bind", "param": "/s.position", "from": "/k", "channel": "chan1"},
+        ]}),
+    );
+    assert!(f.fail("audio.seek", json!({"path": "/s", "seconds": 0.0})).contains("bound"));
+    let info = f.call("node.info", json!({"path": "/s"}));
+    let speed = info["params"].as_array().unwrap().iter().find(|p| p["name"] == "speed").unwrap().clone();
+    assert_eq!(speed["why"], "Does nothing while position is bound", "{info}");
 
     assert!(f.fail("audio.file_info", json!({"path": "/o"})).contains("not an audio.file"));
     assert!(f.fail("audio.play", json!({"path": "/o"})).contains("not an audio.instrument or audio.file"));
