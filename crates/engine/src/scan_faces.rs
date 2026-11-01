@@ -55,7 +55,7 @@ const OUTLINE_INSIDE: f64 = 0.9;
 /// ... and this share of it is the face, an object in front of it or unmeasured.
 const OUTLINE_FILL: f64 = 0.8;
 /// The focal length assumed when the corners do not tell it, times the camera's width.
-const ASSUMED_FOCAL: f64 = 1.5;
+pub const ASSUMED_FOCAL: f64 = 1.5;
 
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
@@ -63,7 +63,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "scan.faces",
         "The faces of a scene, by the names tex.face_content and scan.face_template take: every region of \
          scan.regions (by its name, else `region N`) and every face of scan.scene (`face N`), with its size \
-         in camera pixels and whether its template exists. {scene? (folder scan.scene wrote, scene)}",
+         in camera pixels, whether its template exists and its normal in the camera's frame where known \
+         (a rectified face). {scene? (folder scan.scene wrote, scene)}",
         move |p| {
             let a: FacesArgs = args(p)?;
             list(e.session().dir(), a.scene.as_deref())
@@ -86,7 +87,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          [[x, y] x 4] camera px, far left first, clockwise}, ...]; all regions when the scene has any, else \
          all faces, leaving out those under min_pixels), size? (template's longer side, px, 1920), photo? \
          (the camera's picture of the scene; the first scan's photo.png or frames/00.png), min_pixels? \
-         (camera px, a thousandth of the picture), focal? (the camera's focal length in pixels of its picture,          for the aspects; else told by the faces' corners where the camera sees them in perspective, or          assumed 1.5 times the picture's width)}",
+         (camera px, a thousandth of the picture), focal? (the camera's focal length in pixels of its picture, \
+         for the aspects and normals; else told by the faces' corners where the camera sees them in \
+         perspective, or assumed 1.5 times the picture's width)}",
         move |p| {
             let a: TemplateArgs = args(p)?;
             template(e.session().dir(), &a)
@@ -182,13 +185,23 @@ pub struct Surface {
     /// Corners known from the scan, and from where.
     pub corners: Option<([[f64; 2]; 4], &'static str)>,
     pub aspect: Option<[f64; 2]>,
+    /// Its normal as `scan.scene` wrote it for a face it rectified.
+    pub normal: Option<Json>,
     /// Its folder in the faces folder.
     pub folder: String,
 }
 
 impl Surface {
     fn json(&self, scene_dir: &Path) -> Json {
-        let made = scene_dir.join(FACES_FOLDER).join(&self.folder).join(UV_CAMERA).exists();
+        let folder = scene_dir.join(FACES_FOLDER).join(&self.folder);
+        let made = folder.join(UV_CAMERA).exists();
+        // The template's normal, else the one scan.scene wrote.
+        let normal = std::fs::read_to_string(folder.join(FACE_JSON))
+            .ok()
+            .and_then(|t| serde_json::from_str::<Json>(&t).ok())
+            .and_then(|j| j.get("normal").cloned())
+            .filter(|n| !n.is_null())
+            .or_else(|| self.normal.clone());
         let mut j = json!({
             "name": self.name,
             "kind": match self.kind { Kind::Face => "face", Kind::Region => "region" },
@@ -203,6 +216,9 @@ impl Surface {
             }
             if let Some(r) = self.region {
                 o.insert("region".into(), json!(r));
+            }
+            if let Some(n) = normal {
+                o.insert("normal".into(), n);
             }
         }
         j
@@ -258,6 +274,11 @@ pub fn surfaces(scene_dir: &Path) -> CmdResult<(Vec<Surface>, Vec<String>)> {
         let r = rectified.iter().find(|r| r.get("plane").and_then(Json::as_u64) == Some(u64::from(face)))?;
         Some((r.get("corners").and_then(quad)?, r.get("aspect").and_then(point)))
     };
+    // Its normal, in scene.json files that have one.
+    let normal_of = |face: u16| -> Option<Json> {
+        let r = rectified.iter().find(|r| r.get("plane").and_then(Json::as_u64) == Some(u64::from(face)))?;
+        r.get("normal").filter(|n| !n.is_null()).cloned()
+    };
     let mut out = Vec::new();
     let mut folders: Vec<String> = Vec::new();
     for r in regions.as_ref().and_then(|r| r.get("regions")).and_then(Json::as_array).into_iter().flatten() {
@@ -289,10 +310,10 @@ pub fn surfaces(scene_dir: &Path) -> CmdResult<(Vec<Surface>, Vec<String>)> {
             .unwrap_or_default();
         // A face of it that scan.scene rectified gives its corners and aspect (a lid claimed by
         // its corners), else the straight corners scan.regions found.
-        let from_scene = faces.iter().find_map(|f| rectified_face(*f));
-        let (corners, aspect) = match from_scene {
-            Some((c, a)) => (Some((c, "scan.scene")), a),
-            None => (r.get("straight").and_then(quad).map(|q| (q, "scan.regions")), None),
+        let from_scene = faces.iter().find_map(|f| rectified_face(*f).map(|r| (r, normal_of(*f))));
+        let (corners, aspect, normal) = match from_scene {
+            Some(((c, a), n)) => (Some((c, "scan.scene")), a, n),
+            None => (r.get("straight").and_then(quad).map(|q| (q, "scan.regions")), None, None),
         };
         out.push(Surface {
             name,
@@ -303,6 +324,7 @@ pub fn surfaces(scene_dir: &Path) -> CmdResult<(Vec<Surface>, Vec<String>)> {
             region: None,
             corners,
             aspect,
+            normal,
             folder,
         });
     }
@@ -321,6 +343,7 @@ pub fn surfaces(scene_dir: &Path) -> CmdResult<(Vec<Surface>, Vec<String>)> {
             region: face_region(u64::from(number)),
             corners: r.and_then(|r| r.get("corners")).and_then(quad).map(|q| (q, "scan.scene")),
             aspect: r.and_then(|r| r.get("aspect")).and_then(point),
+            normal: normal_of(number),
             folder: reference.folder(),
         });
     }
@@ -469,18 +492,7 @@ pub fn rectangle_aspect(
     width: f64,
     focal: Option<f64>,
 ) -> (f64, Option<f64>) {
-    let m = |p: [f64; 2]| [p[0] - principal[0], p[1] - principal[1], 1.0];
-    let cross = |a: [f64; 3], b: [f64; 3]| {
-        [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
-    };
-    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-    // Zhang and He's whiteboard rectification: m1 the first corner, m2 the end of the width,
-    // m3 the end of the depth, m4 the corner across.
-    let (m1, m2, m4, m3) = (m(c[0]), m(c[1]), m(c[2]), m(c[3]));
-    let k2 = dot(cross(m1, m4), m3) / dot(cross(m2, m4), m3);
-    let k3 = dot(cross(m1, m4), m2) / dot(cross(m3, m4), m2);
-    let n2 = [k2 * m2[0] - m1[0], k2 * m2[1] - m1[1], k2 * m2[2] - m1[2]];
-    let n3 = [k3 * m3[0] - m1[0], k3 * m3[1] - m1[1], k3 * m3[2] - m1[2]];
+    let (n2, n3) = rectangle_edges(c, principal);
     let ratio = |f2: f64| {
         let r = ((n2[0] * n2[0] + n2[1] * n2[1] + f2 * n2[2] * n2[2])
             / (n3[0] * n3[0] + n3[1] * n3[1] + f2 * n3[2] * n3[2]))
@@ -500,6 +512,43 @@ pub fn rectangle_aspect(
     }
     let f = ASSUMED_FOCAL * width;
     (ratio(f * f), None)
+}
+
+/// The focal length (pixels) at which a rectangle of known `aspect` (width along the first
+/// edge, depth along the last) shows the corners `c`, as in [`rectangle_aspect`]. This works
+/// also where the camera only tilts down at the rectangle, as long as one pair of its edges
+/// converges in the picture. `None` when the face is seen straight on (the aspect then does
+/// not depend on the focal length) or the result is implausible for a picture `width` wide.
+pub fn focal_from_aspect(c: [[f64; 2]; 4], principal: [f64; 2], width: f64, aspect: [f64; 2]) -> Option<f64> {
+    let (n2, n3) = rectangle_edges(c, principal);
+    let r2 = (aspect[0] / aspect[1]).powi(2);
+    if !(r2.is_finite() && r2 > 0.0) || n2[2].abs().max(n3[2].abs()) < 0.02 {
+        return None;
+    }
+    let f2 = (n2[0] * n2[0] + n2[1] * n2[1] - r2 * (n3[0] * n3[0] + n3[1] * n3[1]))
+        / (r2 * n3[2] * n3[2] - n2[2] * n2[2]);
+    let f = f2.sqrt();
+    (f2.is_finite() && f2 > 0.0 && ((0.2 * width)..=(20.0 * width)).contains(&f)).then_some(f)
+}
+
+/// Zhang and He's whiteboard rectification: the rectangle's width and depth edges in camera
+/// space, up to scale, for its corners `c` (far left first, clockwise) seen by a camera with
+/// square pixels and its principal point at `principal`. x and y in pixels, z in units of the
+/// focal length.
+fn rectangle_edges(c: [[f64; 2]; 4], principal: [f64; 2]) -> ([f64; 3], [f64; 3]) {
+    let m = |p: [f64; 2]| [p[0] - principal[0], p[1] - principal[1], 1.0];
+    let cross = |a: [f64; 3], b: [f64; 3]| {
+        [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+    };
+    let dot = |a: [f64; 3], b: [f64; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    // Zhang and He's whiteboard rectification: m1 the first corner, m2 the end of the width,
+    // m3 the end of the depth, m4 the corner across.
+    let (m1, m2, m4, m3) = (m(c[0]), m(c[1]), m(c[2]), m(c[3]));
+    let k2 = dot(cross(m1, m4), m3) / dot(cross(m2, m4), m3);
+    let k3 = dot(cross(m1, m4), m2) / dot(cross(m3, m4), m2);
+    let n2 = [k2 * m2[0] - m1[0], k2 * m2[1] - m1[1], k2 * m2[2] - m1[2]];
+    let n3 = [k3 * m3[0] - m1[0], k3 * m3[1] - m1[1], k3 * m3[2] - m1[2]];
+    (n2, n3)
 }
 
 /// Bilinear sample of an RGBA picture at pixel position `p` (centres at .5), edges held.
@@ -647,13 +696,19 @@ pub fn template(dir: &Path, a: &TemplateArgs) -> CmdResult<Json> {
     }
     told.sort_by(f64::total_cmp);
     let focal = match (a.focal, told.get(told.len() / 2)) {
-        (Some(px), _) => Focal { px, from: "given", given: true },
-        (None, Some(px)) => {
-            Focal { px: *px, from: "estimated with the focal length other faces tell", given: false }
-        }
-        (None, None) => {
-            Focal { px: ASSUMED_FOCAL * cw as f64, from: "estimated, focal length assumed", given: false }
-        }
+        (Some(px), _) => Focal { px, from: "given", given: true, normal_from: "given" },
+        (None, Some(px)) => Focal {
+            px: *px,
+            from: "estimated with the focal length other faces tell",
+            given: false,
+            normal_from: "told by other faces' corners",
+        },
+        (None, None) => Focal {
+            px: ASSUMED_FOCAL * cw as f64,
+            from: "estimated, focal length assumed",
+            given: false,
+            normal_from: "assumed, 1.5 times the camera's width",
+        },
     };
     let mut written = Vec::new();
     for ((s, aspect, _), f) in picks.iter().zip(&frames) {
@@ -805,6 +860,8 @@ pub struct Focal {
     pub from: &'static str,
     /// Given: used for every face, also where the corners would tell one.
     pub given: bool,
+    /// Where it comes from, for a face's normal.
+    pub normal_from: &'static str,
 }
 
 /// One face's folder: its template, mask and maps.
@@ -843,6 +900,25 @@ fn face(
             }
         },
         (None, None) => (frame.bounds, "the camera's picture", None),
+    };
+    // The normal: with the focal length this face's corners tell (with its aspect where that is
+    // known), else the call's.
+    let known_aspect = matches!(aspect_from, "given" | "scan.scene");
+    let own_focal = if rectified && !focal.given {
+        rectangle_aspect(frame_corners, principal, cw as f64, None).1.or_else(|| {
+            known_aspect.then(|| focal_from_aspect(frame_corners, principal, cw as f64, aspect)).flatten()
+        })
+    } else {
+        None
+    };
+    let normal = if rectified {
+        let (f, from) = own_focal.map_or((focal.px, focal.normal_from), |f| (f, "told by its corners"));
+        let middle = from_face.apply([0.5, 0.5]).unwrap_or(principal);
+        to_face.plane_normal(f, principal, middle).map(|n| {
+            json!({"camera": n.map(|v| (v * 1e6).round() / 1e6), "focal_px": f.round(), "focal_from": from})
+        })
+    } else {
+        None
     };
     let focal = focal_used;
     let ratio = aspect[0] / aspect[1];
@@ -938,9 +1014,12 @@ fn face(
         if face_map.is_none() {
             warnings.push(format!("projector {p} does not light it (its uv map is empty)"));
         }
+        let rows = |h: &Homography| h.rows().map(|r| r.map(|v| (v * 1e12).round() / 1e12));
         projectors.push(json!({
             "uv": file,
             "lit": face_map.is_some(),
+            "projector_to_camera": fit.map(|f| rows(&f.homography)),
+            "projector_to_uv": fit.map(|f| rows(&to_face.after(&f.homography))),
             "fit": match (fit, &face_map) {
                 (Some(f), Some(m)) => json!({"pixels": f.pixels, "error_px": round(f.error_px), "corrected": m.corrected()}),
                 _ => Json::Null,
@@ -1043,7 +1122,7 @@ fn face(
     let mask_file = write_file(&folder.join(MASK), penumbra_gpu::image::encode_png_gray8(tw, th, mask)?)?;
     let guide_file = write_file(&folder.join(GUIDE), penumbra_gpu::encode_png_rgba8(tw, th, guide)?)?;
 
-    let rows = |h: &Homography| h.rows().map(|r| r.map(|v| (v * 1e9).round() / 1e9));
+    let rows = |h: &Homography| h.rows().map(|r| r.map(|v| (v * 1e12).round() / 1e12));
     let j = json!({
         "name": s.name,
         "kind": match s.kind { Kind::Face => "face", Kind::Region => "region" },
@@ -1059,6 +1138,8 @@ fn face(
         "frame_note": frame.note,
         "camera_pixels": pixels.len(),
         "camera_to_uv": rows(&to_face),
+        "uv_to_camera": rows(&from_face),
+        "normal": normal,
         "files": {"template": guide_file, "mask": mask_file, "uv": uv_png, "uv_camera": uv_camera},
         "projectors": projectors,
         "deliver": format!("{tw} x {th} pixels, or any size of aspect {}:{}", round(aspect[0]), round(aspect[1])),
@@ -1098,6 +1179,21 @@ mod tests {
         let (r, focal) = rectangle_aspect(c, [cx, cy], 1280.0, None);
         assert!((r - 1.5).abs() < 1e-6, "{r}");
         assert!((focal.unwrap() - f).abs() < 1e-3, "{focal:?}");
+        assert!((focal_from_aspect(c, [cx, cy], 1280.0, [w, h]).unwrap() - f).abs() < 1e-3);
+        // Only tilted: the corners alone do not tell the focal length, with the aspect they do.
+        let tilted = |x: f64, y: f64| {
+            let (y1, z1) = (y * a.cos(), y * a.sin() + 4.0);
+            [cx + f * x / z1, cy + f * y1 / z1]
+        };
+        let c = [
+            tilted(-w / 2.0, -h / 2.0),
+            tilted(w / 2.0, -h / 2.0),
+            tilted(w / 2.0, h / 2.0),
+            tilted(-w / 2.0, h / 2.0),
+        ];
+        assert!(rectangle_aspect(c, [cx, cy], 1280.0, None).1.is_none());
+        let told = focal_from_aspect(c, [cx, cy], 1280.0, [60.0, 40.0]).unwrap();
+        assert!((told - f).abs() < 1e-3, "{told}");
         // Seen head on: no focal length, the aspect from the sides.
         let flat = [[100.0, 100.0], [400.0, 100.0], [400.0, 300.0], [100.0, 300.0]];
         let (r, focal) = rectangle_aspect(flat, [cx, cy], 1280.0, None);

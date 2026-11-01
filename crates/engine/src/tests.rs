@@ -1833,6 +1833,78 @@ fn scene_planes_top_and_heights_from_two_scans() {
     }
     assert!(checked > 1000, "{checked} top pixels with u and v");
     let _ = (map, pw);
+    // Plane data per face: projector 0's plane fit of the top takes its pixels to where the
+    // camera sees them, and back.
+    let rows = |j: &Json| {
+        let r: Vec<Vec<f64>> = serde_json::from_value(j.clone()).unwrap();
+        penumbra_calib::Homography::from_rows([
+            [r[0][0], r[0][1], r[0][2]],
+            [r[1][0], r[1][1], r[1][2]],
+            [r[2][0], r[2][1], r[2][2]],
+        ])
+    };
+    assert!(r["coordinates"].as_str().unwrap().contains("camera px"), "{r}");
+    let top = &r["planes"][1];
+    let to_camera = rows(&top["projector_to_camera"][0]);
+    let from_camera = rows(&top["camera_to_projector"][0]);
+    let mut errors = Vec::new();
+    for (i, t) in truth.iter().enumerate() {
+        let Some((penumbra_calib::synthetic::Surface::Top, pt)) = t else { continue };
+        let at = [(i % pw) as f64 + 0.5, (i / pw) as f64 + 0.5];
+        let (Some(c), Some(want)) = (to_camera.apply(at), room.camera_point(*pt)) else { continue };
+        errors.push((c[0] - want[0]).hypot(c[1] - want[1]));
+        let back = from_camera.apply(c).unwrap();
+        assert!((back[0] - at[0]).hypot(back[1] - at[1]) < 1e-6, "{at:?} {back:?}");
+    }
+    errors.sort_by(f64::total_cmp);
+    assert!(errors.len() > 1000 && errors[errors.len() / 2] < 0.5, "{}", errors[errors.len() / 2]);
+    // The rectified top: uv to camera and to the projectors, and its normal.
+    let face = &r["rectified"][0];
+    let middle = rows(&face["uv_to_camera"]).apply([0.5, 0.5]).unwrap();
+    let want = room.camera_point(room.top_point(0, 0.5, 0.5)).unwrap();
+    // As close as the corners it comes from (within 1.5 px each).
+    assert!((middle[0] - want[0]).hypot(middle[1] - want[1]) < 2.5, "{middle:?} vs {want:?}");
+    let in_projector = rows(&face["uv_to_projector"][0]).apply([0.5, 0.5]).unwrap();
+    let back = to_camera.apply(in_projector).unwrap();
+    assert!((back[0] - middle[0]).hypot(back[1] - middle[1]) < 1e-6, "{back:?} vs {middle:?}");
+    // The camera only tilts down at the crate, so the top's corners tell the focal length only
+    // with its aspect (60:40).
+    assert_eq!(face["normal"]["focal_from"], "told by the rectified faces' corners and aspects", "{r}");
+    let told = face["normal"]["focal_px"].as_f64().unwrap();
+    assert!((told - room.focal).abs() < 20.0, "{told}");
+    // The top's normal is up in the room; in the camera's frame (x right, y down, z forward):
+    let (fw, up) = {
+        let f = [room.target[0] - room.eye[0], room.target[1] - room.eye[1], room.target[2] - room.eye[2]];
+        let l = (f[0] * f[0] + f[1] * f[1] + f[2] * f[2]).sqrt();
+        (f.map(|v| v / l), [0.0, 1.0, 0.0])
+    };
+    let right = {
+        let c = [up[1] * fw[2] - up[2] * fw[1], up[2] * fw[0] - up[0] * fw[2], up[0] * fw[1] - up[1] * fw[0]];
+        let l = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt();
+        c.map(|v| v / l)
+    };
+    let down = [
+        right[1] * fw[2] - right[2] * fw[1],
+        right[2] * fw[0] - right[0] * fw[2],
+        right[0] * fw[1] - right[1] * fw[0],
+    ];
+    let in_camera = |n: [f64; 3]| {
+        let dot = |a: [f64; 3]| a[0] * n[0] + a[1] * n[1] + a[2] * n[2];
+        [dot(right), dot(down), dot(fw)]
+    };
+    let angle = |got: &Json, want: [f64; 3]| {
+        let g: Vec<f64> = serde_json::from_value(got.clone()).unwrap();
+        let cos = g[0] * want[0] + g[1] * want[1] + g[2] * want[2];
+        cos.clamp(-1.0, 1.0).acos().to_degrees()
+    };
+    let off = angle(&face["normal"]["camera"], in_camera(up));
+    assert!(off < 2.0, "{off} degrees: {}", face["normal"]);
+    let r = f.call("scan.scene", json!({"scans": ["a", "b"], "min_object": 500, "focal": room.focal}));
+    let face = &r["rectified"][0];
+    assert_eq!(face["normal"]["focal_from"], "given", "{r}");
+    let off = angle(&face["normal"]["camera"], in_camera(up));
+    assert!(off < 2.0, "{off} degrees: {}", face["normal"]);
+    assert!(f.fail("scan.scene", json!({"scans": ["a"], "focal": -1})).contains("focal"));
     // Heights: the ball's top high, its rim on the crate low; mask on the ball.
     let p0 = &r["projectors"][0]["heights"];
     assert_eq!(p0["sign"]["heuristic"]["by"], "planes below", "{r}");
@@ -1982,6 +2054,15 @@ fn a_face_gets_a_template_and_content_delivered_for_it_lands_on_it() {
     }
     assert!(f.fail("scan.faces", json!({})).contains("scan.scene"));
     f.call("scan.scene", json!({"scans": ["a", "b"], "min_object": 500, "rectify": []}));
+    // A scene.json from before the plane data reads as well: take it out again.
+    let file = dir.join("scene/scene.json");
+    let mut scene: Json = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+    scene.as_object_mut().unwrap().remove("coordinates");
+    for p in scene["planes"].as_array_mut().unwrap() {
+        let p = p.as_object_mut().unwrap();
+        assert!(p.remove("projector_to_camera").is_some() && p.remove("camera_to_projector").is_some());
+    }
+    std::fs::write(&file, serde_json::to_vec_pretty(&scene).unwrap()).unwrap();
     // Wall, top, front, floor.
     let r = f.call("scan.faces", json!({}));
     let names: Vec<&str> =
@@ -2006,7 +2087,44 @@ fn a_face_gets_a_template_and_content_delivered_for_it_lands_on_it() {
         assert!(dir.join("scene/faces/face_2").join(file).exists(), "{file}");
     }
     assert!(dir.join("scene/faces/faces.json").exists());
-    assert_eq!(f.call("scan.faces", json!({}))["faces"][1]["template"], true);
+    let listed = f.call("scan.faces", json!({}));
+    assert_eq!(listed["faces"][1]["template"], true);
+    // Normals in the camera's frame: the top's up in the room, the front's towards the camera.
+    // The camera looks along +z of the room, tilted down; its frame is x right, y down, z forward.
+    let fw = {
+        let f = [room.target[0] - room.eye[0], room.target[1] - room.eye[1], room.target[2] - room.eye[2]];
+        let l = (f[0] * f[0] + f[1] * f[1] + f[2] * f[2]).sqrt();
+        f.map(|v| v / l)
+    };
+    // The right is the room's x; down = right x forward.
+    let down = [0.0, -fw[2], fw[1]];
+    let in_camera = |n: [f64; 3]| {
+        let dot = |a: [f64; 3]| a[0] * n[0] + a[1] * n[1] + a[2] * n[2];
+        [dot([1.0, 0.0, 0.0]), dot(down), dot(fw)]
+    };
+    for (face, room_normal) in [(top, [0.0, 1.0, 0.0]), (&r["faces"][1], [0.0, 0.0, -1.0])] {
+        let n: Vec<f64> = serde_json::from_value(face["normal"]["camera"].clone()).unwrap();
+        let want = in_camera(room_normal);
+        let off = (n[0] * want[0] + n[1] * want[1] + n[2] * want[2]).clamp(-1.0, 1.0).acos().to_degrees();
+        assert!(off < 3.0, "{}: {off} degrees, {n:?} vs {want:?}", face["name"]);
+        assert_eq!(face["normal"]["focal_from"], "given");
+    }
+    assert_eq!(listed["faces"][1]["normal"], top["normal"], "{listed}");
+    // Each projector's plane fit takes the face's middle to the same camera pixel.
+    let rows = |j: &Json| {
+        let r: Vec<Vec<f64>> = serde_json::from_value(j.clone()).unwrap();
+        penumbra_calib::Homography::from_rows([
+            [r[0][0], r[0][1], r[0][2]],
+            [r[1][0], r[1][1], r[1][2]],
+            [r[2][0], r[2][1], r[2][2]],
+        ])
+    };
+    let middle = rows(&top["uv_to_camera"]).apply([0.5, 0.5]).unwrap();
+    for p in top["projectors"].as_array().unwrap() {
+        let in_projector = rows(&p["projector_to_uv"]).inverse().unwrap().apply([0.5, 0.5]).unwrap();
+        let c = rows(&p["projector_to_camera"]).apply(in_projector).unwrap();
+        assert!((c[0] - middle[0]).hypot(c[1] - middle[1]) < 1e-6, "{c:?} vs {middle:?}");
+    }
     // The mask: the ball stands on the top, so part of it is grey; most of it white.
     let mask = penumbra_gpu::image::decode_file_raw(&dir.join("scene/faces/face_2/mask.png"), 8192, 1 << 24)
         .unwrap();

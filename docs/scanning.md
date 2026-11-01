@@ -487,6 +487,30 @@ that changed; `scene_view.png` draws the straight runs (fitted cyan, meeting lin
 
 Everything the reply holds is also written to `scene.json`.
 
+**Plane data per face.** `scene.json` holds what content needs to place itself on a face without
+a new computation. Its `coordinates` entry names the frames.
+
+- `planes[].projector_to_camera`, one per projector: the face's plane fit, a homography from the
+  projector's pixels to the camera's. `camera_to_projector` goes back. `null` where a projector
+  does not see the face.
+- `rectified[].camera_to_uv`, `uv_to_camera`, `projector_to_uv`, `uv_to_projector`: between the
+  pixels and the face's own u and v (0 to 1 along its outline's first and last edge).
+- `rectified[].normal.camera`: the face's direction as a unit vector in the camera's frame (x
+  right, y down, z away from the camera), turned to the camera. A crate's top seen from above
+  reads about `[0, -0.96, -0.29]`.
+
+A homography is three rows of three numbers. It takes the pixel (x, y) to ((a x + b y + c) / w,
+(d x + e y + f) / w) with w = g x + h y + i. Pixels count from the top left corner, a pixel's
+centre at +0.5.
+
+The normal needs the camera's focal length in pixels. Give it with `focal` when it is known.
+Without it, the rectified faces' corners tell it: a face seen at an angle from the side by its
+corners alone, a face the camera only tilts down at by its corners and its aspect. Else it is
+assumed 1.5 times the picture's width. `normal.focal_from` says which, `focal_px` the value. The
+normal is right only when the outline is a rectangle on the real face. Faces that are not
+rectified get no normal: without the camera's and the projectors' lenses a plane fit alone does
+not tell one.
+
 **Trying it without a scan.** `scan.synthetic` writes the scans of a made-up room, ray cast,
 in the same files `scan.decode` writes: by default a landscape of five Euro crates with a
 ribbed pumpkin on one of them, two full HD projectors left and right of a full HD camera, and
@@ -744,7 +768,7 @@ puts the delivered clip back onto that face.
 **The faces.** `scan.faces` lists the faces of a scene by the names the commands and the node
 take. A region of `scan.regions` goes by its name ("pumpkin crate, lid"), or by `region 3`
 when it has none. A face of `scan.scene` goes by `face 7`, or just `7`. Region names survive a
-rescan; face numbers change with every one.
+rescan; face numbers change with every one. A rectified face also gets its `normal`.
 
     penumbra-cli ctl scan.faces
 
@@ -757,7 +781,7 @@ rescan; face numbers change with every one.
 |---|---|
 | `template.png` | the frame to paint in: the camera's photo of the face, the area outside it dimmed, its edge yellow, objects in front of it hatched, a grid in true squares |
 | `mask.png` | the same frame: white the face, grey an object in front of it, black not the face |
-| `face.json` | name, `size` in pixels, `aspect`, and how the frame was found |
+| `face.json` | name, `size` in pixels, `aspect`, and how the frame was found; `camera_to_uv` and `uv_to_camera`, per projector `projector_to_camera` and `projector_to_uv`, and for a rectified face its `normal`, all as in `scene.json` (see "Plane data per face") |
 | `uv.png` | the face in the camera's picture (16-bit: red u, green v, blue 1 on the face), to preview a delivery on the photo in any tool that remaps by uv |
 | `uv_camera.exr`, `uv_N.exr` | the maps `tex.face_content` reads |
 

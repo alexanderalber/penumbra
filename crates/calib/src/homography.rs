@@ -259,6 +259,29 @@ impl Homography {
         Self::scaled(self.m * first.m).unwrap_or(Homography { m: self.m * first.m })
     }
 
+    /// The unit normal of the plane this homography maps onto its own coordinates (camera
+    /// pixels to any affine frame of the plane, such as u and v along a rectangle's edges), in
+    /// the camera's frame: x right, y down, z forward. For a pinhole camera with square pixels,
+    /// focal length `focal` and principal point `principal`, both in pixels. Only the image of
+    /// the plane's line at infinity counts (the third row, `l`): the normal is `K^T l`. Turned
+    /// to face the camera along the ray through camera pixel `at`. `None` for a focal length
+    /// that is not positive or a homography without a line at infinity.
+    pub fn plane_normal(&self, focal: f64, principal: [f64; 2], at: [f64; 2]) -> Option<[f64; 3]> {
+        if !(focal.is_finite() && focal > 0.0) {
+            return None;
+        }
+        let [_, _, l] = self.rows();
+        let n = [focal * l[0], focal * l[1], principal[0] * l[0] + principal[1] * l[1] + l[2]];
+        let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+        if !(length.is_finite() && length > 0.0) {
+            return None;
+        }
+        let ray = [(at[0] - principal[0]) / focal, (at[1] - principal[1]) / focal, 1.0];
+        let facing = n[0] * ray[0] + n[1] * ray[1] + n[2] * ray[2];
+        let sign = if facing > 0.0 { -1.0 } else { 1.0 };
+        Some(n.map(|v| sign * v / length))
+    }
+
     /// Root mean square distance between `H(from)` and `to` over `pairs`; infinite when a point
     /// maps to infinity.
     pub fn rms_error(&self, pairs: &[([f64; 2], [f64; 2])]) -> f64 {
@@ -541,5 +564,42 @@ mod tests {
         assert!(Homography::fit_robust(&from, &to[..5], 1.0).is_err());
         let line: Vec<[f64; 2]> = (0..10).map(|k| [f64::from(k), 0.0]).collect();
         assert!(Homography::fit_robust(&line, &line, 1.0).is_err());
+    }
+
+    #[test]
+    fn a_plane_seen_at_an_angle_gives_back_its_normal() {
+        let (f, c) = (800.0, [640.0, 360.0]);
+        // A plane turned by a about y and tilted by b, 5 m away; e1 and e2 orthonormal on it.
+        let (a, b) = (0.6f64, -0.4f64);
+        let e1 = [a.cos(), 0.0, a.sin()];
+        let e2 = [-a.sin() * b.sin(), b.cos(), a.cos() * b.sin()];
+        let o = [0.2, -0.1, 5.0];
+        let project = |u: f64, v: f64| {
+            let p: Vec<f64> = (0..3).map(|k| o[k] + u * e1[k] + v * e2[k]).collect();
+            [c[0] + f * p[0] / p[2], c[1] + f * p[1] / p[2]]
+        };
+        // u and v over a 2 x 1 rectangle, so the frame is the plane's only up to scale.
+        let quad = [project(0.0, 0.0), project(2.0, 0.0), project(2.0, 1.0), project(0.0, 1.0)];
+        let to_plane = Homography::square_to_quad(quad).unwrap().inverse().unwrap();
+        let n = to_plane.plane_normal(f, c, project(1.0, 0.5)).unwrap();
+        let mut want =
+            [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+        // Facing the camera, which sits at the origin.
+        let centre: Vec<f64> = (0..3).map(|k| o[k] + e1[k] + 0.5 * e2[k]).collect();
+        if want.iter().zip(&centre).map(|(w, p)| w * p).sum::<f64>() > 0.0 {
+            want = want.map(|v| -v);
+        }
+        for k in 0..3 {
+            assert!((n[k] - want[k]).abs() < 1e-9, "{n:?} vs {want:?}");
+        }
+        // Seen straight on: towards the camera whatever the focal length.
+        let flat =
+            Homography::square_to_quad([[100.0, 100.0], [400.0, 100.0], [400.0, 300.0], [100.0, 300.0]])
+                .unwrap()
+                .inverse()
+                .unwrap();
+        let n = flat.plane_normal(1234.0, c, [250.0, 200.0]).unwrap();
+        assert!(n[0].abs() < 1e-12 && n[1].abs() < 1e-12 && (n[2] + 1.0).abs() < 1e-12, "{n:?}");
+        assert!(flat.plane_normal(0.0, c, c).is_none());
     }
 }

@@ -88,7 +88,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          height_N.exr and mask_N.png (the objects' height over the support, as scan.relief writes them); in camera \
          space planes_camera.png, objects_camera.png, uv_K_camera.exr, height_camera.exr and \
          scene_view.png (with the rectified faces' outlines and a grid in true squares); scene.json (the \
-         reply). {scans: [folder, ...], out? (folder, scene), rectify? ([{plane?, aspect: [width, depth], \
+         reply: per face its plane fit in each projector, projector_to_camera and camera_to_projector; per \
+         rectified face its homographies between camera, projectors and uv and its normal in the camera's \
+         frame; `coordinates` names the frames). {scans: [folder, ...], out? (folder, scene), rectify? ([{plane?, aspect: [width, depth], \
          corners? ([[x, y] x 4] camera px, instead of finding them; without plane they give the face: the \
          plane most pixels inside lie on, taken from the faces and objects it was split into, also where \
          it sags a little)}, ...], else the support at 60:40), \
@@ -99,7 +101,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          projector), erode? (projector px the light mask shrinks, 2), straight? (straight borders in \
          planes_camera.png and planes_N.png, true; planes_camera_measured.png keeps the measured ones), \
          straight_tolerance? (camera px nine tenths of a measured border may lie off its line, 2), \
-         straight_length? (shortest straight border, px, 16)}",
+         straight_length? (shortest straight border, px, 16), focal? (the camera's focal length in pixels \
+         of its picture, for the normals; else told by the rectified faces' corners, or assumed 1.5 times the \
+         picture's width)}",
         move |p| {
             let a: SceneArgs = args(p)?;
             run(e.session().dir(), &a)
@@ -124,6 +128,7 @@ pub struct SceneArgs {
     pub straight: Option<bool>,
     pub straight_tolerance: Option<f64>,
     pub straight_length: Option<f64>,
+    pub focal: Option<f64>,
 }
 
 /// The support: a plane number, or `"rectified"` for the first face in `rectify`.
@@ -253,8 +258,32 @@ fn renumbering(before: &[Vec<u16>], after: &[Parts], counts: &[usize]) -> Vec<Ve
         .collect()
 }
 
+/// What the numbers in `scene.json` are measured in, written into it.
+const COORDINATES: &str = "camera px and projector px: x right, y down, from the picture's top left corner, a \
+     pixel's centre at +0.5. uv: a rectified face's own frame, u along its outline's first edge and v along its \
+     last, 0 to 1 over the face. A homography is three rows [[a, b, c], [d, e, f], [g, h, i]] that take (x, y) to \
+     ((a x + b y + c) / (g x + h y + i), (d x + e y + f) / (g x + h y + i)). planes[].projector_to_camera, one \
+     per projector (null where it does not see the face), is the face's plane fit; rectified[].camera_to_uv and \
+     the others go between the frames their names say. rectified[].normal.camera: the face's unit normal in the \
+     camera's frame (x right, y down, z away from the camera, turned to the camera), from the perspective of its \
+     outline with the focal length focal_px; right when the outline is a rectangle (or a parallelogram) on the \
+     real face.";
+
+/// A rectified face's normal in the camera's frame, seen at the middle of the face.
+fn normal_json(to_face: &Homography, focal: f64, from: &str, principal: [f64; 2]) -> Json {
+    let middle = to_face.inverse().and_then(|h| h.apply([0.5, 0.5])).unwrap_or(principal);
+    match to_face.plane_normal(focal, principal, middle) {
+        Some(n) => json!({
+            "camera": n.map(|v| (v * 1e6).round() / 1e6),
+            "focal_px": focal.round(),
+            "focal_from": from,
+        }),
+        None => Json::Null,
+    }
+}
+
 fn rows_json(h: &Homography) -> Json {
-    json!(h.rows().map(|r| r.map(|v| (v * 1e9).round() / 1e9)))
+    json!(h.rows().map(|r| r.map(|v| (v * 1e12).round() / 1e12)))
 }
 
 /// Runs `scan.scene` over the scans of `a` (paths relative to `dir`).
@@ -289,6 +318,9 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
         if r.corners.is_some_and(|c| c.iter().flatten().any(|v| !v.is_finite())) {
             return Err("a face's `corners` are four [x, y] pairs of numbers".into());
         }
+    }
+    if a.focal.is_some_and(|f| !(f.is_finite() && f > 0.0 && f < 1e6)) {
+        return Err("`focal` is the camera's focal length in pixels, a positive number".into());
     }
     let asked = sign(a.sign.as_ref())?;
     let kind = a.scale.unwrap_or_default();
@@ -730,6 +762,26 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
         draw_outline(&mut picture, cw, ch, &r.corners, r.aspect);
     }
     let view_file = write(SCENE_VIEW, penumbra_gpu::encode_png_rgba8(cwu, chu, picture)?)?;
+    // The focal length the rectified faces' normals are computed with: given, else the median
+    // of what their corners tell (seen at an angle from the side, else with their aspect), else
+    // assumed.
+    let principal = [cw as f64 / 2.0, ch as f64 / 2.0];
+    let mut told: Vec<f64> = rectified
+        .iter()
+        .filter_map(|r| {
+            crate::scan_faces::rectangle_aspect(r.corners, principal, cw as f64, None)
+                .1
+                .or_else(|| crate::scan_faces::focal_from_aspect(r.corners, principal, cw as f64, r.aspect))
+        })
+        .collect();
+    told.sort_by(f64::total_cmp);
+    let (focal, focal_from) = match (a.focal, told.get(told.len() / 2)) {
+        (Some(f), _) => (f, "given"),
+        (None, Some(f)) => (*f, "told by the rectified faces' corners and aspects"),
+        (None, None) => {
+            (crate::scan_faces::ASSUMED_FOCAL * cw as f64, "assumed, 1.5 times the camera's width")
+        }
+    };
     let mut faces_json = Vec::new();
     for r in &rectified {
         let rgba: Vec<[f32; 4]> = (0..cw * ch)
@@ -758,7 +810,10 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
             "edge_points": r.outline.as_ref().map(|o| o.edges.map(|e| e.points)),
             "border_points": r.outline.as_ref().map(|o| o.border),
             "camera_to_uv": rows_json(&r.to_face),
+            "uv_to_camera": r.to_face.inverse().map_or(Json::Null, |h| rows_json(&h)),
             "projector_to_uv": r.projectors.iter().map(|m| m.as_ref().map_or(Json::Null, |m| rows_json(&r.to_face.after(&m.homography)))).collect::<Vec<_>>(),
+            "uv_to_projector": r.projectors.iter().map(|m| m.as_ref().and_then(|m| r.to_face.after(&m.homography).inverse()).map_or(Json::Null, |h| rows_json(&h))).collect::<Vec<_>>(),
+            "normal": normal_json(&r.to_face, focal, focal_from, principal),
             "projector_fit": r.projectors.iter().map(|m| m.as_ref().map_or(Json::Null, |m| json!({
                 "pixels": m.pixels,
                 "error_px": {"plane": round(m.error_px[0]), "corrected": round(m.error_px[1])},
@@ -807,8 +862,16 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
                         .map_or(Json::Null, |pl| json!([round(pl.error_px[0]), round(pl.error_px[1])]))
                 })
                 .collect();
+            let to_camera_rows: Vec<Json> = (0..found.len())
+                .map(|p| homography(p, label).map_or(Json::Null, |h| rows_json(&h)))
+                .collect();
+            let from_camera_rows: Vec<Json> = (0..found.len())
+                .map(|p| homography(p, label).and_then(|h| h.inverse()).map_or(Json::Null, |h| rows_json(&h)))
+                .collect();
             json!({
                 "plane": k,
+                "projector_to_camera": to_camera_rows,
+                "camera_to_projector": from_camera_rows,
                 "camera_y": planes_found.camera_y.get(k - 1).map(|y| y.round()),
                 "camera_pixels": planes_camera.iter().filter(|l| **l == label).count(),
                 "pixels": pixels,
@@ -849,6 +912,7 @@ pub fn run(dir: &Path, a: &SceneArgs) -> CmdResult<Json> {
     let reply = json!({
         "message": message,
         "camera": [cw, ch],
+        "coordinates": COORDINATES,
         "planes": plane_list,
         "objects": object_list,
         "support": support.map(|(s, by)| json!({"plane": s, "by": by})),
