@@ -206,7 +206,7 @@ fn a_websocket_round_trip_with_published_channels_and_controls() {
     let (hub, _osc, port) = hub_on_any_port(Params::Controls, Config::default());
     hub.set_controls(std::sync::Arc::new(|| json!([{"path": "/fader", "value": 0.5}])));
     let publisher = hub.publisher(0);
-    publisher.set(None, vec![("lfo".into(), 0.3)]);
+    publisher.set(None, true, vec![("lfo".into(), 0.3)]);
     let mut ws = ws_connect(port);
     let first = ws_until(&mut ws, "the first state", |_| true);
     assert_eq!(first["chans"]["lfo"], 0.3);
@@ -214,7 +214,7 @@ fn a_websocket_round_trip_with_published_channels_and_controls() {
     ws.write_all(&client_frame(1, br#"{"/slider": 0.75}"#)).unwrap();
     let v = ws_until(&mut ws, "the echo", |v| v["in"]["/slider"] == 0.75);
     assert_eq!(v["chans"]["lfo"], 0.3);
-    publisher.set(None, vec![("lfo".into(), 0.6)]);
+    publisher.set(None, true, vec![("lfo".into(), 0.6)]);
     ws_until(&mut ws, "the new channel value", |v| v["chans"]["lfo"] == 0.6);
     // An error comes back as a message; the connection stays.
     ws.write_all(&client_frame(1, b"{not json")).unwrap();
@@ -260,7 +260,7 @@ fn files_from_the_folder_and_nothing_else() {
     let (hub, _osc, port) = hub_on_any_port(Params::Off, Config::default());
     assert!(get(port, "/").contains("404"), "no folder published yet");
     let publisher = hub.publisher(0);
-    publisher.set(Some(www.clone()), Vec::new());
+    publisher.set(Some(www.clone()), true, Vec::new());
     let r = get(port, "/");
     assert!(status_line(&r).contains("200"), "{r}");
     assert!(r.contains("Content-Type: text/html"), "{r}");
@@ -464,5 +464,153 @@ fn switching_off_closes_and_wants_merge() {
     assert!(hub.listener(0).is_some());
     hub.set_wanted(&[]);
     assert!(hub.read(0).is_none());
+    hub.shutdown();
+}
+
+/// Records what a page presses: (key, holder, down) per call, taps as down and up.
+#[derive(Default)]
+struct Recorder(std::sync::Mutex<Vec<(u64, u64, bool)>>);
+
+impl penumbra_http::hub::Presser for Recorder {
+    fn find(&self, path: &str, any: bool) -> Result<u64, String> {
+        match path {
+            "/go" => Ok(1),
+            "/stop" => Ok(2),
+            "/hidden" if any => Ok(3),
+            "/hidden" => Err("not flagged `show`".into()),
+            _ => Err(format!("no node at {path}")),
+        }
+    }
+
+    fn hold(&self, key: u64, holder: u64, down: bool) {
+        self.0.lock().unwrap().push((key, holder, down));
+    }
+
+    fn tap(&self, key: u64, holder: u64) {
+        self.hold(key, holder, true);
+        self.hold(key, holder, false);
+    }
+}
+
+impl Recorder {
+    /// Whether `key` is held now, by anyone, from the calls so far.
+    fn held(&self, key: u64) -> bool {
+        let calls = self.0.lock().unwrap();
+        let mut holders = std::collections::BTreeSet::new();
+        for (k, h, down) in calls.iter().filter(|(k, _, _)| *k == key) {
+            let _ = k;
+            if *down {
+                holders.insert(*h);
+            } else {
+                holders.remove(h);
+            }
+        }
+        !holders.is_empty()
+    }
+
+    fn downs(&self, key: u64) -> usize {
+        self.0.lock().unwrap().iter().filter(|(k, _, d)| *k == key && *d).count()
+    }
+}
+
+#[test]
+fn the_built_in_page_answers_where_the_folder_has_none_and_can_be_switched_off() {
+    let dir = ScratchDir::new("http_hub_page").unwrap();
+    let www = dir.path().join("www");
+    std::fs::create_dir_all(&www).unwrap();
+    let (hub, _osc, port) = hub_on_any_port(Params::Controls, Config::default());
+    let publisher = hub.publisher(0);
+    publisher.set(Some(www.clone()), true, Vec::new());
+    let r = get(port, "/");
+    assert!(status_line(&r).contains("200"), "{r}");
+    assert!(r.contains("Content-Type: text/html"), "{r}");
+    assert!(body(&r).contains("penumbra controls"), "the built-in page");
+    assert!(get(port, "/index.html").contains("penumbra controls"));
+    assert!(get(port, "/other.html").contains("404"), "only / gets the built-in page");
+    // Switched off: 404 as before.
+    publisher.set(Some(www.clone()), false, Vec::new());
+    assert!(status_line(&get(port, "/")).contains("404"));
+    // A second node on the port that keeps it on does not switch it back on.
+    let second = hub.publisher(0);
+    second.set(None, true, Vec::new());
+    assert!(status_line(&get(port, "/")).contains("404"), "one node switched off is enough");
+    drop(second);
+    // An empty folder param with the page on: the page still answers.
+    publisher.set(None, true, Vec::new());
+    assert!(body(&get(port, "/")).contains("penumbra controls"));
+    // A page of the project's own wins.
+    publisher.set(Some(www.clone()), true, Vec::new());
+    std::fs::write(www.join("index.html"), "<p>own</p>").unwrap();
+    assert_eq!(body(&get(port, "/")), "<p>own</p>");
+    hub.shutdown();
+}
+
+#[test]
+fn a_page_holds_buttons_and_lets_go_when_it_closes_or_goes_silent() {
+    let (hub, _osc, port) = hub_on_any_port(Params::Controls, Config::default());
+    let rec = std::sync::Arc::new(Recorder::default());
+    hub.set_presser(rec.clone());
+    let mut ws = ws_connect(port);
+    let first = ws_until(&mut ws, "the first state", |_| true);
+    assert_eq!(first["params"], "controls");
+    // Two buttons held at once (two fingers), renewed: one press each.
+    ws.write_all(&client_frame(1, br#"{"press": {"/go": true, "/stop": 1}}"#)).unwrap();
+    until("both held", || rec.held(1) && rec.held(2));
+    for _ in 0..3 {
+        std::thread::sleep(Duration::from_millis(300));
+        ws.write_all(&client_frame(1, br#"{"press": {"/go": true, "/stop": true}}"#)).unwrap();
+    }
+    assert!(rec.held(1) && rec.held(2), "renewed within the lease");
+    assert_eq!((rec.downs(1), rec.downs(2)), (1, 1), "a renewal is no new press");
+    assert_eq!(hub.listener(0).unwrap().held, 2);
+    ws.write_all(&client_frame(1, br#"{"press": {"/stop": false}}"#)).unwrap();
+    until("stop let go", || !rec.held(2));
+    assert!(rec.held(1));
+    // Refused presses come back as an error; the connection stays.
+    ws.write_all(&client_frame(1, br#"{"press": {"/hidden": true, "/nope": true}}"#)).unwrap();
+    ws_until(&mut ws, "the refusal", |v| v["error"].as_str().is_some_and(|e| e.contains("not flagged")));
+    // Silent for longer than the lease: let go, and a late renewal does not press again.
+    std::thread::sleep(penumbra_http::hub::LEASE + Duration::from_millis(300));
+    until("go let go for want of renewal", || !rec.held(1));
+    ws.write_all(&client_frame(1, br#"{"press": {"/go": true}}"#)).unwrap();
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!rec.held(1), "a renewal after the lease ran out is ignored");
+    assert_eq!(rec.downs(1), 1);
+    assert_eq!(hub.listener(0).unwrap().lapsed, 1);
+    // Let go, then a new press: a second press.
+    ws.write_all(&client_frame(1, br#"{"press": {"/go": false}}"#)).unwrap();
+    ws.write_all(&client_frame(1, br#"{"press": {"/go": true}}"#)).unwrap();
+    until("go pressed again", || rec.held(1));
+    assert_eq!(rec.downs(1), 2);
+    // The connection drops without a close: every button is let go.
+    drop(ws);
+    until("go let go when the page went away", || !rec.held(1));
+    until("no button held", || hub.listener(0).unwrap().held == 0);
+    // Over POST a press is a tap.
+    let r = post(port, r#"{"press": {"/stop": true}}"#);
+    assert!(status_line(&r).contains("200"), "{r}");
+    assert_eq!(rec.downs(2), 2);
+    assert!(!rec.held(2));
+    let r = post(port, r#"{"press": {"/nope": true}, "/fader": 1}"#);
+    assert!(body(&r).contains("refused"), "{r}");
+    assert_eq!(values(&hub, "/fader"), Some(vec![1.0]), "the rest of the message is taken");
+    let st = hub.listener(0).unwrap();
+    assert_eq!(st.presses, 4, "{st:?}");
+    assert_eq!(st.press_refused, 3, "{st:?}");
+    hub.shutdown();
+}
+
+#[test]
+fn presses_need_params() {
+    let (hub, _osc, port) = hub_on_any_port(Params::Off, Config::default());
+    let rec = std::sync::Arc::new(Recorder::default());
+    hub.set_presser(rec.clone());
+    let r = post(port, r#"{"press": {"/go": true}}"#);
+    assert!(body(&r).contains("`params` is off"), "{r}");
+    assert_eq!(rec.downs(1), 0);
+    hub.set_wanted(&[want(Params::All)]);
+    until("params all", || hub.listener(0).unwrap().params == Params::All);
+    post(port, r#"{"press": {"/hidden": true}}"#);
+    assert_eq!(rec.downs(3), 1, "params all presses any momentary button");
     hub.shutdown();
 }

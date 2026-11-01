@@ -16,7 +16,7 @@ saves into it.)
 | [curl-noise](curl-noise/README.md) | 65 536 sticks drifting through a flow field, simulated on the GPU and drawn instanced | `/out` | |
 | [feedback](feedback/README.md) | a loop that feeds each frame back into the next: trails, zoom, drifting colour | `/show` | |
 | [show](show/README.md) | a show as a list of cues: five looks with fades, stepped by the space key, a GO button on the show screen or OSC, a caption per cue from a table | `/out` | |
-| [control-page](control-page/README.md) | a web page that moves the project's sliders and switches from a phone or a browser, made to be copied into your own project | `/show` | (for a phone: the same network as this computer) |
+| [control-page](control-page/README.md) | a web page that moves the project's sliders, switches and buttons from a phone or a browser, made to be copied into your own project | `/show` | (for a phone: the same network as this computer) |
 | [audio-reactive](audio-reactive/README.md) | sound turned into channels that move the picture: level, kick, bar | `/show` | a microphone |
 | [beat-grid](beat-grid/README.md) | the beats and bars of a sound file, found ahead of time, beside the live beat tracker on the same music: flashes on the beat, a ring on each bar's first beat, a line over the bar | `/out` | speakers or headphones |
 | [pendulum-wave](pendulum-wave/README.md) | 121 pendulums seen from above, drifting apart and back into sync, each striking a note as it passes its rest point, over a hi-hat and kick | `/out` | speakers or headphones |

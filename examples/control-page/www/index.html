@@ -13,9 +13,12 @@
   {"<path>/value": number} over the WebSocket. The state messages that come back carry every
   control's value, so all open pages follow each other.
 
-  A momentary chan.button shows as a lamp that lights while it is held. The page cannot press
-  it: chan.http_in sets only the `value` of a slider or a toggle. Press it on the show screen,
-  with chan.press, or use a toggle instead.
+  A momentary chan.button is held while a finger is on it: the page sends
+  {"press": {"<path>": true}} and renews it every 250 ms, then {"press": {"<path>": false}}.
+  penumbra lets go of a press the page stops renewing for a second, and of every press when the
+  page closes, so a phone that drops off the network leaves no button held.
+
+  Without this folder, chan.http_in shows a built-in page with the same controls.
 
   What to change: the colours in the style block, the title, and the text in <h1>.
 -->
@@ -58,7 +61,7 @@ const touched = new Map();      // address -> time it was last sent, to keep a d
 function connect() {
   socket = new WebSocket("ws://" + location.host + "/ws");
   socket.onopen = () => status("connected", true);
-  socket.onclose = () => { status("not connected, trying again", false); setTimeout(connect, 1000); };
+  socket.onclose = () => { holding.clear(); status("not connected, trying again", false); setTimeout(connect, 1000); };
   socket.onmessage = (e) => receive(JSON.parse(e.data));
 }
 
@@ -145,22 +148,40 @@ function button(c) {
   const { element, value } = frame(c);
   const b = document.createElement("button");
   const momentary = c.mode !== "toggle";
-  b.disabled = momentary;
   let on = false;
-  if (!momentary) b.onclick = () => { on = !on; show(); send(c.address, on ? 1 : 0); };
+  if (momentary) {
+    b.style.touchAction = "none";
+    b.onpointerdown = (e) => { b.setPointerCapture(e.pointerId); hold(c.path, true); on = true; show(); };
+    b.onpointerup = b.onpointercancel = b.onlostpointercapture = () => { if (holding.has(c.path)) hold(c.path, false); };
+  } else {
+    b.onclick = () => { on = !on; show(); send(c.address, on ? 1 : 0); };
+  }
   element.append(b);
   const show = () => {
     b.classList.toggle("on", on);
-    b.textContent = momentary ? (on ? "held" : "press on the show screen") : on ? "on" : "off";
+    b.textContent = momentary ? (on ? "held" : "hold") : on ? "on" : "off";
   };
   const update = (c) => {
-    if (performance.now() - (touched.get(c.address) || -1e9) > 500) on = c.value >= 0.5;
-    if (!momentary) b.disabled = c.bound;
+    if (momentary) on = c.value >= 0.5 || holding.has(c.path);
+    else if (performance.now() - (touched.get(c.address) || -1e9) > 500) on = c.value >= 0.5;
+    b.disabled = c.bound || c.locked;
     value.textContent = c.bound ? "(bound)" : "";
     show();
   };
   return { element, update };
 }
+
+// Momentary buttons this page holds, renewed every 250 ms; let go when the page is hidden.
+const holding = new Set();
+function hold(path, down) {
+  if (down) holding.add(path); else holding.delete(path);
+  if (socket && socket.readyState === 1) socket.send(JSON.stringify({ press: { [path]: down } }));
+}
+setInterval(() => { for (const path of holding) hold(path, true); }, 250);
+const letGo = () => { for (const path of [...holding]) hold(path, false); };
+document.addEventListener("visibilitychange", () => { if (document.hidden) letGo(); });
+window.addEventListener("pagehide", letGo);
+window.addEventListener("blur", letGo);
 
 connect();
 </script>

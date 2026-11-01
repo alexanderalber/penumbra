@@ -5,7 +5,8 @@
 //!   value is a param, so it is saved with the project and one drag is one undo step.
 //! - **`chan.button`** makes one channel that is 1 or 0. With `mode` `toggle` it is the param
 //!   `value`: a click flips it (an edit, saved and undoable). With `mode` `momentary` it is 1
-//!   while the button is held, in the editor or by `chan.press`; that is live state in the
+//!   while the button is held, in the editor, by `chan.press` or on a control page
+//!   (`chan.http_in`); that is live state in the
 //!   [`Buttons`] hub, never an edit, so it works while Claude edits and leaves no history. A
 //!   press shorter than a frame still shows for one cook.
 //! - **`show`** (both): the control also appears on the show screen while show mode locks the
@@ -39,6 +40,9 @@ pub enum Holder {
     Editor,
     /// `chan.press`.
     Command,
+    /// One connection of a control page (`chan.http_in`), by its id: each page holds on its
+    /// own, so one page letting go does not release another's press.
+    Page(u64),
 }
 
 impl Holder {
@@ -46,9 +50,13 @@ impl Holder {
         match self {
             Holder::Editor => 1,
             Holder::Command => 2,
+            Holder::Page(_) => 0,
         }
     }
 }
+
+/// Pages one button remembers as holding it; more are let go of the oldest first.
+const MAX_PAGES: usize = 64;
 
 /// One momentary button as the hub knows it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -62,6 +70,8 @@ pub struct ButtonView {
 #[derive(Default)]
 struct Entry {
     holders: u8,
+    /// The pages holding it (ids of [`Holder::Page`]).
+    pages: Vec<u64>,
     presses: u64,
     waker: Option<Waker>,
 }
@@ -83,13 +93,21 @@ impl Buttons {
         let waker = {
             let mut map = lock(&self.0);
             let e = map.entry(node).or_default();
-            let was = e.holders != 0;
-            if down {
-                e.holders |= holder.bit();
-            } else {
-                e.holders &= !holder.bit();
+            let was = e.is_held();
+            match (holder, down) {
+                (Holder::Page(id), true) => {
+                    if !e.pages.contains(&id) {
+                        if e.pages.len() >= MAX_PAGES {
+                            e.pages.remove(0);
+                        }
+                        e.pages.push(id);
+                    }
+                }
+                (Holder::Page(id), false) => e.pages.retain(|p| *p != id),
+                (_, true) => e.holders |= holder.bit(),
+                (_, false) => e.holders &= !holder.bit(),
             }
-            let is = e.holders != 0;
+            let is = e.is_held();
             if was == is {
                 return false;
             }
@@ -113,7 +131,7 @@ impl Buttons {
     pub fn view(&self, node: NodeId) -> ButtonView {
         lock(&self.0)
             .get(&node)
-            .map(|e| ButtonView { held: e.holders != 0, presses: e.presses })
+            .map(|e| ButtonView { held: e.is_held(), presses: e.presses })
             .unwrap_or_default()
     }
 
@@ -134,7 +152,13 @@ impl Buttons {
         if e.waker.is_none() {
             e.waker = Some(waker);
         }
-        ButtonView { held: e.holders != 0, presses: e.presses }
+        ButtonView { held: e.is_held(), presses: e.presses }
+    }
+}
+
+impl Entry {
+    fn is_held(&self) -> bool {
+        self.holders != 0 || !self.pages.is_empty()
     }
 }
 
@@ -286,6 +310,11 @@ mod tests {
         assert!(!b.hold(n, Holder::Command, false), "a second release changes nothing");
         b.tap(n, Holder::Command);
         assert_eq!(b.view(n), ButtonView { held: false, presses: 2 });
+        assert!(b.hold(n, Holder::Page(1), true));
+        assert!(!b.hold(n, Holder::Page(2), true), "a second page holds too");
+        assert!(!b.hold(n, Holder::Page(1), false), "the second page still holds it");
+        assert!(b.hold(n, Holder::Page(2), false));
+        assert_eq!(b.view(n), ButtonView { held: false, presses: 3 });
         b.hold(n, Holder::Editor, true);
         b.reset();
         assert_eq!(b.view(n), ButtonView::default(), "a closing project lets go");

@@ -3,11 +3,13 @@
 //! projectors (`crate::blend_match`),
 //! the resolution analysis with its overlay and optimise button, and the show-machine checks with a
 //! fix and a restore button each, the persistent state (when it was last saved, save now, restore)
-//! OSC (listeners, senders, what arrived, learn) and audio (inputs, outputs, the mute of every
+//! OSC (listeners, senders, what arrived, learn), HTTP (the control page's address for a phone,
+//! who is connected, what was refused) and audio (inputs, outputs, the mute of every
 //! output). Opened from the status bar; the same things
 //! are `output.list`, `projector.test`, `res.analyze`, `res.overlay`, `res.optimize`, `system.check`, `system.fix`,
 //! `system.restore`, `state.info`, `state.save`, `state.restore`, `state.discard`, `state.config`,
-//! `project.settings`, `osc.status`, `osc.config`, `osc.learn`, `audio.status`, `audio.config`,
+//! `project.settings`, `osc.status`, `osc.config`, `osc.learn`, `http.status`, `http.config`,
+//! `audio.status`, `audio.config`,
 //! `audio.mute`, `audio.devices` and `audio.outputs` on the control channel.
 
 use std::collections::BTreeMap;
@@ -148,6 +150,8 @@ impl Helpers {
                     self.state(ui, input, auto, actions);
                     ui.separator();
                     self.osc(ui, input.engine, auto);
+                    ui.separator();
+                    http(ui, input.engine, auto);
                     ui.separator();
                     self.audio(ui, input.engine, auto);
                     ui.separator();
@@ -925,6 +929,103 @@ fn table(
 fn spawn(name: &str, work: impl FnOnce() + Send + 'static) {
     if let Err(e) = std::thread::Builder::new().name(name.into()).spawn(work) {
         log::error!("cannot start {name}: {e}");
+    }
+}
+
+/// HTTP: the `chan.http_in` listeners, the page's address for a phone, who is connected.
+fn http(ui: &mut Ui, engine: &Arc<Engine>, auto: &mut automation::Registry) {
+    ui.heading("HTTP");
+    let weak = theme::TEXT_WEAK;
+    let hub = engine.http();
+    let mut config = hub.config();
+    let r = ui.checkbox(&mut config.enabled, "listen").on_hover_text(
+        "Off: every chan.http_in port closes for this run; the nodes stay (http.config enabled)",
+    );
+    auto.add("helpers.http.enabled", r.rect, "listen");
+    if r.changed() {
+        hub.set_config(config);
+    }
+    let listeners = hub.status();
+    if listeners.is_empty() {
+        ui.label(
+            RichText::new(
+                "Nothing listens: add a chan.http_in node (Tab > chan). Its page opens in a browser on a phone.",
+            )
+            .color(weak),
+        );
+    }
+    for l in &listeners {
+        let reach = if l.lan { "network" } else { "this machine only" };
+        let mut text =
+            format!("port {} \u{b7} {reach} \u{b7} {} open", l.port, plural(l.websockets.len(), "page"));
+        if l.held > 0 {
+            text.push_str(&format!(" \u{b7} {} held", plural(l.held, "button")));
+        }
+        // `as`: a count far below usize's range.
+        text.push_str(&format!(" \u{b7} {}", plural(l.messages as usize, "message")));
+        ui.label(text);
+        if let Some(e) = &l.error {
+            ui.colored_label(theme::WARNING, e);
+        }
+        if let Some(url) = penumbra_engine::http::page(l) {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&url).monospace());
+                let r = ui.button("Copy").on_hover_text("Copy the page's address");
+                auto.add(format!("helpers.http.copy.{}", l.port), r.rect, "Copy");
+                if r.clicked() {
+                    ui.ctx().copy_text(url.clone());
+                }
+            });
+            let hint = if l.lan {
+                "Open this address on a phone in the same network. Windows may ask to allow penumbra the first time."
+            } else {
+                "Only this machine reaches it. For a phone, set the chan.http_in's bind to lan."
+            };
+            ui.label(RichText::new(hint).color(weak));
+        }
+        for w in &l.websockets {
+            ui.label(
+                RichText::new(format!("  {}  connected {:.0} s, {} messages", w.from, w.seconds, w.messages))
+                    .monospace()
+                    .color(weak),
+            );
+        }
+        let mut dropped = Vec::new();
+        for (n, what) in [
+            (l.forbidden, "from another site"),
+            (l.malformed, "malformed"),
+            (l.oversize, "too large"),
+            (l.rate_dropped, "over the rate"),
+            (l.refused, "too many connections"),
+            (l.timeouts, "too slow"),
+        ] {
+            if n > 0 {
+                dropped.push(format!("{n} {what}"));
+            }
+        }
+        // `as`: counts far below usize's range.
+        if l.press_refused > 0 {
+            dropped.push(format!("{} refused", plural(l.press_refused as usize, "press")));
+        }
+        if l.lapsed > 0 {
+            dropped.push(format!("{} let go when a page went silent", plural(l.lapsed as usize, "press")));
+        }
+        if !dropped.is_empty() {
+            let r = ui.colored_label(theme::WARNING, format!("dropped: {}", dropped.join(", ")));
+            let last = [&l.last_press_refused, &l.last_forbidden, &l.last_malformed];
+            if let Some(m) = last.into_iter().flatten().next() {
+                r.on_hover_text(m);
+            }
+        }
+    }
+}
+
+/// `n` and the noun, with an s (es after an s) unless `n` is 1.
+fn plural(n: usize, noun: &str) -> String {
+    match n {
+        1 => format!("1 {noun}"),
+        _ if noun.ends_with('s') => format!("{n} {noun}es"),
+        _ => format!("{n} {noun}s"),
     }
 }
 

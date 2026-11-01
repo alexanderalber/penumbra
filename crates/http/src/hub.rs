@@ -21,6 +21,13 @@
 //!   changed: `{"in": {address: value}, "chans": {name: value}, "controls": [...]}`: what
 //!   arrived, the channels the nodes publish ([`Publisher`]) and the show screen's controls
 //!   (from [`Hub::set_controls`]).
+//! - **Presses** (`{"press": {"/go": true}}`, [`crate::message`]) hold momentary buttons
+//!   through the engine's [`Presser`]. On a WebSocket a press is held until the page lets go,
+//!   the connection ends, or the page stops renewing it for [`LEASE`] (a phone that lost the
+//!   network). A renewal of a press that was let go that way does not press again: the page has
+//!   to let go first. Over `POST /set` a press is a tap (one frame).
+//! - **The built-in page** ([`PAGE`]) answers `/` when the node's folder has no `index.html`
+//!   and no node on the port switched it off: the show screen's controls, for a phone.
 //! - **Requests from other sites** are refused: a `Host` that is not an IP address, `localhost`,
 //!   a `.local` name or a single-label name (a page of a DNS-rebinding site), and for `/set`,
 //!   `/ws` and `/state` an `Origin` other than this server or a `Sec-Fetch-Site` other than
@@ -68,6 +75,28 @@ const PING: Duration = Duration::from_secs(20);
 const LINGER: Duration = Duration::from_millis(200);
 /// A state built this recently is sent again as it is.
 const STATE_CACHE: Duration = Duration::from_millis(8);
+/// A press on a WebSocket not renewed for this long is let go. The built-in page renews every
+/// 250 ms while a finger is down.
+pub const LEASE: Duration = Duration::from_millis(1000);
+/// Buttons one WebSocket connection may hold at once.
+const MAX_HOLDS: usize = 64;
+
+/// The control page served at `/` when the folder has none: every control flagged `show`, as
+/// the show screen draws it, for a phone.
+pub const PAGE: &str = include_str!("page.html");
+
+/// Presses the momentary buttons a page names. The engine provides it ([`Hub::set_presser`]);
+/// without one, presses are refused.
+pub trait Presser: Send + Sync {
+    /// The momentary `chan.button` at node path `path` that a page may press, as a key for
+    /// [`Presser::hold`]. `any`: any momentary button (the listener's `params` is `all`);
+    /// else only one flagged `show`. An error says why not (no such node, a toggle, locked).
+    fn find(&self, path: &str, any: bool) -> Result<u64, String>;
+    /// Holds the button `key` for page connection `holder`, or lets go.
+    fn hold(&self, key: u64, holder: u64, down: bool);
+    /// Presses and lets go at once (one frame).
+    fn tap(&self, key: u64, holder: u64);
+}
 
 /// Settings for all listeners. Not stored: every start has the defaults (`http.config`).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -232,6 +261,15 @@ pub struct ListenerStatus {
     pub last_addresses: Vec<String>,
     /// State messages sent to WebSocket clients.
     pub sent: u64,
+    /// Button presses taken (a renewal of a held press is not one).
+    pub presses: u64,
+    /// Buttons held by pages now.
+    pub held: usize,
+    /// Presses let go because their page stopped renewing them (a phone off the network).
+    pub lapsed: u64,
+    /// Presses refused, with the last reason.
+    pub press_refused: u64,
+    pub last_press_refused: Option<String>,
 }
 
 struct Bucket {
@@ -300,6 +338,8 @@ pub struct Tables {
 struct Published {
     port: u16,
     folder: Option<PathBuf>,
+    /// The built-in page may answer `/` when the folder has no `index.html`.
+    page: bool,
     chans: Vec<(String, f64)>,
 }
 
@@ -324,6 +364,8 @@ struct Listener {
     /// The learn generation and the addresses busy when it was armed.
     busy: Mutex<(u64, BTreeSet<String>)>,
     cache: Mutex<Option<(Instant, String)>>,
+    /// Buttons held by this port's WebSocket connections now.
+    held: AtomicUsize,
 }
 
 struct Inner {
@@ -334,6 +376,7 @@ struct Inner {
     watches: Mutex<Vec<WatchEntry>>,
     published: Mutex<BTreeMap<u64, Published>>,
     controls: Mutex<Option<Controls>>,
+    presser: Mutex<Option<Arc<dyn Presser>>>,
     next_id: AtomicU64,
 }
 
@@ -383,11 +426,12 @@ impl Publisher {
         self.port
     }
 
-    /// The folder files are served from (`None`: no files) and the channels sent to clients.
-    pub fn set(&self, folder: Option<PathBuf>, mut chans: Vec<(String, f64)>) {
+    /// The folder files are served from (`None`: no files), whether the built-in page may answer
+    /// `/` when that folder has no `index.html`, and the channels sent to clients.
+    pub fn set(&self, folder: Option<PathBuf>, page: bool, mut chans: Vec<(String, f64)>) {
         chans.truncate(MAX_PUBLISHED);
         if let Some(inner) = self.hub.upgrade() {
-            lock(&inner.published).insert(self.id, Published { port: self.port, folder, chans });
+            lock(&inner.published).insert(self.id, Published { port: self.port, folder, page, chans });
         }
     }
 }
@@ -412,6 +456,7 @@ impl Hub {
                 watches: Mutex::new(Vec::new()),
                 published: Mutex::new(BTreeMap::new()),
                 controls: Mutex::new(None),
+                presser: Mutex::new(None),
                 next_id: AtomicU64::new(1),
             }),
         }
@@ -430,6 +475,11 @@ impl Hub {
     /// Where the show screen's controls come from, for the state sent to clients.
     pub fn set_controls(&self, controls: Controls) {
         *lock(&self.inner.controls) = Some(controls);
+    }
+
+    /// Who presses the buttons pages name.
+    pub fn set_presser(&self, presser: Arc<dyn Presser>) {
+        *lock(&self.inner.presser) = Some(presser);
     }
 
     /// The listeners the network wants. Wants on the same port merge: the LAN if any asks for
@@ -495,6 +545,7 @@ impl Hub {
                         last: Mutex::new(VecDeque::new()),
                         busy: Mutex::new((0, BTreeSet::new())),
                         cache: Mutex::new(None),
+                        held: AtomicUsize::new(0),
                     });
                     {
                         let config = self.config();
@@ -569,7 +620,10 @@ impl Hub {
         let l = self.listener_of(port).ok_or_else(|| format!("nothing listens on port {port}"))?;
         let parsed = message::parse_json(text, &self.config().caps())?;
         lock(&l.status).bytes += text.len() as u64;
-        take_in(&self.inner, &l, (Ipv4Addr::LOCALHOST, 0).into(), &parsed);
+        let refused = take_in(&self.inner, &l, (Ipv4Addr::LOCALHOST, 0).into(), &parsed, None);
+        if !refused.is_empty() {
+            return Err(refused.join("; "));
+        }
         Ok(parsed.len())
     }
 
@@ -599,6 +653,7 @@ fn status_of(inner: &Inner, l: &Listener, port: u16) -> ListenerStatus {
     s.addresses = lock(&l.store).entries.len();
     s.tables = lock(&l.tables).list.iter().map(|(a, _)| a.clone()).collect();
     s.connections = l.open.load(Ordering::Acquire);
+    s.held = l.held.load(Ordering::Acquire);
     s.messages_per_second = lock(&l.per_second).now(now);
     s.last_addresses = lock(&l.last).iter().rev().cloned().collect();
     s.folder = folder_of(inner, port).map(|f| f.display().to_string());
@@ -629,6 +684,14 @@ fn folder_of(inner: &Inner, port: u16) -> Option<PathBuf> {
     lock(&inner.published).values().filter(|p| p.port == port).find_map(|p| p.folder.clone())
 }
 
+/// Whether the built-in page may answer on `port`: a node publishes there and none switched
+/// the page off.
+fn page_of(inner: &Inner, port: u16) -> bool {
+    let published = lock(&inner.published);
+    let mut on_port = published.values().filter(|p| p.port == port).peekable();
+    on_port.peek().is_some() && on_port.all(|p| p.page)
+}
+
 /// Calls the watchers of `port`.
 fn wake(inner: &Inner, port: u16) {
     for (p, _, pending, wake) in lock(&inner.watches).iter() {
@@ -645,7 +708,15 @@ fn catch(f: impl FnOnce()) -> std::thread::Result<()> {
 // ---------------------------------------------------------------------------------------------
 // Taking messages in, building the state
 
-fn take_in(inner: &Inner, l: &Listener, from: SocketAddr, parsed: &Parsed) {
+/// Takes in what a message says; returns the presses refused, with their reasons. `holds`: the
+/// WebSocket connection's held buttons (a press holds); `None` over plain HTTP (a press taps).
+fn take_in(
+    inner: &Inner,
+    l: &Listener,
+    from: SocketAddr,
+    parsed: &Parsed,
+    holds: Option<&mut Holds<'_>>,
+) -> Vec<String> {
     let want = *lock(&l.want);
     let config = lock(&inner.config).clone();
     let now = Instant::now();
@@ -724,6 +795,142 @@ fn take_in(inner: &Inner, l: &Listener, from: SocketAddr, parsed: &Parsed) {
     if changed {
         wake(inner, want.port);
     }
+    if parsed.presses.is_empty() {
+        return Vec::new();
+    }
+    let presser = lock(&inner.presser).clone();
+    let refused = match (presser, want.params) {
+        (None, _) => {
+            parsed.presses.iter().map(|(p, _)| format!("press {p}: nothing presses buttons here")).collect()
+        }
+        (Some(_), Params::Off) => parsed
+            .presses
+            .iter()
+            .map(|(p, _)| format!("press {p}: this listener's `params` is off"))
+            .collect(),
+        (Some(presser), _) => {
+            let any = want.params == Params::All;
+            match holds {
+                Some(h) => h.take(&presser, &parsed.presses, any),
+                None => tap_all(inner, l, &*presser, &parsed.presses, any),
+            }
+        }
+    };
+    if !refused.is_empty() {
+        let mut st = lock(&l.status);
+        st.press_refused += refused.len() as u64;
+        st.last_press_refused = refused.last().map(|r| format!("from {from}: {r}"));
+    }
+    refused
+}
+
+/// Presses over plain HTTP: a tap each (a request has no connection that could let go later).
+fn tap_all(
+    inner: &Inner,
+    l: &Listener,
+    presser: &dyn Presser,
+    presses: &[(String, bool)],
+    any: bool,
+) -> Vec<String> {
+    let holder = inner.next_id.fetch_add(1, Ordering::Relaxed);
+    let mut refused = Vec::new();
+    for (path, down) in presses {
+        if !*down {
+            continue;
+        }
+        match presser.find(path, any) {
+            Ok(key) => {
+                presser.tap(key, holder);
+                lock(&l.status).presses += 1;
+            }
+            Err(why) => refused.push(format!("press {path}: {why}")),
+        }
+    }
+    refused
+}
+
+/// The buttons one WebSocket connection holds, by node path: the presser's key and when the
+/// page last renewed the press. Dropping it lets go of all of them, so a connection that ends
+/// in any way leaves no button held.
+struct Holds<'a> {
+    l: &'a Listener,
+    holder: u64,
+    presser: Option<Arc<dyn Presser>>,
+    held: BTreeMap<String, (u64, Instant)>,
+    /// Presses let go for want of renewal; renewals are ignored until the page lets go.
+    lapsed: BTreeSet<String>,
+}
+
+impl<'a> Holds<'a> {
+    fn new(l: &'a Listener, holder: u64) -> Self {
+        Self { l, holder, presser: None, held: BTreeMap::new(), lapsed: BTreeSet::new() }
+    }
+
+    fn take(&mut self, presser: &Arc<dyn Presser>, presses: &[(String, bool)], any: bool) -> Vec<String> {
+        let now = Instant::now();
+        let mut refused = Vec::new();
+        for (path, down) in presses {
+            if !*down {
+                self.lapsed.remove(path);
+                if let Some((key, _)) = self.held.remove(path) {
+                    presser.hold(key, self.holder, false);
+                    self.l.held.fetch_sub(1, Ordering::AcqRel);
+                }
+                continue;
+            }
+            if let Some((_, renewed)) = self.held.get_mut(path) {
+                *renewed = now;
+                continue;
+            }
+            if self.lapsed.contains(path) {
+                continue;
+            }
+            if self.held.len() >= MAX_HOLDS {
+                refused.push(format!("press {path}: more than {MAX_HOLDS} buttons held at once"));
+                continue;
+            }
+            match presser.find(path, any) {
+                Ok(key) => {
+                    presser.hold(key, self.holder, true);
+                    self.held.insert(path.clone(), (key, now));
+                    self.l.held.fetch_add(1, Ordering::AcqRel);
+                    lock(&self.l.status).presses += 1;
+                    self.presser = Some(presser.clone());
+                }
+                Err(why) => refused.push(format!("press {path}: {why}")),
+            }
+        }
+        refused
+    }
+
+    /// Lets go of the presses not renewed within [`LEASE`].
+    fn expire(&mut self, now: Instant) {
+        let Some(presser) = &self.presser else { return };
+        let old: Vec<String> = self
+            .held
+            .iter()
+            .filter(|(_, (_, at))| now.saturating_duration_since(*at) > LEASE)
+            .map(|(p, _)| p.clone())
+            .collect();
+        for path in old {
+            if let Some((key, _)) = self.held.remove(&path) {
+                presser.hold(key, self.holder, false);
+                self.l.held.fetch_sub(1, Ordering::AcqRel);
+                lock(&self.l.status).lapsed += 1;
+                self.lapsed.insert(path);
+            }
+        }
+    }
+}
+
+impl Drop for Holds<'_> {
+    fn drop(&mut self) {
+        let Some(presser) = self.presser.take() else { return };
+        for (key, _) in std::mem::take(&mut self.held).into_values() {
+            presser.hold(key, self.holder, false);
+            self.l.held.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
 }
 
 /// The state as JSON text, built at most every [`STATE_CACHE`].
@@ -752,7 +959,8 @@ fn state_text(inner: &Inner, l: &Listener, port: u16) -> String {
     }
     let controls = lock(&inner.controls).clone();
     let controls = controls.map_or(Json::Array(Vec::new()), |c| c());
-    let text = json!({"in": received, "chans": chans, "controls": controls}).to_string();
+    let params = lock(&l.want).params;
+    let text = json!({"in": received, "chans": chans, "controls": controls, "params": params}).to_string();
     *lock(&l.cache) = Some((now, text.clone()));
     text
 }
@@ -1119,13 +1327,13 @@ fn handle(inner: &Weak<Inner>, l: &Listener, stream: &mut TcpStream, from: Socke
             body.truncate(len);
             lock(&l.status).bytes += len as u64;
             let reply = match std::str::from_utf8(&body) {
-                Ok(text) => take_text(&inner, l, from, text, false),
+                Ok(text) => take_text(&inner, l, from, text, false, None),
                 Err(_) => Err("the body is not UTF-8".to_string()),
             };
             answer(stream, l, from, reply);
         }
         ("GET", "/set") => {
-            let reply = take_text(&inner, l, from, req.query.as_deref().unwrap_or(""), true);
+            let reply = take_text(&inner, l, from, req.query.as_deref().unwrap_or(""), true, None);
             answer(stream, l, from, reply);
         }
         ("GET" | "HEAD", "/state") => {
@@ -1137,23 +1345,35 @@ fn handle(inner: &Weak<Inner>, l: &Listener, stream: &mut TcpStream, from: Socke
     }
 }
 
-/// Parses and takes in one message (JSON, or a query when `query`).
+/// Parses and takes in one message (JSON, or a query when `query`): how many addresses it had
+/// and the presses refused.
 fn take_text(
     inner: &Inner,
     l: &Listener,
     from: SocketAddr,
     text: &str,
     query: bool,
-) -> Result<usize, String> {
+    holds: Option<&mut Holds<'_>>,
+) -> Result<(usize, Vec<String>), String> {
     let caps = lock(&inner.config).caps();
     let parsed = if query { message::parse_query(text, &caps) } else { message::parse_json(text, &caps) }?;
-    take_in(inner, l, from, &parsed);
-    Ok(parsed.len())
+    let refused = take_in(inner, l, from, &parsed, holds);
+    Ok((parsed.len(), refused))
 }
 
-fn answer(stream: &mut TcpStream, l: &Listener, from: SocketAddr, reply: Result<usize, String>) {
+fn answer(
+    stream: &mut TcpStream,
+    l: &Listener,
+    from: SocketAddr,
+    reply: Result<(usize, Vec<String>), String>,
+) {
     match reply {
-        Ok(n) => send(stream, &json_response(200, &json!({"ok": true, "addresses": n}))),
+        Ok((n, refused)) if refused.is_empty() => {
+            send(stream, &json_response(200, &json!({"ok": true, "addresses": n})));
+        }
+        Ok((n, refused)) => {
+            send(stream, &json_response(200, &json!({"ok": true, "addresses": n, "refused": refused})));
+        }
         Err(why) => {
             malformed(l, from, &why);
             send(stream, &error_response(400, &why));
@@ -1174,13 +1394,22 @@ fn serve_file(
         lock(&l.status).not_found += 1;
         send(stream, &response(404, "text/plain; charset=utf-8", why.as_bytes(), head));
     };
+    let front = path == "/" || path == "/index.html";
+    let builtin = |stream: &mut TcpStream| {
+        lock(&l.status).files += 1;
+        send(stream, &response(200, "text/html; charset=utf-8", PAGE.as_bytes(), head));
+    };
     let Some(folder) = folder_of(inner, port) else {
+        if front && page_of(inner, port) {
+            return builtin(stream);
+        }
         return not_found(
             stream,
             "Not found. This chan.http_in serves no folder (its `folder` param is empty).",
         );
     };
     match files::resolve(&folder, path) {
+        Err(Refused::NotFound) if front && page_of(inner, port) => builtin(stream),
         Ok(file) => match std::fs::read(&file) {
             Ok(bytes) => {
                 lock(&l.status).files += 1;
@@ -1276,6 +1505,9 @@ fn websocket(
         },
     );
     let _entry = SocketEntry { l, id };
+    // Declared after the entry, so dropped first: the buttons are let go before the socket
+    // leaves the status.
+    let mut holds = Holds::new(l, id);
     let close = |stream: &mut TcpStream, code: u16, why: &str| send(stream, &ws::close_frame(code, why));
     let mut buf = rest;
     let mut chunk = vec![0u8; 16_384];
@@ -1330,8 +1562,15 @@ fn websocket(
                             lock(&l.status).rate_dropped += 1;
                             continue;
                         }
-                        if let Err(why) = take_text(inner, l, from, &text, false) {
-                            malformed(l, from, &why);
+                        let why = match take_text(inner, l, from, &text, false, Some(&mut holds)) {
+                            Ok((_, refused)) if refused.is_empty() => None,
+                            Ok((_, refused)) => Some(refused.join("; ")),
+                            Err(why) => {
+                                malformed(l, from, &why);
+                                Some(why)
+                            }
+                        };
+                        if let Some(why) = why {
                             send(
                                 stream,
                                 &ws::frame(ws::OP_TEXT, json!({"error": why}).to_string().as_bytes()),
@@ -1353,6 +1592,7 @@ fn websocket(
             }
         }
         let now = Instant::now();
+        holds.expire(now);
         if now.saturating_duration_since(last_heard) > idle {
             return close(stream, ws::CLOSE_GOING_AWAY, "silent for too long");
         }

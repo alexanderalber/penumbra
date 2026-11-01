@@ -157,3 +157,102 @@ fn params_off_sets_none_and_all_any() {
     f.call("http.send", json!({"message": {"/lfo/rate": 3}}));
     eventually("the param", || param_value(&f, "/lfo", "rate") == 3.0);
 }
+
+/// A WebSocket to `/ws`, handshake read; frames from it are not read (the test watches the
+/// engine instead).
+fn ws_connect(port: u16) -> std::net::TcpStream {
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    let req = format!(
+        "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    s.write_all(req.as_bytes()).unwrap();
+    let mut head = Vec::new();
+    let mut b = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        s.read_exact(&mut b).unwrap();
+        head.push(b[0]);
+    }
+    assert!(head.starts_with(b"HTTP/1.1 101"), "{}", String::from_utf8_lossy(&head));
+    s
+}
+
+/// One masked text frame (a client must mask), short payloads only.
+fn ws_text(s: &mut std::net::TcpStream, text: &str) {
+    let mask = [7u8, 1, 9, 3];
+    let p = text.as_bytes();
+    assert!(p.len() < 126);
+    let mut out = vec![0x81, 0x80 | p.len() as u8];
+    out.extend_from_slice(&mask);
+    out.extend(p.iter().zip(mask.iter().cycle()).map(|(b, m)| b ^ m));
+    s.write_all(&out).unwrap();
+}
+
+#[test]
+fn the_built_in_page_presses_momentary_buttons_with_the_show_screens_checks() {
+    let f = Fixture::new("http_page");
+    f.call("node.create", json!({"path": "/http", "kind": "chan.http_in", "params": {"port": 0}}));
+    f.call("node.create", json!({"path": "/go", "kind": "chan.button", "params": {"show": true}}));
+    f.call("node.create", json!({"path": "/stop", "kind": "chan.button", "params": {"show": true}}));
+    f.call("node.create", json!({"path": "/plain", "kind": "chan.button"}));
+    f.call("node.create", json!({"path": "/held", "kind": "chan.button", "params": {"show": true}}));
+    f.call(
+        "node.create",
+        json!({"path": "/flip", "kind": "chan.button", "params": {"show": true, "mode": "toggle"}}),
+    );
+    f.call("node.lock", json!({"path": "/held", "locked": true}));
+    for n in ["/http", "/go", "/stop"] {
+        f.call("node.watch", json!({"path": n}));
+    }
+    let port = http_port(&f, 0);
+
+    // No www folder in the project: / is the built-in page.
+    let page = http(port, &format!("GET / HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n"));
+    assert!(page.starts_with("HTTP/1.1 200") && page.contains("penumbra controls"), "{page}");
+
+    // The state lists locked nodes as such.
+    let state = f.engine.http().state(0).unwrap();
+    let held = state["controls"].as_array().unwrap().iter().find(|c| c["path"] == "/held").unwrap().clone();
+    assert_eq!((held["locked"].clone(), held["mode"].clone()), (json!(true), json!("momentary")), "{state}");
+
+    // A tap over http.send shows for a frame and counts a press.
+    let r = f.call("http.send", json!({"message": {"press": {"/go": true}}}));
+    assert_eq!(r["addresses"], 0, "{r}");
+    eventually("the tap", || f.call("node.info", json!({"path": "/go"}))["button"]["presses"] == 1);
+    for (path, why) in
+        [("/plain", "not flagged `show`"), ("/held", "locked"), ("/flip", "toggle"), ("/nothing", "no node")]
+    {
+        let e = f.fail("http.send", json!({"message": {"press": {path: true}}}));
+        assert!(e.contains(why), "{path}: {e}");
+    }
+
+    // Two buttons held from one page at once; let go when the page goes away.
+    let mut ws = ws_connect(port);
+    ws_text(&mut ws, r#"{"press": {"/go": true, "/stop": true}}"#);
+    eventually("both held", || channel(&f, "/go", "value") == 1.0 && channel(&f, "/stop", "value") == 1.0);
+    ws_text(&mut ws, r#"{"press": {"/stop": false}}"#);
+    eventually("stop let go", || channel(&f, "/stop", "value") == 0.0);
+    assert_eq!(channel(&f, "/go", "value"), 1.0);
+    // The editor's hold and the page's are apart: the editor letting go keeps the page's press.
+    f.call("chan.press", json!({"path": "/go", "down": false}));
+    assert_eq!(f.call("node.info", json!({"path": "/go"}))["button"]["held"], true);
+    drop(ws);
+    eventually("go let go with the page", || channel(&f, "/go", "value") == 0.0);
+    assert_eq!(f.call("node.info", json!({"path": "/go"}))["button"]["presses"], 2);
+
+    // Switched off, / answers 404 again.
+    f.call("node.set", json!({"path": "/http", "params": {"page": false}}));
+    eventually("the page switched off", || {
+        http(port, &format!("GET / HTTP/1.1\r\nHost: localhost:{port}\r\n\r\n")).starts_with("HTTP/1.1 404")
+    });
+
+    // In show mode a page still presses and switches, as the show screen does.
+    f.call("show.lock", json!({}));
+    f.call("http.send", json!({"message": {"press": {"/go": true}, "/flip/value": 1}}));
+    eventually("the press in show mode", || {
+        f.call("node.info", json!({"path": "/go"}))["button"]["presses"] == 3
+    });
+    eventually("the toggle in show mode", || param_value(&f, "/flip", "value") == true);
+    f.call("show.unlock", json!({}));
+}

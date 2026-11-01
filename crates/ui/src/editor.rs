@@ -2529,7 +2529,7 @@ fn options_menu(
     layout.set_options(options, input.now);
     ui.separator();
     let r = ui.button("Helpers").on_hover_text(
-        "Displays, output windows, what paces the show clock, resolution, state, OSC, audio, show-machine checks",
+        "Displays, output windows, what paces the show clock, resolution, state, OSC, HTTP, audio, show-machine checks",
     );
     auto.add("options.helpers", r.rect, "Helpers");
     if r.clicked() {

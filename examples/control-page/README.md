@@ -17,9 +17,9 @@ Four controls with `show` ticked drive it:
 a slider per slider and a switch per toggle, labelled and with the slider's `min` and `max`.
 Moving one changes `/show` at once. Two open pages follow each other.
 
-**The momentary button:** the page shows `/flash` as a lamp that lights while it is held, on
-the node or the show screen. The page cannot press it, because `chan.http_in` sets only the
-`value` of a slider or a toggle.
+**The momentary button:** hold `/flash` on the page and the background turns white until the
+finger lifts. Two fingers work at once: hold `/flash` and drag `size`. When the page is hidden,
+the phone locks or drops off the network, penumbra lets go of the button within a second.
 
 **From a phone:** set `/http` `bind` to `lan`. Windows may ask whether penumbra may use the
 network; allow it for private networks. `http.status` names the page's address under `page`,
@@ -28,6 +28,9 @@ for example `http://192.168.1.20:8090/`. Open it on a phone in the same network.
 **Your own page:** copy `www/` into your project folder and add a `chan.http_in`. Tick `show` on
 every `chan.slider` and `chan.button` the page should offer. The comment at the top of
 `index.html` says what to change.
+
+**Without `www/`:** `chan.http_in` shows a built-in page with the same controls. Rename `www`
+and reload the browser to see it. Its `page` param switches the built-in page off.
 
 Try:
 

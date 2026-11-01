@@ -9,6 +9,11 @@
 //! - `null` or an empty array: the address with no value.
 //!
 //! An address without a leading `/` gets one. Every count is capped ([`Caps`]).
+//!
+//! One key is not an address: `"press"` with an object (`{"press": {"/go": true}}`) presses
+//! momentary `chan.button`s by node path: `true` or a number of 0.5 or more holds the button,
+//! `false` or a smaller number lets go ([`Parsed::presses`]). No address takes an object, so
+//! the key stays free for addresses otherwise (`{"press": 1}` is the address `/press`).
 
 use penumbra_osc::codec::{Arg, Message};
 use serde_json::Value as Json;
@@ -43,16 +48,18 @@ pub struct Parsed {
     pub messages: Vec<Message>,
     /// Address and rows.
     pub tables: Vec<(String, Vec<Vec<String>>)>,
+    /// Momentary buttons to press (`true`) or let go, by node path.
+    pub presses: Vec<(String, bool)>,
 }
 
 impl Parsed {
-    /// Addresses in it, values and tables together.
+    /// Addresses in it, values and tables together (presses are not addresses).
     pub fn len(&self) -> usize {
         self.messages.len() + self.tables.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.len() == 0 && self.presses.is_empty()
     }
 }
 
@@ -189,9 +196,34 @@ pub fn parse_json(text: &str, caps: &Caps) -> Result<Parsed, String> {
     };
     let mut parsed = Parsed::default();
     for (k, v) in &map {
+        if let (Some(presses), "press" | "/press") = (v.as_object(), k.trim()) {
+            take_presses(&mut parsed, presses, caps)?;
+            continue;
+        }
         take(&mut parsed, k, v, caps)?;
     }
     Ok(parsed)
+}
+
+/// `{"/go": true, "/stop": false}`: node paths and whether each is held.
+fn take_presses(
+    parsed: &mut Parsed,
+    presses: &serde_json::Map<String, Json>,
+    caps: &Caps,
+) -> Result<(), String> {
+    for (path, v) in presses {
+        if parsed.len() + parsed.presses.len() >= caps.addresses {
+            return Err(format!("more than {} addresses and presses in one message", caps.addresses));
+        }
+        let path = address(path, caps)?;
+        let down = match v {
+            Json::Bool(b) => *b,
+            Json::Number(n) => n.as_f64().is_some_and(|x| x >= 0.5),
+            _ => return Err(format!("press `{}`: true to hold the button, false to let go", short(&path))),
+        };
+        parsed.presses.push((path, down));
+    }
+    Ok(())
 }
 
 /// A query string: `fader=0.5&go=1&name=x`. A value that reads as a number is one, `true` and
@@ -274,6 +306,27 @@ mod tests {
         );
         assert!(parse_json(r#"{"t": [[1], {"a": 1}]}"#, &caps()).is_err());
         assert!(parse_json(r#"{"t": [[[1]]]}"#, &caps()).is_err());
+    }
+
+    #[test]
+    fn presses_by_node_path() {
+        let p = parse_json(r#"{"press": {"/go": true, "stage/stop": 0, "/x": 0.75}, "/fader": 1}"#, &caps())
+            .unwrap();
+        assert_eq!(
+            p.presses,
+            vec![("/go".to_string(), true), ("/x".into(), true), ("/stage/stop".into(), false)]
+        );
+        assert_eq!(p.len(), 1, "presses are not addresses");
+        let p = parse_json(r#"{"press": 1}"#, &caps()).unwrap();
+        assert_eq!(p.messages[0].address, "/press", "a number makes the address /press");
+        assert!(parse_json(r#"{"press": {"/go": "yes"}}"#, &caps()).is_err());
+        assert!(parse_json(r#"{"press": {"": true}}"#, &caps()).is_err());
+        let many: String = format!(
+            "{{\"press\": {{{}}}}}",
+            (0..300).map(|i| format!("\"/b{i}\": true")).collect::<Vec<_>>().join(",")
+        );
+        assert!(parse_json(&many, &caps()).is_err());
+        assert!(!parse_json(r#"{"press": {"/go": true}}"#, &caps()).unwrap().is_empty());
     }
 
     #[test]

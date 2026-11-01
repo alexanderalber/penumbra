@@ -11,7 +11,7 @@ offline: [penumbra.html](penumbra.html), which the `?` on every node opens.
 - [Glossary](glossary.md): the words of the first hour, from binding and cook to premultiplied
   alpha and show mode.
 - [The Helpers window](helpers.md): outputs, resolution, show-machine checks, persistent state,
-  OSC, audio.
+  OSC, HTTP, audio.
 - [Audio](audio.md): reacting to sound (levels, onsets, tempo, beat and bar), and making it
   with ready-made instruments.
 - [DMX](dmx.md): driving lights through the Enttec Open DMX USB, Art-Net, sACN or DDP, and

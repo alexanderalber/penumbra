@@ -1,16 +1,18 @@
 //! HTTP and WebSocket in the engine: the hub's listeners follow the network's `chan.http_in`
 //! nodes ([`penumbra_ops::http::wants`]), their messages go to the OSC hub, so the osc thread
 //! sets params by address and learn binds as for OSC. The state sent to a page lists the show
-//! screen's controls ([`controls`]), so a page can show and move them.
+//! screen's controls ([`controls`]), so a page can show and move them, and a page presses
+//! momentary buttons through [`ButtonPresser`] (a holder of its own per connection in the
+//! [`penumbra_ops::chan::controls::Buttons`] hub, as the editor and `chan.press` have).
 //!
 //! Commands: `http.status`, `http.config`, `http.send`.
 
 use std::sync::{Arc, Weak};
 
-use penumbra_core::Value;
+use penumbra_core::{NodeId, NodePath, Value};
 use penumbra_graph::NodeDef;
-use penumbra_http::hub::{Config, ListenerStatus};
-use penumbra_ops::chan::controls::SLIDER;
+use penumbra_http::hub::{Config, ListenerStatus, Presser};
+use penumbra_ops::chan::controls::{BUTTON, Holder, MOMENTARY, SLIDER};
 use penumbra_ops::http::HTTP_IN;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
@@ -26,6 +28,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     engine
         .http()
         .set_controls(Arc::new(move || weak.upgrade().map_or(Json::Array(Vec::new()), |e| controls(&e))));
+    engine.http().set_presser(Arc::new(ButtonPresser(Arc::downgrade(engine))));
     let mut add = engine_commands(registry, engine);
     add(
         "http.status",
@@ -60,6 +63,7 @@ pub fn controls(e: &Engine) -> Json {
             let mut v = serde_json::to_value(&c).unwrap_or(Json::Null);
             if let Some(o) = v.as_object_mut() {
                 o.insert("address".into(), json!(format!("{}/value", c.path)));
+                o.insert("locked".into(), json!(node.is_some_and(|n| n.locked)));
                 if c.kind == SLIDER
                     && let Some(n) = node
                 {
@@ -73,6 +77,47 @@ pub fn controls(e: &Engine) -> Json {
     Json::Array(out)
 }
 
+/// Presses the momentary buttons a control page names, with the checks OSC applies to a value:
+/// the node must exist, be a momentary `chan.button`, not be locked, and (unless the
+/// listener's `params` is `all`) be flagged `show`. A press is live state, so the gate and show
+/// mode's lock do not stop it, as on the show screen.
+struct ButtonPresser(Weak<Engine>);
+
+impl Presser for ButtonPresser {
+    fn find(&self, path: &str, any: bool) -> Result<u64, String> {
+        let e = self.0.upgrade().ok_or("the engine is gone")?;
+        let path: NodePath = path.parse().map_err(|_| format!("`{path}` is not a node path"))?;
+        let net = e.session().doc().snapshot();
+        let node =
+            net.resolve(&path).and_then(|id| net.node(id)).ok_or_else(|| format!("no node at {path}"))?;
+        if node.kind != BUTTON {
+            return Err(format!("{path} is a {}, not a {BUTTON}", node.kind));
+        }
+        if crate::buttons::mode_of(&e, node) != MOMENTARY {
+            return Err(format!("{path} is a toggle: set its value (`{path}/value`)"));
+        }
+        if !any && !crate::buttons::on_show_screen(e.types(), node) {
+            return Err(format!("{path} is not flagged `show` (this listener's `params` is `controls`)"));
+        }
+        if node.locked {
+            return Err(format!("{path} is locked"));
+        }
+        Ok(node.id.0)
+    }
+
+    fn hold(&self, key: u64, holder: u64, down: bool) {
+        if let Some(e) = self.0.upgrade() {
+            e.buttons().hold(NodeId(key), Holder::Page(holder), down);
+        }
+    }
+
+    fn tap(&self, key: u64, holder: u64) {
+        if let Some(e) = self.0.upgrade() {
+            e.buttons().tap(NodeId(key), Holder::Page(holder));
+        }
+    }
+}
+
 fn param_f64(e: &Engine, node: &NodeDef, name: &str, or: f64) -> f64 {
     e.types().desc(&node.kind).and_then(|d| node.param(d, name)).and_then(Value::as_f64).unwrap_or(or)
 }
@@ -83,7 +128,7 @@ fn bound_port(s: &ListenerStatus) -> Option<u16> {
 }
 
 /// Where a phone (or this machine, for a listener on localhost) opens the page.
-fn page(s: &ListenerStatus) -> Option<String> {
+pub fn page(s: &ListenerStatus) -> Option<String> {
     let port = bound_port(s)?;
     let host = if s.lan {
         penumbra_osc::hub::local_ip().map_or_else(|| "<this machine>".to_string(), |ip| ip.to_string())

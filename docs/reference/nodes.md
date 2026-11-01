@@ -1384,6 +1384,7 @@ Outputs:
 | `addresses` | text | `"*"` |  | Space-separated OSC patterns of the addresses to keep as channels: `/1/* /xy`; `*` all; `^/ping` leaves an address out |
 | `params` | controls \| off \| all | `"controls"` |  | Which params the addresses may set (live, outside the undo history); controls: the value of a chan.slider or chan.button flagged `show`: `/fader/value 0.5`; off: no param: the messages make channels only; all: any param the address names, as chan.osc_in's `params`: `/scene/speed 0.5` |
 | `folder` | text | `"www"` |  | Folder in the project whose files the page and its scripts come from; / opens its index.html. Empty: no files |
+| `page` | bool | `true` |  | Without an index.html in `folder`, / opens a built-in page with every control flagged `show`, as on the show screen. Off: / answers 404 then |
 | `rate` | float | `30` | 1 to 60 Hz (soft) | State messages per second to each WebSocket client, at most (only when something changed) |
 | `table` | text |  |  | The address whose table the `table` output holds: `/cues`. Empty: the table that came last |
 

@@ -7,7 +7,9 @@
 //! `table` output. With `params`, the same messages also set params by address (the engine
 //! does that, through the OSC hub). The node serves the files of a folder in the project, so a
 //! page there opens on a phone without any other server, and it sends its input's channels
-//! back to the page's WebSocket. The node recooks when something arrives.
+//! back to the page's WebSocket. Without a page in that folder, `/` opens a built-in one that
+//! draws the show screen's controls (`page` switches it off). The node recooks when something
+//! arrives.
 //!
 //! The listener belongs to the engine's [`Hub`], which opens what [`wants`] lists after every
 //! change of the network.
@@ -62,6 +64,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(ParamSpec::text("folder", DEFAULT_FOLDER).doc(
             "Folder in the project whose files the page and its scripts come from; / opens its index.html. Empty: no files",
+        ))
+        .param(ParamSpec::bool("page", true).doc(
+            "Without an index.html in `folder`, / opens a built-in page with every control flagged `show`, as on the show screen. Off: / answers 404 then",
         ))
         .param(
             ParamSpec::float("rate", 30.0)
@@ -150,7 +155,7 @@ impl Operator for HttpIn {
             .map(|c| c.channels().iter().map(|ch| (ch.name.to_string(), ch.value())).collect())
             .unwrap_or_default();
         if let Some(p) = &self.publisher {
-            p.set(folder, chans);
+            p.set(folder, cx.bool("page")?, chans);
         }
         let Some(status) = hub.listener(port) else {
             return Err(CookError::failed(if hub.config().enabled {

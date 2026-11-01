@@ -349,6 +349,22 @@ An address listed under a `chan.osc_in`'s `triggers` is a press, as a desk's GO:
 1 for one frame per message with 0.5 or more (or with no number), then 0. Bind a cue list's
 `go` to it.
 
+## HTTP
+
+`chan.http_in` nodes serve a control page to a browser (see
+[a control page in the browser](concepts.md#a-control-page-in-the-browser)); this section shows
+who uses it.
+
+- **listen** off closes every `chan.http_in` port for this run; the nodes stay.
+- Per port: whether only this machine or the network reaches it, the pages open now, the
+  buttons they hold, the messages taken in.
+- **The page's address** for a phone, with **Copy**. With the node's `bind` at `localhost`,
+  only this machine reaches it; set `bind` to `lan` for a phone. Windows may ask once whether
+  penumbra may use the network.
+- Every open page with its address and time connected, and what was dropped: requests from
+  another site, malformed or too large messages, floods, refused presses, and presses let go
+  because a page went silent.
+
 ## Audio
 
 What the [audio input](audio.md) is doing:

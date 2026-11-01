@@ -319,15 +319,24 @@ button, or push the cap clearly along one axis.
 ### A control page in the browser
 
 `chan.http_in` makes a web page a control surface: a phone or tablet on the same network, or
-another program. **Where the page lives:** the node serves the files in its `folder` (`www` in
-the project), so `www/index.html` opens at `http://localhost:8090/`. With `bind` at `lan`,
-other devices reach it at `http://<this computer's address>:8090/`; `http.status` names the
-address. **Messages:** a JSON object of addresses and values, sent over a WebSocket at `/ws`,
+another program. **The built-in page:** add a `chan.http_in` and open `http://localhost:8090/`.
+The page shows every `chan.slider` and `chan.button` with `show` ticked, in the order of the
+show screen. Sliders drag, toggles switch, momentary buttons stay pressed while a finger is on
+them, several at once. All open pages and the show screen show the same values. A control that
+is bound or locked is greyed out. The node's `page` param switches the built-in page off.
+**Your own page:** the node serves the files in its `folder` (`www` in the project), so
+`www/index.html` replaces the built-in page. With `bind` at `lan`,
+other devices reach it at `http://<this computer's address>:8090/`; `http.status` and
+[Helpers > HTTP](helpers.md#http) name the address. **Messages:** a JSON object of addresses and values, sent over a WebSocket at `/ws`,
 as `POST /set`, or as `GET /set?fader=0.5`. `{"/fader": 0.5}` makes channel `fader`; an array
 of numbers makes one channel per number (`xy_0`, `xy_1`); an array of arrays or of objects is a
 table on the `table` output. Bind params to the channels as for OSC. **Show controls:** with
 `params` at `controls` (the default), `{"/fade/value": 0.3}` moves the `chan.slider` `/fade`
-flagged `show`. **What comes back:** a WebSocket gets
+flagged `show`. **Buttons:** `{"press": {"/go": true}}` holds the momentary button `/go`,
+`{"press": {"/go": false}}` lets go. A page sends the press again every 250 ms while the finger
+is down. penumbra lets go of a press that is not renewed for a second, and of every press of a
+WebSocket that closes. A repeated press while held is no new press, so a held GO counts once.
+Over `POST /set` or `http.send`, a press is a tap of one frame. **What comes back:** a WebSocket gets
 `{"in": {...}, "chans": {...}, "controls": [...]}` whenever something changed, at most `rate`
 times a second: what the node received, the channels at its input, and the show controls with
 their values. A page from another site or a file cannot send. From the control channel:
@@ -346,7 +355,8 @@ their values. A page from another site or a file cannot send. From the control c
 ```
 
 The [control-page](../examples/control-page/README.md) example has a page to copy: its
-`www/index.html` draws a slider or a switch for every show control of the project it is in.
+`www/index.html` draws a slider, a switch or a button for every show control of the project it
+is in.
 The [feedback](../examples/feedback/README.md) example has a page made for its own addresses.
 
 ### A clock per piece
