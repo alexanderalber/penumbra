@@ -178,7 +178,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `node.delete` | Delete a node and everything inside it; {path} |
 | `node.disconnect` | Clear an input; {to, input} |
 | `node.info` | One node: params, connections, cook status; {path} |
-| `node.kinds` | Node types with their params, inputs and outputs. With a param: its help (what it does, type, default, range, unit, what each choice does); {kind?, param?} |
+| `node.kinds` | Node types with their params, inputs, outputs and tags. With a param: its help (what it does, type, default, range, unit, what each choice does). With search: the types whose name contains the text or a tag starts with it (TouchDesigner names, file extensions), as the add dialog finds them; {kind?, param?, search?} |
 | `node.list` | Nodes under a path; {path?, recursive?} |
 | `node.lock` | Lock (hold outputs) or unlock a node; {path, locked?} |
 | `node.paste` | Paste the nodes copied last (or `text`) into a component or the root; {into?, text?} |

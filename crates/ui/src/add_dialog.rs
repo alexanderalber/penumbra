@@ -13,9 +13,12 @@
 //! marked with where it lies.
 //!
 //! Typing does not hide types: those whose name does not contain the text are greyed out, so
-//! the grid keeps its shape and the eye its places. Families with a match are marked in their
-//! tab (bright text, a bar underneath), the others dimmed; the dialog never switches the tab by
-//! itself. Enter takes the first match of the active tab, Tab switches to the next tab, Escape or a
+//! the grid keeps its shape and the eye its places. Spaces, underscores and dots do not count.
+//! A type is also found by a tag that starts with the text: a TouchDesigner name (`chop to`
+//! finds `tex.from_chan`) or a file name extension it reads (`fbx` finds `geo.file`). The
+//! summary names the tag. Families with a match are marked in their tab (bright text, a bar
+//! underneath), the others dimmed; the dialog never switches the tab by itself. Enter takes the
+//! first match of the active tab, one found by its name before one found by a tag, Tab switches to the next tab, Escape or a
 //! click outside closes. Opened by double-click on empty canvas or Tab in the editor, and by "Replace
 //! node..." in the node menu, where choosing replaces that node.
 //!
@@ -228,7 +231,7 @@ fn short(kind: &str) -> &str {
 }
 
 fn matches(kind: &str, filter: &str) -> bool {
-    kind != GAP && (filter.is_empty() || kind.to_lowercase().contains(filter))
+    kind != GAP && penumbra_graph::name_found(kind, filter)
 }
 
 /// What can be chosen where the node goes: everything inside a component, everything but the
@@ -244,9 +247,18 @@ impl Usable<'_> {
         self.in_component || self.types.desc(kind).is_none_or(|d| d.port.is_none())
     }
 
-    /// A choice for the search: usable here and containing the text.
+    /// A choice for the search: usable here, and containing the text in its name or starting a
+    /// tag with it.
     fn hit(self, kind: &str, filter: &str) -> bool {
-        self.allows(kind) && matches(kind, filter)
+        self.allows(kind) && (matches(kind, filter) || self.tag(kind, filter).is_some())
+    }
+
+    /// The tag the search finds `kind` by when its name does not contain the text.
+    fn tag(self, kind: &str, filter: &str) -> Option<String> {
+        if kind == GAP || matches(kind, filter) {
+            return None;
+        }
+        self.types.tag_found(kind, filter)
     }
 }
 
@@ -273,9 +285,9 @@ impl AddDialog {
         auto: &mut automation::Registry,
     ) -> Outcome {
         let groups = groups(types);
+        let filter = self.filter.trim().to_lowercase();
         let usable = Usable { types, in_component: self.in_component };
         let mut active = groups.iter().position(|g| g.contains(&self.family)).unwrap_or(0);
-        let filter = self.filter.trim().to_lowercase();
         let mut outcome = Outcome::Open;
 
         // Keys first, so Tab does not move the focus out of the search field.
@@ -299,7 +311,14 @@ impl AddDialog {
         }
 
         let (cells, sections) = cells(types, group, library);
-        let first = cells.iter().map(|c| &c.kind).find(|k| usable.hit(k, &filter)).cloned();
+        // Enter takes a type found by its name before one found by a tag.
+        let hit = |by_name: bool| {
+            cells
+                .iter()
+                .map(|c| &c.kind)
+                .find(|k| usable.hit(k, &filter) && usable.tag(k, &filter).is_none() == by_name)
+        };
+        let first = hit(true).or_else(|| hit(false)).cloned();
         if enter && let Some(k) = &first {
             outcome = Outcome::Chosen(k.clone());
         }
@@ -331,7 +350,7 @@ impl AddDialog {
                     ui.separator();
                     // The summary of the type under the pointer (or of Enter's choice).
                     let about = hovered.or(first.as_deref());
-                    summary(ui, about, usable, library, width);
+                    summary(ui, about, usable, library, &filter, width);
                 });
             });
         let outside = ui.input(|i| i.pointer.any_pressed())
@@ -648,8 +667,16 @@ impl<'a> Grid<'a> {
     }
 }
 
-/// The summary of the type or component file `about`, in one line.
-fn summary(ui: &mut Ui, about: Option<&str>, usable: Usable<'_>, library: &[Offered], width: f32) {
+/// The summary of the type or component file `about`, in one line, with the tag the search
+/// found it by.
+fn summary(
+    ui: &mut Ui,
+    about: Option<&str>,
+    usable: Usable<'_>,
+    library: &[Offered],
+    filter: &str,
+    width: f32,
+) {
     let text = about
         .and_then(|k| match k.strip_prefix(LIBRARY_MARK) {
             Some(name) => {
@@ -664,7 +691,10 @@ fn summary(ui: &mut Ui, about: Option<&str>, usable: Usable<'_>, library: &[Offe
             None if !usable.allows(k) => Some(format!(
                 "{k}: only inside a component. At the top level there is no component socket for it"
             )),
-            None => usable.types.desc(k).map(|d| format!("{k}: {}", d.summary)),
+            None => usable.types.desc(k).map(|d| match usable.tag(k, filter) {
+                Some(tag) => format!("{k} (tag `{tag}`): {}", d.summary),
+                None => format!("{k}: {}", d.summary),
+            }),
         })
         .unwrap_or_default();
     ui.allocate_ui_with_layout(vec2(width, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -731,5 +761,20 @@ mod tests {
         assert!(inside.allows("tex.in") && inside.allows("tex.noise"));
         assert!(!top.hit("tex.in", "tex.in"), "the search passes over a port at the top level");
         assert!(inside.hit("tex.in", "tex.in"));
+    }
+
+    #[test]
+    fn a_tag_finds_a_type_its_name_does_not() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let u = Usable { types: &types, in_component: false };
+        assert!(u.hit("geo.file", "fbx"), "the extensions geo.file reads are its tags");
+        assert_eq!(u.tag("geo.file", "fbx").as_deref(), Some("fbx"));
+        assert!(!u.hit("tex.blur", "fbx"));
+        assert!(u.hit("tex.slope", "slope") && u.tag("tex.slope", "slope").is_none(), "by its name");
+        assert!(u.hit("chan.derivative", "slope"), "and another by a tag, though a name has the text");
+        assert!(u.hit("tex.from_chan", "chopto") && u.hit("tex.from_chan", "chop to"));
+        assert!(!u.hit("tex.from_chan", "to"), "a tag is found from its start");
+        assert!(u.hit("tex.lens_distort", "lens distort"), "spaces count as nothing");
+        assert!(u.tag("tex.lens_distort", "lens distort").is_none());
     }
 }

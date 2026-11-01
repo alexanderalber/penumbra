@@ -111,6 +111,17 @@ fn build_a_network_and_watch_it_cook() {
     assert_eq!((rate["unit"].as_str(), rate["bindable"].as_bool()), (Some("Hz"), Some(true)));
     assert!(f.fail("node.kinds", json!({"param": "rate"})).contains("needs `kind`"));
     assert!(f.fail("node.kinds", json!({"kind": "chan.lfo", "param": "nope"})).contains("no param `nope`"));
+    let file = f.call("node.kinds", json!({"kind": "geo.file"}));
+    assert!(file["kinds"][0]["tags"].as_array().unwrap().contains(&json!("fbx")), "{file}");
+    let slope = f.call("node.kinds", json!({"search": "slope"}));
+    let found: Vec<(&str, Option<&str>)> = slope["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| (k["kind"].as_str().unwrap_or_default(), k["tag"].as_str()))
+        .collect();
+    assert!(found.contains(&("tex.slope", None)), "by its name: {found:?}");
+    assert!(found.contains(&("chan.derivative", Some("slope"))), "by a tag: {found:?}");
 }
 
 #[test]

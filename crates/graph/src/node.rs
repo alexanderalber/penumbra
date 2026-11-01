@@ -810,6 +810,8 @@ pub struct NodeTypes {
     types: BTreeMap<String, Arc<dyn NodeType>>,
     /// Old kind -> the kind it is now ([`NodeTypes::renamed_kind`]).
     renamed: BTreeMap<String, String>,
+    /// Kind -> the words a search finds it by besides its name ([`NodeTypes::tag`]).
+    tags: BTreeMap<String, Vec<String>>,
 }
 
 impl NodeTypes {
@@ -859,6 +861,53 @@ impl NodeTypes {
         self.renamed.iter().map(|(o, n)| (o.as_str(), n.as_str()))
     }
 
+    /// Gives `kind` words a search finds it by besides its name: the name another program gives a
+    /// node that does the same (`slope` for `chan.derivative`), a word for what it reads. `kind`
+    /// must be registered.
+    pub fn tag(&mut self, kind: &str, words: &[&str]) -> Result<(), Error> {
+        if !self.types.contains_key(kind) {
+            return Err(Error::new(format!("`{kind}` is tagged, but is not registered")));
+        }
+        let list = self.tags.entry(kind.to_string()).or_default();
+        for word in words {
+            let word = word.trim().to_lowercase();
+            if search_form(&word).is_empty() {
+                return Err(Error::new(format!("`{kind}` has an empty tag")));
+            }
+            if !list.contains(&word) {
+                list.push(word);
+            }
+        }
+        Ok(())
+    }
+
+    /// The words a search finds `kind` by besides its name: its tags, then the file name
+    /// extensions its file params take, so `fbx` finds the node that reads FBX files.
+    pub fn tags(&self, kind: &str) -> Vec<String> {
+        let mut out = self.tags.get(kind).cloned().unwrap_or_default();
+        for spec in self.desc(kind).map_or(&[][..], |d| d.params.as_slice()) {
+            if let ParamKind::File { extensions } = &spec.kind {
+                for e in extensions {
+                    if !out.contains(e) {
+                        out.push(e.clone());
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The first tag of `kind` that starts with the search `text` ([`search_form`]); `None` for
+    /// an empty text. From the start only, since a short text is found inside many tags (`in`
+    /// in every `... in`).
+    pub fn tag_found(&self, kind: &str, text: &str) -> Option<String> {
+        let text = search_form(text);
+        if text.is_empty() {
+            return None;
+        }
+        self.tags(kind).into_iter().find(|t| search_form(t).starts_with(&text))
+    }
+
     pub fn get(&self, kind: &str) -> Option<&Arc<dyn NodeType>> {
         self.types.get(kind)
     }
@@ -870,6 +919,22 @@ impl NodeTypes {
     pub fn kinds(&self) -> impl Iterator<Item = &str> + '_ {
         self.types.keys().map(String::as_str)
     }
+}
+
+/// A search text, kind or tag as a search compares it: lower case, without spaces, underscores,
+/// dashes and dots. So `lens distort` finds `tex.lens_distort` and `chopto` finds the tag
+/// `chop to`.
+pub fn search_form(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, ' ' | '_' | '-' | '.') && !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Whether the name of `kind` contains the search `text` ([`search_form`]); any kind for an
+/// empty text.
+pub fn name_found(kind: &str, text: &str) -> bool {
+    search_form(kind).contains(&search_form(text))
 }
 
 /// A [`NodeType`] made from a declaration and a closure, for simple nodes.

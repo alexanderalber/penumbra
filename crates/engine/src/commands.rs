@@ -73,7 +73,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     add("history.redo", "Redo one history entry", history_redo);
     add(
         "node.kinds",
-        "Node types with their params, inputs and outputs. With a param: its help (what it does, type, default, range, unit, what each choice does); {kind?, param?}",
+        "Node types with their params, inputs, outputs and tags. With a param: its help (what it does, type, default, range, unit, what each choice does). With search: the types whose name contains the text or a tag starts with it (TouchDesigner names, file extensions), as the add dialog finds them; {kind?, param?, search?}",
         node_kinds,
     );
     add("node.list", "Nodes under a path; {path?, recursive?}", node_list);
@@ -344,9 +344,27 @@ fn node_kinds(e: &Engine, p: &Json) -> Result<Json> {
     struct A {
         kind: Option<String>,
         param: Option<String>,
+        search: Option<String>,
     }
     let mut a: A = args(p)?;
     let types = e.types();
+    if let Some(text) = &a.search {
+        let found: Vec<Json> = types
+            .kinds()
+            .filter(|k| *k != penumbra_graph::broken::BROKEN_KIND)
+            .filter_map(|k| {
+                let tag = types.tag_found(k, text);
+                let by_name = penumbra_graph::name_found(k, text);
+                let summary = types.desc(k).map_or("", |d| d.summary.as_str());
+                match (by_name, tag) {
+                    (true, _) => Some(json!({"kind": k, "summary": summary})),
+                    (false, Some(tag)) => Some(json!({"kind": k, "tag": tag, "summary": summary})),
+                    (false, None) => None,
+                }
+            })
+            .collect();
+        return Ok(json!({"kinds": found}));
+    }
     let mut note = None;
     if let Some(kind) = a.kind.take() {
         let (kind, n) = current_kind(e, kind);
@@ -377,6 +395,10 @@ fn node_kinds(e: &Engine, p: &Json) -> Result<Json> {
             if let Some(o) = v.as_object_mut() {
                 o.insert("inputs".into(), to_json(&d.listed_inputs())?);
                 o.remove("runs");
+                let tags = types.tags(&d.kind);
+                if !tags.is_empty() {
+                    o.insert("tags".into(), to_json(&tags)?);
+                }
             }
         }
     }

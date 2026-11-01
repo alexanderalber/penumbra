@@ -58,8 +58,56 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     for (old, new) in RENAMED_KINDS {
         types.renamed_kind(old, new)?;
     }
+    for (kind, words) in TAGS {
+        types.tag(kind, words)?;
+    }
     Ok(())
 }
+
+/// Words the add dialog's search also finds a kind by, from their start. Mostly the
+/// TouchDesigner names of nodes that do the same under another name here, so someone who knows
+/// TouchDesigner finds their way. A name that already contains the TouchDesigner name needs no
+/// tag: the search ignores spaces, underscores and dots, so `lens distort` finds
+/// `tex.lens_distort`. The file name extensions a node reads are tags of their own and need no
+/// row.
+pub const TAGS: &[(&str, &[&str])] = &[
+    ("tex.channel_mix", &["reorder"]),
+    ("tex.composite", &["over", "add", "multiply", "screen", "subtract", "difference"]),
+    ("tex.from_chan", &["chop to"]),
+    ("tex.hsv", &["hsv adjust"]),
+    ("tex.image_file", &["movie file in"]),
+    ("tex.mapper", &["kantan mapper", "stoner"]),
+    ("tex.primitive", &["rectangle", "circle"]),
+    ("tex.shader", &["glsl"]),
+    ("tex.spout_in", &["syphon spout in"]),
+    ("tex.video_file", &["movie file in"]),
+    ("tex.video_in", &["video device in", "webcam"]),
+    ("chan.beat_analysis", &["audio analysis"]),
+    ("chan.clock", &["timer"]),
+    ("chan.derivative", &["slope"]),
+    ("chan.filter", &["lag"]),
+    ("chan.from_table", &["dat to"]),
+    ("chan.from_tex", &["top to"]),
+    ("chan.http_in", &["web server", "websocket"]),
+    ("chan.integrator", &["speed"]),
+    ("chan.spacemouse_in", &["joystick"]),
+    ("audio.file", &["audio file in"]),
+    ("table.file", &["file in"]),
+    ("geo.assign_material", &["material"]),
+    ("geo.file", &["file in"]),
+    ("geo.instance", &["instancing"]),
+    ("geo.primitive", &["box", "sphere", "grid"]),
+    ("geo.tex_instance", &["instancing"]),
+    ("light.environment", &["environment light"]),
+    ("comp.base", &["container"]),
+    ("out.audio", &["audio device out"]),
+    ("out.audio_file", &["audio file out"]),
+    ("out.dmx", &["dmx out"]),
+    ("out.ndi", &["ndi out"]),
+    ("out.projector", &["window"]),
+    ("out.spout", &["syphon spout out"]),
+    ("out.video", &["movie file out"]),
+];
 
 /// Kinds that were renamed, old name first. A project, component or copied node that still
 /// names the old kind loads as the new one, and the next save writes the new name. A row stays
