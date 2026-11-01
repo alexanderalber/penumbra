@@ -3,12 +3,16 @@
 (
     version: 2,
     nodes: {
-        "/first": (kind: "tex.text", params: {"color": [0.02, 0.02, 0.06, 1.0], "height": 720, "size": 60.0, "style": "Bold", "text": "1", "width": 1280}, binds: {"position.0": "slots:x1", "position.1": "slots:y1"}, pos: [600.0, 0.0]),
-        "/labels": (kind: "tex.composite", inputs: {"in0": "first", "in1": "second"}, pos: [800.0, 0.0]),
-        "/second": (kind: "tex.text", params: {"color": [0.02, 0.02, 0.06, 1.0], "height": 720, "size": 60.0, "style": "Bold", "text": "2", "width": 1280}, binds: {"position.0": "slots:x2", "position.1": "slots:y2"}, pos: [600.0, 142.0]),
-        "/slots": (kind: "chan.null", inputs: {"in": "track:chans"}, pos: [400.0, 0.0]),
-        "/spots": (kind: "tex.shader", params: {"file": "spots.wgsl", "height": 720, "width": 1280}, pos: [0.0, 0.0]),
+        "/about_camera": (kind: "ui.note", params: {"height": 115, "text": "# With a camera\nAdd a `tex.video_in` (Tab > tex > video_in). Wire it into `track` instead of `spots`. Set `detect` to `background`, step out of the picture, press learn background.", "width": 560}, pos: [0.0, 330.0]),
+        "/about_labels": (kind: "ui.note", params: {"height": 115, "text": "# Numbers on the blobs\n`slots` passes the channels on. `position` on `first` and `second` is bound to `x1`, `y1` and `x2`, `y2`. The numbers ride on the blobs in slots 1 and 2. `view` lays them over `spots`.", "width": 550}, pos: [600.0, -120.0]),
+        "/about_spots": (kind: "ui.note", params: {"height": 115, "text": "# Something to track\n`spots` draws wandering spots with a shader (`spots.wgsl`). No camera needed. Each spot: a white core and a dimmer coloured glow.\n- `count`, `pace`, `glow`, `look` on `spots`", "width": 540}, pos: [0.0, -160.0]),
+        "/about_track": (kind: "ui.note", params: {"height": 135, "text": "# Tracking\n`track` counts what is brighter than `threshold` (0.5, `detect` is `bright`): the cores, not the glow. Each blob keeps its id while it moves.\n- `chans` output: `count`, and per slot `id`, `x`, `y`, `area`\n- `blobs` output: a table of all blobs", "width": 560}, pos: [0.0, 150.0]),
+        "/first": (kind: "tex.text", params: {"color": [0.02, 0.02, 0.06, 1.0], "height": 720, "size": 60.0, "style": "Bold", "text": "1", "width": 1280}, binds: {"position.0": "slots:x1", "position.1": "slots:y1"}, pos: [600.0, 134.0]),
+        "/labels": (kind: "tex.composite", inputs: {"in0": "first", "in1": "second"}, pos: [800.0, 209.0]),
+        "/second": (kind: "tex.text", params: {"color": [0.02, 0.02, 0.06, 1.0], "height": 720, "size": 60.0, "style": "Bold", "text": "2", "width": 1280}, binds: {"position.0": "slots:x2", "position.1": "slots:y2"}, pos: [600.0, 263.0]),
+        "/slots": (kind: "chan.null", inputs: {"in": "track:chans"}, pos: [400.0, 49.0]),
+        "/spots": (kind: "tex.shader", params: {"file": "spots.wgsl", "height": 720, "width": 1280}, pos: [0.0, 22.0]),
         "/track": (kind: "tex.blob_track", params: {"detect": "bright", "threshold": 0.5}, inputs: {"in": "spots"}, pos: [200.0, 0.0]),
-        "/view": (kind: "tex.composite", inputs: {"in0": "spots", "in1": "labels"}, pos: [200.0, 142.0]),
+        "/view": (kind: "tex.composite", inputs: {"in0": "spots", "in1": "labels"}, pos: [1000.0, 144.0]),
     },
 )

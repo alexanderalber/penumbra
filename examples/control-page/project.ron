@@ -3,13 +3,16 @@
 (
     version: 2,
     nodes: {
-        "/flash": (kind: "chan.button", params: {"label": "flash", "show": true}, pos: [0.0, 420.0]),
-        "/http": (kind: "chan.http_in", pos: [300.0, 420.0]),
-        "/look": (kind: "comp.base", pos: [0.0, 140.0]),
+        "/about_controls": (kind: "ui.note", params: {"height": 175, "text": "# Controls\nFour controls with `show` ticked drive the picture in `show`:\n- `size`: size of `shape`, 0.1 to 1\n- `round`: toggle, square or circle\n- `flash`: white background while held\n- `colour` inside `look`: hue, -180 to 180. The page names it `look/colour`", "width": 560}, pos: [0.0, -205.0]),
+        "/about_copy": (kind: "ui.note", params: {"height": 115, "text": "# Your own page\nCopy `www/` into the project folder. Add a `chan.http_in`. Tick `show` on every `chan.slider` and `chan.button` the page should offer.", "width": 420}, pos: [600.0, 20.0]),
+        "/about_page": (kind: "ui.note", params: {"height": 195, "text": "# The page\n`http` serves `www/index.html` at http://localhost:8090/. Open it in a browser while the example runs. It draws a slider per slider and a switch per toggle.\n- Phone: set `bind` on `http` to `lan`. `http.status` names the address under `page`\n- `flash` shows as a lamp. The page cannot press a momentary button\n- `min`, `max` on `size`: the page's slider follows", "width": 560}, pos: [200.0, 260.0]),
+        "/flash": (kind: "chan.button", params: {"label": "flash", "show": true}, pos: [0.0, 180.0]),
+        "/http": (kind: "chan.http_in", pos: [0.0, 318.0]),
+        "/look": (kind: "comp.base", pos: [200.0, 21.0]),
         "/look/hue": (kind: "chan.slider", params: {"label": "colour", "max": 180.0, "min": -180.0, "show": true}, pos: [0.0, 0.0]),
-        "/round": (kind: "chan.button", params: {"label": "round", "mode": "toggle", "show": true}, pos: [0.0, 280.0]),
-        "/shape": (kind: "tex.primitive", params: {"background": [0.0, 0.0, 0.0, 1.0], "fill": [1.0, 0.45, 0.1, 1.0], "softness": 2.0}, binds: {"background.0": "flash", "background.1": "flash", "background.2": "flash", "shape": "round", "size.0": "size", "size.1": "size"}, pos: [300.0, 140.0]),
-        "/show": (kind: "tex.hsv", inputs: {"in": "shape"}, binds: {"hue": "look/hue"}, pos: [550.0, 140.0]),
+        "/round": (kind: "chan.button", params: {"label": "round", "mode": "toggle", "show": true}, pos: [0.0, 90.0]),
+        "/shape": (kind: "tex.primitive", params: {"background": [0.0, 0.0, 0.0, 1.0], "fill": [1.0, 0.45, 0.1, 1.0], "softness": 2.0}, binds: {"background.0": "flash", "background.1": "flash", "background.2": "flash", "shape": "round", "size.0": "size", "size.1": "size"}, pos: [200.0, 121.0]),
+        "/show": (kind: "tex.hsv", inputs: {"in": "shape"}, binds: {"hue": "look/hue"}, pos: [400.0, 121.0]),
         "/size": (kind: "chan.slider", params: {"label": "size", "max": 1.0, "min": 0.1, "show": true, "value": 0.5}, pos: [0.0, 0.0]),
     },
 )

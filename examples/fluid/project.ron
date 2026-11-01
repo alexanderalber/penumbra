@@ -3,11 +3,14 @@
 (
     version: 2,
     nodes: {
-        "/black": (kind: "tex.constant", pos: [400.0, 142.0]),
-        "/flow": (kind: "tex.optical_flow", inputs: {"in": "movers"}, pos: [200.0, 0.0]),
-        "/fluid": (kind: "tex.fluid", params: {"dye_fade": 8.0, "velocity_fade": 5.0, "vorticity": 0.8}, inputs: {"dye": "movers", "force": "flow", "splats": "track:blobs"}, pos: [400.0, 0.0]),
-        "/movers": (kind: "tex.shader", params: {"count": 5, "file": "movers.wgsl", "height": 720, "look": "neon", "width": 1280}, pos: [0.0, 0.0]),
-        "/track": (kind: "tex.blob_track", params: {"detect": "bright", "threshold": 0.2}, inputs: {"in": "movers"}, pos: [200.0, 142.0]),
-        "/view": (kind: "tex.composite", inputs: {"in0": "black", "in1": "fluid"}, pos: [600.0, 0.0]),
+        "/about_fluid": (kind: "ui.note", params: {"height": 175, "text": "# Try on `fluid`\n- `vorticity` (0.8): curlier swirls\n- `velocity_fade` (5 s), `dye_fade` (8 s): how long it swirls and glows\n- `edges` `open`: it flows out of the picture\n- With a camera: a `tex.video_in` into `flow`, `track` and `dye` instead of `movers`", "width": 440}, pos: [600.0, 210.0]),
+        "/about_in": (kind: "ui.note", params: {"height": 135, "text": "# Moving picture\n`movers` (`movers.wgsl`) draws coloured spots wandering over black. A stand-in for a camera watching people move.\n- `look` on `movers`: `candy`, `primaries`, ...", "width": 380}, pos: [0.0, -170.0]),
+        "/about_push": (kind: "ui.note", params: {"height": 155, "text": "# What drives the fluid\n- `flow` measures how the spots move. Its output is the fluid's `force`\n- `track` finds the spots. Its `blobs` table goes into `splats`: a push and the spot's colour at each blob\n- `movers` is the `dye`: where the picture moves, the fluid takes on its colours", "width": 560}, pos: [0.0, 310.0]),
+        "/black": (kind: "tex.constant", pos: [400.0, 0.0]),
+        "/flow": (kind: "tex.optical_flow", inputs: {"in": "movers"}, pos: [200.0, 41.0]),
+        "/fluid": (kind: "tex.fluid", params: {"dye_fade": 8.0, "velocity_fade": 5.0, "vorticity": 0.8}, inputs: {"dye": "movers", "force": "flow", "splats": "track:blobs"}, pos: [400.0, 128.0]),
+        "/movers": (kind: "tex.shader", params: {"count": 5, "file": "movers.wgsl", "height": 720, "look": "neon", "width": 1280}, pos: [0.0, 108.0]),
+        "/track": (kind: "tex.blob_track", params: {"detect": "bright", "threshold": 0.2}, inputs: {"in": "movers"}, pos: [200.0, 175.0]),
+        "/view": (kind: "tex.composite", inputs: {"in0": "black", "in1": "fluid"}, pos: [600.0, 68.0]),
     },
 )

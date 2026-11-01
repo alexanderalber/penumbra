@@ -1647,7 +1647,7 @@ mod tests {
         layout.sync(&net);
         let notes: Vec<NodeId> =
             net.children(None).filter(|n| penumbra_ops::note::is_note(n)).map(|n| n.id).collect();
-        assert_eq!(notes.len(), 4);
+        assert_eq!(notes.len(), 6);
         // Scrambled, so the nodes move a long way and land where the notes were.
         let scramble: Vec<penumbra_graph::Op> = net
             .children(None)
