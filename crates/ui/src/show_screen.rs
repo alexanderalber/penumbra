@@ -118,7 +118,7 @@ pub fn controls(
             .and_then(|d| node.param(d, "name"))
             .and_then(penumbra_core::Value::as_str)
             .unwrap_or("value");
-        let line = node_controls::line(name, node_controls::shown_value(&control, pointer.pressed));
+        let line = node_controls::line(name, &control, node_controls::shown_value(&control, pointer.pressed));
         let hovered = resp.hovered() || pointer.pressed;
         node_controls::draw(&painter, body, &control, &line, pointer.pressed, hovered, active, ZOOM, 0.0);
         node_controls::cursor(ui, &resp, &control, active);

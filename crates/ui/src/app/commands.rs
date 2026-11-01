@@ -188,6 +188,12 @@ impl PenumbraApp {
         let from = self.element_pos(p.get("from").unwrap_or(&Json::Null))?;
         let to = self.element_pos(p.get("to").unwrap_or(&Json::Null))?;
         let steps = p.get("steps").and_then(Json::as_u64).unwrap_or(8).clamp(2, 200);
+        // The modifiers are held for the whole drag, as `ctx.input` reports them (a Shift drag is
+        // a fine drag on a slider).
+        let held = modifiers != Modifiers::default();
+        if held {
+            self.synthetic.push_back(egui::Event::ModifiersChanged(modifiers));
+        }
         self.synthetic.push_back(egui::Event::PointerMoved(from));
         self.synthetic.push_back(egui::Event::PointerButton { pos: from, button, pressed: true, modifiers });
         for i in 1..=steps {
@@ -195,6 +201,9 @@ impl PenumbraApp {
             self.synthetic.push_back(egui::Event::PointerMoved(from + (to - from) * t));
         }
         self.synthetic.push_back(egui::Event::PointerButton { pos: to, button, pressed: false, modifiers });
+        if held {
+            self.synthetic.push_back(egui::Event::ModifiersChanged(Modifiers::default()));
+        }
         Ok(Outcome::AfterInput)
     }
 

@@ -106,9 +106,30 @@ pub fn rect(body: Rect, zoom: f32, port_pick: f32) -> Rect {
     Rect::from_min_max(min, max)
 }
 
+/// How much of the pointer's way a fine drag (Shift held) moves a slider: a tenth, as the
+/// fine drags of the mapping and shape handles.
+pub const FINE: f64 = 0.1;
+
 /// The slider's value for a pointer at `x` over `rect`: the range in [`STEPS`] steps.
-pub fn slider_at(rect: Rect, x: f32, min: f64, max: f64) -> f64 {
-    let t = f64::from(((x - rect.min.x) / rect.width().max(1.0)).clamp(0.0, 1.0));
+#[cfg(test)]
+fn slider_at(rect: Rect, x: f32, min: f64, max: f64) -> f64 {
+    slider_round(share_at(rect, x), min, max)
+}
+
+/// The share of `rect`'s width left of `x`, 0 to 1.
+fn share_at(rect: Rect, x: f32) -> f64 {
+    f64::from(((x - rect.min.x) / rect.width().max(1.0)).clamp(0.0, 1.0))
+}
+
+/// Where `value` sits between `min` and `max`, 0 to 1.
+fn share_of(value: f64, min: f64, max: f64) -> f64 {
+    let span = max - min;
+    let t = if span.abs() > 0.0 { (value - min) / span } else { 0.0 };
+    if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 }
+}
+
+/// The value at share `t` of the range, on one of [`STEPS`] steps.
+fn slider_round(t: f64, min: f64, max: f64) -> f64 {
     let v = min + (max - min) * (t * STEPS).round() / STEPS;
     // Two decimals more than a step needs, so 0.437 does not come out as 0.43700000000000006.
     let step = ((max - min).abs() / STEPS).max(1e-12);
@@ -116,6 +137,40 @@ pub fn slider_at(rect: Rect, x: f32, min: f64, max: f64) -> f64 {
     let scale = 10f64.powf(decimals);
     let rounded = (v * scale).round() / scale;
     if rounded.is_finite() { rounded } else { v }
+}
+
+/// The anchor of a slider drag: the pointer's `x` and the slider's share `t` of its range when
+/// the drag started or Shift last went down or up, and whether Shift is held (`fine`). The
+/// slider moves from the anchor by the pointer's way, a tenth of it while fine. A drag without
+/// Shift starts at the pointer, so the handle follows it as before; a change of Shift sets a
+/// new anchor where the slider is, so it does not jump.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Grip {
+    x: f32,
+    t: f64,
+    fine: bool,
+}
+
+impl Grip {
+    /// The anchor of a drag that starts at `x` on a slider at `value`. Without Shift the slider
+    /// takes the pointer's place; with Shift it stays where it is.
+    pub fn start(rect: Rect, x: f32, value: f64, min: f64, max: f64, fine: bool) -> Grip {
+        let t = if fine { share_of(value, min, max) } else { share_at(rect, x) };
+        Grip { x, t, fine }
+    }
+
+    /// The slider's share of its range with the pointer at `x`.
+    pub fn share(&self, rect: Rect, x: f32) -> f64 {
+        let factor = if self.fine { FINE } else { 1.0 };
+        let t = self.t + f64::from((x - self.x) / rect.width().max(1.0)) * factor;
+        if t.is_finite() { t.clamp(0.0, 1.0) } else { self.t }
+    }
+
+    /// The anchor for the pointer at `x` with Shift held or not (`fine`): unchanged while Shift
+    /// stays as it was, else a new one where the slider is now.
+    pub fn with(self, rect: Rect, x: f32, fine: bool) -> Grip {
+        if fine == self.fine { self } else { Grip { x, t: self.share(rect, x), fine } }
+    }
 }
 
 /// Draws the value line and the control. `pressed`: held by the pointer now; `hovered`: the
@@ -212,8 +267,9 @@ pub enum Pressed {
     Button,
     /// A toggle: it switches on the click.
     Toggle,
-    /// A slider being dragged: every edit of the drag joins `group`; `value` is the last one set.
-    Slider { group: GroupId, value: f64 },
+    /// A slider being dragged: every edit of the drag joins `group`; `value` is the last one set;
+    /// `grip` turns the pointer's place into the slider's.
+    Slider { group: GroupId, value: f64, grip: Grip },
 }
 
 /// What the pointer does to a control this frame.
@@ -271,11 +327,14 @@ pub fn interact(
             }
             Control::Slider { value, min, max, .. } => {
                 if down && let Some(p) = resp.interact_pointer_pos() {
-                    let v = slider_at(rect, p.x, *min, *max);
-                    let (group, last) = match mine {
-                        Some(Pressed::Slider { group, value }) => (group, Some(value)),
-                        _ => (new_group(), None),
+                    let fine = ui.input(|i| i.modifiers.shift);
+                    let (group, last, grip) = match mine {
+                        Some(Pressed::Slider { group, value, grip }) => {
+                            (group, Some(value), grip.with(rect, p.x, fine))
+                        }
+                        _ => (new_group(), None, Grip::start(rect, p.x, *value, *min, *max, fine)),
                     };
+                    let v = slider_round(grip.share(rect, p.x), *min, *max);
                     let changed = match last {
                         Some(last) => last != v,
                         None => *value != v,
@@ -287,7 +346,7 @@ pub fn interact(
                             group: Some(group),
                         });
                     }
-                    *press = Some(Press { node, what: Pressed::Slider { group, value: v } });
+                    *press = Some(Press { node, what: Pressed::Slider { group, value: v, grip } });
                     *value = v;
                 }
             }
@@ -338,9 +397,13 @@ pub fn shown_value(control: &Control, pressed: bool) -> f64 {
     }
 }
 
-/// The value line's text:the channel's name and value (a lone `value` shows just the number).
-pub fn line(name: &str, value: f64) -> String {
-    let v = crate::editor::format_value(value);
+/// The value line's text: the channel's name and value (a lone `value` shows just the number).
+/// A button's value is `1` or `0`, a slider's has three decimals.
+pub fn line(name: &str, control: &Control, value: f64) -> String {
+    let v = match control {
+        Control::Button { .. } => if value > 0.5 { "1" } else { "0" }.to_string(),
+        Control::Slider { .. } => crate::editor::format_value(value),
+    };
     if name == "value" { v } else { format!("{name} {v}") }
 }
 
@@ -357,7 +420,7 @@ pub fn tip(control: &Control, can_edit: bool, show: bool) -> String {
         Control::Slider { min, max, .. } => {
             let undo = if show { kept } else { "One drag is one undo step" };
             format!(
-                "Drag to set the value between {} and {}. {undo}",
+                "Drag to set the value between {} and {}, with Shift held for a fine drag. {undo}",
                 crate::editor::format_value(*min),
                 crate::editor::format_value(*max)
             )
@@ -379,6 +442,41 @@ mod tests {
         assert_eq!(slider_at(r, 53.7, 0.0, 1.0), 0.437);
         assert_eq!(slider_at(r, 60.0, -10.0, 10.0), 0.0);
         assert_eq!(slider_at(r, 60.0, 1.0, 0.0), 0.5, "max below min runs the other way");
+    }
+
+    #[test]
+    fn a_fine_drag_moves_a_tenth_and_shift_makes_no_jump() {
+        let r = Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 20.0));
+        // Without Shift the slider is under the pointer, as before.
+        let g = Grip::start(r, 30.0, 0.9, 0.0, 1.0, false);
+        assert_eq!(slider_round(g.share(r, 30.0), 0.0, 1.0), 0.3);
+        assert_eq!(slider_round(g.share(r, 70.0), 0.0, 1.0), slider_at(r, 70.0, 0.0, 1.0));
+        // Shift goes down at 70: no jump, then a tenth of the way.
+        let g = g.with(r, 70.0, true);
+        assert_eq!(slider_round(g.share(r, 70.0), 0.0, 1.0), 0.7);
+        assert_eq!(slider_round(g.share(r, 90.0), 0.0, 1.0), 0.72);
+        // Shift up at 90: no jump back to 0.9, then the full way again from there.
+        let g = g.with(r, 90.0, false);
+        assert_eq!(slider_round(g.share(r, 90.0), 0.0, 1.0), 0.72);
+        assert_eq!(slider_round(g.share(r, 80.0), 0.0, 1.0), 0.62);
+        assert_eq!(slider_round(g.share(r, 500.0), 0.0, 1.0), 1.0, "still ends at max");
+        // A drag that starts with Shift leaves the slider where it is.
+        let g = Grip::start(r, 10.0, 0.437, 0.0, 1.0, true);
+        assert_eq!(slider_round(g.share(r, 10.0), 0.0, 1.0), 0.437);
+        assert_eq!(slider_round(g.share(r, -1000.0), 0.0, 1.0), 0.0);
+        // Over a range of -10 to 10, a fine drag across the whole slider moves by 2.
+        let g = Grip::start(r, 0.0, 0.0, -10.0, 10.0, true);
+        assert_eq!(slider_round(g.share(r, 100.0), -10.0, 10.0), 2.0);
+    }
+
+    #[test]
+    fn a_button_shows_one_or_zero_and_a_slider_three_decimals() {
+        let button = Control::Button { toggle: false, on: true, label: String::new(), bound: false };
+        let slider = Control::Slider { value: 0.25, min: 0.0, max: 1.0, bound: false };
+        assert_eq!(line("value", &button, 1.0), "1");
+        assert_eq!(line("go", &button, 0.0), "go 0");
+        assert_eq!(line("value", &slider, 0.25), "0.250");
+        assert_eq!(line("level", &slider, 1.0), "level 1.000");
     }
 
     #[test]

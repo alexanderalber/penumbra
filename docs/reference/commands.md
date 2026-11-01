@@ -368,7 +368,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.arrange` | Arrange the nodes so wires cross little and run straight (one undo step): {nodes?: [path]}, else every level |
 | `ui.camera` | The viewer's 3D view of a render or geometry: {mode?: picture\|free\|steer, home?, camera?: {eye, target, roll, fov, ortho?}, orbit?: [yaw, pitch], pan?: [right, up], dolly?, travel?: [right, up, forward], look?: [yaw, pitch], roll?, take?}; moves go to the free view's camera, in steer mode to the camera node (orthographic: dolly scales the view's size); take copies the free view into the camera node |
 | `ui.click` | Click an element or a point; {id \| x, y, button?, double?, ctrl?, shift?, alt?} |
-| `ui.drag` | Drag between elements or points; {from: {id \| x, y}, to: {id \| x, y}, button?, steps?} |
+| `ui.drag` | Drag between elements or points, modifiers held throughout; {from: {id \| x, y}, to: {id \| x, y}, button?, steps?, ctrl?, shift?, alt?} |
 | `ui.elements` | Automation ids with rects in points; {prefix?} |
 | `ui.enter` | Show the inside of a component in the editor, the top level without a path; {path?} |
 | `ui.frame` | Fit all nodes into the editor |

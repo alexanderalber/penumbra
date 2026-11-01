@@ -10,7 +10,7 @@ Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#g
 
 [tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
 
-*in:* [tex.ndi_in](#texndi_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
+*inputs:* [tex.ndi_in](#texndi_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
 *scan and shapes:* [tex.blend_weight](#texblend_weight), [tex.face_content](#texface_content), [tex.scan](#texscan), [tex.scan_pattern](#texscan_pattern), [tex.shape_content](#texshape_content), [tex.shapes](#texshapes)
 
@@ -1114,7 +1114,7 @@ Outputs:
 
 [chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
-*in:* [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
+*inputs:* [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
 ### chan.audio_envelope
 
@@ -1659,7 +1659,7 @@ Outputs:
 
 [audio.ambience](#audioambience), [audio.file](#audiofile), [audio.filter](#audiofilter), [audio.instrument](#audioinstrument), [audio.mix](#audiomix), [audio.null](#audionull), [audio.oscillator](#audiooscillator)
 
-*in:* [audio.device_in](#audiodevice_in)
+*inputs:* [audio.device_in](#audiodevice_in)
 
 ### audio.ambience
 

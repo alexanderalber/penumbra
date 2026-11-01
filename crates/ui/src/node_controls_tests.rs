@@ -95,3 +95,44 @@ fn press_toggle_and_drag_on_node_bodies() {
     assert_eq!(history, 3, "the toggle and one entry per slider drag; no press, no bound drag");
     engine.shutdown();
 }
+
+#[test]
+fn a_shift_drag_on_a_slider_is_fine_and_starts_without_a_jump() {
+    let dir = ScratchDir::unborn("ui-controls-fine");
+    let types = Arc::new(penumbra_ops::builtin_types().unwrap());
+    let project = r#"(
+        version: 1,
+        nodes: {
+            "/s": (kind: "chan.slider", params: {"value": 0.2}, pos: [0, 0]),
+            "/f": (kind: "chan.slider", params: {"value": 0.2}, pos: [0, 90]),
+            "/right": (kind: "chan.constant", pos: [400, 0]),
+            "/right_f": (kind: "chan.constant", pos: [400, 90]),
+        },
+    )"#;
+    let content = penumbra_project::parse(project, &types).unwrap();
+    let session = Arc::new(Session::open(dir.path(), types, &content).unwrap());
+    let engine = Engine::start(session).unwrap();
+    let drag = |from: &str, to: &str, shift: bool| json!({"method": "ui.drag", "params": {"from": {"id": from}, "to": {"id": to}, "steps": 6, "shift": shift}});
+    let info = |path: &str| json!({"method": "node.info", "params": {"path": path}});
+    let script = [
+        json!({"wait": 1.0}),
+        // Pressed with Shift on the control's middle: the slider stays at 0.2.
+        drag("control./s", "control./s", true),
+        info("/s"),
+        // With Shift to far right: a tenth of the way. Without: max.
+        drag("control./f", "node./right_f", true),
+        info("/f"),
+        drag("control./s", "node./right", false),
+        info("/s"),
+    ];
+    let script: Vec<String> = script.iter().map(Json::to_string).collect();
+    let options = headless::Options { size: [1200.0, 800.0], pixels_per_point: 1.0, software: true };
+    let replies = headless::run(engine.clone(), &script.join("\n"), &options).unwrap();
+    assert_eq!(param(reply(&replies, "node.info", 0), "value"), json!(0.2), "no jump on a Shift press");
+    let fine = param(reply(&replies, "node.info", 1), "value").as_f64().unwrap();
+    assert!(fine > 0.25 && fine < 0.7, "a tenth of the way: {fine}");
+    assert_eq!(param(reply(&replies, "node.info", 2), "value"), json!(1.0), "a plain drag still reaches max");
+    let history = engine.session().doc().with_history(|h| h.entries().len());
+    assert_eq!(history, 2, "one entry per drag that changed the value");
+    engine.shutdown();
+}

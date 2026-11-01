@@ -1459,7 +1459,7 @@ impl Editor {
             .and_then(|d| node.param(d, "name"))
             .and_then(Value::as_str)
             .unwrap_or("value");
-        let line = node_controls::line(name, node_controls::shown_value(&control, pressed));
+        let line = node_controls::line(name, &control, node_controls::shown_value(&control, pressed));
         let hovered = resp.hovered() || pressed;
         node_controls::cursor(ui, &resp, &control, active);
         let resp = if pointer.down {

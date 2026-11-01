@@ -10,7 +10,7 @@
 //!   message (and node positions)
 //! - `ui.elements {prefix?}`: automation ids with their rects ([`crate::automation`])
 //! - `ui.click {id | x, y, button?, double?, ctrl?, shift?, alt?}`
-//! - `ui.drag {from: {id | x, y}, to: {id | x, y}, button?, steps?}`
+//! - `ui.drag {from: {id | x, y}, to: {id | x, y}, button?, steps?, ctrl?, shift?, alt?}`
 //! - `ui.scroll {id | x, y, dy}` (the editor zooms on the wheel)
 //! - `ui.key {key, ctrl?, shift?, alt?}`, `ui.type {text}`
 //! - `ui.select {paths}`, `ui.view {path?}` (pin the viewer; no path unpins)
@@ -97,7 +97,10 @@ const COMMANDS: &[(&str, &str)] = &[
     ("ui.state", "Selection, viewer, pan and zoom, editing mode, the status bar's message; {positions?}"),
     ("ui.elements", "Automation ids with rects in points; {prefix?}"),
     ("ui.click", "Click an element or a point; {id | x, y, button?, double?, ctrl?, shift?, alt?}"),
-    ("ui.drag", "Drag between elements or points; {from: {id | x, y}, to: {id | x, y}, button?, steps?}"),
+    (
+        "ui.drag",
+        "Drag between elements or points, modifiers held throughout; {from: {id | x, y}, to: {id | x, y}, button?, steps?, ctrl?, shift?, alt?}",
+    ),
     ("ui.scroll", "Mouse wheel over an element or point; {id | x, y, dy}"),
     ("ui.key", "Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?}"),
     ("ui.type", "Type text into the focused field; {text}"),

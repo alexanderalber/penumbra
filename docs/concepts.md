@@ -271,7 +271,10 @@ binding is written as `(node: "scores", cell: (row: 1, col: "name"))` or
 `chan.button` and `chan.slider` are steered right on their node in the network editor, without
 selecting it. **Button:** with `mode` `momentary` its channel is 1 while the mouse button is held
 on it; with `mode` `toggle` each click switches it between 1 and 0. **Slider:** dragging on it
-sets `value` between `min` and `max`. One drag is one undo step. A toggle's state and a slider's
+sets `value` between `min` and `max`. With Shift held, the slider moves a tenth of the mouse's
+way, for fine steps; pressing or letting go of Shift mid-drag does not make it jump. One drag
+is one undo step. The line above the control shows the channel's value: `1` or `0` for a
+button, three decimals for a slider. A toggle's state and a slider's
 value are params, saved with the project. A momentary press is no edit: it leaves no history
 and works while Claude edits. Bind params to their channel like to any other. From the control
 channel: `chan.press {path}` (or `{path, down}` to hold and let go) presses a button,

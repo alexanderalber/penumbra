@@ -204,7 +204,7 @@ pub enum PortRole {
 pub enum Block {
     /// Live pictures and channels from outside: cameras, other programs, controllers, the
     /// network. Files are not in it: a file is part of the project, an input comes and goes.
-    #[serde(rename = "in")]
+    #[serde(rename = "inputs")]
     In,
     /// The steps of a structured-light scan and what draws on its result. Placed by the scan
     /// commands far more often than by hand, so they stay out of the way of the common types.
@@ -219,7 +219,7 @@ impl Block {
     /// The heading over the block, as `node.kinds` names it.
     pub fn heading(self) -> &'static str {
         match self {
-            Block::In => "in",
+            Block::In => "inputs",
             Block::ScanAndShapes => "scan and shapes",
         }
     }

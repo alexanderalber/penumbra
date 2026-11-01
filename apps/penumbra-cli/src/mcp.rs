@@ -375,9 +375,12 @@ fn tools() -> Vec<Value> {
             "ui_drag",
             "Drag",
             false,
-            "Press, move and release between two elements or points (ui.drag).",
-            json!({"from": point, "to": point, "button": {"type": "string", "enum": ["left", "right", "middle"]},
-                   "steps": {"type": "integer", "minimum": 1}}),
+            "Press, move and release between two elements or points, modifiers held throughout (ui.drag; Shift on a slider is a fine drag).",
+            with(
+                json!({"from": point, "to": point, "button": {"type": "string", "enum": ["left", "right", "middle"]},
+                       "steps": {"type": "integer", "minimum": 1}}),
+                &modifiers,
+            ),
             &["from", "to"],
         ),
         tool(

@@ -96,7 +96,7 @@ fn build_a_network_and_watch_it_cook() {
     assert_eq!(kinds["kinds"][0]["params"][0]["name"], "rate");
     assert_eq!(kinds["kinds"][0].get("block"), None, "a common type is in no block");
     let video = f.call("node.kinds", json!({"kind": "tex.video_in"}));
-    assert_eq!(video["kinds"][0]["block"], "in");
+    assert_eq!(video["kinds"][0]["block"], "inputs");
     let scan = f.call("node.kinds", json!({"kind": "tex.scan"}));
     assert_eq!(scan["kinds"][0]["block"], "scan and shapes");
     let help = f.call("node.kinds", json!({"kind": "chan.lfo", "param": "shape"}))["param"].clone();
