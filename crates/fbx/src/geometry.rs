@@ -20,7 +20,9 @@ pub const NONE: u32 = u32::MAX;
 /// A polygon's corners: `count` entries of [`Geometry::corners`] from `first`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Polygon {
+    /// The polygon's first corner.
     pub first: u32,
+    /// How many corners it has (at least 3).
     pub count: u32,
     /// The polygon's position in the file, counting the skipped ones too (what `ByPolygon`
     /// layers refer to).
@@ -30,7 +32,9 @@ pub struct Polygon {
 /// Values and, per polygon corner, which value it takes ([`NONE`] for none).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Attribute<T> {
+    /// The values as stored.
     pub values: Vec<T>,
+    /// Per polygon corner, the index into `values`.
     pub index: Vec<u32>,
 }
 
@@ -44,12 +48,15 @@ impl<T: Copy> Attribute<T> {
 
 /// A mesh geometry as stored, before any transform.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Geometry {
+    /// The control points as stored, in the file's units.
     pub positions: Vec<[f64; 3]>,
     /// Per polygon corner, the control point.
     pub corners: Vec<u32>,
     /// The usable polygons, in file order.
     pub polygons: Vec<Polygon>,
+    /// The first normal layer, per corner.
     pub normals: Option<Attribute<[f64; 3]>>,
     /// The first UV set (the lowest layer index), origin at the bottom left as in the file.
     pub uvs: Option<Attribute<[f64; 2]>>,
@@ -230,7 +237,7 @@ impl Geometry {
 }
 
 /// Triangles over the corners of a planar-ish polygon (indices into `points`).
-pub fn triangulate(points: &[[f64; 3]]) -> Vec<[usize; 3]> {
+pub(crate) fn triangulate(points: &[[f64; 3]]) -> Vec<[usize; 3]> {
     let n = points.len();
     let fan = || (1..n.saturating_sub(1)).map(|k| [0, k, k + 1]).collect::<Vec<_>>();
     if n < 3 {

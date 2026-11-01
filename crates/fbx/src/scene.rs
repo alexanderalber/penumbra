@@ -12,11 +12,17 @@ use crate::{Error, Limits};
 /// A signed coordinate axis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Axis {
+    /// +x.
     PosX,
+    /// -x.
     NegX,
+    /// +y.
     PosY,
+    /// -y.
     NegY,
+    /// +z.
     PosZ,
+    /// -z.
     NegZ,
 }
 
@@ -34,6 +40,7 @@ impl Axis {
         })
     }
 
+    /// The unit vector along the axis.
     pub fn vector(self) -> [f64; 3] {
         match self {
             Axis::PosX => [1.0, 0.0, 0.0],
@@ -58,12 +65,16 @@ impl Axis {
 /// front faces). The FBX SDK's default is x right, y up, z front.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Axes {
+    /// The axis pointing right.
     pub right: Axis,
+    /// The axis pointing up.
     pub up: Axis,
+    /// The axis a model's front faces along.
     pub front: Axis,
 }
 
 impl Axes {
+    /// The FBX SDK's default: x right, y up, z front.
     pub const Y_UP: Axes = Axes { right: Axis::PosX, up: Axis::PosY, front: Axis::PosZ };
 
     /// From `CoordAxis`, `UpAxis` and `FrontAxis` with their signs; `None` when one is missing
@@ -101,12 +112,15 @@ impl Axes {
 
 /// A geometry placed by a model.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct MeshInstance {
     /// Index into [`Hierarchy::nodes`].
     pub node: usize,
+    /// The model's object id.
     pub model_id: i64,
     /// The model's name.
     pub name: String,
+    /// The geometry's object id: pass it to [`Scene::geometry`] and [`Scene::skin`].
     pub geometry_id: i64,
     /// Geometry to world, in the file's units and axes.
     pub geometry_to_world: Mat4,
@@ -117,20 +131,27 @@ pub struct MeshInstance {
 
 /// A material's colour and diffuse texture.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct MaterialInfo {
+    /// The material's object id.
     pub id: i64,
+    /// The material's name.
     pub name: String,
     /// `DiffuseColor` (or the older `Diffuse`) times `DiffuseFactor`, as stored (linear).
     pub diffuse: [f64; 3],
     /// `Opacity` where the material has one, else 1.
     pub opacity: f64,
+    /// The texture on `DiffuseColor` (or `Diffuse`), if any.
     pub diffuse_texture: Option<TextureInfo>,
 }
 
 /// A texture and where its image is.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct TextureInfo {
+    /// The texture's object id.
     pub id: i64,
+    /// The texture's name.
     pub name: String,
     /// The path as the writer saw it, usually absolute on the writer's machine.
     pub file_name: String,
@@ -142,8 +163,11 @@ pub struct TextureInfo {
 
 /// A parsed file with its hierarchy evaluated.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct Scene {
+    /// The objects, connections and settings below the scene.
     pub document: Document,
+    /// The models and their parents.
     pub hierarchy: Hierarchy,
     /// Per entry of [`Hierarchy::nodes`], from the file's values.
     pub worlds: Vec<NodeWorld>,
@@ -153,14 +177,17 @@ pub struct Scene {
     pub axes: Option<Axes>,
     /// The takes and their curves; [`Animation::worlds`] places the models at a time.
     pub animation: Animation,
+    /// What was read in a doubtful way or left out, in words. A file with warnings still loads.
     pub warnings: Vec<String>,
 }
 
 impl Scene {
+    /// Reads a binary or ASCII FBX 7.x file from its bytes.
     pub fn parse(bytes: &[u8], limits: &Limits) -> Result<Scene, Error> {
         Self::from_document(Document::parse(bytes, limits)?, limits)
     }
 
+    /// The scene of a document read earlier.
     pub fn from_document(document: Document, limits: &Limits) -> Result<Scene, Error> {
         let mut warnings = Vec::new();
         let hierarchy = Hierarchy::from_document(&document, limits, &mut warnings)?;
@@ -224,6 +251,7 @@ impl Scene {
         Ok(Some(skin))
     }
 
+    /// Material `id`'s colour, opacity and diffuse texture; `None` when no material has the id.
     pub fn material(&self, id: i64) -> Option<MaterialInfo> {
         let doc = &self.document;
         let m = doc.object(id)?;

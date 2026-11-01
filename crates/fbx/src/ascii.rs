@@ -74,7 +74,7 @@ const ELEMENT_BYTES: u64 = 8;
 const MAX_RESERVE: usize = 4096;
 
 /// The version a `; FBX 7.4.0 project file` comment at the start names (7400), if any.
-pub fn header_version(bytes: &[u8]) -> Option<u32> {
+pub(crate) fn header_version(bytes: &[u8]) -> Option<u32> {
     let s = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
     let start = s.iter().position(|c| !c.is_ascii_whitespace())?;
     let s = s.get(start..)?.strip_prefix(b";")?;
@@ -98,7 +98,7 @@ fn too_old(version: u32) -> Error {
 }
 
 /// Reads the node tree of an ASCII FBX file.
-pub fn parse(bytes: &[u8], limits: &Limits) -> Result<Tree, Error> {
+pub(crate) fn parse(bytes: &[u8], limits: &Limits) -> Result<Tree, Error> {
     if bytes.len() as u64 > limits.max_file_bytes {
         return Err(Error::new(format!("larger than {} MiB", limits.max_file_bytes >> 20)));
     }

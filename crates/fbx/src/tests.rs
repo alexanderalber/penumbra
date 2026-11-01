@@ -28,7 +28,7 @@ fn the_tree_survives_a_round_trip_in_every_layout() {
 #[test]
 fn other_files_are_refused_with_a_reason() {
     let l = Limits::default();
-    let err = |b: &[u8]| tree::parse(b, &l).unwrap_err().0;
+    let err = |b: &[u8]| tree::parse(b, &l).unwrap_err().to_string();
     assert!(err(b"; FBX 6.1.0 project file\nFBXHeaderExtension:  {\n").contains("FBX 6"));
     let mut be = to_bytes(7400, &[], false);
     be[22] = 1;
@@ -90,7 +90,7 @@ fn hostile_counts_are_refused_before_allocating() {
         to_bytes(7400, &[Node::new("A", vec![Value::Array(Array::F64(vec![1.0; 4]))], Vec::new())], true);
     let at = after_header(&bytes, b'd');
     bytes[at + 1..at + 5].copy_from_slice(&u32::MAX.to_le_bytes());
-    assert!(tree::parse(&bytes, &l).unwrap_err().0.contains("arrays exceed"));
+    assert!(tree::parse(&bytes, &l).unwrap_err().to_string().contains("arrays exceed"));
     // A record claiming a billion values.
     let mut bytes = to_bytes(7400, &[Node::new("A", vec![Value::I32(1)], Vec::new())], false);
     bytes[31..35].copy_from_slice(&1_000_000_000u32.to_le_bytes());
@@ -98,7 +98,7 @@ fn hostile_counts_are_refused_before_allocating() {
     // Values budget.
     let many = Node::new("A", vec![Value::Bool(1); 100], Vec::new());
     let small = Limits { max_values: 50, ..Limits::default() };
-    assert!(tree::parse(&to_bytes(7400, &[many], false), &small).unwrap_err().0.contains("values"));
+    assert!(tree::parse(&to_bytes(7400, &[many], false), &small).unwrap_err().to_string().contains("values"));
 }
 
 #[test]
@@ -112,7 +112,7 @@ fn bad_zlib_is_an_error() {
     for b in &mut bytes[at + 2..at + 12] {
         *b ^= 0x5a;
     }
-    assert!(tree::parse(&bytes, &Limits::default()).unwrap_err().0.contains("zlib"));
+    assert!(tree::parse(&bytes, &Limits::default()).unwrap_err().to_string().contains("zlib"));
 }
 
 #[test]
@@ -122,7 +122,7 @@ fn deep_nesting_is_refused() {
         n = Node::new("n", Vec::new(), vec![n]);
     }
     let err = tree::parse(&to_bytes(7400, &[n], false), &Limits::default()).unwrap_err();
-    assert!(err.0.contains("deeper"), "{err}");
+    assert!(err.message().contains("deeper"), "{err}");
 }
 
 fn scene_of(objects: Vec<Node>, connections: Vec<Node>) -> Scene {
@@ -158,7 +158,7 @@ fn deep_model_chains_are_refused() {
     let conns: Vec<Node> = (2..=100).map(|i| connection("OO", i, i - 1, None)).collect();
     let nodes = vec![Node::new("Objects", Vec::new(), objects), Node::new("Connections", Vec::new(), conns)];
     let err = Scene::parse(&to_bytes(7400, &nodes, false), &Limits::default()).unwrap_err();
-    assert!(err.0.contains("deeper"), "{err}");
+    assert!(err.message().contains("deeper"), "{err}");
 }
 
 #[test]
@@ -506,9 +506,9 @@ fn the_animated_scene_moves_its_models() {
 fn animation_budgets_and_broken_curves() {
     let bytes = to_bytes(7400, &write::animated_scene(), true);
     let few = Limits { max_keys: 3, ..Limits::default() };
-    assert!(Scene::parse(&bytes, &few).unwrap_err().0.contains("animation keys"));
+    assert!(Scene::parse(&bytes, &few).unwrap_err().to_string().contains("animation keys"));
     let one = Limits { max_curves: 1, ..Limits::default() };
-    assert!(Scene::parse(&bytes, &one).unwrap_err().0.contains("animation curves"));
+    assert!(Scene::parse(&bytes, &one).unwrap_err().to_string().contains("animation curves"));
     // A curve whose arrays disagree is left out with a warning; the rest still moves.
     let mut nodes = write::animated_scene();
     for n in &mut nodes {
@@ -622,7 +622,7 @@ fn broken_skins_are_read_safely() {
     let bytes = to_bytes(7400, &write::skinned_scene(), false);
     let scene = Scene::parse(&bytes, &Limits::default()).unwrap();
     let few = Limits { max_skin_weights: 6, ..Limits::default() };
-    assert!(scene.skin(20, &few).unwrap_err().0.contains("weights"));
+    assert!(scene.skin(20, &few).unwrap_err().to_string().contains("weights"));
     // Every truncation: an error or a scene whose skin reads and poses at any time.
     for n in (0..bytes.len()).step_by(5) {
         if let Ok(s) = Scene::parse(&bytes[..n], &Limits::default())
@@ -773,7 +773,7 @@ fn ascii_syntax_reads_as_the_sdk_writes_it() {
 fn hostile_ascii_is_refused_with_a_reason() {
     let l = Limits::default();
     let head = "; FBX 7.4.0 project file\n";
-    let err = |body: &str| tree::parse(format!("{head}{body}").as_bytes(), &l).unwrap_err().0;
+    let err = |body: &str| tree::parse(format!("{head}{body}").as_bytes(), &l).unwrap_err().to_string();
     // A claimed length the file does not back costs nothing and is not trusted.
     let t = tree::parse(format!("{head}A: *18446744073709551615 {{ a: 1,2 }}\n").as_bytes(), &l).unwrap();
     assert_eq!(t.nodes[0].values, [Value::Array(Array::I32(vec![1, 2]))]);
@@ -791,25 +791,28 @@ fn hostile_ascii_is_refused_with_a_reason() {
     let deep = "A: {".repeat(1000);
     assert!(err(&deep).contains("deeper than"));
     // Versions: FBX 6 by comment or by record, none at all, the future.
-    assert!(tree::parse(b"; FBX 6.1.0 project file\nA: 1\n", &l).unwrap_err().0.contains("FBX 6"));
+    assert!(tree::parse(b"; FBX 6.1.0 project file\nA: 1\n", &l).unwrap_err().to_string().contains("FBX 6"));
     let v = |n: i64| format!("FBXHeaderExtension: {{\n FBXVersion: {n}\n}}\n");
-    assert!(tree::parse(v(6100).as_bytes(), &l).unwrap_err().0.contains("FBX 6"));
-    assert!(tree::parse(v(12000).as_bytes(), &l).unwrap_err().0.contains("not known"));
-    assert!(tree::parse(v(-1).as_bytes(), &l).unwrap_err().0.contains("not known"));
-    assert!(tree::parse(b"A: 1\n", &l).unwrap_err().0.contains("not an FBX file"));
+    assert!(tree::parse(v(6100).as_bytes(), &l).unwrap_err().to_string().contains("FBX 6"));
+    assert!(tree::parse(v(12000).as_bytes(), &l).unwrap_err().to_string().contains("not known"));
+    assert!(tree::parse(v(-1).as_bytes(), &l).unwrap_err().to_string().contains("not known"));
+    assert!(tree::parse(b"A: 1\n", &l).unwrap_err().to_string().contains("not an FBX file"));
     // Budgets count values and elements, not bytes.
     let small = Limits { max_array_bytes: 80, ..Limits::default() };
     let many = format!("{head}A: *11 {{ a: {} }}\n", ["1"; 11].join(","));
-    assert!(tree::parse(many.as_bytes(), &small).unwrap_err().0.contains("arrays exceed"));
+    assert!(tree::parse(many.as_bytes(), &small).unwrap_err().to_string().contains("arrays exceed"));
     let few = Limits { max_values: 3, ..Limits::default() };
     assert!(
-        tree::parse(format!("{head}A: 1,2\nB: 3,4\n").as_bytes(), &few).unwrap_err().0.contains("values")
+        tree::parse(format!("{head}A: 1,2\nB: 3,4\n").as_bytes(), &few)
+            .unwrap_err()
+            .to_string()
+            .contains("values")
     );
     let records = Limits { max_nodes: 2, ..Limits::default() };
     assert!(
         tree::parse(format!("{head}A: 1\nB: 2\nC: 3\n").as_bytes(), &records)
             .unwrap_err()
-            .0
+            .message()
             .contains("records")
     );
     // Every truncation of each scene ends in an error or a scene that evaluates safely.

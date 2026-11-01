@@ -31,17 +31,19 @@ use crate::tree::{Array, Node, Value};
 use crate::{Error, Limits};
 
 /// Ticks per second in FBX 7.x.
-pub const TICKS_PER_SECOND: i64 = 46_186_158_000;
+pub(crate) const TICKS_PER_SECOND: i64 = 46_186_158_000;
 /// Ticks per second where the header opts into FBX 8's unit (`TCDefinition` other than 127).
-pub const TICKS_PER_SECOND_V8: i64 = 141_120_000;
+pub(crate) const TICKS_PER_SECOND_V8: i64 = 141_120_000;
 
 /// How the value moves from a key to the next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Interpolation {
     /// Holds the key's value until the next key.
     ConstantPrevious,
     /// Jumps to the next key's value right after the key.
     ConstantNext,
+    /// Straight to the next key.
     Linear,
     /// A Bezier segment shaped by the key's right tangent and the next key's left tangent.
     Cubic,
@@ -50,22 +52,31 @@ pub enum Interpolation {
 /// A tangent handle relative to its key: `dx` seconds, `dy` value.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Tangent {
+    /// Seconds along the time axis.
     pub dx: f32,
+    /// Change in value.
     pub dy: f32,
 }
 
 /// One key: a value at a time (seconds), and how it leads on to the next key.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Key {
+    /// Seconds on the file's clock.
     pub time: f64,
+    /// The value at `time`.
     pub value: f64,
+    /// How the value moves on to the next key.
     pub interpolation: Interpolation,
+    /// The handle towards the previous key.
     pub left: Tangent,
+    /// The handle towards the next key.
     pub right: Tangent,
 }
 
 /// What a curve does before its first or after its last key.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Extrapolation {
     /// The end key's value.
     #[default]
@@ -83,15 +94,21 @@ pub enum Extrapolation {
 /// An extrapolation and how often it repeats (`None`: forever).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Beyond {
+    /// What the curve does there.
     pub mode: Extrapolation,
+    /// How many passes `mode` repeats the keys.
     pub repetitions: Option<u32>,
 }
 
 /// One component's keys over time.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Curve {
+    /// The keys, sorted by time.
     pub keys: Vec<Key>,
+    /// Before the first key.
     pub pre: Beyond,
+    /// After the last key.
     pub post: Beyond,
     /// The file's ticks per second, for repeating in whole ticks.
     pub ticks_per_second: f64,
@@ -500,7 +517,9 @@ fn cubic_bezier_t(p1: f64, p2: f64, x0: f64) -> f64 {
 
 /// A curve node: the value of one property over time, up to three components.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct CurveNode {
+    /// The `AnimationCurveNode` object's id.
     pub id: i64,
     /// The components' values where no curve drives them.
     pub default: [f64; 3],
@@ -510,8 +529,11 @@ pub struct CurveNode {
 
 /// A property a layer drives: `property` of object `target`, by curve node `value`.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Driven {
+    /// The id of the object the property belongs to.
     pub target: i64,
+    /// The property's name, e.g. `Lcl Rotation`.
     pub property: String,
     /// Index into [`Animation::curve_nodes`].
     pub value: usize,
@@ -519,6 +541,7 @@ pub struct Driven {
 
 /// How a layer combines with the layers before it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Blend {
     /// `BlendMode` 0: added, times the weight.
     #[default]
@@ -531,11 +554,15 @@ pub enum Blend {
 
 /// An `AnimationLayer`.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Layer {
+    /// The `AnimationLayer` object's id.
     pub id: i64,
+    /// The layer's name.
     pub name: String,
     /// `Weight` / 100, in 0..1.
     pub weight: f64,
+    /// How the layer combines with the layers before it.
     pub blend: Blend,
     /// Rotations combine as quaternions (`RotationAccumulationMode` 0) rather than per angle.
     pub compose_rotation: bool,
@@ -547,18 +574,23 @@ pub struct Layer {
 
 /// A take: an `AnimationStack` with its layers.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Take {
+    /// The `AnimationStack` object's id.
     pub id: i64,
+    /// The take's name, e.g. `Take 001` or `mixamo.com`.
     pub name: String,
     /// Seconds on the file's clock, from `LocalStart` and `LocalStop` (else `ReferenceStart` and
     /// `ReferenceStop`, else the keys' span).
     pub start: f64,
+    /// Where the take ends, in seconds on the file's clock.
     pub stop: f64,
     /// Indices into [`Animation::layers`], in order.
     pub layers: Vec<usize>,
 }
 
 impl Take {
+    /// Seconds from `start` to `stop`, at least 0.
     pub fn duration(&self) -> f64 {
         (self.stop - self.start).max(0.0)
     }
@@ -566,13 +598,19 @@ impl Take {
 
 /// Everything animated in a file.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Animation {
+    /// Key time ticks per second: 46186158000, or 141120000 for files in the FBX 8 unit.
     pub ticks_per_second: f64,
     /// From `TimeMode` (or `CustomFrameRate`); 24 when the file does not say.
     pub frame_rate: f64,
+    /// The takes in file order.
     pub takes: Vec<Take>,
+    /// All layers; [`Take::layers`] points into this.
     pub layers: Vec<Layer>,
+    /// All curve nodes; [`Driven::value`] points into this.
     pub curve_nodes: Vec<CurveNode>,
+    /// All curves; [`CurveNode::curves`] points into this.
     pub curves: Vec<Curve>,
 }
 
@@ -583,7 +621,7 @@ const TIME_MODE_FPS: [f64; 18] = [
 ];
 
 /// Ticks per second as the file's header states them.
-pub fn ticks_per_second(doc: &Document) -> f64 {
+pub(crate) fn ticks_per_second(doc: &Document) -> f64 {
     let header = doc.tree.top("FBXHeaderExtension");
     let int = |n: Option<&Node>| n.and_then(|n| n.value(0)).and_then(Value::as_i64);
     let header_version = int(header.and_then(|h| h.child("FBXHeaderVersion"))).unwrap_or(0);
@@ -851,7 +889,7 @@ impl Animation {
 }
 
 /// Whether `property` is one of a model's transform properties.
-pub fn is_transform(property: &str) -> bool {
+pub(crate) fn is_transform(property: &str) -> bool {
     matches!(
         property,
         "Lcl Translation"
@@ -993,7 +1031,7 @@ fn matrix_of(q: Quat) -> Mat3 {
 }
 
 /// Euler angles in degrees, in `order`, of a rotation matrix: `euler(euler_of(m, o), o) == m`.
-pub fn euler_of(m: &Mat3, order: RotationOrder) -> [f64; 3] {
+pub(crate) fn euler_of(m: &Mat3, order: RotationOrder) -> [f64; 3] {
     let [i, j, k] = order.axes();
     // An even permutation of x, y, z turns one way, an odd one the other.
     let s = if (j + 3 - i) % 3 == 1 { 1.0 } else { -1.0 };

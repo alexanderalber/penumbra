@@ -560,7 +560,7 @@ pub fn parse(
     let stem = if stem.is_empty() { "mesh".to_string() } else { stem };
     let loaded = if bytes.starts_with(b"glTF") {
         gltf::parse(bytes, sidecar, limits)?
-    } else if penumbra_fbx::is_binary_fbx(bytes) {
+    } else if fbx_reader::is_binary_fbx(bytes) {
         fbx::parse(bytes, sidecar, limits)?
     } else {
         match ext.as_str() {
@@ -572,7 +572,7 @@ pub fn parse(
                 let head = bytes.get(..bytes.len().min(512)).unwrap_or(&[]);
                 let text = String::from_utf8_lossy(head);
                 let trimmed = text.trim_start();
-                if penumbra_fbx::is_ascii_fbx(bytes) {
+                if fbx_reader::is_ascii_fbx(bytes) {
                     fbx::parse(bytes, sidecar, limits)?
                 } else if trimmed.starts_with('{') {
                     gltf::parse(bytes, sidecar, limits)?

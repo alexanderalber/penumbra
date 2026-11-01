@@ -20,9 +20,14 @@ use std::collections::HashMap;
 use crate::document::{Document, Properties};
 use crate::{Error, Limits};
 
+/// A 4 x 4 matrix, row-major for column vectors: `p' = M * p`, translation in the last column
+/// (`m[0][3]`, `m[1][3]`, `m[2][3]`). `glam::DMat4::from_cols_array_2d(&m).transpose()` and
+/// `mint::RowMatrix4::from(m)` take it as it is.
 pub type Mat4 = [[f64; 4]; 4];
+/// A 3 x 3 rotation matrix in the same layout as [`Mat4`].
 pub type Mat3 = [[f64; 3]; 3];
 
+/// The identity matrix.
 pub const IDENTITY: Mat4 =
     [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
 const IDENTITY3: Mat3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
@@ -31,17 +36,24 @@ const IDENTITY3: Mat3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum RotationOrder {
     #[default]
+    /// x, then y, then z (`RotationOrder` 0, the default).
     Xyz,
+    /// x, then z, then y (1).
     Xzy,
+    /// y, then z, then x (2).
     Yzx,
+    /// y, then x, then z (3).
     Yxz,
+    /// z, then x, then y (4).
     Zxy,
+    /// z, then y, then x (5).
     Zyx,
     /// Stored by some writers; treated as `Xyz`.
     Spheric,
 }
 
 impl RotationOrder {
+    /// From the `RotationOrder` property; unknown numbers give `Xyz`.
     pub fn from_index(i: i64) -> RotationOrder {
         match i {
             1 => RotationOrder::Xzy,
@@ -81,23 +93,38 @@ pub enum Inherit {
 
 /// The property values a model's transform depends on. Angles in degrees.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct TransformProps {
+    /// `Lcl Translation`.
     pub translation: [f64; 3],
+    /// `Lcl Rotation`, Euler angles in `rotation_order`.
     pub rotation: [f64; 3],
+    /// `Lcl Scaling`.
     pub scaling: [f64; 3],
+    /// `PreRotation`, Euler angles in `Xyz`.
     pub pre_rotation: [f64; 3],
+    /// `PostRotation`, Euler angles in `Xyz`.
     pub post_rotation: [f64; 3],
+    /// `RotationOffset`.
     pub rotation_offset: [f64; 3],
+    /// `RotationPivot`.
     pub rotation_pivot: [f64; 3],
+    /// `ScalingOffset`.
     pub scaling_offset: [f64; 3],
+    /// `ScalingPivot`.
     pub scaling_pivot: [f64; 3],
+    /// `RotationOrder`.
     pub rotation_order: RotationOrder,
     /// `RotationActive` and not `RotationSpaceForLimitOnly`: pre- and post-rotation and the
     /// rotation order apply.
     pub rotation_space: bool,
+    /// `InheritType`.
     pub inherit: Inherit,
+    /// `GeometricTranslation`.
     pub geometric_translation: [f64; 3],
+    /// `GeometricRotation`, Euler angles in `Xyz`.
     pub geometric_rotation: [f64; 3],
+    /// `GeometricScaling`.
     pub geometric_scaling: [f64; 3],
 }
 
@@ -126,12 +153,16 @@ impl Default for TransformProps {
 /// A translation, a rotation and a per-axis scale applied first: `T * R * S`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Trs {
+    /// Applied last.
     pub translation: [f64; 3],
+    /// Applied after the scale.
     pub rotation: Mat3,
+    /// Per axis, applied first.
     pub scale: [f64; 3],
 }
 
 impl Trs {
+    /// The matrix `T * R * S`.
     pub fn matrix(&self) -> Mat4 {
         let ([r0, r1, r2], [sx, sy, sz], [tx, ty, tz]) = (self.rotation, self.scale, self.translation);
         [
@@ -233,7 +264,7 @@ pub fn euler(degrees: [f64; 3], order: RotationOrder) -> Mat3 {
 }
 
 /// `f` per component.
-pub fn each(a: [f64; 3], b: [f64; 3], f: impl Fn(f64, f64) -> f64) -> [f64; 3] {
+pub(crate) fn each(a: [f64; 3], b: [f64; 3], f: impl Fn(f64, f64) -> f64) -> [f64; 3] {
     [f(a[0], b[0]), f(a[1], b[1]), f(a[2], b[2])]
 }
 
@@ -241,7 +272,7 @@ fn dot<const N: usize>(a: &[f64; N], b: &[f64; N]) -> f64 {
     a.iter().zip(b).map(|(x, y)| x * y).sum()
 }
 
-pub fn mul3(a: &Mat3, b: &Mat3) -> Mat3 {
+pub(crate) fn mul3(a: &Mat3, b: &Mat3) -> Mat3 {
     let bt = transpose3(b);
     a.map(|row| bt.map(|col| dot(&row, &col)))
 }
@@ -259,6 +290,7 @@ fn transpose(m: &Mat4) -> Mat4 {
     [[a, e, i, m0], [b, f, j, n], [c, g, k, o], [d, h, l, p]]
 }
 
+/// The product `a * b`: `b` applies first.
 pub fn mul(a: &Mat4, b: &Mat4) -> Mat4 {
     let bt = transpose(b);
     a.map(|row| bt.map(|col| dot(&row, &col)))
@@ -272,8 +304,11 @@ pub fn transform_point(m: &Mat4, p: [f64; 3]) -> [f64; 3] {
 
 /// One model in the hierarchy.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct HierarchyNode {
+    /// The model's object id.
     pub id: i64,
+    /// The model's name.
     pub name: String,
     /// Index of the parent model in [`Hierarchy::nodes`]; `None` under the scene root.
     pub parent: Option<usize>,
@@ -285,12 +320,14 @@ pub struct HierarchyNode {
 /// in file order.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Hierarchy {
+    /// The models, each parent before its children.
     pub nodes: Vec<HierarchyNode>,
     index: HashMap<i64, usize>,
 }
 
 /// Where a model ended up.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct NodeWorld {
     /// Model to world.
     pub world: Mat4,

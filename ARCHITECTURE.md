@@ -18,7 +18,7 @@ A Cargo workspace of 23 library crates, two apps and `xtask`. From the bottom up
 | `core` | Time (integer ticks), ids, names and paths, values, parameter metadata, palettes, errors. |
 | `graph` | The network, its edits and history, the cook scheduler with dirty tracking, asynchronous jobs, the `Operator` trait. |
 | `project` | The project as text: RON format, load and save, diff and merge, autosave, editing modes. |
-| `calib`, `track`, `mesh`, `audio`, `osc`, `dmx`, `camera`, `video`, `record`, `script`, `pyhost`, `spacenav`, `system` | One concern each, pure where possible: calibration math, blob tracking, mesh readers, audio input and analysis, OSC, DMX, camera input, video decoding, movie encoding, the Python host, the SpaceNavigator, the show machine's checks. |
+| `calib`, `track`, `mesh`, `fbx`, `audio`, `osc`, `dmx`, `camera`, `video`, `record`, `script`, `pyhost`, `spacenav`, `system` | One concern each, pure where possible: calibration math, blob tracking, mesh readers, the FBX reader (published on crates.io as `fbx-reader`, depends on no penumbra crate), audio input and analysis, OSC, DMX, camera input, video decoding, movie encoding, the Python host, the SpaceNavigator, the show machine's checks. |
 | `gpu` | The wgpu device, textures, fullscreen shader passes, readback, image files. |
 | `ops` | Every built-in node type: `chan` and `table` nodes on the CPU, `tex` nodes as WGSL passes, `geo`, `mat`, `light` and `view` for 3D, the outputs, the script node. |
 | `spout`, `ndi` | Texture sharing with other programs, on the GPU. |

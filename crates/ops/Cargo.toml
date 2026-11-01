@@ -35,7 +35,7 @@ effectcraft-text.workspace = true
 tiny-skia.workspace = true
 
 [dev-dependencies]
-penumbra-fbx.workspace = true
+fbx-reader = { workspace = true, features = ["write"] }
 photocraft-codecs.workspace = true
 photocraft-psd.workspace = true
 

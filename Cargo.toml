@@ -18,7 +18,8 @@ penumbra-camera = { path = "crates/camera" }
 penumbra-core = { path = "crates/core" }
 penumbra-dmx = { path = "crates/dmx" }
 penumbra-engine = { path = "crates/engine" }
-penumbra-fbx = { path = "crates/fbx" }
+# Published on crates.io from this repository (crates/fbx); depends on no penumbra crate.
+fbx-reader = { path = "crates/fbx" }
 penumbra-gpu = { path = "crates/gpu" }
 penumbra-graph = { path = "crates/graph" }
 penumbra-http = { path = "crates/http" }
@@ -155,7 +156,7 @@ opt-level = 2
 [profile.dev.package.penumbra-calib]
 opt-level = 2
 
-[profile.dev.package.penumbra-fbx]
+[profile.dev.package.fbx-reader]
 opt-level = 2
 
 [profile.dev.package.penumbra-gpu]

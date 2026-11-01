@@ -503,17 +503,17 @@ fn append_renumbers_and_keeps_polygon_edges() {
     assert_eq!(out.inner_edges[cube.triangle_count()..], grid.inner_edges[..]);
 }
 
-/// The example FBX scene of `penumbra-fbx`, optionally with a diffuse texture on its material:
+/// The example FBX scene of `fbx-reader`, optionally with a diffuse texture on its material:
 /// embedded (`content`) or beside the file as `tex/wood.png`.
 fn fbx_scene(texture: Option<&[u8]>) -> Vec<u8> {
-    penumbra_fbx::write::to_bytes(7400, &fbx_nodes(texture), true)
+    fbx_reader::write::to_bytes(7400, &fbx_nodes(texture), true)
 }
 
 /// The records of [`fbx_scene`].
-fn fbx_nodes(texture: Option<&[u8]>) -> Vec<penumbra_fbx::Node> {
-    use penumbra_fbx::Value;
-    use penumbra_fbx::write::{connection, leaf, object};
-    let mut nodes = penumbra_fbx::write::example_scene();
+fn fbx_nodes(texture: Option<&[u8]>) -> Vec<fbx_reader::Node> {
+    use fbx_reader::Value;
+    use fbx_reader::write::{connection, leaf, object};
+    let mut nodes = fbx_reader::write::example_scene();
     if let Some(content) = texture {
         let objects = nodes.iter_mut().find(|n| n.name == "Objects").unwrap();
         objects.children.push(object(
@@ -595,7 +595,7 @@ fn fbx_textures_come_embedded_or_from_beside_the_file() {
 
 #[test]
 fn ascii_fbx_files_load_as_their_binary_twins() {
-    use penumbra_fbx::write::{animated_scene, skinned_scene, to_ascii, to_bytes};
+    use fbx_reader::write::{animated_scene, skinned_scene, to_ascii, to_bytes};
     let l = Limits::default();
     for nodes in [fbx_nodes(Some(b"\x89PNG embedded")), animated_scene(), skinned_scene()] {
         let binary = parse("s.fbx", &to_bytes(7400, &nodes, false), &no_files, &l).unwrap();
@@ -621,7 +621,7 @@ fn fbx_errors_say_why() {
 
 #[test]
 fn animated_fbx_files_come_with_their_motion() {
-    let bytes = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::animated_scene(), false);
+    let bytes = fbx_reader::write::to_bytes(7400, &fbx_reader::write::animated_scene(), false);
     let none = |_: &str| Err(Error::new("no sidecar"));
     let l = parse("a.fbx", &bytes, &none, &Limits::default()).unwrap();
     let m = l.motion.expect("motion");
@@ -647,7 +647,7 @@ fn animated_fbx_files_come_with_their_motion() {
 
 #[test]
 fn skinned_fbx_files_bend_with_their_bones() {
-    let bytes = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::skinned_scene(), false);
+    let bytes = fbx_reader::write::to_bytes(7400, &fbx_reader::write::skinned_scene(), false);
     let none = |_: &str| Err(Error::new("no sidecar"));
     let mut l = parse("s.fbx", &bytes, &none, &Limits::default()).unwrap();
     assert!(l.warnings.is_empty(), "{:?}", l.warnings);

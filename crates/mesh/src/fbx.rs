@@ -1,4 +1,4 @@
-//! FBX through `penumbra-fbx`: version 7000 and later, binary (little endian) or ASCII. Read:
+//! FBX through `fbx-reader`: version 7000 and later, binary (little endian) or ASCII. Read:
 //! every model with a mesh, one part each named after the model, with all transforms baked in
 //! (pivots, pre- and post-rotation, geometric transforms, inherit types). Polygons are split
 //! into triangles. Normals and the first UV set are read, materials as their diffuse colour
@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use penumbra_fbx::transform::mul;
-use penumbra_fbx::{Axes, Axis, Geometry, Scene};
+use fbx_reader::transform::mul;
+use fbx_reader::{Axes, Axis, Geometry, Scene};
 
 use crate::{
     Builder, Error, Image, Limits, Loaded, Material, Motion, Vertex, determinant, motion::Bind,
@@ -27,15 +27,14 @@ type Mat = [[f64; 4]; 4];
 const PENUMBRA_AXES: Axes = Axes { right: Axis::PosX, up: Axis::PosZ, front: Axis::NegY };
 
 /// The reader's budgets from the mesh budgets.
-fn fbx_limits(limits: &Limits) -> penumbra_fbx::Limits {
-    penumbra_fbx::Limits {
-        max_file_bytes: limits.max_file_bytes,
-        max_array_bytes: limits.max_total_bytes,
-        max_depth: limits.max_depth,
-        max_vertices: limits.max_vertices,
-        max_polygon_vertices: limits.max_triangles.saturating_mul(3),
-        ..penumbra_fbx::Limits::default()
-    }
+fn fbx_limits(limits: &Limits) -> fbx_reader::Limits {
+    let mut l = fbx_reader::Limits::default();
+    l.max_file_bytes = limits.max_file_bytes;
+    l.max_array_bytes = limits.max_total_bytes;
+    l.max_depth = limits.max_depth;
+    l.max_vertices = limits.max_vertices;
+    l.max_polygon_vertices = limits.max_triangles.saturating_mul(3);
+    l
 }
 
 pub fn parse(
@@ -44,7 +43,7 @@ pub fn parse(
     limits: &Limits,
 ) -> Result<Loaded, Error> {
     let fl = fbx_limits(limits);
-    let scene = Scene::parse(bytes, &fl).map_err(|e| Error::new(e.0))?;
+    let scene = Scene::parse(bytes, &fl).map_err(|e| Error::new(e.to_string()))?;
     let mut warnings = scene.warnings.clone();
     let axes = scene.axes.unwrap_or_else(|| {
         warnings.push("the file does not say which way is up; read as y up".into());
@@ -79,7 +78,7 @@ pub fn parse(
         let g = match geometries.entry(inst.geometry_id) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => {
-                let g = scene.geometry(inst.geometry_id, &fl).map_err(|e| Error::new(e.0))?;
+                let g = scene.geometry(inst.geometry_id, &fl).map_err(|e| Error::new(e.to_string()))?;
                 degenerate += g.degenerate;
                 out_of_range += g.out_of_range;
                 for m in &g.unknown_mappings {
@@ -103,7 +102,7 @@ pub fn parse(
         let skin = match skins.get(&inst.geometry_id) {
             Some(s) => s.clone(),
             None if animated => {
-                let s = scene.skin(inst.geometry_id, &fl).map_err(|e| Error::new(e.0))?;
+                let s = scene.skin(inst.geometry_id, &fl).map_err(|e| Error::new(e.to_string()))?;
                 let bind = s.map(|s| {
                     r.warnings.extend(s.warnings.iter().cloned());
                     Arc::new(Bind::from_skin(&s))
@@ -176,7 +175,7 @@ impl Reader<'_> {
 
     /// The image of a texture: embedded, else the relative path beside the file, else the
     /// file name alone beside the file (writers store absolute paths of their own machine).
-    fn image(&mut self, t: &penumbra_fbx::TextureInfo) -> Result<Option<u32>, Error> {
+    fn image(&mut self, t: &fbx_reader::TextureInfo) -> Result<Option<u32>, Error> {
         if let Some(i) = self.images.get(&t.id) {
             return Ok(*i);
         }

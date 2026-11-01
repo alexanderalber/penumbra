@@ -62,7 +62,7 @@ const LAYERS: &[(&str, &[&str])] = &[
     ("penumbra-video", UI_AND_GPU),
     ("penumbra-calib", UI_AND_GPU),
     ("penumbra-mesh", UI_AND_GPU),
-    ("penumbra-fbx", UI_AND_GPU),
+    ("fbx-reader", UI_AND_GPU),
     ("penumbra-osc", UI_AND_GPU),
     ("penumbra-http", UI_AND_GPU),
     ("penumbra-audio", UI_AND_GPU),

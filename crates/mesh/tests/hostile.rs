@@ -178,22 +178,13 @@ mod fuzz {
             ("a.stl", ascii_stl),
             ("s.glb", to_glb(&s)),
             ("s.gltf", gltf_json),
-            ("s.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::example_scene(), true)),
-            ("w.fbx", penumbra_fbx::write::to_bytes(7500, &penumbra_fbx::write::example_scene(), false)),
-            ("m.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::animated_scene(), false)),
-            ("k.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::skinned_scene(), false)),
-            (
-                "a.fbx",
-                penumbra_fbx::write::to_ascii(7400, &penumbra_fbx::write::example_scene()).into_bytes(),
-            ),
-            (
-                "n.fbx",
-                penumbra_fbx::write::to_ascii(7700, &penumbra_fbx::write::animated_scene()).into_bytes(),
-            ),
-            (
-                "j.fbx",
-                penumbra_fbx::write::to_ascii(7400, &penumbra_fbx::write::skinned_scene()).into_bytes(),
-            ),
+            ("s.fbx", fbx_reader::write::to_bytes(7400, &fbx_reader::write::example_scene(), true)),
+            ("w.fbx", fbx_reader::write::to_bytes(7500, &fbx_reader::write::example_scene(), false)),
+            ("m.fbx", fbx_reader::write::to_bytes(7400, &fbx_reader::write::animated_scene(), false)),
+            ("k.fbx", fbx_reader::write::to_bytes(7400, &fbx_reader::write::skinned_scene(), false)),
+            ("a.fbx", fbx_reader::write::to_ascii(7400, &fbx_reader::write::example_scene()).into_bytes()),
+            ("n.fbx", fbx_reader::write::to_ascii(7700, &fbx_reader::write::animated_scene()).into_bytes()),
+            ("j.fbx", fbx_reader::write::to_ascii(7400, &fbx_reader::write::skinned_scene()).into_bytes()),
         ];
         let limits = Limits::default();
         let mut rng = Rng(0x5EED_1234_ABCD_0001);
@@ -235,14 +226,14 @@ mod fuzz {
     /// Crafted FBX files: each is refused or read, cheaply.
     #[test]
     fn crafted_fbx_files_are_refused_cheaply() {
-        use penumbra_fbx::write::{connection, object, to_bytes};
-        use penumbra_fbx::{Array, Node, Value};
+        use fbx_reader::write::{connection, object, to_bytes};
+        use fbx_reader::{Array, Node, Value};
         let limits = Limits::default();
         let load = |b: &[u8]| {
             catch_unwind(AssertUnwindSafe(|| parse("x.fbx", b, &sidecar, &limits))).expect("no panic")
         };
         let base = |extra: Vec<Node>, conns: Vec<Node>| {
-            let mut nodes = penumbra_fbx::write::example_scene();
+            let mut nodes = fbx_reader::write::example_scene();
             nodes.iter_mut().find(|n| n.name == "Objects").unwrap().children.extend(extra);
             nodes.iter_mut().find(|n| n.name == "Connections").unwrap().children.extend(conns);
             nodes
@@ -265,7 +256,7 @@ mod fuzz {
         assert!(l.warnings.iter().any(|w| w.contains("ancestor")), "{:?}", l.warnings);
         // A geometry whose corners point far outside its points, and one with a billion corners
         // claimed.
-        let mut g = penumbra_fbx::write::cube_geometry(22, "bad");
+        let mut g = fbx_reader::write::cube_geometry(22, "bad");
         g.children.iter_mut().find(|c| c.name == "PolygonVertexIndex").unwrap().values[0] =
             Value::Array(Array::I32(vec![0, 1, i32::MAX, -1_000_000_000, 0, 1, -3]));
         let m = object("Model", 12, "bad", "Mesh", Vec::new(), Vec::new());
@@ -283,7 +274,7 @@ mod fuzz {
         // ASCII: a claimed length of 2^64 - 1 behind two elements, a length too large for any
         // number, an unterminated string and brace, a thousand open braces, garbage numbers.
         let head = "; FBX 7.4.0 project file\n";
-        let ascii = penumbra_fbx::write::to_ascii(7400, &bad);
+        let ascii = fbx_reader::write::to_ascii(7400, &bad);
         let huge = ascii.replacen("*24 {", "*18446744073709551615 {", 1);
         assert_ne!(huge, ascii);
         assert!(load(huge.as_bytes()).is_ok());

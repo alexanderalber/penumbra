@@ -9,8 +9,12 @@ publish.workspace = true
 
 [dependencies]
 penumbra-core.workspace = true
-penumbra-fbx.workspace = true
+fbx-reader.workspace = true
 serde_json.workspace = true
+
+[dev-dependencies]
+# The tests build small FBX files with the reader's writer.
+fbx-reader = { workspace = true, features = ["write"] }
 
 [lints]
 workspace = true

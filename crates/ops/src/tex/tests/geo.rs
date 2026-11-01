@@ -475,7 +475,7 @@ fn mesh_files_load_with_their_parts_and_reload() {
 fn fbx_files_load_with_their_transforms_baked_in_metres() {
     let Some(gpu) = gpu() else { return };
     let dir = scratch("geo-fbx");
-    let scene = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::example_scene(), true);
+    let scene = fbx_reader::write::to_bytes(7400, &fbx_reader::write::example_scene(), true);
     std::fs::write(dir.join("towers.fbx"), scene).unwrap();
     let ops = vec![
         create("/fbx", "geo.file", &[("file", "towers.fbx".into())]),
@@ -1778,7 +1778,7 @@ fn fbx_bounds(rig: &mut Rig, after: u64) -> penumbra_mesh::Bounds {
 fn an_animated_fbx_moves_its_parts_with_the_time() {
     let Some(gpu) = gpu() else { return };
     let dir = scratch("geo-fbx-anim");
-    let scene = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::animated_scene(), true);
+    let scene = fbx_reader::write::to_bytes(7400, &fbx_reader::write::animated_scene(), true);
     std::fs::write(dir.join("towers.fbx"), scene).unwrap();
     let ops = vec![
         create("/fbx", "geo.file", &[("file", "towers.fbx".into()), ("play", Value::Bool(false))]),
@@ -1824,7 +1824,7 @@ fn an_animated_fbx_moves_its_parts_with_the_time() {
 fn a_skinned_fbx_bends_with_its_bones() {
     let Some(gpu) = gpu() else { return };
     let dir = scratch("geo-fbx-skin");
-    let scene = penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::skinned_scene(), true);
+    let scene = fbx_reader::write::to_bytes(7400, &fbx_reader::write::skinned_scene(), true);
     std::fs::write(dir.join("column.fbx"), scene).unwrap();
     let ops = vec![
         create("/fbx", "geo.file", &[("file", "column.fbx".into()), ("play", Value::Bool(false))]),

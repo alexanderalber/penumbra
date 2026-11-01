@@ -1378,6 +1378,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "caf1079563223d5d59d83c85886a56e586cfd5c1a26292e971a0fa266531ac5a"
 
 [[package]]
+name = "fbx-reader"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide 0.9.1",
+]
+
+[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3260,13 +3267,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "penumbra-fbx"
-version = "0.7.0"
-dependencies = [
- "miniz_oxide 0.9.1",
-]
-
-[[package]]
 name = "penumbra-gpu"
 version = "0.7.0"
 dependencies = [
@@ -3309,8 +3309,8 @@ dependencies = [
 name = "penumbra-mesh"
 version = "0.7.0"
 dependencies = [
+ "fbx-reader",
  "penumbra-core",
- "penumbra-fbx",
  "serde_json",
 ]
 
@@ -3340,6 +3340,7 @@ name = "penumbra-ops"
 version = "0.7.0"
 dependencies = [
  "effectcraft-text",
+ "fbx-reader",
  "half",
  "log",
  "penumbra-audio",
@@ -3347,7 +3348,6 @@ dependencies = [
  "penumbra-camera",
  "penumbra-core",
  "penumbra-dmx",
- "penumbra-fbx",
  "penumbra-gpu",
  "penumbra-graph",
  "penumbra-http",

@@ -18,24 +18,30 @@ use crate::{Error, Limits};
 /// One property: `P: name, type, label, flags, values...`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Property {
+    /// The property's name, e.g. `Lcl Translation`.
     pub name: String,
     /// E.g. `Lcl Translation`, `Color`, `double`, `enum`.
     pub type_name: String,
+    /// A second type word some writers add (often empty).
     pub label: String,
     /// `A` animatable, `U` user-defined, `+` animated, ...
     pub flags: String,
+    /// The values after the flags.
     pub values: Vec<Value>,
 }
 
 impl Property {
+    /// The first value as a finite number.
     pub fn number(&self) -> Option<f64> {
         self.values.first()?.as_f64().filter(|x| x.is_finite())
     }
 
+    /// The first value as an integer (floats truncated).
     pub fn int(&self) -> Option<i64> {
         self.values.first()?.as_i64()
     }
 
+    /// The first value as text.
     pub fn string(&self) -> Option<&str> {
         self.values.first()?.as_str()
     }
@@ -52,8 +58,11 @@ impl Property {
 
 /// An object's own properties, with its class's template behind them.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Properties {
+    /// The properties the object lists itself.
     pub own: Vec<Property>,
+    /// The template of the object's class, shared by all objects of that class.
     pub defaults: Option<Arc<Vec<Property>>>,
 }
 
@@ -67,25 +76,29 @@ impl Properties {
             .or_else(|| self.defaults.as_ref().and_then(|d| d.iter().rfind(|p| p.name == name)))
     }
 
+    /// Property `name` as a finite number.
     pub fn number(&self, name: &str) -> Option<f64> {
         self.get(name)?.number()
     }
 
+    /// Property `name` as an integer.
     pub fn int(&self, name: &str) -> Option<i64> {
         self.get(name)?.int()
     }
 
+    /// Property `name` as text.
     pub fn string(&self, name: &str) -> Option<&str> {
         self.get(name)?.string()
     }
 
+    /// Property `name` as three finite numbers.
     pub fn vec3(&self, name: &str) -> Option<[f64; 3]> {
         self.get(name)?.vec3()
     }
 
     /// Reads a `Properties70` record (older `Properties60` records hold `Property` entries in
     /// the same layout).
-    pub fn read(node: &Node) -> Properties {
+    pub(crate) fn read(node: &Node) -> Properties {
         let mut own = Vec::new();
         for p in node.children.iter().filter(|c| c.name == "P" || c.name == "Property") {
             let text = |i: usize| p.value(i).and_then(Value::as_str).unwrap_or("").to_string();
@@ -104,14 +117,18 @@ impl Properties {
 
 /// One object of the `Objects` record.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Object {
+    /// The object's 64-bit id, as connections name it.
     pub id: i64,
     /// The record's name: `Model`, `Geometry`, `Material`, `Texture`, `Video`, `Deformer`,
     /// `AnimationCurve`, ...
     pub class: String,
     /// `Mesh`, `LimbNode`, `Null`, `Skin`, `Cluster`, ... (an `Fbx` prefix removed).
     pub sub_class: String,
+    /// The object's name, without the class part.
     pub name: String,
+    /// The object's properties, template defaults behind them.
     pub props: Properties,
     /// Index of the object's record among the children of `Objects`.
     pub node: usize,
@@ -134,8 +151,11 @@ pub enum ConnectionKind {
 /// its parent model).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Connection {
+    /// Which ends are objects and which are properties.
     pub kind: ConnectionKind,
+    /// The id of the object connected into `parent`.
     pub child: i64,
+    /// The id of the object `child` is connected into (0 is the scene root).
     pub parent: i64,
     /// The parent's property for `OP` and `PP`, the child's for `PO`.
     pub property: Option<String>,
@@ -146,10 +166,15 @@ pub struct Connection {
 /// A parsed file: the node tree, the objects by id, the connections both ways, and the
 /// `GlobalSettings` properties.
 #[derive(Clone, Debug, Default)]
+#[non_exhaustive]
 pub struct Document {
+    /// The node tree as stored.
     pub tree: Tree,
+    /// The objects in file order.
     pub objects: Vec<Object>,
+    /// The connections in file order, each listed once.
     pub connections: Vec<Connection>,
+    /// The `GlobalSettings` properties: units, axes, frame rate.
     pub settings: Properties,
     by_id: HashMap<i64, usize>,
     /// Parent id to the indices of connections into it, in file order.
@@ -159,7 +184,7 @@ pub struct Document {
 }
 
 /// An object's name and class from `Name\0\x01Class` (binary) or `Class::Name` (ASCII).
-pub fn split_name(raw: &str) -> (&str, &str) {
+pub(crate) fn split_name(raw: &str) -> (&str, &str) {
     if let Some((name, class)) = raw.split_once("\u{0}\u{1}") {
         (name, class)
     } else if let Some((class, name)) = raw.split_once("::") {
@@ -179,6 +204,7 @@ impl Document {
         Self::from_tree(tree::parse(bytes, limits)?, limits)
     }
 
+    /// The objects, connections and settings of a node tree.
     pub fn from_tree(tree: Tree, limits: &Limits) -> Result<Document, Error> {
         // Templates: (object class, template sub-class without `Fbx`) to properties.
         let mut templates: Vec<(String, String, Arc<Vec<Property>>)> = Vec::new();
@@ -273,10 +299,12 @@ impl Document {
         Ok(Document { tree, objects, connections, settings, by_id, into, from })
     }
 
+    /// The file's version, e.g. 7400 for FBX 2014.
     pub fn version(&self) -> u32 {
         self.tree.version
     }
 
+    /// The object with `id`.
     pub fn object(&self, id: i64) -> Option<&Object> {
         self.objects.get(*self.by_id.get(&id)?)
     }

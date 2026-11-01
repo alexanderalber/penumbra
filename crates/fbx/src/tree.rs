@@ -1,5 +1,6 @@
-//! The node tree: records with a name, values and child records, exactly as stored. This module
-//! reads the binary form; [`crate::ascii`] reads the ASCII form into the same tree.
+//! The node tree: records with a name, values and child records, exactly as stored. This is the
+//! low-level API: [`parse`] reads binary and ASCII files into the same types, and every record
+//! the higher layers do not interpret (cameras, lights, blend shapes) is still here.
 //!
 //! A record header holds the offset of the record's end, its number of values, the byte length
 //! of the values and the length of its name: three 32-bit numbers and a byte below version
@@ -18,16 +19,22 @@ pub enum Value {
     Bool(u8),
     /// `B` and `Z`.
     Byte(u8),
+    /// `Y`.
     I16(i16),
+    /// `I`.
     I32(i32),
+    /// `L`.
     I64(i64),
+    /// `F`.
     F32(f32),
+    /// `D`.
     F64(f64),
     /// `S`. Bytes that are not UTF-8 are replaced, not refused. Object names keep the binary
     /// separator `\0\x01` between name and class.
     String(String),
     /// `R`, e.g. an embedded image.
     Raw(Vec<u8>),
+    /// An array, see [`Array`].
     Array(Array),
 }
 
@@ -38,13 +45,18 @@ pub enum Array {
     Bool(Vec<u8>),
     /// `c`.
     Byte(Vec<u8>),
+    /// `i`.
     I32(Vec<i32>),
+    /// `l`.
     I64(Vec<i64>),
+    /// `f`.
     F32(Vec<f32>),
+    /// `d`.
     F64(Vec<f64>),
 }
 
 impl Array {
+    /// The number of elements.
     pub fn len(&self) -> usize {
         match self {
             Array::Bool(v) | Array::Byte(v) => v.len(),
@@ -55,6 +67,7 @@ impl Array {
         }
     }
 
+    /// Whether there are no elements.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -83,6 +96,7 @@ impl Array {
 }
 
 impl Value {
+    /// Any number as an integer (floats truncated); `None` for strings, raw bytes and arrays.
     pub fn as_i64(&self) -> Option<i64> {
         match self {
             Value::Bool(v) | Value::Byte(v) => Some(i64::from(*v)),
@@ -95,6 +109,7 @@ impl Value {
         }
     }
 
+    /// Any number as a float; `None` for strings, raw bytes and arrays.
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Value::F32(v) => Some(f64::from(*v)),
@@ -107,6 +122,7 @@ impl Value {
         }
     }
 
+    /// A string's text.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Value::String(s) => Some(s),
@@ -114,6 +130,7 @@ impl Value {
         }
     }
 
+    /// Raw bytes, or a string's bytes.
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
             Value::Raw(b) => Some(b),
@@ -122,6 +139,7 @@ impl Value {
         }
     }
 
+    /// An array value.
     pub fn as_array(&self) -> Option<&Array> {
         match self {
             Value::Array(a) => Some(a),
@@ -133,12 +151,16 @@ impl Value {
 /// One record.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Node {
+    /// The record's name, e.g. `Vertices` or `Model`.
     pub name: String,
+    /// The record's values in order.
     pub values: Vec<Value>,
+    /// The nested records in order.
     pub children: Vec<Node>,
 }
 
 impl Node {
+    /// A record from its parts.
     pub fn new(name: &str, values: Vec<Value>, children: Vec<Node>) -> Self {
         Self { name: name.to_string(), values, children }
     }
@@ -153,6 +175,7 @@ impl Node {
         self.children.iter().filter(move |c| c.name == name)
     }
 
+    /// Value `i`.
     pub fn value(&self, i: usize) -> Option<&Value> {
         self.values.get(i)
     }
@@ -170,8 +193,11 @@ impl Node {
 
 /// A whole file: its version and its top-level records.
 #[derive(Clone, Debug, Default, PartialEq)]
+#[non_exhaustive]
 pub struct Tree {
+    /// The file's version, e.g. 7400.
     pub version: u32,
+    /// The top-level records: `FBXHeaderExtension`, `GlobalSettings`, `Objects`, `Connections`, ...
     pub nodes: Vec<Node>,
 }
 

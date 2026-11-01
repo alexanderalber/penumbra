@@ -28,6 +28,7 @@ use crate::{Error, Limits};
 
 /// How a skin's author wanted its points blended.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum SkinningMethod {
     /// `Linear` or no `SkinningType`.
     #[default]
@@ -42,8 +43,11 @@ pub enum SkinningMethod {
 
 /// One bone's share of a skin.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Cluster {
+    /// The `Cluster` deformer's object id.
     pub id: i64,
+    /// The cluster's name.
     pub name: String,
     /// The bone model's index in [`Hierarchy::nodes`].
     pub bone: usize,
@@ -59,15 +63,20 @@ pub struct Cluster {
 pub struct Influence {
     /// Index into [`Skin::clusters`].
     pub cluster: u32,
+    /// The weight as stored; [`Skin::point_matrix`] divides by the sum of a point's weights.
     pub weight: f64,
 }
 
 /// A skin read from a file: its clusters, and per control point of the geometry the clusters
 /// that move it.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct Skin {
+    /// The `Skin` deformer's object id.
     pub id: i64,
+    /// The skin's name.
     pub name: String,
+    /// The blending the file asks for. Every method is blended linearly.
     pub method: SkinningMethod,
     /// Whether the file asks for dual quaternion blending anywhere (applied as linear).
     pub dual_quaternion: bool,
@@ -76,6 +85,7 @@ pub struct Skin {
     /// Per control point, where its influences start in `influences`; one more entry at the end.
     first: Vec<u32>,
     influences: Vec<Influence>,
+    /// What was read in a doubtful way or left out, in words.
     pub warnings: Vec<String>,
 }
 
@@ -99,7 +109,7 @@ fn matrix(a: &Array) -> Option<Mat4> {
 }
 
 /// The inverse of an affine matrix, all zero when it is singular (as ufbx does).
-pub fn invert_affine(m: &Mat4) -> Mat4 {
+pub(crate) fn invert_affine(m: &Mat4) -> Mat4 {
     let [[a, b, c, tx], [d, e, f, ty], [g, h, i, tz], _] = *m;
     let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
     if !det.is_finite() || det.abs() <= f64::MIN_POSITIVE {
@@ -121,7 +131,7 @@ pub fn invert_affine(m: &Mat4) -> Mat4 {
 }
 
 /// The skins connected into geometry `geometry` (usually one).
-pub fn skins_of(doc: &Document, geometry: i64) -> impl Iterator<Item = &Object> + '_ {
+pub(crate) fn skins_of(doc: &Document, geometry: i64) -> impl Iterator<Item = &Object> + '_ {
     doc.sources(geometry, "Deformer").filter(|d| d.sub_class == "Skin")
 }
 
@@ -141,7 +151,7 @@ fn bind_pose(doc: &Document, model: i64) -> Option<Mat4> {
 impl Skin {
     /// Reads skin `skin` of a geometry with `points` control points, placed by hierarchy node
     /// `mesh_node` (whose world transform `worlds` holds as the file stores it).
-    pub fn read(
+    pub(crate) fn read(
         doc: &Document,
         hierarchy: &Hierarchy,
         worlds: &[NodeWorld],

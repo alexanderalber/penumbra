@@ -1,6 +1,9 @@
 //! Writes a node tree as a binary or ASCII FBX file, plus helpers to build the records of a scene.
+//! Needs the `write` feature.
+//!
 //! Meant for tests and tools that need small files: no footer is written, and nothing checks
-//! that the tree is a valid scene.
+//! that the tree is a valid scene. [`example_scene`], [`animated_scene`] and [`skinned_scene`]
+//! are the small scenes the crate's own tests read; other crates can use them as test input.
 
 use crate::MAGIC;
 use crate::tree::{Array, Node, Value};
@@ -434,7 +437,9 @@ pub fn example_scene() -> Vec<Node> {
 
 /// Key interpolation flags for [`curve`]: constant, linear, cubic with auto tangents.
 pub const KEY_CONSTANT: i32 = 0x2;
+/// `KeyAttrFlags` of a linear key.
 pub const KEY_LINEAR: i32 = 0x4;
+/// `KeyAttrFlags` of a cubic key.
 pub const KEY_CUBIC: i32 = 0x8;
 
 /// An `AnimationCurve` record with keys at `seconds` holding `values`, all interpolated by

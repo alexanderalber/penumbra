@@ -1,14 +1,28 @@
 [package]
-name = "penumbra-fbx"
-description = "A reader for binary FBX 7.x files in safe Rust: the node tree, objects and connections, transforms and meshes, all under budgets. Depends on no penumbra crate."
-version.workspace = true
+name = "fbx-reader"
+description = "A reader for FBX 7.x files, binary and ASCII, in safe Rust: meshes, materials, animation curves and layers, linear blend skinning. No panics, budgets checked before allocating."
+# Its own version: the crate is published on its own, apart from penumbra's releases.
+version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-publish.workspace = true
+publish = true
+repository = "https://github.com/alexanderalber/penumbra"
+readme = "README.md"
+keywords = ["fbx", "3d", "mesh", "animation", "skinning"]
+categories = ["parser-implementations", "graphics", "game-development", "rendering::data-formats"]
+include = ["src/**/*.rs", "README.md", "LICENSE-MIT", "LICENSE-APACHE"]
+
+[features]
+# The `write` module: writes a node tree as a binary or ASCII FBX file and builds small test
+# scenes. For tests and tools, not part of the reading API.
+write = []
 
 [dependencies]
 miniz_oxide.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
 
 [lints]
 workspace = true

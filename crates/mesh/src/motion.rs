@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use penumbra_fbx::{Animation, Hierarchy, NodeWorld, Skin};
+use fbx_reader::{Animation, Hierarchy, NodeWorld, Skin};
 
 use crate::{Up, Vertex, normal_matrix, normalize};
 
@@ -335,7 +335,7 @@ fn normals_of(m: &Mat) -> [[f64; 3]; 3] {
     n.map(|row| row.map(|x| x / det))
 }
 
-use penumbra_fbx::transform::mul;
+use fbx_reader::transform::mul;
 
 /// The inverse of an affine matrix (last row 0 0 0 1); `None` when it is singular.
 fn inverse(m: &Mat) -> Option<Mat> {
