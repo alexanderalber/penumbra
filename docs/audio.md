@@ -96,9 +96,10 @@ gap. `audio.status` shows the delay and counts the gaps. `audio.measure_latency`
 clicks and finds them again on an input. The input `loopback:Speakers` records what the output
 named Speakers plays, without a cable.
 
-**Recording.** `out.video` records the sound with the picture: the sum of every `out.audio`,
-as the speakers get it, each frame of sound at its show time. This holds for a render slower
-than real time too, where nothing plays on the speakers. See [Recording](recording.md#sound).
+**Recording.** `out.video` records the sound with the picture, each frame of sound at its show
+time. The sound is the chain wired to its `audio` input, or else the sum of every `out.audio`
+as the speakers get it. This holds for a render slower than real time too, where nothing plays
+on the speakers. See [Recording](recording.md#sound).
 `out.audio_file` records sound alone, see below.
 
 ## Recording sound to a file

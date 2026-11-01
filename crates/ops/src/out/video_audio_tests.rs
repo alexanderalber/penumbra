@@ -1,5 +1,6 @@
 //! `out.video` with sound, on the software adapter: what `out.audio` plays lands in the file
-//! sample for sample, offline as live; pause, seeks and a tone that starts with a white frame.
+//! sample for sample, offline as live; pause, seeks and a tone that starts with a white frame;
+//! the same from the `audio` input, with no `out.audio` at all.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -43,12 +44,15 @@ fn set(p: &str, v: impl Into<Value>) -> Op {
 }
 
 fn connect(from: &str, to: &str) -> Op {
-    Op::Connect {
-        from: NodePath::parse(from).unwrap(),
-        output: 0,
-        to: NodePath::parse(to).unwrap(),
-        input: 0,
-    }
+    connect_to(from, to, 0)
+}
+
+fn connect_to(from: &str, to: &str, input: u32) -> Op {
+    Op::Connect { from: NodePath::parse(from).unwrap(), output: 0, to: NodePath::parse(to).unwrap(), input }
+}
+
+fn delete(path: &str) -> Op {
+    Op::Delete { path: NodePath::parse(path).unwrap() }
 }
 
 struct Rig {
@@ -227,8 +231,7 @@ fn audio_off_or_no_out_audio_records_no_sound() {
     let s = rig.stop();
     assert_eq!(s.audio, None);
     assert_eq!(audio::read(Path::new(&s.file)).unwrap(), None);
-    let mut rig =
-        Rig::new(gpu, "none", "none.mov", &[Op::Delete { path: NodePath::parse("/speakers").unwrap() }]);
+    let mut rig = Rig::new(gpu, "none", "none.mov", &[delete("/speakers")]);
     rig.warm_up();
     rig.start();
     rig.frames(10);
@@ -287,12 +290,11 @@ fn pause_and_seeks_keep_picture_and_sound_the_same_length() {
     assert_eq!((a.gap_samples, a.cut_samples), (47 * PER_FRAME as u64, 144), "{a:?}");
 }
 
-/// The A/V check: a square tone and a picture that turns white with it, every second. In the
-/// file the tone's rising edge and the first white frame are at the same time.
-#[test]
-fn a_tone_and_a_white_frame_at_the_same_show_time_meet_in_the_file() {
-    let Some(gpu) = gpu() else { return };
-    let mut extra = vec![
+/// A square tone at 1 Hz and a picture that turns white with it, every second, recorded for
+/// 150 frames from show frame 30 on, with `extra` on top: the recording's status, the frames
+/// where the picture turns white and the file's sound.
+fn flash_and_tone(gpu: Gpu, name: &str, extra: &[Op]) -> (Status, Vec<usize>, Vec<Vec<f32>>) {
+    let mut ops = vec![
         set("/osc.shape", "square"),
         set("/osc.frequency", 1.0),
         create(
@@ -307,7 +309,7 @@ fn a_tone_and_a_white_frame_at_the_same_show_time_meet_in_the_file() {
         ),
     ];
     for c in 0..3 {
-        extra.push(Op::Bind {
+        ops.push(Op::Bind {
             param: ParamPath::parse("/picture.color").unwrap(),
             component: Some(c),
             from: NodePath::parse("/flash").unwrap(),
@@ -316,7 +318,8 @@ fn a_tone_and_a_white_frame_at_the_same_show_time_meet_in_the_file() {
             format: None,
         });
     }
-    let mut rig = Rig::new(gpu, "sync", "sync.mov", &extra);
+    ops.extend_from_slice(extra);
+    let mut rig = Rig::new(gpu, name, &format!("{name}.mov"), &ops);
     // Start half a second in, so the file starts in the dark and quiet half.
     rig.clock.seek(30);
     rig.warm_up();
@@ -342,8 +345,21 @@ fn a_tone_and_a_white_frame_at_the_same_show_time_meet_in_the_file() {
         was = is;
     }
     let sound = audio::read(&file).unwrap().unwrap();
-    let c = &sound.channels[0];
-    let rising: Vec<usize> = (1..c.len()).filter(|&k| c[k - 1] < 0.0 && c[k] > 0.0).collect();
+    (s, white, sound.channels)
+}
+
+/// The samples where a square tone turns from below 0 to above.
+fn rising(c: &[f32]) -> Vec<usize> {
+    (1..c.len()).filter(|&k| c[k - 1] < 0.0 && c[k] > 0.0).collect()
+}
+
+/// The A/V check: a square tone and a picture that turns white with it, every second. In the
+/// file the tone's rising edge and the first white frame are at the same time.
+#[test]
+fn a_tone_and_a_white_frame_at_the_same_show_time_meet_in_the_file() {
+    let Some(gpu) = gpu() else { return };
+    let (_, white, channels) = flash_and_tone(gpu, "sync", &[]);
+    let rising = rising(&channels[0]);
     // White from frames 30 and 90 (show times 1 s and 2 s); the tone rises on the same samples.
     assert_eq!(white, [30, 90]);
     let at: Vec<usize> = white.iter().map(|f| f * PER_FRAME).collect();
@@ -353,4 +369,102 @@ fn a_tone_and_a_white_frame_at_the_same_show_time_meet_in_the_file() {
         "A/V offset {:?} samples",
         rising.iter().zip(&at).map(|(r, a)| *r as i64 - *a as i64).collect::<Vec<_>>()
     );
+}
+
+/// The same check with the tone wired to the `audio` input and no `out.audio` at all: `auto`
+/// takes the input as `input` does, the mono tone is on both channels, and click and flash
+/// share a frame.
+#[test]
+fn the_audio_input_records_a_tone_no_speaker_plays_in_step_with_the_picture() {
+    let Some(gpu) = gpu() else { return };
+    for choice in ["auto", "input"] {
+        let extra = [delete("/speakers"), connect_to("/osc", "/rec", 1), set("/rec.audio", choice)];
+        let (s, white, channels) = flash_and_tone(gpu.clone(), &format!("input-{choice}"), &extra);
+        let a = s.audio.clone().unwrap();
+        assert_eq!(
+            (a.sources, a.rate, a.channels, a.samples),
+            (1, 48_000, 2, 150 * PER_FRAME as u64),
+            "{a:?}"
+        );
+        // Nothing cut or filled in: the input's blocks join from the file's first sample on.
+        assert_eq!((a.gap_samples, a.cut_samples, a.refused, a.dropped), (0, 0, 0, 0), "{a:?}");
+        assert_eq!(white, [30, 90]);
+        let at: Vec<usize> = white.iter().map(|f| f * PER_FRAME).collect();
+        assert_eq!(rising(&channels[0]), at, "{choice}");
+        assert_eq!(channels[0], channels[1], "a mono input is on both channels");
+        // Straight from the oscillator: no limiter, the full amplitude.
+        assert!(channels[0].iter().all(|v| (v.abs() - 0.25).abs() < 1e-6), "{choice}");
+    }
+}
+
+/// With the input wired, `all` still records what `out.audio` plays and `off` records nothing;
+/// neither cooks the chain on the input.
+#[test]
+fn all_and_off_ignore_a_wired_audio_input() {
+    let Some(gpu) = gpu() else { return };
+    let other = [
+        create(
+            "/other",
+            "audio.oscillator",
+            &[("frequency", Value::Float(1000.0)), ("amplitude", Value::Float(0.5))],
+        ),
+        connect_to("/other", "/rec", 1),
+    ];
+    let mut extra = other.to_vec();
+    extra.push(set("/rec.audio", "all"));
+    let mut rig = Rig::new(gpu.clone(), "all-wired", "all-wired.mov", &extra);
+    rig.clock.seek(30);
+    rig.warm_up();
+    rig.start();
+    rig.frames(59);
+    let s = rig.stop();
+    assert!(rig.cooker.outputs(rig.id("/other")).is_none_or(<[_]>::is_empty), "the input was cooked");
+    let sound = audio::read(Path::new(&s.file)).unwrap().unwrap();
+    let n = 60 * PER_FRAME - 144;
+    let want = sine(30 * PER_FRAME as i64, n);
+    assert!(worst(&sound.channels[0][..n], &want) < 1e-6, "not the out.audio's tone");
+    let mut extra = other.to_vec();
+    extra.push(set("/rec.audio", "off"));
+    let mut rig = Rig::new(gpu, "off-wired", "off-wired.mov", &extra);
+    rig.warm_up();
+    rig.start();
+    rig.frames(10);
+    let s = rig.stop();
+    assert!(rig.cooker.outputs(rig.id("/other")).is_none_or(<[_]>::is_empty), "the input was cooked");
+    assert_eq!(s.audio, None);
+    assert_eq!(audio::read(Path::new(&s.file)).unwrap(), None);
+}
+
+/// `input` with nothing wired records the picture without sound and says why; a sound wired in
+/// while it records starts at its show time, after silence.
+#[test]
+fn input_with_nothing_wired_records_silence_and_warns() {
+    let Some(gpu) = gpu() else { return };
+    let mut rig = Rig::new(gpu, "unwired", "unwired.mov", &[set("/rec.audio", "input")]);
+    rig.clock.seek(30);
+    rig.warm_up();
+    rig.start();
+    rig.frames(10);
+    let rec = rig.id("/rec");
+    let warning = rig.cooker.status(rec).and_then(|s| s.warning).unwrap_or_default();
+    assert!(warning.contains("nothing is connected to the audio input"), "{warning}");
+    assert_eq!(rig.record.status(rec).unwrap().audio.map(|a| (a.sources, a.samples)), Some((0, 0)));
+    // Wired at file frame 11: the first block of a newly wired input is one frame long and ends
+    // at that cook, so the sound starts at frame 10.
+    rig.edit(&[connect_to("/osc", "/rec", 1)]);
+    rig.frames(20);
+    let s = rig.stop();
+    assert_eq!(s.frames, 31, "{s:?}");
+    let a = s.audio.unwrap();
+    assert_eq!(
+        (a.sources, a.samples, a.gap_samples),
+        (1, 31 * PER_FRAME as u64, 10 * PER_FRAME as u64),
+        "{a:?}"
+    );
+    let sound = audio::read(Path::new(&s.file)).unwrap().unwrap();
+    let c = &sound.channels[0];
+    let from = 10 * PER_FRAME;
+    assert!(c[..from].iter().all(|v| *v == 0.0), "silence before the wire");
+    let want = sine(40 * PER_FRAME as i64, 21 * PER_FRAME);
+    assert!(worst(&c[from..], &want) < 1e-6, "{}", worst(&c[from..], &want));
 }

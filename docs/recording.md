@@ -53,10 +53,22 @@ for recording a busy show in real time, ProRes for calm pictures, smaller sizes 
 
 ## Sound
 
-With `audio` at `all` (the default), the file also gets the project's sound: what every
-`out.audio` plays, added up as the speakers get it. That is after each node's room, `level`,
-`mute` and limiter. `audio.mute` silences the room only; the file keeps the sound. A project
-without an `out.audio` records no sound track. `audio` off records none either.
+`audio` says where the file's sound comes from:
+
+- `auto` (default): the `audio` input while something is wired to it, else `all`. A project
+  without the input records as before.
+- `input`: the sound wired to the `audio` input. No `out.audio` is needed, so a chain records
+  without playing on the speakers. An `audio.file` wired only to `out.video` still plays on the
+  show clock. Nothing wired: the file has no sound, and the node warns.
+- `all`: what every `out.audio` plays, added up as the speakers get it. That is after each
+  node's room, `level`, `mute` and limiter. `audio.mute` silences the room only; the file keeps
+  the sound. A project without an `out.audio` records no sound track.
+- `off`: no sound.
+
+The chain on the `audio` input cooks while `audio` takes it (`auto` with a wire, `input`), also
+between recordings. A sound file on it keeps its place in time that way. With `all` or `off`
+the chain costs nothing.
+
 For sound without a picture, `out.audio_file` writes a WAV file (see
 [Recording sound to a file](audio.md#recording-sound-to-a-file)).
 
@@ -65,10 +77,11 @@ For sound without a picture, `out.audio_file` writes a WAV file (see
 | `h264` (MP4) | AAC-LC, 320 kbit/s, stereo | every player opens it |
 | ProRes (MOV) | PCM, 24 bits, stereo, uncompressed | editing programs expect it beside ProRes |
 
-The sound is always two channels: a mono `out.audio` is on both, a third channel and up are left
-out. Its rate is the rate of the `out.audio` input, usually 48 000 Hz. AAC takes only the
-standard rates (44 100, 48 000 and others); at another rate an MP4 records no sound and the
-status says why, a MOV takes any rate.
+The sound is always two channels: a mono source is on both, a third channel and up are left
+out. Its rate is the rate of the first sound recorded, usually 48 000 Hz. Sound at another rate
+later in the take is left out, counted and warned about. AAC takes only the standard rates
+(44 100, 48 000 and others); at another rate an MP4 records no sound and the status says why,
+a MOV takes any rate.
 
 **Picture and sound stay together.** Each frame of sound goes into the file at its show time,
 counted from the same start as the pictures. Dropped frames cost no sound. A pause records
@@ -78,8 +91,8 @@ silence (or the sound for the skipped time, for jumps up to half a second). An M
 up to 21 ms after its last picture: AAC comes in blocks of 1024 samples.
 
 `video_out.status` shows the sound under `audio`: `codec`, `rate`, `sources` (the `out.audio`
-nodes playing; 0 records no sound), `seconds`, and the samples of silence put in or left out at
-jumps.
+nodes playing, or 1 for a wired `audio` input; 0 records no sound), `seconds`, and the samples
+of silence put in or left out at jumps.
 
 ### H.264 presets
 
@@ -172,5 +185,5 @@ over black; ProRes 4444 keeps the alpha channel.
 
 ## Not yet
 
-There is no hardware encoder (NVENC) yet. A recording takes the sum of every `out.audio`; it
-cannot pick one of them.
+There is no hardware encoder (NVENC) yet. A recording takes one sound: the `audio` input or the
+sum of every `out.audio`. To record both, mix them with `audio.mix` and wire that into the input.

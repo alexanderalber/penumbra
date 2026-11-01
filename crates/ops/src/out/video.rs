@@ -18,27 +18,41 @@
 //! recording by itself. A recording that could not start or ended by itself (an error) is not
 //! tried again until `record` turns off and on.
 //!
-//! Sound: with `audio` at `all` the file also gets what every `out.audio` of the project plays,
-//! summed as their devices get it (after reverb, level and limiter, before `audio.mute`), through
-//! a tap of the [`Outputs`] hub. Each block goes where its show time falls in the file, by the
-//! same start the frames count from, so picture and sound stay together through dropped frames
-//! and jumps. Blocks of a pass reach the node at its next cook. An MP4 gets AAC, a MOV 24-bit
-//! PCM ([`penumbra_record::audio`]). Loops made of the file are silent.
+//! Sound comes by `audio`, fixed when a recording starts. With `all` the file gets what every
+//! `out.audio` of the project plays, summed as their devices get it (after reverb, level and
+//! limiter, before `audio.mute`), through a tap of the [`Outputs`] hub; blocks of a pass reach
+//! the node at its next cook. With `input` it gets the sound wired to the `audio` input, one new
+//! block per show tick (the block contract of [`crate::audio::block`]), whether or not anything
+//! plays it on a speaker. `auto`, the default, is `input` while the input is wired and `all`
+//! while it is not, so a project without the input records as before. Either way each block goes
+//! where its show time falls in the file, by the same start the frames count from, so picture and
+//! sound stay together through dropped frames and jumps. The file has two channels at the rate
+//! of the first block: a mono input is on both, a third channel and up are left out, a block at
+//! another rate is left out and counted. An MP4 gets AAC, a MOV 24-bit PCM
+//! ([`penumbra_record::audio`]). Loops made of the file are silent.
+//!
+//! The input is cooked only while `audio` uses it, recording or not: a source on the show clock
+//! (an `audio.file` beside the `tex.video_file` of the same clip) keeps its place in time, as it
+//! does under an `out.audio`. With `audio` at `all` or `off` the chain wired to it costs nothing.
 //!
 //! With `loop` set, a finished recording is made into a loop as well
 //! ([`penumbra_record::looping`]), on a thread of the record hub's; the node warns while it runs.
 //! The params count as they are when the recording stops.
 
+use penumbra_audio::playback::{MAX_RATE, MIN_RATE};
 use penumbra_audio::{Outputs, Tap};
-use penumbra_core::{Error, NodeId, ParamSpec, Rate, Resolves, Tick, Unit, Value};
+use penumbra_core::{Chans, Error, NodeId, ParamSpec, Rate, Resolves, Tick, Unit, Value};
 use penumbra_gpu::{Gpu, MappedPlanes, PlaneLayout, Tex, YuvReader};
 use penumbra_graph::{
-    CookContext, CookError, Cooked, DataKind, FnNodeType, NodeDef, NodeDesc, NodeTypes, Operator,
+    CookContext, CookError, Cooked, Data, DataKind, FnNodeType, InputChoice, NodeDef, NodeDesc, NodeTypes,
+    Operator,
 };
 use penumbra_record::looping::{Method, Spec};
 use penumbra_record::{AudioBlock, Codec, Fps, Frame, H264Preset, Hub, Layout, Planes, Recording, Settings};
 
-use crate::audio::block::sample_at;
+use penumbra_record::audio::AUDIO_CHANNELS;
+
+use crate::audio::block::{BlockClock, Step, sample_at};
 use crate::on_gpu;
 
 /// Kind of the movie recording node.
@@ -51,6 +65,40 @@ const RING_BYTES: usize = 256 << 20;
 pub const DEFAULT_PRESET: H264Preset = H264Preset::Fast;
 /// Where recordings go when `file` is empty, relative to the project.
 pub const FOLDER: &str = "recordings";
+/// Index of the sound input.
+const AUDIO_INPUT: usize = 1;
+/// Most of one input block that goes into the file, seconds (the newest part of a longer one).
+pub const MAX_BLOCK_SECONDS: f64 = 1.0;
+
+/// Where a recording's sound comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Sound {
+    Off,
+    /// Every `out.audio`, through a tap.
+    All,
+    /// The `audio` input.
+    Input,
+}
+
+/// The sound param `choice` asks for, with the sound input `wired` or not.
+fn sound_of(choice: &str, wired: bool) -> Sound {
+    match choice {
+        "off" => Sound::Off,
+        "all" => Sound::All,
+        "input" => Sound::Input,
+        _ if wired => Sound::Input,
+        _ => Sound::All,
+    }
+}
+
+/// The sound input is cooked only while `audio` takes it.
+fn choose_inputs(cx: &InputChoice<'_>) -> Option<Vec<usize>> {
+    let wired = cx.connected(AUDIO_INPUT);
+    match sound_of(cx.text("audio").unwrap_or("auto"), wired) {
+        Sound::Input => None,
+        Sound::All | Sound::Off => Some(vec![0]),
+    }
+}
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let preset = H264Preset::NAMES.iter().fold(
@@ -114,8 +162,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             ))
             .param(codec)
             .param(
-                ParamSpec::choice("audio", &["all", "off"])
-                    .doc("Whether the file gets sound, fixed when the recording starts")
+                ParamSpec::choice("audio", &["auto", "input", "all", "off"])
+                    .doc("Where the file's sound comes from, fixed when the recording starts")
+                    .choice_doc("auto", "input while something is wired to the audio input, all while nothing is")
+                    .choice_doc(
+                        "input",
+                        "the sound wired to the audio input, also when no out.audio plays it; AAC in an MP4, \
+                         24-bit PCM in a MOV. Nothing wired: no sound",
+                    )
                     .choice_doc(
                         "all",
                         "what every out.audio of the project plays, added up as the speakers get it \
@@ -176,12 +230,18 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             )
             .input("in", DataKind::Tex)
             .describe_input("in", "The picture to record")
+            .input("audio", DataKind::Audio)
+            .describe_input(
+                "audio",
+                "Sound for the file, with `audio` at auto or input: any rate, the first two channels (mono on both)",
+            )
             // Reads the clock: a frame is due at the recording's rate whether or not the input
             // changed.
             .time_dependent(),
         || Box::new(VideoOut::default()) as Box<dyn Operator>,
     )
     .inactive(inactive)
+    .choose_inputs(choose_inputs)
     .warm_up(on_gpu(|gpu| gpu.yuv_pipeline().map(|_| ()))))
 }
 
@@ -262,6 +322,17 @@ struct Take {
     last: i64,
     /// Hears the project's sound, with `audio` all.
     tap: Option<Tap>,
+    /// Takes the sound input's blocks, with `audio` input.
+    input: bool,
+}
+
+/// One new block of the sound input, as the file takes it.
+struct InputBlock {
+    /// The show's sample number of the first sample.
+    first: i64,
+    rate: u32,
+    /// [`AUDIO_CHANNELS`] channels of equal length.
+    channels: Vec<Vec<f32>>,
 }
 
 #[derive(Default)]
@@ -276,6 +347,10 @@ struct VideoOut {
     tried: bool,
     /// Why the last start failed, shown while `record` stays on.
     failed: Option<String>,
+    /// Tells a new block of the sound input from the same one again.
+    clock: BlockClock,
+    /// The sound input taken last, to tell a new block from the same one handed on again.
+    last: Option<Data>,
 }
 
 impl Drop for VideoOut {
@@ -350,13 +425,19 @@ impl VideoOut {
         let settings = Settings { path, codec, width: w, height: h, fps, threads, queue, h264 };
         let recording = hub.start(node, settings).map_err(CookError::failed)?;
         recording.then_loop(loop_spec(cx, codec)?);
-        let tap = match (cx.text("audio")?, cx.resource::<Outputs>()) {
-            ("all", Some(outputs)) => {
+        let sound =
+            sound_of(cx.text("audio")?, cx.def().inputs.get(AUDIO_INPUT).is_some_and(Option::is_some));
+        let tap = match (sound, cx.resource::<Outputs>()) {
+            (Sound::All, Some(outputs)) => {
                 recording.sound(outputs.lanes(), 0, 0);
                 Some(outputs.tap())
             }
             _ => None,
         };
+        let input = sound == Sound::Input;
+        if input {
+            recording.sound(usize::from(cx.input(AUDIO_INPUT).is_some()), 0, 0);
+        }
         self.take = Some(Take {
             codec,
             planes: plane_layout(&recording.layout()),
@@ -366,8 +447,70 @@ impl VideoOut {
             start: now,
             last: -1,
             tap,
+            input,
         });
         Ok(())
+    }
+
+    /// The sound input's new block at this tick, if there is one. `Ok(None)`: nothing
+    /// connected, or the same block as before.
+    fn input_block(&mut self, cx: &CookContext<'_>) -> Result<Option<InputBlock>, CookError> {
+        let Some(data) = cx.input(AUDIO_INPUT) else {
+            self.last = None;
+            return Ok(None);
+        };
+        let Some(chans) = data.get::<Chans>() else {
+            return Err(crate::waiting(cx));
+        };
+        let rate_f = chans.rate();
+        // `as`: checked to be a whole number in range first.
+        let rate = if rate_f.is_finite()
+            && rate_f.fract() == 0.0
+            && (f64::from(MIN_RATE)..=f64::from(MAX_RATE)).contains(&rate_f)
+        {
+            rate_f as u32
+        } else {
+            return Err(CookError::failed(format!(
+                "the sound input is at {rate_f} samples per second; out.video records whole rates from \
+                 {MIN_RATE} to {MAX_RATE}"
+            )));
+        };
+        let Some(first_channel) = chans.channels().first() else { return Ok(None) };
+        let time = cx.time();
+        let span = self.clock.step(time.tick, time.rate.frame_ticks(), rate);
+        let same = self.last.as_ref().is_some_and(|d| d.same(data));
+        if span.step == Step::Again || same {
+            return Ok(None);
+        }
+        self.last = Some(data.clone());
+        // `as`: seconds to a sample count.
+        let max = (rate_f * MAX_BLOCK_SECONDS) as usize;
+        let second = chans.channels().get(1).unwrap_or(first_channel);
+        let frames = first_channel.samples.len().max(second.samples.len()).min(max);
+        let channels: Vec<Vec<f32>> = [first_channel, second]
+            .into_iter()
+            .take(AUDIO_CHANNELS)
+            .map(|c| {
+                let skip = c.samples.len().saturating_sub(frames);
+                // `as`: samples to f32 as recordings keep them.
+                let mut v: Vec<f32> = c
+                    .samples
+                    .iter()
+                    .skip(skip)
+                    .map(|v| if v.is_finite() { *v as f32 } else { 0.0 })
+                    .collect();
+                // A shorter channel is silent at the start: the block ends now.
+                if v.len() < frames {
+                    let mut padded = vec![0.0; frames - v.len()];
+                    padded.append(&mut v);
+                    v = padded;
+                }
+                v
+            })
+            .collect();
+        // The block ends now.
+        let first = span.end.saturating_sub(i64::try_from(frames).unwrap_or(0));
+        Ok(Some(InputBlock { first, rate, channels }))
     }
 }
 
@@ -383,6 +526,17 @@ impl Take {
         }
         let sources = outputs.map_or(0, Outputs::lanes);
         self.recording.sound(sources, tap.dropped(), tap.refused());
+    }
+
+    /// Hands a block of the sound input to the recording at the file's sample of its show
+    /// time; a block that ends before the file starts is left out.
+    fn put(&self, block: InputBlock) {
+        let at = block.first.saturating_sub(sample_at(self.start, block.rate));
+        let len = i64::try_from(block.channels.first().map_or(0, Vec::len)).unwrap_or(0);
+        if at.saturating_add(len) <= 0 {
+            return;
+        }
+        self.recording.push_audio(AudioBlock { at, rate: block.rate, channels: block.channels });
     }
 
     /// Takes the frame due at `now`, if one is.
@@ -456,9 +610,29 @@ impl Operator for VideoOut {
         if let Some(take) = &self.take {
             take.listen(outputs);
         }
+        // The sound input's block of this tick belongs to the recording also when this cook
+        // stops it: it holds the sound of the last frame.
+        let input_take = self.take.as_ref().is_some_and(|t| t.input);
+        let starting = record && self.take.is_none() && !self.tried;
+        let wired = cx.def().inputs.get(AUDIO_INPUT).is_some_and(Option::is_some);
+        let mut sound_error = None;
+        let mut block = None;
+        if input_take || (starting && sound_of(cx.text("audio")?, wired) == Sound::Input) {
+            match self.input_block(cx) {
+                Ok(b) => block = b,
+                Err(CookError::Pending) => {}
+                Err(CookError::Failed(e)) => sound_error = Some(e),
+            }
+        } else {
+            self.last = None;
+            self.clock.reset();
+        }
         if !record {
             // The loop follows the params as they are when the recording stops.
             if let Some(take) = self.take.take() {
+                if let Some(b) = block.take().filter(|_| take.input) {
+                    take.put(b);
+                }
                 take.recording.then_loop(loop_spec(cx, take.codec).unwrap_or(None));
                 if take.tap.is_some() && outputs.is_some_and(|o| o.lanes() > 0) {
                     self.closing = Some(take);
@@ -482,6 +656,13 @@ impl Operator for VideoOut {
         if let Some(take) = self.take.as_mut() {
             let gpu = crate::gpu(cx)?;
             take.frame(gpu, cx.input_as::<Tex>(0), now)?;
+            // After the frame: a jump moved the start, and this block ends at the new one.
+            if take.input {
+                take.recording.sound(usize::from(cx.input(AUDIO_INPUT).is_some()), 0, 0);
+                if let Some(b) = block.take() {
+                    take.put(b);
+                }
+            }
         }
         // The last recording's error and drops count while `record` is on; once off, the status
         // line of the panel and video_out.status still tell.
@@ -494,6 +675,26 @@ impl Operator for VideoOut {
             }
             if s.recording && cx.input(0).is_none() {
                 cx.warn("nothing connected: the file holds the last picture");
+            }
+            let input = self.take.as_ref().is_some_and(|t| t.input);
+            if s.recording && input && cx.input(AUDIO_INPUT).is_none() {
+                cx.warn(
+                    "`audio` is input, but nothing is connected to the audio input: the file has no sound",
+                );
+            }
+            if let Some(e) = sound_error.filter(|_| input) {
+                cx.warn(format!("the file has no sound from the audio input: {e}"));
+            }
+            if let Some(a) = &s.audio {
+                if let Some(e) = &a.error {
+                    cx.warn(format!("the file has no sound: {e}"));
+                } else if a.refused > 0 {
+                    cx.warn(format!(
+                        "{} blocks of sound left out: they are not at the file's {} Hz; turn record off and on \
+                         for a file at the new rate",
+                        a.refused, a.rate
+                    ));
+                }
             }
         }
         if let Some(l) = hub.status(node).and_then(|s| s.looping) {
