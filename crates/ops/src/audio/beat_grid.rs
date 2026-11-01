@@ -13,8 +13,13 @@
 //! cancelled, and when the app closes. A finished one stays in memory for the next node that
 //! wants the same file, until the file changes on disk.
 //!
+//! **Bars** are voted over 64 beats from the network's downbeat logits ([`beats::bars`]), so
+//! they hold on DJ mixes, where the downbeats the network marks one by one do not.
+//!
 //! **Time:** the grid is known ahead, so `offset` moves the lookup itself: a tick comes exactly
-//! `offset` early, with no prediction. Per cook the node costs one binary search.
+//! `offset` early, with no prediction. A looped file's grid runs from its last beat into the
+//! first beat of the next pass ([`BeatGrid::at_looped`]). Per cook the node costs one binary
+//! search.
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -120,15 +125,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
 pub struct Grid {
     pub beats: Beats,
     pub grid: BeatGrid,
+    /// The grid's bar starts, seconds into the file: voted from the network's downbeat
+    /// logits, so they need not be `beats.downbeats`.
+    pub bars: Vec<f64>,
     /// Seconds into the file before which the grid is final; infinite once the analysis ended,
-    /// minus infinity before two downbeats are known.
+    /// minus infinity before two bars are known.
     pub final_until: f64,
 }
 
 impl Grid {
     fn new(beats: Beats, final_until: f64) -> Self {
-        let grid = BeatGrid::new(&beats.beats, &beats.downbeats);
-        Grid { beats, grid, final_until }
+        let grid = BeatGrid::from_beats(&beats);
+        let bars = grid.downbeats();
+        Grid { beats, grid, bars, final_until }
     }
 
     /// The analysis ended and this is all of it.
@@ -475,8 +484,9 @@ fn run(inner: &Inner, file: &Path, cancel: &AtomicBool, shared: &Shared) -> Resu
 struct GridNode {
     analysis: Option<Arc<Analysis>>,
     watch: Option<FileWatch>,
-    /// The beat and bar at the last lookup and its time, for the ticks.
-    last: Option<(i64, i64, f64)>,
+    /// The pass through a looped file, beat and bar at the last lookup and its time, for the
+    /// ticks.
+    last: Option<(i64, i64, i64, f64)>,
     names: Vec<Name>,
     /// The `grid` output and the grid it was made from.
     table: Option<(Arc<Grid>, Data)>,
@@ -566,16 +576,25 @@ impl Operator for GridNode {
 
         let offset = cx.float("offset")?;
         let offset = if offset.is_finite() { offset.clamp(-5000.0, 5000.0) / 1000.0 } else { 0.0 };
-        let t = status.in_file + offset;
-        let pos = grid.as_ref().and_then(|g| g.grid.at(t));
+        // A looped file's grid runs on from its last beat into the first beat of the next pass,
+        // once all of it is known; `t` counts from the start of the first pass then.
+        let looped = status.looping && status.duration > 0.0 && grid.as_ref().is_some_and(|g| g.complete());
+        let (t, lookup) = if looped {
+            let t = status.position + offset;
+            (t, grid.as_ref().and_then(|g| g.grid.at_looped(t, status.duration)))
+        } else {
+            let t = status.in_file + offset;
+            (t, grid.as_ref().and_then(|g| g.grid.at(t)).map(|p| (p, 0)))
+        };
+        let pos = lookup.map(|(p, _)| p);
         let ready = pos.is_some() && grid.as_ref().is_some_and(|g| t < g.final_until);
         let (mut tick, mut downbeat) = (false, false);
-        if let (Some(p), Some((beat, bar, before))) = (pos, self.last) {
+        if let (Some((p, pass)), Some((last_pass, beat, bar, before))) = (lookup, self.last) {
             let forward = t > before && t - before <= JUMP_SECONDS;
-            tick = forward && p.beat > beat;
-            downbeat = forward && p.bar > bar;
+            tick = forward && (pass, p.beat) > (last_pass, beat);
+            downbeat = forward && (pass, p.bar) > (last_pass, bar);
         }
-        self.last = pos.map(|p| (p.beat, p.bar, t));
+        self.last = lookup.map(|(p, pass)| (pass, p.beat, p.bar, t));
 
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
         let values = match pos {

@@ -421,7 +421,11 @@ another beat; `bar_beat` and `bar` are then counted from there.
 
 **Finding the beats.** The node finds the beats of the whole file once, in the background, with the Beat This! network (Foscarin, Schlüter and Widmer, JKU Linz, ISMIR 2024; [github.com/CPJKU/beat_this](https://github.com/CPJKU/beat_this)). A 4 minute track takes a few seconds, a 2 hour mix a few minutes. The result is kept in a cache, so the next time the file opens the grid is there at once. While the analysis runs, `progress` rises from 0 to 1, `analyzing` reads 1, and the panel shows a progress bar with `cancel`.
 
-**Using it early.** The grid fills from the start of the file. `ready` reads 1 where the grid under the playhead is final. Further on, `coasting` reads 1 and the beat runs on at the last tempo found. The panel says how far the grid is ready.
+**Bars.** The network marks each beat that may begin a bar. On DJ mixes these marks alone give bars of one, two or five beats, so the node does not take them one by one. Each beat looks at the 64 beats around it, and the pattern of 4 (or 3) beats that the marks favour there sets the bars. On a 2 hour mix this made 98 % of the bars four beats long, against 79 % from the marks alone. Where the mix shifts by a beat, one bar of 3, 5, 6 or 7 beats takes up the change. A waltz gets bars of 3. `beats.grid` gives both: `downbeats` are the bars the node uses, `marked_downbeats` the network's marks.
+
+**Loops.** When the `audio.file` loops, the last beat of the file runs on into the first beat of the next pass, and `beat_index` and `bar_index` start again from there.
+
+**Using it early.** The grid fills from the start of the file. `ready` reads 1 where the grid under the playhead is final. The bars of the last 32 beats found wait for the beats after them, about 15 seconds of music. Further on, `coasting` reads 1 and the beat runs on at the last tempo found. The panel says how far the grid is ready.
 
 **Timing.** The grid is known ahead, so `offset` (milliseconds) makes `tick` come exactly that early, without guessing. Set it to the projector's delay.
 

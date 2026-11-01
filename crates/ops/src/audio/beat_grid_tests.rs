@@ -146,6 +146,33 @@ fn the_grid_follows_the_playhead_and_ticks_ahead() {
 }
 
 #[test]
+fn a_looped_file_ticks_on_across_its_end() {
+    // The clicks loop (audio.file's default): 12 s, the last click at 11.5 s, the first at 0 s.
+    let dir = temp_dir("loop");
+    let file = clicks(&dir);
+    let mut f = fixture(&grid_ops(&file), &dir.join("cache"));
+    analysed(&mut f);
+    // 11 to 13 s: a tick every half second, at 12 s too, and the beats count from 0 again.
+    let (mut beats, mut index) = (Vec::new(), Vec::new());
+    for i in 0..780u64 {
+        f.clock.advance(1);
+        let c = cook(&mut f).0.unwrap();
+        if i >= 660 && value(&c, "tick") == 1.0 {
+            beats.push(i);
+            index.push(value(&c, "beat_index"));
+        }
+    }
+    assert_eq!(beats.len(), 4, "{beats:?}");
+    for w in beats.windows(2) {
+        assert!((w[1] - w[0]).abs_diff(30) <= 1, "{beats:?}");
+    }
+    // Frame i shows (i + 1) / 60 s: 12 s is frame 719.
+    assert!(beats.iter().any(|b| b.abs_diff(719) <= 1), "{beats:?}");
+    assert_eq!(index.iter().filter(|i| **i == 0.0).count(), 1, "{index:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn wiring_without_a_file_is_an_error() {
     let dir = temp_dir("wiring");
     let cache = dir.join("cache");

@@ -9,13 +9,18 @@
 //! runs the whole chain from the sound file, without the cache.
 //!
 //! Both print the time taken, the counts and the F-measure within 20 ms and 70 ms of beats and
-//! downbeats. Set `BEAT_MODEL` to another network file to use it instead, and `BEAT_OUT` to a
-//! path prefix to write the times found to `PREFIX_beats.txt` and `PREFIX_downs.txt`.
+//! downbeats, and the bar lengths in beats: between the downbeats the network marks, and of the
+//! bars voted from its logits (`beats::bars`). Set `BEAT_MODEL` to another network file to use
+//! it instead, and `BEAT_OUT` to a path prefix to write the times found to `PREFIX_beats.txt`,
+//! `PREFIX_downs.txt`, `PREFIX_bars.txt` (the voted bar starts) and `PREFIX_logits.txt` (one
+//! downbeat logit per beat).
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use penumbra_audio::beats::{self, BeatModel, Beats, Spectrogram};
+use std::collections::BTreeMap;
+
+use penumbra_audio::beats::{self, BeatGrid, BeatModel, Beats, Spectrogram};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -77,7 +82,11 @@ fn run(mode: &str, input: &Path, ref_beats: &str, ref_downs: &str) -> Result<(),
     println!("{mode}: {elapsed:.2?}");
     if let Some(prefix) = std::env::var_os("BEAT_OUT") {
         let prefix = prefix.to_string_lossy().into_owned();
-        for (what, t) in [("beats", &got.beats), ("downs", &got.downbeats)] {
+        let bars = BeatGrid::from_beats(&got).downbeats();
+        let logits: Vec<f64> = got.downbeat_logits.iter().map(|v| f64::from(*v)).collect();
+        for (what, t) in
+            [("beats", &got.beats), ("downs", &got.downbeats), ("bars", &bars), ("logits", &logits)]
+        {
             let text: String = t.iter().map(|t| format!("{t:.4}\n")).collect();
             let path = format!("{prefix}_{what}.txt");
             std::fs::write(&path, text).map_err(|e| format!("{path}: {e}"))?;
@@ -92,5 +101,21 @@ fn run(mode: &str, input: &Path, ref_beats: &str, ref_downs: &str) -> Result<(),
             beats::f_measure(w, g, 0.07)
         );
     }
+    bar_report("marked downbeats", &got.beats, &got.downbeats);
+    bar_report("voted bars", &got.beats, &BeatGrid::from_beats(&got).downbeats());
     Ok(())
+}
+
+/// Bars and their lengths in beats between the bar starts `starts` (times of beats).
+fn bar_report(what: &str, beats: &[f64], starts: &[f64]) {
+    let idx: Vec<usize> = starts.iter().filter_map(|t| beats.iter().position(|b| b == t)).collect();
+    let mut lengths: BTreeMap<usize, usize> = BTreeMap::new();
+    for (a, b) in idx.iter().zip(idx.iter().skip(1)) {
+        *lengths.entry(b - a).or_default() += 1;
+    }
+    println!(
+        "  {what}: {} bars, first at beat {:?}, lengths {lengths:?}",
+        idx.len().saturating_sub(1),
+        idx.first()
+    );
 }

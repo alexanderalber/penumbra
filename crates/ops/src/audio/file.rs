@@ -122,6 +122,10 @@ pub struct FileStatus {
     /// `position` as the `info` output's: within the file while it loops, else at most its
     /// length.
     pub in_file: f64,
+    /// The file's length in seconds, 0 while unknown.
+    pub duration: f64,
+    /// The file plays over and over.
+    pub looping: bool,
     pub playing: bool,
     /// Gaps where the decoder had not caught up, since the file was loaded.
     pub gaps: u64,
@@ -444,6 +448,8 @@ impl FilePlayer {
             decoder: self.status.clone(),
             position: self.playhead,
             in_file: in_file(self.playhead, self.duration, self.looping).0,
+            duration: self.duration,
+            looping: self.looping,
             playing: self.mapping.is_some_and(|m| m.speed > 0.0),
             gaps: self.gaps,
             restarts: self.restarts,

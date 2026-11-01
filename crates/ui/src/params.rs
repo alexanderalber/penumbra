@@ -2710,7 +2710,7 @@ fn beat_grid_row(ui: &mut Ui, input: &Inputs<'_>, node: &NodeDef, auto: &mut aut
             (Some(e), _) => (format!("no beats: {e}"), theme::WARNING),
             (None, Some(g)) if complete => {
                 let n = g.beats.beats.len();
-                (format!("{n} beats, {} bars, found in {:.1} s", g.beats.downbeats.len(), s.seconds), weak)
+                (format!("{n} beats, {} bars, found in {:.1} s", g.bars.len(), s.seconds), weak)
             }
             (None, Some(g)) => (format!("cancelled after {} beats", g.beats.beats.len()), theme::WARNING),
             (None, None) => ("cancelled".to_string(), theme::WARNING),

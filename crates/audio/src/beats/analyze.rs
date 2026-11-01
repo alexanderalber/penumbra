@@ -620,7 +620,8 @@ mod tests {
         assert!(p.beats.beats.len() >= 55, "{} beats", p.beats.beats.len());
         assert_eq!(p.beats.beats[..], want.beats[..p.beats.beats.len()]);
         assert_eq!(p.beats.downbeats[..], want.downbeats[..p.beats.downbeats.len()]);
-        assert!(p.final_until.is_some_and(|t| t > 25.0 && t < 29.8), "{:?}", p.final_until);
+        // The bars of the last 32 beats known wait for the beats after them.
+        assert!(p.final_until.is_some_and(|t| t > 11.0 && t < 14.0), "{:?}", p.final_until);
         assert_eq!(last.fraction(), 1.0);
         assert_eq!((last.chunks_done, last.chunks), (2, 2));
         // The second run reads the cache.
@@ -629,7 +630,7 @@ mod tests {
         assert!(start.elapsed().as_millis() < 200, "{:?}", start.elapsed());
         // A corrupt cache entry is computed again (and the cancel flag shows it is not read).
         for entry in std::fs::read_dir(&cache).unwrap() {
-            std::fs::write(entry.unwrap().path(), "penumbra-beats 1 garbage").unwrap();
+            std::fs::write(entry.unwrap().path(), "penumbra-beats 2 garbage").unwrap();
         }
         let stop = AtomicBool::new(true);
         let r = analyze_file(&sound, &model, Some(&cache), Some(&stop), &mut |_| {});
@@ -639,6 +640,23 @@ mod tests {
         std::fs::write(&junk, vec![0x55u8; 5000]).unwrap();
         assert!(matches!(analyze_file(&junk, &model, None, None, &mut |_| {}), Err(BeatError::Input(_))));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_example_track_keeps_its_bars() {
+        // examples/beat-grid/music.wav: 32 bars of 4/4, a beat every 10 670 samples at 22 050 Hz,
+        // the first on 0 s, a breakdown in bars 17 to 24. The bars voted from the logits are the
+        // marked downbeats, each on its bar's first beat.
+        let music = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
+        let model = BeatModel::shipped().unwrap();
+        let got = analyze_file(&music, &model, None, None, &mut |_| {}).unwrap();
+        let bars = super::super::BeatGrid::from_beats(&got).downbeats();
+        assert_eq!(bars, got.downbeats);
+        assert!((32..=33).contains(&bars.len()), "{} bars", bars.len());
+        for (k, t) in bars.iter().enumerate() {
+            let want = (k * 4 * 10_670) as f64 / 22_050.0;
+            assert!((t - want).abs() <= 0.02, "bar {k} at {t} s, not {want} s");
+        }
     }
 
     #[test]

@@ -16,8 +16,10 @@
 //!   order. [`run_network`] does both in sequence, cancellable between chunks.
 //! - **Peaks:** [`pick`] turns the per-frame logits into beat and downbeat times as
 //!   upstream's "minimal" post-processing does.
+//! - **Bars:** [`bars`] votes regular bars over 64 beats from the downbeat logit of each beat;
+//!   the downbeats marked one by one make irregular bars on DJ material.
 //! - **Position:** a [`BeatGrid`] answers, for any time, which beat and bar it falls in and
-//!   how far through them it is.
+//!   how far through them it is, also in a looped piece ([`BeatGrid::at_looped`]).
 //!
 //! [`track`] runs the whole chain on one block of samples. [`analyze_file`] runs it on a sound
 //! file with the shipped network ([`BeatModel`]), its chunks in parallel, and keeps the result
@@ -28,11 +30,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 mod analyze;
 mod cache;
+mod meter;
 
 pub use analyze::{
     BeatModel, IN_FLIGHT, MAX_SECONDS, MODEL_FILE, Progress, analyze_file, analyze_file_with, f_measure,
     model_path, run_parallel,
 };
+pub use meter::{HOLD, LOGIT_LIMIT, THREE_LEAD, THREE_MIN_LEAD, WINDOW as METER_WINDOW, bars, bars_decided};
 
 use crate::fft::{Complex, Fft};
 use crate::resample::{CLIP, Kernel, MAX_CHANNELS, MAX_RATE, MIN_RATE, dot};
@@ -838,8 +842,13 @@ where
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Beats {
     pub beats: Vec<f64>,
-    /// Each one is also in `beats` (when there are any beats).
+    /// The downbeats the network marks, each one also in `beats` (when there are any beats).
+    /// On DJ mixes they make bars of irregular length; [`bars`] votes regular ones.
     pub downbeats: Vec<f64>,
+    /// How sure the network is that each beat begins a bar: the largest downbeat logit within
+    /// a frame of the beat's peak, one per beat, clamped to ±[`LOGIT_LIMIT`]. Empty when
+    /// unknown: then the bars are the marked downbeats.
+    pub downbeat_logits: Vec<f32>,
 }
 
 /// Peak frames merged into one: its first and last frame and their mean. A frame joins when it
@@ -886,6 +895,20 @@ fn peaks(v: &[f32]) -> Vec<f64> {
     peak_groups(v).into_iter().map(|g| g.mean / FPS).collect()
 }
 
+/// The downbeat logit of the beat whose peak is `g`: the largest within a frame of its frames,
+/// clamped, a non-number counted as the lowest.
+fn logit_at(g: &PeakGroup, downbeat: &[f32]) -> f32 {
+    let range = g.first.saturating_sub(1)..(g.last + 2).min(downbeat.len());
+    let max = downbeat
+        .get(range)
+        .unwrap_or(&[])
+        .iter()
+        .copied()
+        .filter(|v| !v.is_nan())
+        .fold(f32::NEG_INFINITY, f32::max);
+    max.clamp(-LOGIT_LIMIT, LOGIT_LIMIT)
+}
+
 /// The index of the beat nearest to `t` in ascending `beats`; the earlier one on a tie.
 fn nearest(beats: &[f64], t: f64) -> Option<usize> {
     let i = beats.partition_point(|b| *b < t);
@@ -902,14 +925,16 @@ fn nearest(beats: &[f64], t: f64) -> Option<usize> {
 /// peaks at most one frame apart merge into their mean; each downbeat moves to the nearest
 /// beat, and downbeats that land on the same beat become one.
 pub fn pick(beat: &[f32], downbeat: &[f32]) -> Beats {
-    let beats = peaks(beat);
+    let groups = peak_groups(beat);
+    let beats: Vec<f64> = groups.iter().map(|g| g.mean / FPS).collect();
+    let downbeat_logits = groups.iter().map(|g| logit_at(g, downbeat)).collect();
     let mut downbeats: Vec<f64> = peaks(downbeat)
         .into_iter()
         .map(|t| nearest(&beats, t).and_then(|i| beats.get(i)).copied().unwrap_or(t))
         .collect();
     downbeats.sort_by(f64::total_cmp);
     downbeats.dedup();
-    Beats { beats, downbeats }
+    Beats { beats, downbeats, downbeat_logits }
 }
 
 /// Beats known for certain while only the start of the piece has been through the network.
@@ -918,8 +943,9 @@ pub struct Partial {
     /// A prefix of what [`pick`] gives for the whole piece: the same first beats and the same
     /// first downbeats.
     pub beats: Beats,
-    /// Seconds before which a [`BeatGrid`] of `beats` gives the same [`Position`] as the grid
-    /// of the whole piece: the last downbeat known, once two are known. `None` before that.
+    /// Seconds before which [`BeatGrid::from_beats`] of `beats` gives the same [`Position`] as
+    /// the grid of the whole piece: the last bar start whose vote is final ([`bars_decided`]),
+    /// once there are two. `None` before that.
     pub final_until: Option<f64>,
 }
 
@@ -936,6 +962,8 @@ pub fn pick_final(beat: &[f32], downbeat: &[f32]) -> Partial {
     let groups = peak_groups(beat);
     let known = groups.iter().take_while(|g| complete(g)).count();
     let beats: Vec<f64> = groups.iter().take(known).map(|g| g.mean / FPS).collect();
+    // A complete group's frames and the one after it are decided.
+    let downbeat_logits: Vec<f32> = groups.iter().take(known).map(|g| logit_at(g, downbeat)).collect();
     // Every beat found later lies at or after this frame: the first undecided group, or the
     // first frame whose peak is not decided yet.
     let undecided = frames.saturating_sub(PEAK_RADIUS);
@@ -955,8 +983,10 @@ pub fn pick_final(beat: &[f32], downbeat: &[f32]) -> Partial {
             downbeats.push(at);
         }
     }
-    let final_until = (downbeats.len() >= 2).then(|| downbeats.last().copied()).flatten();
-    Partial { beats: Beats { beats, downbeats }, final_until }
+    let starts = bars_decided(&downbeat_logits, known.saturating_sub(meter::WINDOW / 2));
+    let final_until =
+        (starts.len() >= 2).then(|| starts.last().and_then(|i| beats.get(*i)).copied()).flatten();
+    Partial { beats: Beats { beats, downbeats, downbeat_logits }, final_until }
 }
 
 /// The whole chain on one block of interleaved samples: front end, every chunk through `net`
@@ -1069,6 +1099,17 @@ impl BeatGrid {
         Self { beats: b, downs, tempo }
     }
 
+    /// The grid of a tracked piece: the bars [`bars`] votes from the downbeat logits, or the
+    /// marked downbeats when there are no logits for every beat.
+    pub fn from_beats(b: &Beats) -> Self {
+        if b.downbeat_logits.len() != b.beats.len() {
+            return Self::new(&b.beats, &b.downbeats);
+        }
+        let starts: Vec<f64> =
+            bars(&b.downbeat_logits).into_iter().filter_map(|i| b.beats.get(i)).copied().collect();
+        Self::new(&b.beats, &starts)
+    }
+
     pub fn beats(&self) -> &[f64] {
         &self.beats
     }
@@ -1106,12 +1147,58 @@ impl BeatGrid {
             let (a, b) = (*self.beats.get(i)?, *self.beats.get(i + 1)?);
             (i as i64, (t - a) / (b - a), b - a, true)
         };
+        Some(self.position(beat, phase, seconds, inside))
+    }
+
+    /// Where `t` falls while the piece plays in a loop of `length` seconds: `t` counts from
+    /// the start of the first pass, and the pass the moment's beat belongs to comes along.
+    /// From the last beat the beat runs to the first beat of the next pass, so beats and bars
+    /// go on from the start instead of at the last spacing. A beat found in the last half
+    /// spacing before the end is the next pass's first beat, heard early, and is left out.
+    /// Before the first beat of the first pass, beats count back as [`BeatGrid::at`] does. A
+    /// `length` that is no number or does not hold two beats gives [`BeatGrid::at`] of `t` in
+    /// pass 0.
+    pub fn at_looped(&self, t: f64, length: f64) -> Option<(Position, i64)> {
+        let first = *self.beats.first()?;
+        let wrap = length + first;
+        // The beats of one pass: those before the next pass's first beat comes round.
+        let mut n = self.beats.partition_point(|b| *b < length);
+        while n >= 2 {
+            let (Some(prev), Some(last)) = (self.beats.get(n - 2), self.beats.get(n - 1)) else { break };
+            if wrap - last >= 0.5 * (last - prev) {
+                break;
+            }
+            n -= 1;
+        }
+        let last = match n.checked_sub(1).and_then(|i| self.beats.get(i)) {
+            Some(l) if n >= 2 && length.is_finite() && first >= 0.0 && t.is_finite() => *l,
+            _ => return self.at(t).map(|p| (p, 0)),
+        };
+        let pass = (t / length).floor();
+        let local = t - pass * length;
+        // `as`: saturates far outside any show, where the count no longer matters.
+        let pass = pass as i64;
+        let span = wrap - last;
+        // `as`: a count of beats, far below i64::MAX.
+        let last_beat = n as i64 - 1;
+        if local >= last {
+            return Some((self.position(last_beat, (local - last) / span, span, true), pass));
+        }
+        if local < first && pass > 0 {
+            let phase = (local + length - last) / span;
+            return Some((self.position(last_beat, phase, span, true), pass - 1));
+        }
+        self.at(local).map(|p| (p, pass))
+    }
+
+    /// The position `phase` (0 to 1) through beat `beat` of `seconds`.
+    fn position(&self, beat: i64, phase: f64, seconds: f64, inside: bool) -> Position {
         let phase = phase.clamp(0.0, 1.0 - f64::EPSILON);
         let (bar, beat_in_bar, beats_in_bar) = self.bar_of(beat);
         // Outside the beats the spacing is the first's or the last's, and so is the tempo.
         let gap = usize::try_from(beat).unwrap_or(0).min(self.tempo.len().saturating_sub(1));
         let bpm = self.tempo.get(gap).copied().unwrap_or(0.0);
-        Some(Position {
+        Position {
             beat,
             beat_phase: phase,
             beat_seconds: seconds,
@@ -1122,7 +1209,7 @@ impl BeatGrid {
             bar_phase: (beat_in_bar as f64 + phase) / beats_in_bar.max(1) as f64,
             inside,
             bpm,
-        })
+        }
     }
 
     /// The bar of beat `k`, its place in the bar and the bar's length in beats.

@@ -242,7 +242,7 @@ fn peaks_edge_cases() {
     let mut d = vec![-5.0f32; 100];
     d[10] = 1.0;
     d[90] = 1.0;
-    assert_eq!(pick(&b, &d), Beats { beats: vec![1.0], downbeats: vec![1.0] });
+    assert_eq!(pick(&b, &d), Beats { beats: vec![1.0], downbeats: vec![1.0], downbeat_logits: vec![-5.0] });
     // Beat and downbeat tracks of different lengths do not panic.
     let _ = pick(&b, &d[..3]);
 }
@@ -251,7 +251,7 @@ fn peaks_edge_cases() {
 /// the whole piece's, and its grid gives the whole piece's positions before `final_until`.
 fn check_partial(b: &[f32], d: &[f32], step: usize) -> usize {
     let full = pick(b, d);
-    let grid = BeatGrid::new(&full.beats, &full.downbeats);
+    let grid = BeatGrid::from_beats(&full);
     let mut with_until = 0;
     for f in (0..=b.len()).step_by(step) {
         let p = pick_final(&b[..f], &d[..f]);
@@ -265,7 +265,12 @@ fn check_partial(b: &[f32], d: &[f32], step: usize) -> usize {
         let Some(until) = p.final_until else { continue };
         with_until += 1;
         assert!(until <= f as f64 / FPS, "{until} beyond {f} frames");
-        let part = BeatGrid::new(&p.beats.beats, &p.beats.downbeats);
+        assert_eq!(
+            p.beats.downbeat_logits[..],
+            full.downbeat_logits[..p.beats.downbeat_logits.len()],
+            "logits at {f} frames"
+        );
+        let part = BeatGrid::from_beats(&p.beats);
         let mut t = -2.0;
         while t < until {
             // The tempo near the end of a part still lacks the beats after it.
@@ -452,6 +457,50 @@ fn beat_grid_positions() {
     }
 }
 
+#[test]
+fn a_looped_piece_wraps_to_its_first_beat() {
+    // Eight beats every 0.5 s from 0.25 s in a loop of 4 s, bars of four from the first beat.
+    let beats: Vec<f64> = (0..8).map(|i| 0.25 + 0.5 * i as f64).collect();
+    let g = BeatGrid::new(&beats, &[beats[0], beats[4]]);
+    let at = |t: f64| {
+        let (p, pass) = g.at_looped(t, 4.0).unwrap();
+        (p.beat, p.bar, p.beat_in_bar, pass, (p.beat_phase * 1e6).round() / 1e6)
+    };
+    // Inside the beats as in the plain grid.
+    assert_eq!(at(1.5), (2, 0, 2, 0, 0.5));
+    // From the last beat to the end of the file and on into the next pass, one beat of 0.5 s.
+    assert_eq!(at(3.9), (7, 1, 3, 0, 0.3));
+    assert_eq!(at(4.1), (7, 1, 3, 0, 0.7));
+    assert_eq!(at(4.25), (0, 0, 0, 1, 0.0));
+    assert_eq!(at(9.8), (3, 0, 3, 2, 0.1));
+    // Before the first beat of the first pass nothing came before: the beats count back.
+    assert_eq!(at(0.1).0, -1);
+    assert_eq!(at(0.1).3, 0);
+    // With the first beat on 0 s, a beat found on the very end (or a frame before it) is the
+    // next pass's first: the same as without it, but for the tempo.
+    let from_zero: Vec<f64> = (0..8).map(|i| 0.5 * i as f64).collect();
+    let g0 = BeatGrid::new(&from_zero, &[0.0, 2.0]);
+    let no_bpm = |p: Option<(Position, i64)>| p.map(|(p, k)| (Position { bpm: 0.0, ..p }, k));
+    for end in [4.0, 3.98] {
+        let mut with_end = from_zero.clone();
+        with_end.push(end);
+        let g2 = BeatGrid::new(&with_end, &[0.0, 2.0]);
+        for t in [3.6, 3.99, 4.0, 4.1, 9.8] {
+            assert_eq!(no_bpm(g2.at_looped(t, 4.0)), no_bpm(g0.at_looped(t, 4.0)), "{end} {t}");
+        }
+    }
+    let (p, pass) = g0.at_looped(4.0, 4.0).unwrap();
+    assert_eq!((p.beat, p.bar, p.beat_phase, pass), (0, 0, 0.0, 1));
+    // A length that does not hold two beats is no loop.
+    for len in [f64::NAN, 0.0, -4.0, 0.5] {
+        let (p, pass) = g.at_looped(4.1, len).unwrap();
+        assert_eq!((p.beat, pass), (7, 0), "{len}");
+        assert!(!p.inside);
+    }
+    assert!(g.at_looped(f64::NAN, 4.0).is_none());
+    assert!(g.at_looped(1e300, 4.0).is_some());
+}
+
 // The study data: a 60 s excerpt of a DJ mix at 22.05 kHz with torch's spectrogram and
 // final0 logits, and the whole 2 h mix.
 const STUDY: &str = "E:/misc/temp/beat-study/onnx/data";
@@ -534,4 +583,68 @@ fn tempo_holds_steady_on_beats_snapped_to_frames() {
     // Single spacings alone would jump by several beats per minute.
     let one = |i: usize| 60.0 / (beats[i + 1] - beats[i]);
     assert!((0..40).map(one).any(|b| (b - 124.0).abs() > 2.0));
+}
+
+/// Bar lengths in beats between bar starts (indices into the beats).
+fn bar_lengths(starts: &[usize]) -> Vec<usize> {
+    starts.windows(2).map(|w| w[1] - w[0]).collect()
+}
+
+/// How regular bars are: their count, the share of 4-beat bars, the bars whose length is no
+/// multiple of 4 (a change of phase), and the share of time in runs of at least 32 4-beat bars.
+fn bar_stats(what: &str, starts: &[usize], marked: &[usize]) {
+    let len = bar_lengths(starts);
+    let four = len.iter().filter(|n| **n == 4).count();
+    let shifts = len.iter().filter(|n| **n % 4 != 0).count();
+    let on = marked.iter().filter(|i| starts.binary_search(i).is_ok()).count();
+    let (mut run, mut long, total) = (0usize, 0usize, len.iter().sum::<usize>());
+    for n in len.iter().chain([&0]) {
+        if *n == 4 {
+            run += 1;
+        } else {
+            if run >= 32 {
+                long += 4 * run;
+            }
+            run = 0;
+        }
+    }
+    let mut hist = std::collections::BTreeMap::new();
+    for n in &len {
+        *hist.entry(*n).or_insert(0usize) += 1;
+    }
+    eprintln!(
+        "{what}: {} bars, 4-beat {:.3}, phase shifts {shifts}, marked downbeats on the bars {:.3}, \
+         time in runs of 32+ regular bars {:.2}, lengths {hist:?}",
+        len.len(),
+        four as f64 / len.len().max(1) as f64,
+        on as f64 / marked.len().max(1) as f64,
+        long as f64 / total.max(1) as f64,
+    );
+}
+
+#[test]
+#[ignore = "needs the beat study data in E:/misc/temp/beat-study; prints how regular the bars are"]
+fn study_full_mix_bars() {
+    let d = Path::new(STUDY);
+    let (b, dn) = deinterleave(&read_f32(&d.join("logits_torch_final0_full_cpu.f32")));
+    let got = pick(&b, &dn);
+    let marked: Vec<usize> =
+        got.downbeats.iter().filter_map(|t| got.beats.binary_search_by(|b| b.total_cmp(t)).ok()).collect();
+    assert_eq!(marked.len(), got.downbeats.len());
+    let t = std::time::Instant::now();
+    let voted = bars(&got.downbeat_logits);
+    eprintln!("{} beats, voted in {:.1} ms", got.beats.len(), t.elapsed().as_secs_f64() * 1e3);
+    bar_stats("marked downbeats", &marked, &marked);
+    bar_stats("voted bars", &voted, &marked);
+    // Partial results over the whole mix, every 50th chunk's worth of frames.
+    let full = BeatGrid::from_beats(&got);
+    for f in (0..b.len()).step_by(1488 * 50).skip(1) {
+        let p = pick_final(&b[..f], &dn[..f]);
+        let part = BeatGrid::from_beats(&p.beats);
+        let until = p.final_until.unwrap();
+        let (part, full) = (part.downbeats(), full.downbeats());
+        let k = part.partition_point(|t| *t <= until);
+        assert!(k > 0 && k <= full.len(), "{f} frames: {k} bars final");
+        assert_eq!(part[..k], full[..k], "{f} frames");
+    }
 }

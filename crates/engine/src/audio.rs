@@ -79,8 +79,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "beats.grid",
-        "The beats found in a sound file: {path or file, from? to? (s)} gives beats and downbeats (s into the file) \
-         between from and to, and final_until and complete as beats.status. Does not start an analysis",
+        "The beats found in a sound file: {path or file, from? to? (s)} gives beats, downbeats (the bar starts \
+         chan.beat_grid uses, voted over 64 beats) and marked_downbeats (those the network marks one by one; \
+         irregular on DJ mixes), s into the file, between from and to, and final_until and complete as \
+         beats.status. Does not start an analysis",
         beats_grid,
     );
     add(
@@ -321,7 +323,7 @@ fn beats_json(file: &Path, s: &State) -> Json {
         "running": s.running,
         "progress": s.progress,
         "beats": beats.len(),
-        "downbeats": grid.map_or(0, |g| g.beats.downbeats.len()),
+        "downbeats": grid.map_or(0, |g| g.bars.len()),
         "final_until": grid.map(|g| g.final_until).filter(|t| t.is_finite()),
         "complete": grid.is_some_and(|g| g.complete()),
         "bpm": bpm,
@@ -408,7 +410,8 @@ fn beats_grid(e: &Engine, p: &Json) -> CmdResult<Json> {
     Ok(json!({
         "file": file.display().to_string(),
         "beats": grid.map(|g| within(&g.beats.beats)).unwrap_or_default(),
-        "downbeats": grid.map(|g| within(&g.beats.downbeats)).unwrap_or_default(),
+        "downbeats": grid.map(|g| within(&g.bars)).unwrap_or_default(),
+        "marked_downbeats": grid.map(|g| within(&g.beats.downbeats)).unwrap_or_default(),
         "final_until": grid.map(|g| g.final_until).filter(|t| t.is_finite()),
         "complete": grid.is_some_and(|g| g.complete()),
         "running": s.running,
