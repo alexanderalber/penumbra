@@ -41,6 +41,11 @@ pub struct Receiver {
 }
 
 impl Receiver {
+    /// Bytes on the GPU of the textures received into that the receiver keeps.
+    pub fn bytes(&self) -> u64 {
+        self.ring.bytes()
+    }
+
     pub fn new(gpu: &Gpu) -> Result<Self, String> {
         let interop = Interop::new(gpu.device(), gpu.queue())?;
         Ok(Self { interop, connection: None, converter: Converter::new(), ring: TexRing::new(), frames: 0 })

@@ -273,6 +273,10 @@ struct EnvironmentNode {
 }
 
 impl Operator for EnvironmentNode {
+    fn gpu_bytes(&self) -> u64 {
+        self.baked.as_ref().map_or(0, |(_, m)| m.bytes())
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = crate::gpu(cx)?;
         let Some(picture) = cx.input_as::<Tex>(0) else {

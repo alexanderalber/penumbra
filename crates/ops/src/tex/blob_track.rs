@@ -277,6 +277,10 @@ fn settings(cx: &CookContext<'_>) -> Result<Settings, CookError> {
 }
 
 impl Operator for BlobTrack {
+    fn gpu_bytes(&self) -> u64 {
+        self.small.bytes() + self.small_background.bytes() + self.view.bytes() + self.pool.bytes()
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         if cx.resource::<BlobTracks>().is_some_and(|t| t.check_in(cx.node(), cx.waker())) {

@@ -252,6 +252,10 @@ fn reserve(v: &Vram) -> u64 {
 }
 
 impl Operator for TimeMachine {
+    fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes() + self.stack.as_ref().map_or(0, Stack::bytes)
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let data = cx.input(0).ok_or_else(|| waiting(cx))?;

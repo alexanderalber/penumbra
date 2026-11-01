@@ -148,6 +148,11 @@ pub struct Converter {
 }
 
 impl Converter {
+    /// Bytes on the GPU of the plane textures kept.
+    pub fn bytes(&self) -> u64 {
+        self.planes.iter().flatten().map(|p| crate::tex::texture_bytes(&p.texture)).sum()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

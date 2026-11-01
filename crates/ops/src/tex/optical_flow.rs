@@ -141,6 +141,13 @@ struct OpticalFlow {
 }
 
 impl Operator for OpticalFlow {
+    fn gpu_bytes(&self) -> u64 {
+        let rings = self.values.iter().chain(&self.flows).chain([&self.smoothed, &self.out]);
+        penumbra_gpu::unique_bytes(
+            rings.flat_map(TexRing::iter).chain(self.previous.iter().flatten()).chain(&self.last),
+        )
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let pass = self.pass.get(gpu, pass)?;

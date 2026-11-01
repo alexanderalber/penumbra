@@ -192,6 +192,13 @@ pub struct YuvReader {
 }
 
 impl YuvReader {
+    /// Bytes on the GPU of the conversion's output and the read buffers waiting for reuse;
+    /// buffers out being read are not counted.
+    pub fn bytes(&self) -> u64 {
+        self.storage.as_ref().map_or(0, wgpu::Buffer::size)
+            + self.free.iter().map(wgpu::Buffer::size).sum::<u64>()
+    }
+
     pub fn new(max: usize) -> Self {
         let (back, returned) = channel();
         Self {

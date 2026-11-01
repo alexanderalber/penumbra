@@ -224,6 +224,10 @@ impl SpectrumNode {
 }
 
 impl Operator for SpectrumNode {
+    fn gpu_bytes(&self) -> u64 {
+        self.picture.as_ref().map_or(0, |p| p.ring.bytes())
+    }
+
     fn trim(&mut self) {
         if let Some(p) = &mut self.picture {
             p.ring.trim();

@@ -995,6 +995,28 @@ impl Default for Renderer {
 }
 
 impl Renderer {
+    /// Bytes on the GPU of what the renderer keeps between renders: attachments, shadow and
+    /// occlusion targets, mip chains, buffers. The pictures it renders into belong to the caller.
+    pub fn bytes(&self) -> u64 {
+        use crate::tex::view_bytes;
+        let buffers =
+            self.frame.iter().chain(&self.draws).chain(&self.shadow_frames).chain(&self.ao_uniforms);
+        self.msaa_color.as_ref().map_or(0, view_bytes)
+            + self.depth.as_ref().map_or(0, |(_, v)| view_bytes(v))
+            + self.depth_data.as_ref().map_or(0, view_bytes)
+            + self.white.as_ref().map_or(0, Tex::bytes)
+            + self.shadows.as_ref().map_or(0, |s| view_bytes(&s.array))
+            + self.tints.as_ref().map_or(0, |s| view_bytes(&s.array))
+            + self.ao.as_ref().map_or(0, |a| {
+                view_bytes(&a.positions)
+                    + view_bytes(&a.normals)
+                    + view_bytes(&a.estimate)
+                    + view_bytes(&a.blurred)
+            })
+            + buffers.map(wgpu::Buffer::size).sum::<u64>()
+            + self.mips.bytes()
+    }
+
     pub fn new() -> Self {
         Self {
             size: (0, 0),

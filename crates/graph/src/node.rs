@@ -761,6 +761,14 @@ pub trait Operator: Send {
     /// the node has not cooked for a while (a piece not shown, a still that was made once),
     /// so the video memory of what is not on show goes back.
     fn trim(&mut self) {}
+
+    /// Bytes on the GPU this operator keeps: its texture rings (the current output among them),
+    /// intermediate pictures, stacks of frames, meshes, readback buffers. What it only passes on
+    /// from its inputs belongs to the node that made it and is not counted again. Called on the
+    /// cook thread after every cook, so it must only add up sizes it knows. 0 by default.
+    fn gpu_bytes(&self) -> u64 {
+        0
+    }
 }
 
 /// How the pixels of a node's input relate to the pixels of its output, for `res.analyze`.

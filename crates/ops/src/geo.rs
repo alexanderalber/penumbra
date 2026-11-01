@@ -126,7 +126,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .doc("Plane: quads along each side; with mat.wireframe a grid of lines (a floor to fly over)"),
             )
             .output("out", DataKind::Geo),
-        || Box::new(Primitive) as Box<dyn Operator>,
+        || Box::new(Primitive::default()) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
         NodeDesc::new("geo.transform", "Moves, turns and scales geometry")
@@ -393,6 +393,8 @@ struct GeoFile {
     shown: Option<(usize, u64)>,
     /// The vertices posed last, kept to reuse their memory.
     scratch: Vec<penumbra_mesh::Vertex>,
+    /// The vertex buffer of the model posed last, which only the output holds.
+    posed_bytes: u64,
 }
 
 impl GeoFile {
@@ -428,6 +430,11 @@ impl GeoFile {
 }
 
 impl Operator for GeoFile {
+    fn gpu_bytes(&self) -> u64 {
+        self.slot.latest().map_or(0, |l| l.geo.items.iter().map(|i| i.model.bytes()).sum::<u64>())
+            + self.posed_bytes
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let fresh = self.slot.poll();
         // Before anything is remembered: a cook before the GPU arrives must not count as the
@@ -514,9 +521,13 @@ impl Operator for GeoFile {
                 let mut vertices = std::mem::take(&mut self.scratch);
                 m.deform(&base.model.mesh.vertices, take, at, &mut vertices);
                 let model = base.model.with_vertices(&gpu, vertices)?;
+                self.posed_bytes = model.vertex_bytes();
                 Geo::single(Arc::new(model))
             }
-            _ if fresh || self.shown.take().is_some() => l.geo.clone(),
+            _ if fresh || self.shown.take().is_some() => {
+                self.posed_bytes = 0;
+                l.geo.clone()
+            }
             _ => return Ok(Cooked::Unchanged),
         };
         Ok(Cooked::Outputs(vec![
@@ -535,10 +546,15 @@ impl Operator for GeoFile {
     }
 }
 
+/// Keeps the model it made last, which its output holds anyway, to count it.
 #[derive(Default)]
-struct Primitive;
+struct Primitive(Option<Arc<Model>>);
 
 impl Operator for Primitive {
+    fn gpu_bytes(&self) -> u64 {
+        self.0.as_ref().map_or(0, |m| m.bytes())
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let size = vec3(cx, "size")?.map(|v| v.abs() as f32);
@@ -548,7 +564,9 @@ impl Operator for Primitive {
             _ => prim::cuboid(size)?,
         };
         let (model, _) = Model::upload(gpu, mesh, "primitive")?;
-        let geo = Geo::single(Arc::new(model));
+        let model = Arc::new(model);
+        self.0 = Some(model.clone());
+        let geo = Geo::single(model);
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
     }
 }

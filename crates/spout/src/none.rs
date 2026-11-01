@@ -33,6 +33,10 @@ impl Sender {
 pub struct Receiver;
 
 impl Receiver {
+    pub fn bytes(&self) -> u64 {
+        0
+    }
+
     pub fn new(_gpu: &Gpu) -> Result<Self, String> {
         Err(MISSING.into())
     }

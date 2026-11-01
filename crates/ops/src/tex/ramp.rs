@@ -157,6 +157,10 @@ struct Ramp {
 }
 
 impl Operator for Ramp {
+    fn gpu_bytes(&self) -> u64 {
+        self.out.bytes() + self.lut.as_ref().map_or(0, |(_, t)| t.bytes())
+    }
+
     fn trim(&mut self) {
         self.out.trim();
     }

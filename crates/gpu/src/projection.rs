@@ -189,6 +189,12 @@ pub struct Projection {
 }
 
 impl Projection {
+    /// Bytes on the GPU of the uploaded meshes and the uniform buffers.
+    pub fn bytes(&self) -> u64 {
+        self.geometry.values().map(|g| g.vertices.size() + g.indices.size()).sum::<u64>()
+            + self.uniforms.iter().map(wgpu::Buffer::size).sum::<u64>()
+    }
+
     pub fn new(gpu: &Gpu) -> Self {
         let sampler = gpu.device().create_sampler(&wgpu::SamplerDescriptor {
             label: Some("projection"),

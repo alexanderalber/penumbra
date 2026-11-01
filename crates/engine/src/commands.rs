@@ -578,6 +578,7 @@ fn node_info(e: &Engine, p: &Json) -> Result<Json> {
             "average_ms": ms(s.stats.average),
             "max_ms": ms(s.stats.max),
             "load": s.stats.load(),
+            "gpu_bytes": s.gpu_bytes,
         })
     });
     let mut info = json!({

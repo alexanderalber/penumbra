@@ -96,6 +96,10 @@ struct BlendWeight {
 }
 
 impl Operator for BlendWeight {
+    fn gpu_bytes(&self) -> u64 {
+        self.middle.bytes() + self.low.bytes() + self.out.bytes()
+    }
+
     fn trim(&mut self) {
         self.middle.trim();
         self.low.trim();

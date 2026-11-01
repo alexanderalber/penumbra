@@ -195,6 +195,12 @@ impl MatNode {
 }
 
 impl Operator for MatNode {
+    fn gpu_bytes(&self) -> u64 {
+        self.sphere.as_ref().map_or(0, |m| m.bytes())
+            + self.studio.as_ref().map_or(0, |m| m.bytes())
+            + self.renderer.bytes()
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = crate::gpu(cx)?;
         let mut material = Material { shading: self.shading, ..Material::constant() };

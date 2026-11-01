@@ -69,6 +69,10 @@ struct Blur {
 }
 
 impl Operator for Blur {
+    fn gpu_bytes(&self) -> u64 {
+        self.middle.bytes() + self.out.bytes()
+    }
+
     fn trim(&mut self) {
         self.middle.trim();
         self.out.trim();

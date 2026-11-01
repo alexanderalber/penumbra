@@ -161,6 +161,11 @@ pub struct BcConverter {
 }
 
 impl BcConverter {
+    /// Bytes on the GPU of the uploaded textures kept.
+    pub fn bytes(&self) -> u64 {
+        self.slots.iter().flatten().map(|s| crate::tex::texture_bytes(&s.texture)).sum()
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

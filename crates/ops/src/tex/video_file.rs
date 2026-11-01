@@ -164,6 +164,10 @@ impl Video {
 }
 
 impl Operator for Video {
+    fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes() + self.converter.bytes() + self.bc.bytes()
+    }
+
     fn trim(&mut self) {
         self.ring.trim();
     }

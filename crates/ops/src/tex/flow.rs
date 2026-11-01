@@ -138,6 +138,10 @@ fn switch_inputs(cx: &InputChoice<'_>) -> Option<Vec<usize>> {
 }
 
 impl Operator for Switch {
+    fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes()
+    }
+
     fn trim(&mut self) {
         self.ring.trim();
     }
@@ -227,6 +231,11 @@ impl Default for Feedback {
 }
 
 impl Operator for Feedback {
+    fn gpu_bytes(&self) -> u64 {
+        // The frames passed on belong to the nodes that made them; one from a state file is its own.
+        self.restored.as_ref().and_then(|d| d.get::<Tex>()).map_or(0, Tex::bytes)
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         self.persist = cx.bool("persist")?;
         let reset = cx.bool("reset")?;

@@ -1746,6 +1746,9 @@ impl Editor {
                     s.stats.average.as_secs_f64() * 1000.0,
                     load * 100.0
                 ));
+                if s.gpu_bytes > 0 {
+                    tip.push_str(&format!("\nvideo memory {}", crate::memory::bytes(s.gpu_bytes)));
+                }
                 if let Some(e) = &s.error {
                     tip.push_str(&format!("\nerror: {e}"));
                 }

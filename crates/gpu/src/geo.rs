@@ -255,6 +255,12 @@ impl Model {
         Ok(buffer)
     }
 
+    /// GPU memory of the vertex buffer alone: what a model posed by [`Model::with_vertices`]
+    /// adds to the one it was posed from.
+    pub fn vertex_bytes(&self) -> u64 {
+        self.vertices.size()
+    }
+
     /// GPU memory of the buffers and textures.
     pub fn bytes(&self) -> u64 {
         self.vertices.size()

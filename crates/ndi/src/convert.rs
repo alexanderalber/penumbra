@@ -118,6 +118,11 @@ impl Unpacker {
         Self::default()
     }
 
+    /// Bytes on the GPU of the uploaded textures kept.
+    pub fn bytes(&self) -> u64 {
+        self.color.iter().chain(&self.alpha).map(penumbra_gpu::texture_bytes).sum()
+    }
+
     /// Uploads `picture` and converts it into `target` (of [`Picture::size`]).
     pub fn convert(
         &mut self,

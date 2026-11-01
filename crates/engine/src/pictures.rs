@@ -67,6 +67,11 @@ impl GeoPictures {
         }
     }
 
+    /// Bytes on the GPU: each shown output's renderer and its last picture.
+    pub fn gpu_bytes(&self) -> u64 {
+        self.shown.values().map(|s| s.renderer.bytes() + s.made.as_ref().map_or(0, |m| m.tex.bytes())).sum()
+    }
+
     /// Forgets the pictures of nodes `keep` says are gone.
     pub fn prune(&mut self, keep: impl Fn(NodeId) -> bool) {
         self.shown.retain(|(id, _), _| keep(*id));

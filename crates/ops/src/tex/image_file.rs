@@ -36,6 +36,10 @@ struct Image {
 }
 
 impl Operator for Image {
+    fn gpu_bytes(&self) -> u64 {
+        self.slot.latest().map_or(0, Tex::bytes)
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let fresh = self.slot.poll();
         // Before anything is remembered: a cook before the GPU arrives must not count as the

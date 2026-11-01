@@ -142,6 +142,11 @@ impl Mipped {
 }
 
 impl Mips {
+    /// Bytes on the GPU of the chains kept.
+    pub(super) fn bytes(&self) -> u64 {
+        self.chains.iter().map(|c| crate::tex::texture_bytes(&c.texture)).sum()
+    }
+
     /// Chains for `textures` (each once, however often it is named), encoded into `encoder`:
     /// a copy of the texture, then each level from the one above. Chains of the last render are
     /// taken again where the size fits; those left over are dropped.

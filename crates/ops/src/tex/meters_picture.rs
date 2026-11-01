@@ -172,6 +172,11 @@ impl Default for MetersPicture {
 }
 
 impl MetersPicture {
+    /// Bytes on the GPU: the pictures and the canvas's atlas and buffers.
+    pub(crate) fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes() + self.canvas.bytes()
+    }
+
     /// Whether the glyph job has finished (its text is worth drawing).
     pub(crate) fn job_done(&self) -> bool {
         self.job.as_ref().is_some_and(|j| matches!(j.status(), JobStatus::Done | JobStatus::Failed { .. }))

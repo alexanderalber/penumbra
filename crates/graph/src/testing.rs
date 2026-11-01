@@ -247,6 +247,11 @@ impl Operator for Trims {
     fn trim(&mut self) {
         self.0 += 1;
     }
+
+    /// 1000 bytes until the first trim, as if it let go of a spare texture.
+    fn gpu_bytes(&self) -> u64 {
+        if self.0 == 0 { 1000 } else { 0 }
+    }
 }
 
 /// Counts cooks; the count is its state, saved as text.

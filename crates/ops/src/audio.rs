@@ -402,6 +402,10 @@ impl Analysis {
 }
 
 impl Operator for Analysis {
+    fn gpu_bytes(&self) -> u64 {
+        self.picture.as_ref().map_or(0, |p| p.gpu_bytes())
+    }
+
     fn sets_size(&self, _def: &NodeDef, _desc: &NodeDesc) -> bool {
         true
     }

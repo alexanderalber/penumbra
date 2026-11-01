@@ -448,6 +448,22 @@ impl Fluid {
 }
 
 impl Operator for Fluid {
+    fn gpu_bytes(&self) -> u64 {
+        let rings = [
+            &self.velocity_ring,
+            &self.pressure_ring,
+            &self.divergence_ring,
+            &self.dye_ring,
+            &self.out_ring,
+            &self.splat_ring,
+        ];
+        let state = [&self.velocity, &self.pressure, &self.dye, &self.velocity_out];
+        let restored = self.restored.iter().flat_map(|(v, d)| [v, d]);
+        penumbra_gpu::unique_bytes(
+            rings.into_iter().flat_map(TexRing::iter).chain(state.into_iter().flatten()).chain(restored),
+        )
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let pass = self.pass.get(gpu, pass)?;

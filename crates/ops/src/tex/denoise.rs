@@ -90,6 +90,10 @@ struct Denoise {
 }
 
 impl Operator for Denoise {
+    fn gpu_bytes(&self) -> u64 {
+        penumbra_gpu::unique_bytes(self.ring.iter().chain(&self.last))
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let pass = self.pass.get(gpu, pass)?;

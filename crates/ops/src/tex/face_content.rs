@@ -170,6 +170,10 @@ struct FaceContent {
 }
 
 impl Operator for FaceContent {
+    fn gpu_bytes(&self) -> u64 {
+        self.slot.latest().map_or(0, |(t, _)| t.bytes()) + self.ring.bytes()
+    }
+
     fn trim(&mut self) {
         self.ring.trim();
     }

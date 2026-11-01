@@ -453,6 +453,8 @@ pub struct NodeStatus {
     pub warning: Option<String>,
     pub job: Option<JobStatus>,
     pub stats: CookStats,
+    /// What the operator holds on the GPU ([`Operator::gpu_bytes`]) as of its last cook.
+    pub gpu_bytes: u64,
     /// Parameters the instance declares beyond its type's ([`Operator::params`]).
     pub params: Option<Vec<ParamSpec>>,
     /// Values of bound parameters as of the last cook (whole values, also for a vector bound
@@ -527,6 +529,8 @@ struct Runtime {
     error: Option<String>,
     warning: Option<String>,
     stats: CookStats,
+    /// [`Operator::gpu_bytes`] after the last cook or trim.
+    gpu_bytes: u64,
     /// State restored before the operator existed, handed to it before its first cook.
     restored: Option<Vec<StateItem>>,
     /// The next cook sees nothing on inputs that read a previous result, so a loop whose
@@ -556,6 +560,19 @@ impl Runtime {
         self.op = None;
         self.notified = true;
         self.blank_previous = true;
+        self.gpu_bytes = 0;
+    }
+
+    /// Asks the operator what it holds on the GPU now ([`Operator::gpu_bytes`]); 0 without one.
+    /// The operators add up a few sizes, so this runs after every cook.
+    fn measure(&mut self, id: NodeId) {
+        self.gpu_bytes = match self.op.as_ref() {
+            None => 0,
+            Some(op) => catch_unwind(AssertUnwindSafe(|| op.gpu_bytes())).unwrap_or_else(|p| {
+                log::error!("node {id}: gpu_bytes panicked: {}", panic_message(p.as_ref()));
+                0
+            }),
+        };
     }
 
     /// The version output `output` last changed at.
@@ -587,6 +604,7 @@ impl Runtime {
             error: None,
             warning: None,
             stats: CookStats::default(),
+            gpu_bytes: 0,
             blank_previous: false,
             restored: None,
             seen_wanted: Vec::new(),
@@ -734,6 +752,7 @@ impl Cooker {
                 rt.op = None;
                 rt.notified = true;
             }
+            rt.measure(*id);
         }
     }
 
@@ -1139,6 +1158,7 @@ impl Cooker {
         rt.notified = false;
         rt.blank_previous = false;
         rt.stats.add(elapsed);
+        rt.measure(id);
         report.cooked.push(id);
     }
 
@@ -1567,10 +1587,22 @@ impl Cooker {
             },
             job: rt.op.as_ref().and_then(|op| op.job_status()),
             stats: rt.stats,
+            gpu_bytes: rt.gpu_bytes,
             params: if params { rt.op.as_ref().and_then(|op| op.params()) } else { None },
             bound: rt.seen_bound.clone(),
             time_dependent: rt.ty.as_ref().is_some_and(|ty| time_dependent(ty.desc(), rt.op.as_deref())),
         })
+    }
+
+    /// What node `id`'s operator holds on the GPU now ([`Operator::gpu_bytes`]), asked anew
+    /// rather than as of its last cook; `None` for a node the cooker does not know.
+    pub fn gpu_bytes(&self, id: NodeId) -> Option<u64> {
+        let rt = self.runtimes.get(&id)?;
+        let Some(op) = rt.op.as_ref() else { return Some(0) };
+        Some(catch_unwind(AssertUnwindSafe(|| op.gpu_bytes())).unwrap_or_else(|p| {
+            log::error!("node {id}: gpu_bytes panicked: {}", panic_message(p.as_ref()));
+            0
+        }))
     }
 
     /// How input `input` of node `id` relates to its output ([`Operator::density`]); `None`
@@ -1924,11 +1956,13 @@ mod tests {
         let mut f = Fixture::new(&[create("/x", "test.trims"), create("/k", "test.const")]);
         f.cook(&["/x"]);
         assert_eq!(f.value("/x"), Some(0.0));
+        assert_eq!(f.status("/x").gpu_bytes, 1000, "measured after the cook");
         // Asked for but clean, then not asked for at all: both count as not cooking.
         for i in 0..TRIM_AFTER_PASSES * 3 {
             f.cook(if i % 2 == 0 { &["/x"] } else { &["/k"] });
         }
         f.set("/x.value", Value::Float(1.0));
+        assert_eq!(f.status("/x").gpu_bytes, 0, "measured again after the trim");
         assert_eq!(f.cook(&["/x"]), ["/x"]);
         assert_eq!(f.value("/x"), Some(1.0), "trimmed once, not again while idle");
         // Cooking every pass keeps it from being trimmed.

@@ -60,6 +60,10 @@ struct Layer {
 }
 
 impl Operator for Layer {
+    fn gpu_bytes(&self) -> u64 {
+        self.slot.latest().map_or(0, |l| l.tex.bytes())
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let fresh = self.slot.poll();
         // Before anything is remembered: a cook before the GPU arrives must not count as the

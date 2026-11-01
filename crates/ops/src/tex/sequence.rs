@@ -169,6 +169,10 @@ fn tex_out(target: Tex) -> Cooked {
 }
 
 impl Operator for SequencePicture {
+    fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes()
+    }
+
     fn trim(&mut self) {
         self.ring.trim();
     }

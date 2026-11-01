@@ -193,6 +193,15 @@ pub struct Canvas {
 }
 
 impl Canvas {
+    /// Bytes on the GPU: the glyph atlas, the buffers and the blending texture. The picture
+    /// drawn into belongs to the caller.
+    pub fn bytes(&self) -> u64 {
+        self.atlas.as_ref().map_or(0, |(t, _)| crate::tex::texture_bytes(t))
+            + self.prims.as_ref().map_or(0, |(b, _)| b.size())
+            + self.uniform.as_ref().map_or(0, wgpu::Buffer::size)
+            + self.scratch.as_ref().map_or(0, Tex::bytes)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

@@ -121,6 +121,10 @@ struct FromChan {
 }
 
 impl Operator for FromChan {
+    fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes()
+    }
+
     fn trim(&mut self) {
         self.ring.trim();
     }
@@ -283,6 +287,10 @@ impl Components {
 }
 
 impl Operator for FromTex {
+    fn gpu_bytes(&self) -> u64 {
+        self.levels.iter().map(TexRing::bytes).sum::<u64>() + self.pool.bytes()
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         let src = cx.input_as::<Tex>(0).ok_or_else(|| waiting(cx))?;

@@ -374,6 +374,10 @@ fn outline(instance: &Instance, size: (u32, u32)) -> Vec<[f32; 2]> {
 }
 
 impl Operator for ShapesOp {
+    fn gpu_bytes(&self) -> u64 {
+        self.rings.iter().map(TexRing::bytes).sum()
+    }
+
     fn trim(&mut self) {
         for ring in &mut self.rings {
             ring.trim();

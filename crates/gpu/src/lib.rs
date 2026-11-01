@@ -45,7 +45,7 @@ pub use readback::{PendingRead, Pixels, ReadPool, ReadState, RowsError, encode_p
 pub use render::Lights;
 pub use shapes::{ShapeMode, ShapePoly, Shapes, shape_random};
 pub use stack::Stack;
-pub use tex::{Tex, TexRing};
+pub use tex::{Tex, TexRing, texture_bytes, unique_bytes, view_bytes};
 pub use vram::Vram;
 pub use yuv::{MappedPlanes, PlaneLayout, YuvReader};
 
@@ -340,6 +340,23 @@ impl Gpu {
             allocations: r.allocations.len() as u64,
             blocks: r.blocks.len() as u64,
         })
+    }
+
+    /// wgpu's live allocations summed per label (the name a texture or buffer was created with),
+    /// largest first: (label, bytes, count). Unlabelled ones share the empty label. Walks every
+    /// allocation, so it is for a command, not for every frame.
+    pub fn allocations_by_label(&self) -> Option<Vec<(String, u64, u64)>> {
+        let r = self.inner.device.generate_allocator_report()?;
+        let mut by: std::collections::HashMap<String, (u64, u64)> = std::collections::HashMap::new();
+        for a in r.allocations {
+            let e = by.entry(a.name).or_default();
+            e.0 += a.size;
+            e.1 += 1;
+        }
+        let mut v: Vec<(String, u64, u64)> =
+            by.into_iter().map(|(name, (bytes, n))| (name, bytes, n)).collect();
+        v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        Some(v)
     }
 
     /// Dedicated video memory granted to and used by this process (DXGI, DX12 only). Cheap, but

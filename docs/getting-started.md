@@ -63,7 +63,7 @@ else runs without it.
   the first channel's value at the top left. `chan.trail` and the sound nodes (`audio`) get a taller body
   for it, as tall as a picture's.
 - **Parameters** (top right): the selected node's name, kind, a one-line summary, the lock, its
-  cook time, and its params. Params that belong together sit in folded sections, the rarely
+  cook time and the video memory it holds, and its params. Params that belong together sit in folded sections, the rarely
   used ones under "more". The `?` beside the kind opens the node's documentation in the
   browser, as the `?` at the right end of every node's header in the editor does (see
   [the documentation page](#the-documentation-page)).
@@ -195,7 +195,9 @@ into regions there ([Scanning](scanning.md#51-regions-scanregions)).
 penumbra stops creating GPU memory at 90 % of what Windows grants it, so a node asking for too
 much gets an error (or, for `tex.time_machine`, fewer frames and a warning) instead of taking
 the driver down. The status bar's `VRAM` share counts against that grant: at 90 %
-new textures fail. The grant shrinks while other programs hold video memory. Should the GPU device still be lost (a driver reset, another program filling
+new textures fail. The grant shrinks while other programs hold video memory. To find what holds
+it, hover a node: below its cook time it shows its video memory. `node.memory` lists the nodes
+by size, with their total against what penumbra has allocated. Should the GPU device still be lost (a driver reset, another program filling
 the GPU), penumbra saves the project file but no state, shows a message and exits with code 3.
 The next start opens the project with the show clock stopped and says why in the status bar;
 press play once the cause is fixed. The record of that lives in

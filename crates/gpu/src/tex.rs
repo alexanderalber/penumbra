@@ -84,6 +84,53 @@ impl Tex {
     }
 }
 
+/// Bytes a texture takes on the GPU by its size, format, layers, samples and mip levels. The
+/// driver's padding and alignment come on top.
+pub fn texture_bytes(t: &wgpu::Texture) -> u64 {
+    let format = t.format();
+    let (bw, bh) = format.block_dimensions();
+    let block = format.block_copy_size(None).map_or_else(
+        || match format {
+            wgpu::TextureFormat::Depth16Unorm => 2,
+            wgpu::TextureFormat::Stencil8 => 1,
+            wgpu::TextureFormat::Depth32FloatStencil8 => 8,
+            // The other depth formats, and anything unknown, as four bytes a texel.
+            _ => 4,
+        },
+        u64::from,
+    );
+    let (w, h) = (t.width().max(1), t.height().max(1));
+    let levels: u64 = (0..t.mip_level_count().min(32))
+        .map(|l| {
+            u64::from((w >> l).max(1).div_ceil(bw.max(1))) * u64::from((h >> l).max(1).div_ceil(bh.max(1)))
+        })
+        .sum();
+    let bytes = levels * block * u64::from(t.depth_or_array_layers()) * u64::from(t.sample_count());
+    // Direct3D 12 places a multisampled texture on 4 MiB boundaries, so a small one takes 4 MiB:
+    // the previews of geometry and materials draw with 4x antialiasing.
+    if t.sample_count() > 1 { bytes.next_multiple_of(MSAA_ALIGNMENT) } else { bytes }
+}
+
+/// Placement alignment of multisampled textures on Direct3D 12.
+const MSAA_ALIGNMENT: u64 = 4 << 20;
+
+/// Bytes on the GPU of `textures`, each counted once however often it is named (a ring's
+/// texture that is also kept as the last result).
+pub fn unique_bytes<'a>(textures: impl IntoIterator<Item = &'a Tex>) -> u64 {
+    let mut seen: Vec<&Tex> = Vec::new();
+    for t in textures {
+        if !seen.iter().any(|s| s.same(t)) {
+            seen.push(t);
+        }
+    }
+    seen.iter().map(|t| t.bytes()).sum()
+}
+
+/// [`texture_bytes`] of the texture behind a view.
+pub fn view_bytes(v: &wgpu::TextureView) -> u64 {
+    texture_bytes(v.texture())
+}
+
 /// Most textures a [`TexRing`] keeps.
 const RING: usize = 3;
 
@@ -121,6 +168,16 @@ impl TexRing {
     /// the node cooks again.
     pub fn trim(&mut self) {
         self.textures.retain(Tex::shared);
+    }
+
+    /// Bytes on the GPU of the textures the ring keeps, its current output among them.
+    pub fn bytes(&self) -> u64 {
+        self.textures.iter().map(Tex::bytes).sum()
+    }
+
+    /// The textures the ring keeps.
+    pub fn iter(&self) -> impl Iterator<Item = &Tex> {
+        self.textures.iter()
     }
 
     /// Textures the ring keeps now.
@@ -171,6 +228,35 @@ mod tests {
         drop((b, c));
         ring.trim();
         assert!(ring.is_empty());
+    }
+
+    #[test]
+    fn bytes_count_each_texture_once() {
+        let Some(gpu) = gpu() else { return };
+        let mut ring = TexRing::new();
+        let a = ring.next(&gpu, 8, 4, "a").unwrap();
+        let b = ring.next(&gpu, 8, 4, "b").unwrap();
+        assert_eq!(a.bytes(), 8 * 4 * 8);
+        assert_eq!(texture_bytes(a.texture()), a.bytes());
+        assert_eq!(view_bytes(a.view()), a.bytes());
+        assert_eq!(ring.bytes(), 2 * a.bytes());
+        // The last result kept beside the ring is in it already.
+        assert_eq!(unique_bytes(ring.iter().chain([&a, &a])), ring.bytes());
+        drop((a, b));
+        ring.trim();
+        assert_eq!(ring.bytes(), 0);
+        let mips = gpu.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("mips"),
+            size: wgpu::Extent3d { width: 8, height: 4, depth_or_array_layers: 2 },
+            mip_level_count: 4,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        // 8x4 + 4x2 + 2x1 + 1x1 texels of 4 bytes, two layers.
+        assert_eq!(texture_bytes(&mips), (32 + 8 + 2 + 1) * 4 * 2);
     }
 
     #[test]

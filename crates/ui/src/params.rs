@@ -192,10 +192,12 @@ impl ParamPanel {
                 }
             }
             if let Some(s) = input.status {
-                ui.label(
-                    RichText::new(format!("cook {:.2} ms", s.stats.average.as_secs_f64() * 1000.0))
-                        .color(theme::TEXT_WEAK)
-                        .small(),
+                let mut text = format!("cook {:.2} ms", s.stats.average.as_secs_f64() * 1000.0);
+                if s.gpu_bytes > 0 {
+                    text.push_str(&format!("  {}", crate::memory::bytes(s.gpu_bytes)));
+                }
+                ui.label(RichText::new(text).color(theme::TEXT_WEAK).small()).on_hover_text(
+                    "Average cook time, and the video memory the node holds: its textures, frame stacks, meshes",
                 );
             }
         });

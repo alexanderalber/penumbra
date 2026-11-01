@@ -69,6 +69,10 @@ struct NdiIn {
 }
 
 impl Operator for NdiIn {
+    fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes() + self.unpacker.bytes()
+    }
+
     fn trim(&mut self) {
         self.ring.trim();
     }

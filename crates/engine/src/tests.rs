@@ -392,6 +392,15 @@ fn snapshot_of_a_texture_node() {
     // The quadrilateral (0.25, 0.25), (1, 0), (1, 1), (0, 1) covers 3/4 of the picture.
     let mean = r["stats"]["mean"][0].as_f64().unwrap();
     assert!((mean - 0.75).abs() < 0.02, "{r}");
+    // Its picture is one 192x108 texture; the constant's 64x36 one is in the list too.
+    let m = f.call("node.memory", json!({}));
+    let mapper =
+        m["nodes"].as_array().unwrap().iter().find(|n| n["path"] == "/m").cloned().unwrap_or_default();
+    assert_eq!(mapper["bytes"].as_u64().map(|b| b >= 192 * 108 * 8), Some(true), "{m}");
+    assert_eq!(f.call("node.info", json!({"path": "/m"}))["status"]["gpu_bytes"], mapper["bytes"], "{m}");
+    let total = m["nodes_bytes"].as_u64().unwrap_or(0);
+    assert!(total >= 192 * 108 * 8 + 64 * 36 * 8, "{m}");
+    assert_eq!(f.call("node.memory", json!({"limit": 1}))["nodes"].as_array().map(Vec::len), Some(1));
     // Crossed corners are an error on the node, which keeps its last good picture.
     f.call("node.set", json!({"path": "/m", "params": {"corner_tl": [2, 2]}}));
     let r = f.call("node.snapshot", json!({"path": "/m"}));

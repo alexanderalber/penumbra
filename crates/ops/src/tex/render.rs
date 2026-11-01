@@ -404,6 +404,10 @@ pub fn viewpoint(cx: &CookContext<'_>) -> Result<Viewpoint, CookError> {
 }
 
 impl Operator for Render {
+    fn gpu_bytes(&self) -> u64 {
+        self.renderer.bytes() + self.ring.bytes() + self.data_ring.bytes()
+    }
+
     fn trim(&mut self) {
         self.ring.trim();
         self.data_ring.trim();

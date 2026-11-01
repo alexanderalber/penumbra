@@ -90,6 +90,11 @@ impl FreeView {
         Self::default()
     }
 
+    /// Bytes on the GPU: the renderer's targets and the pictures kept.
+    pub fn gpu_bytes(&self) -> u64 {
+        self.renderer.bytes() + self.ring.bytes()
+    }
+
     pub fn draw(
         &mut self,
         gpu: &Gpu,

@@ -119,7 +119,10 @@ fn details(ui: &mut Ui, engine: &Engine, fps: f64, auto: &mut automation::Regist
                 .small(),
         );
     }
-    memory::section(ui, &engine.memory(), PLOT_SIZE.x, auto);
+    let view = engine.view();
+    let held = view.status.values().map(|s| s.gpu_bytes).filter(|b| *b > 0);
+    let nodes = held.fold((0, 0), |(sum, n), b| (sum + b, n + 1));
+    memory::section(ui, &engine.memory(), nodes, PLOT_SIZE.x, auto);
 }
 
 /// The NVIDIA GPU's rows; a value the GPU did not report gets no row.

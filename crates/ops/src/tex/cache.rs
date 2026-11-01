@@ -75,6 +75,10 @@ impl Cache {
 }
 
 impl Operator for Cache {
+    fn gpu_bytes(&self) -> u64 {
+        penumbra_gpu::unique_bytes(&self.frames)
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = gpu(cx)?;
         self.record = cx.bool("record")?;

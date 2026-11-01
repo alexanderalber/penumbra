@@ -1,7 +1,8 @@
 //! `state.*` (persistent state, [`crate::state`]), `cook.stats` (pass timings over a stretch of
 //! time) and `system.process` (memory, handles, threads, GPU memory), the last two for the soak
 //! test and for looking at a long-running show; `cook.meter` and `system.load` (the last seconds'
-//! pass times, CPU and GPU load), what the status bar's cook time shows.
+//! pass times, CPU and GPU load), what the status bar's cook time shows; `node.memory` (video
+//! memory per node against what wgpu has allocated).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -60,6 +61,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "system.load",
         "CPU over all cores and the busiest GPU engine in percent, sampled once a second while asked for (the first call waits for a sample). On NVIDIA GPUs `nvidia`: power_w, power_limit_w, temperature_c, clock_mhz, limited_by of the GPU penumbra renders on (`matched`), else the first",
         system_load,
+    );
+    add(
+        "node.memory",
+        "Video memory per node, largest first, with the total against what wgpu has allocated, and wgpu's allocations by label; {limit?} (default 30 of each)",
+        node_memory,
     );
     add(
         "system.process",
@@ -239,6 +245,64 @@ fn system_load(e: &Engine, p: &Json) -> Result<Json> {
         o.insert("age_s".into(), json!(age));
     }
     Ok(out)
+}
+
+/// Nodes `node.memory` lists when not told otherwise.
+const MEMORY_LIMIT: usize = 30;
+
+fn node_memory(e: &Engine, p: &Json) -> Result<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        limit: Option<usize>,
+    }
+    let a: A = args(p)?;
+    let limit = a.limit.unwrap_or(MEMORY_LIMIT);
+    let session = e.session().clone();
+    let (mut nodes, views) = e.on_cook(move |st| {
+        let net = session.doc().snapshot();
+        let nodes: Vec<(String, String, u64)> = net
+            .nodes()
+            .filter_map(|n| {
+                let bytes = st.cooker.gpu_bytes(n.id).filter(|b| *b > 0)?;
+                Some((net.path_of(n.id)?.to_string(), n.kind.clone(), bytes))
+            })
+            .collect();
+        (nodes, st.view_gpu_bytes())
+    })?;
+    nodes.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
+    let total: u64 = nodes.iter().map(|n| n.2).sum();
+    let (free_views, geo_pictures) = views;
+    let counted = total + free_views + geo_pictures;
+    let gpu = e.gpu();
+    let memory = gpu.and_then(|g| g.memory());
+    let vram = gpu.and_then(|g| g.vram());
+    let labels: Option<Vec<Json>> = gpu.and_then(|g| g.allocations_by_label()).map(|v| {
+        v.into_iter()
+            .take(limit)
+            .map(|(label, bytes, count)| json!({"label": label, "bytes": bytes, "count": count}))
+            .collect()
+    });
+    let listed: Vec<Json> = nodes
+        .iter()
+        .take(limit)
+        .map(|(path, kind, bytes)| json!({"path": path, "kind": kind, "bytes": bytes}))
+        .collect();
+    Ok(json!({
+        "nodes": listed,
+        "nodes_holding": nodes.len(),
+        "nodes_bytes": total,
+        "free_views_bytes": free_views,
+        "geometry_pictures_bytes": geo_pictures,
+        "counted_bytes": counted,
+        "allocated": memory.map(|m| m.allocated),
+        "reserved": memory.map(|m| m.reserved),
+        "not_counted_bytes": memory.map(|m| m.allocated.saturating_sub(counted)),
+        "vram_usage": vram.map(|v| v.usage),
+        "vram_budget": vram.map(|v| v.budget),
+        "allocations_by_label": labels,
+        "not_counted": "the editor's thumbnail copies, output windows, the window's own textures, shader pipelines, uniform buffers; allocations_by_label shows them by the label they were created with",
+    }))
 }
 
 fn system_process(e: &Engine, p: &Json) -> Result<Json> {

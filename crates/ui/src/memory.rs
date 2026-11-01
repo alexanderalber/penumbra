@@ -66,8 +66,9 @@ pub fn status_hint() -> String {
     )
 }
 
-/// The memory section of the cook time details, `width` wide; `m` from [`penumbra_engine::Engine::memory`].
-pub fn section(ui: &mut Ui, m: &Memory, width: f32, auto: &mut automation::Registry) {
+/// The memory section of the cook time details, `width` wide; `m` from [`penumbra_engine::Engine::memory`],
+/// `nodes` the video memory the nodes hold and how many hold some.
+pub fn section(ui: &mut Ui, m: &Memory, nodes: (u64, usize), width: f32, auto: &mut automation::Registry) {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label(RichText::new("memory").color(theme::TEXT_WEAK).small());
@@ -110,6 +111,15 @@ pub fn section(ui: &mut Ui, m: &Memory, width: f32, auto: &mut automation::Regis
             ),
         ),
         ("wgpu allocated", wgpu, wgpu_hint),
+        (
+            "nodes",
+            format!("{} in {} {}", bytes(nodes.0), nodes.1, if nodes.1 == 1 { "node" } else { "nodes" }),
+            "Video memory the nodes hold: their textures, frame stacks, meshes and readback \
+             buffers. Hover a node in the editor for its own share. The command node.memory \
+             lists the nodes by size. Not counted here: the editor's thumbnails, the output \
+             windows, shaders"
+                .to_string(),
+        ),
         (
             "working set",
             working,

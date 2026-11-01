@@ -41,6 +41,10 @@ struct SpoutIn {
 }
 
 impl Operator for SpoutIn {
+    fn gpu_bytes(&self) -> u64 {
+        self.receiver.as_ref().map_or(0, Receiver::bytes)
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let result = self.cook_inner(cx);
         self.failed = match &result {

@@ -223,6 +223,10 @@ struct Mapper {
 }
 
 impl Operator for Mapper {
+    fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes() + self.projection.as_ref().map_or(0, Projection::bytes)
+    }
+
     fn trim(&mut self) {
         self.ring.trim();
     }

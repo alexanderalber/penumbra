@@ -150,6 +150,11 @@ struct Text {
 }
 
 impl Operator for Text {
+    fn gpu_bytes(&self) -> u64 {
+        self.ring.bytes()
+            + penumbra_gpu::unique_bytes(self.slot.latest().into_iter().chain(&self.current).map(|r| &r.tex))
+    }
+
     fn trim(&mut self) {
         self.ring.trim();
     }

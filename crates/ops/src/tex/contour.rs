@@ -125,6 +125,10 @@ impl Contour {
 }
 
 impl Operator for Contour {
+    fn gpu_bytes(&self) -> u64 {
+        self.across.bytes() + self.field.bytes() + self.out.bytes()
+    }
+
     fn trim(&mut self) {
         self.across.trim();
         self.field.trim();

@@ -523,6 +523,12 @@ impl CookState {
         self.ticker.set(period);
     }
 
+    /// Bytes on the GPU the cook thread holds besides the nodes: the free views' renderers and
+    /// pictures, and the pictures of geometry for the editor and the viewer.
+    pub fn view_gpu_bytes(&self) -> (u64, u64) {
+        (self.free_views.iter().map(freeview::FreeView::gpu_bytes).sum(), self.pictures.gpu_bytes())
+    }
+
     fn publish(
         &mut self,
         net: &Network,

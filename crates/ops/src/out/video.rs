@@ -429,6 +429,10 @@ impl Take {
 }
 
 impl Operator for VideoOut {
+    fn gpu_bytes(&self) -> u64 {
+        self.take.iter().chain(&self.closing).map(|t| t.reader.bytes()).sum()
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let hub = cx
             .resource::<Hub>()

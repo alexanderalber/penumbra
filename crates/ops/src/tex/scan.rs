@@ -331,6 +331,10 @@ fn load(folder: &Path, smooth: bool, max_side: u32) -> Result<[Decoded; 3], Stri
 }
 
 impl Operator for Scan {
+    fn gpu_bytes(&self) -> u64 {
+        self.slot.latest().map_or(0, penumbra_gpu::unique_bytes)
+    }
+
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let fresh = self.slot.poll();
         let gpu = super::gpu(cx)?;
