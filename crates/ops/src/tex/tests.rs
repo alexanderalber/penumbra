@@ -974,6 +974,45 @@ fn image_reloads_and_reports_bad_files() {
     }
 }
 
+/// A scan's map through `tex.image_file` into `tex.remap` places the input to a fraction of a
+/// pixel even near the right edge of 1920 pixels, where half floats round by up to half a pixel.
+#[test]
+fn a_float_map_remaps_to_a_fraction_of_a_pixel() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("float-map");
+    let (w, d) = (1920u32, 0.37f32);
+    let exr = |name: &str, f: &dyn Fn(f32) -> [f32; 4]| {
+        let rgba: Vec<[f32; 4]> = (0..w).map(|x| f(x as f32)).collect();
+        std::fs::write(dir.join(name), penumbra_gpu::image::encode_exr_rgba32f(w, 1, &rgba).unwrap())
+            .unwrap();
+    };
+    // The map points a third of a pixel right of each pixel's centre; the ruler's value is its
+    // column, offset and scaled so that half floats hold it to 1/4096 near the edge.
+    exr("map.exr", &|x| [(x + 0.5 + d) / w as f32, 0.5, 1.0, 1.0]);
+    exr("ruler.exr", &|x| [(x - 1900.0) / 32.0, 0.0, 0.0, 1.0]);
+    let mut rig = Rig::new(
+        gpu,
+        Some(&dir),
+        &[
+            create("/map", "tex.image_file", &[("file", "map.exr".into())]),
+            create("/ruler", "tex.image_file", &[("file", "ruler.exr".into())]),
+            create("/remap", "tex.remap", &[]),
+            connect("/ruler", "/remap", 0),
+            connect("/map", "/remap", 1),
+        ],
+    );
+    rig.cook_until_new("/ruler", 0);
+    let map = rig.cook_until_new("/map", 0);
+    assert_eq!(map.format(), penumbra_gpu::FLOAT_FORMAT);
+    let px = rig.pixels("/remap");
+    assert_eq!(px.width, w);
+    let worst = (1900..w - 1)
+        .map(|x| (px.data[x as usize][0] * 32.0 + 1900.0 - x as f32 - d).abs())
+        .fold(0.0f32, f32::max);
+    // The output is half floats, 1/64 of a pixel apart here; a half-float map is off by up to 0.44.
+    assert!(worst < 0.03, "{worst} px");
+}
+
 #[test]
 fn without_a_gpu_tex_nodes_fail_cleanly() {
     let types = Arc::new(builtin_types().unwrap());

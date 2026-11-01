@@ -165,6 +165,11 @@ it holds 46 pictures (at 1920 x 1080), as the default sines when it holds 54; ot
 `coding`, `period` and `steps`. The reply's `coding_from` says which: `recorded`, `picture count`
 or `asked`.
 
+The maps keep this precision on the GPU. `tex.scan` loads its map as 32-bit floats, and
+`tex.image_file` does so for any file of 32-bit floats (the `.exr` maps the scan commands write).
+In half floats, a position near the right edge of a 1920-pixel map would be off by up to half a
+pixel. A 1920 x 1080 map takes 33 MB of video memory instead of 17 MB.
+
 Kept frames of several levels merge again with `scan.decode` and a list:
 `"frames": ["scan/proj_a/frames", "scan/proj_a/frames_1"]`.
 

@@ -410,7 +410,7 @@ Outputs: `out` (tex).
 
 ### tex.image_file
 
-A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it
+A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it. Files of 32-bit floats, such as a scan's maps, keep their precision
 
 Inputs: none.
 
@@ -777,7 +777,7 @@ Inputs: none.
 
 Outputs:
 
-- `proj_to_cam` (tex): Projector size: per projector pixel, the camera position in red and green (0 to 1). Blue: 1 measured, 0.5 filled in, -1 none; -1 everywhere before a scan. Use as tex.remap's map with the camera's picture as in
+- `proj_to_cam` (tex): Projector size: per projector pixel, the camera position in red and green (0 to 1). Blue: 1 measured, 0.5 filled in, -1 none; -1 everywhere before a scan. Use as tex.remap's map with the camera's picture as in. 32-bit floats, so positions keep a fraction of a pixel
 - `weight` (tex): Projector size: the blend weight against the other projectors of the run; multiply the projector's picture by it. 1 everywhere for a projector alone, or before a blend
 - `scene` (tex): Projector size: the scene as the projector sees it (black before a scan)
 

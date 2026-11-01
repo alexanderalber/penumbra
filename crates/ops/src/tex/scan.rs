@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use half::f16;
 use penumbra_core::{Error, NodeId, ParamSpec, lock};
 use penumbra_gpu::Tex;
-use penumbra_gpu::image::Decoded;
+use penumbra_gpu::image::{Decoded, Picture};
 use penumbra_graph::{
     AsyncSlot, CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDesc,
     NodeTypes, Operator, Waker,
@@ -112,7 +112,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "proj_to_cam",
             "Projector size: per projector pixel, the camera position in red and green (0 to 1). Blue: 1 \
              measured, 0.5 filled in, -1 none; -1 everywhere before a scan. Use as tex.remap's map with the \
-             camera's picture as in",
+             camera's picture as in. 32-bit floats, so positions keep a fraction of a pixel",
         )
         .output("weight", DataKind::Tex)
         .describe_output(
@@ -299,14 +299,15 @@ pub fn has_scan(folder: &Path) -> bool {
 }
 
 /// A 1 x 1 picture of `value` in every channel.
-fn flat(value: f32) -> Decoded {
+fn flat(value: f32) -> Picture {
     let v = f16::from_f32(value);
-    Decoded { width: 1, height: 1, rgba: vec![v, v, v, f16::ONE], source: "flat".into() }
+    Picture::Half(Decoded { width: 1, height: 1, rgba: vec![v, v, v, f16::ONE], source: "flat".into() })
 }
 
-/// Decodes the files of a scan folder: the map (smoothed if asked and written, else as decoded),
-/// the weight (1 everywhere until a blend wrote one) and the scene.
-fn load(folder: &Path, smooth: bool, max_side: u32) -> Result<[Decoded; 3], String> {
+/// Decodes the files of a scan folder: the map (smoothed if asked and written, else as decoded;
+/// 32-bit floats as written, so the GPU keeps a fraction of a pixel), the weight (1 everywhere
+/// until a blend wrote one) and the scene.
+fn load(folder: &Path, smooth: bool, max_side: u32) -> Result<[Picture; 3], String> {
     let raw = folder.join(PROJECTOR_MAP);
     if !raw.exists() {
         // Nothing scanned yet (the param panel says so): no camera position anywhere.
@@ -314,16 +315,16 @@ fn load(folder: &Path, smooth: bool, max_side: u32) -> Result<[Decoded; 3], Stri
     }
     let smoothed = folder.join(SMOOTH_MAP);
     let map_file = if smooth && smoothed.exists() { smoothed } else { raw };
-    let map = penumbra_gpu::image::decode_file(&map_file, max_side).map_err(|e| e.0)?;
+    let map = penumbra_gpu::image::decode_file_picture(&map_file, max_side).map_err(|e| e.0)?;
     let weight_file = folder.join(WEIGHT);
     let weight = if weight_file.exists() {
-        penumbra_gpu::image::decode_file(&weight_file, max_side).map_err(|e| e.0)?
+        Picture::Half(penumbra_gpu::image::decode_file(&weight_file, max_side).map_err(|e| e.0)?)
     } else {
         flat(1.0)
     };
     let scene_file = folder.join(SCENE);
     let scene = if scene_file.exists() {
-        penumbra_gpu::image::decode_file(&scene_file, max_side).map_err(|e| e.0)?
+        Picture::Half(penumbra_gpu::image::decode_file(&scene_file, max_side).map_err(|e| e.0)?)
     } else {
         flat(0.0)
     };
@@ -372,7 +373,9 @@ impl Operator for Scan {
                 let names = ["proj_to_cam", "weight", "scene"];
                 let mut out: Vec<Tex> = Vec::with_capacity(3);
                 for (p, name) in pictures.iter().zip(names) {
-                    out.push(gpu.upload(p, &format!("{} {name}", folder.display())).map_err(|e| e.0)?);
+                    out.push(
+                        gpu.upload_picture(p, &format!("{} {name}", folder.display())).map_err(|e| e.0)?,
+                    );
                 }
                 match <[Tex; 3]>::try_from(out) {
                     Ok(t) => Ok(t),

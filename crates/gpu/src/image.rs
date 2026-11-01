@@ -44,14 +44,85 @@ impl Decoded {
     }
 }
 
-/// Reads and decodes `path` for a texture at most `max_side` pixels on each side.
-pub fn decode_file(path: &std::path::Path, max_side: u32) -> Result<Decoded, Error> {
+/// An image of 32-bit floats ready for upload: linear, premultiplied RGBA. A scan's maps are
+/// such files; half floats would round their positions (see [`crate::FLOAT_FORMAT`]).
+pub struct FloatImage {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<[f32; 4]>,
+    pub source: String,
+}
+
+impl FloatImage {
+    /// The same picture rounded to half floats.
+    pub fn to_half(&self) -> Decoded {
+        let rgba = self.rgba.iter().flat_map(|c| c.map(f16::from_f32)).collect();
+        Decoded { width: self.width, height: self.height, rgba, source: self.source.clone() }
+    }
+}
+
+/// A decoded file as it goes onto the GPU: half floats, or 32-bit floats where the file holds
+/// them.
+pub enum Picture {
+    Half(Decoded),
+    Float(FloatImage),
+}
+
+impl Picture {
+    pub fn size(&self) -> (u32, u32) {
+        match self {
+            Picture::Half(d) => (d.width, d.height),
+            Picture::Float(f) => (f.width, f.height),
+        }
+    }
+}
+
+fn read_file(path: &std::path::Path) -> Result<Vec<u8>, Error> {
     let len = std::fs::metadata(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?.len();
     if len > MAX_FILE_BYTES {
         return Err(Error::new(format!("{}: {len} bytes is too large", path.display())));
     }
-    let bytes = std::fs::read(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))?;
+    std::fs::read(path).map_err(|e| Error::new(format!("{}: {e}", path.display())))
+}
+
+/// Reads and decodes `path` for a texture at most `max_side` pixels on each side.
+pub fn decode_file(path: &std::path::Path, max_side: u32) -> Result<Decoded, Error> {
+    let bytes = read_file(path)?;
     decode(&bytes, max_side).map_err(|e| e.context(path.display()))
+}
+
+/// [`decode_file`], keeping 32-bit float samples as they are ([`Picture::Float`]).
+pub fn decode_file_picture(path: &std::path::Path, max_side: u32) -> Result<Picture, Error> {
+    let bytes = read_file(path)?;
+    decode_picture(&bytes, max_side).map_err(|e| e.context(path.display()))
+}
+
+/// [`decode`], keeping 32-bit float samples as they are ([`Picture::Float`]).
+pub fn decode_picture(bytes: &[u8], max_side: u32) -> Result<Picture, Error> {
+    let opts = DecodeOptions { limits: limits(max_side), keep_orientation: false };
+    let image = photocraft_codecs::decode_with(bytes, &opts).map_err(|e| Error::new(e.to_string()))?;
+    if image.sample_type() != SampleType::F32 {
+        return Ok(Picture::Half(to_linear(&image)?));
+    }
+    let (width, height) = image.dimensions();
+    let source = format!("{} float", format!("{:?}", image.layout()).to_lowercase());
+    let rgba = image.converted(ChannelLayout::Rgba, SampleType::F32);
+    let finite = |c: f32| if c.is_finite() { c } else { 0.0 };
+    let samples: Vec<f32> =
+        rgba.data().as_chunks::<4>().0.iter().map(|b| finite(f32::from_ne_bytes(*b))).collect();
+    let pixels: Vec<[f32; 4]> = samples
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|[r, g, b, a]| {
+            let a = a.clamp(0.0, 1.0);
+            [r * a, g * a, b * a, a]
+        })
+        .collect();
+    if pixels.len() as u64 != u64::from(width) * u64::from(height) {
+        return Err(Error::new(format!("decoded {} pixels, expected {width} x {height}", pixels.len())));
+    }
+    Ok(Picture::Float(FloatImage { width, height, rgba: pixels, source }))
 }
 
 pub fn decode(bytes: &[u8], max_side: u32) -> Result<Decoded, Error> {
@@ -257,6 +328,44 @@ pub fn shrink_png(png: &[u8], max_side: u32) -> Result<Vec<u8>, Error> {
 }
 
 impl Gpu {
+    /// A texture holding `picture`: [`crate::FLOAT_FORMAT`] for 32-bit floats where the device
+    /// filters it ([`Gpu::float_textures`]), else [`crate::FORMAT`]. Safe to call off the cook
+    /// thread.
+    pub fn upload_picture(&self, picture: &Picture, label: &str) -> Result<Tex, Error> {
+        match picture {
+            Picture::Half(d) => self.upload(d, label),
+            Picture::Float(f) if self.float_textures() => self.upload_float(f, label),
+            Picture::Float(f) => self.upload(&f.to_half(), label),
+        }
+    }
+
+    /// A texture of [`crate::FLOAT_FORMAT`] holding `image`.
+    pub fn upload_float(&self, image: &FloatImage, label: &str) -> Result<Tex, Error> {
+        let tex = Tex::new_float(self, image.width, image.height, label)?;
+        let bytes: Vec<u8> = image.rgba.iter().flatten().flat_map(|f| f.to_le_bytes()).collect();
+        let ((), error) = self.scoped(|| {
+            self.queue().write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: tex.texture(),
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &bytes,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(image.width * 16),
+                    rows_per_image: Some(image.height),
+                },
+                wgpu::Extent3d { width: image.width, height: image.height, depth_or_array_layers: 1 },
+            );
+        });
+        match error {
+            Some(e) => Err(Error::new(format!("upload failed: {e}"))),
+            None => Ok(tex),
+        }
+    }
+
     /// A texture holding `image`. Safe to call off the cook thread.
     pub fn upload(&self, image: &Decoded, label: &str) -> Result<Tex, Error> {
         let tex = Tex::new(self, image.width, image.height, label)?;
@@ -346,6 +455,71 @@ mod tests {
         // The transparent green does not tint the red; alpha is the plain average.
         assert_eq!(small.to_rgba8(), [255, 0, 0, 128, 0, 0, 255, 255]);
         assert!(shrink_png(b"not a picture", 2).is_err());
+    }
+
+    /// The error of a map's red, as a pass sampling it sees it, against x + 0.5 + `offset` at each
+    /// pixel of a 1920-pixel row: largest and mean, in pixels.
+    fn map_error(gpu: &Gpu, map: &Tex, offset: f32) -> (f32, f32) {
+        let (w, h) = map.size();
+        let pass = crate::Pass::compile(
+            gpu,
+            "map error",
+            "@fragment
+fn main(v: PnVertex) -> @location(0) vec4f {
+    let m = textureSampleLevel(in0, pn_clamp, v.uv, 0.0);
+    return vec4f(m.r * pn.resolution.x - v.pos.x, 0.0, 0.0, 1.0);
+}
+",
+            &[],
+        )
+        .unwrap();
+        let out = Tex::new(gpu, w, h, "error").unwrap();
+        let input = crate::PassInput { inputs: &[Some(map)], seconds: 0.0, frame: 0, param: &|_: &str| None };
+        pass.render(gpu, &out, &input).unwrap();
+        let px = gpu.read(&out).unwrap();
+        let errors: Vec<f32> = px.data.iter().map(|c| (c[0] - offset).abs()).collect();
+        let worst = errors.iter().copied().fold(0.0, f32::max);
+        (worst, errors.iter().sum::<f32>() / errors.len() as f32)
+    }
+
+    #[test]
+    fn a_float_map_keeps_a_fraction_of_a_pixel_where_half_floats_round_it() {
+        let Some(gpu) = gpu() else { return };
+        assert!(gpu.float_textures(), "the adapter filters 32-bit floats");
+        // Positions a third of a pixel off each pixel's centre, as a decode with sines gives them.
+        let (w, h, offset) = (1920u32, 2u32, 0.37f32);
+        let rgba: Vec<[f32; 4]> =
+            (0..w * h).map(|i| [((i % w) as f32 + 0.5 + offset) / w as f32, 0.5, 1.0, 1.0]).collect();
+        let map = FloatImage { width: w, height: h, rgba, source: String::new() };
+        let half = gpu.upload(&map.to_half(), "map").unwrap();
+        let float = gpu.upload_picture(&Picture::Float(map), "map").unwrap();
+        assert_eq!((float.format(), float.bytes()), (crate::FLOAT_FORMAT, u64::from(w * h) * 16));
+        assert_eq!(half.bytes(), u64::from(w * h) * 8);
+        let (f_worst, f_mean) = map_error(&gpu, &float, offset);
+        let (h_worst, h_mean) = map_error(&gpu, &half, offset);
+        eprintln!("map error px: float worst {f_worst} mean {f_mean}; half worst {h_worst} mean {h_mean}");
+        assert!(f_worst < 0.01, "{f_worst}");
+        assert!(h_worst > 0.4, "{h_worst}");
+        // Read back whole, converted for copies, readback rows and mip chains.
+        let back = gpu.read(&float).unwrap();
+        assert_eq!(back.data[1919][0], (1919.0 + 0.5 + offset) / 1920.0);
+        let converted = gpu.to_half(&float).unwrap();
+        assert_eq!(converted.format(), crate::FORMAT);
+        let target = Tex::new(&gpu, w, h, "copy").unwrap();
+        gpu.copy(&float, &target).unwrap();
+        let copied = gpu.read(&target).unwrap();
+        assert!((copied.data[1919][0] - back.data[1919][0]).abs() < 1e-3);
+        let pending = gpu.read_async(&[&float]).unwrap();
+        assert_eq!(pending.wait(&gpu, std::time::Duration::from_secs(10)), crate::ReadState::Ready);
+        let mut rows = 0;
+        pending
+            .rows(0, |r| -> Result<(), ()> {
+                assert_eq!(r.len(), w as usize * 8);
+                rows += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(rows, h);
     }
 
     #[test]

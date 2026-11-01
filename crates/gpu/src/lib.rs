@@ -4,7 +4,10 @@
 //!
 //! Conventions every `tex` node follows:
 //! - textures are [`FORMAT`] (RGBA, 16-bit float), **linear light, premultiplied alpha**;
-//!   values above 1 are allowed (HDR);
+//!   values above 1 are allowed (HDR). Pictures loaded from files of 32-bit floats (the maps a
+//!   scan writes) are [`FLOAT_FORMAT`] instead, so they keep the precision of a sub-pixel
+//!   position: every pass samples them like the others, and readback and copies turn them into
+//!   [`FORMAT`] where they need it ([`Gpu::to_half`]);
 //! - texture coordinates have their origin at the **top left**, `y` pointing down (as wgpu and
 //!   image files have it);
 //! - a node's resolution is fixed (a parameter or its input's), never derived from downstream.
@@ -51,6 +54,18 @@ pub use yuv::{MappedPlanes, PlaneLayout, YuvReader};
 
 /// The format of every texture flowing between nodes.
 pub const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The format of pictures loaded from files of 32-bit floats, where the device can filter it
+/// ([`Gpu::float_textures`]). Half floats space their values 1/2048 apart between 0.5 and 1, so a
+/// map position near the right edge of a 1920-pixel map would round by up to half a pixel.
+pub const FLOAT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Float;
+
+/// Copies a texture into one of [`FORMAT`] the same size, texel by texel.
+const HALF_COPY: &str = "@fragment
+fn main(v: PnVertex) -> @location(0) vec4f {
+    return textureLoad(in0, vec2i(v.pos.xy), 0);
+}
+";
 
 /// How alpha travels to and from other programs (Spout, NDI), which exchange sRGB-encoded
 /// colour: penumbra's own textures are always premultiplied.
@@ -506,8 +521,39 @@ impl Gpu {
         }
     }
 
-    /// Copies `src` into `dst`, which must have the same size.
+    /// Whether pictures of 32-bit floats load as [`FLOAT_FORMAT`] textures: the device filters
+    /// them, as every pass's sampler does. Without it they load as [`FORMAT`].
+    pub fn float_textures(&self) -> bool {
+        self.device().features().contains(wgpu::Features::FLOAT32_FILTERABLE)
+    }
+
+    /// `tex` as a texture of [`FORMAT`]: itself when it is one, else a copy, rounded to half
+    /// floats. For whatever copies texels rather than sampling them (readback, copies, mip chains).
+    pub fn to_half(&self, tex: &Tex) -> Result<Tex, Error> {
+        if tex.format() == FORMAT {
+            return Ok(tex.clone());
+        }
+        let (w, h) = tex.size();
+        let half = Tex::new(self, w, h, "half copy")?;
+        let pass = self.cached_pass("half copy", HALF_COPY, &[])?;
+        pass.render(
+            self,
+            &half,
+            &PassInput { inputs: &[Some(tex)], seconds: 0.0, frame: 0, param: &|_: &str| None },
+        )?;
+        Ok(half)
+    }
+
+    /// Copies `src` into `dst`, which must have the same size. A `src` of another format is
+    /// converted on the way (into a `dst` of [`FORMAT`]).
     pub fn copy(&self, src: &Tex, dst: &Tex) -> Result<(), Error> {
+        if src.format() != dst.format() {
+            if dst.format() != FORMAT || src.size() != dst.size() {
+                return Err(Error::new("cannot copy a texture into one of another format or size"));
+            }
+            let half = self.to_half(src)?;
+            return self.copy(&half, dst);
+        }
         if src.size() != dst.size() {
             return Err(Error::new(format!(
                 "cannot copy a {}x{} texture into a {}x{} one",
@@ -607,15 +653,17 @@ impl Gpu {
 
 /// What penumbra asks of a device: the adapter's texture size limit (up to 16384), up to 64
 /// sampled textures per shader stage (frame stacks bind one array texture per chunk, see
-/// [`stack`]), BC texture compression where the adapter has it (HAP, [`bc`]), otherwise wgpu's
-/// defaults. eframe gets the same in the app.
+/// [`stack`]), BC texture compression where the adapter has it (HAP, [`bc`]), filtering of
+/// 32-bit float textures where it has that ([`FLOAT_FORMAT`]), otherwise wgpu's defaults. eframe
+/// gets the same in the app.
 pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> {
     let mut limits = wgpu::Limits::default();
     let offered = adapter.limits();
     limits.max_texture_dimension_2d = offered.max_texture_dimension_2d.clamp(8192, 16384);
     limits.max_sampled_textures_per_shader_stage =
         offered.max_sampled_textures_per_shader_stage.clamp(limits.max_sampled_textures_per_shader_stage, 64);
-    let required_features = adapter.features() & wgpu::Features::TEXTURE_COMPRESSION_BC;
+    let required_features =
+        adapter.features() & (wgpu::Features::TEXTURE_COMPRESSION_BC | wgpu::Features::FLOAT32_FILTERABLE);
     wgpu::DeviceDescriptor {
         label: Some("penumbra"),
         required_limits: limits,

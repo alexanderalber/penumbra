@@ -118,9 +118,11 @@ impl Gpu {
     /// Copies `tex` to the CPU and waits for it. Blocks the calling thread for a few
     /// milliseconds (more on a software adapter), so call it off the cook thread; it may run
     /// concurrently with cooking.
+    /// A texture of [`crate::FLOAT_FORMAT`] reads back at full precision.
     pub fn read(&self, tex: &Tex) -> Result<Pixels, Error> {
         let (width, height) = tex.size();
-        let row = u64::from(width) * 8;
+        let float = tex.format() == crate::FLOAT_FORMAT;
+        let row = u64::from(width) * u64::from(tex.pixel_bytes());
         let padded = row.div_ceil(256) * 256;
         let size = padded * u64::from(height);
         let device = self.device();
@@ -174,6 +176,17 @@ impl Gpu {
             let start = y * padded as usize;
             let line =
                 view.get(start..start + row as usize).ok_or_else(|| Error::new("readback too short"))?;
+            if float {
+                for px in line.as_chunks::<16>().0 {
+                    let (floats, _) = px.as_chunks::<4>();
+                    let mut c = [0f32; 4];
+                    for (out, f) in c.iter_mut().zip(floats) {
+                        *out = f32::from_le_bytes(*f);
+                    }
+                    data.push(c);
+                }
+                continue;
+            }
             for px in line.as_chunks::<8>().0 {
                 let (halves, _) = px.as_chunks::<2>();
                 let mut c = [0f32; 4];
@@ -203,19 +216,25 @@ impl Gpu {
     }
 
     /// [`Gpu::read_async_reusing`] calling `ready` once every buffer is mapped (from inside
-    /// [`Gpu::poll`] or [`PendingRead::wait`], so it must be quick: waking a node is).
+    /// [`Gpu::poll`] or [`PendingRead::wait`], so it must be quick: waking a node is). Rows are
+    /// half floats always: a texture of [`crate::FLOAT_FORMAT`] is converted first.
     pub fn read_async_notify(
         &self,
         textures: &[&Tex],
         spare: &mut ReadPool,
         ready: Option<Arc<dyn Fn() + Send + Sync>>,
     ) -> Result<PendingRead, Error> {
+        let mut halves = Vec::with_capacity(textures.len());
+        for tex in textures {
+            halves.push(self.to_half(tex)?);
+        }
+        let textures: Vec<&Tex> = halves.iter().collect();
         let device = self.device();
         let ((items, index), error) = self.scoped(|| {
             let mut encoder =
                 device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("read_async") });
             let mut items = Vec::with_capacity(textures.len());
-            for tex in textures {
+            for tex in &textures {
                 let (width, height) = tex.size();
                 let padded = (u64::from(width) * 8).div_ceil(256) * 256;
                 let size = padded * u64::from(height);
@@ -289,6 +308,9 @@ impl Gpu {
 
     /// [`Gpu::upload_rgba16f`] into an existing texture of the same size (a [`crate::TexRing`]'s).
     pub fn write_rgba16f(&self, tex: &Tex, bytes: &mut [u8]) -> Result<(), Error> {
+        if tex.format() != crate::FORMAT {
+            return Err(Error::new("half floats go into a texture of half floats only"));
+        }
         let (width, height) = tex.size();
         let expected = u64::from(width).saturating_mul(u64::from(height)).saturating_mul(8);
         if bytes.len() as u64 != expected {

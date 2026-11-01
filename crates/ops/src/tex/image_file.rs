@@ -18,7 +18,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
         NodeDesc::new(
             "tex.image_file",
-            "A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it",
+            "A picture from a file (PNG, JPEG, EXR, ...); saving the file again updates it. Files of 32-bit floats, such as a scan's maps, keep their precision",
         )
         .param(
             ParamSpec::file("file", EXTENSIONS)
@@ -55,9 +55,10 @@ impl Operator for Image {
             let label = path.display().to_string();
             let p = path.clone();
             self.slot.start(cx.spawn(move |_job| {
-                let decoded =
-                    penumbra_gpu::image::decode_file(&p, gpu.max_texture_size()).map_err(|e| e.0)?;
-                gpu.upload(&decoded, &label).map_err(|e| e.0)
+                // Files of 32-bit floats (a scan's maps) stay 32-bit on the GPU.
+                let picture =
+                    penumbra_gpu::image::decode_file_picture(&p, gpu.max_texture_size()).map_err(|e| e.0)?;
+                gpu.upload_picture(&picture, &label).map_err(|e| e.0)
             }));
         }
         if let Some(e) = self.slot.error() {

@@ -212,9 +212,9 @@ impl Operator for FaceContent {
             let p = path.clone();
             let json = folder.join("face.json");
             self.slot.start(cx.spawn(move |_job| {
-                let decoded =
-                    penumbra_gpu::image::decode_file(&p, gpu.max_texture_size()).map_err(|e| e.0)?;
-                let tex = gpu.upload(&decoded, &label).map_err(|e| e.0)?;
+                let picture =
+                    penumbra_gpu::image::decode_file_picture(&p, gpu.max_texture_size()).map_err(|e| e.0)?;
+                let tex = gpu.upload_picture(&picture, &label).map_err(|e| e.0)?;
                 Ok((tex, template_aspect(&json)))
             }));
         }

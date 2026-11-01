@@ -169,8 +169,16 @@ impl Mips {
                 Some(k) => old.swap_remove(k),
                 None => Chain::new(gpu, size),
             };
+            // A picture of 32-bit floats goes into the chain of half floats through a pass.
+            let half = match gpu.to_half(t) {
+                Ok(h) => h,
+                Err(e) => {
+                    log::warn!("mip chain: {e}");
+                    continue;
+                }
+            };
             encoder.copy_texture_to_texture(
-                t.texture().as_image_copy(),
+                half.texture().as_image_copy(),
                 chain.texture.as_image_copy(),
                 wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
             );

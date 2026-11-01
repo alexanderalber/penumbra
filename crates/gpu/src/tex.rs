@@ -4,17 +4,19 @@ use std::sync::Arc;
 
 use penumbra_core::Error;
 
-use crate::{FORMAT, Gpu};
+use crate::{FLOAT_FORMAT, FORMAT, Gpu};
 
 struct Inner {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     width: u32,
     height: u32,
+    format: wgpu::TextureFormat,
 }
 
-/// A texture in [`FORMAT`]: linear light, premultiplied alpha, origin top left. Cloning is an
-/// `Arc` clone. This is the payload of `tex` data in the graph.
+/// A texture in [`FORMAT`] (or [`FLOAT_FORMAT`], loaded from a file of 32-bit floats): linear
+/// light, premultiplied alpha, origin top left. Cloning is an `Arc` clone. This is the payload of
+/// `tex` data in the graph.
 #[derive(Clone)]
 pub struct Tex(Arc<Inner>);
 
@@ -22,6 +24,21 @@ impl Tex {
     /// A new texture, contents undefined until rendered to. Sizes are checked against the
     /// device, so a hostile resolution is an error, not a wgpu panic.
     pub fn new(gpu: &Gpu, width: u32, height: u32, label: &str) -> Result<Self, Error> {
+        Self::with_format(gpu, width, height, FORMAT, label)
+    }
+
+    /// A new texture of [`FLOAT_FORMAT`] for pictures uploaded from the CPU (not rendered to).
+    pub fn new_float(gpu: &Gpu, width: u32, height: u32, label: &str) -> Result<Self, Error> {
+        Self::with_format(gpu, width, height, FLOAT_FORMAT, label)
+    }
+
+    fn with_format(
+        gpu: &Gpu,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        label: &str,
+    ) -> Result<Self, Error> {
         let max = gpu.max_texture_size();
         if width == 0 || height == 0 || width > max || height > max {
             return Err(Error::new(format!("resolution {width}x{height} must be 1 to {max} on each side")));
@@ -33,7 +50,7 @@ impl Tex {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: FORMAT,
+                format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::COPY_SRC
@@ -45,7 +62,7 @@ impl Tex {
             return Err(Error::new(format!("cannot create a {width}x{height} texture: {e}")));
         }
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Ok(Self(Arc::new(Inner { texture, view, width, height })))
+        Ok(Self(Arc::new(Inner { texture, view, width, height, format })))
     }
 
     pub fn width(&self) -> u32 {
@@ -68,9 +85,19 @@ impl Tex {
         &self.0.view
     }
 
+    /// [`FORMAT`], or [`FLOAT_FORMAT`] for a picture of 32-bit floats.
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.0.format
+    }
+
+    /// Bytes per pixel: 8, or 16 for [`FLOAT_FORMAT`].
+    pub fn pixel_bytes(&self) -> u32 {
+        if self.0.format == FLOAT_FORMAT { 16 } else { 8 }
+    }
+
     /// Bytes on the GPU.
     pub fn bytes(&self) -> u64 {
-        u64::from(self.0.width) * u64::from(self.0.height) * 8
+        u64::from(self.0.width) * u64::from(self.0.height) * u64::from(self.pixel_bytes())
     }
 
     /// Whether both are the same texture.
