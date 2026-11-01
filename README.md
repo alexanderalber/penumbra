@@ -27,11 +27,13 @@ and 11 only so far; Linux is planned but untested, macOS is not planned.
 
 ## Features
 
-About 110 node types in seven data kinds: `tex` pictures, `chan` channels of numbers, `table`
-text tables, `geo`, `mat`, `light` and `view` for 3D. The [node reference](docs/reference/nodes.md)
+About 130 node types in eight data kinds: `tex` pictures, `chan` channels of numbers, `audio`
+sound, `table` text tables, `geo`, `mat`, `light` and `view` for 3D. The [node reference](docs/reference/nodes.md)
 lists every one.
 
-- **Pictures:** sources are noise, ramps, text, shapes, images, PSD layers and video. Filters
+- **Pictures:** sources are noise, ramps, text, shapes (rectangle, ellipse, polygon), images,
+  PSD layers and video. A channel can scrub a video like tape. Image files can also be read as
+  data, every channel as stored: maps, positions and normals from other programs. Filters
   include level, HSV, blur, edge, displace, lookup, threshold, chroma key, matte and composite.
   Also feedback loops, a per-pixel time machine, a frame cache, a 2D fluid pushed by motion or
   blobs, and a shader node in WGSL whose params come from the shader file.
@@ -47,7 +49,7 @@ lists every one.
   again after a replug by model and serial number (or connector). Corner pin, mesh warp,
   soft-edge blending, drawn masks, all by eye when there is no camera
   ([mapping without a camera](docs/mapping-without-camera.md)). Test patterns on every projector at once (alignment, focus,
-  frame drops, dead pixels). Projectors of different models matched in colour and brightness
+  frame drops, dead pixels). A projector output can also run in a desktop window. Projectors of different models matched in colour and brightness
   from camera measurements, and evened out across each picture. The
   [projector-wall](examples/projector-wall/README.md) example shows three projectors as one
   picture on a wall, with the measurements of a real setup.
@@ -63,11 +65,15 @@ lists every one.
   background-removed photo, a threshold, a scan's regions), then simplified and edited by hand.
 - **Camera:** live input from webcams and capture cards, denoising, optical flow, blob tracking
   with ids that stay with a blob.
-- **Sound:** input from any audio device or a sound file, loudness, bands, onsets, a spectrum (also as a texture), a beat tracker, instruments and drones played by channels, output through a limiter or to a WAV file
-  (see [below](#beat-tracking)).
-- **Channels:** LFO, noise, math, filter, integrator, derivative, trail, merge, select. Mouse, keyboard and 3D
-  mouse as inputs. Any parameter can be bound to a channel by dragging a wire onto it. OSC
-  addresses can be learned.
+- **Sound:** input from any audio device or a sound file. Loudness, bands, onsets and a
+  spectrum (also as a texture). A live beat tracker, and for sound files a beat and bar grid
+  found ahead of time ([below](#beat-tracking)). Instruments and drones played by channels, a
+  filter, a room reverb. Output through a limiter, to a WAV file or into a video recording.
+- **Channels:** LFO, noise, math, filter, envelope (attack, decay, sustain, release),
+  integrator, derivative, trail, merge, select. Buttons and sliders that are pressed and dragged
+  on their node. Mouse, keyboard and 3D mouse as inputs. A web page on a phone sends channels
+  over HTTP or a WebSocket ([control-page](examples/control-page/README.md) example). Any
+  parameter can be bound to a channel by dragging a wire onto it. OSC addresses can be learned.
 - **Shows:** a show as a list of steps (`chan.sequence`): which piece, how long, which
   transition. A step can hold until GO, from a key, a button or OSC. `tex.sequence` blends
   between the pieces and cooks only what is shown; a `chan.clock` per piece starts it from its
@@ -76,15 +82,18 @@ lists every one.
   and a table, and keeps its state between frames.
 - **Components:** networks inside a node, with chosen params exposed, kept in a library.
 - **Editor:** automatic layout ([below](#arranging-a-network)), undo with a change log, copy
-  and paste, replacing a node by another kind with its wires kept. A `?` on every node opens
+  and paste, replacing a node by another kind with its wires kept. Notes written on the canvas,
+  which move along when the network is arranged. The add dialog also finds a node type by its
+  TouchDesigner name or by a file extension. A `?` on every node opens
   its help in a [single-page manual](docs/penumbra.html).
 - **For running a show:** a failing node shows an error and the rest keeps running (no panics
   by design). Feedback loops and caches survive a restart. Nodes that sit idle give their video
   memory back. The app checks for Windows settings that interfere with a show (Game Bar,
   notification banners), fixes them and restores them afterwards. A cook-time meter shows GPU
-  load, memory and temperature. The app recovers after the GPU device is lost. Show mode locks
-  the project against edits during a performance and starts the app again after a crash.
-- **Files out:** a recording of the show (`out.video`), any table as CSV or TSV (`out.table`),
+  load, memory and temperature, and each node shows its cook time and video memory. The app recovers after the GPU device is lost. Show mode locks
+  the project against edits during a performance. After a crash the app starts again and the
+  show goes on at its cue, with the values set by OSC or the show screen.
+- **Files out:** a recording of the show with its sound (`out.video`), any table as CSV or TSV (`out.table`),
   any geometry as OBJ, STL or GLB with its transforms and instances baked in (`out.mesh`); each
   writes when its input changes or on command, into the project's `export/` folder by default.
 - **Automation:** headless runs execute a script of commands and save pictures of any node or
@@ -101,7 +110,7 @@ lists every one.
 | Image files | yes | snapshots | `tex.image_file`, `tex.layer` | PNG, JPEG, TIFF, EXR, HDR, WebP and more; PSD/PSB layers. `node.snapshot` saves any node as PNG |
 | 3D files | yes | yes | `geo.file`, `out.mesh` | in: OBJ (with MTL), STL, glTF/GLB, FBX (7.x binary and ASCII, animated, skinned). Out: OBJ, STL, GLB |
 | Text tables | yes | yes | `table.file`, `out.table` | in: CSV, TSV, plain lines. Out: CSV, TSV |
-| Audio | yes | yes | `audio.device_in`, `audio.file`, `out.audio`, `out.audio_file`, `chan.audio_envelope`, `chan.audio_spectrum`, `chan.beat_analysis`, `audio.instrument`, `audio.ambience`, `audio.filter` | any device (WASAPI, shared mode). Loudness per channel, a spectrum as numbers or a spectrogram texture, beat and tempo. Output always through a limiter at -1 dBFS; `audio.mute` silences everything. Ready-made instruments and drones in a key and scale, played by channels. A filter for any sound. Sound files (WAV, FLAC, MP3, Ogg, AAC) play in step with video files (the [clips](examples/clips/README.md) example); `out.audio_file` records to WAV |
+| Audio | yes | yes | `audio.device_in`, `audio.file`, `out.audio`, `out.audio_file`, `chan.audio_envelope`, `chan.audio_spectrum`, `chan.beat_analysis`, `chan.beat_grid`, `audio.instrument`, `audio.ambience`, `audio.filter` | any device (WASAPI, shared mode). Loudness per channel, a spectrum as numbers or a spectrogram texture, beat and tempo; for a sound file the whole beat grid ahead of time. Output always through a limiter at -1 dBFS; `audio.mute` silences everything. Ready-made instruments and drones in a key and scale, played by channels. A filter for any sound. Sound files (WAV, FLAC, MP3, Ogg, AAC) play in step with video files (the [clips](examples/clips/README.md) example); `out.audio_file` records to WAV |
 | Spout | yes | yes | `tex.spout_in`, `out.spout` | textures shared with other programs on the same machine |
 | NDI® | video and audio | video | `tex.ndi_in`, `out.ndi` | needs the NDI runtime installed |
 | DMX over USB | | yes | `out.dmx` | Enttec Open DMX USB, one universe |
@@ -109,6 +118,7 @@ lists every one.
 | sACN (E1.31) | yes | yes | `chan.dmx_in`, `out.dmx` | |
 | DDP | | yes | `out.dmx` | pixel controllers such as WLED |
 | OSC | yes | yes | `chan.osc_in`, `chan.osc_out` | UDP; learn binds a param to the next address that arrives |
+| HTTP, WebSocket | yes | | `chan.http_in` | JSON from a browser or another program; serves the project's control page, or a built-in one |
 | Mouse, keyboard | yes | | `chan.mouse_in`, `chan.keyboard_in` | the pointer anywhere on the desktop; keys while a penumbra window has the focus |
 | 3D mouse | yes | | `chan.spacemouse_in` | 3Dconnexion SpaceNavigator, also steers the 3D viewer; without the vendor driver |
 | Control channel | yes | yes | | JSON lines over TCP on localhost, every command of the app |
@@ -128,13 +138,14 @@ Not in penumbra, as of now. Some of this is planned, some stays out, see [Scope]
 - Python expressions on parameters. Parameters are driven by binding them to channels. Python
   runs only in script nodes.
 - Custom control panels (TouchDesigner's Panel COMPs): buttons and sliders sit on their nodes
-  and, flagged `show`, on the locked show screen. Keyframe animation and a timeline: a show
+  and, flagged `show`, on the locked show screen. A web page in the project's `www` folder
+  steers channels from a phone. Keyframe animation and a timeline: a show
   runs as a list of steps instead (`chan.sequence`).
 - Geometry modelling beyond primitives, transforms, merging and instancing. Particle systems
   and physics have no dedicated nodes; both can be done in shaders, as in the curl-noise
   example.
-- Network I/O beyond OSC, Art-Net, sACN, DDP and NDI: no TCP, UDP, WebSocket, HTTP or serial
-  nodes, no streaming (RTMP, SRT, WebRTC).
+- Network I/O beyond OSC, Art-Net, sACN, DDP, NDI and incoming HTTP and WebSocket: no raw TCP,
+  UDP or serial nodes, no outgoing web requests, no streaming (RTMP, SRT, WebRTC).
 - GLSL (shaders are WGSL), a C++ plugin API, macOS and Syphon.
 
 Different by design:
@@ -198,8 +209,8 @@ colormap. The screenshot at the top of this page shows its network.
 ![The curl-noise example: sticks in purple, pink and pale yellow swirling in a flow field](assets/gallery/curl-noise.jpg)
 
 The [synthwave](examples/synthwave/README.md) example: a glider flying over a wireframe city
-between two grids, through a nebula. Everything is made in the network: no pictures, no meshes
-from files.
+between two grids, through a nebula. Everything but the glider is made in the network, without
+pictures; the glider comes from two OBJ files.
 
 ![The synthwave example: a wireframe glider over wireframe blocks between white grids, in front of a purple and blue nebula](assets/gallery/synthwave.jpg)
 
@@ -239,6 +250,11 @@ projected or laid over the show:
 
 Here a Python script node plays a 124 BPM pattern into the analysis. The method is described
 in [Audio](docs/audio.md).
+
+For a sound file, `chan.beat_grid` finds every beat and bar before they play, with the
+[Beat This!](https://github.com/CPJKU/beat_this) model on the CPU. Its channels have no lag
+and hold their bars on DJ mixes. The [beat-grid](examples/beat-grid/README.md) example
+runs it beside the live tracker on the same music.
 
 ## Palettes
 
