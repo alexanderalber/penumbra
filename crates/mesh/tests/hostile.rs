@@ -182,6 +182,18 @@ mod fuzz {
             ("w.fbx", penumbra_fbx::write::to_bytes(7500, &penumbra_fbx::write::example_scene(), false)),
             ("m.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::animated_scene(), false)),
             ("k.fbx", penumbra_fbx::write::to_bytes(7400, &penumbra_fbx::write::skinned_scene(), false)),
+            (
+                "a.fbx",
+                penumbra_fbx::write::to_ascii(7400, &penumbra_fbx::write::example_scene()).into_bytes(),
+            ),
+            (
+                "n.fbx",
+                penumbra_fbx::write::to_ascii(7700, &penumbra_fbx::write::animated_scene()).into_bytes(),
+            ),
+            (
+                "j.fbx",
+                penumbra_fbx::write::to_ascii(7400, &penumbra_fbx::write::skinned_scene()).into_bytes(),
+            ),
         ];
         let limits = Limits::default();
         let mut rng = Rng(0x5EED_1234_ABCD_0001);
@@ -265,6 +277,30 @@ mod fuzz {
         let full = to_bytes(7400, &bad, true);
         for n in 0..full.len() {
             if let Ok(l) = load(&full[..n]) {
+                l.mesh.check().unwrap();
+            }
+        }
+        // ASCII: a claimed length of 2^64 - 1 behind two elements, a length too large for any
+        // number, an unterminated string and brace, a thousand open braces, garbage numbers.
+        let head = "; FBX 7.4.0 project file\n";
+        let ascii = penumbra_fbx::write::to_ascii(7400, &bad);
+        let huge = ascii.replacen("*24 {", "*18446744073709551615 {", 1);
+        assert_ne!(huge, ascii);
+        assert!(load(huge.as_bytes()).is_ok());
+        assert!(load(ascii.replacen("*24 {", "*99999999999999999999999 {", 1).as_bytes()).is_err());
+        for body in [
+            "Objects: {\n Model: 1, \"Model::open",
+            "Objects: {\n Model: 1, \"Model::a\", \"Mesh\" {\n",
+            &"A: {".repeat(1000),
+            "A: *3 { a: 1, 2.5.5, 3 }",
+            "A: 1e999999, --4, 0x10",
+            "A: \u{0}\u{ff}",
+        ] {
+            assert!(load(format!("{head}{body}").as_bytes()).is_err(), "{body:.40}");
+        }
+        // Every truncation of the ASCII file.
+        for n in 0..ascii.len() {
+            if let Ok(l) = load(&ascii.as_bytes()[..n]) {
                 l.mesh.check().unwrap();
             }
         }

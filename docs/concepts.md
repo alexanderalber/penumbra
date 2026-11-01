@@ -130,10 +130,11 @@ The families:
   camera; the camera is perspective, orthographic or calibrated). `light.projector` throws a
   picture through a camera onto the geometry: a virtual projector, for trying a mapping on a
   model of the room. Coordinates are metres, z up.
-  `geo.file` reads OBJ, STL, glTF and FBX. FBX works for binary files from version 7.0 on, the
-  default of Blender, Maya, 3ds Max and Unity. An ASCII FBX file gives an error: export it as
-  binary. Each FBX model becomes a part with its name, placed as in the file, in metres and z up.
-  Materials bring their diffuse colour and texture, embedded or from a file beside the FBX.
+  `geo.file` reads OBJ, STL, glTF and FBX. FBX works from file version 7.0 on, binary or
+  ASCII. Binary is the default of Blender, Maya, 3ds Max and Unity. An FBX 6 file gives an
+  error: export it again as FBX 2011 or later. Each FBX model becomes a part with its name,
+  placed as in the file, in metres and z up. Materials bring their diffuse colour and texture,
+  embedded or from a file beside the FBX.
   Animated models play: each part moves as its model does in the file. A skinned character
   bends with its bones: each vertex follows the bones that weigh on it, blended by the weights
   (linear blend skinning). `take` picks the animation (the `takes` output lists them), `play`,

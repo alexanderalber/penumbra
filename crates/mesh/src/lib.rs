@@ -572,7 +572,9 @@ pub fn parse(
                 let head = bytes.get(..bytes.len().min(512)).unwrap_or(&[]);
                 let text = String::from_utf8_lossy(head);
                 let trimmed = text.trim_start();
-                if trimmed.starts_with('{') {
+                if penumbra_fbx::is_ascii_fbx(bytes) {
+                    fbx::parse(bytes, sidecar, limits)?
+                } else if trimmed.starts_with('{') {
                     gltf::parse(bytes, sidecar, limits)?
                 } else if stl::is_binary(bytes) || trimmed.starts_with("solid") {
                     stl::parse(bytes, &stem, limits)?

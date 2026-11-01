@@ -1,4 +1,5 @@
-//! The binary node tree: records with a name, values and child records, exactly as stored.
+//! The node tree: records with a name, values and child records, exactly as stored. This module
+//! reads the binary form; [`crate::ascii`] reads the ASCII form into the same tree.
 //!
 //! A record header holds the offset of the record's end, its number of values, the byte length
 //! of the values and the length of its name: three 32-bit numbers and a byte below version
@@ -181,16 +182,18 @@ impl Tree {
     }
 }
 
-/// Reads the node tree of a binary FBX file.
+/// Reads the node tree of an FBX file, binary or ASCII.
 pub fn parse(bytes: &[u8], limits: &Limits) -> Result<Tree, Error> {
     if bytes.len() as u64 > limits.max_file_bytes {
         return Err(Error::new(format!("larger than {} MiB", limits.max_file_bytes >> 20)));
     }
     if !bytes.starts_with(MAGIC) {
-        if crate::is_ascii_fbx(bytes) {
-            return Err(Error::new("an ASCII FBX file; only binary FBX is read (export as binary)"));
-        }
-        return Err(Error::new("not a binary FBX file"));
+        return match crate::ascii::parse(bytes, limits) {
+            Err(e) if !crate::is_ascii_fbx(bytes) => {
+                Err(e.context("not an FBX file: neither binary nor ASCII FBX"))
+            }
+            other => other,
+        };
     }
     let head = bytes.get(..27).ok_or_else(|| Error::new("the FBX header is cut short"))?;
     if head.get(22).copied() != Some(0) {

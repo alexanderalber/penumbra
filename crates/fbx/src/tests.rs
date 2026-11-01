@@ -29,13 +29,13 @@ fn the_tree_survives_a_round_trip_in_every_layout() {
 fn other_files_are_refused_with_a_reason() {
     let l = Limits::default();
     let err = |b: &[u8]| tree::parse(b, &l).unwrap_err().0;
-    assert!(err(b"; FBX 7.4.0 project file\nFBXHeaderExtension:  {\n").contains("ASCII"));
+    assert!(err(b"; FBX 6.1.0 project file\nFBXHeaderExtension:  {\n").contains("FBX 6"));
     let mut be = to_bytes(7400, &[], false);
     be[22] = 1;
     assert!(err(&be).contains("big-endian"));
     assert!(err(&to_bytes(6100, &[], false)).contains("6100"));
-    assert!(err(b"solid cube").contains("not a binary FBX"));
-    assert!(err(&MAGIC[..10]).contains("not a binary FBX"));
+    assert!(err(b"solid cube").contains("not an FBX file"));
+    assert!(err(&MAGIC[..10]).contains("not an FBX file"));
 }
 
 #[test]
@@ -632,6 +632,195 @@ fn broken_skins_are_read_safely() {
                 let mats = skin.cluster_matrices(&s.animation.worlds(&s.hierarchy, 0, t));
                 for p in 0..skin.points() + 2 {
                     let _ = skin.point_matrix(p, &mats);
+                }
+            }
+        }
+    }
+}
+
+/// Whether two values hold the same thing, whatever type each form chose: numbers as numbers,
+/// arrays element by element (as `f32` when either side is), binary object names against
+/// `Class::Name`.
+fn same_value(a: &Value, b: &Value) -> bool {
+    let num = |x: f64, y: f64| x == y || (x.is_nan() && y.is_nan());
+    match (a, b) {
+        (Value::String(x), Value::String(y)) => {
+            document::split_name(x) == document::split_name(y)
+                && (x.contains("\u{0}\u{1}") || y.contains("\u{0}\u{1}") || x == y)
+        }
+        (Value::Raw(x), Value::Raw(y)) => x == y,
+        (Value::Array(x), Value::Array(y)) => {
+            let single = matches!(x, Array::F32(_)) || matches!(y, Array::F32(_));
+            x.len() == y.len()
+                && (0..x.len()).all(|i| {
+                    let (p, q) = (x.f64_at(i).unwrap(), y.f64_at(i).unwrap());
+                    if single { num(f64::from(p as f32), f64::from(q as f32)) } else { num(p, q) }
+                })
+        }
+        (x, y) => match (x.as_f64(), y.as_f64()) {
+            (Some(p), Some(q)) => num(p, q),
+            _ => false,
+        },
+    }
+}
+
+fn same_node(a: &Node, b: &Node) -> bool {
+    a.name == b.name
+        && a.values.len() == b.values.len()
+        && a.values.iter().zip(&b.values).all(|(x, y)| same_value(x, y))
+        && a.children.len() == b.children.len()
+        && a.children.iter().zip(&b.children).all(|(x, y)| same_node(x, y))
+}
+
+fn world_matrices(w: &[NodeWorld]) -> Vec<Mat4> {
+    w.iter().map(|w| w.world).collect()
+}
+
+#[test]
+fn ascii_files_read_as_their_binary_twins() {
+    let l = Limits::default();
+    let scenes = [example_scene(), write::animated_scene(), write::skinned_scene()];
+    for (k, nodes) in scenes.iter().enumerate() {
+        let binary = to_bytes(7400, nodes, false);
+        let ascii = write::to_ascii(7400, nodes);
+        let (bt, at) = (tree::parse(&binary, &l).unwrap(), tree::parse(ascii.as_bytes(), &l).unwrap());
+        assert_eq!(at.version, 7400);
+        assert_eq!(bt.nodes.len(), at.nodes.len());
+        for (x, y) in bt.nodes.iter().zip(&at.nodes) {
+            assert!(same_node(x, y), "scene {k}: `{}` differs\n{x:?}\n{y:?}", x.name);
+        }
+        let (b, a) = (Scene::parse(&binary, &l).unwrap(), Scene::parse(ascii.as_bytes(), &l).unwrap());
+        assert_eq!(world_matrices(&b.worlds), world_matrices(&a.worlds));
+        let (bi, ai) = (b.mesh_instances(), a.mesh_instances());
+        assert_eq!(bi.len(), ai.len());
+        for (x, y) in bi.iter().zip(&ai) {
+            assert_eq!((x.name.as_str(), x.geometry_to_world), (y.name.as_str(), y.geometry_to_world));
+            let (gx, gy) = (b.geometry(x.geometry_id, &l).unwrap(), a.geometry(y.geometry_id, &l).unwrap());
+            assert_eq!((gx.positions, gx.corners), (gy.positions, gy.corners));
+            let (sx, sy) = (b.skin(x.geometry_id, &l).unwrap(), a.skin(y.geometry_id, &l).unwrap());
+            assert_eq!(sx.is_some(), sy.is_some());
+            if let (Some(sx), Some(sy)) = (sx, sy) {
+                assert_eq!(sx.cluster_matrices(&b.worlds), sy.cluster_matrices(&a.worlds));
+            }
+        }
+        assert_eq!(b.animation.takes.len(), a.animation.takes.len());
+        for t in [0.0, 0.4, 1.0, 1.7, 2.0] {
+            let (wb, wa) = (b.animation.worlds(&b.hierarchy, 0, t), a.animation.worlds(&a.hierarchy, 0, t));
+            assert_eq!(world_matrices(&wb), world_matrices(&wa), "scene {k} at {t}");
+        }
+    }
+}
+
+#[test]
+fn ascii_syntax_reads_as_the_sdk_writes_it() {
+    let text = "\u{feff}; FBX 7.5.0 project file\n\
+        ; a comment, with \"quotes\" and { braces }\n\
+        Top:  { ; trailing comment\n\
+        \tName: \"Model::a &quot;b&quot;\", \"x&ly&lf;z\", 12, -3.5e2, Y, word\n\
+        \tVertices: *3 {\n\t\ta: 1,2.5,-3\n\t}\n\
+        \tPolygonVertexIndex: *4 { a: 0,1,-3, 3000000000 }\n\
+        \tKeyValueFloat: *2 { a: 218434821,0.1 }\n\
+        \tKeyAttrDataFloat: *2 { a: 1065353216,-1082130432 }\n\
+        \tEmpty: *0 { a: }\n\
+        \tIndexes: 4, 5, 6\n\
+        \tContent: , \"aGVs\", \"bG8=\"\n\
+        \tOdd: 1.#INF, -1.#IND, nan\n\
+        \tWords: *4 { a: inf, -Infinity, nan(ind), snan }\n\
+        \t\"Spaced Name\": 1\n\
+        }\n";
+    let tree = tree::parse(text.as_bytes(), &Limits::default()).unwrap();
+    // No `FBXVersion`: the comment says it.
+    assert_eq!(tree.version, 7500);
+    let top = tree.top("Top").unwrap();
+    let name = top.child("Name").unwrap();
+    assert_eq!(name.values[0], Value::String("Model::a \"b\"".into()));
+    assert_eq!(document::split_name(name.values[0].as_str().unwrap()), ("a \"b\"", "Model"));
+    assert_eq!(name.values[1], Value::String("x&ly\nz".into()));
+    assert_eq!(
+        &name.values[2..],
+        &[Value::I64(12), Value::F64(-350.0), Value::Bool(b'Y'), Value::String("word".into())]
+    );
+    assert_eq!(top.child_array("Vertices"), Some(&Array::F64(vec![1.0, 2.5, -3.0])));
+    assert_eq!(top.child_array("PolygonVertexIndex"), Some(&Array::I64(vec![0, 1, -3, 3_000_000_000])));
+    assert_eq!(top.child_array("KeyValueFloat"), Some(&Array::F32(vec![218434821.0, 0.1])));
+    // From 7200 on, the integers of the floats' bits; before, the floats themselves.
+    assert_eq!(top.child_array("KeyAttrDataFloat"), Some(&Array::F32(vec![1.0, -1.0])));
+    let old = tree::parse(
+        b"; FBX 7.1.0 project file\nK: { KeyAttrDataFloat: *1 { a: 0.25 } }\n",
+        &Limits::default(),
+    );
+    assert_eq!(old.unwrap().nodes[0].child_array("KeyAttrDataFloat"), Some(&Array::F32(vec![0.25])));
+    assert_eq!(top.child_array("Empty"), Some(&Array::I32(Vec::new())));
+    assert_eq!(top.child_array("Indexes"), Some(&Array::I32(vec![4, 5, 6])));
+    assert_eq!(top.child("Content").unwrap().values, [Value::Raw(b"hello".to_vec())]);
+    let odd: Vec<f64> = top.child("Odd").unwrap().values.iter().map(|v| v.as_f64().unwrap()).collect();
+    assert!(odd[0] == f64::INFINITY && odd[1].is_nan() && odd[2].is_nan(), "{odd:?}");
+    assert_eq!(top.child("Spaced Name").unwrap().values, [Value::I64(1)]);
+    let words = top.child_array("Words").unwrap();
+    assert!(words.f64_at(0) == Some(f64::INFINITY) && words.f64_at(1) == Some(f64::NEG_INFINITY));
+    assert!(words.f64_at(2).unwrap().is_nan() && words.f64_at(3) == Some(f64::from(b's')));
+    // `FBXVersion` wins over the comment; an embedded file survives the trip.
+    let nodes = vec![
+        Node::new("FBXHeaderExtension", Vec::new(), vec![write::leaf("FBXVersion", Value::I32(7700))]),
+        write::leaf("Content", Value::Raw((0..=255).collect())),
+    ];
+    let back = tree::parse(write::to_ascii(7300, &nodes).as_bytes(), &Limits::default()).unwrap();
+    assert_eq!(back.version, 7700);
+    assert_eq!(back.nodes[1].values, [Value::Raw((0..=255).collect())]);
+}
+
+#[test]
+fn hostile_ascii_is_refused_with_a_reason() {
+    let l = Limits::default();
+    let head = "; FBX 7.4.0 project file\n";
+    let err = |body: &str| tree::parse(format!("{head}{body}").as_bytes(), &l).unwrap_err().0;
+    // A claimed length the file does not back costs nothing and is not trusted.
+    let t = tree::parse(format!("{head}A: *18446744073709551615 {{ a: 1,2 }}\n").as_bytes(), &l).unwrap();
+    assert_eq!(t.nodes[0].values, [Value::Array(Array::I32(vec![1, 2]))]);
+    assert!(err("A: *99999999999999999999 { a: 1 }").contains("no length"));
+    assert!(err("A: \"open\nB: 1\n").contains("closing quote"));
+    assert!(err("A: {\n B: 1\n").contains("not closed"));
+    assert!(err("A: 1\n}\n").contains("never opened"));
+    assert!(err("A: *2 { a: 1, \"x\" }").contains("where a number"));
+    assert!(err("A: 1.2.3").contains("not a number"));
+    assert!(err("A: 1.#NOPE").contains("not a number"));
+    assert!(err("A: *2 { a: 1, 2e }").contains("not a number"));
+    assert!(err("A: 1, @").contains("unexpected character `@`"));
+    assert!(err("A: 1\nB: 2, 3 x\n").contains("expected a record name"));
+    assert!(err("A: 1\n\nB: 2,\n\u{1}").contains("line 5"));
+    let deep = "A: {".repeat(1000);
+    assert!(err(&deep).contains("deeper than"));
+    // Versions: FBX 6 by comment or by record, none at all, the future.
+    assert!(tree::parse(b"; FBX 6.1.0 project file\nA: 1\n", &l).unwrap_err().0.contains("FBX 6"));
+    let v = |n: i64| format!("FBXHeaderExtension: {{\n FBXVersion: {n}\n}}\n");
+    assert!(tree::parse(v(6100).as_bytes(), &l).unwrap_err().0.contains("FBX 6"));
+    assert!(tree::parse(v(12000).as_bytes(), &l).unwrap_err().0.contains("not known"));
+    assert!(tree::parse(v(-1).as_bytes(), &l).unwrap_err().0.contains("not known"));
+    assert!(tree::parse(b"A: 1\n", &l).unwrap_err().0.contains("not an FBX file"));
+    // Budgets count values and elements, not bytes.
+    let small = Limits { max_array_bytes: 80, ..Limits::default() };
+    let many = format!("{head}A: *11 {{ a: {} }}\n", ["1"; 11].join(","));
+    assert!(tree::parse(many.as_bytes(), &small).unwrap_err().0.contains("arrays exceed"));
+    let few = Limits { max_values: 3, ..Limits::default() };
+    assert!(
+        tree::parse(format!("{head}A: 1,2\nB: 3,4\n").as_bytes(), &few).unwrap_err().0.contains("values")
+    );
+    let records = Limits { max_nodes: 2, ..Limits::default() };
+    assert!(
+        tree::parse(format!("{head}A: 1\nB: 2\nC: 3\n").as_bytes(), &records)
+            .unwrap_err()
+            .0
+            .contains("records")
+    );
+    // Every truncation of each scene ends in an error or a scene that evaluates safely.
+    for nodes in [example_scene(), write::animated_scene(), write::skinned_scene()] {
+        let text = write::to_ascii(7400, &nodes);
+        let bytes = text.as_bytes();
+        for n in (0..bytes.len()).step_by(3) {
+            if let Ok(s) = Scene::parse(&bytes[..n], &l) {
+                let _ = s.mesh_instances();
+                for t in [-1.0, 0.5, f64::NAN, 1e300] {
+                    let _ = s.animation.worlds(&s.hierarchy, 0, t);
                 }
             }
         }

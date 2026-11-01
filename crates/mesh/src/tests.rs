@@ -506,8 +506,13 @@ fn append_renumbers_and_keeps_polygon_edges() {
 /// The example FBX scene of `penumbra-fbx`, optionally with a diffuse texture on its material:
 /// embedded (`content`) or beside the file as `tex/wood.png`.
 fn fbx_scene(texture: Option<&[u8]>) -> Vec<u8> {
+    penumbra_fbx::write::to_bytes(7400, &fbx_nodes(texture), true)
+}
+
+/// The records of [`fbx_scene`].
+fn fbx_nodes(texture: Option<&[u8]>) -> Vec<penumbra_fbx::Node> {
     use penumbra_fbx::Value;
-    use penumbra_fbx::write::{connection, leaf, object, to_bytes};
+    use penumbra_fbx::write::{connection, leaf, object};
     let mut nodes = penumbra_fbx::write::example_scene();
     if let Some(content) = texture {
         let objects = nodes.iter_mut().find(|n| n.name == "Objects").unwrap();
@@ -534,7 +539,7 @@ fn fbx_scene(texture: Option<&[u8]>) -> Vec<u8> {
         conns.children.push(connection("OP", 40, 30, Some("DiffuseColor")));
         conns.children.push(connection("OO", 50, 40, None));
     }
-    to_bytes(7400, &nodes, true)
+    nodes
 }
 
 #[test]
@@ -589,10 +594,27 @@ fn fbx_textures_come_embedded_or_from_beside_the_file() {
 }
 
 #[test]
+fn ascii_fbx_files_load_as_their_binary_twins() {
+    use penumbra_fbx::write::{animated_scene, skinned_scene, to_ascii, to_bytes};
+    let l = Limits::default();
+    for nodes in [fbx_nodes(Some(b"\x89PNG embedded")), animated_scene(), skinned_scene()] {
+        let binary = parse("s.fbx", &to_bytes(7400, &nodes, false), &no_files, &l).unwrap();
+        let text = to_ascii(7400, &nodes);
+        let ascii = parse("s.fbx", text.as_bytes(), &no_files, &l).unwrap();
+        assert_eq!(ascii, binary);
+        // Sniffed by its header comment, whatever the name.
+        assert_eq!(parse("s.txt", text.as_bytes(), &no_files, &l).unwrap(), binary);
+    }
+}
+
+#[test]
 fn fbx_errors_say_why() {
-    let ascii = b"; FBX 7.4.0 project file\nFBXHeaderExtension:  {\n}\n";
-    let e = parse("a.fbx", ascii, &no_files, &Limits::default()).unwrap_err();
-    assert!(e.0.contains("ASCII"), "{e}");
+    let old = b"; FBX 6.1.0 project file\nFBXHeaderExtension:  {\n}\n";
+    let e = parse("a.fbx", old, &no_files, &Limits::default()).unwrap_err();
+    assert!(e.0.contains("FBX 6"), "{e}");
+    let open = b"; FBX 7.4.0 project file\nObjects: {\n";
+    let e = parse("a.fbx", open, &no_files, &Limits::default()).unwrap_err();
+    assert!(e.0.contains("not closed"), "{e}");
     let cut = fbx_scene(None);
     assert!(parse("a.fbx", &cut[..cut.len() / 2], &no_files, &Limits::default()).is_err());
 }

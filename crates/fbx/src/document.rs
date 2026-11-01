@@ -58,12 +58,13 @@ pub struct Properties {
 }
 
 impl Properties {
-    /// The property called `name`: the object's own, else the template's.
+    /// The property called `name`: the object's own, else the template's. A name listed twice
+    /// takes its last entry (as ufbx does).
     pub fn get(&self, name: &str) -> Option<&Property> {
         self.own
             .iter()
-            .find(|p| p.name == name)
-            .or_else(|| self.defaults.as_ref().and_then(|d| d.iter().find(|p| p.name == name)))
+            .rfind(|p| p.name == name)
+            .or_else(|| self.defaults.as_ref().and_then(|d| d.iter().rfind(|p| p.name == name)))
     }
 
     pub fn number(&self, name: &str) -> Option<f64> {
@@ -117,7 +118,7 @@ pub struct Object {
 }
 
 /// How a connection links its two ends.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ConnectionKind {
     /// `OO`: object to object.
     ObjectObject,
@@ -131,7 +132,7 @@ pub enum ConnectionKind {
 
 /// One `C` record: `child` is connected into `parent` (a geometry into its model, a model into
 /// its parent model).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Connection {
     pub kind: ConnectionKind,
     pub child: i64,
@@ -173,7 +174,7 @@ fn strip_fbx(s: &str) -> &str {
 }
 
 impl Document {
-    /// Reads a binary FBX file into a document.
+    /// Reads an FBX file, binary or ASCII, into a document.
     pub fn parse(bytes: &[u8], limits: &Limits) -> Result<Document, Error> {
         Self::from_tree(tree::parse(bytes, limits)?, limits)
     }
@@ -230,6 +231,7 @@ impl Document {
             }
         }
         let mut connections = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         if let Some(conns) = tree.top("Connections") {
             if conns.children.len() > limits.max_connections {
                 return Err(Error::new(format!("more than {} connections", limits.max_connections)));
@@ -250,13 +252,11 @@ impl Document {
                     _ => continue,
                 };
                 let text = |i: usize| c.value(i).and_then(Value::as_str).map(str::to_string);
-                connections.push(Connection {
-                    kind,
-                    child,
-                    parent,
-                    property: text(3),
-                    parent_property: text(4),
-                });
+                let conn = Connection { kind, child, parent, property: text(3), parent_property: text(4) };
+                // A connection listed twice counts once.
+                if seen.insert(conn.clone()) {
+                    connections.push(conn);
+                }
             }
         }
         let mut into: HashMap<i64, Vec<usize>> = HashMap::new();

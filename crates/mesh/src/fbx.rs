@@ -1,4 +1,4 @@
-//! FBX through `penumbra-fbx`: binary files of version 7000 and later, little endian. Read:
+//! FBX through `penumbra-fbx`: version 7000 and later, binary (little endian) or ASCII. Read:
 //! every model with a mesh, one part each named after the model, with all transforms baked in
 //! (pivots, pre- and post-rotation, geometric transforms, inherit types). Polygons are split
 //! into triangles. Normals and the first UV set are read, materials as their diffuse colour
@@ -6,7 +6,7 @@
 //! the file's axes become penumbra's: z up, front towards -y. Animated models come with a
 //! [`Motion`]: each vertex remembers its model and control point, and moves with the model's
 //! animated transform, or with the bones of its skin (linear blend skinning). The file as stored
-//! is the rest pose. Not read: blend shapes, geometry caches, cameras, lights; ASCII files are
+//! is the rest pose. Not read: blend shapes, geometry caches, cameras, lights; FBX 6 files are
 //! refused with an error saying so.
 
 use std::collections::HashMap;

@@ -1,4 +1,4 @@
-//! Writes a node tree as a binary FBX file, plus helpers to build the records of a scene.
+//! Writes a node tree as a binary or ASCII FBX file, plus helpers to build the records of a scene.
 //! Meant for tests and tools that need small files: no footer is written, and nothing checks
 //! that the tree is a valid scene.
 
@@ -106,6 +106,132 @@ fn value(out: &mut Vec<u8>, v: &Value, compress: bool) {
             out.extend((data.len() as u32).to_le_bytes());
             out.extend(data);
         }
+    }
+}
+
+/// The text of an ASCII FBX file of `version` (7000 or later) holding `nodes`, as the FBX SDK
+/// writes it: a `; FBX 7.4.0 project file` comment, arrays as `*N { a: ... }`, object names as
+/// `Class::Name`, raw values (embedded files) as base64.
+pub fn to_ascii(version: u32, nodes: &[Node]) -> String {
+    let mut out = format!(
+        "; FBX {}.{}.{} project file\n; ----------------------------------------------------\n\n",
+        version / 1000,
+        version / 100 % 10,
+        version / 10 % 10
+    );
+    for n in nodes {
+        ascii_record(&mut out, n, 0, version);
+    }
+    out
+}
+
+fn ascii_record(out: &mut String, n: &Node, depth: usize, version: u32) {
+    use std::fmt::Write as _;
+    let indent = "\t".repeat(depth);
+    let _ = write!(out, "{indent}{}: ", n.name);
+    if matches!(n.values.as_slice(), [Value::Raw(_)]) {
+        // An embedded file goes after a leading comma, as the FBX SDK writes it.
+        out.push_str(", ");
+    }
+    for (i, v) in n.values.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        match v {
+            Value::Bool(c) | Value::Byte(c) => {
+                if c.is_ascii_alphabetic() {
+                    out.push(char::from(*c));
+                } else {
+                    let _ = write!(out, "{c}");
+                }
+            }
+            Value::I16(x) => {
+                let _ = write!(out, "{x}");
+            }
+            Value::I32(x) => {
+                let _ = write!(out, "{x}");
+            }
+            Value::I64(x) => {
+                let _ = write!(out, "{x}");
+            }
+            Value::F32(x) => ascii_float(out, f64::from(*x), Some(*x)),
+            Value::F64(x) => ascii_float(out, *x, None),
+            Value::String(s) => {
+                let s = match s.split_once("\u{0}\u{1}") {
+                    Some((name, class)) => format!("{class}::{name}"),
+                    None => s.clone(),
+                };
+                out.push('"');
+                for c in s.chars() {
+                    match c {
+                        '"' => out.push_str("&quot;"),
+                        '\n' => out.push_str("&lf;"),
+                        '\r' => out.push_str("&cr;"),
+                        c => out.push(c),
+                    }
+                }
+                out.push('"');
+            }
+            Value::Raw(b) => {
+                out.push('"');
+                base64(out, b);
+                out.push('"');
+            }
+            Value::Array(a) => {
+                let _ = write!(out, "*{} {{\n{indent}\ta: ", a.len());
+                for i in 0..a.len() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    match a {
+                        // From 7200 on, the FBX SDK writes these floats as their bits.
+                        Array::F32(v) if n.name == "KeyAttrDataFloat" && version >= 7200 => {
+                            let _ = write!(out, "{}", v.get(i).copied().unwrap_or(0.0).to_bits() as i32);
+                        }
+                        Array::F32(v) => {
+                            let x = v.get(i).copied().unwrap_or(0.0);
+                            ascii_float(out, f64::from(x), Some(x));
+                        }
+                        Array::F64(v) => ascii_float(out, v.get(i).copied().unwrap_or(0.0), None),
+                        other => {
+                            let _ = write!(out, "{}", other.i64_at(i).unwrap_or(0));
+                        }
+                    }
+                }
+                let _ = write!(out, "\n{indent}}}");
+            }
+        }
+    }
+    if !n.children.is_empty() {
+        out.push_str(" {\n");
+        for c in &n.children {
+            ascii_record(out, c, depth + 1, version);
+        }
+        out.push_str(&indent);
+        out.push('}');
+    }
+    out.push('\n');
+}
+
+/// The shortest text that reads back as the same number (`f32` when given).
+fn ascii_float(out: &mut String, x: f64, single: Option<f32>) {
+    use std::fmt::Write as _;
+    let _ = match single {
+        Some(f) => write!(out, "{f}"),
+        None => write!(out, "{x}"),
+    };
+}
+
+fn base64(out: &mut String, bytes: &[u8]) {
+    const DIGITS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let digit = |v: u32| char::from(DIGITS.get((v & 63) as usize).copied().unwrap_or(b'A'));
+    for chunk in bytes.chunks(3) {
+        let b = |i: usize| u32::from(chunk.get(i).copied().unwrap_or(0));
+        let v = (b(0) << 16) | (b(1) << 8) | b(2);
+        out.push(digit(v >> 18));
+        out.push(digit(v >> 12));
+        out.push(if chunk.len() > 1 { digit(v >> 6) } else { '=' });
+        out.push(if chunk.len() > 2 { digit(v) } else { '=' });
     }
 }
 

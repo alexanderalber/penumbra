@@ -1,9 +1,10 @@
-//! A reader for binary FBX files, version 7.x, little endian, in safe Rust.
+//! A reader for FBX files, version 7.x, binary (little endian) and ASCII, in safe Rust.
 //!
 //! The reader is built in layers, and each layer stays public, so that animation and skinning
 //! can be added on top without reparsing:
 //!
-//! 1. [`tree`]: the binary node tree. Every record, value and array as stored in the file.
+//! 1. [`tree`]: the node tree. Every record, value and array as stored in the file. The binary
+//!    form is read in [`tree`], the ASCII form in [`ascii`], into the same tree.
 //! 2. [`Document`]: the objects by id, their connections, and their properties with the
 //!    defaults from the property templates filled in.
 //! 3. [`transform`]: a `Model`'s local transform as a function of its property values, and the
@@ -23,8 +24,8 @@
 //! inflate beyond the size its header states, and that size is checked first. Callers that need
 //! certainty against bugs should still run the reader inside `catch_unwind`.
 //!
-//! Not read: ASCII FBX, big-endian files and versions below 7000 (each is refused with an
-//! error that says so), blend shapes, geometry caches, cameras, lights, NURBS. Dual quaternion
+//! Not read: big-endian files and versions below 7000, FBX 6 (each is refused with an error
+//! that says so), blend shapes, geometry caches, cameras, lights, NURBS. Dual quaternion
 //! skins are blended linearly, with a warning.
 //!
 //! The format knowledge follows ufbx (Samuli Raivio, MIT or Unlicense,
@@ -36,6 +37,7 @@
 //! `ufbx_get_skin_vertex_matrix` (see [`skin`]), all taken under the Unlicense. No code is taken from fbxcel.
 
 pub mod anim;
+pub mod ascii;
 pub mod document;
 pub mod geometry;
 pub mod scene;
