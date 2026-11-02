@@ -1,11 +1,14 @@
 # The content library
 
-Ready-made effects for content on scanned objects, one component each. They take what a scan
-leaves behind (`scan.scene`'s and `scan.regions`' pictures, camera stills), never the face or
-region numbers of one particular scene, so they fit any scanned scene. Each folder holds the
-component (`<name>.comp.ron`), its shaders and pictures, and `preview.png`: the effect rendered
-headless on a real scan of a few crates with a pumpkin on one of them, over a dim drawing of the
-scan's regions.
+Ready-made effects, one component each. Most are content for scanned objects. They take what a
+scan leaves behind (`scan.scene`'s and `scan.regions`' pictures, camera stills), never the face or
+region numbers of one particular scene, so they fit any scanned scene. The last group is a stage
+for music: a synthwave world that a `chan.beat_grid` drives, with elements to swap in and out.
+
+Each folder holds the component (`<name>.comp.ron`), its shaders and pictures, and `preview.png`.
+For a scan effect the preview is the effect rendered headless on a real scan of a few crates with
+a pumpkin on one of them, over a dim drawing of the scan's regions. For the music stage it is the
+stage at 20 s into `examples/beat-grid/music.wav`, with `warmth` at 1.
 
 ## Using one
 
@@ -236,3 +239,80 @@ Glazed tiles with grout and a wooden rim on a rectified face, appearing one by o
   centimetres, as given to `scan.scene`), `tile`, `grout`, `rim`, `decor` (share of decorated
   tiles), `grout_color`, `wood`, `gain`, `seed`, `atlas` (the decorated tile in the left half, a
   plain one in the right).
+
+## A stage for music
+
+A synthwave world that moves with a sound file: one stage, and elements that stand in it. They
+all take the same music bus, the whole output of a `chan.beat_grid`. A project has one
+`chan.beat_grid` and wires it into the `bus` input of the stage and of every element:
+`node.connect {"from": "/grid", "to": "/stage", "input": "bus"}`. Each component reads the
+channels it needs by name. `travelled` moves the world, `drift` puts the lane's turns on
+downbeats, `beat` and `beat_length` time the blocks, `energy_low` brightens the sky. [Beats of a
+sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
+
+- **Floor elements** stand on the stage's grid and move with it. They take `bus` and the stage's
+  `lane` output, so they keep the glider's lane free. Their output goes into the stage's `floor`;
+  several go through a `geo.merge`.
+- **Sky elements** draw a picture over black. Their output goes into the stage's `sky`, screened
+  over the nebula.
+- **`presence`** (0 to 1) brings an element in and takes it out again. A floor element sinks into
+  the floor towards 0, a sky element dims. To swap two elements, ramp one's `presence` down while
+  the other's goes up, for example through the blend between two sections.
+
+### stage_synthwave
+
+![stage_synthwave](stage_synthwave/preview.png)
+
+The world: a camera flying over a wireframe floor, under a wireframe ceiling, behind a glider,
+towards a nebula in a warm or cold palette. The world moves one grid cell per beat of
+`travelled`. The glider's lane zigzags to the other side every two bars, each turn starting on a
+downbeat. The bass brightens the nebula. Lines fade out with distance from the camera.
+
+- In: `bus`, `floor` (geometry standing on the grid), `sky` (a picture screened over the nebula).
+- Out: `out` (the picture), `lane` (256 x 1: per texel i, -8 + 0.25 i metres ahead, red the
+  lane's x in metres, green its sideways slope per metre, blue `step`).
+- Params: `warmth` (0 the warm palette, 1 the cold one), `lift` (added to the bass, e.g. before a
+  change), `energy_curve`, `dim` (the nebula's light); the lane's `bars_per_turn`, `swing`, `turn`,
+  `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade; the glider's
+  `at` (metres ahead) and `bank`.
+
+### floor_blocks
+
+![floor_blocks](floor_blocks/preview.png)
+
+A city of wireframe blocks. Each block lies flat until it passes `rise_at` and shoots up on the
+next beat, so a new row stands up on every beat. Blocks on the lane stay low.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (towards 0 the blocks sink back into the floor one after another), `rise`
+  (beats a block takes to stand up), `rise_at`, `lane` (half the low lane's width), `fill` (share
+  of places with a block), `spread` (the city's width), `near`, `far`, `extent`.
+
+### floor_mountains
+
+![floor_mountains](floor_mountains/preview.png)
+
+Wireframe mountain ranges beside the lane: square pyramids with contour lines, overlapping into
+jagged ridges. They rise from the lane's edge to full height over `foot` metres; no foot reaches
+into the lane. The heights come from noise fixed to the floor, so a ridge keeps its shape as it
+comes nearer. Another `seed` gives another range.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (towards 0 the peaks sink into the floor one after another), `seed`,
+  `height` (the tallest peaks, metres; the camera is 2 m up, the ceiling 4 m), `width` (a peak's
+  foot across), `length` (along the lane, as a multiple of `width`), `spacing` (between peaks),
+  `peaks` (metres between summits: smaller is more jagged), `valleys` (peaks lower than this share
+  of `height` are left out, so the floor shows between ridges), `foot`, `lane` (as on
+  `floor_blocks`, 1.6), `spread` (the range's width, both sides), `near`, `far`, `color`, `extent`.
+
+### sky_galaxy
+
+![sky_galaxy](sky_galaxy/preview.png)
+
+A spiral galaxy seen at a slant, over black, in the stage's palette: a warm core, arms of stars
+with knots of glowing gas, dust lanes. It turns with `travelled` and brightens with the bass.
+
+- In: `bus`. Out: `out`.
+- Params: `presence` (towards 0 the galaxy dims to a dark sky), `brightness`, `warmth` (the
+  palette, as on the stage), `spin` (degrees per beat), `lift`, `energy_curve`; its shape: `tilt`, `angle`, `size`,
+  `twist`, `arms`, `bulge`, `dust`, `center`.

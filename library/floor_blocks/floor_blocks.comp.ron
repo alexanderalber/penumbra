@@ -1,0 +1,21 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/floor_blocks": (kind: "comp.base", params: {"expose": "presence = places.presence\nrise = places.rise\nrise_at = places.rise_at\nlane = places.lane\nfill = places.fill\nspread = places.spread\nnear = places.near\nfar = places.far\nextent = blocks.extent"}),
+        "/floor_blocks/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
+        "/floor_blocks/lane": (kind: "tex.in", pos: [-600.0, 150.0]),
+        "/floor_blocks/places": (kind: "tex.shader", params: {"far": 11.0, "file": "library/floor_blocks/blocks.wgsl", "fill": 0.7, "height": 20, "keep_size": true, "lane": 1.6, "near": -1.0, "presence": 1.0, "resolution": "custom", "rise": 0.25, "rise_at": 8.0, "spread": 12.0, "width": 20}, inputs: {"in0": "lane"}, binds: {"beat": "bus:beat", "beat_length": "bus:beat_length", "beats": "bus:travelled"}, pos: [-400.0, 100.0]),
+        "/floor_blocks/sizes": (kind: "tex.shader", params: {"file": "library/floor_blocks/sizes.wgsl"}, inputs: {"in0": "places"}, pos: [-200.0, 200.0]),
+        "/floor_blocks/box": (kind: "geo.primitive", pos: [-600.0, -250.0]),
+        "/floor_blocks/block_lines": (kind: "mat.wireframe", params: {"line_width": 2.0}, pos: [-600.0, -150.0]),
+        "/floor_blocks/block": (kind: "geo.assign_material", inputs: {"in": "box", "mat": "block_lines"}, pos: [-400.0, -200.0]),
+        "/floor_blocks/walls": (kind: "geo.primitive", params: {"size": [0.98, 0.98, 0.98]}, pos: [-600.0, -400.0]),
+        "/floor_blocks/wall_mat": (kind: "mat.occluder", pos: [-600.0, -320.0]),
+        "/floor_blocks/wall": (kind: "geo.assign_material", inputs: {"in": "walls", "mat": "wall_mat"}, pos: [-400.0, -350.0]),
+        "/floor_blocks/model": (kind: "geo.merge", inputs: {"in0": "block", "in1": "wall"}, pos: [-200.0, -250.0]),
+        "/floor_blocks/blocks": (kind: "geo.tex_instance", params: {"extent": 20.0}, inputs: {"in": "model", "position": "places", "scale": "sizes"}, pos: [0.0, 0.0]),
+        "/floor_blocks/out": (kind: "geo.out", inputs: {"in": "blocks"}, pos: [200.0, 0.0]),
+    },
+)
