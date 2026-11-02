@@ -14,7 +14,7 @@ use penumbra_audio::capture::{self, Config};
 use penumbra_audio::measure;
 use penumbra_audio::playback::{self, Settings};
 use penumbra_core::NodePath;
-use penumbra_ops::audio::beat_grid::{Analysis, BEAT_GRID, State};
+use penumbra_ops::audio::beat_grid::{Analysis, BEAT_GRID, State, letter};
 use penumbra_ops::audio::file::{FILE, FileStatus};
 use penumbra_ops::audio::instrument::{INSTRUMENT, Presses};
 use serde::Deserialize;
@@ -79,8 +79,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "beats.status",
         "How the beat analyses stand: {path or file} for one, nothing for all held. Per file: running, progress \
          (0 to 1), beats, downbeats, final_until (s; the grid before it is final, null for none yet), complete, \
-         bpm (median), error, cancelled, seconds, and envelopes {running, progress, known_until (s), complete, \
-         bytes, error}",
+         bpm (median), error, cancelled, seconds, envelopes {running, progress, known_until (s), complete, \
+         bytes, error}, and sections {ready, running, tracks, sections, kinds, error}. The sections are found once \
+         beats and envelopes are complete",
         beats_status,
     );
     add(
@@ -90,7 +91,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          downbeats (the bar starts chan.beat_grid uses, voted over 64 beats), found_beats (the network's beats \
          before folding) and marked_downbeats (those the network marks one by one; \
          irregular on DJ mixes), s into the file, between from and to, and final_until and complete as \
-         beats.status. Does not start an analysis",
+         beats.status. sections lists the sections that overlap from to to, once found: start and end (s), bars, \
+         label (the kind of sound, the same number anywhere in the file where it sounds alike), letter (repeats \
+         within a track share it), track, track_start, strength (0 to 1), seed and zone [start, end] (s, the blend \
+         from the section before); null before. Does not start an analysis",
         beats_grid,
     );
     add(
@@ -339,6 +343,20 @@ fn beats_json(file: &Path, s: &State) -> Json {
         "cancelled": s.cancelled,
         "seconds": s.seconds,
         "envelopes": envelopes_json(s),
+        "sections": sections_json(s),
+    })
+}
+
+/// How the sections of one analysis stand.
+fn sections_json(s: &State) -> Json {
+    let x = s.sections.as_ref().map(|x| &x.sections);
+    json!({
+        "ready": x.is_some(),
+        "running": s.sections_running,
+        "tracks": x.map_or(0, |x| x.tracks()),
+        "sections": x.map_or(0, |x| x.len()),
+        "kinds": x.map_or(0, |x| x.kinds()),
+        "error": s.sections_error,
     })
 }
 
@@ -429,6 +447,27 @@ fn beats_grid(e: &Engine, p: &Json) -> CmdResult<Json> {
     let (from, to) = (a.from.unwrap_or(f64::NEG_INFINITY), a.to.unwrap_or(f64::INFINITY));
     let within = |v: &[f64]| -> Vec<f64> { v.iter().copied().filter(|t| *t >= from && *t <= to).collect() };
     let grid = s.grid.as_ref();
+    let sections: Option<Vec<Json>> = s.sections.as_ref().map(|x| {
+        x.sections
+            .list()
+            .iter()
+            .filter(|c| c.end >= from && c.start <= to)
+            .map(|c| {
+                json!({
+                    "start": c.start,
+                    "end": c.end,
+                    "bars": c.bars,
+                    "label": c.label,
+                    "letter": letter(c.letter),
+                    "track": c.track,
+                    "track_start": c.track_start,
+                    "strength": c.strength,
+                    "seed": c.seed,
+                    "zone": [c.zone.0, c.zone.1],
+                })
+            })
+            .collect()
+    });
     Ok(json!({
         "file": file.display().to_string(),
         "beats": grid.map(|g| within(g.grid.beats())).unwrap_or_default(),
@@ -438,6 +477,7 @@ fn beats_grid(e: &Engine, p: &Json) -> CmdResult<Json> {
         "final_until": grid.map(|g| g.final_until).filter(|t| t.is_finite()),
         "complete": grid.is_some_and(|g| g.complete()),
         "running": s.running,
+        "sections": sections,
     }))
 }
 

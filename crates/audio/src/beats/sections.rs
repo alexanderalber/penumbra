@@ -165,10 +165,12 @@ pub struct Sections {
 impl Sections {
     /// The sections of a piece with this grid and these envelopes, both complete. The file ends
     /// where the envelopes do. `Err` when there are no bars, more than [`MAX_BARS`], or no
-    /// spectrum.
+    /// spectrum. A bar that starts at the file's end or after it has no sound and is left out:
+    /// the network often finds a beat on the very end of a file.
     pub fn of(grid: &BeatGrid, env: &Envelopes) -> Result<Sections, String> {
         let end = env.len() as f64 * env.hop_seconds();
-        Sections::find(&grid.downbeats(), end, env)
+        let bars: Vec<f64> = grid.downbeats().into_iter().filter(|t| *t < end).collect();
+        Sections::find(&bars, end, env)
     }
 
     /// The sections of a piece whose bars start at `bars` (seconds; non-numbers dropped, sorted)

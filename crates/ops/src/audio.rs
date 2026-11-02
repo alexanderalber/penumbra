@@ -25,7 +25,8 @@
 //!   is the viewer's meters as a texture ([`crate::tex::meters_picture`]), drawn only while
 //!   something reads it.
 //! - **`chan.beat_grid`** ([`beat_grid`]) is the beat and bar of a sound file at an `audio.file`'s
-//!   playhead, from beats the Beat This! network finds in the whole file ahead of time.
+//!   playhead, from beats the Beat This! network finds in the whole file ahead of time, and
+//!   where the playhead stands among the file's tracks and sections.
 //! - **`chan.audio_envelope`** ([`envelope`]) is the loudness of every channel now, with an
 //!   attack and a release; **`chan.audio_spectrum`** ([`spectrum`]) the spectrum in bands, as
 //!   one channel and as a texture (a row now, or a scrolling spectrogram).

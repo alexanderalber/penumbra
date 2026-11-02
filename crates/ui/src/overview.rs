@@ -96,6 +96,7 @@ impl OverviewView {
             status.as_ref().map_or(0.0, |s| s.duration),
             status.as_ref().map(|s| s.in_file),
             node.span,
+            state.as_ref().and_then(|s| s.sections.as_deref()),
             line.as_deref(),
         );
         let (layout, shapes) =

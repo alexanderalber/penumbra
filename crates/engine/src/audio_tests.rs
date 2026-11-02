@@ -448,11 +448,22 @@ fn beats_of_a_sound_file_through_the_commands() {
     let beats: Vec<f64> = grid["beats"].as_array().unwrap().iter().filter_map(Json::as_f64).collect();
     assert_eq!(beats.len(), 3, "{grid}");
     assert!(beats.iter().zip([1.0, 1.5, 2.0]).all(|(b, w)| (b - w).abs() < 0.03), "{grid}");
+    // The sections are found before beats.analyze answers: the clicks are one section.
+    let x = &r["sections"];
+    assert_eq!((x["ready"].as_bool(), x["running"].as_bool()), (Some(true), Some(false)), "{r}");
+    assert!(x["sections"].as_u64().unwrap_or(0) >= 1 && x["tracks"].as_u64() == Some(1), "{r}");
+    let list = grid["sections"].as_array().unwrap();
+    assert!(!list.is_empty() && list[0]["letter"] == "A", "{grid}");
+    assert!(list[0]["start"].as_f64().unwrap() <= 2.1 && list[0]["end"].as_f64().unwrap() >= 0.9, "{grid}");
+    let outside = f.call("beats.grid", json!({"path": "/s", "from": 100.0}));
+    assert_eq!(outside["sections"].as_array().map(Vec::len), Some(0), "{outside}");
 
     f.call("node.watch", json!({"path": "/g"}));
     eventually("the grid's channels", || {
         let read = f.call("chan.read", json!({"path": "/g"}));
-        channel(&read, "ready") == 1.0 && (channel(&read, "bpm") - 120.0).abs() < 2.0
+        channel(&read, "ready") == 1.0
+            && (channel(&read, "bpm") - 120.0).abs() < 2.0
+            && channel(&read, "sections_ready") == 1.0
     });
     let r = f.call("beats.cancel", json!({"file": path.to_string_lossy()}));
     assert_eq!(r["cancelled"], false, "{r}");

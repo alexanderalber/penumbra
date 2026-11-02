@@ -47,6 +47,9 @@ breaks.
 - The thin line under the left title is `progress`, shown while `analyzing` is 1.
 - The yellow bar at each half's right edge is `low`, the bass. Both nodes give it, and they
   agree. `/live` reports it about 20 ms after the sound; `/grid` has it on time.
+- The magenta line at the bottom of the left half is `build`. It grows over the last 8 bars
+  before each new section of the music and starts again from 0 there. The example's sections:
+  a 4-bar intro, the main part, the breakdown from bar 17, the main part again.
 
 **Table.** `/beats` shows the grid's second output, `grid`: one row per beat with `time`
 (seconds into the file), `beat`, `bar`, `beat_in_bar` and `downbeat`. An `out.table` writes it

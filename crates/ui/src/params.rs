@@ -2693,8 +2693,10 @@ fn beat_grid_row(ui: &mut Ui, input: &Inputs<'_>, node: &NodeDef, auto: &mut aut
             };
             let (what, progress) = if s.running {
                 ("finding beats", s.progress)
-            } else {
+            } else if s.envelopes_running {
                 ("measuring levels", s.envelope_progress)
+            } else {
+                ("finding sections", 1.0)
             };
             // `as`: a fraction for the bar.
             let bar = egui::ProgressBar::new(progress as f32)
@@ -2717,9 +2719,14 @@ fn beat_grid_row(ui: &mut Ui, input: &Inputs<'_>, node: &NodeDef, auto: &mut aut
             (None, Some(g)) if complete => {
                 let n = g.grid.beats().len();
                 let found = format!("{n} beats, {} bars, found in {:.1} s", g.bars.len(), s.seconds);
-                match &s.envelope_error {
-                    Some(e) => (format!("{found}; no levels: {e}"), theme::WARNING),
-                    None => (found, weak),
+                match (&s.envelope_error, &s.sections_error, &s.sections) {
+                    (Some(e), _, _) => (format!("{found}; no levels: {e}"), theme::WARNING),
+                    (None, Some(e), _) => (format!("{found}; no sections: {e}"), theme::WARNING),
+                    (None, None, Some(x)) => {
+                        let x = &x.sections;
+                        (format!("{found}; {} sections in {} tracks", x.len(), x.tracks()), weak)
+                    }
+                    (None, None, None) => (found, weak),
                 }
             }
             (None, Some(g)) => (format!("cancelled after {} beats", g.beats.beats.len()), theme::WARNING),

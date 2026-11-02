@@ -211,6 +211,14 @@ fn hostile_input_gives_an_error_or_one_section() {
     // Rows too short.
     let s = Sections::from_features(vec![0.0, 1.0, 2.0], 3.0, &[vec![1.0], vec![], vec![f64::INFINITY]]);
     assert!(!s.is_empty());
+    // A bar on the file's very end: left out, so the last section ends with the sound.
+    let end = env.len() as f64 * env.hop_seconds();
+    let beats: Vec<f64> = (0..).map(|i| f64::from(i) * 0.5).take_while(|t| *t <= end).collect();
+    let downbeats: Vec<f64> = beats.iter().copied().step_by(4).collect();
+    assert_eq!(downbeats.last(), Some(&end), "the piece ends on a bar");
+    let grid = BeatGrid::from_beats(&super::super::Beats { beats, downbeats, downbeat_logits: Vec::new() });
+    let s = Sections::of(&grid, &env).unwrap();
+    assert!(s.bars().iter().all(|b| *b < end) && s.end() == end, "{:?} {}", s.bars(), s.end());
 }
 
 /// Ward by brute force: merge the pair whose merge adds the least variance, until `k` are left.

@@ -54,12 +54,14 @@ const SECTION_COLORS: [Color; 10] = [
 ];
 
 /// One section of the file: from `start` to `end` seconds, with a label that repeats where the
-/// music repeats (A, B, A). Sections of the same label share a colour.
+/// music repeats. Sections of the same label share a colour; `text` is written on the section
+/// where it fits.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Section {
     pub start: f64,
     pub end: f64,
     pub label: String,
+    pub text: String,
 }
 
 /// What the overview shows. Every field may be empty, missing or nonsense; the picture then
@@ -665,14 +667,14 @@ fn lane(
                 color: BACKGROUND,
             });
         }
-        if zoomed && !s.label.is_empty() {
-            let [tw, _] = measure.text_size(&s.label, TEXT);
+        if zoomed && !s.text.is_empty() {
+            let [tw, _] = measure.text_size(&s.text, TEXT);
             if x1 - x0 > tw + 8.0 {
                 out.push(Shape::Text {
                     at: [x0 + 4.0, (strip.min[1] + strip.max[1]) * 0.5],
                     anchor: Anchor::LEFT_CENTER,
                     size: TEXT,
-                    text: s.label.clone(),
+                    text: s.text.clone(),
                     color: [16, 16, 16, 255],
                 });
             }
@@ -832,9 +834,9 @@ mod tests {
         // NaN everywhere.
         let nan = [f64::NAN, 1.0, f64::NAN, 2.0];
         let sections = [
-            Section { start: f64::NAN, end: 3.0, label: "A".into() },
-            Section { start: 5.0, end: 4.0, label: "B".into() },
-            Section { start: 1.0, end: f64::INFINITY, label: String::new() },
+            Section { start: f64::NAN, end: 3.0, label: "A".into(), text: "A".into() },
+            Section { start: 5.0, end: 4.0, label: "B".into(), text: "B".into() },
+            Section { start: 1.0, end: f64::INFINITY, label: String::new(), text: String::new() },
         ];
         let o = Overview {
             duration: f64::NAN,
@@ -926,7 +928,7 @@ mod tests {
 
     #[test]
     fn sections_are_coloured_by_label() {
-        let s = |a: f64, b: f64, l: &str| Section { start: a, end: b, label: l.into() };
+        let s = |a: f64, b: f64, l: &str| Section { start: a, end: b, label: l.into(), text: l.into() };
         let sections = [s(0.0, 10.0, "A"), s(10.0, 20.0, "B"), s(20.0, 30.0, "A")];
         let colors = section_colors(&sections);
         assert_eq!(colors.len(), 2);

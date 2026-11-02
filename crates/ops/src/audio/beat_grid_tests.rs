@@ -154,9 +154,18 @@ fn a_looped_file_ticks_on_across_its_end() {
     analysed(&mut f);
     // 11 to 13 s: a tick every half second, at 12 s too, and the beats count from 0 again.
     let (mut beats, mut index, mut onsets) = (Vec::new(), Vec::new(), Vec::new());
+    let mut countdown = Vec::new();
     for i in 0..780u64 {
         f.clock.advance(1);
         let c = cook(&mut f).0.unwrap();
+        if (700..740).contains(&i) {
+            assert_eq!(value(&c, "sections_ready"), 1.0);
+            countdown.push((
+                value(&c, "seconds_to_boundary"),
+                value(&c, "build"),
+                value(&c, "section_index"),
+            ));
+        }
         if i >= 660 && value(&c, "tick") == 1.0 {
             beats.push(i);
             index.push(value(&c, "beat_index"));
@@ -175,6 +184,12 @@ fn a_looped_file_ticks_on_across_its_end() {
     // Frame i shows (i + 1) / 60 s: 12 s is frame 719.
     assert!(beats.iter().any(|b| b.abs_diff(719) <= 1), "{beats:?}");
     assert_eq!(index.iter().filter(|i| **i == 0.0).count(), 1, "{index:?}");
+    // The sections go by the time within the pass: the end of the file is a boundary, counted
+    // down to and built up to, then the first section begins again.
+    let (before, after) = countdown.split_at(19);
+    let (end, build, _) = before.last().unwrap();
+    assert!(*end < 0.05 && *build > 0.95, "{countdown:?}");
+    assert!(after.iter().skip(2).all(|(s, b, k)| *s > 1.0 && *b < 0.5 && *k == 0.0), "{countdown:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -371,4 +386,200 @@ fn the_grid_follows_a_scrubbed_position() {
     assert_eq!(ticks.len(), 1, "{ticks:?}");
     assert!(ticks[0].abs_diff(30) <= 2, "{ticks:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The section channels of `c`, by name.
+fn sections_of(c: &Chans) -> Vec<(&'static str, f64)> {
+    let first = super::beat_grid::CHANNELS.iter().position(|n| *n == "section_index").unwrap();
+    super::beat_grid::CHANNELS[first..].iter().map(|n| (*n, value(c, n))).collect()
+}
+
+/// Cooks `/g` and `/o` with the `sections` output of `/g` read; the channels of both, once
+/// both have them.
+fn try_cook_two(f: &mut F) -> Option<(Chans, Chans)> {
+    let ids: Vec<_> = ["/g", "/o"].iter().map(|p| f.net.resolve(&p.parse().unwrap()).unwrap()).collect();
+    let table = Port { node: ids[0], output: 3 };
+    f.cooker.cook_showing(&f.net, f.clock.now(), &ids, &[], &[table]);
+    let get =
+        |i: usize| f.cooker.output(Port { node: ids[i], output: 0 }).and_then(|d| d.get::<Chans>()).cloned();
+    Some((get(0)?, get(1)?))
+}
+
+fn cook_two(f: &mut F) -> (Chans, Chans) {
+    try_cook_two(f).unwrap()
+}
+
+/// The example track, scrubbed: the section channels read 0 until the sections are found, the
+/// `sections` table lists them end to end, the countdowns reach the boundary, `offset` moves the
+/// lookup ahead.
+#[test]
+fn the_sections_of_the_example_track() {
+    let dir = temp_dir("sections");
+    let music = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
+    let mut ops = grid_ops(&music.to_string_lossy());
+    ops.extend([
+        create("/o", BEAT_GRID),
+        connect("/p", "/o", 0),
+        set("/o.offset", 1000.0),
+        create("/k", "chan.constant"),
+        set("/k.name0", "pos"),
+        set("/k.value0", 10.0),
+        Op::Bind {
+            param: penumbra_core::ParamPath::parse("/p.position").unwrap(),
+            component: None,
+            from: "/k".parse().unwrap(),
+            channel: Some(penumbra_core::Name::new("pos").unwrap()),
+            cell: None,
+            format: None,
+        },
+    ]);
+    let mut f = fixture(&ops, &dir.join("cache"));
+    let t = Instant::now();
+    let mut waited = 0;
+    loop {
+        assert!(t.elapsed() < Duration::from_secs(120), "the sections never came");
+        std::thread::sleep(Duration::from_millis(20));
+        f.clock.advance(1);
+        let Some((g, _)) = try_cook_two(&mut f) else { continue };
+        if value(&g, "sections_ready") == 0.0 {
+            waited += 1;
+            assert!(sections_of(&g).iter().all(|(_, v)| *v == 0.0), "{:?}", sections_of(&g));
+        } else if value(&g, "analyzing") == 0.0 {
+            break;
+        }
+    }
+    assert!(waited > 0, "the sections were there before the analysis");
+
+    let id = f.net.resolve(&"/g".parse().unwrap()).unwrap();
+    let table =
+        f.cooker.output(Port { node: id, output: 3 }).and_then(|d| d.get::<Table>()).cloned().unwrap();
+    assert_eq!(
+        table.rows()[0],
+        ["start", "end", "bars", "label", "letter", "track", "strength", "zone_start", "zone_end"]
+    );
+    let rows: Vec<Vec<f64>> =
+        table.rows().iter().skip(1).map(|r| r.iter().map(|x| x.parse().unwrap()).collect()).collect();
+    assert!(!rows.is_empty());
+    for w in rows.windows(2) {
+        assert_eq!(w[0][1], w[1][0], "end to end: {rows:?}");
+    }
+    let last = rows.last().unwrap();
+    assert!((last[1] - 62.0).abs() < 2.0 && rows[0][0] < 3.0, "{rows:?}");
+    assert!(
+        rows.iter().all(|r| (0.0..=1.0).contains(&r[6]) && r[7] <= r[0] + 1e-3 && r[8] >= r[0] - 1e-3),
+        "{rows:?}"
+    );
+
+    let at = |f: &mut F, pos: f64| {
+        f.edit(&[set("/k.value0", pos)]);
+        f.clock.advance(1);
+        cook_two(f)
+    };
+    // The boundary into the second section, or the end of the file when there is one section.
+    let b = rows.get(1).map_or(last[1], |r| r[0]);
+    let (g, _) = at(&mut f, b - 0.02);
+    assert_eq!(value(&g, "sections_ready"), 1.0);
+    assert_eq!(value(&g, "section_index"), 0.0);
+    assert!((value(&g, "seconds_to_boundary") - 0.02).abs() < 2e-3, "{:?}", sections_of(&g));
+    assert!(value(&g, "bars_to_boundary") < 0.02 && value(&g, "build") > 0.98, "{:?}", sections_of(&g));
+    assert!((0.0..1.0).contains(&value(&g, "phrase")) && value(&g, "phrase_bar") < 8.0);
+    if let Some(next) = rows.get(1) {
+        let (g, _) = at(&mut f, b + 0.02);
+        assert_eq!(value(&g, "section_index"), 1.0);
+        assert_eq!(value(&g, "section_label"), next[3]);
+        assert!((value(&g, "seconds_to_boundary") - (next[1] - b - 0.02)).abs() < 2e-3);
+        assert!(value(&g, "build") < 1.0);
+    }
+    // One second ahead: /o at a position reads what /g reads a second later.
+    let (_, o) = at(&mut f, b - 1.5);
+    let (g, _) = at(&mut f, b - 0.5);
+    for (name, v) in sections_of(&g) {
+        assert!((value(&o, name) - v).abs() < 2e-3, "{name}: {} vs {v}", value(&o, name));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Synthetic grid and envelopes: two kinds of sound, 16 bars each. The sections come only from
+/// a complete grid with complete envelopes; the lookup counts down to the boundary between them.
+#[test]
+fn sections_come_from_complete_grids_and_envelopes() {
+    use std::sync::Arc;
+
+    use penumbra_audio::beats::{Beats, ENVELOPE_RATE, EnvelopeBuilder, envelopes_of};
+
+    use super::beat_grid::{Grid, State, find_sections, section_values};
+    // 120 beats per minute, a bar every 2 s: a low hum with a kick, then a high tone with hiss.
+    let rate = ENVELOPE_RATE;
+    let n = (64.0 * rate) as usize;
+    let mut seed = 3u32;
+    let x: Vec<f32> = (0..n)
+        .map(|i| {
+            use std::f64::consts::TAU;
+            let t = i as f64 / rate;
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let noise = f64::from(seed >> 8) / f64::from(1u32 << 23) - 1.0;
+            let beat = t % 0.5;
+            let v = if t < 32.0 {
+                0.6 * (-beat / 0.07).exp() * (TAU * 55.0 * beat).sin() + 0.2 * (TAU * 82.0 * t).sin()
+            } else {
+                0.15 * (TAU * 3000.0 * t).sin() + 0.2 * noise * (-beat / 0.05).exp()
+            };
+            v as f32
+        })
+        .collect();
+    let env = Arc::new(envelopes_of(&x, 1, rate).unwrap());
+    let beats = Beats {
+        beats: (0..128).map(|i| f64::from(i) * 0.5).collect(),
+        downbeats: (0..32).map(|i| f64::from(i) * 2.0).collect(),
+        downbeat_logits: Vec::new(),
+    };
+    let grid = Arc::new(Grid::new(beats.clone(), f64::INFINITY));
+    let s = find_sections(&grid, &env).unwrap();
+    let list = s.sections.list();
+    let starts: Vec<f64> = list.iter().map(|c| c.start).collect();
+    let k = starts.iter().position(|t| (t - 32.0).abs() <= 2.0).unwrap_or_else(|| panic!("{starts:?}"));
+    let b = starts[k];
+    assert_ne!(list[k].label, list[k - 1].label);
+    assert_eq!(s.strip.len(), s.sections.len());
+    assert_eq!(s.strip[0].text, "A");
+    // `as`: small indices.
+    let v = section_values(Some(&s), b - 0.05);
+    assert_eq!(v[0], (k - 1) as f64);
+    assert!((v[7] - 0.05).abs() < 1e-3 && v[8] > 0.97, "{v:?}");
+    let v = section_values(Some(&s), b + 0.05);
+    assert_eq!(v[0], k as f64);
+    assert_eq!(v[13], 1.0);
+    // Before the sections, and at a time that is no number.
+    assert!(section_values(None, b).iter().all(|v| *v == 0.0));
+    let v = section_values(Some(&s), f64::NAN);
+    assert!(v[..13].iter().all(|v| *v == 0.0) && v[13] == 1.0, "{v:?}");
+
+    // Claimed only once, and only with both complete.
+    let complete = State { grid: Some(grid.clone()), envelopes: Some(env.clone()), ..State::default() };
+    let mut st = complete.clone();
+    assert!(st.claim_sections().is_some() && st.sections_running && st.busy());
+    assert!(st.claim_sections().is_none());
+    let partial = Arc::new(Grid::new(beats, 10.0));
+    let snapshot = {
+        let mut b = EnvelopeBuilder::new(rate, 1).unwrap();
+        b.push_interleaved(&x[..rate as usize * 4]);
+        Arc::new(b.snapshot())
+    };
+    let hostile = [
+        State { grid: None, ..complete.clone() },
+        State { envelopes: None, envelope_error: Some("broken".into()), ..complete.clone() },
+        State { grid: Some(partial), ..complete.clone() },
+        State { envelopes: Some(snapshot), ..complete.clone() },
+        State { running: true, ..complete.clone() },
+        State { error: Some("no sound".into()), grid: None, ..complete.clone() },
+        State { sections_error: Some("before".into()), ..complete.clone() },
+    ];
+    for mut h in hostile {
+        assert!(h.claim_sections().is_none(), "{h:?}");
+    }
+    // No beats at all, and envelopes of silence too short for a bar: errors, no crash.
+    let empty = Grid::new(Beats::default(), f64::INFINITY);
+    assert!(find_sections(&empty, &env).is_err());
+    let none = envelopes_of(&[], 1, rate).unwrap();
+    assert!(find_sections(&grid, &none).is_err());
 }

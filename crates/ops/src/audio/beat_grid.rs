@@ -25,6 +25,13 @@
 //! own lag taken out: the reading at the playhead is what the live node reports some 20 to 30
 //! ms later. A moment not analysed yet reads 0.
 //!
+//! **Sections:** once the grid and the envelopes are complete, the sections of the file are
+//! found from both ([`Sections::of`], about a tenth of a second for a two-hour mix), on the
+//! thread that finished last. The section channels say where the playhead stands among them;
+//! they read 0, and `sections_ready` 0, before. A looped file looks them up by the time within
+//! its pass, so its end is a boundary like any other: the countdowns reach 0 and `build` 1
+//! there, and the first section begins again.
+//!
 //! **Time:** the grid is known ahead, so `offset` moves the lookup itself: a tick comes exactly
 //! `offset` early, with no prediction. A looped file's grid runs from its last beat into the
 //! first beat of the next pass ([`BeatGrid::at_looped`]). Per cook the node costs one binary
@@ -41,7 +48,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Instant, SystemTime};
 
-use penumbra_audio::beats::{self, BeatError, BeatGrid, BeatModel, Beats, Envelopes, Partial};
+use penumbra_audio::beats::{self, BeatError, BeatGrid, BeatModel, Beats, Envelopes, Partial, Sections};
 use penumbra_core::{Channel, Chans, Error, Name, NodeId, ParamSpec, Table, lock};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDef, NodeDesc,
@@ -59,6 +66,8 @@ pub const BEAT_GRID: &str = "chan.beat_grid";
 const GRID: usize = 1;
 /// The index of the `overview` output.
 const OVERVIEW: usize = 2;
+/// The index of the `sections` output.
+const SECTIONS: usize = 3;
 /// The params' section of the overview.
 const OVERVIEW_GROUP: &str = "overview";
 /// A lookup that moved further than this since the last cook is a jump, not a beat passing.
@@ -90,10 +99,10 @@ fn pool() -> Option<&'static rayon::ThreadPool> {
     .as_ref()
 }
 
-/// The channels `chan.beat_grid` outputs, in order. The first eight and the last six mean what
-/// they mean on `chan.beat_analysis`, so a binding keeps working when one node replaces the
-/// other. New channels go at the end.
-pub const CHANNELS: [&str; 20] = [
+/// The channels `chan.beat_grid` outputs, in order. The first eight and `level` to `kick` mean
+/// what they mean on `chan.beat_analysis`, so a binding keeps working when one node replaces
+/// the other. New channels go at the end.
+pub const CHANNELS: [&str; 34] = [
     "beat",
     "tick",
     "bar",
@@ -114,9 +123,25 @@ pub const CHANNELS: [&str; 20] = [
     "high",
     "onset",
     "kick",
+    "section_index",
+    "section_label",
+    "section_letter",
+    "track_index",
+    "phrase_bar",
+    "phrase",
+    "bars_to_boundary",
+    "seconds_to_boundary",
+    "build",
+    "section_seed",
+    "transition",
+    "transition_from",
+    "transition_to",
+    "sections_ready",
 ];
 /// Where the envelopes begin in [`CHANNELS`].
 const LEVEL: usize = 14;
+/// Where the sections begin in [`CHANNELS`].
+const SECTION: usize = 20;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let [width, height, keep_size] = meters_picture::size_params(OVERVIEW_GROUP, "overview");
@@ -150,12 +175,21 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .lazy_output("grid")
         .output("overview", DataKind::Tex)
         .lazy_output("overview")
+        .output("sections", DataKind::Table)
+        .lazy_output("sections")
         .describe_output(
             "out",
             "Channels to bind: beat and bar rise from 0 to 1, tick and downbeat are 1 in the frame a beat or bar begins, bar_beat counts the beats in the bar from 0, \
              beat_index and bar_index count from the first beat and the first downbeat; also bpm, beats_per_bar, locked, coasting. \
              level, low, mid, high, onset and kick are what chan.beat_analysis gives for this sound, without its lag of 20 to 30 ms. \
-             ready is 1 where the grid is final, progress goes from 0 to 1 while the file is analysed, analyzing is 1 meanwhile",
+             ready is 1 where the grid is final, progress goes from 0 to 1 while the file is analysed, analyzing is 1 meanwhile. \
+             The section channels say where the playhead stands among the file's tracks and sections. section_index and track_index count from 0. \
+             section_label numbers the kind of sound: the same number anywhere in the file where it sounds alike. \
+             section_letter numbers the repeats within a track (0 is A). phrase_bar counts the bars of an 8-bar phrase from 0, phrase rises from 0 to 1 over it. \
+             bars_to_boundary and seconds_to_boundary count down to the next section, build rises from 0 to 1 over the last 8 bars before it. \
+             section_seed is a number fixed per section_label, for random looks that come back with the music. \
+             transition rises from 0 to 1 through the blend from one section into the next, transition_from and transition_to are their labels. \
+             sections_ready is 1 once the sections are found, after the whole file is analysed. Until then the section channels read 0",
         )
         .describe_output(
             "grid",
@@ -164,7 +198,14 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .describe_output(
             "overview",
             "The whole file as a picture, as the viewer shows it: the level as a waveform coloured by bass (red), mid (green) and treble (blue), bars, sections and the playhead. \
+             The strip on top shows the sections, coloured by section_label, with their letter in the lower lane. \
              The lower lane shows span seconds around the playhead. Grey: levels not measured yet. Veiled: grid not final yet. Drawn only while something reads this output",
+        )
+        .describe_output(
+            "sections",
+            "One row per section, under a header row, once the whole file is analysed: start and end (seconds into the file), bars, \
+             label, letter (0 is A) and track as the channels count them, strength (0 to 1: how sharply the sound changes at the start), \
+             zone_start and zone_end (seconds: the blend from the section before; equal at a cut)",
         ),
         || Box::new(GridNode::default()) as Box<dyn Operator>,
     )
@@ -183,8 +224,12 @@ pub fn status_line(s: &State) -> Option<String> {
         Some("beat analysis cancelled".to_string())
     } else if s.envelopes_running {
         Some(format!("measuring levels {:.0} %", s.envelope_progress * 100.0))
+    } else if s.sections_running {
+        Some("finding sections".to_string())
+    } else if let Some(e) = &s.envelope_error {
+        Some(format!("no levels: {e}"))
     } else {
-        s.envelope_error.as_ref().map(|e| format!("no levels: {e}"))
+        s.sections_error.as_ref().map(|e| format!("no sections: {e}"))
     }
 }
 
@@ -195,6 +240,7 @@ pub fn overview_of<'a>(
     duration: f64,
     playhead: Option<f64>,
     span: f64,
+    sections: Option<&'a Structure>,
     status: Option<&'a str>,
 ) -> Overview<'a> {
     Overview {
@@ -204,7 +250,7 @@ pub fn overview_of<'a>(
         bars: grid.map_or(&[], |g| g.bars.as_slice()),
         final_until: grid.map(|g| g.final_until),
         envelopes,
-        sections: &[],
+        sections: sections.map_or(&[], |s| s.strip.as_slice()),
         span,
         status,
     }
@@ -224,7 +270,7 @@ pub struct Grid {
 }
 
 impl Grid {
-    fn new(beats: Beats, final_until: f64) -> Self {
+    pub fn new(beats: Beats, final_until: f64) -> Self {
         let grid = BeatGrid::from_beats(&beats);
         let bars = grid.downbeats();
         Grid { beats, grid, bars, final_until }
@@ -253,6 +299,69 @@ impl Grid {
     }
 }
 
+/// The sections of a file, found once its grid and envelopes are complete.
+#[derive(Debug)]
+pub struct Structure {
+    pub sections: Sections,
+    /// The sections as the overview's strip draws them: coloured by label, with their letter.
+    pub strip: Vec<overview::Section>,
+}
+
+impl Structure {
+    pub fn new(sections: Sections) -> Self {
+        let strip = sections
+            .list()
+            .iter()
+            .map(|s| overview::Section {
+                start: s.start,
+                end: s.end,
+                label: s.label.to_string(),
+                text: letter(s.letter),
+            })
+            .collect();
+        Structure { sections, strip }
+    }
+
+    /// The sections as a table: a header row, then one row per section.
+    pub fn table(&self) -> Result<Table, Error> {
+        let mut rows = Vec::with_capacity(self.sections.len() + 1);
+        rows.push(
+            ["start", "end", "bars", "label", "letter", "track", "strength", "zone_start", "zone_end"]
+                .map(str::to_string)
+                .to_vec(),
+        );
+        for s in self.sections.list() {
+            rows.push(vec![
+                format!("{:.3}", s.start),
+                format!("{:.3}", s.end),
+                s.bars.to_string(),
+                s.label.to_string(),
+                s.letter.to_string(),
+                s.track.to_string(),
+                format!("{:.3}", s.strength),
+                format!("{:.3}", s.zone.0),
+                format!("{:.3}", s.zone.1),
+            ]);
+        }
+        Table::new(rows)
+    }
+}
+
+/// A section's letter within its track as text: A to Z, then the number.
+pub fn letter(n: usize) -> String {
+    match u8::try_from(n).ok().filter(|n| *n < 26) {
+        Some(n) => char::from(b'A' + n).to_string(),
+        None => n.to_string(),
+    }
+}
+
+/// The sections of a complete grid with complete envelopes.
+pub(crate) fn find_sections(grid: &Grid, envelopes: &Envelopes) -> Result<Structure, String> {
+    catch_unwind(AssertUnwindSafe(|| Sections::of(&grid.grid, envelopes)))
+        .unwrap_or_else(|_| Err("finding the sections failed".into()))
+        .map(Structure::new)
+}
+
 /// How one file's analysis stands.
 #[derive(Clone, Debug, Default)]
 pub struct State {
@@ -273,12 +382,29 @@ pub struct State {
     /// 0 to 1.
     pub envelope_progress: f64,
     pub envelope_error: Option<String>,
+    /// The sections, once grid and envelopes are complete and the sections are found.
+    pub sections: Option<Arc<Structure>>,
+    /// The sections are being found.
+    pub sections_running: bool,
+    pub sections_error: Option<String>,
 }
 
 impl State {
-    /// Either analysis is running.
+    /// Either analysis is running, or the sections are being found.
     pub fn busy(&self) -> bool {
-        self.running || self.envelopes_running
+        self.running || self.envelopes_running || self.sections_running
+    }
+
+    /// The grid and the envelopes to find the sections from, when both are complete and the
+    /// sections are neither found nor being found; claims the finding then.
+    pub(crate) fn claim_sections(&mut self) -> Option<(Arc<Grid>, Arc<Envelopes>)> {
+        if self.busy() || self.sections.is_some() || self.sections_error.is_some() {
+            return None;
+        }
+        let grid = self.grid.clone().filter(|g| g.complete())?;
+        let envelopes = self.envelopes.clone().filter(|e| e.complete())?;
+        self.sections_running = true;
+        Some((grid, envelopes))
     }
 
     /// The share of both analyses done: the lesser of the two, leaving out one that failed.
@@ -305,6 +431,29 @@ impl Shared {
         for w in lock(&self.wakers).values() {
             w.wake();
         }
+    }
+
+    /// Applies the end of an analysis with `f` and wakes the nodes. When that was the last of
+    /// the two to end, finds the sections on this thread.
+    fn finish(&self, cancel: &AtomicBool, f: impl FnOnce(&mut State)) {
+        let mut claimed = None;
+        self.update(|s| {
+            f(s);
+            if !cancel.load(Ordering::Relaxed) {
+                claimed = s.claim_sections();
+            }
+        });
+        self.wake();
+        let Some((grid, envelopes)) = claimed else { return };
+        let found = find_sections(&grid, &envelopes);
+        self.update(|s| {
+            s.sections_running = false;
+            match found {
+                Ok(x) => s.sections = Some(Arc::new(x)),
+                Err(e) => s.sections_error = Some(e),
+            }
+        });
+        self.wake();
     }
 }
 
@@ -339,6 +488,11 @@ impl Analysis {
     /// The envelopes so far.
     fn envelopes(&self) -> Option<Arc<Envelopes>> {
         lock(&self.shared.state).envelopes.clone()
+    }
+
+    /// The sections, once found.
+    fn sections(&self) -> Option<Arc<Structure>> {
+        lock(&self.shared.state).sections.clone()
     }
 
     /// Stops it before its next chunk.
@@ -519,7 +673,7 @@ impl BeatFiles {
                 None => work(),
             }))
             .unwrap_or_else(|_| Err(BeatError::Network("the beat analysis failed".into())));
-            shared.update(|s| {
+            shared.finish(&cancel, |s| {
                 s.running = false;
                 match result {
                     Ok(b) => {
@@ -530,7 +684,6 @@ impl BeatFiles {
                     Err(e) => s.error = Some(e.to_string()),
                 }
             });
-            shared.wake();
             inner.keep(&path, &shared);
         });
         if let Err(e) = spawned {
@@ -572,7 +725,7 @@ impl BeatFiles {
                 )
             }))
             .unwrap_or_else(|_| Err(BeatError::Input("the envelope analysis failed".into())));
-            shared.update(|s| {
+            shared.finish(&cancel, |s| {
                 s.envelopes_running = false;
                 match result {
                     Ok(e) => {
@@ -583,7 +736,6 @@ impl BeatFiles {
                     Err(e) => s.envelope_error = Some(e.to_string()),
                 }
             });
-            shared.wake();
             inner.keep(&path, &shared);
         });
         if let Err(e) = spawned {
@@ -662,6 +814,8 @@ struct GridNode {
     names: Vec<Name>,
     /// The `grid` output and the grid it was made from.
     table: Option<(Arc<Grid>, Data)>,
+    /// The `sections` output and the sections it was made from.
+    section_table: Option<(Arc<Structure>, Data)>,
     /// The `overview` output's drawing state, made when it is first read.
     picture: Option<Box<OverviewPicture>>,
 }
@@ -697,6 +851,7 @@ impl GridNode {
         self.last = None;
         self.last_read = None;
         self.table = None;
+        self.section_table = None;
         Ok(a)
     }
 
@@ -749,6 +904,61 @@ impl GridNode {
         self.table = Some((grid.clone(), data.clone()));
         data
     }
+
+    fn section_table(&mut self, cx: &CookContext<'_>, sections: Option<&Arc<Structure>>) -> Data {
+        if !cx.output_wanted(SECTIONS) {
+            self.section_table = None;
+            return Data::skipped(DataKind::Table);
+        }
+        let Some(sections) = sections else {
+            return Data::new(DataKind::Table, Table::default());
+        };
+        if let Some((s, d)) = &self.section_table
+            && Arc::ptr_eq(s, sections)
+        {
+            return d.clone();
+        }
+        let data = match sections.table() {
+            Ok(t) => Data::new(DataKind::Table, t),
+            Err(e) => {
+                cx.warn(format!("the sections output is empty: {e}"));
+                Data::new(DataKind::Table, Table::default())
+            }
+        };
+        self.section_table = Some((sections.clone(), data.clone()));
+        data
+    }
+}
+
+/// The section channels, `section_index` to `sections_ready`, at `t` seconds into the file (into
+/// the pass, for a looped file); all 0 before the sections are found.
+pub(crate) fn section_values(sections: Option<&Structure>, t: f64) -> [f64; CHANNELS.len() - SECTION] {
+    let mut v = [0.0; CHANNELS.len() - SECTION];
+    let Some(s) = sections else { return v };
+    if let Some(p) = s.sections.at(t) {
+        // `as`: counts far below 2^53.
+        let n = |x: usize| x as f64;
+        v = [
+            n(p.section_index),
+            n(p.section_label),
+            n(p.section_letter),
+            n(p.track_index),
+            n(p.phrase_bar),
+            p.phrase_phase,
+            p.bars_to_boundary,
+            p.seconds_to_boundary,
+            p.build,
+            f64::from(p.section_seed),
+            p.transition,
+            n(p.transition_from),
+            n(p.transition_to),
+            1.0,
+        ];
+    }
+    if let Some(ready) = v.last_mut() {
+        *ready = 1.0;
+    }
+    v
 }
 
 impl Operator for GridNode {
@@ -816,7 +1026,8 @@ impl Operator for GridNode {
         self.last_read = Some(te);
 
         let flag = |b: bool| if b { 1.0 } else { 0.0 };
-        let values = match pos {
+        let mut values = [0.0; CHANNELS.len()];
+        let grid_values = match pos {
             Some(p) => [
                 p.beat_phase,
                 flag(tick),
@@ -832,15 +1043,9 @@ impl Operator for GridNode {
                 flag(ready),
                 progress,
                 flag(running),
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
             ],
             None => {
-                let mut v = [0.0; CHANNELS.len()];
+                let mut v = [0.0; LEVEL];
                 if let Some(x) = v.get_mut(12) {
                     *x = progress;
                 }
@@ -850,11 +1055,19 @@ impl Operator for GridNode {
                 v
             }
         };
-        let mut values = values;
+        for (v, g) in values.iter_mut().zip(grid_values) {
+            *v = g;
+        }
         let envelopes =
             [reading.level, reading.low, reading.mid, reading.high, flag(reading.onset), flag(reading.kick)];
         for (v, e) in values.iter_mut().skip(LEVEL).zip(envelopes) {
             *v = e;
+        }
+        // The sections by the time within the pass: a looped file's end is a boundary.
+        let structure = analysis.sections();
+        let ts = if env_loop { te.rem_euclid(status.duration) } else { te };
+        for (v, x) in values.iter_mut().skip(SECTION).zip(section_values(structure.as_deref(), ts)) {
+            *v = x;
         }
         if self.names.len() != CHANNELS.len() {
             self.names = CHANNELS.iter().filter_map(|n| Name::new(n).ok()).collect();
@@ -867,6 +1080,7 @@ impl Operator for GridNode {
             .collect();
         let out = Data::new(DataKind::Chan, Chans::new(cx.rate().as_f64(), channels)?);
         let table = self.table(cx, grid.as_ref());
+        let section_table = self.section_table(cx, structure.as_ref());
         let picture = if cx.output_wanted(OVERVIEW) {
             let line = status_line(&analysis.state());
             let envelopes = analysis.envelopes();
@@ -877,6 +1091,7 @@ impl Operator for GridNode {
                 status.duration,
                 Some(status.in_file),
                 span,
+                structure.as_deref(),
                 line.as_deref(),
             );
             self.overview(cx, &o)
@@ -885,7 +1100,7 @@ impl Operator for GridNode {
             self.picture = None;
             Data::skipped(DataKind::Tex)
         };
-        Ok(Cooked::Outputs(vec![out, table, picture]))
+        Ok(Cooked::Outputs(vec![out, table, picture, section_table]))
     }
 
     fn job_status(&self) -> Option<JobStatus> {
