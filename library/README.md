@@ -253,32 +253,37 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
 - **Floor elements** stand on the stage's grid and move with it. They take `bus` and the stage's
   `lane` output, so they keep the glider's lane free. Their output goes into the stage's `floor`;
   several go through a `geo.merge`.
+- **Mid elements** fly in front of the camera, on the lane. They take `bus` and `lane` too. Their
+  output goes into the stage's `mid`.
 - **Sky elements** draw a picture over black. Their output goes into the stage's `sky`, screened
-  over the nebula.
+  over the nebula. Several go through a `tex.composite` with `op: screen`.
 - **`presence`** (0 to 1) brings an element in and takes it out again. A floor element sinks into
-  the floor towards 0, a sky element dims. To swap two elements, ramp one's `presence` down while
-  the other's goes up, for example through the blend between two sections.
+  the floor towards 0, a mid element flies away, a sky element dims. To swap two elements, ramp
+  one's `presence` down while the other's goes up, for example through the blend between two
+  sections.
 - **`beats.arrange`** does those swaps for a whole sound file. It writes a table with a row per
   section (the `presence` of each element, `warmth`, `intensity`) and binds the elements to it.
   Edit the table to change a section's picture. [An arrangement from the
-  sections](../docs/audio.md#beats-of-a-sound-file) explains the rules.
+  sections](../docs/audio.md#beats-of-a-sound-file) explains the rules. Name the slots `floor`,
+  `mid` and `sky`: `mid` and `sky` stay on through a break, the floor empties.
 
 ### stage_synthwave
 
 ![stage_synthwave](stage_synthwave/preview.png)
 
-The world: a camera flying over a wireframe floor, under a wireframe ceiling, behind a glider,
-towards a nebula in a warm or cold palette. The world moves one grid cell per beat of
-`travelled`. The glider's lane zigzags to the other side every two bars, each turn starting on a
-downbeat. The bass brightens the nebula. Lines fade out with distance from the camera.
+The world: a camera flying over a wireframe floor, under a wireframe ceiling, towards a nebula
+in a warm or cold palette. The world moves one grid cell per beat of `travelled`. The lane
+zigzags to the other side every two bars, each turn starting on a downbeat. The bass brightens
+the nebula. Lines fade out with distance from the camera. The glider is the element
+`mid_glider`.
 
-- In: `bus`, `floor` (geometry standing on the grid), `sky` (a picture screened over the nebula).
+- In: `bus`, `floor` (geometry standing on the grid), `mid` (geometry in front of the camera,
+  such as the glider), `sky` (a picture screened over the nebula).
 - Out: `out` (the picture), `lane` (256 x 1: per texel i, -8 + 0.25 i metres ahead, red the
   lane's x in metres, green its sideways slope per metre, blue `step`).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift` (added to the bass, e.g. before a
   change), `energy_curve`, `dim` (the nebula's light); the lane's `bars_per_turn`, `swing`, `turn`,
-  `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade; the glider's
-  `at` (metres ahead) and `bank`.
+  `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade.
 
 ### floor_blocks
 
@@ -309,6 +314,35 @@ comes nearer. Another `seed` gives another range.
   of `height` are left out, so the floor shows between ridges), `foot`, `lane` (as on
   `floor_blocks`, 1.6), `spread` (the range's width, both sides), `near`, `far`, `color`, `extent`.
 
+### floor_pillars
+
+![floor_pillars](floor_pillars/preview.png)
+
+Tall wireframe pillars in lines on both sides of the lane, like an avenue. A pillar stands every
+`spacing` bars of travel, so the pillars pass the camera on downbeats. The lines follow the lane's
+zigzag at a fixed distance from its edge. On each beat the pillars stretch a little.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (towards 0 the pillars sink into the floor one after another), `spacing`
+  (bars between two pillars), `height` (metres; the camera is 2 m up, the ceiling 4 m), `width`,
+  `rows` (lines on each side, 1 to 3), `gap` (metres between lines), `pulse` (how far they stretch
+  on a beat), `lane` (as on `floor_blocks`, 1.6), `near`, `far`, `beats_per_bar`, `color`,
+  `extent`.
+
+### mid_glider
+
+![mid_glider](mid_glider/preview.png)
+
+The glider: a wireframe hover craft flying ahead of the camera along the lane. It turns with the
+lane, leans into each turn and bobs slowly. Towards `presence` 0 it climbs away ahead and fades
+into the distance; at 0 it is gone. In a break `beats.arrange` keeps it at 0.6: about 4 m further
+ahead and 0.6 m higher, small against the sky.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- Params: `presence`, `at` (metres ahead of the camera), `bank` (how far it leans into a turn),
+  `bob` (metres up and down), `scale` (0.16 makes it 2.4 m long), `hover` (metres above the
+  floor).
+
 ### sky_galaxy
 
 ![sky_galaxy](sky_galaxy/preview.png)
@@ -320,3 +354,31 @@ with knots of glowing gas, dust lanes. It turns with `travelled` and brightens w
 - Params: `presence` (towards 0 the galaxy dims to a dark sky), `brightness`, `warmth` (the
   palette, as on the stage), `spin` (degrees per beat), `lift`, `energy_curve`; its shape: `tilt`, `angle`, `size`,
   `twist`, `arms`, `bulge`, `dust`, `center`.
+
+### sky_sun
+
+![sky_sun](sky_sun/preview.png)
+
+The synthwave sun: a big disc standing on the floor's far edge, with dark lines across its lower
+half that widen towards the bottom and drift slowly down. A glow lies around it. The bass
+brightens it and swells it a little, a drop makes it flash.
+
+- In: `bus`. Out: `out`.
+- Params: `presence` (towards 0 the sun dims to a dark sky), `brightness`, `warmth` (0 yellow to
+  magenta, 1 cyan to violet, as on the stage), `size` (radius, in picture heights), `height` (its
+  centre over the horizon, in picture heights), `lines`, `glow`, `horizon` (where the floor ends,
+  0.68 of the picture's height with the stage's default fade; move it with the stage's `end`).
+
+### sky_aurora
+
+![sky_aurora](sky_aurora/preview.png)
+
+Curtains of light over the horizon: bands hang one above the other, each a bright wavy hem with
+rays rising from it. They drift sideways and fold slowly as the world travels. The treble
+brightens them.
+
+- In: `bus`. Out: `out`.
+- Params: `presence` (towards 0 the curtains dim to a dark sky), `brightness`, `warmth` (0 orange
+  to magenta, 1 green to violet, as on the stage), `bands` (1 to 5), `height` (the lowest hem over
+  the horizon, in picture heights), `speed` (per beat travelled), `glow`, `horizon` (as on
+  `sky_sun`).

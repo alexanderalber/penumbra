@@ -14,7 +14,7 @@
 //! - The colour walks on at every boundary by `change` times [`WALK_STEP`] (twice that from
 //!   [`CHANGE_BIG`]) and never walks back: a place grows, and `warmth` goes 0, 1, 0, ... along it.
 //! - The role of a section sets the rest: calm in an intro or outro, an empty floor in a break,
-//!   everything on in a drop.
+//!   everything on in a drop. The sky and the mid slot stay on through a break, dimmed.
 //!
 //! The rows go into a `table.text` and a `chan.sequence` with one step per row, its clock on the
 //! file's seconds, so the user can edit the table by hand and the picture follows the edit.
@@ -41,8 +41,12 @@ pub const BREAK_SKY: f64 = 0.6;
 pub const FADE_MIN: f64 = 2.0;
 /// The longest `fade_min` taken, in seconds.
 pub const FADE_MIN_MAX: f64 = 30.0;
-/// The slot the role rules treat as the sky; every other slot follows the floor's rules.
+/// The slot the role rules treat as the sky; every other slot but [`MID`] follows the floor's rules.
 pub const SKY: &str = "sky";
+/// The slot in front of the camera (a glider, particles). It follows the sky's rules: it stays
+/// through a break at [`BREAK_SKY`] and is fully there in an intro or outro, since an empty
+/// space before the camera reads as a gap more than an empty floor does.
+pub const MID: &str = "mid";
 /// The columns before the elements and after them.
 pub const LEADING: [&str; 4] = ["start", "end", "role", "change"];
 pub const TRAILING: [&str; 2] = ["warmth", "intensity"];
@@ -166,7 +170,7 @@ pub fn rows(parts: &[Part], slots: &[Slot]) -> Vec<Row> {
         }
         let mut presence = Vec::new();
         for (slot, &(k, n)) in slots.iter().zip(&on) {
-            let sky = slot.name == SKY;
+            let sky = slot.name == SKY || slot.name == MID;
             let level = match (part.role, sky) {
                 (Role::Intro | Role::Outro, false) => CALM_PRESENCE,
                 (Role::Break, false) => 0.0,
@@ -436,6 +440,27 @@ mod tests {
         );
         let i: Vec<f64> = r.iter().map(|r| r.intensity).collect();
         assert_eq!(i, [CALM_INTENSITY, 0.6, 0.6, 1.0, 0.6, CALM_INTENSITY]);
+    }
+
+    #[test]
+    fn the_mid_slot_follows_the_sky_and_other_slots_the_floor() {
+        let s = vec![
+            Slot { name: "floor".into(), elements: vec!["a".into()] },
+            Slot { name: "mid".into(), elements: vec!["g".into()] },
+            Slot { name: "post".into(), elements: vec!["p".into()] },
+            Slot { name: "sky".into(), elements: vec!["s".into()] },
+        ];
+        let p = parts(&[(Role::Intro, 0.0), (Role::Break, 0.5), (Role::Drop, 0.9), (Role::Outro, 0.1)]);
+        let r: Vec<Vec<f64>> = rows(&p, &s).into_iter().map(|r| r.presence).collect();
+        assert_eq!(
+            r,
+            [
+                [CALM_PRESENCE, 1.0, CALM_PRESENCE, 1.0],
+                [0.0, BREAK_SKY, 0.0, BREAK_SKY],
+                [1.0, 1.0, 1.0, 1.0],
+                [CALM_PRESENCE, 1.0, CALM_PRESENCE, 1.0],
+            ]
+        );
     }
 
     #[test]

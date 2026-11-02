@@ -133,7 +133,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          undoable edit: {path (the chan.beat_grid), table (a table.text, created when missing), sequence (a \
          chan.sequence, created when missing), slots ({slot: [element paths]}, e.g. {floor: [\"/blocks\", \
          \"/mountains\"], sky: [\"/galaxy\"]}: the first element of each slot is on at the start, slots take \
-         turns in name order, the slot named sky follows the sky's rules), stage? (gets warmth), intensity? \
+         turns in name order, the slots named sky and mid stay on through a break, every other slot follows \
+         the floor's rules), stage? (gets warmth), intensity? \
          (a param that gets intensity, e.g. \"/stage.dim\"), fade_min? (s, default 2: the shortest fade from \
          one row into the next, also where the music cuts)}. The table has a row per section: start, end, \
          role, change, the presence of each element (the column is named as the element), warmth and \
