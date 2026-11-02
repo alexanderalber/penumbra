@@ -2599,8 +2599,16 @@ fn record_row(
             .map_or_else(|| s.file.clone(), |n| n.to_string_lossy().into_owned());
         let (text, colour) = if s.recording {
             let text = format!(
-                "{name}  {:.1} s  {} frames  {} dropped  encoder {:.0} fps",
-                s.seconds, s.frames, s.dropped, s.encoder_fps
+                "{name}  {:.1} s  {} frames  {} dropped  {}encoder {:.0} fps",
+                s.seconds,
+                s.frames,
+                s.dropped,
+                match s.encoder.as_str() {
+                    "gpu" => "GPU ",
+                    "cpu" => "CPU ",
+                    _ => "",
+                },
+                s.encoder_fps
             );
             (text, if s.dropped > 0 { theme::WARNING } else { theme::ERROR })
         } else if s.finishing {
@@ -2612,7 +2620,11 @@ fn record_row(
                 format!("saved {name}: {:.1} s, {} frames, {} dropped", s.seconds, s.frames, s.dropped);
             (text, theme::TEXT_WEAK)
         };
-        ui.label(RichText::new(text).color(colour).small()).on_hover_text(&s.file);
+        let hover = match &s.encoder_note {
+            Some(why) => format!("{}\nH.264 on the CPU: {why}", s.file),
+            None => s.file.clone(),
+        };
+        ui.label(RichText::new(text).color(colour).small()).on_hover_text(hover);
     });
 }
 

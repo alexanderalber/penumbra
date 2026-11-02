@@ -56,6 +56,12 @@ pub struct Status {
     pub bytes: u64,
     /// Frames per second the encoder manages (from the time it takes per frame).
     pub encoder_fps: f64,
+    /// The encoder running: `gpu` (the graphics card's H.264), `cpu` (H.264 on the CPU) or
+    /// `prores`; empty until the file is open.
+    pub encoder: String,
+    /// Why H.264 runs on the CPU although `encoder` auto asked for the graphics card's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encoder_note: Option<String>,
     /// Frames waiting for the encoder.
     pub queue: usize,
     pub error: Option<String>,

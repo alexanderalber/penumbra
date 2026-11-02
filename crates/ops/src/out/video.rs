@@ -48,7 +48,9 @@ use penumbra_graph::{
     Operator,
 };
 use penumbra_record::looping::{Method, Spec};
-use penumbra_record::{AudioBlock, Codec, Fps, Frame, H264Preset, Hub, Layout, Planes, Recording, Settings};
+use penumbra_record::{
+    AudioBlock, Codec, Fps, Frame, H264Encoder, H264Preset, Hub, Layout, Planes, Recording, Settings,
+};
 
 use penumbra_record::audio::AUDIO_CHANNELS;
 
@@ -179,6 +181,17 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     .choice_doc("off", "no sound"),
             )
             .param(preset)
+            .param(
+                ParamSpec::choice("encoder", &H264Encoder::NAMES)
+                    .more()
+                    .doc("Where the H.264 is encoded: on the graphics card it keeps up with 1440p and 4K at 60 fps")
+                    .choice_doc(
+                        "auto",
+                        "the graphics card's encoder when this machine has one (NVIDIA NVENC), else the CPU;                          the status says which and why",
+                    )
+                    .choice_doc("cpu", "the CPU, with `threads` threads, as on every machine")
+                    .choice_doc("gpu", "the graphics card's encoder; without one the recording fails and says why"),
+            )
             .param(ParamSpec::text("file", "").doc(
                 "The movie file, relative to the project; empty records to recordings/<node name>. A file that \
                  exists is never overwritten: the recording gets the next free name with _2, _3, ...",
@@ -254,6 +267,7 @@ fn inactive(node: &NodeDef, desc: &NodeDesc, name: &str) -> Option<&'static str>
     match (size, name) {
         ("input", "width" | "height") => Some("`size` is input: the file takes the input's size"),
         _ if name == "preset" && codec != "h264" => Some("only the h264 codec has presets"),
+        _ if name == "encoder" && codec != "h264" => Some("ProRes is always encoded on the CPU"),
         _ if name == "loop_min" && !method.is_some_and(Method::cuts) => {
             Some("only cut and cut_fade search a loop")
         }
@@ -414,6 +428,7 @@ impl VideoOut {
             path.set_extension(codec.extension());
         }
         let h264 = cx.text("preset").ok().and_then(H264Preset::parse).unwrap_or(DEFAULT_PRESET);
+        let encoder = cx.text("encoder").ok().and_then(H264Encoder::parse).unwrap_or_default();
         let threads = match usize::try_from(cx.int("threads")?).unwrap_or(0) {
             0 => penumbra_record::writer::default_threads(),
             n => n,
@@ -422,7 +437,7 @@ impl VideoOut {
         layout.check().map_err(CookError::failed)?;
         let ring = ring_frames(&layout);
         let queue = ring.saturating_sub(1).max(1);
-        let settings = Settings { path, codec, width: w, height: h, fps, threads, queue, h264 };
+        let settings = Settings { path, codec, width: w, height: h, fps, threads, queue, h264, encoder };
         let recording = hub.start(node, settings).map_err(CookError::failed)?;
         recording.then_loop(loop_spec(cx, codec)?);
         let sound =

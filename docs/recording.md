@@ -36,8 +36,10 @@ off by a crash or a power failure is not playable; recordings are meant to be st
 | `prores_422_hq` | MOV | editing at a higher quality | up to about 55 MB/s |
 | `prores_4444` | MOV | with transparency: alpha kept, 4:4:4, 12 bits | up to about 83 MB/s |
 
-All four are encoded on the CPU by FilmCraft's encoders (pure Rust; no GPU encoder yet). How
-fast depends on how busy the picture is far more than on anything else. Measured on a Ryzen 7
+`h264` is encoded on the graphics card when this machine has an NVIDIA card (see
+[H.264 on the graphics card](#h264-on-the-graphics-card)), else on the CPU. ProRes is always
+encoded on the CPU. On the CPU, FilmCraft's encoders (pure Rust) do the work, and how fast
+depends on how busy the picture is far more than on anything else. Measured on a Ryzen 7
 5800X3D (8 cores, 16 threads) at 1920 x 1080 with 14 encoder threads, outside the show:
 
 | picture | `h264` | `prores_422` | `prores_422_hq` | `prores_4444` |
@@ -93,6 +95,37 @@ up to 21 ms after its last picture: AAC comes in blocks of 1024 samples.
 `video_out.status` shows the sound under `audio`: `codec`, `rate`, `sources` (the `out.audio`
 nodes playing, or 1 for a wired `audio` input; 0 records no sound), `seconds`, and the samples
 of silence put in or left out at jumps.
+
+### H.264 on the graphics card
+
+`encoder` (under more) says where H.264 is encoded:
+
+- `auto` (default): on the graphics card's video encoder (NVIDIA NVENC) when there is one,
+  else on the CPU.
+- `cpu`: always on the CPU, with `threads` threads.
+- `gpu`: always on the graphics card. Without one, the recording fails and says why.
+
+The card has an encoding engine of its own, so the show's rendering hardly notices it. It keeps
+up where the CPU does not: the 2-hour music video of a synthwave stage at 2560 x 1440 and
+60 fps dropped 26 % of its frames on the CPU and none on the card. The status row says
+`GPU encoder` or `CPU encoder`. With `auto` on the CPU, hovering the row tells why the card was
+not used: no NVIDIA card, a driver older than 531, a size outside the card's limits, or every
+encoder session of the card in use (a GeForce card has a few).
+
+Measured on an RTX 3090 at 80 % of its power limit (280 W), 300 frames of moving bands with noise at
+2560 x 1440, outside the show (`video_out.status` `encoder_fps` counts only the recording
+thread's own time, so for the card the rate the file got is the measure):
+
+| `preset` | card: frames per second | card: file | CPU: frames per second | CPU: file |
+|---|---|---|---|---|
+| `fast` | 207 | 5.5 MB/s | 66 | 1.7 MB/s |
+| `balanced` | 126 | 8.8 MB/s | 35 | 18.5 MB/s |
+| `best` | 124 | 12.0 MB/s | 11 | 16.9 MB/s |
+
+Inside the running app the synthwave stage recorded 90 s at 2560 x 1440 and 60 fps with
+`preset` fast: 5402 frames, none dropped, 2.3 MB/s. On the card, the presets are NVENC's P4, P5
+and P6 at constant quality 23, 20 and 18, High profile, a keyframe every 2 seconds and no
+B-frames. Every preset keeps up there; they trade file size for detail.
 
 ### H.264 presets
 

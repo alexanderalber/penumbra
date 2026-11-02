@@ -420,6 +420,7 @@ fn prepare(input: &Path, spec: &Spec) -> Result<Plan, String> {
         threads: default_threads(),
         queue: 1,
         h264: H264Preset::Balanced,
+        encoder: crate::H264Encoder::Cpu,
     };
     Ok(Plan {
         input: input.to_path_buf(),

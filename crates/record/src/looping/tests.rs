@@ -139,6 +139,7 @@ fn write_clip(path: &Path, codec: Codec, w: u32, h: u32, fps: u32, frames: &[Vec
         threads: 2,
         queue: 1,
         h264: H264Preset::Balanced,
+        encoder: crate::H264Encoder::Cpu,
     };
     let mut sink = Sink::create(&settings, |_| {}).unwrap();
     for f in frames {
@@ -326,6 +327,7 @@ fn a_recording_asked_to_loop_starts_its_loop_when_finished() {
         threads: 2,
         queue: 64,
         h264: H264Preset::Balanced,
+        encoder: crate::H264Encoder::Cpu,
     };
     let rec = hub.start(node, settings).unwrap();
     let layout = rec.layout();
@@ -388,6 +390,7 @@ fn loop_speed_at_1080p() {
         threads: crate::writer::default_threads(),
         queue: 1,
         h264: H264Preset::Fast,
+        encoder: crate::H264Encoder::Cpu,
     };
     let mut sink = Sink::create(&settings, |_| {}).unwrap();
     let rows: Vec<f64> = (0..h).map(|y| 10.0 * (f64::from(y) * 0.01).cos()).collect();

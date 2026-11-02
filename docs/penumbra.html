@@ -973,7 +973,7 @@ water      15
 <tr><td><code>prores_4444</code></td><td>MOV</td><td>with transparency: alpha kept, 4:4:4, 12 bits</td><td>up to about 83 MB/s</td></tr>
 </tbody>
 </table>
-<p>All four are encoded on the CPU by FilmCraft's encoders (pure Rust; no GPU encoder yet). How fast depends on how busy the picture is far more than on anything else. Measured on a Ryzen 7 5800X3D (8 cores, 16 threads) at 1920 x 1080 with 14 encoder threads, outside the show:</p>
+<p><code>h264</code> is encoded on the graphics card when this machine has an NVIDIA card (see <a href="#recording-h264-on-the-graphics-card">H.264 on the graphics card</a>), else on the CPU. ProRes is always encoded on the CPU. On the CPU, FilmCraft's encoders (pure Rust) do the work, and how fast depends on how busy the picture is far more than on anything else. Measured on a Ryzen 7 5800X3D (8 cores, 16 threads) at 1920 x 1080 with 14 encoder threads, outside the show:</p>
 <table>
 <thead><tr><th>picture</th><th><code>h264</code></th><th><code>prores_422</code></th><th><code>prores_422_hq</code></th><th><code>prores_4444</code></th></tr></thead>
 <tbody>
@@ -1007,6 +1007,27 @@ water      15
 <p>The sound is always two channels: a mono source is on both, a third channel and up are left out. Its rate is the rate of the first sound recorded, usually 48 000 Hz. Sound at another rate later in the take is left out, counted and warned about. AAC takes only the standard rates (44 100, 48 000 and others); at another rate an MP4 records no sound and the status says why, a MOV takes any rate.</p>
 <p><strong>Picture and sound stay together.</strong> Each frame of sound goes into the file at its show time, counted from the same start as the pictures. Dropped frames cost no sound. A pause records neither. A jump back or more than a second ahead continues both without a gap. A jump forward of less than a second leaves the same time in both: the picture holds a frame, the sound gets silence (or the sound for the skipped time, for jumps up to half a second). An MP4's sound ends up to 21 ms after its last picture: AAC comes in blocks of 1024 samples.</p>
 <p><a class="ref" href="#video_out.status"><code>video_out.status</code></a> shows the sound under <code>audio</code>: <code>codec</code>, <code>rate</code>, <code>sources</code> (the <a class="ref" href="#out.audio"><code>out.audio</code></a> nodes playing, or 1 for a wired <code>audio</code> input; 0 records no sound), <code>seconds</code>, and the samples of silence put in or left out at jumps.</p>
+<h4 id="recording-h264-on-the-graphics-card">H.264 on the graphics card</h4>
+<p><code>encoder</code> (under more) says where H.264 is encoded:</p>
+<ul>
+<li><code>auto</code> (default): on the graphics card's video encoder (NVIDIA NVENC) when there is one, else on the CPU.
+</li>
+<li><code>cpu</code>: always on the CPU, with <code>threads</code> threads.
+</li>
+<li><code>gpu</code>: always on the graphics card. Without one, the recording fails and says why.
+</li>
+</ul>
+<p>The card has an encoding engine of its own, so the show's rendering hardly notices it. It keeps up where the CPU does not: the 2-hour music video of a synthwave stage at 2560 x 1440 and 60 fps dropped 26 % of its frames on the CPU and none on the card. The status row says <code>GPU encoder</code> or <code>CPU encoder</code>. With <code>auto</code> on the CPU, hovering the row tells why the card was not used: no NVIDIA card, a driver older than 531, a size outside the card's limits, or every encoder session of the card in use (a GeForce card has a few).</p>
+<p>Measured on an RTX 3090 at 80 % of its power limit (280 W), 300 frames of moving bands with noise at 2560 x 1440, outside the show (<a class="ref" href="#video_out.status"><code>video_out.status</code></a> <code>encoder_fps</code> counts only the recording thread's own time, so for the card the rate the file got is the measure):</p>
+<table>
+<thead><tr><th><code>preset</code></th><th>card: frames per second</th><th>card: file</th><th>CPU: frames per second</th><th>CPU: file</th></tr></thead>
+<tbody>
+<tr><td><code>fast</code></td><td>207</td><td>5.5 MB/s</td><td>66</td><td>1.7 MB/s</td></tr>
+<tr><td><code>balanced</code></td><td>126</td><td>8.8 MB/s</td><td>35</td><td>18.5 MB/s</td></tr>
+<tr><td><code>best</code></td><td>124</td><td>12.0 MB/s</td><td>11</td><td>16.9 MB/s</td></tr>
+</tbody>
+</table>
+<p>Inside the running app the synthwave stage recorded 90 s at 2560 x 1440 and 60 fps with <code>preset</code> fast: 5402 frames, none dropped, 2.3 MB/s. On the card, the presets are NVENC's P4, P5 and P6 at constant quality 23, 20 and 18, High profile, a keyframe every 2 seconds and no B-frames. Every preset keeps up there; they trade file size for detail.</p>
 <h4 id="recording-h264-presets">H.264 presets</h4>
 <p><code>preset</code> trades the H.264 encoder's speed against size and quality:</p>
 <ul>
@@ -5287,6 +5308,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>16 to 2160 (soft)</td><td>Height of the file in pixels with <code>size</code> fixed (rounded down to even)</td></tr>
 <tr><td><code>loop</code></td><td>off | cut | fade | pingpong | cut_fade</td><td><code>&quot;off&quot;</code></td><td></td><td>After recording stops, also write a loop of the file as &lt;name&gt;_loop: a movie a player can repeat without a jump. The node shows looping... until it is written<ul><li><code>off</code>: no loop</li><li><code>cut</code>: keeps the stretch whose end looks most like its start, at least loop_min long; for content that comes back to similar pictures</li><li><code>fade</code>: cross-fades the last loop_fade seconds into the start; works for any content, the fade may show as a soft double picture</li><li><code>pingpong</code>: plays forward, then backward; seamless, motion reverses at both ends</li><li><code>cut_fade</code>: cuts, then cross-fades over the seam that remains</li></ul></td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>encoder</code></td><td>auto | cpu | gpu</td><td><code>&quot;auto&quot;</code></td><td></td><td>Where the H.264 is encoded: on the graphics card it keeps up with 1440p and 4K at 60 fps<ul><li><code>auto</code>: the graphics card's encoder when this machine has one (NVIDIA NVENC), else the CPU;                          the status says which and why</li><li><code>cpu</code>: the CPU, with <code>threads</code> threads, as on every machine</li><li><code>gpu</code>: the graphics card's encoder; without one the recording fails and says why</li></ul></td></tr>
 <tr><td><code>threads</code></td><td>int</td><td><code>0</code> (automatic)</td><td>0 to 16 (soft)</td><td>Encoder threads; automatic is all of this machine's logical cores but two. Fewer threads leave more to the rest of the show (video decoding, scripts) but drop frames of busy pictures sooner<ul><li>0: automatic</li></ul></td></tr>
 <tr><td><code>loop_min</code></td><td>float</td><td><code>5</code></td><td>1 to 60 s (soft)</td><td>Shortest loop <code>cut</code> may keep. A longer minimum repeats less often but may find a worse seam</td></tr>
 <tr><td><code>loop_fade</code></td><td>float</td><td><code>1</code></td><td>0.1 to 10 s (soft)</td><td>Length of the cross-fade at the seam. The loop gets this much shorter than the recording</td></tr>
@@ -6545,10 +6567,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Start recording an out.video node to a new file (its params say which and how): turns its record param on (an edit); {path}; answers with the status once recording, audio.sources saying how many out.audio nodes it takes sound from</p>
 <p class="mentions">Mentioned in: <a href="#recording-recording-1">Recording › Recording</a></p>
 </div></details>
-<details class="entry command" id="video_out.status"><summary><code class="name">video_out.status</code><span class="sum">Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, audio (codec, rate, channels, sources, seconds, samples, gap_samples, cut_samples, refused, dropped, error; null without sound), and loop (as video.loop_status) once a loop was asked for</span></summary>
+<details class="entry command" id="video_out.status"><summary><code class="name">video_out.status</code><span class="sum">Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, encoder (gpu, cpu or prores), encoder_note (why auto took the CPU), queue, error, audio (codec, rate, channels, sources, seconds, samples, gap_samples, cut_samples, refused, dropped, error; null without sound), and loop (as video.loop_status) once a loop was asked for</span></summary>
 <div class="body">
-<p>Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, audio (codec, rate, channels, sources, seconds, samples, gap_samples, cut_samples, refused, dropped, error; null without sound), and loop (as video.loop_status) once a loop was asked for; {path?}</p>
-<p class="mentions">Mentioned in: <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
+<p>Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, encoder (gpu, cpu or prores), encoder_note (why auto took the CPU), queue, error, audio (codec, rate, channels, sources, seconds, samples, gap_samples, cut_samples, refused, dropped, error; null without sound), and loop (as video.loop_status) once a loop was asked for; {path?}</p>
+<p class="mentions">Mentioned in: <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-h264-on-the-graphics-card">Recording › H.264 on the graphics card</a>, <a href="#recording-looping-a-recording">Recording › Looping a recording</a></p>
 </div></details>
 <details class="entry command" id="video_out.stop"><summary><code class="name">video_out.stop</code><span class="sum">Stop an out.video's recording and finish the file: turns record off (an edit)</span></summary>
 <div class="body">

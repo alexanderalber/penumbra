@@ -88,6 +88,7 @@ fn steps_clip(dir: &std::path::Path, n: u32) -> std::path::PathBuf {
         threads: 2,
         queue: 1,
         h264: H264Preset::Balanced,
+        encoder: penumbra_record::H264Encoder::Cpu,
     };
     let mut sink = Sink::create(&settings, |_| {}).unwrap();
     let layout = sink.layout();

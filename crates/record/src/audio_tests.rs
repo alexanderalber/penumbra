@@ -30,6 +30,7 @@ fn settings(path: &Path, codec: Codec) -> Settings {
         threads: 2,
         queue: 4,
         h264: H264Preset::Fast,
+        encoder: crate::H264Encoder::Cpu,
     }
 }
 

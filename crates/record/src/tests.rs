@@ -47,6 +47,7 @@ fn settings(path: &Path, codec: Codec, w: u32, h: u32) -> Settings {
         threads: 2,
         queue: 4,
         h264: H264Preset::Balanced,
+        encoder: crate::H264Encoder::Cpu,
     }
 }
 
@@ -260,4 +261,158 @@ fn layouts_and_rates() {
         assert_eq!(preset.name(), *name);
     }
     assert_eq!(H264Preset::default(), H264Preset::Balanced);
+}
+
+/// Pushes `frames` frames of `planes(k)` into `rec`, waiting for room in the queue.
+fn push_all(rec: &crate::Recording, indices: impl Iterator<Item = i64>, planes: impl Fn(i64) -> Vec<u8>) {
+    for k in indices {
+        let mut frame = Frame { index: k, planes: Box::new(Bytes(planes(k))) };
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while let Err(f) = rec.push(frame) {
+            assert!(Instant::now() < deadline, "the queue never had room: {:?}", rec.status());
+            frame = f;
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+}
+
+#[test]
+fn the_graphics_cards_encoder_records_and_reads_back() {
+    if let Err(e) = crate::nvenc::available() {
+        eprintln!("no NVENC here, skipped: {e}");
+        return;
+    }
+    let dir = scratch("nvenc");
+    let hub = Hub::new();
+    // A width that is a multiple of 8 and one that is not (its rows are padded).
+    for (i, (w, h)) in [(256u32, 144u32), (250, 142)].into_iter().enumerate() {
+        for preset in H264Preset::ALL {
+            let node = NodeId(i as u64 * 10 + preset as u64 + 1);
+            hub.attach(node, "/rec");
+            let path = dir.join(format!("gpu_{w}_{}.mp4", preset.name()));
+            let s = Settings {
+                h264: preset,
+                encoder: crate::H264Encoder::Gpu,
+                ..settings(&path, Codec::H264, w, h)
+            };
+            let rec = hub.start(node, s).unwrap();
+            let layout = rec.layout();
+            // Dark then light, with a gap of five frames in the light part.
+            let frames = (0..10).chain(15..25);
+            push_all(&rec, frames, |k| flat(&layout, if k < 5 { 40 } else { 200 }, 128, 128));
+            drop(rec);
+            let s = wait_done(&hub, node);
+            assert_eq!(s.error, None, "{w} {preset:?}");
+            assert_eq!(s.encoder, "gpu");
+            assert_eq!(s.encoder_note, None);
+            assert_eq!((s.frames, s.dropped), (20, 0), "{w} {preset:?}");
+            let mut d = penumbra_video::open(&path, &Limits::default()).unwrap();
+            let info = d.info().clone();
+            assert_eq!((info.width, info.height), (w, h), "{info:?}");
+            assert!((info.duration() - 25.0 / 30.0).abs() < 1e-6, "{info:?}");
+            let dark = mean_luma(&d.frame(2).unwrap());
+            let light = mean_luma(&d.frame(12).unwrap());
+            assert!((dark - 40.0).abs() < 1.5, "{w} {preset:?}: dark {dark}");
+            assert!((light - 200.0).abs() < 1.5, "{w} {preset:?}: light {light}");
+        }
+    }
+}
+
+#[test]
+fn the_cpu_encoder_says_so_and_auto_says_why_it_took_the_cpu() {
+    let dir = scratch("encoder-choice");
+    let hub = Hub::new();
+    let gpu = crate::nvenc::available().is_ok();
+    for (i, encoder) in crate::H264Encoder::ALL.into_iter().enumerate() {
+        if encoder == crate::H264Encoder::Gpu && !gpu {
+            continue;
+        }
+        let node = NodeId(i as u64 + 1);
+        let path = dir.join(format!("{}.mp4", encoder.name()));
+        let rec = hub.start(node, Settings { encoder, ..settings(&path, Codec::H264, 256, 144) }).unwrap();
+        let layout = rec.layout();
+        push_all(&rec, 0..3, |_| flat(&layout, 100, 128, 128));
+        drop(rec);
+        let s = wait_done(&hub, node);
+        assert_eq!(s.error, None);
+        let expected = match encoder {
+            crate::H264Encoder::Cpu => "cpu",
+            crate::H264Encoder::Gpu => "gpu",
+            crate::H264Encoder::Auto if gpu => "gpu",
+            crate::H264Encoder::Auto => "cpu",
+        };
+        assert_eq!(s.encoder, expected, "{encoder:?}");
+        assert_eq!(s.encoder_note.is_some(), encoder == crate::H264Encoder::Auto && !gpu);
+    }
+    // ProRes ignores the choice.
+    let node = NodeId(9);
+    let path = dir.join("p.mov");
+    let s = Settings { encoder: crate::H264Encoder::Gpu, ..settings(&path, Codec::Prores422, 64, 64) };
+    let rec = hub.start(node, s).unwrap();
+    let layout = rec.layout();
+    push_all(&rec, 0..2, |_| flat(&layout, 100, 128, 128));
+    drop(rec);
+    let s = wait_done(&hub, node);
+    assert_eq!((s.error, s.encoder.as_str()), (None, "prores"));
+}
+
+/// How fast each encoder records a busy 1440p picture (moving noise): run with
+/// `cargo test -p penumbra-record --release -- --ignored --nocapture encoder_speed`.
+#[test]
+#[ignore]
+fn encoder_speed_at_1440p() {
+    let dir = scratch("speed");
+    let hub = Hub::new();
+    let (w, h) = (2560u32, 1440u32);
+    let frames = 300i64;
+    for (i, encoder) in [crate::H264Encoder::Gpu, crate::H264Encoder::Cpu].into_iter().enumerate() {
+        for preset in H264Preset::ALL {
+            let node = NodeId((i * 10) as u64 + preset as u64 + 1);
+            let path = dir.join(format!("{}_{}.mp4", encoder.name(), preset.name()));
+            let s = Settings {
+                h264: preset,
+                encoder,
+                threads: default_threads(),
+                queue: 8,
+                fps: Fps { num: 60, den: 1 },
+                ..settings(&path, Codec::H264, w, h)
+            };
+            let rec = hub.start(node, s).unwrap();
+            let layout = rec.layout();
+            let base = flat(&layout, 128, 128, 128);
+            // Eight pictures made before, so the test measures the encoder, not the making.
+            let pictures: Vec<Vec<u8>> = (0..8i64)
+                .map(|k| {
+                    let mut b = base.clone();
+                    let ls = layout.luma_stride() as usize;
+                    let mut seed = 0x9e37_79b9u32;
+                    for (y, row) in b[..ls * h as usize].chunks_mut(ls).enumerate() {
+                        for (x, v) in row.iter_mut().enumerate() {
+                            // Smooth bands moving with k, plus a little noise.
+                            seed ^= seed << 13;
+                            seed ^= seed >> 17;
+                            seed ^= seed << 5;
+                            let band = (x as i64 + 9 * k + (y as i64) / 2) % 256;
+                            *v = (16 + (band * 219 / 255) + i64::from(seed & 7)).clamp(16, 235) as u8;
+                        }
+                    }
+                    b
+                })
+                .collect();
+            let started = Instant::now();
+            push_all(&rec, 0..frames, |k| pictures[k as usize % 8].clone());
+            drop(rec);
+            let s = wait_done(&hub, node);
+            let secs = started.elapsed().as_secs_f64();
+            eprintln!(
+                "{:>4} {:>8}: {:.0} fps through, encoder {:.0} fps, {:.1} MB",
+                encoder.name(),
+                preset.name(),
+                frames as f64 / secs,
+                s.encoder_fps,
+                s.bytes as f64 / 1e6
+            );
+            assert_eq!(s.error, None);
+        }
+    }
 }

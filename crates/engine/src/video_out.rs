@@ -44,7 +44,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "video_out.status",
-        "Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, queue, error, audio (codec, rate, channels, sources, seconds, samples, gap_samples, cut_samples, refused, dropped, error; null without sound), and loop (as video.loop_status) once a loop was asked for; {path?}",
+        "Recordings: node, recording, finishing, done, file, codec, size, fps, frames, dropped, skipped, seconds, bytes, encoder_fps, encoder (gpu, cpu or prores), encoder_note (why auto took the CPU), queue, error, audio (codec, rate, channels, sources, seconds, samples, gap_samples, cut_samples, refused, dropped, error; null without sound), and loop (as video.loop_status) once a loop was asked for; {path?}",
         status,
     );
     add(

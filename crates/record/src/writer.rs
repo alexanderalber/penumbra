@@ -33,7 +33,8 @@ use penumbra_core::lock;
 use crate::audio::{AudioBlock, AudioCodec, AudioStatus};
 use crate::hub::Status;
 use crate::looping::{Job, Jobs, Spec};
-use crate::{Codec, Fps, Frame, H264Preset, Layout, Planes};
+use crate::nvenc::{self, Nvenc};
+use crate::{Codec, Fps, Frame, H264Encoder, H264Preset, Layout, Planes};
 
 /// How long the thread waits for one frame's planes (a GPU readback) before giving up on it,
 /// unless its [`crate::Hub`] says otherwise.
@@ -62,6 +63,8 @@ pub struct Settings {
     pub queue: usize,
     /// How hard the H.264 encoder works; ignored by ProRes.
     pub h264: H264Preset,
+    /// Which encoder makes H.264; ignored by ProRes.
+    pub encoder: H264Encoder,
 }
 
 impl Settings {
@@ -380,6 +383,11 @@ fn record(
             st.opened = true;
         });
     })?;
+    let (encoder, note) = sink.encoder();
+    shared.update(|st| {
+        st.encoder = encoder.to_string();
+        st.encoder_note = note;
+    });
     let mut last_index = -1i64;
     let mut busy: Option<f64> = None;
     let mut failure: Option<String> = None;
@@ -461,6 +469,9 @@ pub struct Sink {
     audio: Option<crate::audio::Track>,
     /// The sound track stopped taking sound (see its `error`); the picture goes on.
     audio_failed: Option<AudioStatus>,
+    /// Why H.264 runs on the CPU although the graphics card's encoder was asked for
+    /// automatically.
+    encoder_note: Option<String>,
 }
 
 /// What [`Sink::close`] reports.
@@ -493,7 +504,7 @@ impl Sink {
     pub fn with_file(s: &Settings, file: File, path: PathBuf) -> Result<Sink, String> {
         check(s)?;
         let layout = s.layout();
-        let encoder = Encoder::new(s)?;
+        let (encoder, encoder_note) = Encoder::new(s)?;
         let mp4 = s.codec == Codec::H264
             && path
                 .extension()
@@ -517,6 +528,7 @@ impl Sink {
             audio_codec: AudioCodec::for_brand(mp4),
             audio: None,
             audio_failed: None,
+            encoder_note,
         })
     }
 
@@ -549,6 +561,17 @@ impl Sink {
             status.error = Some(e);
             self.audio_failed = Some(status);
         }
+    }
+
+    /// Which encoder runs (`cpu` or `gpu`; `prores` for ProRes), and why the graphics card's
+    /// does not when it was asked for automatically.
+    pub fn encoder(&self) -> (&'static str, Option<String>) {
+        let name = match self.encoder {
+            Encoder::H264(_) => "cpu",
+            Encoder::Nvenc(_) => "gpu",
+            Encoder::ProRes { .. } => "prores",
+        };
+        (name, self.encoder_note.clone())
     }
 
     /// The sound track as far as it got; `None` while no sound came.
@@ -721,6 +744,7 @@ fn write_error(e: iso::Error) -> String {
 /// The encoders behind one interface: planes in, packets in file order out.
 enum Encoder {
     H264(Box<filmcraft_h264enc::Encoder>),
+    Nvenc(Box<Nvenc>),
     ProRes {
         encoder: filmcraft_prores::Encoder,
         frame: Box<filmcraft_prores::Frame>,
@@ -729,7 +753,31 @@ enum Encoder {
 }
 
 impl Encoder {
-    fn new(s: &Settings) -> Result<Self, String> {
+    /// The encoder `s` asks for, and why the graphics card's is not used when `s` asked for
+    /// it automatically.
+    fn new(s: &Settings) -> Result<(Self, Option<String>), String> {
+        if s.codec != Codec::H264 || s.encoder == H264Encoder::Cpu {
+            return Ok((Self::cpu(s)?, None));
+        }
+        let cfg = nvenc::Config {
+            width: s.width,
+            height: s.height,
+            fps: (s.fps.num, s.fps.den),
+            keyint: keyint(s.fps),
+            quality: s.h264.nvenc(),
+        };
+        match guarded(|| Nvenc::open(&cfg)) {
+            Ok(enc) => Ok((Encoder::Nvenc(Box::new(enc)), None)),
+            Err(e) if s.encoder == H264Encoder::Gpu => Err(format!("no GPU encoder: {e}")),
+            Err(e) => {
+                log::info!("recording {} on the CPU: {e}", s.path.display());
+                Ok((Self::cpu(s)?, Some(e)))
+            }
+        }
+    }
+
+    /// FilmCraft's H.264 or ProRes encoder on the CPU.
+    fn cpu(s: &Settings) -> Result<Self, String> {
         use filmcraft_prores::Profile;
         let threads = s.threads.max(1);
         let profile = match s.codec {
@@ -739,7 +787,7 @@ impl Encoder {
                 s.h264.apply(&mut cfg);
                 // A keyframe every 2 s, so a player can seek; no B-frames, so packets come in
                 // the order they are shown and a frame can last any number of frames.
-                cfg.keyint = (s.fps.as_f64() * 2.0).round().clamp(1.0, 600.0) as u32;
+                cfg.keyint = keyint(s.fps);
                 cfg.bframes = 0;
                 cfg.threads = threads;
                 cfg.format = h::PacketFormat::LengthPrefixed;
@@ -786,6 +834,11 @@ impl Encoder {
             Encoder::H264(enc) => {
                 let avcc = iso::AvcConfig::parse(&enc.avcc())
                     .map_err(|e| format!("the H.264 encoder's setup: {e}"))?;
+                iso::SampleEntry::avc(avcc, w, h)
+            }
+            Encoder::Nvenc(enc) => {
+                let avcc = iso::AvcConfig::parse(&enc.avcc()?)
+                    .map_err(|e| format!("the GPU encoder's setup: {e}"))?;
                 iso::SampleEntry::avc(avcc, w, h)
             }
             Encoder::ProRes { encoder, .. } => {
@@ -838,6 +891,20 @@ impl Encoder {
                     Ok(())
                 })?;
             }
+            Encoder::Nvenc(enc) => {
+                let strides = (layout.luma_stride() as usize, layout.chroma_stride() as usize);
+                planes.read(timeout, &mut |b| {
+                    started = Some(Instant::now());
+                    let packets = guarded(|| enc.encode(b, [oy, ou, ov], strides, index))
+                        .map_err(|e| format!("GPU encoder: {e}"))?;
+                    out.extend(packets.into_iter().map(|p| Packet {
+                        data: p.data,
+                        index: p.pts,
+                        sync: p.key,
+                    }));
+                    Ok(())
+                })?;
+            }
             Encoder::ProRes { encoder, frame: pf, pool } => {
                 let (w, h) = (layout.width as usize, layout.height as usize);
                 let (cw, ch) = layout.chroma_size();
@@ -876,9 +943,19 @@ impl Encoder {
                     .map(|p| Packet { data: p.data, index: p.pts, sync: p.keyframe })
                     .collect())
             }
+            Encoder::Nvenc(enc) => {
+                let packets = guarded(|| enc.flush()).map_err(|e| format!("GPU encoder: {e}"))?;
+                Ok(packets.into_iter().map(|p| Packet { data: p.data, index: p.pts, sync: p.key }).collect())
+            }
             Encoder::ProRes { .. } => Ok(Vec::new()),
         }
     }
+}
+
+/// A keyframe every 2 s, so a player can seek.
+fn keyint(fps: Fps) -> u32 {
+    // In range after the clamp, so the cast keeps the value.
+    (fps.as_f64() * 2.0).round().clamp(1.0, 600.0) as u32
 }
 
 /// Little-endian 16-bit samples of one plane (rows `stride` bytes apart, starting at `offset`)

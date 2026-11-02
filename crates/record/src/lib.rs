@@ -7,6 +7,8 @@
 //!   dropped (the caller counts it), so whoever records never waits for the encoder.
 //! - [`audio`]: the sound beside the picture: AAC in MP4, 24-bit PCM in MOV, each block put at
 //!   the sample of the file its show time falls on.
+//! - [`nvenc`]: H.264 on an NVIDIA graphics card's video encoder, which keeps up with sizes and
+//!   pictures the CPU encoder cannot.
 //! - [`wav`]: sound alone, recorded to a WAV file (24-bit PCM or 32-bit float) on a thread of
 //!   its own, placed by show time as the sound beside a picture is.
 //! - [`hub`]: the recordings of a process: their status, and finishing every file when the app
@@ -22,6 +24,7 @@
 pub mod audio;
 pub mod hub;
 pub mod looping;
+pub mod nvenc;
 pub mod wav;
 pub mod writer;
 
@@ -97,6 +100,50 @@ impl H264Preset {
                 cfg.preset = h::Preset::Balanced;
                 cfg.rate = h::RateControl::Crf(18.0);
             }
+        }
+    }
+}
+
+/// Which encoder makes a recording's H.264.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum H264Encoder {
+    /// The graphics card's (NVIDIA NVENC) when there is one and it takes the size, else the CPU.
+    #[default]
+    Auto,
+    /// FilmCraft's encoder on the CPU.
+    Cpu,
+    /// The graphics card's; a recording fails when it cannot have it.
+    Gpu,
+}
+
+impl H264Encoder {
+    /// The names a param uses, in [`H264Encoder::ALL`]'s order.
+    pub const NAMES: [&'static str; 3] = ["auto", "cpu", "gpu"];
+    pub const ALL: [H264Encoder; 3] = [H264Encoder::Auto, H264Encoder::Cpu, H264Encoder::Gpu];
+
+    pub fn parse(name: &str) -> Option<H264Encoder> {
+        Self::NAMES.iter().zip(Self::ALL).find(|(n, _)| **n == name).map(|(_, e)| e)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            H264Encoder::Auto => "auto",
+            H264Encoder::Cpu => "cpu",
+            H264Encoder::Gpu => "gpu",
+        }
+    }
+}
+
+impl H264Preset {
+    /// What the preset means for the graphics card's encoder: NVENC preset P4, P5 or P6 and
+    /// constant quality 23, 20 or 18. The card keeps up at every preset; they trade size for
+    /// detail.
+    pub fn nvenc(self) -> nvenc::Quality {
+        match self {
+            H264Preset::Fast => nvenc::Quality { preset: 4, cq: 23 },
+            H264Preset::Balanced => nvenc::Quality { preset: 5, cq: 20 },
+            H264Preset::Best => nvenc::Quality { preset: 6, cq: 18 },
         }
     }
 }
