@@ -15,6 +15,18 @@
 //!   [`CHANGE_BIG`]) and never walks back: a place grows, and `warmth` goes 0, 1, 0, ... along it.
 //! - The role of a section sets the rest: calm in an intro or outro, an empty floor in a break,
 //!   everything on in a drop. The sky and the mid slot stay on through a break, dimmed.
+//! - The slot named [`POST`] holds effects over the finished picture. Each of its elements is on
+//!   or off by itself, so several can be on at once: all are off in an intro, outro or break, all
+//!   come on at a drop, and a swap of the post slot switches its next element on or off.
+//! - **Emptiness:** at a strong boundary into a main section, after at least [`EMPTY_AFTER`]
+//!   full sections, a section may keep the stage and one slot and nothing else. Whether it does
+//!   is drawn from the section's seed, with a chance of [`EMPTY_CHANCE`] times `change`, so the
+//!   same file always gives the same table.
+//! - **Camera:** each row names one of the stage's camera presets ([`CAMERA_MAIN`] and the
+//!   others): low flight in a main section, climbing in a build, high and wide on a drop, still in
+//!   a break, and a variant per track in an intro, an outro and a main section that starts a track.
+//! - **Stage:** with several stages, the row says which one shows. It changes only where a track
+//!   starts with a `change` of at least [`STAGE_CHANGE`], and at most once per [`STAGE_GAP`].
 //!
 //! The rows go into a `table.text` and a `chan.sequence` with one step per row, its clock on the
 //! file's seconds, so the user can edit the table by hand and the picture follows the edit.
@@ -47,9 +59,34 @@ pub const SKY: &str = "sky";
 /// through a break at [`BREAK_SKY`] and is fully there in an intro or outro, since an empty
 /// space before the camera reads as a gap more than an empty floor does.
 pub const MID: &str = "mid";
+/// The slot of effects over the finished picture (scanlines, ...). Its elements are on or off
+/// each by itself: off in an intro, outro or break, on from a drop.
+pub const POST: &str = "post";
+/// The slot hanging from the ceiling. It follows the floor's rules: empty in a break.
+pub const CEILING: &str = "ceiling";
+/// Full sections (main, build or drop, not emptied) a row needs behind it before it may empty.
+pub const EMPTY_AFTER: usize = 3;
+/// The chance of an empty section at a strong boundary, times its `change`.
+pub const EMPTY_CHANCE: f64 = 0.5;
+/// The camera presets a stage has, by index. A stage holds this many rows of presets.
+pub const CAMERA_PRESETS: usize = 6;
+/// Low flight: a main section.
+pub const CAMERA_MAIN: usize = 0;
+/// Higher and looking down: a build.
+pub const CAMERA_BUILD: usize = 1;
+/// High and wide: a drop.
+pub const CAMERA_DROP: usize = 2;
+/// Still and level: a break.
+pub const CAMERA_BREAK: usize = 3;
+/// The variants the tracks take in turn: an intro, an outro, a main section at a track start.
+pub const CAMERA_VARIANTS: [usize; 2] = [4, 5];
+/// The least `change` at a track start that may switch the stage.
+pub const STAGE_CHANGE: f64 = 0.8;
+/// The least time between two switches of the stage, in seconds; the file's start counts as one.
+pub const STAGE_GAP: f64 = 480.0;
 /// The columns before the elements and after them.
 pub const LEADING: [&str; 4] = ["start", "end", "role", "change"];
-pub const TRAILING: [&str; 2] = ["warmth", "intensity"];
+pub const TRAILING: [&str; 4] = ["warmth", "intensity", "camera", "stage"];
 /// The piece every step names: the rows differ by their table row, not by a piece.
 pub const PIECE: &str = "row";
 
@@ -71,6 +108,10 @@ pub struct Part {
     pub change: f64,
     /// Its mean energy, 0 to 1.
     pub energy: f64,
+    /// It begins a track.
+    pub track_start: bool,
+    /// A number fixed per kind of section, for the draws of the arrangement.
+    pub seed: u32,
 }
 
 /// A spatial layer of the stage and its interchangeable elements, in the order they come on.
@@ -94,6 +135,12 @@ pub struct Row {
     pub intensity: f64,
     /// Where the colour's walk stands; `warmth` is its triangle wave.
     pub walk: f64,
+    /// The stage's camera preset, 0 to [`CAMERA_PRESETS`] - 1.
+    pub camera: usize,
+    /// Which stage shows, counted from 0.
+    pub stage: usize,
+    /// The section keeps the stage and one slot only.
+    pub empty: bool,
 }
 
 /// A number that is none counts as 0; the rest is clamped to 0..1.
@@ -139,37 +186,130 @@ pub fn warmth_at(walk: f64) -> f64 {
     if p <= 1.0 { p } else { 2.0 - p }
 }
 
-/// The rows of the arrangement, one per part.
-pub fn rows(parts: &[Part], slots: &[Slot]) -> Vec<Row> {
-    // Per slot: which element is on and how many it has; which slot swaps next at a medium change.
-    let mut on: Vec<(usize, usize)> = slots.iter().map(|s| (0, s.elements.len())).collect();
-    let swappable: Vec<usize> = on.iter().enumerate().filter(|(_, (_, n))| *n > 1).map(|(s, _)| s).collect();
-    let swap = |slot: Option<&mut (usize, usize)>| {
-        if let Some((k, n)) = slot {
-            *k = (*k + 1) % (*n).max(1);
+/// A draw from 0 to 1, fixed by a section's seed and its row (splitmix64).
+pub fn draw(seed: u32, row: usize) -> f64 {
+    let mut z = (u64::from(seed) << 32 ^ row as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^= z >> 31;
+    // The top 53 bits as a fraction; `as`: exact for 53 bits.
+    (z >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// What one slot shows while the rows are made.
+enum State {
+    /// One element on: which, of how many.
+    One(usize, usize),
+    /// The post slot: each element on or off, and which one a swap switches next.
+    Each(Vec<bool>, usize),
+}
+
+impl State {
+    fn swappable(&self) -> bool {
+        match self {
+            State::One(_, n) => *n > 1,
+            State::Each(on, _) => !on.is_empty(),
         }
-    };
+    }
+
+    /// One swap: the next element on; in the post slot the next element switched.
+    fn swap(&mut self) {
+        match self {
+            State::One(k, n) => *k = (*k + 1) % (*n).max(1),
+            State::Each(on, next) => {
+                let at = *next % on.len().max(1);
+                if let Some(x) = on.get_mut(at) {
+                    *x = !*x;
+                }
+                *next += 1;
+            }
+        }
+    }
+
+    /// A big change: every element of the post slot switches, any other slot takes its next.
+    fn swap_all(&mut self) {
+        match self {
+            State::One(..) => self.swap(),
+            State::Each(on, _) => on.iter_mut().for_each(|x| *x = !*x),
+        }
+    }
+}
+
+/// The rows of the arrangement, one per part, for `stages` stages side by side (0 counts as 1).
+pub fn rows(parts: &[Part], slots: &[Slot], stages: usize) -> Vec<Row> {
+    let mut state: Vec<State> = slots
+        .iter()
+        .map(|s| {
+            if s.name == POST {
+                State::Each(vec![false; s.elements.len()], 0)
+            } else {
+                State::One(0, s.elements.len())
+            }
+        })
+        .collect();
+    let swappable: Vec<usize> =
+        state.iter().enumerate().filter(|(_, s)| s.swappable()).map(|(i, _)| i).collect();
+    // The slots an empty section may keep: all but the post slot.
+    let content: Vec<usize> =
+        slots.iter().enumerate().filter(|(_, s)| s.name != POST).map(|(i, _)| i).collect();
+    let stages = stages.max(1);
     let mut turn = 0usize;
     let mut walk = 0.0f64;
+    let mut dense = 0usize;
+    let mut track = 0usize;
+    let mut stage = 0usize;
+    let mut switched = 0.0f64;
     let mut out = Vec::with_capacity(parts.len());
     for (i, part) in parts.iter().enumerate() {
         let change = if i == 0 { 0.0 } else { unit(part.change) };
+        let big = change >= CHANGE_BIG;
         if i > 0 {
-            let big = change >= CHANGE_BIG;
             walk += change * WALK_STEP * if big { 2.0 } else { 1.0 };
             if big {
                 for &s in &swappable {
-                    swap(on.get_mut(s));
+                    if let Some(x) = state.get_mut(s) {
+                        x.swap_all();
+                    }
                 }
             } else if change >= CHANGE_SMALL
                 && let Some(&s) = swappable.get(turn % swappable.len().max(1))
             {
-                swap(on.get_mut(s));
+                if let Some(x) = state.get_mut(s) {
+                    x.swap();
+                }
                 turn += 1;
             }
+            if part.track_start {
+                track += 1;
+            }
+            let start = if part.start.is_finite() { part.start } else { 0.0 };
+            if stages > 1 && part.track_start && change >= STAGE_CHANGE && start - switched >= STAGE_GAP {
+                stage = (stage + 1) % stages;
+                switched = start;
+            }
         }
+        // The post slot follows the role: off where it is calm, on at a drop.
+        for x in &mut state {
+            if let State::Each(on, _) = x {
+                match part.role {
+                    Role::Intro | Role::Outro | Role::Break => on.iter_mut().for_each(|o| *o = false),
+                    Role::Drop => on.iter_mut().for_each(|o| *o = true),
+                    _ => {}
+                }
+            }
+        }
+        let empty = part.role == Role::Main
+            && big
+            && dense >= EMPTY_AFTER
+            && !content.is_empty()
+            && draw(part.seed, i) < EMPTY_CHANCE * change;
+        let kept = content.get(turn % content.len().max(1)).copied();
+        dense = match part.role {
+            Role::Main | Role::Build | Role::Drop if !empty => dense + 1,
+            _ => 0,
+        };
         let mut presence = Vec::new();
-        for (slot, &(k, n)) in slots.iter().zip(&on) {
+        for (s, (slot, x)) in slots.iter().zip(&state).enumerate() {
             let sky = slot.name == SKY || slot.name == MID;
             let level = match (part.role, sky) {
                 (Role::Intro | Role::Outro, false) => CALM_PRESENCE,
@@ -177,12 +317,27 @@ pub fn rows(parts: &[Part], slots: &[Slot]) -> Vec<Row> {
                 (Role::Break, true) => BREAK_SKY,
                 _ => 1.0,
             };
-            presence.extend((0..n).map(|j| if j == k { level } else { 0.0 }));
+            let level = if empty && Some(s) != kept { 0.0 } else { level };
+            match x {
+                State::One(k, n) => presence.extend((0..*n).map(|j| if j == *k { level } else { 0.0 })),
+                State::Each(on, _) => {
+                    presence.extend(on.iter().map(|o| if *o && !empty { 1.0 } else { 0.0 }))
+                }
+            }
         }
         let intensity = match part.role {
             Role::Intro | Role::Outro => CALM_INTENSITY,
             Role::Drop => 1.0,
             _ => unit(part.energy),
+        };
+        let variant = CAMERA_VARIANTS.get(track % CAMERA_VARIANTS.len()).copied().unwrap_or(CAMERA_MAIN);
+        let camera = match part.role {
+            Role::Break => CAMERA_BREAK,
+            Role::Drop => CAMERA_DROP,
+            Role::Build => CAMERA_BUILD,
+            Role::Intro | Role::Outro => variant,
+            Role::Main if part.track_start => variant,
+            Role::Main => CAMERA_MAIN,
         };
         out.push(Row {
             start: part.start,
@@ -193,6 +348,9 @@ pub fn rows(parts: &[Part], slots: &[Slot]) -> Vec<Row> {
             warmth: warmth_at(walk),
             intensity,
             walk,
+            camera,
+            stage,
+            empty,
         });
     }
     out
@@ -225,6 +383,8 @@ pub fn table(slots: &[Slot], rows: &[Row]) -> String {
         cells.extend(r.presence.iter().map(|p| num(*p)));
         cells.push(num(r.warmth));
         cells.push(num(r.intensity));
+        cells.push(r.camera.to_string());
+        cells.push(r.stage.to_string());
         text.push_str(&cells.join(","));
         text.push('\n');
     }
@@ -341,7 +501,16 @@ mod tests {
             .enumerate()
             .map(|(i, &(role, change))| {
                 let start = i as f64 * 30.0;
-                Part { start, end: start + 30.0, zone: (start, start), role, change, energy: 0.6 }
+                Part {
+                    start,
+                    end: start + 30.0,
+                    zone: (start, start),
+                    role,
+                    change,
+                    energy: 0.6,
+                    track_start: false,
+                    seed: i as u32,
+                }
             })
             .collect()
     }
@@ -353,7 +522,7 @@ mod tests {
 
     #[test]
     fn the_first_section_shows_the_first_element_of_each_slot() {
-        let r = rows(&parts(&[(Role::Main, 0.9)]), &slots());
+        let r = rows(&parts(&[(Role::Main, 0.9)]), &slots(), 1);
         assert_eq!(presence(&r), [[1.0, 0.0, 1.0]]);
         assert_eq!(r[0].warmth, 0.0);
         // Its change does not count: nothing came before.
@@ -363,7 +532,7 @@ mod tests {
 
     #[test]
     fn a_small_change_walks_the_colour_and_swaps_nothing() {
-        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 0.2), (Role::Main, 0.29)]), &slots());
+        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 0.2), (Role::Main, 0.29)]), &slots(), 1);
         assert_eq!(presence(&r), [[1.0, 0.0, 1.0]; 3]);
         assert!((r[1].warmth - 0.2 * WALK_STEP).abs() < 1e-12);
         assert!((r[2].warmth - 0.49 * WALK_STEP).abs() < 1e-12);
@@ -371,10 +540,10 @@ mod tests {
 
     #[test]
     fn a_medium_change_swaps_one_slot_and_a_big_one_every_slot_with_a_double_step() {
-        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 0.5)]), &slots());
+        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 0.5)]), &slots(), 1);
         assert_eq!(presence(&r), [[1.0, 0.0, 1.0], [0.0, 1.0, 1.0]]);
         assert!((r[1].walk - 0.5 * WALK_STEP).abs() < 1e-12);
-        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 0.8)]), &slots());
+        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 0.8)]), &slots(), 1);
         assert_eq!(presence(&r), [[1.0, 0.0, 1.0], [0.0, 1.0, 1.0]]);
         assert!((r[1].walk - 0.8 * WALK_STEP * 2.0).abs() < 1e-12);
         // Two floor slots: a big change swaps both, a medium one only one.
@@ -382,7 +551,7 @@ mod tests {
             Slot { name: "floor".into(), elements: vec!["a".into(), "b".into()] },
             Slot { name: "mid".into(), elements: vec!["c".into(), "d".into(), "e".into()] },
         ];
-        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 1.0), (Role::Main, 0.5)]), &two);
+        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 1.0), (Role::Main, 0.5)]), &two, 1);
         assert_eq!(r[1].presence, [0.0, 1.0, 0.0, 1.0, 0.0]);
         assert_eq!(r[2].presence, [1.0, 0.0, 0.0, 1.0, 0.0]);
     }
@@ -401,7 +570,7 @@ mod tests {
             (Role::Main, 0.5),
             (Role::Main, 0.5),
         ]);
-        let r = rows(&p, &s);
+        let r = rows(&p, &s, 1);
         let on = |r: &Row| -> Vec<usize> {
             r.presence.iter().enumerate().filter(|(_, p)| **p > 0.0).map(|(i, _)| i).collect()
         };
@@ -412,7 +581,7 @@ mod tests {
         assert_eq!(on(&r[4]), [0, 4, 5]);
         // Only one-element slots: nothing can swap.
         let single = vec![Slot { name: "sky".into(), elements: vec!["g".into()] }];
-        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 0.5), (Role::Main, 1.0)]), &single);
+        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 0.5), (Role::Main, 1.0)]), &single, 1);
         assert!(r.iter().all(|r| r.presence == [1.0]));
     }
 
@@ -426,7 +595,7 @@ mod tests {
             (Role::Main, 0.1),
             (Role::Outro, 0.1),
         ]);
-        let r = rows(&p, &slots());
+        let r = rows(&p, &slots(), 1);
         assert_eq!(
             presence(&r),
             [
@@ -445,13 +614,13 @@ mod tests {
     #[test]
     fn the_mid_slot_follows_the_sky_and_other_slots_the_floor() {
         let s = vec![
-            Slot { name: "floor".into(), elements: vec!["a".into()] },
+            Slot { name: "ceiling".into(), elements: vec!["c".into()] },
             Slot { name: "mid".into(), elements: vec!["g".into()] },
-            Slot { name: "post".into(), elements: vec!["p".into()] },
+            Slot { name: "other".into(), elements: vec!["p".into()] },
             Slot { name: "sky".into(), elements: vec!["s".into()] },
         ];
         let p = parts(&[(Role::Intro, 0.0), (Role::Break, 0.5), (Role::Drop, 0.9), (Role::Outro, 0.1)]);
-        let r: Vec<Vec<f64>> = rows(&p, &s).into_iter().map(|r| r.presence).collect();
+        let r: Vec<Vec<f64>> = rows(&p, &s, 1).into_iter().map(|r| r.presence).collect();
         assert_eq!(
             r,
             [
@@ -469,7 +638,7 @@ mod tests {
         for k in 0..60 {
             of.push((Role::Main, [0.1, 0.5, 0.95, 0.0, 0.35][k % 5]));
         }
-        let r = rows(&parts(&of), &slots());
+        let r = rows(&parts(&of), &slots(), 1);
         for w in r.windows(2) {
             assert!(w[1].walk >= w[0].walk, "{} after {}", w[1].walk, w[0].walk);
             assert!((0.0..=1.0).contains(&w[1].warmth));
@@ -486,6 +655,7 @@ mod tests {
         let r = rows(
             &parts(&[(Role::Main, 0.0), (Role::Main, f64::NAN), (Role::Main, -3.0), (Role::Main, 7.0)]),
             &slots(),
+            1,
         );
         assert_eq!(r[1].walk, 0.0);
         assert_eq!(r[2].walk, 0.0);
@@ -495,11 +665,11 @@ mod tests {
     #[test]
     fn the_table_has_a_row_per_section_and_the_columns_named() {
         let p = parts(&[(Role::Intro, 0.0), (Role::Drop, 0.9)]);
-        let t = table(&slots(), &rows(&p, &slots()));
+        let t = table(&slots(), &rows(&p, &slots(), 1));
         let lines: Vec<&str> = t.lines().collect();
-        assert_eq!(lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity");
-        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3");
-        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1");
+        assert_eq!(lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage");
+        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3,4,0");
+        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0");
         assert_eq!(lines.len(), 3);
         assert!(check(&slots()).is_ok());
         let bad = |e: &[&str]| {
@@ -507,9 +677,161 @@ mod tests {
         };
         assert!(check(&bad(&["a", "a"])).unwrap_err().contains("twice"));
         assert!(check(&bad(&["warmth"])).unwrap_err().contains("column"));
+        assert!(check(&bad(&["camera"])).unwrap_err().contains("column"));
+        assert!(check(&bad(&["stage"])).unwrap_err().contains("column"));
         assert!(check(&bad(&["a b"])).unwrap_err().contains("column name"));
         assert!(check(&bad(&[])).unwrap_err().contains("no elements"));
         assert!(check(&[]).is_err());
+    }
+
+    #[test]
+    fn post_elements_are_on_each_by_itself_off_where_calm_and_on_from_a_drop() {
+        let s = vec![
+            Slot { name: "floor".into(), elements: vec!["a".into()] },
+            Slot { name: "post".into(), elements: vec!["lines".into(), "glow".into()] },
+        ];
+        let p = parts(&[
+            (Role::Intro, 0.0),
+            (Role::Main, 0.1),
+            (Role::Drop, 0.9),
+            (Role::Main, 0.1),
+            (Role::Main, 0.5),
+            (Role::Main, 0.5),
+            (Role::Break, 0.5),
+            (Role::Main, 0.1),
+            (Role::Main, 0.8),
+            (Role::Outro, 0.5),
+        ]);
+        let r: Vec<Vec<f64>> = rows(&p, &s, 1).into_iter().map(|r| r.presence).collect();
+        // Off at the start and through a small change; both on at a drop, and they stay on.
+        assert_eq!(r[0], [CALM_PRESENCE, 0.0, 0.0]);
+        assert_eq!(r[1], [1.0, 0.0, 0.0]);
+        assert_eq!(r[2], [1.0, 1.0, 1.0]);
+        assert_eq!(r[3], [1.0, 1.0, 1.0]);
+        // A medium change switches the next post element: the post slot is the only one that swaps.
+        assert_eq!(r[4], [1.0, 0.0, 1.0]);
+        assert_eq!(r[5], [1.0, 0.0, 0.0]);
+        // A break turns them off; a big change switches every one of them.
+        assert_eq!(r[6], [0.0, 0.0, 0.0]);
+        assert_eq!(r[7], [1.0, 0.0, 0.0]);
+        assert_eq!(r[8], [1.0, 1.0, 1.0]);
+        assert_eq!(r[9], [CALM_PRESENCE, 0.0, 0.0]);
+        // A ceiling slot follows the floor: empty in a break.
+        let c = vec![Slot { name: CEILING.into(), elements: vec!["chase".into()] }];
+        let r = rows(&parts(&[(Role::Main, 0.0), (Role::Break, 0.5), (Role::Intro, 0.9)]), &c, 1);
+        let r: Vec<f64> = r.iter().map(|r| r.presence[0]).collect();
+        assert_eq!(r, [1.0, 0.0, CALM_PRESENCE]);
+    }
+
+    /// Five slots, three full sections, then a main section at `change` with `seed`.
+    fn empty_case(change: f64, seed: u32) -> Row {
+        let s = vec![
+            Slot { name: "ceiling".into(), elements: vec!["c".into()] },
+            Slot { name: "floor".into(), elements: vec!["a".into(), "b".into()] },
+            Slot { name: "mid".into(), elements: vec!["g".into()] },
+            Slot { name: "post".into(), elements: vec!["p".into()] },
+            Slot { name: "sky".into(), elements: vec!["s".into()] },
+        ];
+        let mut p = parts(&[(Role::Drop, 0.0), (Role::Main, 0.1), (Role::Main, 0.1), (Role::Main, change)]);
+        p[3].seed = seed;
+        rows(&p, &s, 1).remove(3)
+    }
+
+    #[test]
+    fn a_strong_boundary_may_empty_a_main_section_to_one_slot_as_the_seed_draws() {
+        assert_eq!(draw(7, 3), draw(7, 3), "the same draw every time");
+        assert!((0..1000).all(|k| (0.0..1.0).contains(&draw(k, 3))));
+        let full = (0..10_000u32).find(|&k| draw(k, 3) >= EMPTY_CHANCE).unwrap();
+        let seed = (0..10_000u32).find(|&k| draw(k, 3) < 0.3 * EMPTY_CHANCE).unwrap();
+        let r = empty_case(1.0, seed);
+        assert!(r.empty);
+        // One content slot is left at its full presence; the post element is off as well.
+        let on: Vec<usize> =
+            r.presence.iter().enumerate().filter(|(_, p)| **p > 0.0).map(|(i, _)| i).collect();
+        assert_eq!(on.len(), 1, "{:?}", r.presence);
+        assert_ne!(on[0], 4, "the post element is never the one kept");
+        assert_eq!(r.presence[on[0]], 1.0);
+        assert_eq!(r.camera, CAMERA_MAIN);
+        // The same section with a draw above the chance, or a weaker boundary: full.
+        assert!(!empty_case(1.0, full).empty);
+        assert!(!empty_case(CHANGE_BIG - 0.01, seed).empty);
+        // Fewer full sections before: none.
+        let s = vec![Slot { name: "floor".into(), elements: vec!["a".into()] }];
+        let mut p = parts(&[(Role::Main, 0.0), (Role::Break, 0.1), (Role::Main, 0.1), (Role::Main, 1.0)]);
+        p[3].seed = seed;
+        assert!(!rows(&p, &s, 1)[3].empty, "a break two rows before resets the count");
+        // Only a main section empties: a drop at the same draw stays full.
+        let mut p = parts(&[(Role::Main, 0.0), (Role::Main, 0.1), (Role::Main, 0.1), (Role::Drop, 1.0)]);
+        p[3].seed = seed;
+        assert!(!rows(&p, &s, 1)[3].empty);
+        // About EMPTY_CHANCE times change of the seeds empty a strong boundary.
+        let share = (0..2000u32).filter(|&k| empty_case(0.8, k).empty).count() as f64 / 2000.0;
+        assert!((share - 0.8 * EMPTY_CHANCE).abs() < 0.04, "{share}");
+        // An empty row resets the count: the row after it does not empty again.
+        let mut p = parts(&[
+            (Role::Main, 0.0),
+            (Role::Main, 0.1),
+            (Role::Main, 0.1),
+            (Role::Main, 1.0),
+            (Role::Main, 1.0),
+        ]);
+        p[3].seed = seed;
+        p[4].seed = seed;
+        let r = rows(&p, &s, 1);
+        assert!(r[3].empty && !r[4].empty);
+    }
+
+    #[test]
+    fn the_camera_follows_the_role_and_each_track_takes_a_variant() {
+        let mut p = parts(&[
+            (Role::Intro, 0.0),
+            (Role::Main, 0.2),
+            (Role::Build, 0.3),
+            (Role::Drop, 0.9),
+            (Role::Break, 0.6),
+            (Role::Outro, 0.3),
+            (Role::Main, 0.9),
+            (Role::Main, 0.1),
+            (Role::Intro, 0.95),
+        ]);
+        p[0].track_start = true;
+        p[6].track_start = true;
+        p[8].track_start = true;
+        let cams: Vec<usize> = rows(&p, &slots(), 1).iter().map(|r| r.camera).collect();
+        let [a, b] = CAMERA_VARIANTS;
+        assert_eq!(cams, [a, CAMERA_MAIN, CAMERA_BUILD, CAMERA_DROP, CAMERA_BREAK, a, b, CAMERA_MAIN, a]);
+        assert!(cams.iter().all(|c| *c < CAMERA_PRESETS));
+    }
+
+    #[test]
+    fn the_stage_changes_only_at_a_strong_track_start_and_not_twice_in_its_gap() {
+        // A track start every 3 minutes (6 parts of 30 s); every fourth is weak.
+        let mut of = Vec::new();
+        for k in 0..60 {
+            of.push((if k % 6 == 0 { Role::Intro } else { Role::Main }, 0.5));
+        }
+        let mut p = parts(&of);
+        for k in (0..60).step_by(6) {
+            p[k].track_start = true;
+            p[k].change = if (k / 6) % 4 == 3 { 0.7 } else { 0.9 };
+        }
+        // A strong boundary inside a track (a drop) never switches.
+        p[20].role = Role::Drop;
+        p[20].change = 1.0;
+        let r = rows(&p, &slots(), 3);
+        let stages: Vec<usize> = r.iter().map(|r| r.stage).collect();
+        let switches: Vec<usize> = (1..60).filter(|&k| stages[k] != stages[k - 1]).collect();
+        // Track starts at 180 and 360 s (too soon after the file's start), 540 (weak), 720,
+        // 900 and 1080 (too soon), 1260 (weak), 1440, 1620 (too soon).
+        let at: Vec<f64> = switches.iter().map(|&k| p[k].start).collect();
+        assert_eq!(at, [720.0, 1440.0], "{stages:?}");
+        assert!(switches.iter().all(|&k| p[k].track_start && p[k].change >= STAGE_CHANGE));
+        assert!(at.windows(2).all(|w| w[1] - w[0] >= STAGE_GAP));
+        assert_eq!(stages[59], 2);
+        assert!(stages.iter().all(|s| *s < 3));
+        // One stage: always 0.
+        assert!(rows(&p, &slots(), 1).iter().all(|r| r.stage == 0));
+        assert!(rows(&p, &slots(), 0).iter().all(|r| r.stage == 0));
     }
 
     #[test]

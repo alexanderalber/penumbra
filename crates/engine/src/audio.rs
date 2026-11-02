@@ -133,16 +133,23 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          undoable edit: {path (the chan.beat_grid), table (a table.text, created when missing), sequence (a \
          chan.sequence, created when missing), slots ({slot: [element paths]}, e.g. {floor: [\"/blocks\", \
          \"/mountains\"], sky: [\"/galaxy\"]}: the first element of each slot is on at the start, slots take \
-         turns in name order, the slots named sky and mid stay on through a break, every other slot follows \
-         the floor's rules), stage? (gets warmth), intensity? \
-         (a param that gets intensity, e.g. \"/stage.dim\"), fade_min? (s, default 2: the shortest fade from \
-         one row into the next, also where the music cuts)}. The table has a row per section: start, end, \
-         role, change, the presence of each element (the column is named as the element), warmth and \
-         intensity. Edit the table by hand to override a row. The sequence gets a step per row, its clock on \
-         the grid's seconds. Beside the table it creates or updates <table>_now, _plus, _next, _diff, _ramp \
-         and _mix; _mix has a channel per column that moves through each fade. Binds each element's \
-         presence, warmth on the stage and on each element that has it, and intensity. Run it again after \
-         the file changes: it overwrites the table",
+         turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
+         effects that are on or off each by itself (off in an intro, outro or break, on from a drop), every \
+         other slot (floor, ceiling) follows the floor's rules), stage? (a path, or a list of stages side by \
+         side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
+         e.g. \"/stages.index\" of a tex.switch; on a tex.cross it fades), intensity? (a param that gets \
+         intensity, e.g. \"/stage.dim\"), fade_min? (s, default 2: the shortest fade from one row into the \
+         next, also where the music cuts)}. The table has a row per section: start, end, role, change, the \
+         presence of each element (the column is named as the element), warmth, intensity, camera (the \
+         stage's camera preset: low in a main section, higher in a build, high and wide on a drop, level in \
+         a break, a variant per track) and stage (changes only at a track start with change 0.8 or more, \
+         at most once in 8 minutes). A strong boundary into a main section may leave the stage and one slot \
+         alone, drawn from the section's seed. Edit the table by hand to override a row. The sequence gets a \
+         step per row, its clock on the grid's seconds. Beside the table it creates or updates <table>_now, \
+         _plus, _next, _diff, _ramp, _mix, _half, _snap, _jump and _pick; _mix has a channel per column that \
+         moves through each fade, _pick jumps to the next row half way through it. Binds each element's \
+         presence, warmth, camera and switch to them, and intensity. Run it again after the file changes: \
+         it overwrites the table",
         beats_arrange,
     );
     add(
@@ -689,14 +696,28 @@ fn bind_to(param: ParamPath, from: &NodePath, channel: &str) -> CmdResult<Op> {
 }
 
 /// The kinds of the readers `beats.arrange` puts beside its table, by the end of their names.
-const READERS: [(&str, &str); 6] = [
+/// `_mix` moves through each fade; `_pick` jumps from one row to the next half way through it,
+/// for the columns that are an index (camera, stage).
+const READERS: [(&str, &str); 10] = [
     ("now", FROM_TABLE),
     ("plus", "chan.math"),
     ("next", FROM_TABLE),
     ("diff", "chan.math"),
     ("ramp", "chan.math"),
     ("mix", "chan.math"),
+    ("half", "chan.math"),
+    ("snap", "chan.math"),
+    ("jump", "chan.math"),
+    ("pick", "chan.math"),
 ];
+
+/// One stage or several side by side.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Stages {
+    One(NodePath),
+    Many(Vec<NodePath>),
+}
 
 fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     #[derive(Deserialize)]
@@ -706,11 +727,17 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         table: NodePath,
         sequence: NodePath,
         slots: BTreeMap<String, Vec<NodePath>>,
-        stage: Option<NodePath>,
+        stage: Option<Stages>,
+        switch: Option<ParamPath>,
         intensity: Option<ParamPath>,
         fade_min: Option<f64>,
     }
     let a: A = args(p)?;
+    let stages: Vec<NodePath> = match a.stage {
+        None => Vec::new(),
+        Some(Stages::One(p)) => vec![p],
+        Some(Stages::Many(v)) => v,
+    };
     let fade_min = a.fade_min.unwrap_or(arrange::FADE_MIN);
     if !fade_min.is_finite() || !(0.0..=arrange::FADE_MIN_MAX).contains(&fade_min) {
         return Err(CommandError(format!("fade_min is seconds from 0 to {}", arrange::FADE_MIN_MAX)));
@@ -749,10 +776,21 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         slots.push(Slot { name: slot.clone(), elements: names });
     }
     arrange::check(&slots).map_err(CommandError)?;
-    if let Some(stage) = &a.stage {
+    for stage in &stages {
         require(&net, stage)?;
         if !has_param(e, &net, stage, "warmth") {
             return Err(CommandError(format!("{stage} has no param warmth")));
+        }
+    }
+    if let Some(target) = &a.switch {
+        require(&net, target.node())?;
+        if !has_param(e, &net, target.node(), target.param().as_str()) {
+            return Err(CommandError(format!("{} has no param {}", target.node(), target.param())));
+        }
+        if stages.len() < 2 {
+            return Err(CommandError(
+                "switch picks between stages: give them as stage: [\"/stage_a\", \"/stage_b\", ...]".into(),
+            ));
         }
     }
     if let Some(target) = &a.intensity {
@@ -774,7 +812,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         }
         readers.push(path);
     }
-    let [now, plus, next, diff, ramp, mix] = &readers[..] else {
+    let [now, plus, next, diff, ramp, mix, half, snap, jump, pick] = &readers[..] else {
         return Err(CommandError("the readers could not be named".into()));
     };
 
@@ -804,10 +842,12 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             role: c.role,
             change: c.change,
             energy: c.energy,
+            track_start: sec.track_start,
+            seed: sec.seed,
         })
         .collect();
     let end = s.envelopes.as_ref().map_or(0.0, |env| env.len() as f64 * env.hop_seconds());
-    let rows = arrange::rows(&parts, &slots);
+    let rows = arrange::rows(&parts, &slots, stages.len());
     let table = arrange::table(&slots, &rows);
     if table.len() > penumbra_core::param::MAX_TEXT {
         return Err(CommandError(format!("{} rows do not fit into a table.text", rows.len())));
@@ -829,8 +869,10 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     create(&a.table, "table.text", [x, y]);
     create(&a.sequence, SEQUENCE, [x, y + 150.0]);
     for (i, (path, (_, kind))) in readers.iter().zip(READERS).enumerate() {
+        // The picking readers in a second row under the blending ones.
+        let (col, row) = if i < 6 { (i, 0.0) } else { (i - 4, 300.0) };
         let below = if i == 1 { 150.0 } else { 0.0 };
-        create(path, kind, [x + 200.0 * (i + 1) as f32, y + below]);
+        create(path, kind, [x + 200.0 * (col + 1) as f32, y + below + row]);
     }
     let text = |t: &str| Value::Text(t.to_string());
     let set = |node: &NodePath, p: &str, value: Value| -> CmdResult<Op> {
@@ -847,7 +889,19 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     for p in ["steps", "names", "lead_in", "file"] {
         unbind.push(param_of(&a.sequence, p)?);
     }
-    for (r, p) in [(plus, "op"), (plus, "b"), (diff, "op"), (ramp, "op"), (mix, "op")] {
+    for (r, p) in [
+        (plus, "op"),
+        (plus, "b"),
+        (diff, "op"),
+        (ramp, "op"),
+        (mix, "op"),
+        (half, "op"),
+        (half, "b"),
+        (snap, "op"),
+        (snap, "b"),
+        (jump, "op"),
+        (pick, "op"),
+    ] {
         unbind.push(param_of(r, p)?);
     }
     ops.extend(unbind.into_iter().map(|param| Op::Unbind { param, component: None }));
@@ -881,6 +935,22 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         connect(now, mix, 0),
         connect(ramp, mix, 1),
         set(mix, "op", text("add"))?,
+        // The share of the next row rounded: 0 before the fade's middle, 1 after it.
+        connect(&a.sequence, half, 0),
+        Op::Disconnect { to: half.clone(), input: 1 },
+        set(half, "op", text("add"))?,
+        set(half, "b", Value::Float(0.5))?,
+        connect(half, snap, 0),
+        Op::Disconnect { to: snap.clone(), input: 1 },
+        set(snap, "op", text("floor"))?,
+        set(snap, "b", Value::Float(1.0))?,
+        connect(diff, jump, 0),
+        Op::Disconnect { to: jump.clone(), input: 1 },
+        set(jump, "op", text("multiply"))?,
+        bind_to(param_of(jump, "b")?, snap, "mix")?,
+        connect(now, pick, 0),
+        connect(jump, pick, 1),
+        set(pick, "op", text("add"))?,
     ]);
     for r in [now, next] {
         for p in ["layout", "names"] {
@@ -894,14 +964,25 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         ops.push(bind_to(param_of(path, "presence")?, mix, &column)?);
         bound.push(format!("{path}.presence"));
     }
-    let warm: Vec<&NodePath> = a
-        .stage
+    let warm: Vec<&NodePath> = stages
         .iter()
-        .chain(elements.iter().filter(|p| Some(*p) != a.stage.as_ref() && has_param(e, &net, p, "warmth")))
+        .chain(elements.iter().filter(|p| !stages.contains(p) && has_param(e, &net, p, "warmth")))
         .collect();
     for path in warm {
         ops.push(bind_to(param_of(path, "warmth")?, mix, "warmth")?);
         bound.push(format!("{path}.warmth"));
+    }
+    // The camera is an index into the stage's presets: it jumps half way through a fade, and
+    // the stage glides to the new preset.
+    for path in stages.iter().filter(|p| has_param(e, &net, p, "camera")) {
+        ops.push(bind_to(param_of(path, "camera")?, pick, "camera")?);
+        bound.push(format!("{path}.camera"));
+    }
+    if let Some(target) = &a.switch {
+        // A cross fades between two stages through the fade; anything else takes the index.
+        let blends = kind_at(target.node()).is_some_and(|k| k == "tex.cross");
+        ops.push(bind_to(target.clone(), if blends { mix } else { pick }, "stage")?);
+        bound.push(target.to_string());
     }
     if let Some(target) = &a.intensity {
         ops.push(bind_to(target.clone(), mix, "intensity")?);
@@ -920,6 +1001,8 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         obj.insert("rows".into(), json!(rows.len()));
         obj.insert("columns".into(), json!(columns));
         obj.insert("channels".into(), json!(mix.to_string()));
+        obj.insert("picks".into(), json!(pick.to_string()));
+        obj.insert("empty".into(), json!(rows.iter().filter(|r| r.empty).count()));
         obj.insert("readers".into(), json!(readers.iter().map(|p| p.to_string()).collect::<Vec<_>>()));
         obj.insert("bound".into(), json!(bound));
         obj.insert("end".into(), json!(steps.end));

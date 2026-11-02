@@ -255,8 +255,15 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   several go through a `geo.merge`.
 - **Mid elements** fly in front of the camera, on the lane. They take `bus` and `lane` too. Their
   output goes into the stage's `mid`.
+- **Ceiling elements** hang from the ceiling grid, 4 m above the floor. They take `bus` and
+  `lane` and give geometry, as floor elements do. Their output goes into the stage's `ceiling`.
+  Towards `presence` 0 they draw up into the ceiling.
 - **Sky elements** draw a picture over black. Their output goes into the stage's `sky`, screened
   over the nebula. Several go through a `tex.composite` with `op: screen`.
+- **Post elements** change the finished picture. Each takes a picture in `in` and `bus`, and
+  gives the changed picture in `out`. Chain them after the stage's `out`: stage, then
+  `post_scanlines`, then the next one, then the output. At `presence` 0 a post element passes the
+  picture on unchanged.
 - **`presence`** (0 to 1) brings an element in and takes it out again. A floor element sinks into
   the floor towards 0, a mid element flies away, a sky element dims. To swap two elements, ramp
   one's `presence` down while the other's goes up, for example through the blend between two
@@ -265,7 +272,18 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   section (the `presence` of each element, `warmth`, `intensity`) and binds the elements to it.
   Edit the table to change a section's picture. [An arrangement from the
   sections](../docs/audio.md#beats-of-a-sound-file) explains the rules. Name the slots `floor`,
-  `mid` and `sky`: `mid` and `sky` stay on through a break, the floor empties.
+  `ceiling`, `mid`, `sky` and `post`. `mid` and `sky` stay on through a break; `floor` and
+  `ceiling` empty. In `post` every element is on or off by itself, so several can be on at once:
+  they are off in an intro, outro and break and come on at a drop.
+- **The camera** takes one of six presets of the stage. The arrangement's `camera` column picks
+  one per section, and the stage glides to it.
+- **Two stages.** A project can hold several stages side by side, each with its own floor, sky
+  and ceiling elements. Wire their `out` into a `tex.switch`, or a `tex.cross` for two stages.
+  Give `beats.arrange` the stages as a list and the switch's param:
+  `stage: ["/stage_a", "/stage_b"], switch: "/stages.index"`. The `stage` column then changes at
+  a strong track start, at most once in 8 minutes. A `tex.cross` (`switch: "/stages.cross"`)
+  fades between the two stages through the row's fade; a `tex.switch` cuts half way through it.
+  Wire the mid and post elements into every stage, or after the switch.
 
 ### stage_synthwave
 
@@ -278,12 +296,19 @@ the nebula. Lines fade out with distance from the camera. The glider is the elem
 `mid_glider`.
 
 - In: `bus`, `floor` (geometry standing on the grid), `mid` (geometry in front of the camera,
-  such as the glider), `sky` (a picture screened over the nebula).
+  such as the glider), `ceiling` (geometry hanging from the ceiling grid), `sky` (a picture
+  screened over the nebula).
 - Out: `out` (the picture), `lane` (256 x 1: per texel i, -8 + 0.25 i metres ahead, red the
   lane's x in metres, green its sideways slope per metre, blue `step`).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift` (added to the bass, e.g. before a
   change), `energy_curve`, `dim` (the nebula's light); the lane's `bars_per_turn`, `swing`, `turn`,
   `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade.
+- Camera: `camera` (the preset, 0 to 5), `glide` (seconds the camera takes to reach a new preset:
+  most of the way after about 3 times this), `presets` (a csv table, one row per preset: `height`
+  in metres, `pitch` in degrees up, `roll` in degrees, `fov` in degrees, `side` in degrees to the
+  right). The presets: 0 low flight at 1.5 m, 1 higher and looking down for a build, 2 high and
+  wide for a drop (2.9 m, 74 degrees), 3 still and level for a break, 4 and 5 two tilted variants
+  that the tracks take in turn. `pitch` and `side` stay good to about 30 degrees.
 
 ### floor_blocks
 
@@ -382,3 +407,17 @@ brightens them.
   to magenta, 1 green to violet, as on the stage), `bands` (1 to 5), `height` (the lowest hem over
   the horizon, in picture heights), `speed` (per beat travelled), `glow`, `horizon` (as on
   `sky_sun`).
+
+### post_scanlines
+
+![post_scanlines](post_scanlines/preview.png)
+
+Dark lines across the picture, like an old monitor. The lines roll slowly down as the world
+travels. On every onset of the music they darken for a moment, so they flicker with the beat.
+The preview is a piece of the picture at full size; scaled down, the lines vanish.
+
+- In: `in` (the picture, e.g. the stage's `out`), `bus`. Out: `out`.
+- Params: `presence` (0 passes the picture on unchanged), `pitch` (pixels from one line to the
+  next), `strength` (how dark a line is: 0 none, 1 black), `thickness` (share of the pitch a line
+  covers), `roll` (lines the pattern moves per beat travelled), `flicker` (how much darker lines
+  and picture get on an onset), `decay` (seconds the flicker takes to fade).

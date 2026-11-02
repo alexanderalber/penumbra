@@ -691,6 +691,8 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         (json!({"stage": "/n"}), "no param warmth"),
         (json!({"intensity": "/stage.nope"}), "no param nope"),
         (json!({"fade_min": -1.0}), "fade_min"),
+        (json!({"switch": "/stage.dim"}), "switch picks between stages"),
+        (json!({"stage": ["/stage", "/n"]}), "no param warmth"),
         (json!({"extra": 1}), "extra"),
     ] {
         let e = f.fail("beats.arrange", args(extra.clone()));
@@ -699,7 +701,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     let r = f.call("beats.arrange", args(json!({})));
     assert_eq!(r["history"], "new", "{r}");
     assert_eq!(r["rows"], 4, "{r}");
-    assert_eq!(r["created"].as_array().map(Vec::len), Some(8), "{r}");
+    assert_eq!(r["created"].as_array().map(Vec::len), Some(12), "{r}");
     assert_eq!(
         r["bound"],
         json!([
@@ -708,6 +710,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
             "/galaxy.presence",
             "/stage.warmth",
             "/galaxy.warmth",
+            "/stage.camera",
             "/stage.dim"
         ]),
         "{r}"
@@ -717,7 +720,10 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     };
     let table = param(&f.call("node.info", json!({"path": "/arrangement"})), "text");
     let lines: Vec<&str> = table.as_str().unwrap().lines().collect();
-    assert_eq!(lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity", "{table}");
+    assert_eq!(
+        lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage",
+        "{table}"
+    );
     assert_eq!(lines.len(), 5, "{table}");
     assert!(lines[1].starts_with("0,") && lines[1].contains(",intro,0,0.4,0,1,0,0.3"), "{table}");
     let cues = f.call("node.info", json!({"path": "/cues"}));
@@ -734,6 +740,9 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     );
     let palette = f.call("node.info", json!({"path": "/stage/palette"}));
     assert_eq!(palette["binds"], json!([{"param": "cross", "from": "/arrangement_mix:warmth"}]), "{palette}");
+    // The camera preset jumps half way through a fade; the stage glides to it.
+    let preset = f.call("node.info", json!({"path": "/stage/preset"}));
+    assert_eq!(preset["binds"], json!([{"param": "row", "from": "/arrangement_pick:camera"}]), "{preset}");
     // The readers give a channel per number column, the role left out, all at the row the
     // show stands at.
     f.call("node.watch", json!({"path": "/arrangement_mix"}));
@@ -743,8 +752,30 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
             .as_array()
             .map(|c| c.iter().filter_map(|c| c["name"].as_str().map(String::from)).collect())
             .unwrap_or_default();
-        names == ["start", "end", "change", "blocks", "mountains", "galaxy", "warmth", "intensity"]
+        names
+            == [
+                "start",
+                "end",
+                "change",
+                "blocks",
+                "mountains",
+                "galaxy",
+                "warmth",
+                "intensity",
+                "camera",
+                "stage",
+            ]
             && (0.0..=1.0).contains(&channel(&m, "galaxy"))
+    });
+    // The picking reader gives whole preset numbers, a row's own.
+    f.call("node.watch", json!({"path": "/arrangement_pick"}));
+    eventually("a whole camera preset", || {
+        let m = f.call("chan.read", json!({"path": "/arrangement_pick"}));
+        let has = |n: &str| m["channels"].as_array().is_some_and(|c| c.iter().any(|c| c["name"] == n));
+        has("camera") && has("stage") && {
+            let c = channel(&m, "camera");
+            c.fract() == 0.0 && (0.0..6.0).contains(&c) && channel(&m, "stage") == 0.0
+        }
     });
     // Again: nothing new is created, the table is written again.
     let again = f.call("beats.arrange", args(json!({"fade_min": 0.5})));

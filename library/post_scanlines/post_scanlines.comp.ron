@@ -1,0 +1,14 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/post_scanlines": (kind: "comp.base", params: {"expose": "presence = lines.presence\npitch = lines.pitch\nstrength = lines.strength\nthickness = lines.thickness\nroll = lines.roll\nflicker = lines.flicker\ndecay = flash.fall"}),
+        "/post_scanlines/in": (kind: "tex.in", pos: [-600.0, -150.0]),
+        "/post_scanlines/bus": (kind: "chan.in", pos: [-800.0, 100.0]),
+        "/post_scanlines/onset": (kind: "chan.select", params: {"channels": "onset"}, inputs: {"in": "bus"}, pos: [-600.0, 100.0]),
+        "/post_scanlines/flash": (kind: "chan.filter", params: {"type": "first_order", "rise": 0.0, "fall": 0.15}, inputs: {"in": "onset"}, pos: [-400.0, 100.0]),
+        "/post_scanlines/lines": (kind: "tex.shader", params: {"file": "library/post_scanlines/scanlines.wgsl", "pitch": 4.0, "strength": 0.45, "thickness": 0.5, "roll": 0.25, "flicker": 0.35, "presence": 1.0}, inputs: {"in0": "in"}, binds: {"beats": "bus:travelled", "flash": "flash:onset"}, pos: [-200.0, -100.0]),
+        "/post_scanlines/out": (kind: "tex.out", inputs: {"in": "lines"}, pos: [0.0, -100.0]),
+    },
+)
