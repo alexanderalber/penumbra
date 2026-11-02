@@ -98,7 +98,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          beats.status. sections lists the sections that overlap from to to, once found: start and end (s), bars, \
          label (the kind of sound, the same number anywhere in the file where it sounds alike), letter (repeats \
          within a track share it), track, track_start, strength (0 to 1), seed and zone [start, end] (s, the blend \
-         from the section before); null before. Does not start an analysis",
+         from the section before), and with the music bus energy, bass, density (onsets per beat), kick (share \
+         of beats with a kick), jump (energy minus the section before's), role (intro, break, build, drop, outro \
+         or main) and change (0 to 1: how strongly the music changes where the section begins); null before. \
+         Does not start an analysis",
         beats_grid,
     );
     add(
@@ -465,12 +468,15 @@ fn beats_grid(e: &Engine, p: &Json) -> CmdResult<Json> {
     let (from, to) = (a.from.unwrap_or(f64::NEG_INFINITY), a.to.unwrap_or(f64::INFINITY));
     let within = |v: &[f64]| -> Vec<f64> { v.iter().copied().filter(|t| *t >= from && *t <= to).collect() };
     let grid = s.grid.as_ref();
+    let character = s.bus.as_ref().map_or(&[][..], |b| b.sections());
     let sections: Option<Vec<Json>> = s.sections.as_ref().map(|x| {
         x.sections
             .list()
             .iter()
-            .filter(|c| c.end >= from && c.start <= to)
-            .map(|c| {
+            .enumerate()
+            .filter(|(_, c)| c.end >= from && c.start <= to)
+            .map(|(i, c)| {
+                let e = character.get(i);
                 json!({
                     "start": c.start,
                     "end": c.end,
@@ -482,6 +488,13 @@ fn beats_grid(e: &Engine, p: &Json) -> CmdResult<Json> {
                     "strength": c.strength,
                     "seed": c.seed,
                     "zone": [c.zone.0, c.zone.1],
+                    "energy": e.map(|e| e.energy),
+                    "bass": e.map(|e| e.bass),
+                    "density": e.map(|e| e.density),
+                    "kick": e.map(|e| e.kick),
+                    "jump": e.map(|e| e.jump),
+                    "role": e.map(|e| e.role.name()),
+                    "change": e.map(|e| e.change),
                 })
             })
             .collect()

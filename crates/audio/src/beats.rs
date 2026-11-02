@@ -45,7 +45,8 @@ pub use analyze::{
     model_path, run_parallel,
 };
 pub use bus::{
-    Bus, BusReading, DROP_DECAY, DROP_RISE, ENERGY_FALL, ENERGY_HIGH, ENERGY_LOW, ENERGY_RISE, SectionEnergy,
+    BREAK_DIP, BREAK_KICK, BUILD_RISE, Bus, BusReading, CHANGE_JUMP, CHANGE_NOVELTY, CHANGE_TRACK,
+    DROP_DECAY, DROP_RISE, ENERGY_FALL, ENERGY_HIGH, ENERGY_LOW, ENERGY_RISE, KICK_DB, Role, SectionEnergy,
     TRAVEL_CAP, TRAVEL_FLOOR, TRAVEL_HOPS, TRAVEL_SMOOTH, Travel, follow, normalise,
 };
 pub use envelopes::{

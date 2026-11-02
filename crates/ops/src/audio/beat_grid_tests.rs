@@ -472,10 +472,31 @@ fn the_sections_of_the_example_track() {
         f.cooker.output(Port { node: id, output: 3 }).and_then(|d| d.get::<Table>()).cloned().unwrap();
     assert_eq!(
         table.rows()[0],
-        ["start", "end", "bars", "label", "letter", "track", "strength", "zone_start", "zone_end", "energy"]
+        [
+            "start",
+            "end",
+            "bars",
+            "label",
+            "letter",
+            "track",
+            "strength",
+            "zone_start",
+            "zone_end",
+            "energy",
+            "bass",
+            "density",
+            "kick",
+            "jump",
+            "role",
+            "change"
+        ]
     );
-    let rows: Vec<Vec<f64>> =
-        table.rows().iter().skip(1).map(|r| r.iter().map(|x| x.parse().unwrap()).collect()).collect();
+    let rows: Vec<Vec<f64>> = table
+        .rows()
+        .iter()
+        .skip(1)
+        .map(|r| r.iter().map(|x| x.parse().unwrap_or(f64::NAN)).collect())
+        .collect();
     assert!(!rows.is_empty());
     for w in rows.windows(2) {
         assert_eq!(w[0][1], w[1][0], "end to end: {rows:?}");
@@ -829,6 +850,95 @@ fn the_music_bus_of_the_example_track() {
         let (g, _) = at(&mut f, 128.0 * 10_670.0 / 22_050.0 + *s);
         for ((name, v), (_, w)) in bus_of(&g).iter().zip(want) {
             assert!((v - w).abs() < 1e-6, "second pass at {s}, {name}: {v} vs {w}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The character of the example track's sections (intro, main, the breakdown from bar 17, the
+/// main part again): roles, kicks only outside the breakdown, a stronger change at the
+/// breakdown and at the kick's return than from intro to main, and the section channels equal
+/// to the `sections` table at a seek into each section.
+#[test]
+fn the_character_of_the_example_track() {
+    let dir = temp_dir("character");
+    let music = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
+    let mut ops = grid_ops(&music.to_string_lossy());
+    ops.extend([
+        create("/o", BEAT_GRID),
+        connect("/p", "/o", 0),
+        create("/k", "chan.constant"),
+        set("/k.name0", "pos"),
+        set("/k.value0", 10.0),
+        Op::Bind {
+            param: penumbra_core::ParamPath::parse("/p.position").unwrap(),
+            component: None,
+            from: "/k".parse().unwrap(),
+            channel: Some(penumbra_core::Name::new("pos").unwrap()),
+            cell: None,
+            format: None,
+        },
+    ]);
+    let mut f = fixture(&ops, &dir.join("cache"));
+    let names = ["section_role", "section_change", "section_bass", "section_density", "section_kick"];
+    let t = Instant::now();
+    loop {
+        assert!(t.elapsed() < Duration::from_secs(120), "the sections never came");
+        std::thread::sleep(Duration::from_millis(20));
+        f.clock.advance(1);
+        let Some((g, _)) = try_cook_two(&mut f) else { continue };
+        if value(&g, "sections_ready") == 0.0 {
+            assert!(names.iter().all(|n| value(&g, n) == 0.0), "{:?}", bus_of(&g));
+        } else if value(&g, "analyzing") == 0.0 {
+            break;
+        }
+    }
+    let id = f.net.resolve(&"/g".parse().unwrap()).unwrap();
+    let table =
+        f.cooker.output(Port { node: id, output: 3 }).and_then(|d| d.get::<Table>()).cloned().unwrap();
+    let header = &table.rows()[0];
+    assert_eq!(header[9..], ["energy", "bass", "density", "kick", "jump", "role", "change"]);
+    let col = |name: &str| header.iter().position(|h| h == name).unwrap();
+    let rows = &table.rows()[1..];
+    let num = |r: &Vec<String>, name: &str| -> f64 { r[col(name)].parse().unwrap() };
+    let roles: Vec<&str> = rows.iter().map(|r| r[col("role")].as_str()).collect();
+    assert_eq!(roles, ["intro", "main", "break", "drop"], "{rows:?}");
+
+    // The breakdown: bars 17 to 24, without kick.
+    let bar = 4.0 * 10_670.0 / 22_050.0;
+    assert!((num(&rows[2], "start") - 16.0 * bar).abs() < 0.1, "{rows:?}");
+    assert!(num(&rows[2], "kick") < 0.1, "{rows:?}");
+    for r in [&rows[1], &rows[3]] {
+        assert!(num(r, "kick") > 0.8, "{rows:?}");
+        assert!(num(r, "bass") > num(&rows[2], "bass") + 0.2, "{rows:?}");
+        assert!(num(r, "density") > 0.5, "{rows:?}");
+    }
+    let change: Vec<f64> = rows.iter().map(|r| num(r, "change")).collect();
+    assert_eq!(change[0], 0.0);
+    assert!(change[2] > change[1] + 0.05 && change[3] > change[1] + 0.05, "{change:?}");
+    assert!(num(&rows[3], "jump") >= 0.2 && num(&rows[2], "jump") < -0.2, "{rows:?}");
+
+    // A seek into each section: the channels are its row.
+    for (i, r) in rows.iter().enumerate() {
+        let mid = (num(r, "start") + num(r, "end")) / 2.0;
+        f.edit(&[set("/k.value0", mid)]);
+        f.clock.advance(1);
+        let (g, _) = cook_two(&mut f);
+        assert_eq!(value(&g, "section_index"), i as f64);
+        let role =
+            ["intro", "break", "build", "drop", "outro", "main"].iter().position(|x| *x == roles[i]).unwrap();
+        assert_eq!(value(&g, "section_role"), role as f64);
+        for (channel, column) in [
+            ("section_change", "change"),
+            ("section_bass", "bass"),
+            ("section_density", "density"),
+            ("section_kick", "kick"),
+        ] {
+            assert!(
+                (value(&g, channel) - num(r, column)).abs() < 1e-3,
+                "{channel} in section {i}: {:?}",
+                bus_of(&g)
+            );
         }
     }
     let _ = std::fs::remove_dir_all(&dir);

@@ -456,6 +456,13 @@ fn beats_of_a_sound_file_through_the_commands() {
     let list = grid["sections"].as_array().unwrap();
     assert!(!list.is_empty() && list[0]["letter"] == "A", "{grid}");
     assert!(list[0]["start"].as_f64().unwrap() <= 2.1 && list[0]["end"].as_f64().unwrap() >= 0.9, "{grid}");
+    // The character comes with the bus: the first section's change is 0, its role a word.
+    let roles = ["intro", "break", "build", "drop", "outro", "main"];
+    assert!(list[0]["role"].as_str().is_some_and(|r| roles.contains(&r)), "{grid}");
+    assert_eq!(list[0]["change"].as_f64(), Some(0.0), "{grid}");
+    for k in ["energy", "bass", "density", "kick", "jump"] {
+        assert!(list[0][k].as_f64().is_some(), "{k}: {grid}");
+    }
     let outside = f.call("beats.grid", json!({"path": "/s", "from": 100.0}));
     assert_eq!(outside["sections"].as_array().map(Vec::len), Some(0), "{outside}");
 

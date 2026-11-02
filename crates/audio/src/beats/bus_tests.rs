@@ -140,6 +140,8 @@ fn energy_and_drops_of_a_quiet_and_a_loud_half() {
     let list = bus.sections();
     let k = list.iter().position(|s| (s.start - 20.0).abs() <= 2.0).unwrap_or_else(|| panic!("{list:?}"));
     assert!(list[k].drop && !list[0].drop, "{list:?}");
+    assert!(list[k].role == Role::Drop && list[k].change >= CHANGE_JUMP * DROP_RISE - 1e-9, "{list:?}");
+    assert!(list[k].bass > list[0].bass + 0.3 && list[k].kick > 0.5, "{list:?}");
     let at = list[k].start;
     assert!((bus.at(at).drop - 1.0).abs() < 1e-9);
     assert!((bus.at(at + DROP_DECAY).drop - (-1.0f64).exp()).abs() < 1e-6);
@@ -155,4 +157,89 @@ fn energy_and_drops_of_a_quiet_and_a_loud_half() {
     let empty = envelopes_of(&[], 1, rate).unwrap();
     let none = Bus::new(&BeatGrid::default(), &empty, None, TRAVEL_FLOOR, TRAVEL_CAP);
     assert_eq!(none.at(1.0).energy, [0.0; 4]);
+}
+
+/// A section of `track` with this energy and kick share, its novelty `strength` and no rise.
+fn traits(track: usize, track_start: bool, strength: f64, energy: f64, kick: f64) -> Traits {
+    Traits { track, track_start, strength, energy, kick, rise: 0.0 }
+}
+
+/// Roles by precedence: intro, drop, outro, build, break, main.
+#[test]
+fn roles_follow_their_precedence() {
+    let mut t = vec![
+        // Track 0: a first section without a kick is still the intro.
+        traits(0, true, 0.0, 0.6, 0.0),
+        traits(0, false, 0.3, 0.7, 0.9),
+        // Kick gone: a break; then a rise into a drop: a build.
+        traits(0, false, 0.4, 0.65, 0.1),
+        traits(0, false, 0.2, 0.6, 0.9),
+        traits(0, false, 0.6, 0.85, 0.95),
+        // Far below the track's median energy with the kick on: a break.
+        traits(0, false, 0.3, 0.4, 0.9),
+        // The last section begins with a drop: a drop, not an outro.
+        traits(0, false, 0.5, 0.8, 0.9),
+        // Track 1, one section: neither intro nor outro.
+        traits(1, true, 0.7, 0.75, 0.9),
+        // Track 2: intro, outro.
+        traits(2, true, 0.5, 0.7, 0.9),
+        traits(2, false, 0.2, 0.65, 0.9),
+    ];
+    t[3].rise = BUILD_RISE + 0.01;
+    let roles: Vec<Role> = judge(&t).iter().map(|v| v.role).collect();
+    use Role::*;
+    assert_eq!(roles, [Intro, Main, Break, Build, Drop, Break, Drop, Main, Intro, Outro]);
+    // A rise without a drop after it is no build.
+    t[4].energy = 0.7;
+    assert_eq!(judge(&t)[3].role, Main);
+    // Numbers and names.
+    assert_eq!(Role::ALL.map(Role::index), [0, 1, 2, 3, 4, 5]);
+    assert_eq!(Role::ALL.map(Role::name), ["intro", "break", "build", "drop", "outro", "main"]);
+    assert!(judge(&[]).is_empty());
+}
+
+/// change = clamp(max(novelty weight x strength, jump weight x |jump|) + track weight at a track
+/// start); 0 for the first section.
+#[test]
+fn change_combines_novelty_jump_and_track_start() {
+    let t = [
+        traits(0, true, 0.9, 0.5, 1.0),
+        // A small change: novelty alone.
+        traits(0, false, 0.3, 0.55, 1.0),
+        // An energy jump down outweighs the novelty.
+        traits(0, false, 0.3, 0.25, 0.0),
+        // A track start with a weak boundary.
+        traits(1, true, 0.2, 0.3, 1.0),
+        // Everything at once clamps to 1.
+        traits(2, true, 1.0, 0.9, 1.0),
+        traits(2, false, f64::NAN, 0.9, 1.0),
+    ];
+    let v = judge(&t);
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    assert_eq!(v[0].change, 0.0);
+    assert_eq!(v[0].jump, 0.0);
+    assert!(close(v[1].change, CHANGE_NOVELTY * 0.3), "{v:?}");
+    assert!(close(v[1].jump, 0.05), "{v:?}");
+    assert!(close(v[2].change, CHANGE_JUMP * 0.3), "{v:?}");
+    assert!(close(v[3].change, (CHANGE_NOVELTY * 0.2).max(CHANGE_JUMP * 0.05) + CHANGE_TRACK), "{v:?}");
+    assert_eq!(v[4].change, 1.0);
+    assert!(v[4].drop && !v[1].drop);
+    // A broken strength gives a finite change.
+    assert!((0.0..=1.0).contains(&v[5].change), "{v:?}");
+}
+
+/// Onsets per beat, and the share of beats with a kick, counted from a quarter beat early.
+#[test]
+fn rhythm_counts_onsets_per_beat_and_beats_with_a_kick() {
+    let beats: Vec<f64> = (0..9).map(|i| f64::from(i) * 0.5).collect();
+    // Kicks a little early on beats 0 to 3, none after; two onsets per beat.
+    let kicks: Vec<f64> = (0..4).map(|i| f64::from(i) * 0.5 - 0.05).collect();
+    let onsets: Vec<f64> = (0..16).map(|i| f64::from(i) * 0.25).collect();
+    let (density, kick) = rhythm(&beats, &onsets, &kicks, 0.0, 4.0);
+    assert!((density - 2.0).abs() < 1e-9, "{density}");
+    assert!((kick - 0.5).abs() < 1e-9, "{kick}");
+    assert_eq!(rhythm(&beats, &onsets, &kicks, 2.0, 4.0).1, 0.0);
+    // No beats: nothing.
+    assert_eq!(rhythm(&[], &onsets, &kicks, 0.0, 4.0), (0.0, 0.0));
+    assert_eq!(rhythm(&beats, &onsets, &kicks, 10.0, 12.0), (0.0, 0.0));
 }

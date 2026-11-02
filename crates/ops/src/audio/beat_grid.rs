@@ -35,7 +35,8 @@
 //! **Music bus:** with the sections come curves of the whole file, pure functions of the time
 //! in it ([`Bus`]): the beats travelled at the grid's smoothed and clamped tempo, how a grid beat
 //! compares to a travelled one, how far the bars drift from the beats travelled, energies
-//! normalised over the whole file, each section's energy and its drop. They read 0 before. A
+//! normalised over the whole file, each section's energy, drop and character (role, change,
+//! bass, onsets per beat, share of beats with a kick). They read 0 before. A
 //! `travel_floor` or `travel_cap` other than the defaults computes the travel again on the
 //! cook thread, once per change.
 //!
@@ -112,7 +113,7 @@ fn pool() -> Option<&'static rayon::ThreadPool> {
 /// The channels `chan.beat_grid` outputs, in order. The first eight and `level` to `kick` mean
 /// what they mean on `chan.beat_analysis`, so a binding keeps working when one node replaces
 /// the other. New channels go at the end.
-pub const CHANNELS: [&str; 45] = [
+pub const CHANNELS: [&str; 50] = [
     "beat",
     "tick",
     "bar",
@@ -158,6 +159,11 @@ pub const CHANNELS: [&str; 45] = [
     "energy_high",
     "section_energy",
     "drop",
+    "section_role",
+    "section_change",
+    "section_bass",
+    "section_density",
+    "section_kick",
 ];
 /// Where the envelopes begin in [`CHANNELS`].
 const LEVEL: usize = 14;
@@ -167,10 +173,10 @@ const SECTION: usize = 20;
 const SECTION_CHANNELS: usize = 14;
 /// Where `seconds` stands in [`CHANNELS`].
 const SECONDS: usize = SECTION + SECTION_CHANNELS;
-/// Where the music bus begins in [`CHANNELS`]: `travelled` to `drop`.
+/// Where the music bus begins in [`CHANNELS`]: `travelled` to `section_kick`.
 const BUS: usize = SECONDS + 1;
 /// The bus channels.
-const BUS_CHANNELS: usize = 10;
+const BUS_CHANNELS: usize = 15;
 /// The highest tempo `travel_floor` and `travel_cap` take, beats per minute.
 const MAX_TRAVEL_BPM: f64 = 1000.0;
 
@@ -243,6 +249,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
              energy, energy_low, energy_mid and energy_high are level, bass, mid and treble from 0 (the quietest 5 % of the file) to 1 (the loudest 5 %), smoothed (0.05 s up, 0.3 s down). \
              Unlike level, they compare across the whole file. section_energy is the mean energy of the section under the playhead. \
              drop is 1 where a section begins with at least 0.2 more section_energy than the section before, and falls to 37 % in 0.5 s. \
+             section_change says how strongly the music changes where the section under the playhead begins, from 0 to 1: scale a change of the look by it. \
+             Track starts read near 1, drops and breakdowns about 0.5 to 1, small changes within a track mostly below 0.3. \
+             section_role is what the section does in its track: 0 intro, 1 break, 2 build, 3 drop, 4 outro, 5 main. \
+             section_bass is the section's mean energy_low, section_density its onsets per beat, section_kick the share of its beats with a kick (0 to 1). \
              These read 0 until the sections are found",
         )
         .describe_output(
@@ -259,7 +269,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "sections",
             "One row per section, under a header row, once the whole file is analysed: start and end (seconds into the file), bars, \
              label, letter (0 is A) and track as the channels count them, strength (0 to 1: how sharply the sound changes at the start), \
-             zone_start and zone_end (seconds: the blend from the section before; equal at a cut), energy (the section's section_energy, 0 to 1)",
+             zone_start and zone_end (seconds: the blend from the section before; equal at a cut), energy (the section's section_energy, 0 to 1), \
+             bass, density and kick (as section_bass, section_density and section_kick), jump (the section's energy minus the one before's), \
+             role (intro, break, build, drop, outro or main) and change (as section_change)",
         ),
         || Box::new(GridNode::default()) as Box<dyn Operator>,
     )
@@ -378,8 +390,8 @@ impl Structure {
         Structure { sections, strip }
     }
 
-    /// The sections as a table: a header row, then one row per section. `energy` comes from
-    /// `bus`, 0 without it.
+    /// The sections as a table: a header row, then one row per section. `energy` to `change` come
+    /// from `bus`: 0 without it, and an empty `role`.
     pub fn table(&self, bus: Option<&Bus>) -> Result<Table, Error> {
         let mut rows = Vec::with_capacity(self.sections.len() + 1);
         rows.push(
@@ -394,12 +406,20 @@ impl Structure {
                 "zone_start",
                 "zone_end",
                 "energy",
+                "bass",
+                "density",
+                "kick",
+                "jump",
+                "role",
+                "change",
             ]
             .map(str::to_string)
             .to_vec(),
         );
         let energies = bus.map_or(&[][..], |b| b.sections());
+        let num = |x: Option<f64>| format!("{:.3}", x.unwrap_or(0.0));
         for (i, s) in self.sections.list().iter().enumerate() {
+            let e = energies.get(i);
             rows.push(vec![
                 format!("{:.3}", s.start),
                 format!("{:.3}", s.end),
@@ -410,7 +430,13 @@ impl Structure {
                 format!("{:.3}", s.strength),
                 format!("{:.3}", s.zone.0),
                 format!("{:.3}", s.zone.1),
-                format!("{:.3}", energies.get(i).map_or(0.0, |e| e.energy)),
+                num(e.map(|e| e.energy)),
+                num(e.map(|e| e.bass)),
+                num(e.map(|e| e.density)),
+                num(e.map(|e| e.kick)),
+                num(e.map(|e| e.jump)),
+                e.map_or("", |e| e.role.name()).to_string(),
+                num(e.map(|e| e.change)),
             ]);
         }
         Table::new(rows)
@@ -1050,9 +1076,9 @@ fn bpm_param(cx: &CookContext<'_>, name: &str) -> Result<f64, CookError> {
     Ok(if v.is_finite() { v.clamp(0.0, MAX_TRAVEL_BPM) } else { 0.0 })
 }
 
-/// The bus channels, `travelled` to `drop`, at `t` seconds into the file (into the pass, for a
-/// looped file), with the grid's position there; all 0 before the bus is found. `drift` and
-/// `beat_length` need the position and read 0 without it.
+/// The bus channels, `travelled` to `section_kick`, at `t` seconds into the file (into the pass,
+/// for a looped file), with the grid's position there; all 0 before the bus is found. `drift`
+/// and `beat_length` need the position and read 0 without it.
 pub(crate) fn bus_values(
     bus: Option<&Bus>,
     travel: Option<&Travel>,
@@ -1071,7 +1097,26 @@ pub(crate) fn bus_values(
         None => (0.0, 0.0),
     };
     let [energy, low, mid, high] = r.energy;
-    let v = [r.travelled, r.travel_bpm, beat_length, drift, energy, low, mid, high, r.section_energy, r.drop];
+    let s = r.section;
+    // `as`: a role's number, 0 to 5.
+    let role = s.map_or(0.0, |s| s.role.index() as f64);
+    let v = [
+        r.travelled,
+        r.travel_bpm,
+        beat_length,
+        drift,
+        energy,
+        low,
+        mid,
+        high,
+        r.section_energy,
+        r.drop,
+        role,
+        s.map_or(0.0, |s| s.change),
+        s.map_or(0.0, |s| s.bass),
+        s.map_or(0.0, |s| s.density),
+        s.map_or(0.0, |s| s.kick),
+    ];
     v.map(|x| if x.is_finite() { x } else { 0.0 })
 }
 
