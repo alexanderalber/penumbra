@@ -258,6 +258,10 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
 - **`presence`** (0 to 1) brings an element in and takes it out again. A floor element sinks into
   the floor towards 0, a sky element dims. To swap two elements, ramp one's `presence` down while
   the other's goes up, for example through the blend between two sections.
+- **`beats.arrange`** does those swaps for a whole sound file. It writes a table with a row per
+  section (the `presence` of each element, `warmth`, `intensity`) and binds the elements to it.
+  Edit the table to change a section's picture. [An arrangement from the
+  sections](../docs/audio.md#beats-of-a-sound-file) explains the rules.
 
 ### stage_synthwave
 

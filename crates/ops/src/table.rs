@@ -76,7 +76,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .choice_doc("rows", "each row is a channel, its samples read left to right"),
         )
         .param(ParamSpec::bool("names", true).doc(
-            "On, the first cell of each column (or row) is the channel's name; off, the channels              are called chan0, chan1, ... and every cell is a value",
+            "On, the first cell of each column (or row) is the channel's name; off, the channels              are called chan0, chan1, ... and every cell is a value. On, a column of words alone (a \
+             label per row) makes no channel",
         ))
         .param(ParamSpec::int("row", -1).clamp(-1.0, 1e9).range(-1.0, 20.0).special(-1.0, "all").doc(
             "Only this row, counted from 0 under the names: one value per channel. Bind it to the \
@@ -163,7 +164,7 @@ impl Operator for File {
 /// `chan.from_table`: a channel per column (or row). The last value is the one a binding reads.
 /// Empty cells and missing cells of a short row are 0; text that is no number is 0 too, with a
 /// warning. Columns (or rows) without a single filled cell are left out, so a trailing comma
-/// makes no channel.
+/// makes no channel; so are named ones holding words alone, such as a label per row.
 struct FromTable;
 
 impl Operator for FromTable {
@@ -200,16 +201,26 @@ impl Operator for FromTable {
                 continue;
             }
             let mut samples = vec![0.0; len];
+            let mut words = Vec::new();
+            let mut numbers = 0usize;
             for (k, s) in (first..cells).zip(samples.iter_mut()) {
                 let (text, row, col) = cell(i, k);
                 if text.is_empty() {
                     continue;
                 }
                 match text.parse::<f64>() {
-                    Ok(v) => *s = v,
-                    Err(_) => not_numbers.push(format!("`{}` (row {row}, column {col})", short(text))),
+                    Ok(v) => {
+                        *s = v;
+                        numbers += 1;
+                    }
+                    Err(_) => words.push(format!("`{}` (row {row}, column {col})", short(text))),
                 }
             }
+            // A named column of words alone (a label per row) gives no channel and no warning.
+            if named && numbers == 0 && !words.is_empty() {
+                continue;
+            }
+            not_numbers.extend(words);
             if let Some(k) = pick {
                 samples = vec![samples.get(k).copied().unwrap_or(0.0)];
             }
@@ -405,11 +416,16 @@ mod tests {
 
         // Header cells become names; text is 0 with a warning; a trailing comma makes no channel;
         // a name twice keeps the first.
-        let (c, warning) = from_table("pos x,2nd,a,a,\n1,abc,2,3,\n", &[]);
-        assert_eq!(names(&c), ["pos_x", "_2nd", "a"]);
-        assert_eq!(c.value(Some("_2nd")), Some(0.0));
+        // A column of words alone (a label per row) makes no channel and no warning.
+        let (c, warning) = from_table("pos x,2nd,a,a,role,\n1,abc,2,3,intro,\n", &[]);
+        assert_eq!(names(&c), ["pos_x", "a"]);
         assert_eq!(c.value(Some("a")), Some(2.0));
         assert_eq!(c.axis(), SampleAxis::Time, "one value per channel is a value now");
+        let warning = warning.unwrap();
+        assert!(!warning.contains("abc") && !warning.contains("intro"), "{warning}");
+        let (c, warning) = from_table("pos x,2nd,a,a,\n1,abc,2,3,\n4,5,6,7,\n", &[]);
+        assert_eq!(names(&c), ["pos_x", "_2nd", "a"]);
+        assert_eq!(c.get("_2nd").unwrap().samples, [0.0, 5.0]);
         let warning = warning.unwrap();
         assert!(warning.contains("`abc` (row 2, column 2)"), "{warning}");
         assert!(warning.contains("a named twice"), "{warning}");

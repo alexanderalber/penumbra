@@ -636,3 +636,123 @@ fn a_cue_list_on_the_music_comes_back_with_the_music_after_a_crash_restart() {
     });
     e.shutdown();
 }
+
+/// `beats.arrange` on the example track: a table with a row per section, a step per row on the
+/// grid's seconds, readers beside the table, and the elements' presence and warmth bound to
+/// them, all as one undoable edit.
+#[test]
+fn beats_arrange_writes_a_table_read_live_as_one_edit() {
+    let f = Fixture::new("beat_arrange");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let music = root.join("examples/beat-grid/music.wav");
+    f.engine.set_shipped_library(Some(root.join("library")));
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/p", "kind": "audio.file", "params": {"file": music.to_string_lossy()}},
+            {"op": "create", "path": "/g", "kind": "chan.beat_grid"},
+            {"op": "connect", "from": "/p", "to": "/g"},
+            {"op": "create", "path": "/n", "kind": "chan.constant"},
+        ]}),
+    );
+    for (file, path) in [
+        ("stage_synthwave", "/stage"),
+        ("floor_blocks", "/blocks"),
+        ("floor_mountains", "/mountains"),
+        ("sky_galaxy", "/galaxy"),
+    ] {
+        f.call("comp.load", json!({"file": file, "path": path}));
+    }
+    let args = |extra: Json| {
+        let mut a = json!({
+            "path": "/g",
+            "table": "/arrangement",
+            "sequence": "/cues",
+            "slots": {"floor": ["/blocks", "/mountains"], "sky": ["/galaxy"]},
+            "stage": "/stage",
+            "intensity": "/stage.dim",
+        });
+        if let (Some(o), Some(x)) = (a.as_object_mut(), extra.as_object()) {
+            o.extend(x.clone());
+        }
+        a
+    };
+    let e = f.fail("beats.arrange", args(json!({})));
+    assert!(e.contains("no beat analysis"), "{e}");
+    let status = f.call("beats.analyze", json!({"path": "/g"}));
+    assert_eq!(status["bus"]["ready"], true, "{status}");
+    for (extra, says) in [
+        (json!({"path": "/p"}), "not a chan.beat_grid"),
+        (json!({"table": "/n"}), "not a table.text"),
+        (json!({"sequence": "/n"}), "not a chan.sequence"),
+        (json!({"slots": {"floor": ["/n"]}}), "no param presence"),
+        (json!({"slots": {"floor": ["/blocks", "/blocks"]}}), "twice"),
+        (json!({"slots": {}}), "no elements"),
+        (json!({"stage": "/n"}), "no param warmth"),
+        (json!({"intensity": "/stage.nope"}), "no param nope"),
+        (json!({"fade_min": -1.0}), "fade_min"),
+        (json!({"extra": 1}), "extra"),
+    ] {
+        let e = f.fail("beats.arrange", args(extra.clone()));
+        assert!(e.contains(says), "{extra}: {e}");
+    }
+    let r = f.call("beats.arrange", args(json!({})));
+    assert_eq!(r["history"], "new", "{r}");
+    assert_eq!(r["rows"], 4, "{r}");
+    assert_eq!(r["created"].as_array().map(Vec::len), Some(8), "{r}");
+    assert_eq!(
+        r["bound"],
+        json!([
+            "/blocks.presence",
+            "/mountains.presence",
+            "/galaxy.presence",
+            "/stage.warmth",
+            "/galaxy.warmth",
+            "/stage.dim"
+        ]),
+        "{r}"
+    );
+    let param = |info: &Json, name: &str| {
+        info["params"].as_array().unwrap().iter().find(|p| p["name"] == name).unwrap()["value"].clone()
+    };
+    let table = param(&f.call("node.info", json!({"path": "/arrangement"})), "text");
+    let lines: Vec<&str> = table.as_str().unwrap().lines().collect();
+    assert_eq!(lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity", "{table}");
+    assert_eq!(lines.len(), 5, "{table}");
+    assert!(lines[1].starts_with("0,") && lines[1].contains(",intro,0,0.4,0,1,0,0.3"), "{table}");
+    let cues = f.call("node.info", json!({"path": "/cues"}));
+    assert_eq!(cues["binds"], json!([{"param": "clock", "from": "/g:seconds"}]), "{cues}");
+    assert_eq!(param(&cues, "names"), "row");
+    let places = f.call("node.info", json!({"path": "/blocks/places"}));
+    assert!(
+        places["binds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["param"] == "presence" && b["from"] == "/arrangement_mix:blocks"),
+        "{places}"
+    );
+    let palette = f.call("node.info", json!({"path": "/stage/palette"}));
+    assert_eq!(palette["binds"], json!([{"param": "cross", "from": "/arrangement_mix:warmth"}]), "{palette}");
+    // The readers give a channel per number column, the role left out, all at the row the
+    // show stands at.
+    f.call("node.watch", json!({"path": "/arrangement_mix"}));
+    eventually("the arrangement channels", || {
+        let m = f.call("chan.read", json!({"path": "/arrangement_mix"}));
+        let names: Vec<String> = m["channels"]
+            .as_array()
+            .map(|c| c.iter().filter_map(|c| c["name"].as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        names == ["start", "end", "change", "blocks", "mountains", "galaxy", "warmth", "intensity"]
+            && (0.0..=1.0).contains(&channel(&m, "galaxy"))
+    });
+    // Again: nothing new is created, the table is written again.
+    let again = f.call("beats.arrange", args(json!({"fade_min": 0.5})));
+    assert_eq!(again["created"], json!([]), "{again}");
+    // One undo takes the second run back, another the first.
+    f.call("history.undo", json!({}));
+    f.call("history.undo", json!({}));
+    assert!(f.fail("node.info", json!({"path": "/cues"})).contains("no node"));
+    let places = f.call("node.info", json!({"path": "/blocks/places"}));
+    assert!(!places["binds"].as_array().unwrap().iter().any(|b| b["param"] == "presence"), "{places}");
+}

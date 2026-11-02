@@ -38,6 +38,7 @@
 pub mod ambience;
 #[cfg(test)]
 mod ambience_tests;
+pub mod arrange;
 pub mod beat_grid;
 #[cfg(test)]
 mod beat_grid_tests;

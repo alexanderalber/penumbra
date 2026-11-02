@@ -4,9 +4,11 @@
 //!
 //! Commands: `audio.devices`, `audio.outputs`, `audio.status`, `audio.config`, `audio.mute`,
 //! `audio.measure_latency`, `audio.play`, `audio.file_info`, and the beat analyses of sound files:
-//! `beats.analyze`, `beats.status`, `beats.grid`, `beats.cancel`, and `beats.cues`, which writes a
-//! `chan.sequence`'s steps from the sections of a file.
+//! `beats.analyze`, `beats.status`, `beats.grid`, `beats.cancel`, `beats.cues`, which writes a
+//! `chan.sequence`'s steps from the sections of a file, and `beats.arrange`, which writes the
+//! arrangement of a music stage as a table read live.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,11 +18,13 @@ use penumbra_audio::measure;
 use penumbra_audio::playback::{self, Settings};
 use penumbra_core::{Name, NodePath, ParamPath, Value};
 use penumbra_graph::Op;
+use penumbra_ops::audio::arrange::{self, Part, Slot};
 use penumbra_ops::audio::beat_grid::{Analysis, BEAT_GRID, State, letter};
 use penumbra_ops::audio::cues::{self, Blend, Level, Pieces};
 use penumbra_ops::audio::file::{FILE, FileStatus};
 use penumbra_ops::audio::instrument::{INSTRUMENT, Presses};
 use penumbra_ops::sequence::SEQUENCE;
+use penumbra_ops::table::FROM_TABLE;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
@@ -122,6 +126,23 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          grid's offset. A step after a blend begins where the blend ends. Needs the sections: beats.analyze \
          waits for them. Run it again after the file changes",
         beats_cues,
+    );
+    add(
+        "beats.arrange",
+        "Writes the arrangement of a music stage from the sections of the file a chan.beat_grid reads, as one \
+         undoable edit: {path (the chan.beat_grid), table (a table.text, created when missing), sequence (a \
+         chan.sequence, created when missing), slots ({slot: [element paths]}, e.g. {floor: [\"/blocks\", \
+         \"/mountains\"], sky: [\"/galaxy\"]}: the first element of each slot is on at the start, slots take \
+         turns in name order, the slot named sky follows the sky's rules), stage? (gets warmth), intensity? \
+         (a param that gets intensity, e.g. \"/stage.dim\"), fade_min? (s, default 2: the shortest fade from \
+         one row into the next, also where the music cuts)}. The table has a row per section: start, end, \
+         role, change, the presence of each element (the column is named as the element), warmth and \
+         intensity. Edit the table by hand to override a row. The sequence gets a step per row, its clock on \
+         the grid's seconds. Beside the table it creates or updates <table>_now, _plus, _next, _diff, _ramp \
+         and _mix; _mix has a channel per column that moves through each fade. Binds each element's \
+         presence, warmth on the stage and on each element that has it, and intensity. Run it again after \
+         the file changes: it overwrites the table",
+        beats_arrange,
     );
     add(
         "audio.measure_latency",
@@ -573,19 +594,7 @@ fn beats_cues(e: &Engine, p: &Json) -> CmdResult<Json> {
     let name =
         file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().into_owned());
     let Some(structure) = s.sections.as_ref() else {
-        let why =
-            if let Some(err) = s.error.as_ref().or(s.envelope_error.as_ref()).or(s.sections_error.as_ref()) {
-                format!("{name} has no sections: {err}")
-            } else if s.sections_running {
-                format!("the sections of {name} are being found; try again in a moment")
-            } else {
-                format!(
-                    "{name} has no sections yet: they are found once beats and levels are complete \
-                 (beats.analyze {{path: \"{}\"}} waits for them)",
-                    a.path
-                )
-            };
-        return Err(CommandError(why));
+        return Err(no_sections(&name, &s, &a.path));
     };
     // The file's length, so the last step runs to its end.
     let end = s.envelopes.as_ref().map_or(0.0, |env| env.len() as f64 * env.hop_seconds());
@@ -625,6 +634,294 @@ fn beats_cues(e: &Engine, p: &Json) -> CmdResult<Json> {
         obj.insert("names".into(), json!(c.names));
         obj.insert("end".into(), json!(c.end));
         obj.insert("cues".into(), json!(cues));
+    }
+    Ok(reply)
+}
+
+/// Why a file has no sections (yet).
+fn no_sections(name: &str, s: &State, grid: &NodePath) -> CommandError {
+    CommandError(
+        if let Some(err) = s.error.as_ref().or(s.envelope_error.as_ref()).or(s.sections_error.as_ref()) {
+            format!("{name} has no sections: {err}")
+        } else if s.sections_running {
+            format!("the sections of {name} are being found; try again in a moment")
+        } else {
+            format!(
+                "{name} has no sections yet: they are found once beats and levels are complete \
+                 (beats.analyze {{path: \"{grid}\"}} waits for them)"
+            )
+        },
+    )
+}
+
+/// Whether the node at `path` has a param `name`, its own or exposed by a component. An exposed
+/// param that leads to a shader's own params counts: those are known only after a cook.
+fn has_param(e: &Engine, net: &penumbra_graph::Network, path: &NodePath, name: &str) -> bool {
+    let Ok(n) = Name::new(name) else { return false };
+    let Ok(pp) = ParamPath::new(path.clone(), n) else { return false };
+    let Ok(target) = net.resolve_alias(e.types(), &pp) else { return false };
+    let alias = target != pp;
+    net.resolve(target.node())
+        .and_then(|id| net.node(id))
+        .and_then(|n| e.types().desc(&n.kind))
+        .is_some_and(|d| (alias && d.extra_params) || d.param_spec(target.param().as_str()).is_some())
+}
+
+fn name_of(text: &str) -> CmdResult<Name> {
+    Name::new(text).map_err(|err| CommandError(err.to_string()))
+}
+
+fn param_of(node: &NodePath, p: &str) -> CmdResult<ParamPath> {
+    ParamPath::new(node.clone(), name_of(p)?).map_err(|err| CommandError(err.to_string()))
+}
+
+/// A binding of `param` to channel `channel` of `from`.
+fn bind_to(param: ParamPath, from: &NodePath, channel: &str) -> CmdResult<Op> {
+    Ok(Op::Bind {
+        param,
+        component: None,
+        from: from.clone(),
+        channel: Some(name_of(channel)?),
+        cell: None,
+        format: None,
+    })
+}
+
+/// The kinds of the readers `beats.arrange` puts beside its table, by the end of their names.
+const READERS: [(&str, &str); 6] = [
+    ("now", FROM_TABLE),
+    ("plus", "chan.math"),
+    ("next", FROM_TABLE),
+    ("diff", "chan.math"),
+    ("ramp", "chan.math"),
+    ("mix", "chan.math"),
+];
+
+fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        path: NodePath,
+        table: NodePath,
+        sequence: NodePath,
+        slots: BTreeMap<String, Vec<NodePath>>,
+        stage: Option<NodePath>,
+        intensity: Option<ParamPath>,
+        fade_min: Option<f64>,
+    }
+    let a: A = args(p)?;
+    let fade_min = a.fade_min.unwrap_or(arrange::FADE_MIN);
+    if !fade_min.is_finite() || !(0.0..=arrange::FADE_MIN_MAX).contains(&fade_min) {
+        return Err(CommandError(format!("fade_min is seconds from 0 to {}", arrange::FADE_MIN_MAX)));
+    }
+    let net = e.session().doc().snapshot();
+    let kind_at = |path: &NodePath| -> Option<String> {
+        net.resolve(path).and_then(|id| net.node(id)).map(|n| n.kind.clone())
+    };
+    let grid_kind = kind_at(&a.path).ok_or_else(|| CommandError(format!("no node at {}", a.path)))?;
+    if grid_kind != BEAT_GRID {
+        return Err(CommandError(format!(
+            "{} is a {grid_kind}, not a {BEAT_GRID}: the arrangement follows the seconds of a grid",
+            a.path
+        )));
+    }
+    for (path, kind) in [(&a.table, "table.text"), (&a.sequence, SEQUENCE)] {
+        if let Some(k) = kind_at(path).filter(|k| k != kind) {
+            return Err(CommandError(format!("{path} is a {k}, not a {kind}")));
+        }
+    }
+    let (Some(table_name), Some(parent)) = (a.table.name(), a.table.parent()) else {
+        return Err(CommandError("table must name a node, not the root".into()));
+    };
+    let mut slots = Vec::new();
+    let mut elements: Vec<NodePath> = Vec::new();
+    for (slot, paths) in &a.slots {
+        let mut names = Vec::new();
+        for path in paths {
+            require(&net, path)?;
+            if !has_param(e, &net, path, "presence") {
+                return Err(CommandError(format!("{path} has no param presence: an element needs one")));
+            }
+            names.push(path.name().map(|n| n.as_str().to_string()).unwrap_or_default());
+            elements.push(path.clone());
+        }
+        slots.push(Slot { name: slot.clone(), elements: names });
+    }
+    arrange::check(&slots).map_err(CommandError)?;
+    if let Some(stage) = &a.stage {
+        require(&net, stage)?;
+        if !has_param(e, &net, stage, "warmth") {
+            return Err(CommandError(format!("{stage} has no param warmth")));
+        }
+    }
+    if let Some(target) = &a.intensity {
+        require(&net, target.node())?;
+        if !has_param(e, &net, target.node(), target.param().as_str()) {
+            return Err(CommandError(format!("{} has no param {}", target.node(), target.param())));
+        }
+    }
+    // The readers beside the table.
+    let mut readers: Vec<NodePath> = Vec::new();
+    for (end, kind) in READERS {
+        let path = parent
+            .child(name_of(&format!("{table_name}_{end}"))?)
+            .map_err(|err| CommandError(err.to_string()))?;
+        if let Some(k) = kind_at(&path).filter(|k| k != kind) {
+            return Err(CommandError(format!(
+                "{path} is a {k}, not a {kind}: beats.arrange writes the table's readers there; rename it"
+            )));
+        }
+        readers.push(path);
+    }
+    let [now, plus, next, diff, ramp, mix] = &readers[..] else {
+        return Err(CommandError("the readers could not be named".into()));
+    };
+
+    let (file, analysis) = analysis_of(e, &Which { path: Some(a.path.clone()), file: None })?;
+    let s = analysis.state();
+    let file_name =
+        file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let Some(structure) = s.sections.as_ref() else {
+        return Err(no_sections(&file_name, &s, &a.path));
+    };
+    let Some(bus) = s.bus.as_ref() else {
+        return Err(CommandError(format!(
+            "{file_name} has sections but no music bus, which says how strongly each boundary changes: \
+             try beats.analyze {{path: \"{}\", again: true}}",
+            a.path
+        )));
+    };
+    let parts: Vec<Part> = structure
+        .sections
+        .list()
+        .iter()
+        .zip(bus.sections())
+        .map(|(sec, c)| Part {
+            start: sec.start,
+            end: sec.end,
+            zone: sec.zone,
+            role: c.role,
+            change: c.change,
+            energy: c.energy,
+        })
+        .collect();
+    let end = s.envelopes.as_ref().map_or(0.0, |env| env.len() as f64 * env.hop_seconds());
+    let rows = arrange::rows(&parts, &slots);
+    let table = arrange::table(&slots, &rows);
+    if table.len() > penumbra_core::param::MAX_TEXT {
+        return Err(CommandError(format!("{} rows do not fit into a table.text", rows.len())));
+    }
+    let steps = arrange::steps(&parts, end, fade_min, &file_name).map_err(CommandError)?;
+
+    // New nodes go beside the table, or below the grid when the table is new too.
+    let pos_of = |path: &NodePath| net.resolve(path).and_then(|id| net.node(id)).and_then(|n| n.pos);
+    let [x, y] = pos_of(&a.table)
+        .or_else(|| pos_of(&a.path).map(|[x, y]| [x + 250.0, y + 400.0]))
+        .unwrap_or([0.0, 0.0]);
+    let mut ops = Vec::new();
+    let mut create = |path: &NodePath, kind: &str, at: [f32; 2]| {
+        if net.resolve(path).is_none() {
+            ops.push(Op::Create { path: path.clone(), kind: kind.to_string(), params: BTreeMap::new() });
+            ops.push(Op::Place { path: path.clone(), pos: Some(at) });
+        }
+    };
+    create(&a.table, "table.text", [x, y]);
+    create(&a.sequence, SEQUENCE, [x, y + 150.0]);
+    for (i, (path, (_, kind))) in readers.iter().zip(READERS).enumerate() {
+        let below = if i == 1 { 150.0 } else { 0.0 };
+        create(path, kind, [x + 200.0 * (i + 1) as f32, y + below]);
+    }
+    let text = |t: &str| Value::Text(t.to_string());
+    let set = |node: &NodePath, p: &str, value: Value| -> CmdResult<Op> {
+        Ok(Op::Set { param: param_of(node, p)?, value })
+    };
+    let connect = |from: &NodePath, to: &NodePath, input: u32| Op::Connect {
+        from: from.clone(),
+        output: 0,
+        to: to.clone(),
+        input,
+    };
+    // A bound param would hide the value written here.
+    let mut unbind = vec![param_of(&a.table, "text")?, param_of(&a.table, "format")?];
+    for p in ["steps", "names", "lead_in", "file"] {
+        unbind.push(param_of(&a.sequence, p)?);
+    }
+    for (r, p) in [(plus, "op"), (plus, "b"), (diff, "op"), (ramp, "op"), (mix, "op")] {
+        unbind.push(param_of(r, p)?);
+    }
+    ops.extend(unbind.into_iter().map(|param| Op::Unbind { param, component: None }));
+    // The table, and the sequence: a step per row, on the music's seconds.
+    ops.extend([
+        set(&a.table, "text", text(&table))?,
+        set(&a.table, "format", text("csv"))?,
+        set(&a.sequence, "steps", text(&steps.text))?,
+        set(&a.sequence, "names", text(arrange::PIECE))?,
+        set(&a.sequence, "lead_in", Value::Float(0.0))?,
+        Op::Reset { param: param_of(&a.sequence, "file")? },
+        bind_to(param_of(&a.sequence, "clock")?, &a.path, "seconds")?,
+    ]);
+    // The row now and the next, and between them by the share of the next.
+    ops.extend([
+        connect(&a.table, now, 0),
+        bind_to(param_of(now, "row")?, &a.sequence, "step")?,
+        connect(&a.sequence, plus, 0),
+        Op::Disconnect { to: plus.clone(), input: 1 },
+        set(plus, "op", text("add"))?,
+        set(plus, "b", Value::Float(1.0))?,
+        connect(&a.table, next, 0),
+        bind_to(param_of(next, "row")?, plus, "step")?,
+        connect(next, diff, 0),
+        connect(now, diff, 1),
+        set(diff, "op", text("subtract"))?,
+        connect(diff, ramp, 0),
+        Op::Disconnect { to: ramp.clone(), input: 1 },
+        set(ramp, "op", text("multiply"))?,
+        bind_to(param_of(ramp, "b")?, &a.sequence, "mix")?,
+        connect(now, mix, 0),
+        connect(ramp, mix, 1),
+        set(mix, "op", text("add"))?,
+    ]);
+    for r in [now, next] {
+        for p in ["layout", "names"] {
+            ops.push(Op::Unbind { param: param_of(r, p)?, component: None });
+            ops.push(Op::Reset { param: param_of(r, p)? });
+        }
+    }
+    // What the columns drive.
+    let mut bound: Vec<String> = Vec::new();
+    for (path, column) in elements.iter().zip(arrange::columns(&slots)) {
+        ops.push(bind_to(param_of(path, "presence")?, mix, &column)?);
+        bound.push(format!("{path}.presence"));
+    }
+    let warm: Vec<&NodePath> = a
+        .stage
+        .iter()
+        .chain(elements.iter().filter(|p| Some(*p) != a.stage.as_ref() && has_param(e, &net, p, "warmth")))
+        .collect();
+    for path in warm {
+        ops.push(bind_to(param_of(path, "warmth")?, mix, "warmth")?);
+        bound.push(format!("{path}.warmth"));
+    }
+    if let Some(target) = &a.intensity {
+        ops.push(bind_to(target.clone(), mix, "intensity")?);
+        bound.push(target.to_string());
+    }
+    let label = format!("arrangement from the sections of {file_name}");
+    let out = edit(e, &ops, &label)?;
+    let mut reply = outcome(&out);
+    let mut columns: Vec<String> = arrange::LEADING.iter().map(|c| c.to_string()).collect();
+    columns.extend(arrange::columns(&slots));
+    columns.extend(arrange::TRAILING.iter().map(|c| c.to_string()));
+    if let Some(obj) = reply.as_object_mut() {
+        obj.insert("file".into(), json!(file.display().to_string()));
+        obj.insert("table".into(), json!(a.table.to_string()));
+        obj.insert("sequence".into(), json!(a.sequence.to_string()));
+        obj.insert("rows".into(), json!(rows.len()));
+        obj.insert("columns".into(), json!(columns));
+        obj.insert("channels".into(), json!(mix.to_string()));
+        obj.insert("readers".into(), json!(readers.iter().map(|p| p.to_string()).collect::<Vec<_>>()));
+        obj.insert("bound".into(), json!(bound));
+        obj.insert("end".into(), json!(steps.end));
     }
     Ok(reply)
 }

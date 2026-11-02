@@ -1377,7 +1377,7 @@ Outputs: `out` (chan).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `layout` | columns \| rows | `"columns"` |  | Which cells make up one channel; columns: each column is a channel, its samples read top to bottom; rows: each row is a channel, its samples read left to right |
-| `names` | bool | `true` |  | On, the first cell of each column (or row) is the channel's name; off, the channels are called chan0, chan1, ... and every cell is a value |
+| `names` | bool | `true` |  | On, the first cell of each column (or row) is the channel's name; off, the channels are called chan0, chan1, ... and every cell is a value. On, a column of words alone (a label per row) makes no channel |
 | `row` | int | `-1` (all) | -1 to 20 (soft) | Only this row, counted from 0 under the names: one value per channel. Bind it to the step of a chan.sequence, and each cue reads its own row of a cue sheet. Past the last row: the last. With layout rows: this column. -1: all; -1: all |
 
 ### chan.from_tex
