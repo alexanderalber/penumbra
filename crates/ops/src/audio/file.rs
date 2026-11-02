@@ -34,6 +34,11 @@
 //! [`Seeks`] (`audio.seek`) moves the playhead there at once, with the fades of a restart. A
 //! looping file stays in its pass, so `loops` keeps counting.
 //!
+//! **Crash restarts:** in show mode the playhead is kept, in whole seconds
+//! ([`Operator::show_place`]). After a crash restart the file plays on from there instead of
+//! from `start`, so the music comes back where it was and a show that follows it with it. Not
+//! while `position` is bound: the channel says where the file is.
+//!
 //! **Silence:** before the file starts, after it ends (`loop` off), with `play` off or speed 0
 //! (after a 4 ms fade), and where the decoder has not caught up (a seek in a long file): such a
 //! gap is counted and warned about, and the sound fades in again over 4 ms. A missing or
@@ -41,6 +46,8 @@
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
+
+use serde::{Deserialize, Serialize};
 
 use penumbra_audio::file::{EXTENSIONS, Frame, SoundFile, Status};
 use penumbra_audio::resample::{Kernel, dot};
@@ -73,6 +80,8 @@ const KERNEL_STEPS_PER_OCTAVE: f64 = 8.0;
 const KERNELS_KEPT: usize = 8;
 /// A scrubbed position moving faster than this many times real time is silent.
 pub const MAX_SCRUB_SPEED: f64 = 4.0;
+/// Largest kept place read.
+const MAX_PLACE_BYTES: usize = 8192;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     types.register(FnNodeType::new(
@@ -253,6 +262,20 @@ struct FilePlayer {
     position_was: Option<f64>,
     /// A jump asked for and not played yet (a block rendered again cannot take it).
     jump_pending: Option<f64>,
+    /// `position` was bound at the last cook.
+    scrubbing: bool,
+    /// A place from before a crash restart, taken at the next cook if the file is the same.
+    resume: Option<FilePlace>,
+}
+
+/// Where a file player stood, as kept across a crash restart.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilePlace {
+    /// The file as resolved.
+    file: String,
+    /// The playhead, seconds, counted on through the passes of a looping file.
+    seconds: f64,
 }
 
 impl Operator for FilePlayer {
@@ -330,6 +353,25 @@ impl Operator for FilePlayer {
         } else {
             self.status = Status::default();
         }
+        self.scrubbing = scrubbing;
+        // A place kept before a crash restart: the file goes on from there.
+        let resumed = match self.resume.take() {
+            Some(p) if !scrubbing && !self.path.is_empty() && p.file == self.path => Some(p.seconds),
+            Some(_) => {
+                log::info!(
+                    "audio.file: the place kept from before the restart is not taken (another file, or position is bound)"
+                );
+                None
+            }
+            None => None,
+        };
+        let resumed = match resumed {
+            Some(s) if self.mapping.is_some() && !reloaded => {
+                self.jump_pending = Some(in_file(s, self.duration, self.looping).0);
+                None
+            }
+            other => other,
+        };
 
         if !advancing && self.has_output {
             return Ok(Cooked::Unchanged);
@@ -338,7 +380,8 @@ impl Operator for FilePlayer {
         // Where the playhead goes, as in `tex.video_file`.
         let moving = if play { speed } else { 0.0 };
         let frame_sec = f64::from(cx.rate().den()) / f64::from(cx.rate().num().max(1));
-        let restart = advancing && (std::mem::take(&mut self.restart_pending) || reloaded);
+        let restart =
+            advancing && (std::mem::take(&mut self.restart_pending) || reloaded) && resumed.is_none();
         if restart && !reloaded {
             self.restarts += 1;
         }
@@ -346,6 +389,10 @@ impl Operator for FilePlayer {
         let mut tail = None;
         let mapping = match (self.mapping, jump) {
             _ if scrubbing => self.scrub(position, span, rate, reloaded, &mut tail),
+            _ if resumed.is_some() => {
+                let to = resumed.unwrap_or(start);
+                Mapping::through(span.end, to, moving, start.min(to), rate)
+            }
             (None, _) => Mapping::through(span.end, start, moving, start, rate),
             (Some(m), Some(to)) => {
                 let to = in_pass(self.playhead, to, self.duration, looping);
@@ -378,7 +425,9 @@ impl Operator for FilePlayer {
             }
             (Some(m), None) => m,
         };
-        if !scrubbing && (self.mapping.is_none() || restart) {
+        if let Some(to) = resumed {
+            self.gain = if to > 1e-9 { 0.0 } else { 1.0 };
+        } else if !scrubbing && (self.mapping.is_none() || restart) {
             // Starting inside the file fades in; at its very start the file's own attack stays.
             self.gain = if start > 1e-9 { 0.0 } else { 1.0 };
         }
@@ -475,6 +524,32 @@ impl Operator for FilePlayer {
         let info_chans = self.info_chans(&info, looping, length, cx.rate().as_f64())?;
         self.has_output = true;
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Audio, out), Data::new(DataKind::Chan, info_chans)]))
+    }
+
+    fn show_place(&self) -> Option<String> {
+        if let Some(waiting) = &self.resume {
+            // Not taken yet: keep it for the next restart.
+            return serde_json::to_string(waiting).ok();
+        }
+        if self.scrubbing || self.path.is_empty() || self.mapping.is_none() {
+            return None;
+        }
+        // Whole seconds, so the place changes about once a second.
+        let seconds = if self.playhead.is_finite() { self.playhead.max(0.0).floor() } else { 0.0 };
+        serde_json::to_string(&FilePlace { file: self.path.clone(), seconds }).ok()
+    }
+
+    fn restore_show_place(&mut self, place: &str) -> Result<(), String> {
+        if place.len() > MAX_PLACE_BYTES {
+            return Err(format!("a place of {} bytes is not a file player's", place.len()));
+        }
+        let p: FilePlace =
+            serde_json::from_str(place).map_err(|e| format!("not a file player's place: {e}"))?;
+        if !(p.seconds.is_finite() && (0.0..=1e9).contains(&p.seconds)) {
+            return Err(format!("{} seconds is no place in a file", p.seconds));
+        }
+        self.resume = Some(p);
+        Ok(())
     }
 
     /// Running while the file opens (so `node.snapshot` waits for it), idle afterwards.

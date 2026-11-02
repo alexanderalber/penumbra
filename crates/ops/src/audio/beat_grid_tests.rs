@@ -194,7 +194,7 @@ fn a_looped_file_ticks_on_across_its_end() {
 }
 
 #[test]
-fn wiring_without_a_file_is_an_error() {
+fn wiring_without_a_file_is_an_error_and_a_file_without_beats_a_warning() {
     let dir = temp_dir("wiring");
     let cache = dir.join("cache");
     // Nothing wired.
@@ -223,16 +223,31 @@ fn wiring_without_a_file_is_an_error() {
     assert!(e.contains("no file"), "{e}");
     let junk = dir.join("junk.wav");
     std::fs::write(&junk, vec![0x55u8; 5000]).unwrap();
+    // A file with no beats to find is a warning: the node still says where the playhead is,
+    // so a show whose clock follows `seconds` keeps following the music.
     let mut f = fixture(&grid_ops(&junk.to_string_lossy()), &cache);
+    let id = f.net.resolve(&"/g".parse().unwrap()).unwrap();
     let t = Instant::now();
-    let e = loop {
-        if let Some(e) = cook(&mut f).1.filter(|e| e.contains("no beats")) {
-            break e;
+    let w = loop {
+        let (_, error) = cook(&mut f);
+        assert_eq!(error, None);
+        if let Some(w) = f.cooker.status(id).and_then(|s| s.warning).filter(|w| w.contains("no beats")) {
+            break w;
         }
         assert!(t.elapsed() < Duration::from_secs(20), "{:?}", cook(&mut f));
         std::thread::sleep(Duration::from_millis(10));
     };
-    assert!(e.contains("no beats"), "{e}");
+    assert!(w.contains("no beats"), "{w}");
+    let before = value(&cook(&mut f).0.unwrap(), "seconds");
+    for _ in 0..60 {
+        f.clock.advance(1);
+        cook(&mut f);
+    }
+    let (c, error) = cook(&mut f);
+    assert_eq!(error, None);
+    let c = c.unwrap();
+    assert!((value(&c, "seconds") - before - 1.0).abs() < 0.05, "{} after {before}", value(&c, "seconds"));
+    assert_eq!(value(&c, "ready"), 0.0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

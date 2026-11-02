@@ -177,17 +177,35 @@ impl Sections {
     /// and whose last bar ends at `end` (or after one more bar of the last bar's length, when
     /// `end` is no later than the last start).
     pub fn find(bars: &[f64], end: f64, env: &Envelopes) -> Result<Sections, String> {
+        Sections::find_blending(bars, end, env, BLEND_BARS)
+    }
+
+    /// As [`Sections::find`], with blends of at most `blend_bars` bars taken into the track
+    /// boundary's zone ([`BLEND_BARS`] there; 0 takes none, so each blend stays a section of its
+    /// own). For comparing the two settings.
+    pub fn find_blending(
+        bars: &[f64],
+        end: f64,
+        env: &Envelopes,
+        blend_bars: usize,
+    ) -> Result<Sections, String> {
         let bars = clean_bars(bars, end)?;
         if env.spectrum_len() == 0 {
             return Err("the envelopes hold no spectrum".into());
         }
         let (starts, end) = bars;
         let features = bar_features(&starts, end, env);
-        Ok(Sections::from_features(starts, end, &features))
+        Ok(Sections::with_blends(starts, end, &features, blend_bars))
     }
 
     /// The sections from per-bar features ([`GROUPS`] columns each, in that order).
+    #[cfg(test)]
     fn from_features(bars: Vec<f64>, end: f64, features: &[Vec<f64>]) -> Sections {
+        Sections::with_blends(bars, end, features, BLEND_BARS)
+    }
+
+    /// The sections from per-bar features, blends of at most `blend_bars` bars absorbed.
+    fn with_blends(bars: Vec<f64>, end: f64, features: &[Vec<f64>], blend_bars: usize) -> Sections {
         let n = bars.len();
         let similar = standardise(features, &SIMILARITY_WEIGHTS);
         let kinds = standardise(features, &KIND_WEIGHTS);
@@ -213,7 +231,7 @@ impl Sections {
         for &c in &tracks {
             let mut zone = (c, c);
             for side in [Side::Before, Side::After] {
-                if let Some(f) = blend_edge(&similar, &bounds, c, side) {
+                if let Some(f) = blend_edge(&similar, &bounds, c, side, blend_bars) {
                     bounds.retain(|b| *b != f);
                     zone = (zone.0.min(f), zone.1.max(f));
                 }
@@ -708,10 +726,10 @@ enum Side {
 
 /// The section boundary on `side` of the track boundary `c` (both in `bounds`, which holds 0
 /// and the bar count, ascending) when the section between them is a blend: it lies within
-/// [`BLEND_BARS`] of `c`, and its bars move from the sound of the section before it towards
+/// `longest` bars of `c`, and its bars move from the sound of the section before it towards
 /// that of the section after it, by at least [`BLEND_RISE`] of the way between its first and
 /// its last third.
-fn blend_edge(rows: &[Vec<f64>], bounds: &[usize], c: usize, side: Side) -> Option<usize> {
+fn blend_edge(rows: &[Vec<f64>], bounds: &[usize], c: usize, side: Side, longest: usize) -> Option<usize> {
     let i = bounds.iter().position(|b| *b == c)?;
     // The blend runs over `a..b`, between the sections `before..a` and `b..after`.
     let (before, a, b, after) = match side {
@@ -722,7 +740,7 @@ fn blend_edge(rows: &[Vec<f64>], bounds: &[usize], c: usize, side: Side) -> Opti
         Side::Before => a,
         Side::After => b,
     };
-    if b - a > BLEND_BARS || a == 0 || b >= rows.len() {
+    if b - a > longest || a == 0 || b >= rows.len() {
         return None;
     }
     let left = mean_rows(rows, before.max(a.saturating_sub(ZONE_REACH)), a);

@@ -149,6 +149,10 @@ with `audio.play {path}`, or by turning `restart` on (bind a channel to cue it).
 off, a restart plays the file once, as a one-shot sample. `restart_on_show` restarts whenever
 a switch or sequence picks the sound again.
 
+**After a crash in show mode** the file plays on from where it was, to the second, instead of
+from `start`. A show that follows the music comes back with it. With `position` bound, the
+channel says where the file is.
+
 **Jumps.** A change of `start` jumps there at once, and so does `position` set by hand. The
 command `audio.seek {path, seconds}` does the same without an edit. The old sound fades out and
 the new place fades in, over 4 ms each. A looping file stays in its pass, so `loops` keeps
@@ -459,7 +463,7 @@ another beat; `bar_beat` and `bar` are then counted from there.
 
 **Cues from the sections.** `beats.cues {path, sequence, level?, pieces?, transition?}` writes the steps of a `chan.sequence` from the sections a `chan.beat_grid` found. `history.undo` takes the whole edit back. `path` is the grid, `sequence` the `chan.sequence`. There is one step per section, or one per track with `level: "track"`. A step's piece is named by the section's kind (`kind0`, `kind1`, ...), by its letter (`pieces: "letter"`: `A`, `B`, ...) or by its track (`pieces: "track"`). `names` lists the pieces in number order: piece k is `in<k>` of the `tex.sequence`, and `piece` equals `section_label`. Where the music blends from one section into the next, the show cross-fades over the same seconds, and the next step begins where the blend ends. `transition: "cut"` cuts at each section start instead.
 
-The command also binds the sequence's `clock` to the grid's `seconds`: the playhead plus `offset`, within the pass for a looped file. The show then stands at the section under the playhead, also after a seek, a loop or a change of `offset`. `hold` and `go` do nothing then. The steps are a copy: run `beats.cues` again after the sound file changes.
+The command also binds the sequence's `clock` to the grid's `seconds`: the playhead plus `offset`, within the pass for a looped file. The show then stands at the section under the playhead, also after a seek, a loop or a change of `offset`. `hold` and `go` do nothing then. The steps are a copy: run `beats.cues` again after the sound file changes. When the grid finds no beats (no network file, a file it cannot read), it warns and `seconds` still follows the playhead, so the show still follows the music.
 
 ## Tips
 

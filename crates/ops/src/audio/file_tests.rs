@@ -471,3 +471,74 @@ fn start_position_and_seeks_jump_at_once() {
     check(&mut f, 12_000, "seek");
     assert_eq!(info(&f, "restarts"), 0.0);
 }
+
+/// In show mode the playhead is kept in whole seconds; after a crash restart (a new cooker and
+/// clock, the place given back before the first cook) the file plays on from there instead of
+/// from `start`. Another file's place, a bound `position` and hostile places are not taken.
+#[test]
+fn the_playhead_comes_back_after_a_crash_restart() {
+    let dir = temp_dir("place");
+    let rate = 48_000u32;
+    let file = write_wav(&dir, "ramp.wav", rate, 1, &ramp(10 * rate as usize));
+    let mut f = F::new(&player(&file));
+    let id = f.net.resolve(&"/p".parse().unwrap()).unwrap();
+    first(&mut f);
+    // 3.5 s in.
+    for _ in 0..210 {
+        next(&mut f, 1);
+    }
+    let at = info(&f, "position");
+    assert!((at - 3.5).abs() < 0.05, "{at}");
+    let places = f.cooker.show_places();
+    let (_, place) = places.iter().find(|(n, _)| *n == id).cloned().unwrap();
+    let kept: serde_json::Value = serde_json::from_str(&place).unwrap();
+    assert_eq!(kept["seconds"], 3.0, "whole seconds: {place}");
+
+    let restarted = |place: &str, ops: &[Op]| {
+        let mut g = F::new(ops);
+        g.cooker.restore_show_place(id, place.to_string()).unwrap();
+        first(&mut g);
+        // A frame on, the block is the file from the kept second on.
+        let block = next(&mut g, 1);
+        (g, block)
+    };
+    let (g, block) = restarted(&place, &player(&file));
+    let p = info(&g, "position");
+    assert!((p - (3.0 + 2.0 / 60.0)).abs() < 0.02, "{p}");
+    // Faded in over 4 ms, then the ramp from 3 s on.
+    let i = 400;
+    let expected = |k: usize| f64::from(ramp(10 * rate as usize)[k] as f32);
+    // The ramp repeats every 65 536 samples: sample 3 s + 400 of the file.
+    assert_eq!(block[0][i], expected(3 * rate as usize + i));
+    // Taken, the place is the playhead again.
+    assert!(g.cooker.show_places().iter().any(|(n, _)| *n == id));
+
+    // Another file: from the start.
+    let other = write_wav(&dir, "other.wav", rate, 1, &ramp(10 * rate as usize));
+    let (g, _) = restarted(&place, &player(&other));
+    assert!(info(&g, "position") < 0.1, "{}", info(&g, "position"));
+    // Bound position: the channel decides, and no place is kept.
+    let (g, _) = restarted(&place, &scrubbed(&file, 0.0));
+    assert!(info(&g, "position") < 0.1, "{}", info(&g, "position"));
+    assert!(!g.cooker.show_places().iter().any(|(n, _)| *n == id));
+    // Hostile places.
+    let mut h = F::new(&player(&file));
+    first(&mut h);
+    for bad in [
+        r#"{"file": "x", "seconds": -1}"#.to_string(),
+        r#"{"file": "x", "seconds": 1e300}"#.to_string(),
+        "[nan".to_string(),
+        r#"{"file": "x", "seconds": 1, "more": 2}"#.to_string(),
+        format!(r#"{{"file": "{}", "seconds": 1}}"#, "x".repeat(10_000)),
+    ] {
+        assert!(h.cooker.restore_show_place(id, bad.clone()).is_err(), "{bad}");
+    }
+    next(&mut h, 1);
+    assert!(info(&h, "position") < 0.1);
+    // A place given back while the file plays is a jump there.
+    h.cooker.restore_show_place(id, place.clone()).unwrap();
+    next(&mut h, 1);
+    next(&mut h, 1);
+    assert!((info(&h, "position") - 3.0).abs() < 0.05, "{}", info(&h, "position"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

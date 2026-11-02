@@ -324,6 +324,8 @@ impl Structure {
                 end: s.end,
                 label: s.label.to_string(),
                 text: letter(s.letter),
+                track_start: s.track_start,
+                zone: s.zone,
             })
             .collect();
         Structure { sections, strip }
@@ -992,10 +994,11 @@ impl Operator for GridNode {
         }
         let analysis = self.follow(cx, Path::new(&status.file))?;
         let (grid, progress, running, error) = analysis.grid();
+        // Without beats the node still says where the playhead is (`seconds`) and how loud the
+        // file is, so a show whose clock follows the music keeps following it.
         if let Some(e) = error {
-            return Err(CookError::failed(format!("no beats: {e}")));
-        }
-        if !running && grid.as_ref().is_none_or(|g| !g.complete()) {
+            cx.warn(format!("no beats: {e}"));
+        } else if !running && grid.as_ref().is_none_or(|g| !g.complete()) {
             cx.warn("the beat analysis was cancelled: analyze starts it again");
         }
 

@@ -559,3 +559,72 @@ fn beats_cues_writes_a_cue_list_as_one_edit() {
     assert_eq!(r["steps"].as_u64(), status["sections"]["tracks"].as_u64(), "{r}");
     assert_eq!(r["names"], "A");
 }
+
+/// A show whose `clock` follows the music (`beats.cues`) comes back where the music was after a
+/// crash restart in show mode: `audio.file` keeps its playhead, the grid's `seconds` follow it,
+/// and the cue list stands at the section the music is in, not at its first step.
+#[test]
+fn a_cue_list_on_the_music_comes_back_with_the_music_after_a_crash_restart() {
+    let f = Fixture::new("beat_cues_restart");
+    let data = f._dir.join("data");
+    let show_file = data.join(crate::show::FILE);
+    let kept = data.join(crate::show_values::FILE);
+    f.engine.set_show_file(Some(show_file.clone()));
+    let music = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/p", "kind": "audio.file", "params": {"file": music.to_string_lossy()}},
+            {"op": "create", "path": "/g", "kind": "chan.beat_grid"},
+            {"op": "connect", "from": "/p", "to": "/g"},
+            {"op": "create", "path": "/seq", "kind": "chan.sequence"},
+        ]}),
+    );
+    f.call("beats.analyze", json!({"path": "/g"}));
+    f.call("beats.cues", json!({"path": "/g", "sequence": "/seq"}));
+    f.call("node.watch", json!({"path": "/seq"}));
+    let read =
+        |r: &crate::Registry, path: &str| r.dispatch("chan.read", &json!({"path": path}))["result"].clone();
+    eventually("the music playing", || {
+        f.registry.dispatch("audio.file_info", &json!({"path": "/p"}))["ok"] == true
+    });
+    // Into the breakdown, the third section, 30.98 to 46.46 s.
+    f.call("audio.seek", json!({"path": "/p", "seconds": 38.0}));
+    eventually("the show in the breakdown", || channel(&read(&f.registry, "/seq"), "step") == 2.0);
+    eventually("autosave", || f.file().contains("g:seconds"));
+    f.call("show.lock", json!({}));
+    let kept_at = || -> f64 {
+        let k: Json = std::fs::read_to_string(&kept)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_default();
+        let place: Json = k["places"]["/p"]["place"]
+            .as_str()
+            .and_then(|p| serde_json::from_str(p).ok())
+            .unwrap_or_default();
+        place["seconds"].as_f64().or_else(|| k["places"]["/p"]["place"]["seconds"].as_f64()).unwrap_or(-1.0)
+    };
+    eventually("the playhead kept", || kept_at() >= 38.0);
+    let at = kept_at();
+    assert!(at < 45.0, "{at}");
+    // The clock-driven show keeps no place of its own: the music is its place.
+    let text = std::fs::read_to_string(&kept).unwrap();
+    assert!(!text.contains("\"/seq\""), "{text}");
+    f.engine.shutdown();
+
+    let types = std::sync::Arc::new(penumbra_ops::builtin_types().unwrap());
+    let session =
+        penumbra_project::Session::open(f._dir.path(), types, &penumbra_project::content::Content::default())
+            .unwrap();
+    let e = crate::Engine::start(std::sync::Arc::new(session)).unwrap();
+    assert!(e.set_show_file(Some(show_file.clone())));
+    let r = crate::engine_registry(&e);
+    r.dispatch("node.watch", &json!({"path": "/seq"}));
+    let position = || r.dispatch("audio.file_info", &json!({"path": "/p"}))["result"]["position"].as_f64();
+    eventually("the music where it was", || position().is_some_and(|p| p >= at && p < at + 5.0));
+    eventually("the show at the music's section", || {
+        let (s, g) = (read(&r, "/seq"), read(&r, "/g"));
+        s["channels"].is_array() && channel(&s, "step") == 2.0 && channel(&g, "section_index") == 2.0
+    });
+    e.shutdown();
+}

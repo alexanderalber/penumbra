@@ -3,8 +3,9 @@
 //!
 //! Each lane draws the file's level as a waveform (from the envelopes, one column per pixel:
 //! the loudest hop of the column faint, the mean bright), coloured by the share of low, mid and
-//! high (red, green, blue). Above it runs a strip of sections, coloured by label; below it a
-//! time axis. Bar lines appear where bars are at least a few units apart, beats where beats
+//! high (red, green, blue). Above it runs a strip of sections, coloured by label, with a taller
+//! white edge where a track starts and a gradient where one section blends into the next;
+//! below it a time axis. Bar lines appear where bars are at least a few units apart, beats where beats
 //! are. Where the grid is not final yet the lane is veiled, where the levels are not measured
 //! yet it is hatched grey. A red line marks the playhead; in the upper lane a box marks what the
 //! lower one shows.
@@ -62,6 +63,123 @@ pub struct Section {
     pub end: f64,
     pub label: String,
     pub text: String,
+    /// The section begins a track: its start gets a taller, brighter edge.
+    pub track_start: bool,
+    /// Seconds over which the section before blends into this one, around `start`: drawn as a
+    /// gradient from the colour before to this one's. Equal ends: a cut.
+    pub zone: (f64, f64),
+}
+
+/// The colour a track start's edge is drawn in, and how far it reaches below the strip.
+const TRACK_EDGE: Color = [245, 245, 245, 255];
+const TRACK_EDGE_REACH: f32 = 6.0;
+/// The widest step of a zone's gradient, layout units, and the most steps per zone.
+const ZONE_STEP: f32 = 2.0;
+const ZONE_STEPS: usize = 48;
+/// The line under a zone, so a blend between two sections of one colour still shows.
+const ZONE_LINE: Color = white_alpha(170);
+
+/// `a` mixed with `b` by `f` (0 is `a`).
+fn mix(a: Color, b: Color, f: f32) -> Color {
+    let f = if f.is_finite() { f.clamp(0.0, 1.0) } else { 0.0 };
+    let mut out = [0u8; 4];
+    for ((o, x), y) in out.iter_mut().zip(a).zip(b) {
+        // `as`: between two u8 values.
+        *o = (f32::from(x) + (f32::from(y) - f32::from(x)) * f).round().clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
+/// The shapes of a sections strip `strip` for `lane`: a block per section in its label's colour,
+/// a gradient over each blend zone with a line under it, a dark edge at each boundary and a
+/// taller white one where a track starts, and with `text` the sections' letters.
+fn strip_shapes(
+    out: &mut Vec<Shape>,
+    lane: &Lane,
+    sections: &[Section],
+    colors: &HashMap<&str, Color>,
+    text: bool,
+    measure: &dyn Measure,
+) {
+    let strip = lane.sections;
+    let ok = |s: &Section| s.start.is_finite() && s.end.is_finite() && s.end > s.start;
+    let shown = |a: f64, b: f64| b >= lane.from && a <= lane.to;
+    let color_of = |s: &Section| colors.get(s.label.as_str()).copied().unwrap_or(UNKNOWN);
+    for s in sections.iter().filter(|s| ok(s) && shown(s.start, s.end)) {
+        let x0 = lane.x_of(s.start.max(lane.from));
+        let x1 = lane.x_of(s.end.min(lane.to));
+        out.push(Shape::Rect {
+            rect: Rect::from_min_max([x0, strip.min[1]], [x1, strip.max[1]]),
+            radius: 0.0,
+            color: color_of(s),
+        });
+    }
+    // Blend zones, over the blocks: the colour before fades into the colour after.
+    let pairs = sections.windows(2).filter_map(|w| Some((w.first()?, w.get(1)?)));
+    for (prev, s) in pairs {
+        let (za, zb) = s.zone;
+        if !(ok(s) && ok(prev) && za.is_finite() && zb.is_finite() && zb > za && shown(za, zb)) {
+            continue;
+        }
+        let (xa, xb) = (lane.x_of(za), lane.x_of(zb));
+        let (from, to) = (color_of(prev), color_of(s));
+        let (left, right) = (lane.x_of(za.max(lane.from)), lane.x_of(zb.min(lane.to)));
+        let width = right - left;
+        if !width.is_finite() || width <= 0.0 {
+            continue;
+        }
+        // `as`: a step count, bounded by ZONE_STEPS.
+        let steps = ((width / ZONE_STEP).ceil().max(1.0) as usize).min(ZONE_STEPS);
+        let w = width / steps as f32;
+        for k in 0..steps {
+            let a = left + w * k as f32;
+            // The colour at the step's middle, by its place in the whole zone.
+            let f = (a + w / 2.0 - xa) / (xb - xa);
+            out.push(Shape::Rect {
+                rect: Rect::from_min_max([a, strip.min[1]], [a + w + 0.05, strip.max[1]]),
+                radius: 0.0,
+                color: mix(from, to, f),
+            });
+        }
+        let y = strip.max[1] - 1.0;
+        out.push(Shape::Line {
+            from: [left, y],
+            to: [right.max(left + 1.0), y],
+            width: 2.0,
+            color: ZONE_LINE,
+        });
+    }
+    for s in sections.iter().filter(|s| ok(s) && s.start >= lane.from && s.start <= lane.to) {
+        let x = lane.x_of(s.start);
+        let shape = if s.track_start {
+            Shape::Line {
+                from: [x, strip.min[1]],
+                to: [x, strip.max[1] + TRACK_EDGE_REACH],
+                width: 2.0,
+                color: TRACK_EDGE,
+            }
+        } else {
+            Shape::Line { from: [x, strip.min[1]], to: [x, strip.max[1]], width: 1.0, color: BACKGROUND }
+        };
+        out.push(shape);
+    }
+    if !text {
+        return;
+    }
+    for s in sections.iter().filter(|s| ok(s) && shown(s.start, s.end) && !s.text.is_empty()) {
+        let x0 = lane.x_of(s.start.max(lane.from));
+        let x1 = lane.x_of(s.end.min(lane.to));
+        let [tw, _] = measure.text_size(&s.text, TEXT);
+        if x1 - x0 > tw + 8.0 {
+            out.push(Shape::Text {
+                at: [x0 + 4.0, (strip.min[1] + strip.max[1]) * 0.5],
+                anchor: Anchor::LEFT_CENTER,
+                size: TEXT,
+                text: s.text.clone(),
+                color: [16, 16, 16, 255],
+            });
+        }
+    }
 }
 
 /// What the overview shows. Every field may be empty, missing or nonsense; the picture then
@@ -644,42 +762,7 @@ fn lane(
     // Sections, or a quiet empty strip.
     let strip = lane.sections;
     out.push(Shape::Rect { rect: strip, radius: 0.0, color: white_alpha(10) });
-    for s in o.sections {
-        if !(s.start.is_finite() && s.end.is_finite() && s.end > s.start)
-            || s.end < lane.from
-            || s.start > lane.to
-        {
-            continue;
-        }
-        let x0 = lane.x_of(s.start.max(lane.from));
-        let x1 = lane.x_of(s.end.min(lane.to));
-        let color = colors.get(s.label.as_str()).copied().unwrap_or(UNKNOWN);
-        out.push(Shape::Rect {
-            rect: Rect::from_min_max([x0, strip.min[1]], [x1, strip.max[1]]),
-            radius: 0.0,
-            color,
-        });
-        if s.start >= lane.from {
-            out.push(Shape::Line {
-                from: [x0, strip.min[1]],
-                to: [x0, strip.max[1]],
-                width: 1.0,
-                color: BACKGROUND,
-            });
-        }
-        if zoomed && !s.text.is_empty() {
-            let [tw, _] = measure.text_size(&s.text, TEXT);
-            if x1 - x0 > tw + 8.0 {
-                out.push(Shape::Text {
-                    at: [x0 + 4.0, (strip.min[1] + strip.max[1]) * 0.5],
-                    anchor: Anchor::LEFT_CENTER,
-                    size: TEXT,
-                    text: s.text.clone(),
-                    color: [16, 16, 16, 255],
-                });
-            }
-        }
-    }
+    strip_shapes(out, lane, o.sections, colors, zoomed, measure);
 
     // The time axis.
     let axis = lane.axis;
@@ -834,9 +917,46 @@ mod tests {
         // NaN everywhere.
         let nan = [f64::NAN, 1.0, f64::NAN, 2.0];
         let sections = [
-            Section { start: f64::NAN, end: 3.0, label: "A".into(), text: "A".into() },
-            Section { start: 5.0, end: 4.0, label: "B".into(), text: "B".into() },
-            Section { start: 1.0, end: f64::INFINITY, label: String::new(), text: String::new() },
+            Section {
+                start: f64::NAN,
+                end: 3.0,
+                label: "A".into(),
+                text: "A".into(),
+                track_start: true,
+                zone: (0.0, 1.0),
+            },
+            Section {
+                start: 5.0,
+                end: 4.0,
+                label: "B".into(),
+                text: "B".into(),
+                track_start: false,
+                zone: (f64::NAN, 9.0),
+            },
+            Section {
+                start: 1.0,
+                end: f64::INFINITY,
+                label: String::new(),
+                text: String::new(),
+                track_start: true,
+                zone: (f64::NEG_INFINITY, f64::INFINITY),
+            },
+            Section {
+                start: 6.0,
+                end: 8.0,
+                label: "A".into(),
+                text: String::new(),
+                track_start: false,
+                zone: (7.0, 5.0),
+            },
+            Section {
+                start: 8.0,
+                end: 9.0,
+                label: "B".into(),
+                text: String::new(),
+                track_start: true,
+                zone: (7.5, 8.5),
+            },
         ];
         let o = Overview {
             duration: f64::NAN,
@@ -928,7 +1048,14 @@ mod tests {
 
     #[test]
     fn sections_are_coloured_by_label() {
-        let s = |a: f64, b: f64, l: &str| Section { start: a, end: b, label: l.into(), text: l.into() };
+        let s = |a: f64, b: f64, l: &str| Section {
+            start: a,
+            end: b,
+            label: l.into(),
+            text: l.into(),
+            track_start: false,
+            zone: (a, a),
+        };
         let sections = [s(0.0, 10.0, "A"), s(10.0, 20.0, "B"), s(20.0, 30.0, "A")];
         let colors = section_colors(&sections);
         assert_eq!(colors.len(), 2);
@@ -948,6 +1075,81 @@ mod tests {
             4
         );
         assert!(shapes.iter().any(|x| matches!(x, Shape::Text { text, .. } if text == "B")));
+    }
+
+    #[test]
+    fn track_starts_and_blend_zones_are_marked_in_the_strip() {
+        let s = |a: f64, b: f64, l: &str, track_start: bool, zone: (f64, f64)| Section {
+            start: a,
+            end: b,
+            label: l.into(),
+            text: String::new(),
+            track_start,
+            zone,
+        };
+        // Two tracks: A then B with a cut, then a blend from B into C over 18 to 22 s, which
+        // starts the second track.
+        let sections = [
+            s(0.0, 10.0, "A", true, (0.0, 0.0)),
+            s(10.0, 20.0, "B", false, (10.0, 10.0)),
+            s(20.0, 30.0, "C", true, (18.0, 22.0)),
+        ];
+        let colors = section_colors(&sections);
+        let (b, c) = (colors.get("B").copied().unwrap(), colors.get("C").copied().unwrap());
+        let o = Overview { duration: 30.0, sections: &sections, final_until: Some(f64::INFINITY), ..empty() };
+        let (layout, shapes) = draw(&o, 640.0, 360.0);
+        let zoom = layout.zoom.unwrap();
+        let strip = zoom.sections;
+        let in_zoom_strip = |y: f32| y >= strip.min[1] - 0.01 && y <= strip.max[1] + 0.01;
+        // Track starts: white edges reaching below the strip, at 0 and 20 s in each lane.
+        let edges: Vec<f32> = shapes
+            .iter()
+            .filter_map(|x| match x {
+                Shape::Line { from, to, color, .. } if *color == TRACK_EDGE && in_zoom_strip(from[1]) => {
+                    assert!(to[1] > strip.max[1]);
+                    Some(from[0])
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(edges.len(), 2, "{edges:?}");
+        assert!((edges[1] - zoom.x_of(20.0)).abs() < 1e-3);
+        // The section boundary at 10 s is a plain dark edge.
+        assert!(shapes.iter().any(|x| matches!(x, Shape::Line { from, color, .. }
+            if *color == BACKGROUND && (from[0] - zoom.x_of(10.0)).abs() < 1e-3 && in_zoom_strip(from[1]))));
+        // The zone: steps in the strip from 18 to 22 s, B's colour fading into C's, a line under.
+        let steps: Vec<(f32, Color)> = shapes
+            .iter()
+            .filter_map(|x| match x {
+                Shape::Rect { rect, color, .. }
+                    if in_zoom_strip(rect.min[1])
+                        && rect.min[0] >= zoom.x_of(18.0) - 0.01
+                        && rect.max[0] <= zoom.x_of(22.0) + 0.1
+                        && rect.width() < 10.0 =>
+                {
+                    Some((rect.min[0], *color))
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(steps.len() >= 8, "{}", steps.len());
+        let (first, last) = (steps.first().unwrap().1, steps.last().unwrap().1);
+        let near = |x: Color, y: Color| x.iter().zip(y).all(|(p, q)| p.abs_diff(q) < 40);
+        assert!(near(first, b) && near(last, c), "{first:?} {last:?}");
+        assert!(steps.iter().any(|(_, k)| *k != b && *k != c));
+        assert!(shapes.iter().any(|x| matches!(x, Shape::Line { from, to, color, .. }
+            if *color == ZONE_LINE && (from[0] - zoom.x_of(18.0)).abs() < 1e-3 && (to[0] - zoom.x_of(22.0)).abs() < 1e-3)));
+        // A zone of one colour still gets its line; a cut gets none.
+        let same = [s(0.0, 10.0, "A", true, (0.0, 0.0)), s(10.0, 20.0, "A", true, (9.0, 11.0))];
+        let o = Overview { duration: 20.0, sections: &same, ..empty() };
+        let lines = draw(&o, 640.0, 360.0)
+            .1
+            .iter()
+            .filter(|x| matches!(x, Shape::Line { color, .. } if *color == ZONE_LINE))
+            .count();
+        assert_eq!(lines, 2);
+        assert_eq!(mix([0, 0, 0, 255], [200, 100, 50, 255], 0.5), [100, 50, 25, 255]);
+        assert_eq!(mix([0, 0, 0, 255], [200, 100, 50, 255], f32::NAN), [0, 0, 0, 255]);
     }
 
     #[test]
