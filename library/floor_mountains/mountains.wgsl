@@ -27,6 +27,8 @@
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
+// Metres a peak's base stands above the floor.
+const LIFT: f32 = 0.02;
 
 fn hash(i: vec2i, seed: u32) -> f32 {
     return f32(pn_hash(vec3u(bitcast<vec2u>(i), seed)).x) / 4294967296.0;
@@ -102,17 +104,19 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let rise = smoothstep(0.0, max(params.foot, 0.01), free);
     let crest = ridges(vec2f(x, ground) / max(params.peaks, 0.1), seed);
     let share = rise * crest * mix(0.8, 1.0, r.x);
-    if share < params.valleys {
-        return vec4f(x, y, 0.0, 0.0);
-    }
-    var height = params.tallest * share;
+    // Peaks fade out towards `valleys` instead of cutting off there: the lane swings, so a peak
+    // at its edge would otherwise pop in and out as its share crosses the line.
+    let keep = smoothstep(params.valleys, params.valleys + 0.15, share);
+    var height = params.tallest * share * keep;
     // Presence: each peak has its own share of it, so as presence falls the peaks sink back into
     // the floor one after another. At 0.5 about half the range's height is left.
     let order = fract(r.z * 61.0 + r.y * 11.0);
     let own = clamp(params.presence * 2.0 - order, 0.0, 1.0);
     height *= own * own * (3.0 - 2.0 * own);
-    if height < 0.01 {
+    // A peak under 3 cm is left out, and every peak stands `LIFT` above the floor, so its base does
+    // not flicker against the floor's lines.
+    if height < 0.03 {
         return vec4f(x, y, 0.0, 0.0);
     }
-    return vec4f(x, y, 0.5 * height, w);
+    return vec4f(x, y, 0.5 * height + LIFT, w);
 }

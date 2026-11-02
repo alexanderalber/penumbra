@@ -22,6 +22,8 @@
 // @param step float = 0.5 0.1..2 -- metres per beat while no lane picture is wired; with one, the stage's step
 
 const LANE_NEAR: f32 = -8.0;
+// Metres a block's bottom stands above the floor.
+const LIFT: f32 = 0.02;
 const LANE_FAR: f32 = 56.0;
 
 @fragment
@@ -71,9 +73,11 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let order = fract(r.y * 53.0 + r.z * 7.0);
     let own = clamp(params.presence * 2.0 - order, 0.0, 1.0);
     height *= own * own * (3.0 - 2.0 * own);
-    let present = fract(r.x * 97.0 + r.z * 13.0) < params.fill && g > 0.0 && own > 0.0;
+    // A block under 3 cm is left out, and every block stands `LIFT` above the floor: a bottom face
+    // in the floor's plane flickers against its lines.
+    let present = fract(r.x * 97.0 + r.z * 13.0) < params.fill && g > 0.0 && own > 0.0 && height >= 0.03;
     if !present {
         return vec4f(x, y, 0.0, 0.0);
     }
-    return vec4f(x, y, 0.5 * height, side);
+    return vec4f(x, y, 0.5 * height + LIFT, side);
 }
