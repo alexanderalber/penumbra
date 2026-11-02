@@ -51,6 +51,8 @@ breaks.
   before each new section of the music and starts again from 0 there. The example's sections:
   a 4-bar intro, the main part, the breakdown from bar 17, the main part again.
 
+**Cues.** `/cues` is a `chan.sequence` whose steps follow the music's sections. `beats.cues {path: "/grid", sequence: "/cues"}` wrote them: one step per section, named by the section's kind (`kind0` the intro, `kind1` the main part, `kind2` the breakdown). Its `clock` is bound to `seconds` of `/grid`. The show stands at the section under the playhead, also after a seek or the loop. `/scene` (a `tex.sequence`) shows each step's look behind the picture: `/ground` for the intro, `/look_main` violet, `/look_break` teal. Where the music blends from one section into the next, `/scene` fades over the same seconds. The steps are a copy: after a change to `music.wav`, run `beats.cues` again.
+
 **Table.** `/beats` shows the grid's second output, `grid`: one row per beat with `time`
 (seconds into the file), `beat`, `bar`, `beat_in_bar` and `downbeat`. An `out.table` writes it
 to a CSV, for a cue list. Over the control channel, `beats.grid {path: "/grid", from, to}`
@@ -66,6 +68,7 @@ With `--times DIR` it also writes the beat and downbeat times it placed.
 
 - `offset` in `/grid`: 100. The flashes come a tenth of a second before the kick.
 - `fall` in `/grid_flash`: 0.4 for longer flashes.
+- `beats.cues {path: "/grid", sequence: "/cues", transition: "cut"}`: cuts at the section starts instead of fades. `history.undo` brings the fades back.
 - `file` in `/music`: a track of your own. Its first open analyses it; a 4 minute track takes a
   few seconds.
 - Open the example a second time: the grid is there from the first beat, and only the live

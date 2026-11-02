@@ -390,8 +390,10 @@ fn the_grid_follows_a_scrubbed_position() {
 
 /// The section channels of `c`, by name.
 fn sections_of(c: &Chans) -> Vec<(&'static str, f64)> {
-    let first = super::beat_grid::CHANNELS.iter().position(|n| *n == "section_index").unwrap();
-    super::beat_grid::CHANNELS[first..].iter().map(|n| (*n, value(c, n))).collect()
+    let names = &super::beat_grid::CHANNELS;
+    let first = names.iter().position(|n| *n == "section_index").unwrap();
+    let last = names.iter().position(|n| *n == "sections_ready").unwrap();
+    names[first..=last].iter().map(|n| (*n, value(c, n))).collect()
 }
 
 /// Cooks `/g` and `/o` with the `sections` output of `/g` read; the channels of both, once
@@ -582,4 +584,115 @@ fn sections_come_from_complete_grids_and_envelopes() {
     assert!(find_sections(&empty, &env).is_err());
     let none = envelopes_of(&[], 1, rate).unwrap();
     assert!(find_sections(&grid, &none).is_err());
+}
+
+/// The cue list of the example track: a `chan.sequence` whose clock is bound to the grid's
+/// `seconds` stands at the step of the section under the playhead, wherever the playhead
+/// jumps, after a loop and with `offset`, and fades through each blend zone.
+#[test]
+fn a_cue_list_follows_the_sections_of_the_example_track() {
+    use super::cues::{Blend, Level, Pieces, cues};
+    let dir = temp_dir("cues");
+    let music = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
+    let file = music.to_string_lossy().into_owned();
+    let mut ops = grid_ops(&file);
+    let bind = |param: &str, from: &str, channel: &str| Op::Bind {
+        param: penumbra_core::ParamPath::parse(param).unwrap(),
+        component: None,
+        from: from.parse().unwrap(),
+        channel: Some(penumbra_core::Name::new(channel).unwrap()),
+        cell: None,
+        format: None,
+    };
+    ops.extend([
+        create("/k", "chan.constant"),
+        set("/k.name0", "pos"),
+        set("/k.value0", 1.0),
+        bind("/p.position", "/k", "pos"),
+        create("/s", crate::sequence::SEQUENCE),
+        bind("/s.clock", "/g", "seconds"),
+    ]);
+    let mut f = fixture(&ops, &dir.join("cache"));
+    let ids: Vec<_> = ["/g", "/s"].iter().map(|p| f.net.resolve(&p.parse().unwrap()).unwrap()).collect();
+    let cook_both = |f: &mut F| {
+        f.cooker.cook_showing(&f.net, f.clock.now(), &ids, &[], &[]);
+        let get = |i: usize| {
+            f.cooker.output(Port { node: ids[i], output: 0 }).and_then(|d| d.get::<Chans>()).cloned()
+        };
+        (get(0), get(1))
+    };
+    let t = Instant::now();
+    loop {
+        assert!(t.elapsed() < Duration::from_secs(120), "the sections never came");
+        std::thread::sleep(Duration::from_millis(20));
+        f.clock.advance(1);
+        if let (Some(g), _) = cook_both(&mut f)
+            && value(&g, "sections_ready") == 1.0
+            && value(&g, "analyzing") == 0.0
+        {
+            break;
+        }
+    }
+    let state = f.cooker.resource::<BeatFiles>().unwrap().get(Path::new(&file)).unwrap().state();
+    let structure = state.sections.clone().unwrap();
+    let env = state.envelopes.clone().unwrap();
+    let duration = env.len() as f64 * env.hop_seconds();
+    let c =
+        cues(&structure.sections, duration, "music.wav", Level::Section, Pieces::Label, Blend::Zone).unwrap();
+    let list = structure.sections.list().to_vec();
+    assert_eq!(c.starts.len(), list.len(), "{}", c.steps);
+    f.edit(&[set("/s.steps", c.steps.as_str()), set("/s.names", c.names.as_str()), set("/s.lead_in", 0.0)]);
+
+    let at = |f: &mut F, pos: f64| {
+        f.edit(&[set("/k.value0", pos)]);
+        f.clock.advance(1);
+        let (g, s) = cook_both(f);
+        let s = s.unwrap_or_else(|| panic!("no show: {:?}", f.cooker.status(ids[1])));
+        (g.unwrap(), s)
+    };
+    // Inside section i, away from both blends.
+    let inside = |i: usize| {
+        let a = list[i].zone.1.max(list[i].start);
+        let b = list.get(i + 1).map_or(list[i].end, |n| n.zone.0.min(n.start));
+        (a + b) / 2.0
+    };
+    // Jumps all over the file: last, first, then every other one backwards.
+    let n = list.len();
+    let mut order: Vec<usize> = vec![n - 1, 0];
+    order.extend((0..n).rev());
+    for i in order {
+        let (g, s) = at(&mut f, inside(i));
+        assert_eq!(value(&g, "section_index"), i as f64);
+        assert_eq!(value(&s, "step"), i as f64, "at {}: {}", inside(i), c.steps);
+        assert_eq!(value(&s, "piece"), list[i].label as f64);
+        assert_eq!(value(&s, "mix"), 0.0);
+    }
+    // The file loops: a pass later the show is at the same step.
+    for i in [1.min(n - 1), 0] {
+        let (g, s) = at(&mut f, duration + inside(i));
+        assert_eq!(value(&g, "section_index"), i as f64);
+        assert_eq!(value(&s, "step"), i as f64);
+    }
+    assert_eq!(value(&at(&mut f, duration - 0.05).1, "step"), (n - 1) as f64);
+    // Offset: a second ahead, half a second before step 1 begins is step 1 already.
+    if let Some(&(b, _)) = c.starts.get(1) {
+        assert_eq!(value(&at(&mut f, b - 0.5).1, "step"), 0.0);
+        f.edit(&[set("/g.offset", 1000.0)]);
+        let (g, s) = at(&mut f, b - 0.5);
+        assert_eq!(value(&s, "step"), 1.0);
+        assert!((value(&g, "seconds") - (b + 0.5)).abs() < 1e-3);
+        f.edit(&[set("/g.offset", 0.0)]);
+    }
+    // Through a blend zone the show fades from one section's piece into the next one's.
+    for (i, s) in list.iter().enumerate().skip(1) {
+        if s.zone.1 - s.zone.0 < 0.1 {
+            continue;
+        }
+        let (_, show) = at(&mut f, (s.zone.0 + s.zone.1) / 2.0);
+        let mix = value(&show, "mix");
+        assert!(mix > 0.2 && mix < 0.8, "section {i}: mix {mix}");
+        assert_eq!(value(&show, "from"), list[i - 1].label as f64);
+        assert_eq!(value(&show, "to"), s.label as f64);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

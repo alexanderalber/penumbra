@@ -102,7 +102,7 @@ fn pool() -> Option<&'static rayon::ThreadPool> {
 /// The channels `chan.beat_grid` outputs, in order. The first eight and `level` to `kick` mean
 /// what they mean on `chan.beat_analysis`, so a binding keeps working when one node replaces
 /// the other. New channels go at the end.
-pub const CHANNELS: [&str; 34] = [
+pub const CHANNELS: [&str; 35] = [
     "beat",
     "tick",
     "bar",
@@ -137,11 +137,16 @@ pub const CHANNELS: [&str; 34] = [
     "transition_from",
     "transition_to",
     "sections_ready",
+    "seconds",
 ];
 /// Where the envelopes begin in [`CHANNELS`].
 const LEVEL: usize = 14;
 /// Where the sections begin in [`CHANNELS`].
 const SECTION: usize = 20;
+/// The section channels, `section_index` to `sections_ready`.
+const SECTION_CHANNELS: usize = 14;
+/// Where `seconds` stands in [`CHANNELS`].
+const SECONDS: usize = SECTION + SECTION_CHANNELS;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let [width, height, keep_size] = meters_picture::size_params(OVERVIEW_GROUP, "overview");
@@ -189,7 +194,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
              bars_to_boundary and seconds_to_boundary count down to the next section, build rises from 0 to 1 over the last 8 bars before it. \
              section_seed is a number fixed per section_label, for random looks that come back with the music. \
              transition rises from 0 to 1 through the blend from one section into the next, transition_from and transition_to are their labels. \
-             sections_ready is 1 once the sections are found, after the whole file is analysed. Until then the section channels read 0",
+             sections_ready is 1 once the sections are found, after the whole file is analysed. Until then the section channels read 0. \
+             seconds is the time into the file the channels are read at: the playhead plus offset, within the pass for a looped file, never below 0. \
+             Bind a chan.sequence's clock to it, and its steps follow the music through seeks and loops",
         )
         .describe_output(
             "grid",
@@ -932,8 +939,8 @@ impl GridNode {
 
 /// The section channels, `section_index` to `sections_ready`, at `t` seconds into the file (into
 /// the pass, for a looped file); all 0 before the sections are found.
-pub(crate) fn section_values(sections: Option<&Structure>, t: f64) -> [f64; CHANNELS.len() - SECTION] {
-    let mut v = [0.0; CHANNELS.len() - SECTION];
+pub(crate) fn section_values(sections: Option<&Structure>, t: f64) -> [f64; SECTION_CHANNELS] {
+    let mut v = [0.0; SECTION_CHANNELS];
     let Some(s) = sections else { return v };
     if let Some(p) = s.sections.at(t) {
         // `as`: counts far below 2^53.
@@ -1068,6 +1075,11 @@ impl Operator for GridNode {
         let ts = if env_loop { te.rem_euclid(status.duration) } else { te };
         for (v, x) in values.iter_mut().skip(SECTION).zip(section_values(structure.as_deref(), ts)) {
             *v = x;
+        }
+        // The time the section channels are read at, for a chan.sequence's `clock`: never below
+        // 0, so a negative offset at the file's start holds the show at its start.
+        if let Some(v) = values.get_mut(SECONDS) {
+            *v = if ts.is_finite() { ts.max(0.0) } else { 0.0 };
         }
         if self.names.len() != CHANNELS.len() {
             self.names = CHANNELS.iter().filter_map(|n| Name::new(n).ok()).collect();

@@ -4,7 +4,8 @@
 //!
 //! Commands: `audio.devices`, `audio.outputs`, `audio.status`, `audio.config`, `audio.mute`,
 //! `audio.measure_latency`, `audio.play`, `audio.file_info`, and the beat analyses of sound files:
-//! `beats.analyze`, `beats.status`, `beats.grid`, `beats.cancel`.
+//! `beats.analyze`, `beats.status`, `beats.grid`, `beats.cancel`, and `beats.cues`, which writes a
+//! `chan.sequence`'s steps from the sections of a file.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -13,15 +14,18 @@ use std::time::{Duration, Instant};
 use penumbra_audio::capture::{self, Config};
 use penumbra_audio::measure;
 use penumbra_audio::playback::{self, Settings};
-use penumbra_core::NodePath;
+use penumbra_core::{Name, NodePath, ParamPath, Value};
+use penumbra_graph::Op;
 use penumbra_ops::audio::beat_grid::{Analysis, BEAT_GRID, State, letter};
+use penumbra_ops::audio::cues::{self, Blend, Level, Pieces};
 use penumbra_ops::audio::file::{FILE, FileStatus};
 use penumbra_ops::audio::instrument::{INSTRUMENT, Presses};
+use penumbra_ops::sequence::SEQUENCE;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
 use crate::command::{CommandError, Registry, args};
-use crate::commands::{engine_commands, require};
+use crate::commands::{edit, engine_commands, outcome, require};
 use crate::engine::Engine;
 
 type CmdResult<T> = std::result::Result<T, CommandError>;
@@ -102,6 +106,19 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Stops a sound file's beat analysis and the measuring of its levels: {path or file}. Its chan.beat_grid \
          nodes keep the beats and levels found so far; beats.analyze starts it again",
         beats_cancel,
+    );
+    add(
+        "beats.cues",
+        "Writes a cue list into a chan.sequence from the sections of the file a chan.beat_grid reads, as one \
+         undoable edit: {path (the chan.beat_grid), sequence (the chan.sequence), level? (section: a step per \
+         section, the default; track: a step per track), pieces? (what names a step's piece: label, the kind \
+         of sound, kind0, kind1...; letter, A, B... within a track; track, track0, track1...; default label, \
+         track for level track), transition? (zone: a cross-fade through each blend between sections, the \
+         default; cut)}. Sets steps, names (piece k is in<k> of a tex.sequence) and lead_in 0, clears file, \
+         and binds clock to the grid's seconds. The show then follows the music through seeks, loops and the \
+         grid's offset. A step after a blend begins where the blend ends. Needs the sections: beats.analyze \
+         waits for them. Run it again after the file changes",
+        beats_cues,
     );
     add(
         "audio.measure_latency",
@@ -490,4 +507,110 @@ fn beats_cancel(e: &Engine, p: &Json) -> CmdResult<Json> {
         "cancelled": stopped,
         "message": (!stopped).then_some("no analysis of this file was running"),
     }))
+}
+
+fn beats_cues(e: &Engine, p: &Json) -> CmdResult<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        path: NodePath,
+        sequence: NodePath,
+        level: Option<String>,
+        pieces: Option<String>,
+        transition: Option<String>,
+    }
+    let a: A = args(p)?;
+    let level = match a.level.as_deref() {
+        None => Level::Section,
+        Some(l) => {
+            Level::parse(l).ok_or_else(|| CommandError(format!("level `{l}` is none of section, track")))?
+        }
+    };
+    let pieces = match a.pieces.as_deref() {
+        None if level == Level::Track => Pieces::Track,
+        None => Pieces::Label,
+        Some(k) => Pieces::parse(k)
+            .ok_or_else(|| CommandError(format!("pieces `{k}` is none of label, letter, track")))?,
+    };
+    let blend = match a.transition.as_deref() {
+        None => Blend::Zone,
+        Some(t) => {
+            Blend::parse(t).ok_or_else(|| CommandError(format!("transition `{t}` is none of zone, cut")))?
+        }
+    };
+    let net = e.session().doc().snapshot();
+    let kind_at = |path: &NodePath| -> CmdResult<String> {
+        let id = require(&net, path)?;
+        Ok(net.node(id).map(|n| n.kind.clone()).unwrap_or_default())
+    };
+    let grid_kind = kind_at(&a.path)?;
+    if grid_kind != BEAT_GRID {
+        return Err(CommandError(format!(
+            "{} is a {grid_kind}, not a {BEAT_GRID}: the cues follow the seconds of a grid",
+            a.path
+        )));
+    }
+    let seq_kind = kind_at(&a.sequence)?;
+    if seq_kind != SEQUENCE {
+        return Err(CommandError(format!("{} is a {seq_kind}, not a {SEQUENCE}", a.sequence)));
+    }
+    let (file, analysis) = analysis_of(e, &Which { path: Some(a.path.clone()), file: None })?;
+    let s = analysis.state();
+    let name =
+        file.file_name().map_or_else(|| file.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let Some(structure) = s.sections.as_ref() else {
+        let why =
+            if let Some(err) = s.error.as_ref().or(s.envelope_error.as_ref()).or(s.sections_error.as_ref()) {
+                format!("{name} has no sections: {err}")
+            } else if s.sections_running {
+                format!("the sections of {name} are being found; try again in a moment")
+            } else {
+                format!(
+                    "{name} has no sections yet: they are found once beats and levels are complete \
+                 (beats.analyze {{path: \"{}\"}} waits for them)",
+                    a.path
+                )
+            };
+        return Err(CommandError(why));
+    };
+    // The file's length, so the last step runs to its end.
+    let end = s.envelopes.as_ref().map_or(0.0, |env| env.len() as f64 * env.hop_seconds());
+    let c = cues::cues(&structure.sections, end, &name, level, pieces, blend).map_err(CommandError)?;
+    let param = |p: &str| -> CmdResult<ParamPath> {
+        let name = Name::new(p).map_err(|err| CommandError(err.to_string()))?;
+        ParamPath::new(a.sequence.clone(), name).map_err(|err| CommandError(err.to_string()))
+    };
+    let text = |t: &str| Value::Text(t.to_string());
+    let mut ops = Vec::new();
+    for p in ["steps", "names", "lead_in", "file"] {
+        // A bound param would hide the value written here.
+        ops.push(Op::Unbind { param: param(p)?, component: None });
+    }
+    ops.extend([
+        Op::Set { param: param("steps")?, value: text(&c.steps) },
+        Op::Set { param: param("names")?, value: text(&c.names) },
+        Op::Set { param: param("lead_in")?, value: Value::Float(0.0) },
+        Op::Reset { param: param("file")? },
+        Op::Bind {
+            param: param("clock")?,
+            component: None,
+            from: a.path.clone(),
+            channel: Some(Name::new("seconds").map_err(|err| CommandError(err.to_string()))?),
+            cell: None,
+            format: None,
+        },
+    ]);
+    let label = format!("cue list from the sections of {name}");
+    let out = edit(e, &ops, &label)?;
+    let mut reply = outcome(&out);
+    let cues: Vec<Json> = c.starts.iter().map(|(t, k)| json!({"start": t, "piece": k})).collect();
+    if let Some(obj) = reply.as_object_mut() {
+        obj.insert("sequence".into(), json!(a.sequence.to_string()));
+        obj.insert("file".into(), json!(file.display().to_string()));
+        obj.insert("steps".into(), json!(c.starts.len()));
+        obj.insert("names".into(), json!(c.names));
+        obj.insert("end".into(), json!(c.end));
+        obj.insert("cues".into(), json!(cues));
+    }
+    Ok(reply)
 }

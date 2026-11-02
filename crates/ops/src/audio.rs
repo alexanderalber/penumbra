@@ -26,7 +26,8 @@
 //!   something reads it.
 //! - **`chan.beat_grid`** ([`beat_grid`]) is the beat and bar of a sound file at an `audio.file`'s
 //!   playhead, from beats the Beat This! network finds in the whole file ahead of time, and
-//!   where the playhead stands among the file's tracks and sections.
+//!   where the playhead stands among the file's tracks and sections. [`cues`] writes a cue list
+//!   for `chan.sequence` from those sections.
 //! - **`chan.audio_envelope`** ([`envelope`]) is the loudness of every channel now, with an
 //!   attack and a release; **`chan.audio_spectrum`** ([`spectrum`]) the spectrum in bands, as
 //!   one channel and as a texture (a row now, or a scrolling spectrogram).
@@ -41,6 +42,7 @@ pub mod beat_grid;
 #[cfg(test)]
 mod beat_grid_tests;
 pub mod block;
+pub mod cues;
 pub mod envelope;
 #[cfg(test)]
 mod envelope_tests;

@@ -476,3 +476,86 @@ fn beats_of_a_sound_file_through_the_commands() {
     f.fail("beats.status", json!({"path": "/s", "extra": 1}));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `beats.cues` writes a `chan.sequence`'s steps from the sections of the example track and binds
+/// its clock to the grid's seconds, as one history entry that one undo takes back; before the
+/// sections, at a node of another kind, at no node and with arguments it does not know it is an
+/// error and changes nothing.
+#[test]
+fn beats_cues_writes_a_cue_list_as_one_edit() {
+    let f = Fixture::new("beat_cues");
+    let music = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/p", "kind": "audio.file", "params": {"file": music.to_string_lossy()}},
+            {"op": "create", "path": "/g", "kind": "chan.beat_grid"},
+            {"op": "connect", "from": "/p", "to": "/g"},
+            {"op": "create", "path": "/seq", "kind": "chan.sequence", "params": {"steps": "x 5", "lead_in": 2.0}},
+            {"op": "create", "path": "/n", "kind": "chan.constant"},
+        ]}),
+    );
+    let cues = |extra: Json| {
+        let mut a = json!({"path": "/g", "sequence": "/seq"});
+        if let (Some(o), Some(x)) = (a.as_object_mut(), extra.as_object()) {
+            o.extend(x.clone());
+        }
+        a
+    };
+    // No analysis yet, or one still running: no sections.
+    let e = f.fail("beats.cues", cues(json!({})));
+    assert!(e.contains("no beat analysis"), "{e}");
+    f.call("beats.analyze", json!({"path": "/g", "wait": false}));
+    let e = f.fail("beats.cues", cues(json!({})));
+    assert!(e.contains("sections") || e.contains("no beat analysis"), "{e}");
+    let status = f.call("beats.analyze", json!({"path": "/g"}));
+    let sections = status["sections"]["sections"].as_u64().unwrap();
+    assert!(sections >= 2, "{status}");
+
+    for (args, says) in [
+        (json!({"path": "/g", "sequence": "/nothing"}), "no node at /nothing"),
+        (json!({"path": "/g", "sequence": "/n"}), "not a chan.sequence"),
+        (json!({"path": "/seq", "sequence": "/seq"}), "not a chan.beat_grid"),
+        (json!({"path": "/p", "sequence": "/seq"}), "not a chan.beat_grid"),
+        (cues(json!({"level": "bar"})), "level"),
+        (cues(json!({"pieces": "colour"})), "pieces"),
+        (cues(json!({"transition": "flash"})), "transition"),
+        (cues(json!({"extra": 1})), "extra"),
+        (json!({"sequence": "/seq"}), "path"),
+    ] {
+        let e = f.fail("beats.cues", args.clone());
+        assert!(e.contains(says), "{args}: {e}");
+    }
+    let before = f.call("node.info", json!({"path": "/seq"}));
+    let param = |info: &Json, name: &str| {
+        info["params"].as_array().unwrap().iter().find(|p| p["name"] == name).unwrap()["value"].clone()
+    };
+    assert_eq!(param(&before, "steps"), "x 5");
+
+    let r = f.call("beats.cues", cues(json!({})));
+    assert_eq!(r["history"], "new", "{r}");
+    assert_eq!(r["steps"].as_u64(), Some(sections), "{r}");
+    let info = f.call("node.info", json!({"path": "/seq"}));
+    let steps = param(&info, "steps");
+    assert!(steps.as_str().unwrap().starts_with("# One step per section of music.wav"), "{steps}");
+    assert_eq!(param(&info, "lead_in"), 0.0);
+    assert_eq!(param(&info, "names"), r["names"]);
+    assert_eq!(info["binds"], json!([{"param": "clock", "from": "/g:seconds"}]), "{info}");
+    // The cue list plays the music's sections: the show's step is the grid's section.
+    f.call("node.watch", json!({"path": "/seq"}));
+    eventually("the show at the grid's section", || {
+        let g = f.call("chan.read", json!({"path": "/g"}));
+        let s = f.call("chan.read", json!({"path": "/seq"}));
+        channel(&g, "sections_ready") == 1.0 && channel(&s, "step") == channel(&g, "section_index")
+    });
+    // One undo takes all of it back.
+    f.call("history.undo", json!({}));
+    let undone = f.call("node.info", json!({"path": "/seq"}));
+    assert_eq!(param(&undone, "steps"), "x 5");
+    assert_eq!(param(&undone, "lead_in"), 2.0);
+    assert_eq!(undone["binds"], json!([]), "{undone}");
+    // Per track, by letter, cut.
+    let r = f.call("beats.cues", cues(json!({"level": "track", "pieces": "letter", "transition": "cut"})));
+    assert_eq!(r["steps"].as_u64(), status["sections"]["tracks"].as_u64(), "{r}");
+    assert_eq!(r["names"], "A");
+}

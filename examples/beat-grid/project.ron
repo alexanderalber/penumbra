@@ -3,6 +3,7 @@
 (
     version: 2,
     nodes: {
+        "/about_cues": (kind: "ui.note", params: {"height": 175, "text": "# Cues from the sections\n`cues` is a `chan.sequence`. `beats.cues {path: \"/grid\", sequence: \"/cues\"}` wrote its steps: one per section, named by the section's kind. Its `clock` is bound to `seconds` of `grid`. After a seek or the loop it stands at the section the music is in.\n- `scene` shows the look of each step behind the picture: the intro near black, the main part violet, the breakdown teal\n- It fades where the music blends from one section into the next", "width": 600}, pos: [1400.0, 830.0]),
         "/about_grid": (kind: "ui.note", params: {"height": 150, "text": "# Beats ahead of time\n`grid` asks which file `music` plays and where its playhead stands. The Beat This! network finds the beats and bars of the whole file once, in the background. The result is cached, so the next open has it at once.\n- While it runs, `analyzing` is 1 and `progress` rises from 0 to 1\n- `ready` is 1 where the grid under the playhead is final\n- `coasting` is 1 beyond that: the beat runs on at the last tempo", "width": 600}, pos: [0.0, 150.0]),
         "/about_live": (kind: "ui.note", params: {"height": 95, "text": "# Live\n`live` listens to the same sound while it plays. It takes a few seconds to lock on and follows the kick. Use it for live input: a microphone, a DJ mixer, a band. For a file, `grid` is right from the first beat and through breaks.", "width": 540}, pos: [-580.0, 800.0]),
         "/about_music": (kind: "ui.note", params: {"height": 100, "text": "# Music\n`music` plays `music.wav` over and over: 32 bars at 124 BPM, made for this example. `speakers` plays it on the default output; `device` picks another.\n- Bars 17 to 24 are a breakdown: no kick, no snare", "width": 540}, pos: [-580.0, 380.0]),
@@ -13,6 +14,7 @@
         "/about_try": (kind: "ui.note", params: {"height": 135, "text": "# Try\n- `offset` on `grid`: 100. The flashes come a tenth of a second before the kick\n- `fall` on `grid_flash`: 0.4 for longer flashes\n- `file` on `music`: a track of your own. A 4 minute track takes a few seconds to analyse\n- `beats.grid {path: \"/grid\", from: 0, to: 10}`: the beat times of the first ten seconds", "width": 600}, pos: [1400.0, 670.0]),
         "/about_watch": (kind: "ui.note", params: {"height": 115, "text": "# What to watch\n- The first open: `grid` takes a few seconds to analyse, `live` about seven to lock on. Opened again, the grid is there from the first beat\n- Bars 17 to 24, from 31 s on: no kick. Halfway through, `live` slips half a beat onto the hats. It finds back some bars after the kick returns. `grid` stays on the beat", "width": 600}, pos: [1400.0, 490.0]),
         "/beats": (kind: "table.null", inputs: {"in": "grid:grid"}, pos: [400.0, 649.0]),
+        "/cues": (kind: "chan.sequence", params: {"lead_in": 0.0, "names": "kind0 kind1 kind2", "steps": "# One step per section of music.wav, written by beats.cues. Seconds follow the file:\n# bind clock to the seconds of its chan.beat_grid.\nkind0 7.740 fade 3.860       # section 0: A, kind 0, track 0, from 0.00 s\nkind1 23.240                 # section 1: B, kind 1, track 0, from 7.74 s\nkind2 15.480 fade 1.940      # section 2: C, kind 2, track 0, from 30.98 s\nkind1 15.471                 # section 3: B, kind 1, track 0, from 46.46 s\n"}, binds: {"clock": "grid:seconds"}, pos: [600.0, 560.0]),
         "/grid": (kind: "chan.beat_grid", inputs: {"audio": "music"}, pos: [200.0, 509.0]),
         "/grid_bass": (kind: "tex.primitive", params: {"center": [0.47, 0.45], "fill": [1.0, 0.75, 0.2, 1.0], "size": [0.012, 0.0]}, binds: {"size.1": "grid_sweep:low"}, pos: [800.0, -128.0]),
         "/grid_bar": (kind: "tex.primitive", params: {"center": [0.25, 0.9], "fill": [0.1, 0.6, 1.0, 1.0], "size": [0.0, 0.02]}, binds: {"size.0": "grid_sweep:bar"}, pos: [800.0, 257.0]),
@@ -41,8 +43,11 @@
         "/live_sweep": (kind: "chan.math", params: {"b": 0.8, "op": "multiply"}, inputs: {"a": "live"}, pos: [400.0, 961.0]),
         "/live_text": (kind: "tex.text", params: {"color": [1.0, 1.0, 1.0, 0.85], "position": [0.75, 0.8], "size": 64.0, "style": "Light", "text": "beat 1"}, binds: {"text": (node: "live_count", channel: "bar_beat", format: "beat {.0}")}, pos: [800.0, 1155.0]),
         "/live_title": (kind: "tex.text", params: {"color": [1.0, 1.0, 1.0, 0.6], "position": [0.75, 0.1], "size": 48.0, "text": "live: chan.beat_analysis"}, pos: [800.0, 1284.0]),
+        "/look_break": (kind: "tex.constant", params: {"color": [0.0, 0.025, 0.03, 1.0]}, pos: [800.0, -512.0]),
+        "/look_main": (kind: "tex.constant", params: {"color": [0.02, 0.006, 0.035, 1.0]}, pos: [800.0, -384.0]),
         "/music": (kind: "audio.file", params: {"file": "music.wav"}, pos: [0.0, 494.0]),
-        "/out": (kind: "tex.composite", inputs: {"in0": "ground", "in1": "grid_side", "in2": "live_side"}, pos: [1200.0, 337.0]),
+        "/out": (kind: "tex.composite", inputs: {"in0": "scene", "in1": "grid_side", "in2": "live_side"}, pos: [1200.0, 337.0]),
+        "/scene": (kind: "tex.sequence", inputs: {"sequence": "cues", "in0": "ground", "in1": "look_main", "in2": "look_break"}, pos: [1000.0, 40.0]),
         "/speakers": (kind: "out.audio", params: {"reverb": 0.0}, inputs: {"in": "music"}, pos: [200.0, 437.0]),
     },
 )

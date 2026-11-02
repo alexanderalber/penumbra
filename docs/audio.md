@@ -457,6 +457,10 @@ another beat; `bar_beat` and `bar` are then counted from there.
 
 **Cues.** The `grid` output is a table with one row per beat: time in the file, beat, bar, beat in bar, downbeat. `beats.grid {path}` gives the same over the control channel; `beats.status` and `beats.analyze` show and start an analysis. The `sections` output is a table with one row per section: start, end, bars, label, letter, track, strength and the blend zone. `beats.grid` lists the same as `sections`, and `beats.status` counts them. The example [beat-grid](../examples/beat-grid/README.md) shows the grid beside the live tracker on the same music.
 
+**Cues from the sections.** `beats.cues {path, sequence, level?, pieces?, transition?}` writes the steps of a `chan.sequence` from the sections a `chan.beat_grid` found. `history.undo` takes the whole edit back. `path` is the grid, `sequence` the `chan.sequence`. There is one step per section, or one per track with `level: "track"`. A step's piece is named by the section's kind (`kind0`, `kind1`, ...), by its letter (`pieces: "letter"`: `A`, `B`, ...) or by its track (`pieces: "track"`). `names` lists the pieces in number order: piece k is `in<k>` of the `tex.sequence`, and `piece` equals `section_label`. Where the music blends from one section into the next, the show cross-fades over the same seconds, and the next step begins where the blend ends. `transition: "cut"` cuts at each section start instead.
+
+The command also binds the sequence's `clock` to the grid's `seconds`: the playhead plus `offset`, within the pass for a looped file. The show then stands at the section under the playhead, also after a seek, a loop or a change of `offset`. `hold` and `go` do nothing then. The steps are a copy: run `beats.cues` again after the sound file changes.
+
 ## Tips
 
 - Analyse one channel with `channel` (e.g. `ch1`) when the others carry something else.

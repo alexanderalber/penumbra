@@ -10,6 +10,10 @@
 //! A step may hold (`hold` instead of seconds): the show's clock stops just before the step's
 //! way out until `go` rises, as a cue list waits for GO. `go` also cuts a timed step short.
 //!
+//! A `clock` bound to a channel replaces the show's own clock: the show stands at those seconds,
+//! whatever came before, so it follows a sound file's playhead (`seconds` of a
+//! `chan.beat_grid`) through seeks and loops. Holds, `go` and the restart do nothing then.
+//!
 //! In show mode the place in the show (seconds, the holds already let go, the rounds) is kept
 //! across a crash restart ([`Operator::show_place`]): the show goes on where it was instead of
 //! starting over at its first cue. The place names the show it belongs to, so a show edited
@@ -39,6 +43,8 @@ const MIN_DURATION: f64 = 0.1;
 const MIN_LENGTH: f64 = 0.05;
 /// A share of the second entry below this counts as none (the same threshold as `tex.switch`).
 const MIX_EPSILON: f64 = 1e-6;
+/// `clock` while the show runs on its own clock.
+const OWN_CLOCK: f64 = -1.0;
 /// How long before its way out a holding step stops the clock, in seconds: a cut at the end of
 /// the step must not have happened yet.
 const HOLD_BEFORE: f64 = 1e-3;
@@ -90,6 +96,19 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
              transition, a timed one cuts its time short. Ignored while a transition plays. Bind it \
              to a key's gate, or to an OSC address listed under `triggers` on a chan.osc_in",
         ))
+        .param(
+            ParamSpec::float("clock", OWN_CLOCK)
+                .clamp(OWN_CLOCK, MAX_PLACE_SECONDS)
+                .range(OWN_CLOCK, 600.0)
+                .unit(Unit::Seconds)
+                .special(OWN_CLOCK, "own")
+                .doc(
+                    "The show's seconds, set from outside. Bind it to `seconds` of a chan.beat_grid, and the \
+                     show stands where the music stands, also after a seek or a loop. `hold`, `go` and the \
+                     restart when `run` turns on do nothing then. beats.cues writes steps for this and binds \
+                     it. -1 (own): the show runs on its own clock from the moment `run` turns on",
+                ),
+        )
         .param(
             ParamSpec::choice("mode", &["once", "loop"])
                 .doc("What the show does after its last step")
@@ -626,40 +645,25 @@ impl Operator for Sequence {
         // A seek back starts it over.
         let back = self.last.is_some_and(|last| now.0 < last.0);
         self.last = Some(now);
-        let resumed = self.resume(on, &show);
-        if !on {
-            self.anchor = None;
-        } else if !resumed && (self.anchor.is_none() || back) {
-            self.anchor = Some((now, 0.0));
-            self.free = 0;
-            self.round = false;
-        }
         let go = cx.float("go")? >= 0.5;
         let rose = go && !self.go_up;
         self.go_up = go;
         let length = show.length();
         let looping = cx.text("mode")? == "loop" && length > 0.0;
-        let mut seconds = 0.0;
-        if let Some((tick, base)) = self.anchor {
-            let mut t = base + Tick(now.0.saturating_sub(tick.0)).seconds();
-            if looping && t >= length {
-                t = t.rem_euclid(length);
-                self.free = 0;
-                self.round = true;
-                self.anchor = Some((now, t));
-            }
-            if let Some(at) = show.held(t, self.free) {
-                t = at;
-                self.anchor = Some((now, t));
-            }
-            if rose && let Some((from, free)) = show.go(t) {
-                t = from;
-                self.free = self.free.max(free);
-                self.anchor = Some((now, t));
-            }
-            seconds = t.min(length);
-        }
-        self.seconds = self.anchor.is_some().then_some(seconds);
+        let clock = cx.float("clock")?;
+        let seconds = if clock.is_finite() && clock > OWN_CLOCK / 2.0 {
+            // From outside: nothing of the show's own clock is kept, nor a place to resume.
+            self.anchor = None;
+            self.resume = None;
+            self.free = 0;
+            self.round = looping && clock >= length;
+            let t = if looping && clock >= length { clock.rem_euclid(length) } else { clock };
+            on.then_some(t.clamp(0.0, length))
+        } else {
+            self.own_clock(on, back, now, rose, &show, looping)
+        };
+        self.seconds = seconds;
+        let seconds = seconds.unwrap_or(0.0);
         let done = on && (self.round || seconds >= length);
         let moment = if on { show.at(seconds) } else { Moment::OFF };
 
@@ -721,6 +725,49 @@ impl Operator for Sequence {
 }
 
 impl Sequence {
+    /// Seconds into the show on its own clock at tick `now`, `None` while it is off: started when
+    /// `run` turns on or the clock went back, held before a holding step's way out, moved on by
+    /// a `go` that `rose`, wrapped by `looping`.
+    fn own_clock(
+        &mut self,
+        on: bool,
+        back: bool,
+        now: Tick,
+        rose: bool,
+        show: &Show,
+        looping: bool,
+    ) -> Option<f64> {
+        let resumed = self.resume(on, show);
+        // A `go` that is up after the restart is no press.
+        let rose = rose && !resumed;
+        if !on {
+            self.anchor = None;
+        } else if !resumed && (self.anchor.is_none() || back) {
+            self.anchor = Some((now, 0.0));
+            self.free = 0;
+            self.round = false;
+        }
+        let length = show.length();
+        let (tick, base) = self.anchor?;
+        let mut t = base + Tick(now.0.saturating_sub(tick.0)).seconds();
+        if looping && t >= length {
+            t = t.rem_euclid(length);
+            self.free = 0;
+            self.round = true;
+            self.anchor = Some((now, t));
+        }
+        if let Some(at) = show.held(t, self.free) {
+            t = at;
+            self.anchor = Some((now, t));
+        }
+        if rose && let Some((from, free)) = show.go(t) {
+            t = from;
+            self.free = self.free.max(free);
+            self.anchor = Some((now, t));
+        }
+        Some(t.min(length))
+    }
+
     /// Takes the place kept before a restart, once: when the show is on and is still the show the
     /// place was kept for. Returns whether it did; otherwise the show starts as usual.
     fn resume(&mut self, on: bool, show: &Show) -> bool {
@@ -737,8 +784,6 @@ impl Sequence {
         self.anchor = Some((now, p.seconds.min(show.length())));
         self.free = p.free.min(show.steps.len());
         self.round = p.round;
-        // A `go` that is up after the restart is no press.
-        self.go_up = true;
         true
     }
 }
@@ -977,6 +1022,77 @@ mod tests {
         assert_eq!(run(&net, 300), (2.0, 2.0, 0.0));
         go(&mut net, 0.0);
         assert_eq!(run(&net, 300), (2.0, 2.0, 0.0));
+    }
+
+    /// A `clock` from outside sets the show's seconds outright: jumps both ways land on the step
+    /// at those seconds, holds and `go` do nothing, `run` off is black, a looping show wraps, and
+    /// no place is kept. Back to -1 the show runs on its own clock again, from its start.
+    #[test]
+    fn an_outside_clock_sets_the_place_in_the_show() {
+        use penumbra_core::{NodePath, ParamPath, Rate, ShowClock, Value};
+        use penumbra_graph::{Cooker, JobPool, Network, Op, Port};
+        let types = Arc::new(crate::builtin_types().unwrap());
+        let create = Op::Create {
+            path: NodePath::parse("/s").unwrap(),
+            kind: SEQUENCE.into(),
+            params: Default::default(),
+        };
+        let set = |p: &str, v: Value| Op::Set { param: ParamPath::parse(p).unwrap(), value: v };
+        let mut net = Arc::new(
+            Network::new()
+                .apply(
+                    &types,
+                    &[
+                        create,
+                        set("/s.steps", "a 10 fade 2\nb hold\nc 5".into()),
+                        set("/s.lead_in", Value::Float(0.0)),
+                    ],
+                )
+                .unwrap()
+                .network,
+        );
+        let mut cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
+        let id = net.resolve(&"/s".parse().unwrap()).unwrap();
+        let mut clock = ShowClock::new(Rate::FPS_60, Default::default());
+        let kept = std::cell::Cell::new(false);
+        let mut at = |net: &mut Arc<Network>, ops: &[Op]| {
+            *net = Arc::new(net.apply(&types, ops).unwrap().network);
+            clock.advance(1);
+            cooker.cook(net, clock.now(), &[id], &[]);
+            kept.set(cooker.show_places().iter().any(|(n, _)| *n == id));
+            let c = cooker.output(Port { node: id, output: 0 }).unwrap().get::<Chans>().unwrap().clone();
+            let v = |n: &str| c.value(Some(n)).unwrap();
+            (v("step"), v("mix"), v("seconds"), v("done"))
+        };
+        let clock_at = |t: f64| set("/s.clock", Value::Float(t));
+        // b holds on its own clock; from outside its 0.1 s pass, and c follows.
+        assert_eq!(at(&mut net, &[clock_at(10.05)]).0, 1.0);
+        assert_eq!(at(&mut net, &[clock_at(10.5)]).0, 2.0);
+        // Back and forth, and the fade at 9 s.
+        assert_eq!(at(&mut net, &[clock_at(3.0)]), (0.0, 0.0, 3.0, 0.0));
+        let (step, mix, ..) = at(&mut net, &[clock_at(9.0)]);
+        assert!(step == 0.0 && (mix - 0.5).abs() < 1e-9);
+        assert_eq!(at(&mut net, &[clock_at(12.0)]).0, 2.0);
+        // `go` changes nothing.
+        assert_eq!(at(&mut net, &[set("/s.go", Value::Float(1.0)), clock_at(3.0)]).0, 0.0);
+        assert_eq!(at(&mut net, &[set("/s.go", Value::Float(0.0))]).0, 0.0);
+        // Past the end: done, the number of steps; a looping show wraps.
+        assert_eq!(at(&mut net, &[clock_at(100.0)]), (3.0, 0.0, 15.1, 1.0));
+        let (step, _, seconds, done) = at(&mut net, &[set("/s.mode", "loop".into())]);
+        assert_eq!(step, 0.0);
+        assert!((seconds - 100.0f64.rem_euclid(15.1)).abs() < 1e-9 && done == 1.0);
+        // Off: black.
+        let (step, ..) = at(&mut net, &[set("/s.run", Value::Float(0.0))]);
+        assert_eq!(step, -1.0);
+        at(&mut net, &[set("/s.run", Value::Float(1.0)), set("/s.mode", "once".into())]);
+        assert!(!kept.get(), "no place with a clock from outside");
+        // Its own clock again: the show starts over and b holds.
+        assert_eq!(at(&mut net, &[clock_at(-1.0)]).2, 0.0);
+        for _ in 0..700 {
+            at(&mut net, &[]);
+        }
+        assert_eq!(at(&mut net, &[]).0, 1.0);
+        assert!(kept.get(), "its own clock keeps its place");
     }
 
     /// The place in a show is kept and taken back by a new operator (a restart): it goes on at
