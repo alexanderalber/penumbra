@@ -452,6 +452,7 @@ fn beats_of_a_sound_file_through_the_commands() {
     let x = &r["sections"];
     assert_eq!((x["ready"].as_bool(), x["running"].as_bool()), (Some(true), Some(false)), "{r}");
     assert!(x["sections"].as_u64().unwrap_or(0) >= 1 && x["tracks"].as_u64() == Some(1), "{r}");
+    assert_eq!(r["bus"]["ready"].as_bool(), Some(true), "{r}");
     let list = grid["sections"].as_array().unwrap();
     assert!(!list.is_empty() && list[0]["letter"] == "A", "{grid}");
     assert!(list[0]["start"].as_f64().unwrap() <= 2.1 && list[0]["end"].as_f64().unwrap() >= 0.9, "{grid}");

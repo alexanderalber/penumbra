@@ -32,6 +32,13 @@
 //! its pass, so its end is a boundary like any other: the countdowns reach 0 and `build` 1
 //! there, and the first section begins again.
 //!
+//! **Music bus:** with the sections come curves of the whole file, pure functions of the time
+//! in it ([`Bus`]): the beats travelled at the grid's smoothed and clamped tempo, how a grid beat
+//! compares to a travelled one, how far the bars drift from the beats travelled, energies
+//! normalised over the whole file, each section's energy and its drop. They read 0 before. A
+//! `travel_floor` or `travel_cap` other than the defaults computes the travel again on the
+//! cook thread, once per change.
+//!
 //! **Time:** the grid is known ahead, so `offset` moves the lookup itself: a tick comes exactly
 //! `offset` early, with no prediction. A looped file's grid runs from its last beat into the
 //! first beat of the next pass ([`BeatGrid::at_looped`]). Per cook the node costs one binary
@@ -48,7 +55,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Instant, SystemTime};
 
-use penumbra_audio::beats::{self, BeatError, BeatGrid, BeatModel, Beats, Envelopes, Partial, Sections};
+use penumbra_audio::beats::{
+    self, BeatError, BeatGrid, BeatModel, Beats, Bus, Envelopes, Partial, Sections, TRAVEL_CAP, TRAVEL_FLOOR,
+    Travel,
+};
 use penumbra_core::{Channel, Chans, Error, Name, NodeId, ParamSpec, Table, lock};
 use penumbra_graph::{
     CookContext, CookError, Cooked, Data, DataKind, FileWatch, FnNodeType, JobStatus, NodeDef, NodeDesc,
@@ -102,7 +112,7 @@ fn pool() -> Option<&'static rayon::ThreadPool> {
 /// The channels `chan.beat_grid` outputs, in order. The first eight and `level` to `kick` mean
 /// what they mean on `chan.beat_analysis`, so a binding keeps working when one node replaces
 /// the other. New channels go at the end.
-pub const CHANNELS: [&str; 35] = [
+pub const CHANNELS: [&str; 45] = [
     "beat",
     "tick",
     "bar",
@@ -138,6 +148,16 @@ pub const CHANNELS: [&str; 35] = [
     "transition_to",
     "sections_ready",
     "seconds",
+    "travelled",
+    "travel_bpm",
+    "beat_length",
+    "drift",
+    "energy",
+    "energy_low",
+    "energy_mid",
+    "energy_high",
+    "section_energy",
+    "drop",
 ];
 /// Where the envelopes begin in [`CHANNELS`].
 const LEVEL: usize = 14;
@@ -147,6 +167,12 @@ const SECTION: usize = 20;
 const SECTION_CHANNELS: usize = 14;
 /// Where `seconds` stands in [`CHANNELS`].
 const SECONDS: usize = SECTION + SECTION_CHANNELS;
+/// Where the music bus begins in [`CHANNELS`]: `travelled` to `drop`.
+const BUS: usize = SECONDS + 1;
+/// The bus channels.
+const BUS_CHANNELS: usize = 10;
+/// The highest tempo `travel_floor` and `travel_cap` take, beats per minute.
+const MAX_TRAVEL_BPM: f64 = 1000.0;
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     let [width, height, keep_size] = meters_picture::size_params(OVERVIEW_GROUP, "overview");
@@ -160,6 +186,18 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .clamp(-5000.0, 5000.0)
                 .range(-200.0, 200.0)
                 .doc("Milliseconds to move beat and bar ahead by, to make up for the projector's delay. Ticks come exactly this much early. Negative values move them later"),
+        )
+        .param(
+            ParamSpec::float("travel_floor", TRAVEL_FLOOR)
+                .clamp(0.0, MAX_TRAVEL_BPM)
+                .range(0.0, 300.0)
+                .doc("Slowest tempo travelled moves by, in beats per minute. A slower grid, or a long gap between beats, travels at this tempo. 0 sets no floor"),
+        )
+        .param(
+            ParamSpec::float("travel_cap", TRAVEL_CAP)
+                .clamp(0.0, MAX_TRAVEL_BPM)
+                .range(0.0, 300.0)
+                .doc("Fastest tempo travelled moves by, in beats per minute. A faster grid travels at this tempo. 0 sets no cap. A travel_floor above the cap wins"),
         )
         .param(
             ParamSpec::float("span", overview::DEFAULT_SPAN)
@@ -196,7 +234,16 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
              transition rises from 0 to 1 through the blend from one section into the next, transition_from and transition_to are their labels. \
              sections_ready is 1 once the sections are found, after the whole file is analysed. Until then the section channels read 0. \
              seconds is the time into the file the channels are read at: the playhead plus offset, within the pass for a looped file, never below 0. \
-             Bind a chan.sequence's clock to it, and its steps follow the music through seeks and loops",
+             Bind a chan.sequence's clock to it, and its steps follow the music through seeks and loops. \
+             travelled counts the beats travelled since the file's start. It rises at travel_bpm: the grid's tempo, kept between travel_floor and travel_cap and smoothed over 1.5 s. \
+             A world moved by travelled moves with the music, steadily through breaks and tempo changes. travelled starts at 0 again in each pass of a looped file. \
+             beat_length is how many travelled beats one grid beat takes: 1 where the tempo is steady. \
+             drift is the bars the grid counts (bar_index plus bar) minus travelled divided by the bar length most bars of the file have. It changes slowly. \
+             An event lands on a downbeat where travelled divided by that bar length, plus drift, is a whole number. \
+             energy, energy_low, energy_mid and energy_high are level, bass, mid and treble from 0 (the quietest 5 % of the file) to 1 (the loudest 5 %), smoothed (0.05 s up, 0.3 s down). \
+             Unlike level, they compare across the whole file. section_energy is the mean energy of the section under the playhead. \
+             drop is 1 where a section begins with at least 0.2 more section_energy than the section before, and falls to 37 % in 0.5 s. \
+             These read 0 until the sections are found",
         )
         .describe_output(
             "grid",
@@ -212,7 +259,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "sections",
             "One row per section, under a header row, once the whole file is analysed: start and end (seconds into the file), bars, \
              label, letter (0 is A) and track as the channels count them, strength (0 to 1: how sharply the sound changes at the start), \
-             zone_start and zone_end (seconds: the blend from the section before; equal at a cut)",
+             zone_start and zone_end (seconds: the blend from the section before; equal at a cut), energy (the section's section_energy, 0 to 1)",
         ),
         || Box::new(GridNode::default()) as Box<dyn Operator>,
     )
@@ -331,15 +378,28 @@ impl Structure {
         Structure { sections, strip }
     }
 
-    /// The sections as a table: a header row, then one row per section.
-    pub fn table(&self) -> Result<Table, Error> {
+    /// The sections as a table: a header row, then one row per section. `energy` comes from
+    /// `bus`, 0 without it.
+    pub fn table(&self, bus: Option<&Bus>) -> Result<Table, Error> {
         let mut rows = Vec::with_capacity(self.sections.len() + 1);
         rows.push(
-            ["start", "end", "bars", "label", "letter", "track", "strength", "zone_start", "zone_end"]
-                .map(str::to_string)
-                .to_vec(),
+            [
+                "start",
+                "end",
+                "bars",
+                "label",
+                "letter",
+                "track",
+                "strength",
+                "zone_start",
+                "zone_end",
+                "energy",
+            ]
+            .map(str::to_string)
+            .to_vec(),
         );
-        for s in self.sections.list() {
+        let energies = bus.map_or(&[][..], |b| b.sections());
+        for (i, s) in self.sections.list().iter().enumerate() {
             rows.push(vec![
                 format!("{:.3}", s.start),
                 format!("{:.3}", s.end),
@@ -350,6 +410,7 @@ impl Structure {
                 format!("{:.3}", s.strength),
                 format!("{:.3}", s.zone.0),
                 format!("{:.3}", s.zone.1),
+                format!("{:.3}", energies.get(i).map_or(0.0, |e| e.energy)),
             ]);
         }
         Table::new(rows)
@@ -369,6 +430,15 @@ pub(crate) fn find_sections(grid: &Grid, envelopes: &Envelopes) -> Result<Struct
     catch_unwind(AssertUnwindSafe(|| Sections::of(&grid.grid, envelopes)))
         .unwrap_or_else(|_| Err("finding the sections failed".into()))
         .map(Structure::new)
+}
+
+/// The music bus of a complete grid with complete envelopes, and of the sections when found,
+/// at the default travel clamps.
+pub(crate) fn find_bus(grid: &Grid, envelopes: &Envelopes, sections: Option<&Structure>) -> Option<Bus> {
+    let sections = sections.map(|s| &s.sections);
+    catch_unwind(AssertUnwindSafe(|| Bus::new(&grid.grid, envelopes, sections, TRAVEL_FLOOR, TRAVEL_CAP)))
+        .map_err(|_| log::warn!("finding the music bus failed"))
+        .ok()
 }
 
 /// How one file's analysis stands.
@@ -396,6 +466,8 @@ pub struct State {
     /// The sections are being found.
     pub sections_running: bool,
     pub sections_error: Option<String>,
+    /// The music bus, found with the sections (also when they fail).
+    pub bus: Option<Arc<Bus>>,
 }
 
 impl State {
@@ -455,8 +527,10 @@ impl Shared {
         self.wake();
         let Some((grid, envelopes)) = claimed else { return };
         let found = find_sections(&grid, &envelopes);
+        let bus = find_bus(&grid, &envelopes, found.as_ref().ok()).map(Arc::new);
         self.update(|s| {
             s.sections_running = false;
+            s.bus = bus;
             match found {
                 Ok(x) => s.sections = Some(Arc::new(x)),
                 Err(e) => s.sections_error = Some(e),
@@ -502,6 +576,11 @@ impl Analysis {
     /// The sections, once found.
     fn sections(&self) -> Option<Arc<Structure>> {
         lock(&self.shared.state).sections.clone()
+    }
+
+    /// The music bus, once found.
+    fn bus(&self) -> Option<Arc<Bus>> {
+        lock(&self.shared.state).bus.clone()
     }
 
     /// Stops it before its next chunk.
@@ -827,6 +906,8 @@ struct GridNode {
     section_table: Option<(Arc<Structure>, Data)>,
     /// The `overview` output's drawing state, made when it is first read.
     picture: Option<Box<OverviewPicture>>,
+    /// The travel for clamps other than the bus's own, and the bus it was made for.
+    travel: Option<(Arc<Bus>, Arc<Travel>)>,
 }
 
 /// What drawing the overview keeps between cooks.
@@ -861,6 +942,7 @@ impl GridNode {
         self.last_read = None;
         self.table = None;
         self.section_table = None;
+        self.travel = None;
         Ok(a)
     }
 
@@ -914,7 +996,30 @@ impl GridNode {
         data
     }
 
-    fn section_table(&mut self, cx: &CookContext<'_>, sections: Option<&Arc<Structure>>) -> Data {
+    /// The travel with `floor` and `cap`: `None` for the bus's own clamps, else one made once per
+    /// change of the clamps.
+    fn travel(&mut self, bus: &Arc<Bus>, grid: Option<&Grid>, floor: f64, cap: f64) -> Option<Arc<Travel>> {
+        if bus.travel().clamps() == (floor, cap) {
+            self.travel = None;
+            return None;
+        }
+        if let Some((b, t)) = &self.travel
+            && Arc::ptr_eq(b, bus)
+            && t.clamps() == (floor, cap)
+        {
+            return Some(t.clone());
+        }
+        let t = Arc::new(bus.travel_with(&grid?.grid, floor, cap));
+        self.travel = Some((bus.clone(), t.clone()));
+        Some(t)
+    }
+
+    fn section_table(
+        &mut self,
+        cx: &CookContext<'_>,
+        sections: Option<&Arc<Structure>>,
+        bus: Option<&Bus>,
+    ) -> Data {
         if !cx.output_wanted(SECTIONS) {
             self.section_table = None;
             return Data::skipped(DataKind::Table);
@@ -927,7 +1032,7 @@ impl GridNode {
         {
             return d.clone();
         }
-        let data = match sections.table() {
+        let data = match sections.table(bus) {
             Ok(t) => Data::new(DataKind::Table, t),
             Err(e) => {
                 cx.warn(format!("the sections output is empty: {e}"));
@@ -937,6 +1042,37 @@ impl GridNode {
         self.section_table = Some((sections.clone(), data.clone()));
         data
     }
+}
+
+/// A tempo param in beats per minute: within 0 to [`MAX_TRAVEL_BPM`], 0 for no number.
+fn bpm_param(cx: &CookContext<'_>, name: &str) -> Result<f64, CookError> {
+    let v = cx.float(name)?;
+    Ok(if v.is_finite() { v.clamp(0.0, MAX_TRAVEL_BPM) } else { 0.0 })
+}
+
+/// The bus channels, `travelled` to `drop`, at `t` seconds into the file (into the pass, for a
+/// looped file), with the grid's position there; all 0 before the bus is found. `drift` and
+/// `beat_length` need the position and read 0 without it.
+pub(crate) fn bus_values(
+    bus: Option<&Bus>,
+    travel: Option<&Travel>,
+    pos: Option<&beats::Position>,
+    t: f64,
+) -> [f64; BUS_CHANNELS] {
+    let Some(bus) = bus else { return [0.0; BUS_CHANNELS] };
+    let r = bus.at_with(t, travel.unwrap_or(bus.travel()));
+    let (beat_length, drift) = match pos {
+        Some(p) => {
+            let length = if p.bpm > 0.0 && p.bpm.is_finite() { r.travel_bpm / p.bpm } else { 0.0 };
+            // `as`: counts far below 2^53.
+            let bars = p.bar as f64 + p.bar_phase;
+            (length, bars - r.travelled / bus.bar_beats().max(1) as f64)
+        }
+        None => (0.0, 0.0),
+    };
+    let [energy, low, mid, high] = r.energy;
+    let v = [r.travelled, r.travel_bpm, beat_length, drift, energy, low, mid, high, r.section_energy, r.drop];
+    v.map(|x| if x.is_finite() { x } else { 0.0 })
 }
 
 /// The section channels, `section_index` to `sections_ready`, at `t` seconds into the file (into
@@ -1084,6 +1220,14 @@ impl Operator for GridNode {
         if let Some(v) = values.get_mut(SECONDS) {
             *v = if ts.is_finite() { ts.max(0.0) } else { 0.0 };
         }
+        // The bus by the time within the pass, as the sections.
+        let bus = analysis.bus();
+        let (floor, cap) = (bpm_param(cx, "travel_floor")?, bpm_param(cx, "travel_cap")?);
+        let travel = bus.as_ref().and_then(|b| self.travel(b, grid.as_deref(), floor, cap));
+        let bus_v = bus_values(bus.as_deref(), travel.as_deref(), pos.as_ref(), ts);
+        for (v, x) in values.iter_mut().skip(BUS).zip(bus_v) {
+            *v = x;
+        }
         if self.names.len() != CHANNELS.len() {
             self.names = CHANNELS.iter().filter_map(|n| Name::new(n).ok()).collect();
         }
@@ -1095,7 +1239,7 @@ impl Operator for GridNode {
             .collect();
         let out = Data::new(DataKind::Chan, Chans::new(cx.rate().as_f64(), channels)?);
         let table = self.table(cx, grid.as_ref());
-        let section_table = self.section_table(cx, structure.as_ref());
+        let section_table = self.section_table(cx, structure.as_ref(), bus.as_deref());
         let picture = if cx.output_wanted(OVERVIEW) {
             let line = status_line(&analysis.state());
             let envelopes = analysis.envelopes();

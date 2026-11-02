@@ -109,6 +109,12 @@ impl Hop {
         })
     }
 
+    /// Level, low, mid and high before normalising, in dBFS (steps of 0.5 dB); -120 at or below
+    /// -120 dBFS.
+    pub fn raw_db(&self) -> [f64; 4] {
+        self.raw.map(|c| RAW_FLOOR_DB + f64::from(c) * RAW_STEP_DB)
+    }
+
     pub fn onset(&self) -> bool {
         self.flags & ONSET != 0
     }

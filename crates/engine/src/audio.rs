@@ -84,8 +84,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "How the beat analyses stand: {path or file} for one, nothing for all held. Per file: running, progress \
          (0 to 1), beats, downbeats, final_until (s; the grid before it is final, null for none yet), complete, \
          bpm (median), error, cancelled, seconds, envelopes {running, progress, known_until (s), complete, \
-         bytes, error}, and sections {ready, running, tracks, sections, kinds, error}. The sections are found once \
-         beats and envelopes are complete",
+         bytes, error}, sections {ready, running, tracks, sections, kinds, error} and bus {ready} (travelled, \
+         energy and drop on chan.beat_grid). The sections and the bus are found once beats and envelopes are complete",
         beats_status,
     );
     add(
@@ -361,6 +361,7 @@ fn beats_json(file: &Path, s: &State) -> Json {
         "seconds": s.seconds,
         "envelopes": envelopes_json(s),
         "sections": sections_json(s),
+        "bus": json!({ "ready": s.bus.is_some() }),
     })
 }
 

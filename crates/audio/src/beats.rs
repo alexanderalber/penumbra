@@ -22,6 +22,8 @@
 //!   how far through them it is, also in a looped piece ([`BeatGrid::at_looped`]).
 //! - **Sections:** [`Sections`] finds the tracks and sections of a whole file from its bars and
 //!   envelopes, labels the ones that sound alike, and answers where a moment stands among them.
+//! - **Music bus:** [`Bus`] turns a whole file's grid, envelopes and sections into curves over
+//!   time: beats travelled at a smoothed tempo, energies normalised over the file, drops.
 //!
 //! [`track`] runs the whole chain on one block of samples. [`analyze_file`] runs it on a sound
 //! file with the shipped network ([`BeatModel`]), its chunks in parallel, and keeps the result
@@ -31,6 +33,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 mod analyze;
+mod bus;
 mod cache;
 mod envelopes;
 mod fold;
@@ -40,6 +43,10 @@ mod sections;
 pub use analyze::{
     BeatModel, IN_FLIGHT, MAX_SECONDS, MODEL_FILE, Progress, analyze_file, analyze_file_with, f_measure,
     model_path, run_parallel,
+};
+pub use bus::{
+    Bus, BusReading, DROP_DECAY, DROP_RISE, ENERGY_FALL, ENERGY_HIGH, ENERGY_LOW, ENERGY_RISE, SectionEnergy,
+    TRAVEL_CAP, TRAVEL_FLOOR, TRAVEL_HOPS, TRAVEL_SMOOTH, Travel, follow, normalise,
 };
 pub use envelopes::{
     ENVELOPE_RATE, EnvelopeBuilder, Envelopes, Hop, KICK_LAG_HOPS, LEVEL_LAG_HOPS, ONSET_LAG_HOPS, Reading,
@@ -1139,6 +1146,12 @@ impl BeatGrid {
 
     pub fn beats(&self) -> &[f64] {
         &self.beats
+    }
+
+    /// The tempo at each spacing, beats per minute: `tempo()[i]` holds from beat `i` to beat
+    /// `i + 1`, the same [`Position::bpm`] gives there. One shorter than [`BeatGrid::beats`].
+    pub fn tempo(&self) -> &[f64] {
+        &self.tempo
     }
 
     /// The downbeats, seconds.

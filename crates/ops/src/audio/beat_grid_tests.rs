@@ -472,7 +472,7 @@ fn the_sections_of_the_example_track() {
         f.cooker.output(Port { node: id, output: 3 }).and_then(|d| d.get::<Table>()).cloned().unwrap();
     assert_eq!(
         table.rows()[0],
-        ["start", "end", "bars", "label", "letter", "track", "strength", "zone_start", "zone_end"]
+        ["start", "end", "bars", "label", "letter", "track", "strength", "zone_start", "zone_end", "energy"]
     );
     let rows: Vec<Vec<f64>> =
         table.rows().iter().skip(1).map(|r| r.iter().map(|x| x.parse().unwrap()).collect()).collect();
@@ -483,7 +483,10 @@ fn the_sections_of_the_example_track() {
     let last = rows.last().unwrap();
     assert!((last[1] - 62.0).abs() < 2.0 && rows[0][0] < 3.0, "{rows:?}");
     assert!(
-        rows.iter().all(|r| (0.0..=1.0).contains(&r[6]) && r[7] <= r[0] + 1e-3 && r[8] >= r[0] - 1e-3),
+        rows.iter().all(|r| (0.0..=1.0).contains(&r[6])
+            && r[7] <= r[0] + 1e-3
+            && r[8] >= r[0] - 1e-3
+            && (0.0..=1.0).contains(&r[9])),
         "{rows:?}"
     );
 
@@ -708,6 +711,125 @@ fn a_cue_list_follows_the_sections_of_the_example_track() {
         assert!(mix > 0.2 && mix < 0.8, "section {i}: mix {mix}");
         assert_eq!(value(&show, "from"), list[i - 1].label as f64);
         assert_eq!(value(&show, "to"), s.label as f64);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The bus channels of `c`, by name.
+fn bus_of(c: &Chans) -> Vec<(&'static str, f64)> {
+    let names = &super::beat_grid::CHANNELS;
+    let first = names.iter().position(|n| *n == "travelled").unwrap();
+    names[first..].iter().map(|n| (*n, value(c, n))).collect()
+}
+
+/// The music bus of the example track (32 bars at 124 BPM, a breakdown in bars 17 to 24),
+/// scrubbed: the beats travelled match the grid's, the tempo holds at 124 or at the floor,
+/// drift stays small, the breakdown has less bass, the kick's return is a drop. Seeks back and
+/// a second pass give the same values.
+#[test]
+fn the_music_bus_of_the_example_track() {
+    let dir = temp_dir("bus");
+    let music = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/beat-grid/music.wav");
+    let mut ops = grid_ops(&music.to_string_lossy());
+    ops.extend([
+        create("/o", BEAT_GRID),
+        connect("/p", "/o", 0),
+        set("/o.travel_floor", 200.0),
+        create("/k", "chan.constant"),
+        set("/k.name0", "pos"),
+        set("/k.value0", 10.0),
+        Op::Bind {
+            param: penumbra_core::ParamPath::parse("/p.position").unwrap(),
+            component: None,
+            from: "/k".parse().unwrap(),
+            channel: Some(penumbra_core::Name::new("pos").unwrap()),
+            cell: None,
+            format: None,
+        },
+    ]);
+    let mut f = fixture(&ops, &dir.join("cache"));
+    let t = Instant::now();
+    loop {
+        assert!(t.elapsed() < Duration::from_secs(120), "the bus never came");
+        std::thread::sleep(Duration::from_millis(20));
+        f.clock.advance(1);
+        let Some((g, _)) = try_cook_two(&mut f) else { continue };
+        if value(&g, "sections_ready") == 0.0 {
+            assert!(bus_of(&g).iter().all(|(_, v)| *v == 0.0), "{:?}", bus_of(&g));
+        } else if value(&g, "analyzing") == 0.0 {
+            break;
+        }
+    }
+    let at = |f: &mut F, pos: f64| {
+        f.edit(&[set("/k.value0", pos)]);
+        f.clock.advance(1);
+        cook_two(f)
+    };
+    let duration = {
+        let file = music.to_string_lossy().into_owned();
+        let state = f.cooker.resource::<BeatFiles>().unwrap().get(Path::new(&file)).unwrap().state();
+        assert!(state.bus.is_some());
+        let env = state.envelopes.unwrap();
+        env.len() as f64 * env.hop_seconds()
+    };
+    assert!((duration - 61.9).abs() < 0.2, "{duration}");
+
+    let mut before = f64::NEG_INFINITY;
+    let mut seen = Vec::new();
+    let (mut low_break, mut low_around) = (Vec::new(), Vec::new());
+    for k in 0..240 {
+        let s = 0.1 + f64::from(k) * 0.25;
+        if s >= duration - 0.1 {
+            break;
+        }
+        let (g, o) = at(&mut f, s);
+        let travelled = value(&g, "travelled");
+        let beats = value(&g, "beat_index") + value(&g, "beat");
+        assert!(travelled >= before, "{s}: {before} then {travelled}");
+        before = travelled;
+        if s >= 3.0 {
+            assert!((travelled - beats).abs() <= 0.01 * beats, "{s}: {travelled} vs {beats}");
+        }
+        let bpm = value(&g, "travel_bpm");
+        assert!((bpm - 124.0).abs() <= 2.0, "{s}: {bpm}");
+        assert!((value(&g, "beat_length") - 1.0).abs() < 0.03, "{s}: {:?}", bus_of(&g));
+        assert!(value(&g, "drift").abs() <= 0.1, "{s}: {:?}", bus_of(&g));
+        assert!((value(&o, "travel_bpm") - 200.0).abs() < 0.01, "{s}: {:?}", bus_of(&o));
+        assert!((value(&o, "travelled") - s * 200.0 / 60.0).abs() < 0.01, "{s}: {:?}", bus_of(&o));
+        for e in ["energy", "energy_low", "energy_mid", "energy_high", "section_energy", "drop"] {
+            assert!((0.0..=1.0).contains(&value(&g, e)), "{s}: {:?}", bus_of(&g));
+        }
+        let low = value(&g, "energy_low");
+        if (33.0..45.0).contains(&s) {
+            low_break.push(low);
+        } else if (17.0..29.0).contains(&s) || (48.0..60.0).contains(&s) {
+            low_around.push(low);
+        }
+        seen.push((s, bus_of(&g)));
+    }
+    let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
+    let (lb, la) = (mean(&low_break), mean(&low_around));
+    assert!(lb + 0.2 < la, "bass in the breakdown {lb}, around it {la}");
+
+    // The kick returns with bar 25: a drop. None at 10 s or in the breakdown.
+    let bar = 4.0 * 10_670.0 / 22_050.0;
+    let (g, _) = at(&mut f, 24.0 * bar + 0.05);
+    assert!(value(&g, "drop") > 0.8, "{:?}", bus_of(&g));
+    assert!(value(&g, "section_energy") > 0.0);
+    for s in [10.0, 38.0] {
+        let (g, _) = at(&mut f, s);
+        assert_eq!(value(&g, "drop"), 0.0, "{s}: {:?}", bus_of(&g));
+    }
+
+    // Back in time and on the second pass: the same values.
+    for (s, want) in seen.iter().rev().step_by(7) {
+        let (g, _) = at(&mut f, *s);
+        assert_eq!(&bus_of(&g), want, "back at {s}");
+        // The loop's length is the file's: 128 beats of 10 670 samples.
+        let (g, _) = at(&mut f, 128.0 * 10_670.0 / 22_050.0 + *s);
+        for ((name, v), (_, w)) in bus_of(&g).iter().zip(want) {
+            assert!((v - w).abs() < 1e-6, "second pass at {s}, {name}: {v} vs {w}");
+        }
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
