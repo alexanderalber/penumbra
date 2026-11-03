@@ -689,6 +689,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         (json!({"slots": {"floor": ["/blocks", "/blocks"]}}), "twice"),
         (json!({"slots": {}}), "no elements"),
         (json!({"slots": {"floor": [{"path": "/blocks", "weight": 0.0}]}}), "weight is a number above 0"),
+        (json!({"slots": {"floor": [{"path": "/blocks", "stages": ["/galaxy"]}]}}), "not one of the stages"),
         (json!({"stage": "/n"}), "no param warmth"),
         (json!({"intensity": "/stage.nope"}), "no param nope"),
         (json!({"fade_min": -1.0}), "fade_min"),
@@ -793,7 +794,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         }
     });
     // Again, with a weight: nothing new is created, the table is written again.
-    let weighted = json!({"fade_min": 0.5, "gaps": {"build": 0.5, "break": 0.0}, "slots": {"floor": ["/blocks", {"path": "/mountains", "weight": 3}], "sky": ["/galaxy"]}});
+    let weighted = json!({"fade_min": 0.5, "gaps": {"build": 0.5, "break": 0.0}, "slots": {"floor": ["/blocks", {"path": "/mountains", "weight": 3, "stages": ["/stage"]}], "sky": ["/galaxy"]}});
     let again = f.call("beats.arrange", args(weighted));
     assert_eq!(again["created"], json!([]), "{again}");
     assert_eq!(again["rows"], 4, "{again}");

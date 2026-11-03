@@ -11,6 +11,9 @@
 //!   section shows the first element of each slot.
 //! - At a boundary below [`CHANGE_SMALL`] nothing swaps. From [`CHANGE_SMALL`] one slot swaps to
 //!   its next element; the slots take turns. From [`CHANGE_BIG`] every slot swaps.
+//! - **Stages per element:** an element may name the stages it shows in. In a row whose stage
+//!   is not among them it stays at presence 0, and the slot's swap passes it by; when the stage
+//!   changes to one it does not show in, its slot takes its next element there.
 //! - **Weights:** an element of weight 3 comes on three times as often as one of weight 1. The
 //!   next element is the one owed the most turns (smooth weighted round robin), so the turns of a
 //!   heavy element spread out evenly and the same file always gives the same table. With equal
@@ -162,6 +165,9 @@ pub struct Slot {
     /// empty for 1 each. A weight that is no number above 0 counts as 1. The post slot ignores
     /// them (its elements are on or off each by itself).
     pub weights: Vec<f64>,
+    /// The stages each element shows in, by index: one list per element, or none for every
+    /// stage. An empty list counts as every stage.
+    pub stages: Vec<Vec<usize>>,
 }
 
 /// The heaviest weight an element takes; heavier ones count as this.
@@ -174,6 +180,15 @@ impl Slot {
             name: name.into(),
             elements: elements.iter().map(|e| e.to_string()).collect(),
             weights: Vec::new(),
+            stages: Vec::new(),
+        }
+    }
+
+    /// Whether element `i` shows on stage `stage`.
+    pub fn shows_in(&self, i: usize, stage: usize) -> bool {
+        match self.stages.get(i) {
+            Some(list) if !list.is_empty() => list.contains(&stage),
+            _ => true,
         }
     }
 
@@ -289,8 +304,9 @@ impl State {
     }
 
     /// One swap: the next element on; in the post slot the next element switched.
-    /// The next element is the one owed the most turns, never the one on; ties go to the first.
-    fn swap(&mut self) {
+    /// The next element is the one owed the most turns among those `shows` lets on, never the one
+    /// on; ties go to the first.
+    fn swap(&mut self, shows: &dyn Fn(usize) -> bool) {
         match self {
             State::One { on, weights, owed } => {
                 let total: f64 = weights.iter().sum();
@@ -299,7 +315,7 @@ impl State {
                 }
                 let mut best: Option<usize> = None;
                 for (j, o) in owed.iter().enumerate() {
-                    if j != *on && best.is_none_or(|b| owed.get(b).is_some_and(|ob| o > ob)) {
+                    if j != *on && shows(j) && best.is_none_or(|b| owed.get(b).is_some_and(|ob| o > ob)) {
                         best = Some(j);
                     }
                 }
@@ -321,9 +337,9 @@ impl State {
     }
 
     /// A big change: every element of the post slot switches, any other slot takes its next.
-    fn swap_all(&mut self) {
+    fn swap_all(&mut self, shows: &dyn Fn(usize) -> bool) {
         match self {
-            State::One { .. } => self.swap(),
+            State::One { .. } => self.swap(shows),
             State::Each(on, _) => on.iter_mut().for_each(|x| *x = !*x),
         }
     }
@@ -378,20 +394,6 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> V
         let big = change >= CHANGE_BIG;
         if i > 0 {
             walk += change * WALK_STEP * if big { 2.0 } else { 1.0 };
-            if big {
-                for &s in &swappable {
-                    if let Some(x) = state.get_mut(s) {
-                        x.swap_all();
-                    }
-                }
-            } else if change >= CHANGE_SMALL
-                && let Some(&s) = swappable.get(turn % swappable.len().max(1))
-            {
-                if let Some(x) = state.get_mut(s) {
-                    x.swap();
-                }
-                turn += 1;
-            }
             if part.track_start {
                 track += 1;
             }
@@ -399,6 +401,28 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> V
             if stages > 1 && part.track_start && change >= STAGE_CHANGE && start - switched >= STAGE_GAP {
                 (stage, onward) = next_stage(stage, onward, stages);
                 switched = start;
+            }
+            if big {
+                for &s in &swappable {
+                    if let (Some(x), Some(slot)) = (state.get_mut(s), slots.get(s)) {
+                        x.swap_all(&|j| slot.shows_in(j, stage));
+                    }
+                }
+            } else if change >= CHANGE_SMALL
+                && let Some(&s) = swappable.get(turn % swappable.len().max(1))
+            {
+                if let (Some(x), Some(slot)) = (state.get_mut(s), slots.get(s)) {
+                    x.swap(&|j| slot.shows_in(j, stage));
+                }
+                turn += 1;
+            }
+        }
+        // An element left on where the stage does not show it gives way to the next one there.
+        for (x, slot) in state.iter_mut().zip(slots) {
+            if let State::One { on, .. } = x
+                && !slot.shows_in(*on, stage)
+            {
+                x.swap(&|j| slot.shows_in(j, stage));
             }
         }
         // The post slot follows the role: off where it is calm, on at a drop.
@@ -432,12 +456,14 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> V
             };
             let level = if empty && Some(s) != kept { 0.0 } else { level };
             match x {
-                State::One { on, weights, .. } => {
-                    presence.extend((0..weights.len()).map(|j| if j == *on { level } else { 0.0 }))
-                }
-                State::Each(on, _) => {
-                    presence.extend(on.iter().map(|o| if *o && !empty { 1.0 } else { 0.0 }))
-                }
+                State::One { on, weights, .. } => presence.extend(
+                    (0..weights.len()).map(|j| if j == *on && slot.shows_in(j, stage) { level } else { 0.0 }),
+                ),
+                State::Each(on, _) => presence.extend(
+                    on.iter()
+                        .enumerate()
+                        .map(|(j, o)| if *o && !empty && slot.shows_in(j, stage) { 1.0 } else { 0.0 }),
+                ),
             }
         }
         let intensity = match part.role {
@@ -1050,5 +1076,49 @@ mod tests {
             assert_eq!(on(&r), [0, 1, 2, 0, 1, 2, 0]);
         }
         assert_eq!(Slot { weights: vec![1e9], ..Slot::new("x", &["a"]) }.weight(0), WEIGHT_MAX);
+    }
+
+    #[test]
+    fn an_element_shows_only_on_its_stages_and_its_slot_moves_on_elsewhere() {
+        // The sun only on stage 0, the planet everywhere, the bars only on stages 1 and 2.
+        let mut sky = Slot::new("sky", &["sun", "planet", "bars"]);
+        sky.stages = vec![vec![0], vec![], vec![1, 2]];
+        // Four tracks, each starting with a strong change, far enough apart to switch the stage.
+        let mut p = Vec::new();
+        for i in 0..40 {
+            let start = i as f64 * 60.0;
+            let track_start = i % 10 == 0;
+            p.push(Part {
+                start,
+                end: start + 60.0,
+                zone: (start, start),
+                role: Role::Main,
+                change: if track_start { 0.9 } else { 0.4 },
+                energy: 0.6,
+                track_start,
+                seed: i as u32,
+            });
+        }
+        let r = rows(&p, std::slice::from_ref(&sky), 3);
+        assert!(r.iter().any(|r| r.stage == 1) && r.iter().any(|r| r.stage == 2), "the stage walks");
+        for row in &r {
+            let on: Vec<usize> = (0..3).filter(|j| row.presence[*j] > 0.0).collect();
+            assert_eq!(on.len(), 1, "one element on in every row: {row:?}");
+            for j in on {
+                assert!(sky.shows_in(j, row.stage), "{j} on stage {}: {row:?}", row.stage);
+            }
+        }
+        assert!(r.iter().any(|r| r.presence[0] > 0.0), "the sun still comes on on stage 0");
+        // A slot whose only element does not show on the stage stays dark there.
+        let mut alone = Slot::new("sky", &["sun"]);
+        alone.stages = vec![vec![0]];
+        for row in rows(&p, std::slice::from_ref(&alone), 3) {
+            assert_eq!(row.presence[0] > 0.0, row.stage == 0, "{row:?}");
+        }
+        // No lists: the same table as before.
+        let plain = Slot::new("sky", &["sun", "planet", "bars"]);
+        let mut every = plain.clone();
+        every.stages = vec![vec![], vec![], vec![]];
+        assert_eq!(rows(&p, std::slice::from_ref(&plain), 3), rows(&p, std::slice::from_ref(&every), 3));
     }
 }

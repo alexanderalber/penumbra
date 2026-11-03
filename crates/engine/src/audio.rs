@@ -134,7 +134,8 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          chan.sequence, created when missing), slots ({slot: [element paths]}, e.g. {floor: [\"/blocks\", \
          \"/mountains\"], sky: [\"/galaxy\"]}; an element may be {path, weight} instead, e.g. {path: \
          \"/glider\", weight: 3}, to come on three times as often as one of weight 1 (default 1, at most \
-         100): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
+         100), and with stages: [\"/stage\"] to show only while one of those stages shows (elsewhere it stays at \
+         presence 0 and its slot takes another element): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
          effects that are on or off each by itself (off in an intro, outro or break, on from a drop), every \
          other slot (floor, ceiling) follows the floor's rules), stage? (a path, or a list of stages side by \
          side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
@@ -740,12 +741,19 @@ impl Targets {
     }
 }
 
-/// An element in a slot: its path, or its path and how often it comes on.
+/// An element in a slot: its path, or its path with how often it comes on and the stages it
+/// shows in.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Entry {
     Path(NodePath),
-    Weighted { path: NodePath, weight: f64 },
+    Weighted {
+        path: NodePath,
+        #[serde(default)]
+        weight: Option<f64>,
+        #[serde(default)]
+        stages: Option<Vec<NodePath>>,
+    },
 }
 
 fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
@@ -816,11 +824,22 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     for (slot, entries) in &a.slots {
         let mut names = Vec::new();
         let mut weights = Vec::new();
+        let mut shows = Vec::new();
         for entry in entries {
-            let (path, weight) = match entry {
-                Entry::Path(path) => (path, 1.0),
-                Entry::Weighted { path, weight } => (path, *weight),
+            let (path, weight, on) = match entry {
+                Entry::Path(path) => (path, 1.0, None),
+                Entry::Weighted { path, weight, stages: on } => (path, weight.unwrap_or(1.0), on.as_ref()),
             };
+            let mut list = Vec::new();
+            for st in on.into_iter().flatten() {
+                let Some(k) = stages.iter().position(|s| s == st) else {
+                    return Err(CommandError(format!(
+                        "{path}: stage {st} is not one of the stages given in stage"
+                    )));
+                };
+                list.push(k);
+            }
+            shows.push(list);
             if !weight.is_finite() || !(weight > 0.0 && weight <= arrange::WEIGHT_MAX) {
                 return Err(CommandError(format!(
                     "{path}: weight is a number above 0, at most {}",
@@ -835,7 +854,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             names.push(path.name().map(|n| n.as_str().to_string()).unwrap_or_default());
             elements.push(path.clone());
         }
-        slots.push(Slot { name: slot.clone(), elements: names, weights });
+        slots.push(Slot { name: slot.clone(), elements: names, weights, stages: shows });
     }
     arrange::check(&slots).map_err(CommandError)?;
     for stage in &stages {
