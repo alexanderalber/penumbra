@@ -142,7 +142,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          e.g. \"/stages.index\" of a tex.switch, or a list of them; it fades on a tex.cross, for two stages, \
          and on a tex.switch with blend on), intensity? (a param that gets intensity, e.g. \"/stage.dim\", \
          or a list), fade_min? (s, default 2: the shortest fade from one row into the \
-         next, also where the music cuts), gaps? ({build?, break?}: the share of the floor in gaps, default \
+         next, also where the music cuts), stage_fade? (s, default 4: the shortest fade into a row whose \
+         stage changes), dwell? (sections, default 3: an element on that long gives way at the next \
+         boundary with change 0.3 or more, its slot's turn or not; a slot its stage hides counts on; 0 \
+         turns it off), gaps? ({build?, break?}: the share of the floor in gaps, default \
          0.3 in a build and 0.6 in a break)}. The table has a row per section: start, end, role, change, the \
          presence of each element (the column is named as the element), warmth, intensity, camera (the \
          stage's camera preset: low in a main section, higher in a build, high and wide on a drop, level in \
@@ -768,6 +771,8 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         switch: Option<Targets>,
         intensity: Option<Targets>,
         fade_min: Option<f64>,
+        stage_fade: Option<f64>,
+        dwell: Option<f64>,
         gaps: Option<GapShares>,
     }
     #[derive(Deserialize)]
@@ -800,6 +805,23 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     if !fade_min.is_finite() || !(0.0..=arrange::FADE_MIN_MAX).contains(&fade_min) {
         return Err(CommandError(format!("fade_min is seconds from 0 to {}", arrange::FADE_MIN_MAX)));
     }
+    let stage_fade = a.stage_fade.unwrap_or(arrange::STAGE_FADE);
+    if !stage_fade.is_finite() || !(0.0..=arrange::FADE_MIN_MAX).contains(&stage_fade) {
+        return Err(CommandError(format!("stage_fade is seconds from 0 to {}", arrange::FADE_MIN_MAX)));
+    }
+    let dwell = match a.dwell {
+        None => arrange::DWELL,
+        // `as`: a whole number from 0 to DWELL_MAX, checked first.
+        Some(n) if n.is_finite() && n.fract() == 0.0 && (0.0..=arrange::DWELL_MAX as f64).contains(&n) => {
+            n as usize
+        }
+        Some(_) => {
+            return Err(CommandError(format!(
+                "dwell is a whole number of sections from 0 (off) to {}",
+                arrange::DWELL_MAX
+            )));
+        }
+    };
     let net = e.session().doc().snapshot();
     let kind_at = |path: &NodePath| -> Option<String> {
         net.resolve(path).and_then(|id| net.node(id)).map(|n| n.kind.clone())
@@ -936,12 +958,14 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         })
         .collect();
     let end = s.envelopes.as_ref().map_or(0.0, |env| env.len() as f64 * env.hop_seconds());
-    let rows = arrange::rows_with(&parts, &slots, stages.len(), gaps);
+    let rows = arrange::rows_with(&parts, &slots, stages.len(), arrange::Rules { gaps, dwell });
     let table = arrange::table(&slots, &rows);
     if table.len() > penumbra_core::param::MAX_TEXT {
         return Err(CommandError(format!("{} rows do not fit into a table.text", rows.len())));
     }
-    let steps = arrange::steps(&parts, end, fade_min, &file_name).map_err(CommandError)?;
+    let row_stages: Vec<usize> = rows.iter().map(|r| r.stage).collect();
+    let steps = arrange::steps_with(&parts, &row_stages, end, fade_min, stage_fade, &file_name)
+        .map_err(CommandError)?;
 
     // New nodes go beside the table, or below the grid when the table is new too.
     let pos_of = |path: &NodePath| net.resolve(path).and_then(|id| net.node(id)).and_then(|n| n.pos);

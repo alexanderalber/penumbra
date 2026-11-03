@@ -693,6 +693,10 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         (json!({"stage": "/n"}), "no param warmth"),
         (json!({"intensity": "/stage.nope"}), "no param nope"),
         (json!({"fade_min": -1.0}), "fade_min"),
+        (json!({"stage_fade": 31.0}), "stage_fade"),
+        (json!({"dwell": 1001}), "dwell"),
+        (json!({"dwell": -1}), "dwell"),
+        (json!({"dwell": 2.5}), "dwell"),
         (json!({"gaps": {"break": 1.5}}), "gaps.break"),
         (json!({"gaps": {"wide": 1.0}}), "wide"),
         (json!({"switch": "/stage.dim"}), "switch picks between stages"),
@@ -794,7 +798,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         }
     });
     // Again, with a weight: nothing new is created, the table is written again.
-    let weighted = json!({"fade_min": 0.5, "gaps": {"build": 0.5, "break": 0.0}, "slots": {"floor": ["/blocks", {"path": "/mountains", "weight": 3, "stages": ["/stage"]}], "sky": ["/galaxy"]}});
+    let weighted = json!({"fade_min": 0.5, "stage_fade": 6.0, "dwell": 2, "gaps": {"build": 0.5, "break": 0.0}, "slots": {"floor": ["/blocks", {"path": "/mountains", "weight": 3, "stages": ["/stage"]}], "sky": ["/galaxy"]}});
     let again = f.call("beats.arrange", args(weighted));
     assert_eq!(again["created"], json!([]), "{again}");
     assert_eq!(again["rows"], 4, "{again}");

@@ -11,6 +11,10 @@
 //!   section shows the first element of each slot.
 //! - At a boundary below [`CHANGE_SMALL`] nothing swaps. From [`CHANGE_SMALL`] one slot swaps to
 //!   its next element; the slots take turns. From [`CHANGE_BIG`] every slot swaps.
+//! - **Dwell:** an element on for [`DWELL`] sections or more (the caller may give another
+//!   count) gives way at the next boundary from [`CHANGE_SMALL`], whether or not it is its slot's
+//!   turn. A slot counts on while its stage hides it, so it shows its next element when the stage
+//!   comes back. Without this a slot that shows on one stage only would swap a handful of times.
 //! - **Stages per element:** an element may name the stages it shows in. In a row whose stage
 //!   is not among them it stays at presence 0, and the slot's swap passes it by; when the stage
 //!   changes to one it does not show in, its slot takes its next element there.
@@ -63,6 +67,14 @@ pub const CALM_INTENSITY: f64 = 0.3;
 pub const BREAK_SKY: f64 = 0.6;
 /// The shortest fade from one row into the next, in seconds, unless the caller gives another.
 pub const FADE_MIN: f64 = 2.0;
+/// The shortest fade into a row whose stage differs from the row before, in seconds, unless the
+/// caller gives another: long enough to see one stage turn into the next.
+pub const STAGE_FADE: f64 = 4.0;
+/// The sections an element stays on before it gives way at the next boundary from
+/// [`CHANGE_SMALL`], unless the caller gives another count.
+pub const DWELL: usize = 3;
+/// The longest `dwell` taken, in sections.
+pub const DWELL_MAX: usize = 1000;
 /// The longest `fade_min` taken, in seconds.
 pub const FADE_MIN_MAX: f64 = 30.0;
 /// The slot the role rules treat as the sky; every other slot but [`MID`] follows the floor's rules.
@@ -112,6 +124,21 @@ pub struct Gaps {
 impl Default for Gaps {
     fn default() -> Gaps {
         Gaps { build: GAPS_BUILD, brk: GAPS_BREAK }
+    }
+}
+
+/// What the caller may set of the rules: the floor's gaps and the dwell.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rules {
+    pub gaps: Gaps,
+    /// The sections an element stays on before it gives way at the next boundary from
+    /// [`CHANGE_SMALL`]; 0 turns the rule off.
+    pub dwell: usize,
+}
+
+impl Default for Rules {
+    fn default() -> Rules {
+        Rules { gaps: Gaps::default(), dwell: DWELL }
     }
 }
 
@@ -309,6 +336,10 @@ impl State {
     fn swap(&mut self, shows: &dyn Fn(usize) -> bool) {
         match self {
             State::One { on, weights, owed } => {
+                // A slot with nothing else to show keeps its element and its owed turns.
+                if !(0..weights.len()).any(|j| j != *on && shows(j)) {
+                    return;
+                }
                 let total: f64 = weights.iter().sum();
                 for (o, w) in owed.iter_mut().zip(weights.iter()) {
                     *o += *w;
@@ -343,6 +374,14 @@ impl State {
             State::Each(on, _) => on.iter_mut().for_each(|x| *x = !*x),
         }
     }
+
+    /// The element on, for a slot with one element on.
+    fn on(&self) -> Option<usize> {
+        match self {
+            State::One { on, .. } => Some(*on),
+            State::Each(..) => None,
+        }
+    }
 }
 
 /// The stage after `stage` of `stages`, walking onward or back, and the way the walk goes on: it
@@ -358,13 +397,14 @@ fn next_stage(stage: usize, onward: bool, stages: usize) -> (usize, bool) {
 }
 
 /// The rows of the arrangement, one per part, for `stages` stages side by side (0 counts as 1),
-/// with the gaps of [`Gaps::default`].
+/// with the rules of [`Rules::default`].
 pub fn rows(parts: &[Part], slots: &[Slot], stages: usize) -> Vec<Row> {
-    rows_with(parts, slots, stages, Gaps::default())
+    rows_with(parts, slots, stages, Rules::default())
 }
 
-/// [`rows`] with the floor's gaps by `gaps`.
-pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> Vec<Row> {
+/// [`rows`] with the floor's gaps and the dwell by `rules`.
+pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) -> Vec<Row> {
+    let gaps = rules.gaps;
     let mut state: Vec<State> = slots
         .iter()
         .map(|s| {
@@ -388,9 +428,12 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> V
     let mut stage = 0usize;
     let mut onward = true;
     let mut switched = 0.0f64;
+    // Per slot, the sections its element has been on, hidden by the stage or not.
+    let mut since = vec![0usize; slots.len()];
     let mut out = Vec::with_capacity(parts.len());
     for (i, part) in parts.iter().enumerate() {
         let change = if i == 0 { 0.0 } else { unit(part.change) };
+        let before: Vec<Option<usize>> = state.iter().map(State::on).collect();
         let big = change >= CHANGE_BIG;
         if i > 0 {
             walk += change * WALK_STEP * if big { 2.0 } else { 1.0 };
@@ -416,6 +459,15 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> V
                 }
                 turn += 1;
             }
+            // An element on for its dwell gives way, its slot's turn or not.
+            if !big && change >= CHANGE_SMALL && rules.dwell > 0 {
+                for (s, (x, slot)) in state.iter_mut().zip(slots).enumerate() {
+                    let unswapped = x.on().is_some() && x.on() == before.get(s).copied().flatten();
+                    if unswapped && since.get(s).is_some_and(|n| *n >= rules.dwell) {
+                        x.swap(&|j| slot.shows_in(j, stage));
+                    }
+                }
+            }
         }
         // An element left on where the stage does not show it gives way to the next one there.
         for (x, slot) in state.iter_mut().zip(slots) {
@@ -424,6 +476,9 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> V
             {
                 x.swap(&|j| slot.shows_in(j, stage));
             }
+        }
+        for ((n, x), b) in since.iter_mut().zip(&state).zip(&before) {
+            *n = if i > 0 && x.on() == *b { *n + 1 } else { 1 };
         }
         // The post slot follows the role: off where it is calm, on at a drop.
         for x in &mut state {
@@ -562,10 +617,25 @@ pub struct Steps {
 /// the share of the next row. The last step ends at `end` (the file's length, or the parts' end
 /// when that is later). `source` names the file in the first line.
 pub fn steps(parts: &[Part], end: f64, fade_min: f64, source: &str) -> Result<Steps, String> {
+    steps_with(parts, &[], end, fade_min, 0.0, source)
+}
+
+/// [`steps`] with a longer fade where the stage changes: `stages` gives each part's stage (as
+/// the rows say), and the fade into a part whose stage differs from the one before lasts at
+/// least `stage_fade` seconds.
+pub fn steps_with(
+    parts: &[Part],
+    stages: &[usize],
+    end: f64,
+    fade_min: f64,
+    stage_fade: f64,
+    source: &str,
+) -> Result<Steps, String> {
     if parts.is_empty() {
         return Err("the file has no sections".into());
     }
     let fade_min = if fade_min.is_finite() { fade_min.clamp(0.0, FADE_MIN_MAX) } else { FADE_MIN };
+    let stage_fade = if stage_fade.is_finite() { stage_fade.clamp(0.0, FADE_MIN_MAX) } else { STAGE_FADE };
     let last_end = parts.iter().map(|p| p.end).filter(|t| t.is_finite()).fold(0.0, f64::max);
     let end = ms(if end.is_finite() { end.max(last_end) } else { last_end });
     let min_fade = ms(fade_min);
@@ -582,6 +652,8 @@ pub fn steps(parts: &[Part], end: f64, fade_min: f64, source: &str) -> Result<St
         let zone = z1 - z0 >= MIN_ZONE_MS;
         let from = if zone { z0 } else { ms(p.start) };
         let length = if zone { (z1 - z0).max(min_fade) } else { min_fade };
+        let turns = matches!((stages.get(k - 1), stages.get(k)), (Some(a), Some(b)) if a != b);
+        let length = if turns { length.max(ms(stage_fade)) } else { length };
         let previous = begins.last().copied().unwrap_or(0);
         // The fade lies inside the step before; a step lasts at least MIN_STEP_MS.
         let from = from.max(previous + MIN_STEP_MS);
@@ -1036,10 +1108,17 @@ mod tests {
         assert_eq!(gaps, [0.0, 0.0, GAPS_BUILD, 0.0, GAPS_BREAK, 0.0]);
         // Other shares, clamped to 0..1; no number counts as 0.
         let own = Gaps { build: 0.5, brk: 7.0 };
-        let gaps: Vec<f64> = rows_with(&p, &slots(), 1, own).iter().map(|r| r.gaps).collect();
+        let gaps: Vec<f64> = rows_with(&p, &slots(), 1, Rules { gaps: own, ..Rules::default() })
+            .iter()
+            .map(|r| r.gaps)
+            .collect();
         assert_eq!(gaps, [0.0, 0.0, 0.5, 0.0, 1.0, 0.0]);
         let none = Gaps { build: f64::NAN, brk: -1.0 };
-        assert!(rows_with(&p, &slots(), 1, none).iter().all(|r| r.gaps == 0.0));
+        assert!(
+            rows_with(&p, &slots(), 1, Rules { gaps: none, ..Rules::default() })
+                .iter()
+                .all(|r| r.gaps == 0.0)
+        );
         let t = table(&slots(), &rows(&p, &slots(), 1));
         assert!(t.lines().nth(5).is_some_and(|l| l.ends_with(",0.6")), "{t}");
     }
@@ -1120,5 +1199,98 @@ mod tests {
         let mut every = plain.clone();
         every.stages = vec![vec![], vec![], vec![]];
         assert_eq!(rows(&p, std::slice::from_ref(&plain), 3), rows(&p, std::slice::from_ref(&every), 3));
+    }
+
+    /// Five slots taking turns at medium boundaries, the floor (four elements) on stage 0 only;
+    /// a track start every 10 parts of 60 s switches the stage.
+    fn dwell_case() -> (Vec<Part>, Vec<Slot>) {
+        let mut floor = Slot::new("floor", &["a", "b", "c", "d"]);
+        floor.stages = vec![vec![0]; 4];
+        let slots = vec![
+            floor,
+            Slot::new("ceiling", &["e", "f"]),
+            Slot::new("mid", &["g", "h"]),
+            Slot::new("sky", &["i", "j"]),
+            Slot::new("wall", &["k", "l"]),
+        ];
+        let mut p = Vec::new();
+        for i in 0..30 {
+            let start = i as f64 * 60.0;
+            let track_start = i % 10 == 0;
+            p.push(Part {
+                start,
+                end: start + 60.0,
+                zone: (start, start),
+                role: Role::Main,
+                change: if track_start { 0.9 } else { 0.4 },
+                energy: 0.6,
+                track_start,
+                seed: 7,
+            });
+        }
+        (p, slots)
+    }
+
+    /// The floor element on per row, or none.
+    fn floor_on(r: &[Row]) -> Vec<Option<usize>> {
+        r.iter().map(|r| (0..4).find(|j| r.presence[*j] > 0.0)).collect()
+    }
+
+    /// The longest run of rows one floor element stays on.
+    fn longest_run(on: &[Option<usize>]) -> usize {
+        let mut best = 0;
+        let mut run = 0;
+        for (k, x) in on.iter().enumerate() {
+            run = if x.is_some() && k > 0 && on[k - 1] == *x { run + 1 } else { 1 };
+            best = best.max(run);
+        }
+        best
+    }
+
+    #[test]
+    fn an_element_on_for_its_dwell_gives_way_and_a_hidden_slot_counts_on() {
+        let (p, slots) = dwell_case();
+        let r = rows(&p, &slots, 2);
+        let stages: Vec<usize> = r.iter().map(|r| r.stage).collect();
+        assert_eq!(&stages[..], &[[0; 10], [1; 10], [0; 10]].concat()[..], "{stages:?}");
+        let on = floor_on(&r);
+        // Hidden on stage 1, shown on stage 0.
+        assert!(on[10..20].iter().all(Option::is_none), "{on:?}");
+        assert!(on[..10].iter().chain(&on[20..]).all(Option::is_some), "{on:?}");
+        // With five slots the floor's turn comes every fifth medium boundary; the dwell swaps
+        // it after three sections.
+        assert!(longest_run(&on[..10]) <= DWELL && longest_run(&on[20..]) <= DWELL, "{on:?}");
+        let off = rows_with(&p, &slots, 2, Rules { dwell: 0, ..Rules::default() });
+        assert!(longest_run(&floor_on(&off)[..10]) > DWELL, "{:?}", floor_on(&off));
+        // Every floor element gets rows with the dwell; without it only some do.
+        let shown = |on: &[Option<usize>]| (0..4).filter(|j| on.contains(&Some(*j))).count();
+        assert_eq!(shown(&on), 4, "{on:?}");
+        // The slots under the dwell still swap on their turns, so every boundary from 0.3
+        // swaps at least one slot where the floor shows (elsewhere the floor's turn passes).
+        for k in (1..10).chain(20..30) {
+            assert_ne!(r[k].presence, r[k - 1].presence, "row {k}");
+        }
+        // Back on stage 0 the floor shows another element than the one it left with.
+        assert_ne!(on[20], on[9], "{on:?}");
+        assert_eq!(rows(&p, &slots, 2), r, "the same every time");
+    }
+
+    #[test]
+    fn the_fade_into_a_row_on_another_stage_lasts_at_least_the_stage_fade() {
+        let mut p = parts(&[(Role::Main, 0.0), (Role::Main, 0.5), (Role::Main, 0.9), (Role::Main, 0.9)]);
+        // Part 3 blends in from 84 to 94 s, longer than the stage fade.
+        p[3].zone = (84.0, 94.0);
+        let s = steps_with(&p, &[0, 0, 1, 0], 125.0, 2.0, 4.0, "x").unwrap();
+        assert_eq!(s.fades, [0.0, 2.0, 4.0, 10.0]);
+        assert_eq!(s.begins, [0.0, 32.0, 64.0, 94.0]);
+        let show = Show::new(&s.text, PIECE, 0.0);
+        assert!(show.problems().is_empty(), "{:?}", show.problems());
+        assert!((show.at(62.0).mix - 0.5).abs() < 1e-9, "{:?}", show.at(62.0));
+        // Without stages, or a stage fade of 0, the fades of steps.
+        assert_eq!(steps_with(&p, &[], 125.0, 2.0, 4.0, "x").unwrap(), steps(&p, 125.0, 2.0, "x").unwrap());
+        assert_eq!(steps_with(&p, &[0, 0, 1, 0], 125.0, 2.0, 0.0, "x").unwrap().fades, [0.0, 2.0, 2.0, 10.0]);
+        // Hostile: no number takes the default, too long the longest.
+        assert_eq!(steps_with(&p, &[0, 0, 1, 1], 125.0, 2.0, f64::NAN, "x").unwrap().fades[2], STAGE_FADE);
+        assert_eq!(steps_with(&p, &[0, 0, 1, 1], 300.0, 2.0, 1e9, "x").unwrap().fades[2], FADE_MIN_MAX);
     }
 }
