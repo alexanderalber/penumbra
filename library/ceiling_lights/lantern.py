@@ -1,9 +1,9 @@
-"""Writes ceiling_lights' three models next to this file, each hanging down -z from the origin
-(the point on the ceiling). lantern.obj is a paper lantern: a short string, then a body of 8
-ribs and 3 rings round an ellipsoid, a cap ring at its top and bottom and a short tassel.
-core.obj is the light inside: a smaller shell of 6 ribs. halo.obj is the soft light around a
-lit lantern: a larger shell of 8 ribs, turned half a rib against the body. Every line is a thin
-prism, which the wireframe draws as one line. Run with no arguments."""
+"""Writes ceiling_lights' two models next to this file, each hanging down -z from the origin
+(the point on the ceiling). lantern.obj is the frame of a paper lantern: a short string, then 6
+ribs and 2 rings round an ellipsoid, a cap ring at its top and bottom and a short tassel; every
+line is a thin prism, which the wireframe draws as one line. paper.obj is the lantern's paper: a
+closed ellipsoid a little inside the ribs, which the component fills in the lantern's colour,
+so the ribs lie on it as dark lines. Run with no arguments."""
 
 import math
 from pathlib import Path
@@ -17,12 +17,14 @@ NL = "\n"
 STRING = 0.32
 WIDE = 0.2
 TALL = 0.27
-RIBS = 8
-RINGS = 3
+RIBS = 6
+RINGS = 2
 STEPS = 12
 OPEN = 0.42
 TASSEL = 0.12
 THIN = 0.004
+# The paper's size against the ribs: inside them, so the ribs lie on top.
+PAPER = 0.97
 
 
 class Model:
@@ -106,21 +108,40 @@ def main():
     lantern.prism((0.0, 0.0, -middle - TALL), (0.0, 0.0, -middle - TALL - TASSEL))
     lantern.write("lantern.obj")
 
-    core = Model([
-        "The light inside a lantern of ceiling_lights: a shell of 6 ribs, 0.5 of the body's size,",
-        "round its middle. Written by lantern.py.",
+    paper = Model([
+        f"The paper of a lantern of ceiling_lights: an ellipsoid {2 * WIDE * PAPER:.3f} m wide and {2 * TALL * PAPER:.3f} m tall,",
+        "closed by its openings, a little inside the ribs of lantern.obj. Faces outwards. Written by",
+        "lantern.py.",
     ])
-    for share in (0.5,):
-        shell(core, middle, WIDE * share, TALL * share, 6, 1, 0.25)
-    core.write("core.obj")
+    ellipsoid(paper, middle, WIDE * PAPER, TALL * PAPER)
+    paper.write("paper.obj")
+    for old in ("core.obj", "halo.obj"):
+        if (HERE / old).exists():
+            (HERE / old).unlink()
+    print("wrote lantern.obj and paper.obj")
 
-    halo = Model([
-        "The soft light round a lit lantern of ceiling_lights: a shell of 8 ribs 1.3 times the body's",
-        "size, turned half a rib against it. Written by lantern.py.",
-    ])
-    shell(halo, middle, WIDE * 1.3, TALL * 1.18, RIBS, 0, 0.5)
-    halo.write("halo.obj")
-    print("wrote lantern.obj, core.obj and halo.obj")
+
+def ellipsoid(model, middle, wide, tall, around=16, steps=10):
+    """A closed ellipsoid from the top opening to the bottom one, flat caps, faces outwards."""
+    top = math.asin(OPEN)
+    rows = []
+    for s in range(steps + 1):
+        t = top + (math.pi - 2 * top) * s / steps
+        row = []
+        for a in range(around):
+            u = 2 * math.pi * a / around
+            model.lines.append(f"v {wide * math.sin(t) * math.cos(u):.4f} {wide * math.sin(t) * math.sin(u):.4f} "
+                               f"{-middle + tall * math.cos(t):.4f}")
+            model.count += 1
+            row.append(model.count)
+        rows.append(row)
+    for s in range(steps):
+        for a in range(around):
+            b = (a + 1) % around
+            # Seen from outside: counter-clockwise.
+            model.faces.append(f"f {rows[s][a]} {rows[s + 1][a]} {rows[s + 1][b]} {rows[s][b]}")
+    model.faces.append("f " + " ".join(str(v) for v in rows[0]))
+    model.faces.append("f " + " ".join(str(v) for v in reversed(rows[-1])))
 
 
 if __name__ == "__main__":

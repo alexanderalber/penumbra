@@ -8,6 +8,7 @@
 // light, its colour (the share of the floor left). Render it 80 x 1.
 // @param what choice(place|size|light) = place -- which picture
 // @param scroll float = 0 -1..1 -- how far the grid is moved along y now, in metres (the stage's scroll)
+// @param roll_up float = 0 0..1 -- the roll-up into a tube (roll.wgsl): the grid gives way to the roll's lines over its first fifth
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
@@ -32,7 +33,8 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let lane0 = textureLoad(in0, vec2i(0, 0), 0);
     let wired = lane0.b > 0.0;
     let ground = select(1.0, textureSampleLevel(in0, pn_clamp, vec2f(u, 0.5), 0.0).a, wired);
-    let left = clamp(ground, 0.0, 1.0);
+    let gone = smoothstep(0.0, 0.2, clamp(params.roll_up, 0.0, 1.0));
+    let left = clamp(ground, 0.0, 1.0) * (1.0 - gone);
     if params.what == what_size {
         let s = select(1.0, 0.0, left < 0.02);
         return vec4f(s, s, s, 1.0);

@@ -76,6 +76,8 @@
         "/stage_ascent/sky_over": (kind: "tex.composite", params: {"op": "screen"}, inputs: {"in0": "nebula_dim", "in1": "sky"}, pos: [1000.0, -550.0]),
         "/stage_ascent/picture": (kind: "tex.composite", inputs: {"in0": "sky_over", "in1": "fade"}, pos: [1200.0, -100.0]),
         "/stage_ascent/out": (kind: "tex.out", inputs: {"in": "picture"}, pos: [1400.0, -100.0]),
-        "/stage_ascent/pose": (kind: "chan.out", inputs: {"in": "glide"}, pos: [200.0, 950.0]),
+        "/stage_ascent/shape": (kind: "chan.constant", params: {"rows": 3, "name0": "axis", "value0": 1.5, "name1": "walls", "value1": 1.0, "name2": "curve", "value2": 0.0}, pos: [0.0, 1050.0]),
+        "/stage_ascent/pose_all": (kind: "chan.merge", inputs: {"in0": "glide", "in1": "shape"}, pos: [200.0, 1050.0]),
+        "/stage_ascent/pose": (kind: "chan.out", inputs: {"in": "pose_all"}, pos: [400.0, 1050.0]),
     },
 )

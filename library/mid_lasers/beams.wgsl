@@ -2,6 +2,9 @@
 // along y. The beams fan out from a point low over the lane `origin` metres ahead, where the
 // floor fades into the distance, and pass the camera above and on both sides. The fan's middle
 // sweeps from side to side once every two bars. A kick takes every beam out for one frame.
+// The stage may say where the point lies and how the fan opens (its `pose`): `axis` puts the
+// point that high, and `round` 1 opens the fan all round the point, so in a tube the beams
+// leave from its axis towards the wall all round and pass the camera on every side.
 // in0: the stage's lane picture (its `lane` output); the fan's point follows the lane.
 // Unconnected: a straight lane at x = 0.
 // `what` place: the middle of each beam in rgb. aim: its direction. scale: `thickness` across,
@@ -21,6 +24,8 @@
 // @param sweep float = 20 0..45 -- degrees the fan's middle swings to each side
 // @param thickness float = 0.015 0.001..0.1 -- metres across a beam; the line is drawn as thick as the wireframe's line_width at any size
 // @param strobe bool = true -- a kick takes the beams out for one frame
+// @param axis float = -1 -1..10 -- metres up where the beams start, from the stage (axis of its pose); below 0 `low` holds
+// @param round float = 0 0..1 -- 0 a fan upwards, 1 a fan all round its point, as in a tube (curve of the stage's pose)
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
@@ -37,14 +42,21 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let wired = lane0.b > 0.0;
     let u = (params.origin - LANE_NEAR) / (LANE_FAR - LANE_NEAR);
     let lane = select(0.0, textureSampleLevel(in0, pn_clamp, vec2f(u, 0.5), 0.0).r, wired);
-    let start = vec3f(lane, params.origin, params.low);
+    let low = select(params.low, params.axis, params.axis >= 0.0);
+    let start = vec3f(lane, params.origin, low);
     // The fan's middle: once to each side every two bars.
     let bars = params.bar_index + clamp(params.bar, 0.0, 1.0);
     let middle = params.sweep * sin(3.14159265 * bars);
     let k = f32(i) / f32(max(n - 1u, 1u));
     let lean = radians(clamp(middle + params.open * (2.0 * k - 1.0), -LEAN_MAX, LEAN_MAX));
-    let up = min(params.up, TOP - params.low);
-    let end = vec3f(params.across * sin(lean), params.reach, params.low + up * cos(lean));
+    let up = min(params.up, max(TOP - low, 0.3));
+    let flat = vec3f(params.across * sin(lean), params.reach, low + up * cos(lean));
+    // All round: the beams spread evenly round the point and turn with the sweep, ending inside
+    // a tube whose axis lies at `low`.
+    let all_round = 6.2831853 * f32(i) / f32(max(n, 1u)) + radians(middle);
+    let wide = min(params.across, 0.8 * max(low, 0.5));
+    let ring = vec3f(wide * sin(all_round), params.reach, low + wide * cos(all_round));
+    let end = mix(flat, ring, clamp(params.round, 0.0, 1.0));
     let full = end - start;
     let dir = normalize(full);
     // Presence: the middle beams stay longest; each one draws back into the point as presence

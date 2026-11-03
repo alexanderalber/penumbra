@@ -1,6 +1,7 @@
 // Rows of paper lanterns under the ceiling of the synthwave stage, one row on each side of the
-// lane, drawn by geo.tex_instance with lantern.obj (string, ribs and rings, as lines), core.obj
-// (the light inside a lit lantern) and halo.obj (its soft light around it). The lanterns swing
+// lane, drawn by geo.tex_instance with lantern.obj (string, ribs and rings, as lines) and
+// paper.obj (the paper, filled in the lantern's colour, dim while dark, bright while lit). The
+// ribs lie on the paper as darker lines. The lanterns swing
 // a little, more with the mids. A lantern hangs every `spacing` beats of travel. A running light
 // switches along each row: on every beat the next lantern ahead lights up, the ones it left glow
 // on dimmer for a beat or two, so the light runs away from the camera faster than the floor
@@ -12,10 +13,8 @@
 // straight lane at x = 0 and `step` metres per beat.
 // Render it 24 x 2: row 0 the left lanterns, row 1 the right ones, nearest first.
 // `what` place: where the lantern hangs from the ceiling. aim: its swing. scale: its size (0
-// where none hangs). shade: the colour of its lines. light: the colour of the light inside.
-// rays: the size of the light inside and around it (0 while the lantern is dark). glow: the
-// colour of the light around it.
-// @param what choice(place|aim|scale|shade|light|rays|glow) = place -- what this node writes
+// where none hangs). shade: the colour of its ribs. light: the colour of its paper.
+// @param what choice(place|aim|scale|shade|light) = place -- what this node writes
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid)
 // @param beat_index float = 0 0..1000000 -- beats counted (beat_index of a chan.beat_grid): the running light steps on each
 // @param beat float = 0 0..1 -- how far the current beat has gone (beat of a chan.beat_grid)
@@ -27,9 +26,9 @@
 // @param trail int = 3 0..4 -- lanterns behind the running light that still glow
 // @param apart float = 2.4 0..6 -- metres from the lane's middle to each row (beside the lane, since a lantern hangs down to 3 m)
 // @param size float = 1 0.3..1.2 -- a lantern's size: 1 hangs 0.32 m from the ceiling on its string and reaches 0.98 m down with its tassel
-// @param idle float = 0.12 0..1 -- a lantern's light while it is off
+// @param idle float = 0.12 0..1 -- a lantern's paper while it is off
 // @param full float = 0.8 0..2 -- every lantern's light in a drop
-// @param glow float = 1 0..4 -- the soft light around a lit lantern
+// @param glow float = 1 0..4 -- how bright a lit lantern's paper shines
 // @param swing float = 7 0..30 -- degrees a lantern swings to and fro at full mids
 // @param calm float = 0.3 0..1 -- the share of the swing left without mids
 // @param mids float = 0 0..1 -- the mids (energy_mid of a chan.beat_grid, smoothed): the lanterns swing with them
@@ -43,10 +42,12 @@ const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
 
 // The palette: warm (0) runs yellow, orange, magenta; cold (1) cyan, blue, violet. `s` 0 to 1.
-fn palette(s: f32) -> vec3f {
+// `pick` 0 to 1, fixed per lantern: between warm and cold each lantern takes one palette whole,
+// the share of cold ones growing with `warmth`, so paper never mixes to grey.
+fn palette(s: f32, pick: f32) -> vec3f {
     let warm = mix(mix(vec3f(1.0, 0.86, 0.3), vec3f(1.0, 0.42, 0.18), smoothstep(0.0, 0.5, s)), vec3f(0.95, 0.12, 0.55), smoothstep(0.45, 1.0, s));
     let cold = mix(mix(vec3f(0.35, 0.95, 1.0), vec3f(0.25, 0.45, 1.0), smoothstep(0.0, 0.5, s)), vec3f(0.62, 0.18, 1.0), smoothstep(0.45, 1.0, s));
-    return mix(warm, cold, clamp(params.warmth, 0.0, 1.0));
+    return select(warm, cold, pick < clamp(params.warmth, 0.0, 1.0));
 }
 
 fn wrap(a: i32, n: i32) -> i32 {
@@ -111,17 +112,12 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         every = max(every, params.full);
     }
     lit = max(lit, every);
-    let colour = palette(f32(wrap(n, period)) / f32(period - 1));
+    let colour = palette(f32(wrap(n, period)) / f32(period - 1), r.z);
     if params.what == what_shade {
-        return vec4f(colour * (params.idle + mix(0.35, 1.1, min(lit, 1.0))), 1.0);
+        // The ribs: darker than lit paper, a little lighter than dark paper.
+        return vec4f(colour * (0.3 + 0.2 * min(lit, 1.0)), 1.0);
     }
-    // The light inside: a little whiter than the paper; the light around it dimmer.
-    if params.what == what_light {
-        return vec4f(mix(colour, vec3f(1.0), 0.2) * 1.2 * min(lit, 1.2), 1.0);
-    }
-    if params.what == what_rays {
-        // Only in a lantern that shines: dark lines would draw black.
-        return vec4f(vec3f(select(0.0, size, lit > 0.1)), 1.0);
-    }
-    return vec4f(colour * params.glow * 0.35 * min(lit, 1.2), 1.0);
+    // The paper: dim in the lantern's colour while dark, bright and a little whiter while lit.
+    let shine = min(lit, 1.2) * params.glow;
+    return vec4f(mix(colour, vec3f(1.0), 0.12 * min(shine, 1.0)) * (params.idle + 1.1 * shine), 1.0);
 }

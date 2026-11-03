@@ -302,7 +302,21 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   to the first stage's pose. So the glider and the horizon move over with the picture.
   `intensity` takes a list too: `intensity: ["/stage.dim", "/tunnel.dim", "/ascent.dim"]`. Floor
   and ceiling elements need a flat floor and a flat ceiling: wire them into `stage_synthwave`
-  only.
+  only. An element that does not suit a stage gets a list of the stages it may show in:
+  `{path: "/sun", stages: ["/stage"]}` keeps the sun off the tunnel and the shaft, and its slot
+  shows another element there.
+- **The stage's shape** is in its `pose` too: `axis` (metres up where the stage's middle lies:
+  0.5 over the synthwave floor, the tube's axis, the shaft's middle), `walls` (1 where walls
+  stand round the camera) and `curve` (1 where the horizon is the round end of a tube). The
+  lasers start at `axis`, the glider floats up out of the picture where `walls` is 1, and the
+  bars and the city wrap round the tube's end with `curve`. Wire the blended pose into
+  `mid_lasers` and `mid_glider` as into the sky elements.
+- **Rolling the plane up into the tunnel.** `stage_synthwave` and `stage_tunnel` both have
+  `roll_up`. Bind both to the share of the fade between them (the `min` 1 part of the `stage`
+  channel above). While the switch fades, the plane's floor gives way to lines from right to
+  left, and those lines bend up into the tunnel's rings; the ceiling grid fades out. Both
+  stages show the same lines through the fade, so the switch's crossfade reads as one floor
+  rolling up.
 
 ### stage_synthwave
 
@@ -321,13 +335,16 @@ glider is the element `mid_glider`.
 - Out: `out` (the picture), `lane` (256 x 1: per texel i, -8 + 0.25 i metres ahead, red the
   lane's x in metres, green its sideways slope per metre, blue `step`, alpha the floor: 1 where
   it stands, 0 in a gap), `pose` (the camera as it glides: channels `height`, `pitch`, `roll`,
-  `fov`, `side`; wire it into the sky elements that take it).
+  `fov`, `side`, and the stage's shape: `axis` 0.5, `walls` 0, `curve` 0; wire it into the
+  sky elements and the mid elements that take it).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift` (added to the bass, e.g. before a
   change), `energy_curve`, `dim` (the nebula's light); the lane's `bars_per_turn`, `swing`, `turn`,
   `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade; `ground` (how
   dark the sky gets below the horizon: 0 not at all, 1 black, so the floor stands on black. Bind
   it to the sun's presence: the sun is cut hard at the horizon, and black ground fits that cut,
-  with or without the floor's lines and in a gap).
+  with or without the floor's lines and in a gap), `roll_up` (0 the floor as it is; towards 1
+  the floor grid gives way to lines from right to left that bend up into rings round an axis
+  4 m up, as `stage_tunnel`'s rings at its own `roll_up`, and the ceiling grid fades out).
 - Camera: `camera` (the preset, 0 to 5), `glide` (seconds the camera takes to reach a new preset:
   most of the way after about 3 times this), `presets` (a csv table, one row per preset: `height`
   in metres, `pitch` in degrees up, `roll` in degrees, `fov` in degrees, `side` in degrees to the
@@ -352,20 +369,33 @@ away the tube fades out, so the sky (nebula and `sky`) shows as a disc at its en
 nebula, distance fade and camera presets work as on `stage_synthwave`, so the two stages can
 swap.
 
+The tube lives with the music. On every beat a pulse of light runs from the camera down the
+tube, and the rings it passes narrow a little. Twice a bar a bright dash runs ahead along every
+third long line. Chevrons on the tube's bottom point ahead and come towards the camera with the
+world; the bass brightens them. Every `roll_bars` bars the whole tube makes a turn round its
+axis over `roll_length` bars, the next turn the other way; in a drop the turns come twice as
+often. The tube is a sheet rolled up: at `roll_up` 0 it lies open as a flat floor of lines from
+right to left, the rings, which roll up into the tube as `roll_up` grows (see the paragraph on
+rolling the plane up above).
+
 - In: `bus`, `mid` (geometry in the tube, such as the glider), `sky` (a picture screened over
   the nebula), `floor` and `ceiling` (merged into the scene, but the tube has no flat floor or
-  ceiling: floor elements sink away, since the lane's alpha is 0, and ceiling elements hang at
-  their own `ceiling` height in the middle of the tube; leave both unwired).
+  ceiling: floor elements beside the lane stand through the curved wall, and ceiling elements
+  hang at their own `ceiling` height in the middle of the tube; leave both unwired).
 - Out: `out` (the picture), `lane` (the layout of `stage_synthwave`'s lane: red and green 0,
   since the lane lies straight at the tube's bottom, blue `step`, alpha 0, since nothing can
   stand on the curved bottom), `pose` (the camera as it glides: channels `height`, `pitch`,
-  `roll`, `fov`, `side`).
+  `roll`, `fov`, `side`, and the stage's shape: `axis` the tube's axis, 4 m, `walls` 1, `curve`
+  1).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift`, `energy_curve`, `dim`; the
   lane's `bars_per_turn`, `swing`, `turn`, `beats_per_bar`; `step` (metres per beat: the
   distance between two rings); `start`, `end` of the distance fade (6 and 20 m: the tube is
   seen further than the synthwave floor); `ceiling` (the tube's height, twice its radius: 8 m);
   `twist` (how far the tube rolls with the lane: 1 turns it by the lane's swing over the
-  radius); `lines` (long lines along the wall, up to 24); `line_width`.
+  radius); `lines` (long lines along the wall, up to 24); `line_width`; `roll_up` (1 the tube,
+  towards 0 a flat floor of lines); `roll_bars` (bars from one turn of the tube to the next, 8;
+  0 never turns); `roll_length` (bars a turn takes, 2); `pulse` (the light of the pulses and
+  dashes, 1; 0 none); `marks` (the chevrons' light, 1; 0 none).
 - Camera: `camera`, `glide` and `presets` as on `stage_synthwave`, with presets of the same
   meaning for the tube: 0 low flight at 1.8 m, 1 higher and looking down for a build, 2 high and
   wide for a drop (3.4 m, 76 degrees), 3 still and nearly level for a break, 4 and 5 two tilted
@@ -394,7 +424,8 @@ swap.
 - Out: `out` (the picture), `lane` (the layout of `stage_synthwave`'s lane: red and green 0,
   since the lane runs straight ahead, blue `step`, alpha 0, since there is no floor to stand
   on), `pose` (the camera as it glides: channels `height`, `pitch`, `roll`, `fov`, `side`;
-  `height` is the camera's height above the floor it would stand on, the same on every storey).
+  `height` is the camera's height above the floor it would stand on, the same on every storey;
+  and the stage's shape: `axis` 1.5, `walls` 1, `curve` 0).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift`, `energy_curve`, `dim`; the
   lane's `bars_per_turn`, `swing`, `turn`, `beats_per_bar` (they set the sway); `step` (metres per
   beat, for the mid elements); `start`, `end` of the distance fade (8 and 24 m); `ceiling` (metres
@@ -579,11 +610,14 @@ number instead; the grid's sections know a track's number but no name. The bus c
 
 The glider: a wireframe hover craft flying ahead of the camera along the lane. It turns with the
 lane, leans into each turn and bobs slowly. Towards `presence` 0 it climbs away ahead, up to 6 m
-further and 1 m higher, and shrinks over the last quarter; at 0 it is gone. The glider smooths
+further and 1 m higher, and shrinks over the last quarter; at 0 it is gone. On a stage with walls
+(`walls` 1 in the stage's `pose`) it would fly through the wall that way: there it floats
+straight up out of the picture instead, and comes back down from above. The glider smooths
 `presence` itself, so it glides in and out over about 4 seconds even when the arrangement fades
 faster. In a break `beats.arrange` keeps it at 0.6: about 2 m further ahead and 0.35 m higher.
 
-- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- In: `bus`, `lane`, `pose` (the stage's, for `walls`; unwired, it climbs away ahead). Out:
+  `out` (into the stage's `mid`).
 - Params: `presence`, `at` (metres ahead of the camera), `arrive` (seconds to cover 63 % of a
   change of `presence`, default 2), `bank` (how far it leans into a turn),
   `bob` (metres up and down), `scale` (0.16 makes it 2.4 m long), `hover` (metres above the
@@ -685,9 +719,12 @@ A fan of laser beams. The beams start at one point low over the lane, where the 
 into the distance, and pass the camera above and on both sides. The fan swings from side to side
 once every two bars. Every kick takes the beams out for one frame, so they flicker with the
 beat. The fan suits a drop; `beats.arrange` decides when it shows. Towards `presence` 0 the
-outer beams draw back into their point first.
+outer beams draw back into their point first. With the stage's `pose` wired, the point lies at
+the stage's `axis`, and where the stage is a tube (`curve` 1) the fan opens all round the point:
+the beams leave the tube's axis far ahead and pass the camera on every side.
 
-- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- In: `bus`, `lane`, `pose` (the stage's; unwired, the point is `low` over the floor and the
+  fan opens upwards). Out: `out` (into the stage's `mid`).
 - Params: `presence`, `count` (5 to 15 beams), `origin` (metres ahead where the beams start),
   `low` (their height there), `reach` (metres ahead where they end; below 0 behind the camera),
   `across` (how far out the outer beams end), `up` (how high the middle beam ends), `open`
@@ -758,13 +795,15 @@ the models.
 ![ceiling_lights](ceiling_lights/preview.png)
 
 Two rows of paper lanterns under the ceiling, one on each side of the lane. Each lantern hangs on
-a short string: a body of 8 ribs and 3 rings round an ellipsoid, with a tassel. The lanterns swing
+a short string: a body of paper round an ellipsoid, filled in the lantern's colour, with 6 ribs
+and 2 rings on it as darker lines, and a tassel. The lanterns swing
 a little to and fro, more with the mids. A running light switches along each row: on every beat
 the next lantern ahead lights up. The lanterns behind it glow on dimmer for a few beats. The light
 runs away from the camera, faster than the floor comes towards it. The pattern repeats every 8
 lanterns, and the right row runs half a pattern behind the left one. Each lantern of a pattern has
-its own colour from the warm or cold palette. A lit lantern shines brighter and shows a light
-inside and a soft shell of light around it, all as lines. In a drop every lantern is on, and the
+its own colour from the warm or cold palette; between warm and cold, each lantern takes one
+palette whole, so the paper stays coloured. A dark lantern's paper glows dimly, a lit one's
+shines bright and a little whiter. In a drop every lantern is on, and the
 drop's flash lights them all up. `lantern.py` in the folder writes the models.
 
 - In: `bus` (it reads `beat_index`, `section_role` and `drop`), `lane`. Out: `out` (into the
@@ -773,7 +812,7 @@ drop's flash lights them all up. `lantern.py` in the folder writes the models.
   `spacing` (beats of travel between two lanterns), `period` (lanterns from one running light to
   the next), `trail` (dimmer lanterns behind it, 0 to 4), `apart` (metres from the lane's middle to
   each row), `size` (1 reaches 0.98 m down with its tassel; at most 1.2), `idle` (a dark lantern's
-  light), `full` (every lantern's light in a drop), `glow` (the light around a lit lantern), `swing`
+  paper), `full` (every lantern's light in a drop), `glow` (how bright a lit lantern's paper shines), `swing`
   (degrees at full mids, 7), `calm` (the share of the swing left without mids), `warmth`,
   `ceiling`, `near`, `far`, `line_width`, `extent`.
 
@@ -847,7 +886,9 @@ every bar for a moment.
 - Params: `presence`, `brightness`, `warmth`, `count` (bars), `span` (half the row's width, in
   picture heights), `tall` (a bar at full level), `gap` (dark share between bars), `cells` (0
   draws solid bars), `jitter` (how much each bar moves by itself), `kick` (the lift on an onset),
-  `glow`, `reach`.
+  `glow`, `reach`, `bend` (0 a straight row; 1 the row wraps round the view's vanishing point as
+  a ring, the bars pointing to its middle: bind it to the pose's `curve`, so in a tube the bars
+  stand round its far end), `ring` (the ring's radius in picture heights).
 
 ### sky_city
 
@@ -862,7 +903,8 @@ half the pace. The towers' bodies only glow faintly, so the nebula shows through
 - Params: `presence`, `brightness`, `warmth`, `seed` (another number, another skyline), `tall`
   (the tallest towers, in picture heights), `slide` (picture heights per beat), `windows` (share
   lit in quiet passages), `flicker` (how much the mids light more and how often windows change),
-  `edge` (the outlines' light), `reach`.
+  `edge` (the outlines' light), `reach`, `bend` and `ring` as on `sky_bars` (the skyline wraps
+  round the tube's far end, the towers pointing to its middle).
 
 ### sky_figure
 

@@ -26,6 +26,8 @@
 // @param roll float = 0 -45..45 -- the camera's roll, degrees (roll of the stage's pose)
 // @param side float = 0 -45..45 -- the camera's turn to the right, degrees (side of the stage's pose)
 // @param reach float = 10 1..100 -- metres ahead where the floor fades out, the stage's `end`: the horizon lies there
+// @param bend float = 0 0..1 -- how far the horizon bends into a ring round the view's vanishing point, for a tube: 0 straight, 1 a ring of `ring` (curve of the stage's pose)
+// @param ring float = 0.17 0.02..1 -- the ring's radius at full bend, in picture heights of a 60 degree view (0.17: the far end of stage_tunnel's tube)
 
 // Where this pixel lies in the sky, in picture heights of a 60 degree view: x from straight ahead,
 // y up from the horizon. The horizon is where the floor fades out, `reach` metres ahead, as the
@@ -41,6 +43,27 @@ fn sky_at(px: vec2f) -> vec3f {
     let down = atan(max(params.eye, 0.0) / max(params.reach, 0.1)) + radians(params.pitch);
     let unit = 2.0 * tan(radians(30.0));
     return vec3f(vec2f(p.x + tan(radians(params.side)), p.y + tan(down)) / unit, 2.0 * t / (res.y * unit));
+}
+
+// The sky point `at` (from sky_at) with the horizon bent into a ring, for a stage that is a
+// tube: at `bend` 1 the horizon is a ring of radius `ring` round the point straight ahead at
+// the horizon's height, the vanishing point of the tube's axis, and up is towards its middle.
+// Between, the horizon is an arc of a larger ring, so the row wraps round bit by bit.
+fn bent(at: vec3f) -> vec3f {
+    let b = clamp(params.bend, 0.0, 1.0);
+    if b < 0.001 {
+        return at;
+    }
+    let unit = 2.0 * tan(radians(30.0));
+    let down = atan(max(params.eye, 0.0) / max(params.reach, 0.1)) + radians(params.pitch);
+    // The vanishing point's height above the horizon.
+    let vanish = (tan(down) - tan(radians(params.pitch))) / unit;
+    let ring = max(params.ring, 0.02);
+    let radius = ring / b;
+    let centre = vec2f(0.0, b * (vanish - ring) + radius);
+    let d = at.xy - centre;
+    let angle = atan2(d.x, -d.y);
+    return vec3f(angle * radius, radius - length(d), at.z);
 }
 
 // The palette: warm (0) runs yellow, orange, magenta; cold (1) cyan, blue, violet. `s` 0 to 1.
@@ -65,7 +88,7 @@ fn level(i: i32, n: i32) -> f32 {
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
-    let at = sky_at(v.pos.xy);
+    let at = bent(sky_at(v.pos.xy));
     let s = at.xy;
     let n = max(params.count, 1);
     let span = max(params.span, 0.01);
