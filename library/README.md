@@ -871,7 +871,7 @@ brightens them.
 
 A planet with a tilted ring over the horizon. Bands of cloud in the palette run around it and
 drift as it turns. The planet grows over each track: small at the track's start, twice the size
-and a little higher at its end. The bass makes it breathe. The ring's near half passes in front
+and a little higher at its end. It turns slowly and holds still against the beat (`breathe` lets the bass swell it). The ring's near half passes in front
 of the disc, its far half behind it.
 
 - In: `bus` (it reads `track_phase`), `pose` (the stage's). Out: `out`.
