@@ -263,8 +263,10 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   Anything that hangs lower stays beside the lane.
 - **Sky elements** draw a picture over black. Their output goes into the stage's `sky`, screened
   over the nebula. Several go through a `tex.composite` with `op: screen`. The sky lies behind
-  everything the stage renders: the solid bodies of floor and mid elements are black and hide
-  it. They are a `mat.occluder` with `shows: black`, so they also fade into the sky with distance. Screening only adds light, so a sky element cannot darken the nebula. Every sky element
+  everything the stage renders. The solid bodies of floor and mid elements are a plain
+  `mat.occluder`: they hide the lines behind them and show the sky, so a body reads as a dark
+  shape of nebula with its own edges. Screening only adds light, so a sky element cannot darken
+  the nebula. Every sky element
   except `sky_galaxy` also takes the stage's `pose`, so its horizon moves with the camera.
 - **Post elements** change the finished picture. Each takes a picture in `in` and `bus`, and
   gives the changed picture in `out`. Chain them after the stage's `out`: stage, then
@@ -348,9 +350,8 @@ glider is the element `mid_glider`.
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift` (added to the bass, e.g. before a
   change), `energy_curve`, `dim` (the nebula's light); the lane's `bars_per_turn`, `swing`, `turn`,
   `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade; `ground` (how
-  dark the sky gets below the horizon: 0 not at all, 1 black, so the floor stands on black. Bind
-  it to the sun's presence: the sun is cut hard at the horizon, and black ground fits that cut,
-  with or without the floor's lines and in a gap), `roll_up` (0 the floor as it is; towards 1
+  dark the sky gets below the horizon: 0 not at all, the default, so the nebula shows under the
+  floor's lines and in a gap; 1 black, so the floor stands on black), `roll_up` (0 the floor as it is; towards 1
   the floor grid gives way to lines from right to left that bend up into rings round an axis
   4 m up, as `stage_tunnel`'s rings at its own `roll_up`, and the ceiling grid fades out).
 - Camera: `camera` (the preset, 0 to 5), `glide` (seconds the camera takes to reach a new preset:
@@ -506,7 +507,7 @@ A dense field of hexagonal wireframe prisms side by side on both sides of the la
 columns. The prisms stand in a honeycomb fixed to the floor, so the field comes nearer with the
 floor. Their heights come from noise fixed to the floor, from 0.4 to 3.2 m, so hills and valleys
 of prisms keep their shape as they come nearer. On each beat the prisms rise a little. The lane
-stays free: prisms at its edge shrink whole. The bodies are black and hide the sky behind them.
+stays free: prisms at its edge shrink whole. The bodies hide the lines behind them.
 `hexfield.py` in the folder writes the model.
 
 - In: `bus`, `lane`. Out: `out`.
@@ -580,7 +581,7 @@ At the stage's 0.5 m per beat that is a stride every 2 beats, a little faster wh
 gains on the camera. The stride is a slow gallop in the order Muybridge photographed: the hind
 legs land, then the forelegs, then all four leave the ground. The body rocks, the neck swings, the
 tail streams back. The horse faces 30 degrees in towards the lane, so the camera sees its flank.
-Its body is black and hides the sky behind it. `animal.py` in the folder writes the 24 poses.
+Its body hides the lines behind it. `animal.py` in the folder writes the 24 poses.
 
 - In: `bus`, `lane`. Out: `out`.
 - Params: `presence` (towards 0 the horse runs off ahead and shrinks, 0 none), `at` (metres
