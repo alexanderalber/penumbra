@@ -3373,6 +3373,61 @@ fn ndi_round_trip() {
     assert_eq!((status.error, status.warning), (None, None));
 }
 
+/// Through the installed runtime: a tone wired to `out.ndi`'s `audio` comes out of a
+/// `tex.ndi_in`'s `audio` output at its rate.
+#[test]
+#[ignore = "needs the NDI runtime and the local network"]
+fn ndi_round_trip_with_sound() {
+    let Some(gpu) = gpu() else { return };
+    let name = format!("penumbra test sound {}", std::process::id());
+    let mut rig = Rig::new(
+        gpu,
+        None,
+        &[
+            create("/c", "tex.constant", &[("width", Value::Int(64)), ("height", Value::Int(32))]),
+            create("/tone", "audio.oscillator", &[("amplitude", Value::Float(0.5))]),
+            create("/out", "out.ndi", &[("name", name.as_str().into())]),
+            connect("/c", "/out", 0),
+            connect("/tone", "/out", 1),
+            create("/in", "tex.ndi_in", &[("source", name.as_str().into())]),
+            // A reader of the received sound, so `tex.ndi_in` keeps it.
+            create("/mix", "audio.mix", &[]),
+            Op::Connect { from: "/in".parse().unwrap(), output: 1, to: "/mix".parse().unwrap(), input: 0 },
+        ],
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut samples = 0usize;
+    let mut peak = 0.0f64;
+    let mut rate = 0.0;
+    while samples < 48_000 / 2 {
+        rig.clock.advance(1);
+        rig.cook("/out");
+        rig.gpu.poll();
+        rig.cook("/mix");
+        if let Some(chans) = rig
+            .cooker
+            .output(Port { node: rig.id("/mix"), output: 0 })
+            .and_then(|d| d.get::<penumbra_core::Chans>().cloned())
+        {
+            rate = chans.rate();
+            if let Some(c) = chans.channels().first() {
+                samples += c.samples.len();
+                peak = c.samples.iter().fold(peak, |m, v| m.max(v.abs()));
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "too little sound: {samples} samples, {:?}",
+            rig.cooker.status(rig.id("/in"))
+        );
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    assert_eq!(rate, 48_000.0);
+    assert!((peak - 0.5).abs() < 0.02, "peak {peak}");
+    let status = rig.cooker.status(rig.id("/out")).unwrap();
+    assert_eq!((status.error, status.warning), (None, None));
+}
+
 #[test]
 fn scan_pattern_matches_the_decoders_patterns_pixel_for_pixel() {
     let Some(gpu) = gpu() else { return };

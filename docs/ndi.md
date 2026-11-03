@@ -39,6 +39,22 @@ source on the network; other programs list it as `MACHINE (name)`.
 A frame is sent whenever the input changes, announced at the show rate; receivers keep the last
 one meanwhile. The source disappears when the node is deleted or its project closed.
 
+### Sound
+
+Wire a sound into the `audio` input to send it with the picture: an `audio.file`, an
+`audio.mix`, an `audio.device_in` or any other `audio` node. OBS, vMix and other receivers
+then get the picture and the sound from one source.
+
+- Any whole rate from 8000 to 192000 samples per second goes as it is, with up to 16 channels.
+  Most receivers expect 48000. If a receiver refuses another rate, put an `audio.mix` with
+  `rate` 48000 in front.
+- With sound wired, every picture and every block of sound carries the show time. A receiver
+  that syncs by the source's timing keeps the two in step.
+- The sound goes out as it comes in. The room, level and limiter of `out.audio` are not
+  applied. To send what the speakers play, wire the same sound into both nodes.
+- When sending falls behind (a slow network, a busy machine), blocks of sound are left out.
+  The node warns how many.
+
 ## Receiving: `tex.ndi_in`
 
 Add a `tex.ndi_in` and pick the source in the **...** menu next to `source`, which lists the

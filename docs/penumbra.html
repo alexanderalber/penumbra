@@ -88,7 +88,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><a href="#spout">Spout</a>: pictures to and from other programs on this machine (TouchDesigner, OBS, Resolume) with <a class="ref" href="#out.spout"><code>out.spout</code></a> and <a class="ref" href="#tex.spout_in"><code>tex.spout_in</code></a>.
 </li>
-<li><a href="#ndi">NDI</a>: pictures (and sound in) over the network, to and from OBS, vMix, cameras or another machine, with <a class="ref" href="#out.ndi"><code>out.ndi</code></a> and <a class="ref" href="#tex.ndi_in"><code>tex.ndi_in</code></a>.
+<li><a href="#ndi">NDI</a>: pictures and sound over the network, to and from OBS, vMix, cameras or another machine, with <a class="ref" href="#out.ndi"><code>out.ndi</code></a> and <a class="ref" href="#tex.ndi_in"><code>tex.ndi_in</code></a>.
 </li>
 <li><a href="#camera">Camera</a>: a live camera or capture card with <a class="ref" href="#tex.video_in"><code>tex.video_in</code></a>, calmed with <a class="ref" href="#tex.denoise"><code>tex.denoise</code></a>, its motion with <a class="ref" href="#tex.optical_flow"><code>tex.optical_flow</code></a>.
 </li>
@@ -1140,6 +1140,18 @@ water      15
 </li>
 </ul>
 <p>A frame is sent whenever the input changes, announced at the show rate; receivers keep the last one meanwhile. The source disappears when the node is deleted or its project closed.</p>
+<h4 id="ndi-sound">Sound</h4>
+<p>Wire a sound into the <code>audio</code> input to send it with the picture: an <a class="ref" href="#audio.file"><code>audio.file</code></a>, an <a class="ref" href="#audio.mix"><code>audio.mix</code></a>, an <a class="ref" href="#audio.device_in"><code>audio.device_in</code></a> or any other <code>audio</code> node. OBS, vMix and other receivers then get the picture and the sound from one source.</p>
+<ul>
+<li>Any whole rate from 8000 to 192000 samples per second goes as it is, with up to 16 channels. Most receivers expect 48000. If a receiver refuses another rate, put an <a class="ref" href="#audio.mix"><code>audio.mix</code></a> with <code>rate</code> 48000 in front.
+</li>
+<li>With sound wired, every picture and every block of sound carries the show time. A receiver that syncs by the source's timing keeps the two in step.
+</li>
+<li>The sound goes out as it comes in. The room, level and limiter of <a class="ref" href="#out.audio"><code>out.audio</code></a> are not applied. To send what the speakers play, wire the same sound into both nodes.
+</li>
+<li>When sending falls behind (a slow network, a busy machine), blocks of sound are left out. The node warns how many.
+</li>
+</ul>
 <h3 id="ndi-receiving-texndi_in">Receiving: <a class="ref" href="#tex.ndi_in"><code>tex.ndi_in</code></a></h3>
 <p>Add a <a class="ref" href="#tex.ndi_in"><code>tex.ndi_in</code></a> and pick the source in the <strong>...</strong> menu next to <code>source</code>, which lists the sources on the network and fills in as they answer (give it a second after the first opening). <code>source</code> also takes a part of the name, such as <code>OBS</code>; empty takes the first source. The texture has the source's size and follows it when it changes.</p>
 <ul>
@@ -4066,7 +4078,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ul>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#dmx-setting-up">DMX › Setting up</a></p>
 </div></details>
-<details class="entry node" id="chan.mouse_in"><summary><code class="name">chan.mouse_in</code><span class="sum">The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</span></summary>
 <details class="entry node" id="chan.midi_in"><summary><code class="name">chan.midi_in</code><span class="sum">A MIDI controller's faders, knobs, pads and keys, and its MIDI clock as a tempo: every control a channel</span></summary>
 <div class="body">
 <p>A MIDI controller's faders, knobs, pads and keys, and its MIDI clock as a tempo: every control a channel</p>
@@ -4111,6 +4122,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
 </div></details>
+<details class="entry node" id="chan.mouse_in"><summary><code class="name">chan.mouse_in</code><span class="sum">The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</span></summary>
 <div class="body">
 <p>The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</p>
 <p class="note">Follows the show clock: cooks again whenever time moves.</p>
@@ -4398,7 +4410,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the input's name (Helpers &gt; Audio lists them), e.g. <code>Focusrite</code>; empty: the system's default input</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#ndi-sound">NDI › Sound</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="audio.file"><summary><code class="name">audio.file</code><span class="sum">Plays a sound file: music, an atmosphere or a sample, looped or once</span></summary>
 <div class="body">
@@ -4428,7 +4440,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>rate</code></td><td>int</td><td><code>48000</code></td><td>8000 to 192000</td><td>Samples per second of the sound made, whatever the file's rate. out.audio nodes on one device need the same rate; audio.mix converts between rates</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-scrubbing-a-clip">Concepts › Scrubbing a clip</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a>, <a href="#recording-sound">Recording › Sound</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-show-mode">Getting started › Show mode</a>, <a href="#concepts-scrubbing-a-clip">Concepts › Scrubbing a clip</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a>, <a href="#recording-sound">Recording › Sound</a>, <a href="#ndi-sound">NDI › Sound</a></p>
 </div></details>
 <details class="entry node" id="audio.filter"><summary><code class="name">audio.filter</code><span class="sum">Shapes a sound by frequency: removes the highs or the lows, picks out or cuts a band, or turns a range up or down. Every channel is filtered on its own</span></summary>
 <div class="body">
@@ -4522,7 +4534,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>rate</code></td><td>int</td><td><code>0</code></td><td>0 to 192000</td><td>Samples per second of the mix. 0 takes the rate of the first wired input. Inputs at another rate are converted to it</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#recording-not-yet">Recording › Not yet</a></p>
+<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-mixing-rates-and-devices">Audio › Mixing rates and devices</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#recording-not-yet">Recording › Not yet</a>, <a href="#ndi-sound">NDI › Sound</a></p>
 </div></details>
 <details class="entry node" id="audio.null"><summary><code class="name">audio.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
 <div class="body">
@@ -5186,7 +5198,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>latency</code></td><td>float</td><td><code>50</code></td><td>20 to 200 (soft)</td><td>Milliseconds of sound queued ahead of the device, which adds its own buffer on top. Less answers faster; too little and late frames are heard as gaps (audio.status counts them as underruns)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a>, <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-not-yet">Recording › Not yet</a>, <a href="#control-headless-runs">Control › Headless runs</a></p>
+<p class="mentions">Mentioned in: <a href="#helpers-audio">The Helpers window › Audio</a>, <a href="#audio-playing-sound">Audio › Playing sound</a>, <a href="#audio-recording-sound-to-a-file">Audio › Recording sound to a file</a>, <a href="#audio-playing-sound-files">Audio › Playing sound files</a>, <a href="#audio-instruments-and-ambience">Audio › Instruments and ambience</a>, <a href="#recording-sound">Recording › Sound</a>, <a href="#recording-not-yet">Recording › Not yet</a>, <a href="#ndi-sound">NDI › Sound</a>, <a href="#control-headless-runs">Control › Headless runs</a></p>
 </div></details>
 <details class="entry node" id="out.audio_file"><summary><code class="name">out.audio_file</code><span class="sum">Records sound to a WAV file: its input, or everything the out.audio nodes play</span></summary>
 <div class="body">
@@ -5256,12 +5268,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
-<details class="entry node" id="out.ndi"><summary><code class="name">out.ndi</code><span class="sum">Sends a picture over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)</span></summary>
+<details class="entry node" id="out.ndi"><summary><code class="name">out.ndi</code><span class="sum">Sends a picture, and sound if wired, over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)</span></summary>
 <div class="body">
-<p>Sends a picture over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)</p>
+<p>Sends a picture, and sound if wired, over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)</p>
 <h4>Inputs</h4>
 <ul>
 <li><code>in</code> <span class="kind">tex</span>: The picture to send</li>
+<li><code>audio</code> <span class="kind">audio</span>: Sound to send with the picture: any rate from 8000 to 192000 samples per second, up to 16 channels. Pictures and sound then carry the show time, so receivers keep them in step</li>
 </ul>
 <h4>Outputs</h4>
 <p>none</p>
@@ -6034,7 +6047,6 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 </div>
-<div class="group" id="group-mouse">
 <div class="group" id="group-midi">
 <h3>midi</h3>
 <details class="entry command" id="midi.config"><summary><code class="name">midi.config</code><span class="sum">MIDI settings for this run: {enabled?}; off closes every device</span></summary>
@@ -6058,6 +6070,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
 </div></details>
 </div>
+<div class="group" id="group-mouse">
 <h3>mouse</h3>
 <details class="entry command" id="mouse.fake"><summary><code class="name">mouse.fake</code><span class="sum">Stand in for the mouse, for chan.mouse_in: {x?, y?, buttons?: [left, right, middle], wheel?: notches}; x and y in desktop pixels put a fake pointer in place of the real one, {real: true} brings the real one back; wheel turns it by that many notches (up positive)</span></summary>
 <div class="body">

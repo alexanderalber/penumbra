@@ -182,7 +182,7 @@ fn a_source_sent_here_is_received_here() {
     let tex = texture(&gpu, 320, 180, |x, _| [x as f32 / 320.0, 0.2, 0.0, 1.0]);
     let start = Instant::now();
     let full = loop {
-        sender.send(&gpu, &tex, Alpha::Opaque, (60, 1)).unwrap();
+        sender.send(&gpu, &tex, Alpha::Opaque, (60, 1), None).unwrap();
         gpu.poll();
         if let Some(n) = sender.name() {
             break n;
@@ -194,7 +194,7 @@ fn a_source_sent_here_is_received_here() {
     let receiver = crate::Receiver::new(&name, crate::Bandwidth::Highest, "penumbra test", || {}).unwrap();
     let start = Instant::now();
     let picture = loop {
-        sender.send(&gpu, &tex, Alpha::Opaque, (60, 1)).unwrap();
+        sender.send(&gpu, &tex, Alpha::Opaque, (60, 1), None).unwrap();
         gpu.poll();
         if let Some(p) = receiver.take_picture() {
             break p;
@@ -211,4 +211,57 @@ fn a_source_sent_here_is_received_here() {
     let status = receiver.status();
     assert_eq!(status.source.as_deref(), Some(full.as_str()));
     assert!(status.connected && status.frames > 0, "{status:?}");
+}
+
+/// Through the installed runtime: sound sent with the picture comes back with its rate,
+/// channels and samples. Needs NDI Tools or the NDI Runtime.
+#[test]
+#[ignore = "needs the NDI runtime and the local network"]
+fn sound_sent_here_is_received_here() {
+    let gpu = Gpu::headless(AdapterChoice::Software).unwrap();
+    let name = format!("penumbra sound test {}", std::process::id());
+    let mut sender = crate::Sender::new(&name).unwrap();
+    let tex = texture(&gpu, 64, 36, |_, _| [0.2, 0.2, 0.2, 1.0]);
+    let receiver = crate::Receiver::new(&name, crate::Bandwidth::Highest, "penumbra test", || {}).unwrap();
+    receiver.want_audio(true);
+    // 800 samples a frame at 48 kHz and 60 fps: channel 1 counts up, channel 2 is its negative.
+    let block = |n: u32| {
+        let up: Vec<f32> = (0..800).map(|k| ((n * 800 + k) % 1000) as f32 / 1000.0).collect();
+        let down = up.iter().map(|v| -v).collect();
+        vec![up, down]
+    };
+    let start = Instant::now();
+    let mut got: Vec<Vec<f32>> = vec![Vec::new(), Vec::new()];
+    let mut rate = 0;
+    let mut n = 0;
+    while got[0].len() < 4800 {
+        // A tick in 100 ns steps per frame: 166 667.
+        let tc = i64::from(n) * 166_667;
+        sender.send_audio(48_000, block(n), Some(tc)).unwrap();
+        sender.send(&gpu, &tex, Alpha::Opaque, (60, 1), Some(tc)).unwrap();
+        gpu.poll();
+        let _ = receiver.take_picture();
+        let audio = receiver.take_audio();
+        if !audio.channels.is_empty() {
+            assert_eq!(audio.channels.len(), 2, "channels");
+            rate = audio.rate;
+            for (g, c) in got.iter_mut().zip(&audio.channels) {
+                g.extend_from_slice(c);
+            }
+        }
+        assert!(start.elapsed() < Duration::from_secs(20), "too little sound: {} samples", got[0].len());
+        n += 1;
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    assert_eq!(rate, 48_000);
+    assert_eq!(sender.dropped_audio(), 0);
+    // Whatever arrived continues the ramp and mirrors it on the second channel.
+    for w in got[0].windows(2).take(4000) {
+        // The ramp wraps from 0.999 to 0.
+        let step = (w[1] - w[0] + 1.0) % 1.0;
+        assert!((step - 0.001).abs() < 1e-4, "{w:?}");
+    }
+    for (a, b) in got[0].iter().zip(&got[1]) {
+        assert!((a + b).abs() < 1e-6);
+    }
 }

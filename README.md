@@ -112,7 +112,7 @@ lists every one.
 | Text tables | yes | yes | `table.file`, `out.table` | in: CSV, TSV, plain lines. Out: CSV, TSV |
 | Audio | yes | yes | `audio.device_in`, `audio.file`, `out.audio`, `out.audio_file`, `chan.audio_envelope`, `chan.audio_spectrum`, `chan.beat_analysis`, `chan.beat_grid`, `audio.instrument`, `audio.ambience`, `audio.filter` | any device (WASAPI, shared mode). Loudness per channel, a spectrum as numbers or a spectrogram texture, beat and tempo; for a sound file the whole beat grid ahead of time. Output always through a limiter at -1 dBFS; `audio.mute` silences everything. Ready-made instruments and drones in a key and scale, played by channels. A filter for any sound. Sound files (WAV, FLAC, MP3, Ogg, AAC) play in step with video files (the [clips](examples/clips/README.md) example); `out.audio_file` records to WAV |
 | Spout | yes | yes | `tex.spout_in`, `out.spout` | textures shared with other programs on the same machine |
-| NDI® | video and audio | video | `tex.ndi_in`, `out.ndi` | needs the NDI runtime installed |
+| NDI® | video and audio | video and audio | `tex.ndi_in`, `out.ndi` | needs the NDI runtime installed |
 | DMX over USB | | yes | `out.dmx` | Enttec Open DMX USB, one universe |
 | Art-Net | yes | yes | `chan.dmx_in`, `out.dmx` | |
 | sACN (E1.31) | yes | yes | `chan.dmx_in`, `out.dmx` | |

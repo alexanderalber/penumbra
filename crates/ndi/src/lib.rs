@@ -6,8 +6,8 @@
 //! loaded when first needed ([`ffi`]). Without it every sender and receiver fails with a
 //! message saying where to get it, and nothing else is affected.
 //!
-//! - [`Sender`]: a source on the network; the conversion runs on the GPU ([`convert::Packer`]),
-//!   the sending on a thread of its own.
+//! - [`Sender`]: a source on the network, with sound when given; the conversion runs on the GPU
+//!   ([`convert::Packer`]), the sending on a thread of its own.
 //! - [`Receiver`]: one source received on a thread of its own, its newest picture and its
 //!   audio held for the node; [`convert::Unpacker`] turns the picture into a texture.
 //! - [`sources`]: what the network offers, for menus and `ndi.sources`.

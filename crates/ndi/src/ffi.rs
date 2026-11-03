@@ -188,6 +188,7 @@ type SendCreateFn = unsafe extern "C" fn(*const SendCreate) -> Instance;
 type SendVideoFn = unsafe extern "C" fn(Instance, *const RawVideo);
 type SendConnectionsFn = unsafe extern "C" fn(Instance, u32) -> c_int;
 type SendSourceNameFn = unsafe extern "C" fn(Instance) -> *const RawSource;
+type SendAudioFn = unsafe extern "C" fn(Instance, *const RawAudio);
 
 /// The loaded and initialised runtime.
 pub struct Ndi {
@@ -210,6 +211,7 @@ pub struct Ndi {
     send_video: SendVideoFn,
     send_connections: SendConnectionsFn,
     send_source_name: SendSourceNameFn,
+    send_audio: SendAudioFn,
     // Kept for the process: the functions above point into it.
     _lib: libloading::Library,
 }
@@ -268,6 +270,7 @@ impl Ndi {
                 send_video: get(&lib, b"NDIlib_send_send_video_v2\0")?,
                 send_connections: get(&lib, b"NDIlib_send_get_no_connections\0")?,
                 send_source_name: get(&lib, b"NDIlib_send_get_source_name\0")?,
+                send_audio: get(&lib, b"NDIlib_send_send_audio_v3\0")?,
                 _lib: lib,
             })
         }
@@ -641,6 +644,22 @@ pub struct OutFrame<'a> {
     pub data: &'a [u8],
     /// Frames per second, as numerator and denominator.
     pub rate: (u32, u32),
+    /// When the frame is due, in 100 ns units on the sender's own clock. `None` lets the
+    /// runtime make one up from its clock.
+    pub timecode: Option<i64>,
+}
+
+/// The most channels [`Sender::send_audio`] takes.
+pub const MAX_SEND_CHANNELS: usize = 16;
+/// The sample rates [`Sender::send_audio`] takes.
+pub const SEND_RATES: std::ops::RangeInclusive<u32> = 8_000..=192_000;
+
+/// Sound to send: one buffer per channel, all of the same length.
+pub struct OutAudio<'a> {
+    pub rate: u32,
+    pub channels: &'a [Vec<f32>],
+    /// The first sample's time, as [`OutFrame::timecode`].
+    pub timecode: Option<i64>,
 }
 
 /// A source this program offers on the network.
@@ -719,7 +738,7 @@ impl Sender {
             frame_rate_d: frame.rate.1.min(i32::MAX as u32) as c_int,
             aspect: 0.0,
             frame_format: FORMAT_PROGRESSIVE,
-            timecode: TIMECODE_SYNTHESIZE,
+            timecode: frame.timecode.unwrap_or(TIMECODE_SYNTHESIZE),
             // The runtime only reads it.
             data: frame.data.as_ptr().cast_mut(),
             stride: c_int::try_from(frame.stride).map_err(|_| "a row too long to send".to_string())?,
@@ -729,6 +748,49 @@ impl Sender {
         // SAFETY: `handle` is live; `raw` describes `frame.data`, checked above to hold the rows
         // the header expects; the synchronous call is done with the bytes when it returns.
         unsafe { (self.ndi.send_video)(self.handle, &raw const raw) };
+        Ok(())
+    }
+
+    /// Sends one block of sound as planar 32-bit float; returns when the runtime is done with
+    /// it. Refuses a block that is empty, has channels of different lengths, more than
+    /// [`MAX_SEND_CHANNELS`] channels, more than a second of samples or a rate outside
+    /// [`SEND_RATES`].
+    pub fn send_audio(&self, audio: &OutAudio<'_>) -> Result<(), String> {
+        let samples = audio.channels.first().map_or(0, Vec::len);
+        if !SEND_RATES.contains(&audio.rate) {
+            return Err(format!("cannot send sound at {} samples per second", audio.rate));
+        }
+        if audio.channels.len() > MAX_SEND_CHANNELS {
+            return Err(format!(
+                "cannot send {} channels of sound (at most {MAX_SEND_CHANNELS})",
+                audio.channels.len()
+            ));
+        }
+        if samples == 0 || samples > audio.rate as usize || audio.channels.iter().any(|c| c.len() != samples)
+        {
+            return Err("a block of sound that does not add up".into());
+        }
+        let mut planar = Vec::with_capacity(samples * audio.channels.len());
+        for c in audio.channels {
+            planar.extend(c.iter().map(|v| if v.is_finite() { *v } else { 0.0 }));
+        }
+        // `as`: checked above, at most 192 000 samples of 16 channels.
+        let raw = RawAudio {
+            sample_rate: audio.rate as c_int,
+            channels: audio.channels.len() as c_int,
+            samples: samples as c_int,
+            timecode: audio.timecode.unwrap_or(TIMECODE_SYNTHESIZE),
+            fourcc: fourcc::FLTP,
+            // The runtime only reads it.
+            data: planar.as_mut_ptr().cast::<u8>(),
+            stride: (samples * 4) as c_int,
+            metadata: std::ptr::null(),
+            timestamp: 0,
+        };
+        // SAFETY: `handle` is live; `raw` describes `planar`, which holds `channels` planes of
+        // `samples` floats each, one after the other; the synchronous call is done with them
+        // when it returns.
+        unsafe { (self.ndi.send_audio)(self.handle, &raw const raw) };
         Ok(())
     }
 

@@ -2439,11 +2439,12 @@ Outputs: none.
 
 ### out.ndi
 
-Sends a picture over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)
+Sends a picture, and sound if wired, over the network as an NDI® source, to other programs and computers; needs the NDI runtime (ndi.video)
 
 Inputs:
 
 - `in` (tex): The picture to send
+- `audio` (audio): Sound to send with the picture: any rate from 8000 to 192000 samples per second, up to 16 channels. Pictures and sound then carry the show time, so receivers keep them in step
 
 Outputs: none.
 
