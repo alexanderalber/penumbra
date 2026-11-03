@@ -18,8 +18,13 @@
 // long line. Every `roll_bars` bars the tube makes a whole turn around its axis over
 // `roll_length` bars, the next turn the other way; in a drop the turns come twice as often.
 //
+// Gaps: where the twist picture's alpha falls, the tube runs out over a few metres and comes
+// back the same way. The rings thin out (every second ring stays, then every fourth, on the
+// downbeats), the long lines and chevrons fade, and the wall opens from the top down in slats
+// that narrow, so the sky shows through. In the open middle of a gap nothing is left.
+//
 // in0: the stage's twist picture (lane.wgsl, `what` twist): red the lane's swing in metres,
-// alpha the tube (1 where it stands, 0 in a gap).
+// alpha the tube (1 where it stands whole, 0 in the open middle of a gap).
 // Rings and walls: one texel per piece, render 64 x 48; column k is ring k (on beat `whole` - 4
 // + k), row i its piece i of 48 around the tube. A wall piece lies between ring k and ring k + 1.
 // Lines: one texel per piece of a line between two rings, render 64 x 24; column k is the piece
@@ -83,10 +88,44 @@ fn lane_at(y: f32) -> vec4f {
     return select(vec4f(0.0, 0.0, 0.0, 1.0), l, wired);
 }
 
-// The tube between ring k and ring k + 1: 1 where it stands, 0 in a gap. Sampled in the middle
-// between the rings, where the lane picture's texels lie wholly inside that stretch.
-fn tube(k: f32) -> f32 {
-    return clamp(lane_at(ring_y(k) + 0.5 * params.step).a, 0.0, 1.0);
+// The tube `y` metres ahead: 1 where it stands whole, 0 in the open middle of a gap.
+fn tube(y: f32) -> f32 {
+    return clamp(lane_at(y).a, 0.0, 1.0);
+}
+
+// How much of ring k is left where the tube runs out. The rings on odd beats go first, then
+// the one in the middle of the bar, the downbeat's ring last.
+fn ring_left(k: f32) -> f32 {
+    let t = tube(ring_y(k));
+    let bpb = max(params.beats_per_bar, 1.0);
+    let beat = params.whole - BEHIND + k;
+    let q = beat / bpb + params.drift + 0.5 / bpb;
+    let n = i32(floor((q - floor(q)) * bpb));
+    if n == 0 {
+        return smoothstep(0.03, 0.3, t);
+    }
+    if n % 2 == 0 {
+        return smoothstep(0.35, 0.6, t);
+    }
+    return smoothstep(0.65, 0.9, t);
+}
+
+// How much of the long lines and chevrons is left `y` metres ahead.
+fn line_left(y: f32) -> f32 {
+    return smoothstep(0.4, 0.9, tube(y));
+}
+
+// How wide a slat of the wall is `y` metres ahead, as a share of a whole wall, for the slat
+// `s` metres round from the tube's bottom on ring k. Where the tube runs out the wall opens from
+// the top down: the roof goes first, the bottom last, so the tube becomes a trough before it
+// ends. Each slat has a little draw of its own, so the edge is ragged.
+fn wall_left(y: f32, s: f32, k: f32, i: u32) -> f32 {
+    let r = max(params.radius, 0.1);
+    let up = clamp(abs(s) / (PI * r), 0.0, 1.0);
+    let n = bitcast<u32>(i32(params.whole + k));
+    let draw = f32(pn_hash(vec3u(n, i, 17u)).x) / 4294967296.0;
+    let edge = mix(0.05, 0.5, up) + 0.12 * (draw - 0.5);
+    return smoothstep(edge, edge + 0.4, tube(y));
 }
 
 // How far the sheet is rolled up: 0 flat, 1 the tube. The plane's floor gives way first.
@@ -201,10 +240,10 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         if w == what_ring_aim {
             return vec4f(b - a, 1.0);
         }
-        // A ring stands where the tube stands on either side of it.
-        let here = max(tube(k - 1.0), tube(k));
+        // A ring thins out where the tube runs out.
+        let here = ring_left(k);
         if w == what_ring_scale {
-            let on = here >= 0.02;
+            let on = here >= 0.03;
             let t = select(0.0, THIN * params.thickness, on);
             return vec4f(t, select(0.0, length(b - a), on), t, 1.0);
         }
@@ -223,13 +262,13 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         if w == what_wall_aim {
             return vec4f(sheet(s + 0.01, y, WALL_OUT) - sheet(s - 0.01, y, WALL_OUT), 1.0);
         }
-        // The wall shortens from its far end while a gap opens, and closes in slats as the
-        // sheet rolls up.
-        let here = tube(k);
+        // The wall opens from the top down where the tube runs out, its slats narrowing, and
+        // closes in slats as the sheet rolls up.
+        let here = wall_left(y, s, k, cell.y);
         let shut = closing();
         let on = here >= 0.02 && shut > 0.01;
-        let across = width * (r + WALL_OUT) / r * 1.04;
-        return vec4f(select(0.0, params.step * here * shut, on), select(0.0, across, on), 1.0, 1.0);
+        let across = width * (r + WALL_OUT) / r * 1.04 * here;
+        return vec4f(select(0.0, params.step * shut, on), select(0.0, across, on), 1.0, 1.0);
     }
     if w == what_mark_place || w == what_mark_aim || w == what_mark_scale || w == what_mark_light {
         // A chevron every other ring, fixed to the world, its tip pointing ahead.
@@ -247,12 +286,12 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         }
         let shut = closing();
         if w == what_mark_scale {
-            let on = even && cell.y < 2u && tube(k) >= 0.02 && shut > 0.02 && params.marks > 0.0;
+            let on = even && cell.y < 2u && line_left(y) >= 0.03 && shut > 0.02 && params.marks > 0.0;
             let t = select(0.0, THIN * params.thickness, on);
             return vec4f(t, select(0.0, length(b - a), on), t, 1.0);
         }
         let c = warm_cold(vec3f(1.0, 0.3, 0.6), vec3f(0.3, 0.9, 1.0));
-        return vec4f(c * params.marks * (0.25 + 1.1 * bass) * shut * tube(k), 1.0);
+        return vec4f(c * params.marks * (0.25 + 1.1 * bass) * shut * line_left(y), 1.0);
     }
 
     // The long lines.
@@ -269,11 +308,11 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     if w == what_line_aim {
         return vec4f(b - a, 1.0);
     }
-    let here = tube(k);
+    let here = line_left(0.5 * (a.y + b.y));
     let shut = closing();
     if w == what_line_scale {
         // A line crossing the sheet's open edge would span it while the sheet is not closed.
-        let on = shown && here >= 0.02 && shut > 0.02 && length(b - a) < 2.0 * params.step + 1.0;
+        let on = shown && here >= 0.03 && shut > 0.02 && length(b - a) < 2.0 * params.step + 1.0;
         let t = select(0.0, params.thickness, on);
         return vec4f(t, select(0.0, length(b - a), on), t, 1.0);
     }

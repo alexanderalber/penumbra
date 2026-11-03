@@ -8,7 +8,8 @@
 //   red    how far the lane swings across (x, metres)
 //   green  how far it moves sideways per metre ahead (dx / dy)
 //   blue   `step`, metres the world moves per beat, the same in every texel
-//   alpha  the tube there: 1 where it stands, 0 in a gap, between while a gap opens or closes
+//   alpha  the tube there: 1 where it stands whole, 0 in the open middle of a gap, between where
+//          it runs out at a gap's ends or while a gap opens
 // `what` lane: the lane picture for the mid elements, in the same layout. The lane lies straight
 // at the tube's bottom, so red and green are 0. Blue is `step`. Alpha is 0: the tube's bottom is
 // curved, so no floor element can stand on it, and floor elements sink away where alpha is 0.
@@ -21,7 +22,7 @@
 // @param turn float = 4 0.1..8 -- beats a turn takes
 // @param swing float = 1.5 0..5 -- how far the lane swings to either side at most, in metres
 // @param origin float = 11 1..50 -- metres ahead where the lane's turns are counted: a corner passes there on a downbeat
-// @param gap float = 0 0..1 -- share of the tube that breaks off into gaps: 0 none, 1 all of it
+// @param gap float = 0 0..1 -- share of the tube that runs out into gaps: 0 none, 1 all of it
 // @param gap_length float = 8 1..40 -- metres a gap runs along the tube, rounded to whole bars
 
 const LANE_NEAR: f32 = -8.0;
@@ -98,22 +99,43 @@ fn lane_slope(c: f32) -> f32 {
 
 // Share of a gap's growth over which it opens: a gap fades in as `gap` rises past its draw.
 const GAP_SOFT: f32 = 0.08;
+// How far the tube runs out at each end of a gap: this share of the gap's length, at most
+// `RUN_OUT_MOST` metres. The middle of a gap is open sky.
+const RUN_OUT_SHARE: f32 = 0.4;
+const RUN_OUT_MOST: f32 = 4.0;
 
-// The tube at the point that passes the camera when `travelled` is `c` beats: 1 where it stands,
-// 0 in a gap. The tube is cut into stretches of whole bars, each about `gap_length` long; a
-// stretch is a gap when its draw lies under `gap`. The bar is taken at the middle of the point's
-// beat, so the wall between two rings is wholly in or out.
+// How far stretch `i` is open: 0 the tube, 1 a gap. A stretch is a gap when its draw lies under
+// `gap`.
+fn opened(i: f32) -> f32 {
+    let draw = f32(pn_hash(vec3u(bitcast<u32>(i32(i)), 23u, 5u)).x) / 4294967296.0;
+    return smoothstep(0.0, GAP_SOFT, params.gap * (1.0 + GAP_SOFT) - draw);
+}
+
+// The tube at the point that passes the camera when `travelled` is `c` beats: 1 where it stands
+// whole, 0 in the open middle of a gap, between where it runs out. The tube is cut into
+// stretches of whole bars, each about `gap_length` long, so a gap starts on a bar. Over the
+// first and last metres of a gap the tube fades: the stage thins out its rings and fades its
+// lines and wall there. Where two gaps follow each other the tube does not come back between
+// them.
 fn ground(c: f32) -> f32 {
     if params.gap <= 0.0 {
         return 1.0;
     }
     let bpb = max(params.beats_per_bar, 1.0);
-    let bars = max(round(params.gap_length / max(bpb * params.step, 0.01)), 1.0);
-    let bar = floor((floor(c) + 0.5) / bpb + params.drift);
-    let stretch = floor(bar / bars);
-    let draw = f32(pn_hash(vec3u(bitcast<u32>(i32(stretch)), 23u, 5u)).x) / 4294967296.0;
-    let open = smoothstep(0.0, GAP_SOFT, params.gap * (1.0 + GAP_SOFT) - draw);
-    return 1.0 - open;
+    let step = max(params.step, 0.01);
+    let bars = max(round(params.gap_length / (bpb * step)), 1.0);
+    let at = (c / bpb + params.drift) / bars;
+    let stretch = floor(at);
+    let f = at - stretch;
+    let open = opened(stretch);
+    if open <= 0.0 {
+        return 1.0;
+    }
+    let span = bars * bpb * step;
+    let ramp = max(min(RUN_OUT_SHARE * span, RUN_OUT_MOST), 0.01);
+    let from_start = mix(smoothstep(0.0, ramp, f * span), 1.0, opened(stretch - 1.0));
+    let to_end = mix(smoothstep(0.0, ramp, (1.0 - f) * span), 1.0, opened(stretch + 1.0));
+    return 1.0 - open * min(from_start, to_end);
 }
 
 @fragment

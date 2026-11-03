@@ -414,8 +414,11 @@ rolling the plane up above).
   meaning for the tube: 0 low flight at 1.8 m, 1 higher and looking down for a build, 2 high and
   wide for a drop (3.4 m, 76 degrees), 3 still and nearly level for a break, 4 and 5 two tilted
   variants.
-- Gaps: `gap` and `gap_length` as on `stage_synthwave`: stretches of the tube break off, and
-  the sky shows through them.
+- Gaps: `gap` and `gap_length` as on `stage_synthwave`: stretches of the tube run out, and the
+  sky shows through them. A gap starts on a bar. Over its first and last metres (at most 4 m) the
+  rings thin out: every second ring stays, then every fourth, on the downbeats. The long lines
+  and chevrons fade, and the wall opens from the top down in narrowing slats. In the middle of
+  the gap nothing is left, and the tube comes back the same way.
 
 ### stage_ascent
 
@@ -522,6 +525,27 @@ stays free: prisms at its edge shrink whole. The bodies hide the lines behind th
   fills; 1 without a gap), `lowest`, `tallest` (metres), `hills` (metres between two hills: smaller
   is more broken), `pulse` (how far they rise on a beat), `lane` (1.6), `near`, `far`, `color`,
   `line_width`, `extent`.
+
+### floor_hexgap
+
+![floor_hexgap](floor_hexgap/preview.png)
+
+Split hexagonal pillars beside the lane. Each pillar is a base standing on the floor and a
+counterpart hanging from the ceiling, with open air between them. The pillars stand where
+`floor_pillars` puts its pillars: in lines on both sides of the lane, one every `spacing` bars
+of travel. Every pillar has a gap of its own: its middle lies between 1.2 and 3 m up, and it is
+0.3 to 1 m tall. On each beat the gaps open a little. The bodies hide the lines behind them.
+`hexgap.py` in the folder writes the model.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (towards 0 the bases sink into the floor and the counterparts into the
+  ceiling, one pillar after another; at a steady presence a pillar stands whole or not at all),
+  `ceiling` (the ceiling's height the counterparts hang from, 4 m), `seed` (other gaps), `low`,
+  `high` (the lowest and highest middle of a gap, 1.2 and 3 m), `narrow`, `wide` (the smallest
+  and largest gap, 0.3 and 1 m), `pulse` (how far a gap opens on a beat, as a share of its
+  height), `spacing`, `width`, `rows`, `gap` (metres between lines), `lane` (1.6), `near`, `far`,
+  `beats_per_bar`, `color`, `line_width`, `extent`. A pillar over a gap in the floor is left out
+  whole, both parts.
 
 ### floor_waves
 
