@@ -3,7 +3,6 @@
 // Its colour runs from top to bottom through a warm gradient (yellow, orange, magenta) or a cold
 // one (cyan, blue, violet). Nothing below the horizon. Black where the sky is empty, so it can
 // be screened over another sky.
-// @param horizon float = 0.68 0..1 -- where the horizon lies, 0 the picture's top, 1 its bottom (the stage's floor grid ends at 0.68 with its default fade)
 // @param above float = 0.2 -0.5..1 -- how far the sun's centre stands above the horizon, in picture heights
 // @param size float = 0.26 0.02..1 -- the sun's radius, in picture heights
 // @param lines int = 8 0..24 -- dark lines across the lower half
@@ -14,19 +13,41 @@
 // @param warmth float = 0 0..1 -- 0 the warm gradient, 1 the cold one, as the stage's palette
 // @param brightness float = 1 0..3 -- the whole picture's light
 // @param presence float = 1 0..1 -- how much of the sun is there: 1 all of it, 0 nothing (a dark sky)
+// @param eye float = 1.5 0..10 -- the camera's height over the floor, metres (bind it to height of the stage's pose)
+// @param pitch float = -2 -60..60 -- the camera's tilt up, degrees (pitch of the stage's pose)
+// @param fov float = 60 10..120 -- the camera's vertical field of view, degrees (fov of the stage's pose)
+// @param roll float = 0 -45..45 -- the camera's roll, degrees (roll of the stage's pose)
+// @param side float = 0 -45..45 -- the camera's turn to the right, degrees (side of the stage's pose)
+// @param reach float = 10 1..100 -- metres ahead where the floor fades out, the stage's `end`: the horizon lies there
+
+// Where this pixel lies in the sky, in picture heights of a 60 degree view: x from straight ahead,
+// y up from the horizon. The horizon is where the floor fades out, `reach` metres ahead, as the
+// camera sees it: it moves with the camera's height, pitch, roll and turn, and things in the sky
+// keep their size in degrees when the field of view changes. `.z`: one pixel in the same unit.
+fn sky_at(px: vec2f) -> vec3f {
+    let res = pn.resolution;
+    let t = tan(radians(0.5 * clamp(params.fov, 1.0, 170.0)));
+    // Tangents of the angle from the view's middle, y up.
+    let q = vec2f((px.x - 0.5 * res.x) / res.y, 0.5 - px.y / res.y) * 2.0 * t;
+    let r = radians(-params.roll);
+    let p = vec2f(cos(r) * q.x - sin(r) * q.y, sin(r) * q.x + cos(r) * q.y);
+    let down = atan(max(params.eye, 0.0) / max(params.reach, 0.1)) + radians(params.pitch);
+    let unit = 2.0 * tan(radians(30.0));
+    return vec3f(vec2f(p.x + tan(radians(params.side)), p.y + tan(down)) / unit, 2.0 * t / (res.y * unit));
+}
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
-    let res = pn.resolution;
-    // In picture heights, x from the middle, y up from the horizon.
-    let p = vec2f((v.pos.x - 0.5 * res.x) / res.y, params.horizon - v.pos.y / res.y);
+    // In picture heights of a 60 degree view, x from straight ahead, y up from the horizon.
+    let at = sky_at(v.pos.xy);
+    let p = at.xy;
     let energy = clamp(params.energy, 0.0, 1.0);
     let flash = clamp(params.flash, 0.0, 1.0);
     let r = max(params.size, 0.001) * (1.0 + 0.03 * energy);
     let q = (p - vec2f(0.0, params.above)) / r;
     let d = length(q);
     // A soft edge one pixel wide.
-    let edge = 1.5 / (r * res.y);
+    let edge = 1.5 * at.z / r;
     var disc = 1.0 - smoothstep(1.0 - edge, 1.0 + edge, d);
 
     // The lines: in the lower half, each band a little wider than the one above it.
@@ -36,7 +57,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         let t = below * n + fract(params.beats / 8.0);
         let f = fract(t);
         let cut = mix(0.1, 0.6, clamp(below, 0.0, 1.0));
-        let aa = 1.5 * n / (r * res.y);
+        let aa = 1.5 * n * at.z / r;
         // Dark where the band begins, lit after `cut`; soft at both ends against aliasing.
         let lit = smoothstep(cut - aa, cut + aa, f) * (1.0 - smoothstep(1.0 - aa, 1.0, f));
         disc *= mix(1.0, lit, smoothstep(0.0, 0.08, below));
@@ -55,6 +76,6 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     var light = colour * disc * (0.85 + 0.35 * energy + 0.6 * flash) + mid * halo * (0.7 + 0.5 * energy);
 
     // Nothing below the horizon: the floor stands there. A thin soft line keeps the cut clean.
-    light *= smoothstep(-1.5 / res.y, 1.5 / res.y, p.y);
+    light *= smoothstep(-1.5 * at.z, 1.5 * at.z, p.y);
     return vec4f(light * params.brightness * clamp(params.presence, 0.0, 1.0), 1.0);
 }

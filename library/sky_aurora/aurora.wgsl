@@ -4,7 +4,6 @@
 // colour runs from the hem upwards through a warm gradient (orange, pink, magenta) or a cold
 // one (green, cyan, violet). Nothing below the horizon. Black where the sky is empty, so it can
 // be screened over another sky.
-// @param horizon float = 0.68 0..1 -- where the horizon lies, 0 the picture's top, 1 its bottom (the stage's floor grid ends at 0.68 with its default fade)
 // @param bands int = 3 1..5 -- curtains, one above the other
 // @param hang float = 0.22 0..1 -- how high the lowest curtain hangs above the horizon, in picture heights; the others hang above it
 // @param speed float = 0.02 0..0.5 -- how fast the curtains drift and fold, per beat travelled
@@ -14,6 +13,12 @@
 // @param warmth float = 0 0..1 -- 0 the warm gradient, 1 the cold one, as the stage's palette
 // @param brightness float = 1 0..3 -- the whole picture's light
 // @param presence float = 1 0..1 -- how much of the aurora is there: 1 all of it, 0 nothing (a dark sky)
+// @param eye float = 1.5 0..10 -- the camera's height over the floor, metres (bind it to height of the stage's pose)
+// @param pitch float = -2 -60..60 -- the camera's tilt up, degrees (pitch of the stage's pose)
+// @param fov float = 60 10..120 -- the camera's vertical field of view, degrees (fov of the stage's pose)
+// @param roll float = 0 -45..45 -- the camera's roll, degrees (roll of the stage's pose)
+// @param side float = 0 -45..45 -- the camera's turn to the right, degrees (side of the stage's pose)
+// @param reach float = 10 1..100 -- metres ahead where the floor fades out, the stage's `end`: the horizon lies there
 
 fn hash1(i: f32, seed: u32) -> f32 {
     return f32(pn_hash(vec3u(bitcast<u32>(i32(i)), seed, 3u)).x) / 4294967296.0;
@@ -39,11 +44,26 @@ fn fbm1(x: f32, seed: u32) -> f32 {
     return sum;
 }
 
+// Where this pixel lies in the sky, in picture heights of a 60 degree view: x from straight ahead,
+// y up from the horizon. The horizon is where the floor fades out, `reach` metres ahead, as the
+// camera sees it: it moves with the camera's height, pitch, roll and turn, and things in the sky
+// keep their size in degrees when the field of view changes. `.z`: one pixel in the same unit.
+fn sky_at(px: vec2f) -> vec3f {
+    let res = pn.resolution;
+    let t = tan(radians(0.5 * clamp(params.fov, 1.0, 170.0)));
+    // Tangents of the angle from the view's middle, y up.
+    let q = vec2f((px.x - 0.5 * res.x) / res.y, 0.5 - px.y / res.y) * 2.0 * t;
+    let r = radians(-params.roll);
+    let p = vec2f(cos(r) * q.x - sin(r) * q.y, sin(r) * q.x + cos(r) * q.y);
+    let down = atan(max(params.eye, 0.0) / max(params.reach, 0.1)) + radians(params.pitch);
+    let unit = 2.0 * tan(radians(30.0));
+    return vec3f(vec2f(p.x + tan(radians(params.side)), p.y + tan(down)) / unit, 2.0 * t / (res.y * unit));
+}
+
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
-    let res = pn.resolution;
-    // In picture heights, x from the middle, y up from the horizon.
-    let p = vec2f((v.pos.x - 0.5 * res.x) / res.y, params.horizon - v.pos.y / res.y);
+    // In picture heights of a 60 degree view, x from straight ahead, y up from the horizon.
+    let p = sky_at(v.pos.xy).xy;
     if p.y < -0.01 {
         return vec4f(0.0, 0.0, 0.0, 1.0);
     }

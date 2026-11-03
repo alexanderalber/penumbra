@@ -256,14 +256,15 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
 - **Mid elements** fly in front of the camera, on the lane. They take `bus` and `lane` too. Their
   output goes into the stage's `mid`; several go through a `geo.merge`.
 - **Ceiling elements** hang from the ceiling grid, 4 m above the floor. They take `bus` and
-  `lane` and give geometry, as floor elements do. Their output goes into the stage's `ceiling`.
-  Towards `presence` 0 they draw up into the ceiling.
+  `lane` and give geometry, as floor elements do. Their output goes into the stage's `ceiling`;
+  several go through a `geo.merge`. Towards `presence` 0 they draw up into the ceiling. Over the
+  lane they stay above 3.2 m, so the glider and the camera pass under them at every preset.
+  Anything that hangs lower stays beside the lane.
 - **Sky elements** draw a picture over black. Their output goes into the stage's `sky`, screened
   over the nebula. Several go through a `tex.composite` with `op: screen`. The sky lies behind
   everything the stage renders: the solid bodies of floor and mid elements are black and hide
-  it. Screening only adds light, so a sky element cannot darken the nebula. `sky_planet`,
-  `sky_bars`, `sky_city`, `sky_figure` and `sky_eyes` also take the stage's `pose`, so their
-  horizon moves with the camera.
+  it. Screening only adds light, so a sky element cannot darken the nebula. Every sky element
+  except `sky_galaxy` also takes the stage's `pose`, so its horizon moves with the camera.
 - **Post elements** change the finished picture. Each takes a picture in `in` and `bus`, and
   gives the changed picture in `out`. Chain them after the stage's `out`: stage, then
   `post_scanlines`, then the next one, then the output. At `presence` 0 a post element passes the
@@ -550,6 +551,70 @@ closed and made of 192 short segments. Towards `presence` 0 the line shortens un
   towards the camera), `grow` (how much the bass enlarges it), `kick` (turns per beat),
   `smooth` (seconds the levels take to fall), `thickness`, `color`, `line_width`.
 
+### ceiling_curtains
+
+![ceiling_curtains](ceiling_curtains/preview.png)
+
+Curtains of wireframe cloth hanging from the ceiling across the lane. A curtain hangs every 2
+bars of travel, so one passes the camera on every second downbeat. Each curtain is a row of 25
+strips, and a wave runs down each strip. The mids make the cloth swing wider. Over the lane the
+strips hang 0.7 m, so the camera flies under them. Beside the lane they hang 2.4 m. The strips
+are lines only, so flying through them hides nothing.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `ceiling`).
+- Params: `presence` (towards 0 the strips draw up into the ceiling one after another),
+  `spacing` (bars between two curtains), `strips` (3 to 32), `pitch` (metres from strip to
+  strip), `fill` (share of the pitch a strip covers), `short` (metres a strip hangs over the
+  lane, at most 0.8), `long` (metres beside the lane), `open` (metres from the lane's middle
+  where the strips grow longer), `foot` (metres over which they grow), `wave` (degrees the hem
+  swings at full mids), `calm` (share of the swing left in quiet mids), `waves` (waves from top
+  to hem), `flow` (waves per beat), `ceiling` (its height, 4 m), `near`, `far`, `beats_per_bar`,
+  `smooth` (seconds the mids take to fall), `color`, `line_width`, `extent`.
+
+### ceiling_shafts
+
+![ceiling_shafts](ceiling_shafts/preview.png)
+
+Shafts of light falling slanted from openings in the ceiling, beside the lane. A shaft stands
+every bar of travel, by turns left and right of the lane, so one passes the camera on each
+downbeat. Each shaft is a bright square in the ceiling and a cone of 16 rays, leaning outwards
+and towards the camera. The rays grow dimmer towards the floor, and a ring marks where the light
+meets it. Dust drifts down inside each cone and glints. The treble brightens the light. The
+palette's warmth turns the light from warm white to cold blue. `shafts.py` in the folder writes
+the models.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `ceiling`).
+- Params: `presence` (towards 0 the shafts draw up into the ceiling one after another),
+  `spacing` (bars between two shafts), `size` (the cone's radius at the floor, metres), `narrow`
+  (its radius at the ceiling, as a share of `size`), `slant` (degrees from straight down),
+  `outwards` (degrees the lean turns from towards the camera to away from the lane), `lane` (1.6),
+  `clear` (metres between the lane's edge and the nearest ray), `base` (the light without
+  treble), `gain` (the light the full treble adds), `warmth`, `dust` (motes per shaft, 0 to 32),
+  `mote` (a mote's size, metres), `fall` (how fast the dust sinks), `fade` and `gone` (metres
+  ahead where the light starts to fade and where it is gone), `ceiling`, `near`, `far`,
+  `beats_per_bar`, `smooth` (seconds the treble takes to fall), `line_width`, `extent`.
+
+### ceiling_lights
+
+![ceiling_lights](ceiling_lights/preview.png)
+
+Two rows of lamps under the ceiling, one on each side of the lane. A running light switches
+along each row: on every beat the next lamp ahead lights up. The lamps behind it glow on dimmer
+for a few beats. The light runs away from the camera, faster than the floor comes towards it.
+The pattern repeats every 8 lamps, and the right row runs half a pattern behind the left one.
+Each lamp of a pattern has its own colour from the warm or cold palette. In a drop every lamp is
+on, and the drop's flash lights them all up. A lit lamp sends short rays down. `lamp.py` in the
+folder writes the models.
+
+- In: `bus` (it reads `beat_index`, `section_role` and `drop`), `lane`. Out: `out` (into the
+  stage's `ceiling`).
+- Params: `presence` (towards 0 the lamps draw up into the ceiling one after another), `spacing`
+  (beats of travel between two lamps), `period` (lamps from one running light to the next),
+  `trail` (dimmer lamps behind it, 0 to 4), `apart` (metres from the lane's middle to each row),
+  `size` (1 hangs 0.73 m and its rays reach 1 m down; at most 1.2), `idle` (a dark lamp's light),
+  `full` (every lamp's light in a drop), `glow` (the rays' light), `warmth`, `ceiling`, `near`,
+  `far`, `line_width`, `extent`.
+
 ### sky_galaxy
 
 ![sky_galaxy](sky_galaxy/preview.png)
@@ -570,11 +635,11 @@ The synthwave sun: a big disc standing on the floor's far edge, with dark lines 
 half that widen towards the bottom and drift slowly down. A glow lies around it. The bass
 brightens it and swells it a little, a drop makes it flash.
 
-- In: `bus`. Out: `out`.
+- In: `bus`, `pose` (the stage's: the horizon moves with the camera). Out: `out`.
 - Params: `presence` (towards 0 the sun dims to a dark sky), `brightness`, `warmth` (0 yellow to
-  magenta, 1 cyan to violet, as on the stage), `size` (radius, in picture heights), `height` (its
-  centre over the horizon, in picture heights), `lines`, `glow`, `horizon` (where the floor ends,
-  0.68 of the picture's height with the stage's default fade; move it with the stage's `end`).
+  magenta, 1 cyan to violet, as on the stage), `size` (radius, in picture heights of a 60 degree
+  view), `height` (its centre over the horizon, in the same unit), `lines`, `glow`, `reach`
+  (metres ahead where the floor ends: the stage's `end`, 10).
 
 ### sky_aurora
 
@@ -584,11 +649,11 @@ Curtains of light over the horizon: bands hang one above the other, each a brigh
 rays rising from it. They drift sideways and fold slowly as the world travels. The treble
 brightens them.
 
-- In: `bus`. Out: `out`.
+- In: `bus`, `pose` (the stage's). Out: `out`.
 - Params: `presence` (towards 0 the curtains dim to a dark sky), `brightness`, `warmth` (0 orange
   to magenta, 1 green to violet, as on the stage), `bands` (1 to 5), `height` (the lowest hem over
-  the horizon, in picture heights), `speed` (per beat travelled), `glow`, `horizon` (as on
-  `sky_sun`).
+  the horizon, in picture heights of a 60 degree view), `speed` (per beat travelled), `glow`,
+  `reach` (as on `sky_sun`).
 
 ### sky_planet
 

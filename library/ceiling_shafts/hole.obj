@@ -1,0 +1,7 @@
+# The opening of a light shaft for ceiling_shafts: a square one unit across in the plane
+# z = 0, centred on the origin. Written by shafts.py.
+v -0.5 -0.5 0
+v 0.5 -0.5 0
+v 0.5 0.5 0
+v -0.5 0.5 0
+f 1 2 3 4

@@ -1,0 +1,11 @@
+# The hem of a curtain strip for ceiling_curtains: a thin prism across x from -0.5 to 0.5 at
+# z = -1, the lower edge of the last segment. Written by curtains.py.
+v -0.5000 0.0000 -0.9960
+v -0.5000 0.0040 -1.0020
+v -0.5000 -0.0040 -1.0020
+v 0.5000 0.0000 -0.9960
+v 0.5000 0.0040 -1.0020
+v 0.5000 -0.0040 -1.0020
+f 1 2 5 4
+f 2 3 6 5
+f 3 1 4 6

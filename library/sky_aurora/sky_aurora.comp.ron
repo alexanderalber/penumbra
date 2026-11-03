@@ -3,9 +3,10 @@
 (
     version: 2,
     nodes: {
-        "/sky_aurora": (kind: "comp.base", params: {"expose": "presence = aurora.presence\nbrightness = aurora.brightness\nwarmth = aurora.warmth\nbands = aurora.bands\nheight = aurora.hang\nspeed = aurora.speed\nglow = aurora.glow\nhorizon = aurora.horizon"}),
+        "/sky_aurora": (kind: "comp.base", params: {"expose": "presence = aurora.presence\nbrightness = aurora.brightness\nwarmth = aurora.warmth\nbands = aurora.bands\nheight = aurora.hang\nspeed = aurora.speed\nglow = aurora.glow\nreach = aurora.reach"}),
         "/sky_aurora/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
-        "/sky_aurora/aurora": (kind: "tex.shader", params: {"bands": 3, "brightness": 1.0, "file": "library/sky_aurora/aurora.wgsl", "glow": 1.0, "hang": 0.22, "horizon": 0.68, "presence": 1.0, "resolution": "custom", "speed": 0.02, "warmth": 0.0}, binds: {"beats": "bus:travelled", "energy": "bus:energy_high"}, pos: [-300.0, 0.0]),
+        "/sky_aurora/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
+        "/sky_aurora/aurora": (kind: "tex.shader", params: {"bands": 3, "brightness": 1.0, "file": "library/sky_aurora/aurora.wgsl", "glow": 1.0, "hang": 0.22, "presence": 1.0, "resolution": "custom", "speed": 0.02, "warmth": 0.0}, binds: {"eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "beats": "bus:travelled", "energy": "bus:energy_high"}, pos: [-300.0, 0.0]),
         "/sky_aurora/out": (kind: "tex.out", inputs: {"in": "aurora"}, pos: [0.0, 0.0]),
     },
 )

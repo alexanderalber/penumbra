@@ -1,0 +1,20 @@
+# A segment of a curtain strip for ceiling_curtains: its two side edges at x = -0.5 and 0.5,
+# from the origin's height one unit down along -z, each a thin prism. Written by curtains.py.
+v -0.4960 0.0000 0.0000
+v -0.5020 0.0040 0.0000
+v -0.5020 -0.0040 0.0000
+v -0.4960 0.0000 -1.0000
+v -0.5020 0.0040 -1.0000
+v -0.5020 -0.0040 -1.0000
+v 0.5040 0.0000 0.0000
+v 0.4980 0.0040 0.0000
+v 0.4980 -0.0040 0.0000
+v 0.5040 0.0000 -1.0000
+v 0.4980 0.0040 -1.0000
+v 0.4980 -0.0040 -1.0000
+f 1 2 5 4
+f 2 3 6 5
+f 3 1 4 6
+f 7 8 11 10
+f 8 9 12 11
+f 9 7 10 12
