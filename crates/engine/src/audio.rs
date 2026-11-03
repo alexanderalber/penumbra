@@ -140,16 +140,18 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
          e.g. \"/stages.index\" of a tex.switch; on a tex.cross it fades), intensity? (a param that gets \
          intensity, e.g. \"/stage.dim\"), fade_min? (s, default 2: the shortest fade from one row into the \
-         next, also where the music cuts)}. The table has a row per section: start, end, role, change, the \
+         next, also where the music cuts), gaps? ({build?, break?}: the share of the floor in gaps, default \
+         0.3 in a build and 0.6 in a break)}. The table has a row per section: start, end, role, change, the \
          presence of each element (the column is named as the element), warmth, intensity, camera (the \
          stage's camera preset: low in a main section, higher in a build, high and wide on a drop, level in \
-         a break, a variant per track) and stage (changes only at a track start with change 0.8 or more, \
-         at most once in 8 minutes). A strong boundary into a main section may leave the stage and one slot \
+         a break, a variant per track), stage (changes only at a track start with change 0.8 or more, \
+         at most once in 8 minutes) and gaps (the share of the floor broken off: only in a build and a \
+         break). A strong boundary into a main section may leave the stage and one slot \
          alone, drawn from the section's seed. Edit the table by hand to override a row. The sequence gets a \
          step per row, its clock on the grid's seconds. Beside the table it creates or updates <table>_now, \
          _plus, _next, _diff, _ramp, _mix, _half, _snap, _jump and _pick; _mix has a channel per column that \
          moves through each fade, _pick jumps to the next row half way through it. Binds each element's \
-         presence, warmth, camera and switch to them, and intensity. Run it again after the file changes: \
+         presence, warmth, camera, gap (on a stage that has it) and switch to them, and intensity. Run it again after the file changes: \
          it overwrites the table",
         beats_arrange,
     );
@@ -740,8 +742,27 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         switch: Option<ParamPath>,
         intensity: Option<ParamPath>,
         fade_min: Option<f64>,
+        gaps: Option<GapShares>,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct GapShares {
+        build: Option<f64>,
+        #[serde(rename = "break")]
+        brk: Option<f64>,
     }
     let a: A = args(p)?;
+    let mut gaps = arrange::Gaps::default();
+    if let Some(g) = &a.gaps {
+        for (value, slot, name) in [(g.build, &mut gaps.build, "build"), (g.brk, &mut gaps.brk, "break")] {
+            if let Some(v) = value {
+                if !v.is_finite() || !(0.0..=1.0).contains(&v) {
+                    return Err(CommandError(format!("gaps.{name} is a share of the floor from 0 to 1")));
+                }
+                *slot = v;
+            }
+        }
+    }
     let stages: Vec<NodePath> = match a.stage {
         None => Vec::new(),
         Some(Stages::One(p)) => vec![p],
@@ -868,7 +889,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         })
         .collect();
     let end = s.envelopes.as_ref().map_or(0.0, |env| env.len() as f64 * env.hop_seconds());
-    let rows = arrange::rows(&parts, &slots, stages.len());
+    let rows = arrange::rows_with(&parts, &slots, stages.len(), gaps);
     let table = arrange::table(&slots, &rows);
     if table.len() > penumbra_core::param::MAX_TEXT {
         return Err(CommandError(format!("{} rows do not fit into a table.text", rows.len())));
@@ -998,6 +1019,11 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     for path in stages.iter().filter(|p| has_param(e, &net, p, "camera")) {
         ops.push(bind_to(param_of(path, "camera")?, pick, "camera")?);
         bound.push(format!("{path}.camera"));
+    }
+    // The gaps fade in and out with the rows, on every stage that has them.
+    for path in stages.iter().filter(|p| has_param(e, &net, p, "gap")) {
+        ops.push(bind_to(param_of(path, "gap")?, mix, "gaps")?);
+        bound.push(format!("{path}.gap"));
     }
     if let Some(target) = &a.switch {
         // A cross fades between two stages through the fade; anything else takes the index.

@@ -692,6 +692,8 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         (json!({"stage": "/n"}), "no param warmth"),
         (json!({"intensity": "/stage.nope"}), "no param nope"),
         (json!({"fade_min": -1.0}), "fade_min"),
+        (json!({"gaps": {"break": 1.5}}), "gaps.break"),
+        (json!({"gaps": {"wide": 1.0}}), "wide"),
         (json!({"switch": "/stage.dim"}), "switch picks between stages"),
         (json!({"stage": ["/stage", "/n"]}), "no param warmth"),
         (json!({"extra": 1}), "extra"),
@@ -712,6 +714,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
             "/stage.warmth",
             "/galaxy.warmth",
             "/stage.camera",
+            "/stage.gap",
             "/stage.dim"
         ]),
         "{r}"
@@ -722,7 +725,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     let table = param(&f.call("node.info", json!({"path": "/arrangement"})), "text");
     let lines: Vec<&str> = table.as_str().unwrap().lines().collect();
     assert_eq!(
-        lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage",
+        lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps",
         "{table}"
     );
     assert_eq!(lines.len(), 5, "{table}");
@@ -744,6 +747,16 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     // The camera preset jumps half way through a fade; the stage glides to it.
     let preset = f.call("node.info", json!({"path": "/stage/preset"}));
     assert_eq!(preset["binds"], json!([{"param": "row", "from": "/arrangement_pick:camera"}]), "{preset}");
+    // The floor's gaps fade with the rows.
+    let lane = f.call("node.info", json!({"path": "/stage/lane_map"}));
+    assert!(
+        lane["binds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["param"] == "gap" && b["from"] == "/arrangement_mix:gaps"),
+        "{lane}"
+    );
     // The readers give a channel per number column, the role left out, all at the row the
     // show stands at.
     f.call("node.watch", json!({"path": "/arrangement_mix"}));
@@ -765,6 +778,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
                 "intensity",
                 "camera",
                 "stage",
+                "gaps",
             ]
             && (0.0..=1.0).contains(&channel(&m, "galaxy"))
     });
@@ -779,7 +793,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         }
     });
     // Again, with a weight: nothing new is created, the table is written again.
-    let weighted = json!({"fade_min": 0.5, "slots": {"floor": ["/blocks", {"path": "/mountains", "weight": 3}], "sky": ["/galaxy"]}});
+    let weighted = json!({"fade_min": 0.5, "gaps": {"build": 0.5, "break": 0.0}, "slots": {"floor": ["/blocks", {"path": "/mountains", "weight": 3}], "sky": ["/galaxy"]}});
     let again = f.call("beats.arrange", args(weighted));
     assert_eq!(again["created"], json!([]), "{again}");
     assert_eq!(again["rows"], 4, "{again}");

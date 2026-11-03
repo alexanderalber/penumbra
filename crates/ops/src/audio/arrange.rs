@@ -31,6 +31,9 @@
 //!   a break, and a variant per track in an intro, an outro and a main section that starts a track.
 //! - **Stage:** with several stages, the row says which one shows. It changes only where a track
 //!   starts with a `change` of at least [`STAGE_CHANGE`], and at most once per [`STAGE_GAP`].
+//! - **Gaps:** the row says how much of the floor breaks off into gaps: [`GAPS_BUILD`] in a
+//!   build, [`GAPS_BREAK`] in a break, none elsewhere. The caller may give other shares
+//!   ([`Gaps`]).
 //!
 //! The rows go into a `table.text` and a `chan.sequence` with one step per row, its clock on the
 //! file's seconds, so the user can edit the table by hand and the picture follows the edit.
@@ -88,9 +91,38 @@ pub const CAMERA_VARIANTS: [usize; 2] = [4, 5];
 pub const STAGE_CHANGE: f64 = 0.8;
 /// The least time between two switches of the stage, in seconds; the file's start counts as one.
 pub const STAGE_GAP: f64 = 480.0;
+/// The share of the floor in gaps during a build.
+pub const GAPS_BUILD: f64 = 0.3;
+/// The share of the floor in gaps during a break.
+pub const GAPS_BREAK: f64 = 0.6;
+
+/// How much of the floor breaks off into gaps, per role: a share from 0 to 1 for a build and a
+/// break; every other role keeps its floor whole.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gaps {
+    pub build: f64,
+    pub brk: f64,
+}
+
+impl Default for Gaps {
+    fn default() -> Gaps {
+        Gaps { build: GAPS_BUILD, brk: GAPS_BREAK }
+    }
+}
+
+impl Gaps {
+    /// The share of the floor in gaps for a section of `role`.
+    pub fn of(&self, role: Role) -> f64 {
+        match role {
+            Role::Build => unit(self.build),
+            Role::Break => unit(self.brk),
+            Role::Intro | Role::Outro | Role::Main | Role::Drop => 0.0,
+        }
+    }
+}
 /// The columns before the elements and after them.
 pub const LEADING: [&str; 4] = ["start", "end", "role", "change"];
-pub const TRAILING: [&str; 4] = ["warmth", "intensity", "camera", "stage"];
+pub const TRAILING: [&str; 5] = ["warmth", "intensity", "camera", "stage", "gaps"];
 /// The piece every step names: the rows differ by their table row, not by a piece.
 pub const PIECE: &str = "row";
 
@@ -169,6 +201,8 @@ pub struct Row {
     pub camera: usize,
     /// Which stage shows, counted from 0.
     pub stage: usize,
+    /// The share of the floor in gaps, 0 to 1.
+    pub gaps: f64,
     /// The section keeps the stage and one slot only.
     pub empty: bool,
 }
@@ -293,8 +327,14 @@ impl State {
     }
 }
 
-/// The rows of the arrangement, one per part, for `stages` stages side by side (0 counts as 1).
+/// The rows of the arrangement, one per part, for `stages` stages side by side (0 counts as 1),
+/// with the gaps of [`Gaps::default`].
 pub fn rows(parts: &[Part], slots: &[Slot], stages: usize) -> Vec<Row> {
+    rows_with(parts, slots, stages, Gaps::default())
+}
+
+/// [`rows`] with the floor's gaps by `gaps`.
+pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> Vec<Row> {
     let mut state: Vec<State> = slots
         .iter()
         .map(|s| {
@@ -410,6 +450,7 @@ pub fn rows(parts: &[Part], slots: &[Slot], stages: usize) -> Vec<Row> {
             walk,
             camera,
             stage,
+            gaps: gaps.of(part.role),
             empty,
         });
     }
@@ -445,6 +486,7 @@ pub fn table(slots: &[Slot], rows: &[Row]) -> String {
         cells.push(num(r.intensity));
         cells.push(r.camera.to_string());
         cells.push(r.stage.to_string());
+        cells.push(num(r.gaps));
         text.push_str(&cells.join(","));
         text.push('\n');
     }
@@ -721,9 +763,12 @@ mod tests {
         let p = parts(&[(Role::Intro, 0.0), (Role::Drop, 0.9)]);
         let t = table(&slots(), &rows(&p, &slots(), 1));
         let lines: Vec<&str> = t.lines().collect();
-        assert_eq!(lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage");
-        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3,4,0");
-        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0");
+        assert_eq!(
+            lines[0],
+            "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps"
+        );
+        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3,4,0,0");
+        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0,0");
         assert_eq!(lines.len(), 3);
         assert!(check(&slots()).is_ok());
         let bad = |e: &[&str]| vec![Slot::new("floor", e)];
@@ -731,6 +776,7 @@ mod tests {
         assert!(check(&bad(&["warmth"])).unwrap_err().contains("column"));
         assert!(check(&bad(&["camera"])).unwrap_err().contains("column"));
         assert!(check(&bad(&["stage"])).unwrap_err().contains("column"));
+        assert!(check(&bad(&["gaps"])).unwrap_err().contains("column"));
         assert!(check(&bad(&["a b"])).unwrap_err().contains("column name"));
         assert!(check(&bad(&[])).unwrap_err().contains("no elements"));
         assert!(check(&[]).is_err());
@@ -921,6 +967,28 @@ mod tests {
             assert!(s.begins.windows(2).all(|w| w[1] >= w[0] + 0.1), "{:?}", s.begins);
         }
         assert!(steps(&[], 10.0, 2.0, "x").is_err());
+    }
+
+    #[test]
+    fn the_floor_breaks_off_in_a_build_and_a_break_and_nowhere_else() {
+        let p = parts(&[
+            (Role::Intro, 0.0),
+            (Role::Main, 0.5),
+            (Role::Build, 0.4),
+            (Role::Drop, 0.9),
+            (Role::Break, 0.8),
+            (Role::Outro, 0.5),
+        ]);
+        let gaps: Vec<f64> = rows(&p, &slots(), 1).iter().map(|r| r.gaps).collect();
+        assert_eq!(gaps, [0.0, 0.0, GAPS_BUILD, 0.0, GAPS_BREAK, 0.0]);
+        // Other shares, clamped to 0..1; no number counts as 0.
+        let own = Gaps { build: 0.5, brk: 7.0 };
+        let gaps: Vec<f64> = rows_with(&p, &slots(), 1, own).iter().map(|r| r.gaps).collect();
+        assert_eq!(gaps, [0.0, 0.0, 0.5, 0.0, 1.0, 0.0]);
+        let none = Gaps { build: f64::NAN, brk: -1.0 };
+        assert!(rows_with(&p, &slots(), 1, none).iter().all(|r| r.gaps == 0.0));
+        let t = table(&slots(), &rows(&p, &slots(), 1));
+        assert!(t.lines().nth(5).is_some_and(|l| l.ends_with(",0.6")), "{t}");
     }
 
     #[test]

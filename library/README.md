@@ -299,7 +299,8 @@ the nebula. Lines fade out with distance from the camera. The glider is the elem
   such as the glider), `ceiling` (geometry hanging from the ceiling grid), `sky` (a picture
   screened over the nebula).
 - Out: `out` (the picture), `lane` (256 x 1: per texel i, -8 + 0.25 i metres ahead, red the
-  lane's x in metres, green its sideways slope per metre, blue `step`).
+  lane's x in metres, green its sideways slope per metre, blue `step`, alpha the floor: 1 where
+  it stands, 0 in a gap).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift` (added to the bass, e.g. before a
   change), `energy_curve`, `dim` (the nebula's light); the lane's `bars_per_turn`, `swing`, `turn`,
   `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade.
@@ -309,6 +310,11 @@ the nebula. Lines fade out with distance from the camera. The glider is the elem
   right). The presets: 0 low flight at 1.5 m, 1 higher and looking down for a build, 2 high and
   wide for a drop (2.9 m, 74 degrees), 3 still and level for a break, 4 and 5 two tilted variants
   that the tracks take in turn. `pitch` and `side` stay good to about 30 degrees.
+- Gaps: `gap` (the share of the floor grid that breaks off, 0 to 1; 0 keeps it whole),
+  `gap_length` (metres a gap runs, rounded to whole bars). A gap begins where a bar begins, so its
+  near edge passes the camera on a downbeat. The lane floats on over nothing. Floor elements read
+  the gaps from `lane` and sink there too. A gap that opens or closes fades. `beats.arrange`
+  binds `gap` to its `gaps` column: 0.3 in a build, 0.6 in a break.
 
 ### floor_blocks
 
@@ -353,6 +359,58 @@ zigzag at a fixed distance from its edge. On each beat the pillars stretch a lit
   `rows` (lines on each side, 1 to 3), `gap` (metres between lines), `pulse` (how far they stretch
   on a beat), `lane` (as on `floor_blocks`, 1.6), `near`, `far`, `beats_per_bar`, `color`,
   `extent`.
+
+### floor_waves
+
+![floor_waves](floor_waves/preview.png)
+
+Waves beside the lane: 48 lines across the floor, each a height field of ridged noise. The lines
+move with the floor, and the waves roll towards the camera a little faster still. Each wave hides
+the lines and floor behind it, like a range of hills. The bass raises the waves. The lane stays
+flat, so the glider never flies through a wave.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (towards 0 the lines flatten into the floor one after another), `source`
+  (`noise`: the waves rise with the bass; `levels`: bass beside the lane, mids further out,
+  treble at the edges), `seed`, `height` (the highest crests, metres), `bass` (share of the height
+  that follows the bass), `crests` (metres between crests), `flow` (metres per beat the waves roll
+  on), `spacing` (metres between lines), `spread` (the field's width), `lane` (half the flat
+  lane's width, 1.6), `foot` (metres beside the lane over which the waves rise), `near`, `far`,
+  `smooth` (seconds the levels take to fall), `color`, `line_width`, `extent`.
+
+### floor_cracks
+
+![floor_cracks](floor_cracks/preview.png)
+
+Glowing cracks in the floor, like lava under a crust: the edges of a cell pattern fixed to the
+floor. Waves of light run along the cracks towards the camera. The cracks glow brighter with the
+bass, and their cores turn yellow-white on a strong bass. The lane stays dark. The cracks lie on a
+sheet 1.2 cm above the grid. Where the sheet is dark it is transparent, so the grid shows through.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (towards 0 the cells go dark one after another), `seed`, `bass` (share of
+  the glow that follows the bass), `cell` (metres across a cell), `thickness` (metres, the bright
+  core), `glow` (metres, the light around it), `flow` (metres per beat the light runs), `pulse`
+  (metres between two waves of light), `color`, `hot` (the core at full bass), `brightness`, `lane`
+  (half the dark lane's width), `fade` and `gone` (metres ahead where the cracks start to fade and
+  where they are gone), `smooth` (seconds the bass takes to fall).
+
+### floor_palms
+
+![floor_palms](floor_palms/preview.png)
+
+Wireframe palms in a line on each side of the lane, leaning away from it. A palm stands every
+`spacing` bars of travel: the left ones pass the camera on a downbeat, the right ones half way
+between. Each palm has a trunk of rings and 7 fronds. The fronds swing up and down, one swing
+per two beats, wider with the mids. `palm.py` in the folder writes the two models.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (towards 0 the palms shrink into the floor one after another), `spacing`
+  (bars between two palms of a line), `size` (1 is 2.6 m to the crown), `fronds` (3 to 8),
+  `sway` (degrees the fronds swing at full mids), `calm` (share of the swing left in quiet mids),
+  `droop` (degrees the fronds hang), `lane` (1.6), `clear` (metres between the lane's edge and a
+  trunk, room for the fronds), `near`, `far`, `beats_per_bar`, `smooth` (seconds the mids take to
+  fall), `color`, `line_width`, `extent`.
 
 ### mid_glider
 

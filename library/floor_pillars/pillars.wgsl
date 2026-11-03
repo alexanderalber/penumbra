@@ -5,9 +5,9 @@
 // They follow the lane at a fixed distance from its edge. A pillar keeps its place on the floor
 // while it comes nearer, since the lane is fixed to the floor.
 // in0: the stage's lane picture (its `lane` output): red the lane's x, green its sideways slope
-// per metre ahead, blue the metres per beat, texel i covering y = -8 + i * 0.25 to
-// -8 + (i + 1) * 0.25 metres ahead. Unconnected: a straight lane at x = 0 and `step` metres per
-// beat.
+// per metre ahead, blue the metres per beat, alpha the floor (0 in a gap), texel i covering
+// y = -8 + i * 0.25 to -8 + (i + 1) * 0.25 metres ahead. Unconnected: a straight lane at x = 0,
+// no gaps and `step` metres per beat.
 // Out: x, y, z of the pillar's centre in rgb, its width in alpha (0 where no pillar stands). A
 // second node (sizes.wgsl) turns that into the pillars' scale. Render it 6 x 32.
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid)
@@ -64,7 +64,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let r = vec3f(pn_hash(vec3u(bitcast<u32>(n), cell.x, 31u))) / 4294967296.0;
     // The lane where the pillar stands; a slanting lane widens the margin.
     let u = (y - LANE_NEAR) / (LANE_FAR - LANE_NEAR);
-    let lane = select(vec4f(0.0), textureSampleLevel(in0, pn_clamp, vec2f(u, 0.5), 0.0), wired);
+    let lane = select(vec4f(0.0, 0.0, 0.0, 1.0), textureSampleLevel(in0, pn_clamp, vec2f(u, 0.5), 0.0), wired);
     let sign = select(-1.0, 1.0, side == 1u);
     let off = params.lane + 0.5 * params.across * (1.0 + abs(lane.g)) + f32(row) * params.gap;
     let x = lane.r + sign * off;
@@ -77,6 +77,8 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     // the floor one after another. At 0.5 about half the height is left.
     let own = clamp(params.presence * 2.0 - r.y, 0.0, 1.0);
     height *= own * own * (3.0 - 2.0 * own);
+    // Where the floor has a gap, the pillars go with it.
+    height *= clamp(lane.a, 0.0, 1.0);
     // A pillar under 3 cm is left out, and every pillar stands `LIFT` above the floor, so its
     // base does not flicker against the floor's lines.
     if height < 0.03 {

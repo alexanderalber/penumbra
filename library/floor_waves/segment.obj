@@ -1,0 +1,12 @@
+# A segment of a wave line: a thin triangular prism one unit long along y, centred on the
+# origin, z up, 1.2 cm across. floor_waves scales it to a segment's length, so the wireframe
+# draws its three long edges as one line. Written by waves.py.
+v 0.0000 -0.5 0.0060
+v -0.0052 -0.5 -0.0030
+v 0.0052 -0.5 -0.0030
+v 0.0000 0.5 0.0060
+v -0.0052 0.5 -0.0030
+v 0.0052 0.5 -0.0030
+f 1 2 5 4
+f 2 3 6 5
+f 3 1 4 6

@@ -9,8 +9,10 @@
 //   red    the lane's middle across (x, metres)
 //   green  how far it moves sideways per metre ahead (dx / dy)
 //   blue   `step`, metres the floor moves per beat, the same in every texel
-//   alpha  1
+//   alpha  the floor there: 1 where it stands, 0 in a gap, between while a gap opens or closes
 // The lane is fixed to the floor: a point of the floor keeps its lane value as it comes nearer.
+// So are the gaps: a gap begins where a bar begins, so its near edge passes the camera on a
+// downbeat. Floor elements read alpha to sink where the floor has gone.
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid)
 // @param drift float = 0 -100..100 -- where the bars stand against `beats`, in bars (drift of a chan.beat_grid)
 // @param step float = 0.5 0.1..2 -- metres the floor moves per beat; one grid cell
@@ -19,6 +21,8 @@
 // @param turn float = 4 0.1..8 -- beats a turn takes
 // @param swing float = 1.5 0..5 -- how far the lane swings to either side at most, in metres
 // @param origin float = 11 1..50 -- metres ahead where the lane's turns are counted: a corner passes there on a downbeat
+// @param gap float = 0 0..1 -- share of the floor that breaks off into gaps: 0 none, 1 all of it
+// @param gap_length float = 8 1..40 -- metres a gap runs along the floor, rounded to whole bars
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
@@ -92,10 +96,31 @@ fn lane_slope(c: f32) -> f32 {
     return zigzag_slope(u) / (params.beats_per_bar * params.bars_per_turn) * sw.x + zigzag(u) * sw.y;
 }
 
+// Share of a gap's growth over which it opens: a gap fades in as `gap` rises past its draw.
+const GAP_SOFT: f32 = 0.08;
+
+// The floor at the point that passes the camera when `travelled` is `c` beats: 1 where it stands,
+// 0 in a gap. The floor is cut into stretches of whole bars, each about `gap_length` long; a
+// stretch is a gap when its draw lies under `gap`. The bar is taken at the middle of the point's
+// beat, so a grid cell is wholly in or out.
+fn ground(c: f32) -> f32 {
+    if params.gap <= 0.0 {
+        return 1.0;
+    }
+    let bpb = max(params.beats_per_bar, 1.0);
+    let bars = max(round(params.gap_length / max(bpb * params.step, 0.01)), 1.0);
+    let bar = floor((floor(c) + 0.5) / bpb + params.drift);
+    let stretch = floor(bar / bars);
+    let draw = f32(pn_hash(vec3u(bitcast<u32>(i32(stretch)), 23u, 5u)).x) / 4294967296.0;
+    let open = smoothstep(0.0, GAP_SOFT, params.gap * (1.0 + GAP_SOFT) - draw);
+    return 1.0 - open;
+}
+
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
     let y = mix(LANE_NEAR, LANE_FAR, v.uv.x);
     // The point at y passed `origin` this many beats ago.
     let born = params.beats - (params.origin - y) / params.step;
-    return vec4f(lane_x(born), lane_slope(born) / params.step, params.step, 1.0);
+    let floor_here = ground(params.beats + y / params.step);
+    return vec4f(lane_x(born), lane_slope(born) / params.step, params.step, floor_here);
 }

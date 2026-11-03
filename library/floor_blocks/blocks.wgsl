@@ -4,8 +4,8 @@
 // they pass `rise_at`, then shoot out of the floor within `rise` beats, so a new row stands up
 // on every beat. Low blocks keep the stage's lane free.
 // in0: the stage's lane picture (its `lane` output): red the lane's x, blue the metres per beat,
-// texel i covering y = -8 + i * 0.25 to -8 + (i + 1) * 0.25 metres ahead. Unconnected: a
-// straight lane at x = 0 and `step` metres per beat.
+// alpha the floor (0 in a gap), texel i covering y = -8 + i * 0.25 to -8 + (i + 1) * 0.25 metres
+// ahead. Unconnected: a straight lane at x = 0, no gaps and `step` metres per beat.
 // Out: x, y, z of the block's centre in rgb, its side in alpha (0 where no block stands). A
 // second node (sizes.wgsl) turns that into the blocks' scale.
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid): the grid's tempo, smoothed and added up
@@ -52,7 +52,8 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     // The lane where the block stands. It is fixed to the floor, so it stays the same while the
     // block comes nearer.
     let u = (y - LANE_NEAR) / (LANE_FAR - LANE_NEAR);
-    let lane_x = select(0.0, textureSampleLevel(in0, pn_clamp, vec2f(u, 0.5), 0.0).r, wired);
+    let lane = select(vec4f(0.0, 0.0, 0.0, 1.0), textureSampleLevel(in0, pn_clamp, vec2f(u, 0.5), 0.0), wired);
+    let lane_x = lane.r;
     // Low inside the lane, tall outside, with a soft edge: when the lane glides sideways after a
     // jump, the blocks at its edge grow or shrink instead of switching at once.
     let inside = 1.0 - smoothstep(params.lane - 0.3, params.lane + 0.3, abs(x - lane_x));
@@ -73,6 +74,8 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let order = fract(r.y * 53.0 + r.z * 7.0);
     let own = clamp(params.presence * 2.0 - order, 0.0, 1.0);
     height *= own * own * (3.0 - 2.0 * own);
+    // Where the floor has a gap, the blocks go with it.
+    height *= clamp(lane.a, 0.0, 1.0);
     // A block under 3 cm is left out, and every block stands `LIFT` above the floor: a bottom face
     // in the floor's plane flickers against its lines.
     let present = fract(r.x * 97.0 + r.z * 13.0) < params.fill && g > 0.0 && own > 0.0 && height >= 0.03;

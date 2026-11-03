@@ -5,9 +5,9 @@
 // nearer, and another `seed` gives another range. The peaks stay off the stage's lane: low at
 // its edge, rising to full height over `foot` metres.
 // in0: the stage's lane picture (its `lane` output): red the lane's x, green its sideways slope
-// per metre ahead, blue the metres per beat, texel i covering y = -8 + i * 0.25 to
-// -8 + (i + 1) * 0.25 metres ahead. Unconnected: a straight lane at x = 0 and `step` metres per
-// beat.
+// per metre ahead, blue the metres per beat, alpha the floor (0 in a gap), texel i covering
+// y = -8 + i * 0.25 to -8 + (i + 1) * 0.25 metres ahead. Unconnected: a straight lane at x = 0,
+// no gaps and `step` metres per beat.
 // Out: x, y, z of the peak's centre in rgb, its width in alpha (0 where no peak stands). A
 // second node (sizes.wgsl) turns that into the peaks' scale. Render it at most 32 x 64.
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid): the grid's tempo, smoothed and added up
@@ -95,7 +95,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     // The lane where the peak stands, and the room its foot leaves beside it. A turning lane runs
     // at a slant across the foot, so the slope widens the margin.
     let u = (y - LANE_NEAR) / (LANE_FAR - LANE_NEAR);
-    let lane = select(vec4f(0.0), textureSampleLevel(in0, pn_clamp, vec2f(u, 0.5), 0.0), wired);
+    let lane = select(vec4f(0.0, 0.0, 0.0, 1.0), textureSampleLevel(in0, pn_clamp, vec2f(u, 0.5), 0.0), wired);
     let half = 0.5 * w + 0.5 * abs(lane.g) * w * 1.6;
     let free = abs(x - lane.r) - half - params.lane;
     if free <= 0.0 {
@@ -113,6 +113,8 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let order = fract(r.z * 61.0 + r.y * 11.0);
     let own = clamp(params.presence * 2.0 - order, 0.0, 1.0);
     height *= own * own * (3.0 - 2.0 * own);
+    // Where the floor has a gap, the peaks go with it.
+    height *= clamp(lane.a, 0.0, 1.0);
     // A peak under 3 cm is left out, and every peak stands `LIFT` above the floor, so its base does
     // not flicker against the floor's lines.
     if height < 0.03 {
