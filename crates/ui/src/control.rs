@@ -102,6 +102,14 @@ const COMMANDS: &[(&str, &str)] = &[
         "Drag between elements or points, modifiers held throughout; {from: {id | x, y}, to: {id | x, y}, button?, steps?, ctrl?, shift?, alt?}",
     ),
     ("ui.scroll", "Mouse wheel over an element or point; {id | x, y, dy}"),
+    (
+        "ui.hover",
+        "Move the pointer onto an element or a point and leave it there (a port shows its tooltip); {id | x, y}",
+    ),
+    (
+        "ui.pointer",
+        "A drawn pointer for recordings and screenshots, where no real cursor shows: show draws an arrow and a ring on each click, glide makes click, drag, scroll and hover move there over that many frames instead of jumping; {show?, glide?: frames 0 to 600, size?: 0.5 to 4}",
+    ),
     ("ui.key", "Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?}"),
     ("ui.type", "Type text into the focused field; {text}"),
     ("ui.select", "Select nodes in the editor (the editor shows the component they sit in); {paths}"),

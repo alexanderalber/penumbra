@@ -30,6 +30,7 @@ mod node_controls;
 mod overview;
 pub mod params;
 pub mod plot;
+mod pointer;
 pub mod projects;
 mod regions;
 mod scope;
@@ -164,6 +165,8 @@ impl Action {
 mod node_controls_tests;
 #[cfg(test)]
 mod note_tests;
+#[cfg(test)]
+mod record_tests;
 #[cfg(test)]
 mod reference;
 #[cfg(test)]

@@ -95,6 +95,10 @@ pub struct PenumbraApp {
     auto: automation::Registry,
     requests: Option<Receiver<UiRequest>>,
     synthetic: VecDeque<egui::Event>,
+    /// The drawn pointer and where synthetic input left it ([`crate::pointer`]).
+    pointer: crate::pointer::Pointer,
+    /// The engine pass the last frame showed ([`penumbra_engine::ViewFrame::pass`]).
+    drawn_pass: u64,
     input_waiters: Vec<Sender<Reply>>,
     shots: Vec<Shot>,
     next_token: u64,
@@ -214,6 +218,8 @@ impl PenumbraApp {
             auto: automation::Registry::default(),
             requests: options.requests,
             synthetic: VecDeque::new(),
+            pointer: crate::pointer::Pointer::default(),
+            drawn_pass: 0,
             input_waiters: Vec::new(),
             shots: Vec::new(),
             next_token: 1,
@@ -283,6 +289,17 @@ impl PenumbraApp {
     /// headless runner feeds these to its harness; the window takes them in `raw_input_hook`.
     pub fn take_synthetic(&mut self) -> Option<egui::Event> {
         self.synthetic.pop_front()
+    }
+
+    /// The engine pass the last frame showed, so a stepped recording knows the picture is
+    /// current.
+    pub fn drawn_pass(&self) -> u64 {
+        self.drawn_pass
+    }
+
+    /// Whether synthetic input is still waiting to be fed.
+    pub fn input_pending(&self) -> bool {
+        !self.synthetic.is_empty()
     }
 
     /// Whether the element with automation id `id` was on screen in the last frame.
@@ -893,6 +910,7 @@ impl PenumbraApp {
         let status = session.status(now);
         let net = session.doc().snapshot();
         let view = self.engine.view();
+        self.drawn_pass = view.pass;
         let board = self.engine.board().state();
         // Blue while Claude has the turn; editing widgets off only for a claim, since the
         // user's own edit ends a hold.
@@ -1826,6 +1844,7 @@ impl eframe::App for PenumbraApp {
         // hidden that sees the last shown frame's events again and again.
         crate::keyboard::feed(ui.ctx(), self.engine.keyboard(), penumbra_ops::keyboard::Source::Editor);
         self.frame(ui);
+        self.pointer.paint(ui.ctx());
         self.tell_outputs(ui.ctx());
         self.keep_place(ui.ctx());
         // The native title bar follows the theme (Windows 11; elsewhere nothing happens).

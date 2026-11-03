@@ -167,7 +167,7 @@ details.target { outline: 2px solid var(--accent); }
 <p>The window opens where it was last time, with its size, maximised or not (kept in <code>%LOCALAPPDATA%\penumbra\window.json</code>), so a setup that shares the screen with other windows, a terminal beside it, say, stays arranged across restarts. The first time, or when that spot is no longer on any display (one was unplugged), it opens maximised. <a class="ref" href="#ui.window"><code>ui.window</code></a> reads and moves it.</p>
 <h3 id="getting-started-a-first-network">A first network</h3>
 <ol>
-<li><strong>Add a node:</strong> press Tab, or double-click on empty canvas. The add dialog has a tab per family; small families share one: <code>rendering</code> holds the 3D ones, <code>system</code> the scripts, outputs and components. Tab cycles the tabs. Typing greys out the types that do not match, Enter takes the first match, a click takes any. Try <code>tex</code> &gt; <code>noise</code>. The everyday types come first in each tab. Live inputs (cameras, NDI, OSC, the keyboard and the like) stand apart under &quot;inputs&quot;, the scan's own nodes under &quot;scan and shapes&quot; at the end of <code>tex</code>. Ready-made effects are in the <code>library</code> tab.
+<li><strong>Add a node:</strong> press Tab, or double-click on empty canvas. The add dialog has a tab per family; small families share one: <code>rendering</code> holds the 3D ones, <code>system</code> the scripts, outputs and components. Tab cycles the tabs. Typing greys out the types that do not match, Enter takes the type named exactly as typed, else the first match; a click takes any. Try <code>tex</code> &gt; <code>noise</code>. The everyday types come first in each tab. Live inputs (cameras, NDI, OSC, the keyboard and the like) stand apart under &quot;inputs&quot;, the scan's own nodes under &quot;scan and shapes&quot; at the end of <code>tex</code>. Ready-made effects are in the <code>library</code> tab.
 </li>
 <li><strong>Add a second one fed from the first:</strong> with exactly one node selected, a new node is wired to it and placed to its right. Select the noise, add <code>tex</code> &gt; <code>level</code>.
 </li>
@@ -1986,11 +1986,29 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </li>
 <li><a class="ref" href="#ui.window"><code>ui.window {position?, size?, maximized?}</code></a> says where the editor window is and moves it, in physical pixels of the desktop as <a class="ref" href="#output.list"><code>output.list</code></a> gives the displays; the next start opens it there again.
 </li>
+<li><a class="ref" href="#ui.pointer"><code>ui.pointer {show?, glide?, size?}</code></a> draws a mouse pointer into the window's picture, for screenshots and recordings, where clicks from the control channel show no cursor. <code>show</code> draws an arrow and a ring on each click. <code>glide</code> is a number of frames: <a class="ref" href="#ui.click"><code>ui.click</code></a>, <a class="ref" href="#ui.drag"><code>ui.drag</code></a>, <a class="ref" href="#ui.scroll"><code>ui.scroll</code></a> and <a class="ref" href="#ui.hover"><code>ui.hover</code></a> then move the pointer to their target over that many frames instead of jumping there. <a class="ref" href="#ui.hover"><code>ui.hover {id | x, y}</code></a> only moves the pointer and leaves it there, so a port shows its tooltip.
+</li>
 </ul>
 <h3 id="control-headless-runs">Headless runs</h3>
-<pre><code>cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--speakers]
+<pre><code>cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--scale F] [--speakers]
 </code></pre>
-<p>runs the real UI without a window and feeds it a script: one request per line (<code>{&quot;method&quot;: ..., &quot;params&quot;: {...}}</code>, any command including <code>ui.*</code>), <code>{&quot;wait&quot;: seconds}</code> to let the show run, <code>{&quot;wait_for&quot;: id, &quot;timeout&quot;: seconds}</code> to let it run until the element <code>id</code> is on screen (<code>timeout</code> optional, 30 s by default), or <code>{&quot;resize&quot;: [width, height]}</code> to change the window's size as a maximize would. <code>wait</code> is wall-clock time, so on a busy machine less has happened by its end; <code>wait_for</code> an element that appears only once something cooked (the viewer's handles, a helper's list) before clicking it. Empty lines and lines starting with <code>//</code> are skipped. <code>$HERE</code> in any string of a line is the project's folder (with forward slashes), so a script kept beside <code>project.ron</code> names its files wherever the project lies: <code>{&quot;method&quot;: &quot;node.snapshot&quot;, &quot;params&quot;: {&quot;path&quot;: &quot;/out&quot;, &quot;file&quot;: &quot;$HERE/snap/out.png&quot;}}</code>. Each reply is printed. Without <code>--project</code> it works on a fresh copy of the demo in the temp directory, so no project is touched. <code>--software</code> renders on a software adapter (WARP on Windows): slow but the same on every machine. <code>--size</code> is the window size in points. A headless run plays no sound: <a class="ref" href="#out.audio"><code>out.audio</code></a> plays into nothing, since frames without a window come too slowly and unevenly for a speaker. <code>--speakers</code> lets it open its devices after all.</p>
+<p>runs the real UI without a window and feeds it a script: one request per line (<code>{&quot;method&quot;: ..., &quot;params&quot;: {...}}</code>, any command including <code>ui.*</code>), <code>{&quot;wait&quot;: seconds}</code> to let the show run, <code>{&quot;wait_for&quot;: id, &quot;timeout&quot;: seconds}</code> to let it run until the element <code>id</code> is on screen (<code>timeout</code> optional, 30 s by default), or <code>{&quot;resize&quot;: [width, height]}</code> to change the window's size as a maximize would. <code>wait</code> is wall-clock time, so on a busy machine less has happened by its end; <code>wait_for</code> an element that appears only once something cooked (the viewer's handles, a helper's list) before clicking it. Empty lines and lines starting with <code>//</code> are skipped. <code>$HERE</code> in any string of a line is the project's folder (with forward slashes), so a script kept beside <code>project.ron</code> names its files wherever the project lies: <code>{&quot;method&quot;: &quot;node.snapshot&quot;, &quot;params&quot;: {&quot;path&quot;: &quot;/out&quot;, &quot;file&quot;: &quot;$HERE/snap/out.png&quot;}}</code>. Each reply is printed. Without <code>--project</code> it works on a fresh copy of the demo in the temp directory, so no project is touched. <code>--software</code> renders on a software adapter (WARP on Windows): slow but the same on every machine. <code>--size</code> is the window size in points. <code>--scale</code> is the number of pixels per point, from 0.5 to 4: <code>--size 1280x720 --scale 2</code> draws the 1280 by 720 layout at 2560 by 1440 pixels, so its text stays sharp and large in a video. A headless run plays no sound: <a class="ref" href="#out.audio"><code>out.audio</code></a> plays into nothing, since frames without a window come too slowly and unevenly for a speaker. <code>--speakers</code> lets it open its devices after all.</p>
+<h4 id="control-recording-a-headless-run">Recording a headless run</h4>
+<p><code>{&quot;record&quot;: {&quot;dir&quot;: &quot;E:/rec&quot;, &quot;fps&quot;: 30}}</code> in the script starts writing every drawn frame as <code>frame_000000.png</code>, <code>frame_000001.png</code>, ... into <code>dir</code>, which must not hold frames yet. <code>{&quot;record&quot;: false}</code> stops; so does the end of the script. Put the frames on a timeline in a video editor as an image sequence at the same rate.</p>
+<p>While it records, the show clock moves by exactly one recorded frame per picture, however long a picture takes to draw (<a class="ref" href="#cook.stepping"><code>cook.stepping</code></a>, see below). So a recording looks the same on a fast and a slow machine, and a sound file the show plays lines up with the frames when the editor puts both at the start. <code>fps</code> must divide the show rate: 30 or 60 for a 60 fps show, not 25.</p>
+<ul>
+<li><code>wait</code> and <code>wait_for</code> count show time while recording. <code>{&quot;wait&quot;: 2}</code> records 2 seconds.
+</li>
+<li>Every frame a request takes is recorded. A <a class="ref" href="#ui.drag"><code>ui.drag</code></a> with 30 <code>steps</code> lasts a second at 30 fps; with <a class="ref" href="#ui.pointer"><code>ui.pointer {glide}</code></a> the pointer first travels to the drag's start.
+</li>
+<li>egui's own animations run at the recording's rate too.
+</li>
+<li><code>marks.jsonl</code> beside the frames has a line per script line that took frames: its line number in the script, what it was (<a class="ref" href="#ui.drag"><code>ui.drag</code></a>, <code>wait</code>, ...) and its first and last frame. Use it to cut, zoom or put a caption on one step.
+</li>
+<li><code>resize</code> is refused while recording: every frame has one size.
+</li>
+</ul>
+<p><a class="ref" href="#cook.stepping"><code>cook.stepping {on?}</code></a> and <a class="ref" href="#cook.step"><code>cook.step {frames?}</code></a> are the commands underneath. With stepping on, neither the timer nor a projector's vsync moves the clock. Each <a class="ref" href="#cook.step"><code>cook.step</code></a> cooks the given number of frames at once and answers with the frame and the pass. Stepping off, the show goes on from where the steps left it.</p>
 <h3 id="control-environment-variables">Environment variables</h3>
 <table>
 <thead><tr><th></th><th></th></tr></thead>
@@ -5908,6 +5926,16 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>Show clock, last cook pass, watched nodes, thumbnail policy</p>
 </div></details>
+<details class="entry command" id="cook.step"><summary><code class="name">cook.step</code><span class="sum">Cook frames at once while stepping, each one frame of show time after the last (while the clock plays)</span></summary>
+<div class="body">
+<p>Cook frames at once while stepping, each one frame of show time after the last (while the clock plays); {frames?} (default 1, at most 3600); answers with the frame and the pass</p>
+<p class="mentions">Mentioned in: <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
+</div></details>
+<details class="entry command" id="cook.stepping"><summary><code class="name">cook.stepping</code><span class="sum">Move the show clock only by cook.step, not by the timer or a projector's vsync, so a render or recording gets every frame whatever the machine's speed; off goes on from where the steps left it</span></summary>
+<div class="body">
+<p>Move the show clock only by cook.step, not by the timer or a projector's vsync, so a render or recording gets every frame whatever the machine's speed; off goes on from where the steps left it; {on?} (default true); answers with the frame</p>
+<p class="mentions">Mentioned in: <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
+</div></details>
 <details class="entry command" id="cook.thumbnails"><summary><code class="name">cook.thumbnails</code><span class="sum">The editor's thumbnails, kept with the project (settings thumbnails and thumbnail_every; one undo step)</span></summary>
 <div class="body">
 <p>The editor's thumbnails, kept with the project (settings thumbnails and thumbnail_every; one undo step); {mode?: always | when_free | never, every?: cook passes between two thumbnail cooks of a node, 1 = every frame}</p>
@@ -6559,10 +6587,12 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="ui.click"><summary><code class="name">ui.click</code><span class="sum">Click an element or a point</span></summary>
 <div class="body">
 <p>Click an element or a point; {id | x, y, button?, double?, ctrl?, shift?, alt?}</p>
+<p class="mentions">Mentioned in: <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 <details class="entry command" id="ui.drag"><summary><code class="name">ui.drag</code><span class="sum">Drag between elements or points, modifiers held throughout</span></summary>
 <div class="body">
 <p>Drag between elements or points, modifiers held throughout; {from: {id | x, y}, to: {id | x, y}, button?, steps?, ctrl?, shift?, alt?}</p>
+<p class="mentions">Mentioned in: <a href="#control-looking-at-results">Control › Looking at results</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
 </div></details>
 <details class="entry command" id="ui.elements"><summary><code class="name">ui.elements</code><span class="sum">Automation ids with rects in points</span></summary>
 <div class="body">
@@ -6577,6 +6607,11 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>Fit all nodes into the editor</p>
 </div></details>
+<details class="entry command" id="ui.hover"><summary><code class="name">ui.hover</code><span class="sum">Move the pointer onto an element or a point and leave it there (a port shows its tooltip)</span></summary>
+<div class="body">
+<p>Move the pointer onto an element or a point and leave it there (a port shows its tooltip); {id | x, y}</p>
+<p class="mentions">Mentioned in: <a href="#control-looking-at-results">Control › Looking at results</a></p>
+</div></details>
 <details class="entry command" id="ui.key"><summary><code class="name">ui.key</code><span class="sum">Press a key (egui name: Delete, Tab, F, Z, Enter, ...)</span></summary>
 <div class="body">
 <p>Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?}</p>
@@ -6590,6 +6625,11 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>The editor's options (right-click on empty space) and the viewer's channel options; {chan_bars?, viewer_background?, binding_lines?, chan_scale?: auto|shared|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale), audio_view?: meters|plot (what the viewer shows of a chan.beat_analysis: meters, beat and spectrum, or the channel plot), viewer_aspect?: auto|number (width over height of the viewer's picture area; the height follows the column's width; dragging the viewer's edge sets the aspect, auto is 16:9)}</p>
 <p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#audio-the-meters-in-the-viewer">Audio › The meters in the viewer</a></p>
 </div></details>
+<details class="entry command" id="ui.pointer"><summary><code class="name">ui.pointer</code><span class="sum">A drawn pointer for recordings and screenshots, where no real cursor shows: show draws an arrow and a ring on each click, glide makes click, drag, scroll and hover move there over that many frames instead of jumping</span></summary>
+<div class="body">
+<p>A drawn pointer for recordings and screenshots, where no real cursor shows: show draws an arrow and a ring on each click, glide makes click, drag, scroll and hover move there over that many frames instead of jumping; {show?, glide?: frames 0 to 600, size?: 0.5 to 4}</p>
+<p class="mentions">Mentioned in: <a href="#control-looking-at-results">Control › Looking at results</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
+</div></details>
 <details class="entry command" id="ui.screenshot"><summary><code class="name">ui.screenshot</code><span class="sum">PNG of the window</span></summary>
 <div class="body">
 <p>PNG of the window; {file?} (default %TEMP%/penumbra/ui.png)</p>
@@ -6598,6 +6638,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="ui.scroll"><summary><code class="name">ui.scroll</code><span class="sum">Mouse wheel over an element or point</span></summary>
 <div class="body">
 <p>Mouse wheel over an element or point; {id | x, y, dy}</p>
+<p class="mentions">Mentioned in: <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 <details class="entry command" id="ui.select"><summary><code class="name">ui.select</code><span class="sum">Select nodes in the editor (the editor shows the component they sit in)</span></summary>
 <div class="body">

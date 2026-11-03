@@ -39,6 +39,13 @@ impl PenumbraApp {
                 done(json!({"elements": self.auto.query(prefix)}))
             }
             "ui.click" => self.click(p, modifiers, button),
+            "ui.hover" => {
+                let at = self.element_pos(p)?;
+                let moves = self.pointer.moves_to(at);
+                self.synthetic.extend(moves);
+                Ok(Outcome::AfterInput)
+            }
+            "ui.pointer" => done(self.pointer_options(p)?),
             "ui.drag" => self.drag(p, modifiers, button),
             "ui.scroll" => self.scroll(p, modifiers),
             "ui.key" => self.key(p, modifiers),
@@ -132,6 +139,27 @@ impl PenumbraApp {
         }
     }
 
+    /// `ui.pointer`: whether the pointer is drawn, how many frames a move takes, its size.
+    fn pointer_options(&mut self, p: &Json) -> Result<Json, String> {
+        if let Some(show) = p.get("show") {
+            self.pointer.show = show.as_bool().ok_or("`show` is true or false")?;
+        }
+        if let Some(glide) = p.get("glide") {
+            let n = glide.as_u64().ok_or("`glide` is a number of frames")?;
+            let max = u64::from(crate::pointer::MAX_GLIDE);
+            if n > max {
+                return Err(format!("`glide` is {n} frames; at most {max}"));
+            }
+            // `as`: at most MAX_GLIDE.
+            self.pointer.glide = n as u32;
+        }
+        if let Some(size) = p.get("size") {
+            let s = size.as_f64().filter(|s| (0.5..=4.0).contains(s)).ok_or("`size` is 0.5 to 4")?;
+            self.pointer.size = s as f32;
+        }
+        Ok(json!({"show": self.pointer.show, "glide": self.pointer.glide, "size": self.pointer.size}))
+    }
+
     fn ui_state(&self, ctx: &egui::Context, p: &Json, now: Instant) -> Json {
         let session = self.engine.session().clone();
         let net = session.doc().snapshot();
@@ -166,7 +194,8 @@ impl PenumbraApp {
     fn click(&mut self, p: &Json, modifiers: Modifiers, button: PointerButton) -> Result<Outcome, String> {
         let at = self.element_pos(p)?;
         let count = if p.get("double").and_then(Json::as_bool).unwrap_or(false) { 2 } else { 1 };
-        self.synthetic.push_back(egui::Event::PointerMoved(at));
+        let moves = self.pointer.moves_to(at);
+        self.synthetic.extend(moves);
         for _ in 0..count {
             self.synthetic.push_back(egui::Event::PointerButton {
                 pos: at,
@@ -194,12 +223,14 @@ impl PenumbraApp {
         if held {
             self.synthetic.push_back(egui::Event::ModifiersChanged(modifiers));
         }
-        self.synthetic.push_back(egui::Event::PointerMoved(from));
+        let moves = self.pointer.moves_to(from);
+        self.synthetic.extend(moves);
         self.synthetic.push_back(egui::Event::PointerButton { pos: from, button, pressed: true, modifiers });
         for i in 1..=steps {
             let t = i as f32 / steps as f32;
             self.synthetic.push_back(egui::Event::PointerMoved(from + (to - from) * t));
         }
+        self.pointer.moved(to);
         self.synthetic.push_back(egui::Event::PointerButton { pos: to, button, pressed: false, modifiers });
         if held {
             self.synthetic.push_back(egui::Event::ModifiersChanged(Modifiers::default()));
@@ -210,7 +241,8 @@ impl PenumbraApp {
     fn scroll(&mut self, p: &Json, modifiers: Modifiers) -> Result<Outcome, String> {
         let at = self.element_pos(p)?;
         let dy = p.get("dy").and_then(Json::as_f64).filter(|d| d.is_finite()).unwrap_or(0.0) as f32;
-        self.synthetic.push_back(egui::Event::PointerMoved(at));
+        let moves = self.pointer.moves_to(at);
+        self.synthetic.extend(moves);
         self.synthetic.push_back(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Point,
             delta: vec2(0.0, dy),

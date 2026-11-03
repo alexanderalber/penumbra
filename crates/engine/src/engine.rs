@@ -121,6 +121,8 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
 pub const RECORD_FINISH: Duration = Duration::from_secs(5);
 /// How long a command waits for the cook thread before giving up.
 pub const COOK_TASK_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often a stepping cook thread looks for messages; it has nothing else to do.
+const STEPPING_POLL: Duration = Duration::from_millis(100);
 /// Passes between two resolution analyses while they are wanted and the network stays the
 /// same (a second at 60 Hz; sizes change without an edit only when a file loads). An analysis
 /// costs about a millisecond per mapper with a mesh.
@@ -134,6 +136,9 @@ enum CookMsg {
     Vsync(Instant),
     /// The ticker ticked; ignored while a real output paces.
     Tick(Instant),
+    /// Cook this many frames now, one frame of show time each, and answer with the last pass
+    /// published ([`Engine::step`]).
+    Step(u64, mpsc::Sender<u64>),
     Stop,
 }
 
@@ -298,6 +303,9 @@ pub struct CookState {
     pub stats: PassStats,
     /// Told what the network wants when it changes.
     hubs: Arc<Hubs>,
+    /// The show clock moves only by [`Engine::step`]: no passes on the timer or on vsyncs.
+    /// For renders that must not depend on how fast the machine is.
+    pub stepping: bool,
     /// Added to the cooker's pass numbers in what is published, so they keep growing when
     /// another project opens (the output threads wait for a pass newer than the last they drew).
     pass_base: u64,
@@ -782,6 +790,7 @@ impl Engine {
             stats: PassStats::default(),
             hubs: self.hubs.clone(),
             pass_base,
+            stepping: false,
         }
     }
 
@@ -1543,6 +1552,30 @@ impl Engine {
         lock(&self.cook).send(CookMsg::Vsync(at)).ok();
     }
 
+    /// Switches the show clock to stepping ([`CookState::stepping`]) or back to the timer and
+    /// the outputs' vsyncs. Back on the timer, the show goes on from where the steps left it.
+    pub fn set_stepping(&self, on: bool) -> Result<(), Error> {
+        self.on_cook(move |st| {
+            st.stepping = on;
+            // Counting starts afresh, so the timer does not catch up on the stepped time.
+            st.pacer = Pacer::new(st.clock.now().rate, Instant::now());
+        })
+    }
+
+    /// Cooks `frames` frames at once, each one frame of show time later (while the clock
+    /// plays), and returns the pass number of the last, as [`ViewFrame::pass`] gives it. Waits
+    /// at most `timeout`.
+    pub fn step(&self, frames: u64, timeout: Duration) -> Result<u64, Error> {
+        let (tx, rx) = mpsc::channel();
+        lock(&self.cook)
+            .send(CookMsg::Step(frames, tx))
+            .map_err(|_| Error::new("the cook thread has stopped"))?;
+        rx.recv_timeout(timeout).map_err(|e| match e {
+            RecvTimeoutError::Timeout => Error::new("the cook thread did not finish the steps in time"),
+            RecvTimeoutError::Disconnected => Error::new("the cook thread dropped the steps"),
+        })
+    }
+
     /// Runs `task` on the cook thread between two frames and returns its result.
     pub fn on_cook<R, F>(&self, task: F) -> Result<R, Error>
     where
@@ -1592,6 +1625,19 @@ impl Engine {
 
 fn cook_loop(session: &Session, mut state: CookState, rx: &Receiver<CookMsg>) {
     loop {
+        if state.stepping {
+            // No pass of its own: only tasks and steps, so the ticker's ticks are dropped too.
+            match rx.recv_timeout(STEPPING_POLL) {
+                Ok(msg) => {
+                    if !handle(std::iter::once(msg).chain(rx.try_iter()), session, &mut state) {
+                        return;
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => return,
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+            continue;
+        }
         let now = Instant::now();
         state.pace_ticker(now);
         let deadline = state.pacer.next_deadline();
@@ -1639,8 +1685,17 @@ fn handle(msgs: impl Iterator<Item = CookMsg>, session: &Session, state: &mut Co
             }
             CookMsg::Vsync(at) => real = Some(at),
             CookMsg::Tick(at) => tick = Some(at),
+            CookMsg::Step(frames, reply) => {
+                for _ in 0..frames {
+                    run_frame(session, state, 1, Instant::now());
+                }
+                reply.send(state.pass_base + state.last.pass).ok();
+            }
             CookMsg::Stop => return false,
         }
+    }
+    if state.stepping {
+        return true;
     }
     if let Some(at) = real {
         state.real_vsync = Some(at);

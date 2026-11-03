@@ -2610,3 +2610,27 @@ fn scan_folders_and_a_blend_in_the_background() {
     };
     assert!(last["ok"] == false && last["message"].as_str().unwrap().contains("nowhere"), "{last}");
 }
+
+#[test]
+fn a_stepping_clock_moves_only_by_steps() {
+    let f = Fixture::new("stepping");
+    assert!(f.fail("cook.step", json!({})).contains("not stepping"));
+    let start = f.call("cook.stepping", json!({}))["frame"].as_i64().unwrap();
+    std::thread::sleep(Duration::from_millis(150));
+    assert_eq!(f.call("cook.status", json!({}))["frame"].as_i64(), Some(start), "the timer moved it");
+    let pass_before = f.engine.view().pass;
+    let r = f.call("cook.step", json!({"frames": 3}));
+    assert_eq!(r["frame"].as_i64(), Some(start + 3));
+    let pass = r["pass"].as_u64().unwrap();
+    assert!(pass >= pass_before + 3, "{pass} after {pass_before}");
+    assert_eq!(f.engine.view().pass, pass, "the last step's pass is published");
+    assert_eq!(f.engine.view().time.unwrap().frame, start + 3);
+    assert!(f.fail("cook.step", json!({"frames": 0})).contains("1 to 3600"));
+    // Paused, a step cooks without moving the time.
+    f.call("cook.play", json!({"playing": false}));
+    assert_eq!(f.call("cook.step", json!({}))["frame"].as_i64(), Some(start + 3));
+    f.call("cook.play", json!({}));
+    // Back on the timer, the show goes on from there.
+    f.call("cook.stepping", json!({"on": false}));
+    eventually("the timer to move the clock", || f.engine.view().time.is_some_and(|t| t.frame > start + 4));
+}

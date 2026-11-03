@@ -148,6 +148,16 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         cook_thumbnails,
     );
     add("cook.play", "Run or stop the show clock; {playing?} (default true)", cook_play);
+    add(
+        "cook.stepping",
+        "Move the show clock only by cook.step, not by the timer or a projector's vsync, so a render or recording gets every frame whatever the machine's speed; off goes on from where the steps left it; {on?} (default true); answers with the frame",
+        cook_stepping,
+    );
+    add(
+        "cook.step",
+        "Cook frames at once while stepping, each one frame of show time after the last (while the clock plays); {frames?} (default 1, at most 3600); answers with the frame and the pass",
+        cook_step,
+    );
     add("gpu.info", "GPU adapter, texture size limit, memory, errors raised so far, whether lost", gpu_info);
     add(
         "gpu.simulate_loss",
@@ -1001,14 +1011,14 @@ fn node_reset(e: &Engine, p: &Json) -> Result<Json> {
 
 fn cook_status(e: &Engine, p: &Json) -> Result<Json> {
     no_args(p)?;
-    let (now, playing, last, watched, thumbs, pace) = e.on_cook(|st| {
+    let (now, playing, last, watched, thumbs, (pace, stepping)) = e.on_cook(|st| {
         (
             st.clock.now(),
             st.clock.is_playing(),
             st.last.clone(),
             st.watched.iter().copied().collect::<Vec<_>>(),
             st.cooker.thumbnail_policy(),
-            st.pace(),
+            (st.pace(), st.stepping),
         )
     })?;
     let net = e.session().doc().snapshot();
@@ -1020,6 +1030,7 @@ fn cook_status(e: &Engine, p: &Json) -> Result<Json> {
         "playing": playing,
         "notice": e.notice(),
         "pace": pace,
+        "stepping": stepping,
         "pass": last.pass,
         "last_pass_ms": last.elapsed.as_secs_f64() * 1000.0,
         "cooked_last_pass": last.cooked.len(),
@@ -1075,6 +1086,45 @@ fn cook_thumbnails(e: &Engine, p: &Json) -> Result<Json> {
         o.insert("every".into(), json!(every));
     }
     Ok(reply)
+}
+
+fn cook_stepping(e: &Engine, p: &Json) -> Result<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        #[serde(default = "yes")]
+        on: bool,
+    }
+    let a: A = args(p)?;
+    e.set_stepping(a.on)?;
+    let frame = e.on_cook(|st| st.clock.now().frame)?;
+    Ok(json!({"stepping": a.on, "frame": frame}))
+}
+
+fn cook_step(e: &Engine, p: &Json) -> Result<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        #[serde(default = "one")]
+        frames: u64,
+    }
+    fn one() -> u64 {
+        1
+    }
+    let a: A = args(p)?;
+    if !(1..=3600).contains(&a.frames) {
+        return Err(CommandError(format!("`frames` is {}; give 1 to 3600", a.frames)));
+    }
+    if !e.on_cook(|st| st.stepping)? {
+        return Err(CommandError("the clock is not stepping; call cook.stepping first".into()));
+    }
+    // A slow pass may take a while; a few seconds per frame at most.
+    let timeout = Duration::from_secs(5)
+        .saturating_mul(u32::try_from(a.frames).unwrap_or(u32::MAX))
+        .min(Duration::from_secs(600));
+    let pass = e.step(a.frames, timeout)?;
+    let frame = e.on_cook(|st| st.clock.now().frame)?;
+    Ok(json!({"frame": frame, "pass": pass}))
 }
 
 fn cook_play(e: &Engine, p: &Json) -> Result<Json> {

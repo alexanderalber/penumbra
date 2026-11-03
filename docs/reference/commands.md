@@ -96,6 +96,8 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `cook.play` | Run or stop the show clock; {playing?} (default true) |
 | `cook.stats` | Cook pass timings since the last reset: passes, slowest pass, longest gap, late frames, stalls; {reset?} |
 | `cook.status` | Show clock, last cook pass, watched nodes, thumbnail policy |
+| `cook.step` | Cook frames at once while stepping, each one frame of show time after the last (while the clock plays); {frames?} (default 1, at most 3600); answers with the frame and the pass |
+| `cook.stepping` | Move the show clock only by cook.step, not by the timer or a projector's vsync, so a render or recording gets every frame whatever the machine's speed; off goes on from where the steps left it; {on?} (default true); answers with the frame |
 | `cook.thumbnails` | The editor's thumbnails, kept with the project (settings thumbnails and thumbnail_every; one undo step); {mode?: always \| when_free \| never, every?: cook passes between two thumbnail cooks of a node, 1 = every frame} |
 
 ## dmx
@@ -383,9 +385,11 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `ui.elements` | Automation ids with rects in points; {prefix?} |
 | `ui.enter` | Show the inside of a component in the editor, the top level without a path; {path?} |
 | `ui.frame` | Fit all nodes into the editor |
+| `ui.hover` | Move the pointer onto an element or a point and leave it there (a port shows its tooltip); {id \| x, y} |
 | `ui.key` | Press a key (egui name: Delete, Tab, F, Z, Enter, ...); {key, ctrl?, shift?, alt?} |
 | `ui.measure` | How tidy the level shown is, in graph units: width and height of the nodes, total and longest wire length, crossings, wire length on top of a wire from another output (overlap; where: overlaps), wire length through nodes |
 | `ui.options` | The editor's options (right-click on empty space) and the viewer's channel options; {chan_bars?, viewer_background?, binding_lines?, chan_scale?: auto\|shared\|per_channel (auto: a lane per channel when one that moves would be flat on a shared scale), audio_view?: meters\|plot (what the viewer shows of a chan.beat_analysis: meters, beat and spectrum, or the channel plot), viewer_aspect?: auto\|number (width over height of the viewer's picture area; the height follows the column's width; dragging the viewer's edge sets the aspect, auto is 16:9)} |
+| `ui.pointer` | A drawn pointer for recordings and screenshots, where no real cursor shows: show draws an arrow and a ring on each click, glide makes click, drag, scroll and hover move there over that many frames instead of jumping; {show?, glide?: frames 0 to 600, size?: 0.5 to 4} |
 | `ui.screenshot` | PNG of the window; {file?} (default %TEMP%/penumbra/ui.png) |
 | `ui.scroll` | Mouse wheel over an element or point; {id \| x, y, dy} |
 | `ui.select` | Select nodes in the editor (the editor shows the component they sit in); {paths} |

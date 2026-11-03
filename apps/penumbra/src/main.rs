@@ -14,7 +14,8 @@
 //! requests (see `penumbra_ui::headless`), prints each reply and exits; `ui.screenshot` in
 //! the script saves what the window would show. Without `--project` it works on a fresh copy
 //! of the demo in the temp directory, so the real demo project is left alone. `--software`
-//! renders on WARP instead of the GPU, `--size WxH` sets the window size in points. A headless
+//! renders on WARP instead of the GPU, `--size WxH` sets the window size in points, `--scale F`
+//! the pixels per point (2 draws the same layout at twice the resolution each way). A headless
 //! run plays no sound on a device (its frames come too slowly for a speaker); `--speakers` lets
 //! `out.audio` open its devices after all.
 //!
@@ -78,6 +79,8 @@ struct Args {
     headless: Option<PathBuf>,
     software: bool,
     size: Option<[f32; 2]>,
+    /// Pixels per point of a headless run.
+    scale: Option<f32>,
     fresh: bool,
     /// A headless run may play on the output devices.
     speakers: bool,
@@ -317,6 +320,9 @@ fn headless(engine: &Arc<Engine>, script: &Path, args: &Args) -> Result<(), Stri
     if let Some(size) = args.size {
         options.size = size;
     }
+    if let Some(scale) = args.scale {
+        options.pixels_per_point = scale;
+    }
     for (method, reply) in penumbra_ui::headless::run(engine.clone(), &text, &options)? {
         println!("{method}: {reply}");
     }
@@ -334,6 +340,16 @@ fn parse_size(text: &str) -> Result<[f32; 2], String> {
     Ok([w, h])
 }
 
+/// Pixels per point from 0.5 to 4.
+fn parse_scale(text: &str) -> Result<f32, String> {
+    let bad = || format!("--scale wants pixels per point from 0.5 to 4, e.g. 2, not `{text}`");
+    let v: f32 = text.parse().map_err(|_| bad())?;
+    if !(0.5..=4.0).contains(&v) {
+        return Err(bad());
+    }
+    Ok(v)
+}
+
 fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut port = None;
     let mut parsed = Args {
@@ -342,6 +358,7 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
         headless: None,
         software: false,
         size: None,
+        scale: None,
         fresh: false,
         speakers: false,
         after_crash_of: None,
@@ -370,10 +387,11 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
                 );
             }
             "--size" => parsed.size = Some(parse_size(&args.next().ok_or("--size needs WIDTHxHEIGHT")?)?),
+            "--scale" => parsed.scale = Some(parse_scale(&args.next().ok_or("--scale needs a factor")?)?),
             other => {
                 return Err(format!(
                     "unknown argument `{other}`; usage: penumbra [--project DIR] [--port N] [--fresh] \
-                     [--headless SCRIPT [--software] [--size WxH] [--speakers]]"
+                     [--headless SCRIPT [--software] [--size WxH] [--scale F] [--speakers]]"
                 ));
             }
         }
@@ -409,6 +427,9 @@ mod tests {
         assert_eq!(h.size, Some([800.0, 600.0]));
         assert!(parse_args(args(&["--size", "huge"])).is_err());
         assert!(parse_args(args(&["--size", "10x10"])).is_err());
+        assert_eq!(parse_args(args(&["--scale", "2"])).unwrap().scale, Some(2.0));
+        assert!(parse_args(args(&["--scale", "9"])).is_err());
+        assert!(parse_args(args(&["--scale", "x"])).is_err());
         assert_eq!(parse_args(args(&["--after-crash-of", "42"])).unwrap().after_crash_of, Some(42));
         assert!(parse_args(args(&["--after-crash-of", "x"])).is_err());
         assert_eq!(

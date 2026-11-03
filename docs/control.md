@@ -114,11 +114,17 @@ Commands that only look, `cook.play` and OSC/DMX keep working. The exception amo
 - `ui.window {position?, size?, maximized?}` says where the editor window is and moves it, in
   physical pixels of the desktop as `output.list` gives the displays; the next start opens it
   there again.
+- `ui.pointer {show?, glide?, size?}` draws a mouse pointer into the window's picture, for
+  screenshots and recordings, where clicks from the control channel show no cursor. `show`
+  draws an arrow and a ring on each click. `glide` is a number of frames: `ui.click`,
+  `ui.drag`, `ui.scroll` and `ui.hover` then move the pointer to their target over that many
+  frames instead of jumping there. `ui.hover {id | x, y}` only moves the pointer and leaves it
+  there, so a port shows its tooltip.
 
 ## Headless runs
 
 ```
-cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--speakers]
+cargo run -p penumbra -- --headless script.jsonl [--project DIR] [--software] [--size WxH] [--scale F] [--speakers]
 ```
 
 runs the real UI without a window and feeds it a script: one request per line
@@ -134,9 +140,37 @@ slashes), so a script kept beside `project.ron` names its files wherever the pro
 Each reply is printed.
 Without `--project` it works on a fresh copy of the demo in the temp directory, so no project
 is touched. `--software` renders on a software adapter (WARP on Windows): slow but the same on
-every machine. `--size` is the window size in points.
+every machine. `--size` is the window size in points. `--scale` is the number of pixels per
+point, from 0.5 to 4: `--size 1280x720 --scale 2` draws the 1280 by 720 layout at 2560 by 1440
+pixels, so its text stays sharp and large in a video.
 A headless run plays no sound: `out.audio` plays into nothing, since frames without a window
 come too slowly and unevenly for a speaker. `--speakers` lets it open its devices after all.
+
+### Recording a headless run
+
+`{"record": {"dir": "E:/rec", "fps": 30}}` in the script starts writing every drawn frame as
+`frame_000000.png`, `frame_000001.png`, ... into `dir`, which must not hold frames yet.
+`{"record": false}` stops; so does the end of the script. Put the frames on a timeline in a video
+editor as an image sequence at the same rate.
+
+While it records, the show clock moves by exactly one recorded frame per picture, however long a
+picture takes to draw (`cook.stepping`, see below). So a recording looks the same on a fast and
+a slow machine, and a sound file the show plays lines up with the frames when the editor puts
+both at the start. `fps` must divide the show rate: 30 or 60 for a 60 fps show, not 25.
+
+- `wait` and `wait_for` count show time while recording. `{"wait": 2}` records 2 seconds.
+- Every frame a request takes is recorded. A `ui.drag` with 30 `steps` lasts a second at
+  30 fps; with `ui.pointer {glide}` the pointer first travels to the drag's start.
+- egui's own animations run at the recording's rate too.
+- `marks.jsonl` beside the frames has a line per script line that took frames: its line number
+  in the script, what it was (`ui.drag`, `wait`, ...) and its first and last frame. Use it to cut,
+  zoom or put a caption on one step.
+- `resize` is refused while recording: every frame has one size.
+
+`cook.stepping {on?}` and `cook.step {frames?}` are the commands underneath. With stepping on,
+neither the timer nor a projector's vsync moves the clock. Each `cook.step` cooks the given
+number of frames at once and answers with the frame and the pass. Stepping off, the show goes on
+from where the steps left it.
 
 ## Environment variables
 
