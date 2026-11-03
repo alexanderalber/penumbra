@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/stage_ascent": (kind: "comp.base", params: {"expose": "warmth = controls.value1\nlift = energy_lift.b\nenergy_curve = energy_curve.b\nbars_per_turn = lane_map.bars_per_turn\nswing = lane_map.swing\nturn = lane_map.turn\nstep = controls.value0\nbeats_per_bar = controls.value2\nstart = fade.start\nend = fade.end\ndim = nebula_dim.brightness\ncamera = preset.row\nglide = glide.rise\npresets = presets.text\ngap = controls.value8\ngap_length = controls.value9\nceiling = controls.value3\nstorey_beats = controls.value6\norbit = controls.value7\nradius = controls.value10\ntwist = controls.value4\nlines = controls.value5\nline_width = tower_lines.line_width"}),
+        "/stage_ascent": (kind: "comp.base", params: {"expose": "warmth = controls.value1\nlift = energy_lift.b\nenergy_curve = energy_curve.b\nbars_per_turn = lane_map.bars_per_turn\nswing = lane_map.swing\nturn = lane_map.turn\nstep = controls.value0\nbeats_per_bar = controls.value2\nstart = fade.start\nend = shape.value4\ndim = nebula_dim.brightness\ncamera = preset.row\nglide = glide.rise\npresets = presets.text\ngap = controls.value8\ngap_length = controls.value9\nceiling = controls.value3\nstorey_beats = controls.value6\norbit = controls.value7\nradius = controls.value10\ntwist = controls.value4\nlines = controls.value5\nline_width = tower_lines.line_width"}),
         "/stage_ascent/bus": (kind: "chan.in", pos: [-1400.0, 0.0]),
         "/stage_ascent/floor": (kind: "geo.in", pos: [400.0, 300.0]),
         "/stage_ascent/mid": (kind: "geo.in", pos: [400.0, 450.0]),
@@ -37,7 +37,7 @@
         "/stage_ascent/scene": (kind: "geo.merge", inputs: {"in0": "storeys", "in1": "slabs", "in2": "posts", "in3": "floor", "in4": "mid", "in5": "ceiling"}, pos: [600.0, 250.0]),
         "/stage_ascent/presets": (kind: "table.text", params: {"format": "csv", "text": "height,pitch,roll,fov,side\n1.5,8,0,64,0\n1.3,14,0,62,0\n1.7,12,0,80,0\n1.6,3,0,56,0\n1.2,10,-8,66,-10\n1.8,6,10,68,12"}, pos: [-400.0, 1300.0]),
         "/stage_ascent/render": (kind: "tex.render", inputs: {"camera": "camera", "geo": "scene"}, pos: [800.0, 300.0]),
-        "/stage_ascent/fade": (kind: "tex.shader", params: {"end": 24.0, "file": "library/stage_ascent/fade.wgsl", "start": 8.0}, inputs: {"in0": "render", "in1": "render:data"}, pos: [1000.0, 300.0]),
+        "/stage_ascent/fade": (kind: "tex.shader", params: {"end": 24.0, "file": "library/stage_ascent/fade.wgsl", "start": 8.0}, binds: {"end": "shape:far"}, inputs: {"in0": "render", "in1": "render:data"}, pos: [1000.0, 300.0]),
         "/stage_ascent/palette": (kind: "tex.cross", params: {"cross": 0.0}, inputs: {"a": "warm", "b": "cold"}, binds: {"cross": "controls:warmth"}, pos: [0.0, -200.0]),
         "/stage_ascent/travelled": (kind: "chan.select", params: {"channels": "travelled"}, inputs: {"in": "bus"}, pos: [-1200.0, -500.0]),
         "/stage_ascent/energy": (kind: "chan.select", params: {"channels": "energy_low"}, inputs: {"in": "bus"}, pos: [-1200.0, -900.0]),
@@ -76,7 +76,7 @@
         "/stage_ascent/sky_over": (kind: "tex.composite", params: {"op": "screen"}, inputs: {"in0": "nebula_dim", "in1": "sky"}, pos: [1000.0, -550.0]),
         "/stage_ascent/picture": (kind: "tex.composite", inputs: {"in0": "sky_over", "in1": "fade"}, pos: [1200.0, -100.0]),
         "/stage_ascent/out": (kind: "tex.out", inputs: {"in": "picture"}, pos: [1400.0, -100.0]),
-        "/stage_ascent/shape": (kind: "chan.constant", params: {"rows": 3, "name0": "axis", "value0": 1.5, "name1": "walls", "value1": 1.0, "name2": "curve", "value2": 0.0}, pos: [0.0, 1050.0]),
+        "/stage_ascent/shape": (kind: "chan.constant", params: {"rows": 5, "name0": "axis", "value0": 1.5, "name1": "walls", "value1": 1.0, "name2": "curve", "value2": 0.0, "name3": "radius", "value3": 6.0, "name4": "far", "value4": 24.0}, binds: {"value3": "controls:radius"}, pos: [0.0, 1050.0]),
         "/stage_ascent/pose_all": (kind: "chan.merge", inputs: {"in0": "glide", "in1": "shape"}, pos: [200.0, 1050.0]),
         "/stage_ascent/pose": (kind: "chan.out", inputs: {"in": "pose_all"}, pos: [400.0, 1050.0]),
     },

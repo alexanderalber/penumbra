@@ -33,6 +33,18 @@
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
+
+// Whether the floor stands under a thing `y` metres ahead: the lane picture's alpha, read as in
+// or out. The floor breaks off in whole cells of one beat, so the test reads the middle of the
+// thing's cell from one texel, without filtering. A thing on a gap's edge then stays in or out
+// as it comes nearer, instead of flickering as a stub. A gap that is opening takes it at once.
+fn on_floor(y: f32, step: f32) -> bool {
+    let s = max(step, 0.01);
+    let c = params.beats + y / s;
+    let mid = (floor(c + 0.01) + 0.5 - params.beats) * s;
+    let texel = clamp(i32(floor((mid - LANE_NEAR) / (LANE_FAR - LANE_NEAR) * 256.0)), 0, 255);
+    return textureLoad(in0, vec2i(texel, 0), 0).a >= 0.5;
+}
 // Metres every line stands above the floor, so it does not flicker against the floor's lines.
 const LIFT: f32 = 0.02;
 
@@ -115,7 +127,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let order = hash(vec2i(i32(n), 7), seed + 3u);
     let own = clamp(params.presence * 2.0 - order, 0.0, 1.0);
     height *= own * own * (3.0 - 2.0 * own);
-    // Where the floor has a gap, the waves go with it.
-    height *= clamp(lane.a, 0.0, 1.0);
+    // Where the floor has a gap, the line lies flat.
+    height *= select(0.0, 1.0, !wired || on_floor(y, step));
     return vec4f(x, y, height + LIFT, height);
 }

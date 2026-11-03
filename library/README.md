@@ -317,9 +317,12 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   shows another element there.
 - **The stage's shape** is in its `pose` too: `axis` (metres up where the stage's middle lies:
   0.5 over the synthwave floor, the tube's axis, the shaft's middle), `walls` (1 where walls
-  stand round the camera) and `curve` (1 where the horizon is the round end of a tube). The
-  lasers start at `axis`, the glider floats up out of the picture where `walls` is 1, and the
-  bars and the city wrap round the tube's end with `curve`. Wire the blended pose into
+  stand round the camera), `curve` (1 where the horizon is the round end of a tube), `radius`
+  (the tube's or the shaft's radius, 0 on the plane) and `far` (metres ahead where the fade ends:
+  the stage's `end`). The lasers start at `axis`, the glider floats up out of the picture where
+  `walls` is 1. With `curve` the bars and the city stand round the tube's far end, `far` metres
+  ahead: a ring of `radius` round the axis, which the camera sees above the vanishing point. The
+  figures stand on that ring's bottom and the planet hangs inside it. Wire the blended pose into
   `mid_lasers` and `mid_glider` as into the sky elements.
 - **Rolling the plane up into the tunnel.** `stage_synthwave` and `stage_tunnel` both have
   `roll_up`. Bind both to the share of the fade between them (the `min` 1 part of the `stage`
@@ -345,7 +348,8 @@ glider is the element `mid_glider`.
 - Out: `out` (the picture), `lane` (256 x 1: per texel i, -8 + 0.25 i metres ahead, red the
   lane's x in metres, green its sideways slope per metre, blue `step`, alpha the floor: 1 where
   it stands, 0 in a gap), `pose` (the camera as it glides: channels `height`, `pitch`, `roll`,
-  `fov`, `side`, and the stage's shape: `axis` 0.5, `walls` 0, `curve` 0; wire it into the
+  `fov`, `side`, and the stage's shape: `axis` 0.5, `walls` 0, `curve` 0, `radius` 0, `far` the
+  fade's `end`; wire it into the
   sky elements and the mid elements that take it).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift` (added to the bass, e.g. before a
   change), `energy_curve`, `dim` (the nebula's light); the lane's `bars_per_turn`, `swing`, `turn`,
@@ -363,7 +367,8 @@ glider is the element `mid_glider`.
 - Gaps: `gap` (the share of the floor grid that breaks off, 0 to 1; 0 keeps it whole),
   `gap_length` (metres a gap runs, rounded to whole bars). A gap begins where a bar begins, so its
   near edge passes the camera on a downbeat. The lane floats on over nothing. Floor elements read
-  the gaps from `lane` and sink there too. A gap that opens or closes fades. `beats.arrange`
+  the gaps from `lane`: a thing whose cell of the floor is in a gap is left out whole, so no stub
+  stands at a gap's edge. A gap that opens or closes fades; the things on it go at its halfway. `beats.arrange`
   binds `gap` to its `gaps` column: 0.3 in a build, 0.6 in a break.
 
 ### stage_tunnel
@@ -395,7 +400,7 @@ rolling the plane up above).
   since the lane lies straight at the tube's bottom, blue `step`, alpha 0, since nothing can
   stand on the curved bottom), `pose` (the camera as it glides: channels `height`, `pitch`,
   `roll`, `fov`, `side`, and the stage's shape: `axis` the tube's axis, 4 m, `walls` 1, `curve`
-  1).
+  1, `radius` 4 m, `far` the fade's `end`, 20 m).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift`, `energy_curve`, `dim`; the
   lane's `bars_per_turn`, `swing`, `turn`, `beats_per_bar`; `step` (metres per beat: the
   distance between two rings); `start`, `end` of the distance fade (6 and 20 m: the tube is
@@ -434,7 +439,8 @@ swap.
   since the lane runs straight ahead, blue `step`, alpha 0, since there is no floor to stand
   on), `pose` (the camera as it glides: channels `height`, `pitch`, `roll`, `fov`, `side`;
   `height` is the camera's height above the floor it would stand on, the same on every storey;
-  and the stage's shape: `axis` 1.5, `walls` 1, `curve` 0).
+  and the stage's shape: `axis` 1.5, `walls` 1, `curve` 0, `radius` the shaft's, `far` the
+  fade's `end`).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift`, `energy_curve`, `dim`; the
   lane's `bars_per_turn`, `swing`, `turn`, `beats_per_bar` (they set the sway); `step` (metres per
   beat, for the mid elements); `start`, `end` of the distance fade (8 and 24 m); `ceiling` (metres
@@ -880,7 +886,9 @@ of the disc, its far half behind it.
   twice), `place` (across the sky), `height` (its centre over the horizon), `rise` (how much
   higher at a track's end), `tilt`, `open` (how far the ring opens towards the viewer), `bands`,
   `spin` (turns per beat), `breathe`, `reach` (metres ahead where the floor fades out: the
-  stage's `end`, where the horizon lies).
+  stage's `end`, where the horizon lies), `bend` (bound to the pose's `curve`: in a tube the
+  planet hangs smaller in the middle of its far end, inside the ring), `axis`, `radius`, `far` as
+  on `sky_bars`.
 
 ### sky_bars
 
@@ -897,7 +905,8 @@ every bar for a moment.
   draws solid bars), `jitter` (how much each bar moves by itself), `kick` (the lift on an onset),
   `glow`, `reach`, `bend` (0 a straight row; 1 the row wraps round the view's vanishing point as
   a ring, the bars pointing to its middle: bind it to the pose's `curve`, so in a tube the bars
-  stand round its far end), `ring` (the ring's radius in picture heights).
+  stand on the wall of its far end), `axis`, `radius`, `far` (where the tube's far end lies;
+  bound to the pose's channels of the same names).
 
 ### sky_city
 
@@ -912,7 +921,7 @@ half the pace. The towers' bodies only glow faintly, so the nebula shows through
 - Params: `presence`, `brightness`, `warmth`, `seed` (another number, another skyline), `tall`
   (the tallest towers, in picture heights), `slide` (picture heights per beat), `windows` (share
   lit in quiet passages), `flicker` (how much the mids light more and how often windows change),
-  `edge` (the outlines' light), `reach`, `bend` and `ring` as on `sky_bars` (the skyline wraps
+  `edge` (the outlines' light), `reach`, `bend`, `axis`, `radius` and `far` as on `sky_bars` (the skyline wraps
   round the tube's far end, the towers pointing to its middle).
 
 ### sky_figure
@@ -928,7 +937,7 @@ flash makes it jump. It bobs on the beats.
   arms up reach a fifth higher), `place` (across the sky), `thickness` (pixels), `glow`, `reach`
   (as on `sky_planet`).
 
-The six figures below are variants of `sky_figure`. Each takes the same poses on the same channels, so any of them can stand in its place in the sky slot. Each also stands in the tunnel: bind `bend` to the pose's `curve` (the component does) and the figure stands smaller on the bottom of the tube's far end.
+The six figures below are variants of `sky_figure`. Each takes the same poses on the same channels, so any of them can stand in its place in the sky slot. Each also stands in the tunnel: bind `bend` to the pose's `curve` (the component does) and the figure stands smaller on the bottom of the tube's far end (from the pose's `axis`, `radius` and `far`).
 
 ### sky_figure_solid
 
@@ -937,7 +946,7 @@ The six figures below are variants of `sky_figure`. Each takes the same poses on
 A variant of `sky_figure`: a filled low-poly silhouette. Each limb and the trunk are a few flat facets of dark fill, lit from the upper left, inside a bright edge.
 
 - In: `bus`, `pose`. Out: `out`.
-- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness` (the edge, pixels), `fill` (the facets' light), `seams` (the lines between facets), `glow`, `reach`, `ring`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel, as a share of the tube's far end), `thickness` (the edge, pixels), `fill` (the facets' light), `seams` (the lines between facets), `glow`, `reach`.
 
 ### sky_figure_robot
 
@@ -946,7 +955,7 @@ A variant of `sky_figure`: a filled low-poly silhouette. Each limb and the trunk
 A variant of `sky_figure`: a robot of boxes. Every part is a wireframe box with a black inside, so a box in front hides the lines behind it. Two eyes glow in the head, and the antenna's tip flashes on each beat. It moves in steps: the arms in quarters, the sway at once with the bar, a drop of the body on each beat.
 
 - In: `bus`, `pose`. Out: `out`.
-- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness`, `depth` (how far the back faces lie), `eyes`, `glow`, `reach`, `ring`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel, as a share of the tube's far end), `thickness`, `depth` (how far the back faces lie), `eyes`, `glow`, `reach`.
 
 ### sky_figure_dancer
 
@@ -955,7 +964,7 @@ A variant of `sky_figure`: a robot of boxes. Every part is a wireframe box with 
 A variant of `sky_figure`: a slim dancer with a cloak of lines. The lines hang from the shoulders, the arms and the wrists. They swing with the mids, the outer ones a little later, so the cloak trails the arms. With the arms up the cloak opens like wings.
 
 - In: `bus`, `pose`. Out: `out`.
-- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness`, `strands` (lines per side), `cloak` (their light), `hem` (the cloak's lower edge), `swing`, `glow`, `reach`, `ring`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel, as a share of the tube's far end), `thickness`, `strands` (lines per side), `cloak` (their light), `hem` (the cloak's lower edge), `swing`, `glow`, `reach`.
 
 ### sky_figure_joints
 
@@ -964,7 +973,7 @@ A variant of `sky_figure`: a slim dancer with a cloak of lines. The lines hang f
 A variant of `sky_figure`: glowing joints and thin faint bones, like a figure in Tron. On each beat a pulse runs from the neck along the bones to the hands and feet, and each joint flashes as it passes.
 
 - In: `bus`, `pose`. Out: `out`.
-- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness` (the bones), `dots` (a joint's radius), `bones` (their light), `pulse`, `glow`, `reach`, `ring`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel, as a share of the tube's far end), `thickness` (the bones), `dots` (a joint's radius), `bones` (their light), `pulse`, `glow`, `reach`.
 
 ### sky_figure_giant
 
@@ -973,7 +982,7 @@ A variant of `sky_figure`: glowing joints and thin faint bones, like a figure in
 A variant of `sky_figure`: a giant seen from below. The legs are huge, and the body narrows upwards to a small head. The silhouette is filled, with dark bands across its lower part like the sun's, rolling slowly down.
 
 - In: `bus`, `pose`. Out: `out`.
-- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness`, `depth` (how much narrower the top is), `spread` (the feet's width), `lines` (bands), `glow`, `reach`, `ring`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel, as a share of the tube's far end), `thickness`, `depth` (how much narrower the top is), `spread` (the feet's width), `lines` (bands), `glow`, `reach`.
 
 ### sky_figure_bust
 
@@ -982,7 +991,7 @@ A variant of `sky_figure`: a giant seen from below. The legs are huge, and the b
 A variant of `sky_figure`: only head and shoulders, huge over the horizon, as a wireframe of latitude and longitude lines with glowing eyes and a mouth. The poses become the head's: it tilts to the side on the sway, lifts through a build, tilts far back in a drop and nods on each beat. The drop's flash makes the whole bust jump.
 
 - In: `bus`, `pose`. Out: `out`.
-- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness`, `rim` (the light where a surface turns away), `fill`, `eyes`, `reach`, `ring`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel, as a share of the tube's far end), `thickness`, `rim` (the light where a surface turns away), `fill`, `eyes`, `reach`.
 
 ### sky_eyes
 

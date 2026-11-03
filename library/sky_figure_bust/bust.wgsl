@@ -5,7 +5,7 @@
 // and the drop's flash makes the whole bust jump; it nods on each beat. Black where the sky is
 // empty, so it can be screened over another sky.
 // @param tall float = 0.55 0.05..1.5 -- its height standing, in picture heights
-// @param tube float = 0.28 0.05..1 -- its height in a tube's far end (with `bend`), in picture heights
+// @param tube float = 0.7 0.1..1.5 -- its height in a tube's far end (with `bend`), as a share of the far end's height
 // @param thickness float = 1.4 0.5..12 -- the lines' width, pixels
 // @param rim float = 1 0..3 -- the light of the rim
 // @param fill float = 0.06 0..0.5 -- the bodies' faint light between the lines
@@ -27,8 +27,10 @@
 // @param roll float = 0 -45..45 -- the camera's roll, degrees (roll of the stage's pose)
 // @param side float = 0 -45..45 -- the camera's turn to the right, degrees (side of the stage's pose)
 // @param reach float = 10 1..100 -- metres ahead where the floor fades out, the stage's `end`: the horizon lies there
-// @param bend float = 0 0..1 -- 0 it stands on the horizon; 1 it stands in a tube's far end, on the bottom of a ring of `ring` round the vanishing point (curve of the stage's pose)
-// @param ring float = 0.17 0.02..1 -- the far end's radius at full bend, in picture heights of a 60 degree view (0.17: stage_tunnel's tube)
+// @param bend float = 0 0..1 -- 0 it stands on the horizon; 1 it stands in a tube's far end, on the bottom of its ring (curve of the stage's pose)
+// @param axis float = 4 0..20 -- the tube's axis, metres over the floor (axis of the stage's pose)
+// @param radius float = 4 0..20 -- the tube's radius, metres (radius of the stage's pose)
+// @param far float = 20 1..100 -- metres ahead where the tube fades out: its far end lies there (far of the stage's pose)
 
 // Where this pixel lies in the sky, in picture heights of a 60 degree view: x from straight ahead,
 // y up from the horizon. The horizon is where the floor fades out, `reach` metres ahead, as the
@@ -46,8 +48,22 @@ fn sky_at(px: vec2f) -> vec3f {
     return vec3f(vec2f(p.x + tan(radians(params.side)), p.y + tan(down)) / unit, 2.0 * t / (res.y * unit));
 }
 
+// The tube's far end as the camera sees it, in sky_at's units: `.xy` its middle, `.z` its radius.
+// The end is the ring of `radius` round the tube's axis, `axis` metres up and `far` metres ahead.
+// The camera sits below the axis, so the middle lies above the vanishing point.
+fn tube_end() -> vec3f {
+    let unit = 2.0 * tan(radians(30.0));
+    let pitch = radians(params.pitch);
+    let down = atan(max(params.eye, 0.0) / max(params.reach, 0.1)) + pitch;
+    let far = max(params.far, 0.5);
+    let r = max(params.radius, 0.0);
+    let top = tan(atan((params.axis + r - params.eye) / far) - pitch);
+    let bottom = tan(atan((params.axis - r - params.eye) / far) - pitch);
+    return vec3f(0.0, (0.5 * (top + bottom) + tan(down)) / unit, max(0.5 * (top - bottom) / unit, 0.02));
+}
+
 // Where the figure's feet stand and how tall it is: on the horizon at `place`, or with `bend`
-// on the bottom of the tube's far end, straight ahead, at the height `tube`.
+// on the bottom of the tube's far end, straight ahead, `tube` of the far end's height tall.
 struct Ground {
     foot: vec2f,
     tall: f32,
@@ -55,13 +71,10 @@ struct Ground {
 
 fn ground() -> Ground {
     let b = clamp(params.bend, 0.0, 1.0);
-    let unit = 2.0 * tan(radians(30.0));
-    let down = atan(max(params.eye, 0.0) / max(params.reach, 0.1)) + radians(params.pitch);
-    // The vanishing point's height above the horizon.
-    let vanish = (tan(down) - tan(radians(params.pitch))) / unit;
+    let end = tube_end();
     var g: Ground;
-    g.foot = vec2f(params.place * (1.0 - b), b * (vanish - max(params.ring, 0.02)));
-    g.tall = mix(max(params.tall, 0.01), max(params.tube, 0.01), b);
+    g.foot = vec2f(params.place * (1.0 - b), b * (end.y - end.z));
+    g.tall = mix(max(params.tall, 0.01), 2.0 * end.z * max(params.tube, 0.01), b);
     return g;
 }
 

@@ -15,11 +15,10 @@ cloak = figure.cloak
 hem = figure.hem
 swing = figure.swing
 glow = figure.glow
-reach = figure.reach
-ring = figure.ring"}),
+reach = figure.reach"}),
         "/sky_figure_dancer/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_figure_dancer/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
-        "/sky_figure_dancer/figure": (kind: "tex.shader", params: {"file": "library/sky_figure_dancer/dancer.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "place": 0.0, "reach": 10.0, "ring": 0.17, "tall": 0.42, "thickness": 1.8, "strands": 12.0, "cloak": 0.55, "hem": 0.3, "swing": 0.06, "glow": 0.6}, binds: {"beats": "bus:travelled", "bar": "bus:bar", "bar_index": "bus:bar_index", "build": "bus:build", "drop": "bus:drop", "role": "bus:section_role", "energy": "bus:energy_low", "mid": "bus:energy_mid", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "bend": "pose:curve"}, pos: [-300.0, 0.0]),
+        "/sky_figure_dancer/figure": (kind: "tex.shader", params: {"file": "library/sky_figure_dancer/dancer.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "place": 0.0, "reach": 10.0, "tall": 0.42, "thickness": 1.8, "strands": 12.0, "cloak": 0.55, "hem": 0.3, "swing": 0.06, "glow": 0.6, "axis": 4.0, "radius": 4.0, "far": 20.0, "bend": 0.0, "tube": 0.7}, binds: {"beats": "bus:travelled", "bar": "bus:bar", "bar_index": "bus:bar_index", "build": "bus:build", "drop": "bus:drop", "role": "bus:section_role", "energy": "bus:energy_low", "mid": "bus:energy_mid", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "bend": "pose:curve", "axis": "pose:axis", "radius": "pose:radius", "far": "pose:far"}, pos: [-300.0, 0.0]),
         "/sky_figure_dancer/out": (kind: "tex.out", inputs: {"in": "figure"}, pos: [0.0, 0.0]),
     },
 )

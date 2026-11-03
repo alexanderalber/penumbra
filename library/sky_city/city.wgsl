@@ -21,8 +21,10 @@
 // @param roll float = 0 -45..45 -- the camera's roll, degrees (roll of the stage's pose)
 // @param side float = 0 -45..45 -- the camera's turn to the right, degrees (side of the stage's pose)
 // @param reach float = 10 1..100 -- metres ahead where the floor fades out, the stage's `end`: the horizon lies there
-// @param bend float = 0 0..1 -- how far the horizon bends into a ring round the view's vanishing point, for a tube: 0 straight, 1 a ring of `ring` (curve of the stage's pose)
-// @param ring float = 0.17 0.02..1 -- the ring's radius at full bend, in picture heights of a 60 degree view (0.17: the far end of stage_tunnel's tube)
+// @param bend float = 0 0..1 -- how far the horizon bends into a ring, for a tube: 0 straight, 1 the ring of the tube's far end, so the row stands on its wall (curve of the stage's pose)
+// @param axis float = 4 0..20 -- the tube's axis, metres over the floor (axis of the stage's pose)
+// @param radius float = 4 0..20 -- the tube's radius, metres (radius of the stage's pose)
+// @param far float = 20 1..100 -- metres ahead where the tube fades out: its far end lies there (far of the stage's pose)
 
 // Where this pixel lies in the sky, in picture heights of a 60 degree view: x from straight ahead,
 // y up from the horizon. The horizon is where the floor fades out, `reach` metres ahead, as the
@@ -40,22 +42,32 @@ fn sky_at(px: vec2f) -> vec3f {
     return vec3f(vec2f(p.x + tan(radians(params.side)), p.y + tan(down)) / unit, 2.0 * t / (res.y * unit));
 }
 
+// The tube's far end as the camera sees it, in sky_at's units: `.xy` its middle, `.z` its radius.
+// The end is the ring of `radius` round the tube's axis, `axis` metres up and `far` metres ahead.
+// The camera sits below the axis, so the middle lies above the vanishing point.
+fn tube_end() -> vec3f {
+    let unit = 2.0 * tan(radians(30.0));
+    let pitch = radians(params.pitch);
+    let down = atan(max(params.eye, 0.0) / max(params.reach, 0.1)) + pitch;
+    let far = max(params.far, 0.5);
+    let r = max(params.radius, 0.0);
+    let top = tan(atan((params.axis + r - params.eye) / far) - pitch);
+    let bottom = tan(atan((params.axis - r - params.eye) / far) - pitch);
+    return vec3f(0.0, (0.5 * (top + bottom) + tan(down)) / unit, max(0.5 * (top - bottom) / unit, 0.02));
+}
+
 // The sky point `at` (from sky_at) with the horizon bent into a ring, for a stage that is a
-// tube: at `bend` 1 the horizon is a ring of radius `ring` round the point straight ahead at
-// the horizon's height, the vanishing point of the tube's axis, and up is towards its middle.
-// Between, the horizon is an arc of a larger ring, so the row wraps round bit by bit.
+// tube: at `bend` 1 the horizon is the ring of the tube's far end (tube_end), and up is towards
+// its middle. Between, the horizon is an arc of a larger ring through the far end's bottom, so
+// the row wraps round bit by bit.
 fn bent(at: vec3f) -> vec3f {
     let b = clamp(params.bend, 0.0, 1.0);
     if b < 0.001 {
         return at;
     }
-    let unit = 2.0 * tan(radians(30.0));
-    let down = atan(max(params.eye, 0.0) / max(params.reach, 0.1)) + radians(params.pitch);
-    // The vanishing point's height above the horizon.
-    let vanish = (tan(down) - tan(radians(params.pitch))) / unit;
-    let ring = max(params.ring, 0.02);
-    let radius = ring / b;
-    let centre = vec2f(0.0, b * (vanish - ring) + radius);
+    let end = tube_end();
+    let radius = end.z / b;
+    let centre = vec2f(0.0, b * (end.y - end.z) + radius);
     let d = at.xy - centre;
     let angle = atan2(d.x, -d.y);
     return vec3f(angle * radius, radius - length(d), at.z);

@@ -33,6 +33,18 @@
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
+
+// Whether the floor stands under a thing `y` metres ahead: the lane picture's alpha, read as in
+// or out. The floor breaks off in whole cells of one beat, so the test reads the middle of the
+// thing's cell from one texel, without filtering. A thing on a gap's edge then stays in or out
+// as it comes nearer, instead of flickering as a stub. A gap that is opening takes it at once.
+fn on_floor(y: f32, step: f32) -> bool {
+    let s = max(step, 0.01);
+    let c = params.beats + y / s;
+    let mid = (floor(c + 0.01) + 0.5 - params.beats) * s;
+    let texel = clamp(i32(floor((mid - LANE_NEAR) / (LANE_FAR - LANE_NEAR) * 256.0)), 0, 255);
+    return textureLoad(in0, vec2i(texel, 0), 0).a >= 0.5;
+}
 // Metres a trunk's foot stands above the floor.
 const LIFT: f32 = 0.02;
 // trunk.obj: the crown's height and how far it leans towards +y, at size 1.
@@ -75,11 +87,11 @@ fn palm(side: u32, row: u32, lane0: vec4f) -> Palm {
     let a = (p.r.y - 0.5) * 1.2;
     p.lean = vec3f(sign * cos(a), sin(a), 0.0);
     // Presence: each palm has its own share of it, so as presence falls the palms shrink into
-    // the floor one after another. A palm over a gap in the floor goes with it.
+    // the floor one after another. Over a gap in the floor no palm stands.
     let own = clamp(params.presence * 2.0 - p.r.z, 0.0, 1.0);
-    var size = s * own * own * (3.0 - 2.0 * own) * clamp(lane.a, 0.0, 1.0);
+    var size = s * own * own * (3.0 - 2.0 * own);
     // A palm under 3 cm is left out.
-    if y > params.far || size * CROWN < 0.03 {
+    if y > params.far || size * CROWN < 0.03 || (wired && !on_floor(y, step)) {
         size = 0.0;
     }
     p.size = size;

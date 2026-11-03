@@ -15,11 +15,10 @@ jitter = bars.jitter
 kick = bars.kick
 glow = bars.glow
 reach = bars.reach
-bend = bars.bend
-ring = bars.ring"}),
+bend = bars.bend"}),
         "/sky_bars/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_bars/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
-        "/sky_bars/bars": (kind: "tex.shader", params: {"file": "library/sky_bars/bars.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "count": 24, "span": 0.62, "tall": 0.12, "gap": 0.3, "cells": 9, "jitter": 0.5, "kick": 0.25, "glow": 0.5, "reach": 10.0, "bend": 0.0, "ring": 0.17}, binds: {"beats": "bus:travelled", "low": "bus:energy_low", "mid": "bus:energy_mid", "high": "bus:energy_high", "onset": "bus:onset", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "bend": "pose:curve"}, pos: [-300.0, 0.0]),
+        "/sky_bars/bars": (kind: "tex.shader", params: {"file": "library/sky_bars/bars.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "count": 24, "span": 0.62, "tall": 0.12, "gap": 0.3, "cells": 9, "jitter": 0.5, "kick": 0.25, "glow": 0.5, "reach": 10.0, "bend": 0.0, "axis": 4.0, "radius": 4.0, "far": 20.0}, binds: {"beats": "bus:travelled", "low": "bus:energy_low", "mid": "bus:energy_mid", "high": "bus:energy_high", "onset": "bus:onset", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "bend": "pose:curve", "axis": "pose:axis", "radius": "pose:radius", "far": "pose:far"}, pos: [-300.0, 0.0]),
         "/sky_bars/out": (kind: "tex.out", inputs: {"in": "bars"}, pos: [0.0, 0.0]),
     },
 )

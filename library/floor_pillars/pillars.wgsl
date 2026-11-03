@@ -29,6 +29,18 @@
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
+
+// Whether the floor stands under a thing `y` metres ahead: the lane picture's alpha, read as in
+// or out. The floor breaks off in whole cells of one beat, so the test reads the middle of the
+// thing's cell from one texel, without filtering. A thing on a gap's edge then stays in or out
+// as it comes nearer, instead of flickering as a stub. A gap that is opening takes it at once.
+fn on_floor(y: f32, step: f32) -> bool {
+    let s = max(step, 0.01);
+    let c = params.beats + y / s;
+    let mid = (floor(c + 0.01) + 0.5 - params.beats) * s;
+    let texel = clamp(i32(floor((mid - LANE_NEAR) / (LANE_FAR - LANE_NEAR) * 256.0)), 0, 255);
+    return textureLoad(in0, vec2i(texel, 0), 0).a >= 0.5;
+}
 // Metres a pillar's base stands above the floor.
 const LIFT: f32 = 0.02;
 // The lowest pillar, in metres: lower ones read as stumps between the many tall lines.
@@ -80,15 +92,17 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     height *= 1.0 + params.pulse * kick;
     // Presence: each pillar has its own share of it, so as presence falls the pillars shrink
     // away whole, one after another; at a steady presence a pillar stands at full size or not
-    // at all, so no stumps stand between the lines. Where the floor has a gap, the pillars
-    // shrink with it.
+    // at all, so no stumps stand between the lines. Where the floor has a gap, no pillar stands.
     let own = clamp((params.presence * 2.0 - r.y) * 8.0, 0.0, 1.0);
-    var size = own * own * (3.0 - 2.0 * own);
-    size *= clamp(lane.a, 0.0, 1.0);
+    let size = own * own * (3.0 - 2.0 * own);
     height *= size;
-    // A pillar under 3 cm is left out, and every pillar stands `LIFT` above the floor, so its
-    // base does not flicker against the floor's lines.
-    if height < 0.03 {
+    if wired && !on_floor(y, step) {
+        return vec4f(x, y, 0.0, 0.0);
+    }
+    // A pillar that has shrunk below half a metre is left out rather than standing as a stub, and
+    // every pillar stands `LIFT` above the floor, so its base does not flicker against the
+    // floor's lines.
+    if height < 0.5 {
         return vec4f(x, y, 0.0, 0.0);
     }
     return vec4f(x, y, 0.5 * height + LIFT, params.across * size);
