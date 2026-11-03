@@ -41,8 +41,8 @@ mod meter;
 mod sections;
 
 pub use analyze::{
-    BeatModel, IN_FLIGHT, MAX_SECONDS, MODEL_FILE, Progress, analyze_file, analyze_file_with, f_measure,
-    model_path, run_parallel,
+    BeatModel, IN_FLIGHT, MAX_SECONDS, MODEL_FILE, Progress, analyze_file, analyze_file_with, cached_beats,
+    f_measure, model_path, run_parallel,
 };
 pub use bus::{
     BREAK_DIP, BREAK_KICK, BUILD_RISE, Bus, BusReading, CHANGE_JUMP, CHANGE_NOVELTY, CHANGE_TRACK,

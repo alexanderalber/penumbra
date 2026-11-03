@@ -183,6 +183,12 @@ pub fn analyze_file(
     analyze_file_with(path, model, cache_dir, cancel, progress, &mut |_| {})
 }
 
+/// The result [`analyze_file`] would read from `cache_dir` for this file and model, without
+/// computing anything. Cheap, so a caller can try it before it waits for threads to compute on.
+pub fn cached_beats(path: &Path, model: &BeatModel, cache_dir: &Path) -> Option<Beats> {
+    cache::load(&cache::Key::of(path, model.id(), cache_dir)?)
+}
+
 /// [`analyze_file`], and `partial` hears the beats that are final so far ([`pick_final`]) each
 /// time the run of chunks done from the start of the file grows. A result from the cache
 /// gives no partial results.

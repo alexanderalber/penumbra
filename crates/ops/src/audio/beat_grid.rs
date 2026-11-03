@@ -790,12 +790,8 @@ impl BeatFiles {
         let (inner, path, cancel) = (self.0.clone(), file.to_path_buf(), a.cancel.clone());
         let spawned = std::thread::Builder::new().name("beats".into()).spawn(move || {
             penumbra_system::process::lower_thread_priority();
-            let work = || run(&inner, &path, &cancel, &shared);
-            let result = catch_unwind(AssertUnwindSafe(|| match pool() {
-                Some(p) => p.install(work),
-                None => work(),
-            }))
-            .unwrap_or_else(|_| Err(BeatError::Network("the beat analysis failed".into())));
+            let result = catch_unwind(AssertUnwindSafe(|| run(&inner, &path, &cancel, &shared)))
+                .unwrap_or_else(|_| Err(BeatError::Network("the beat analysis failed".into())));
             shared.finish(&cancel, |s| {
                 s.running = false;
                 match result {
@@ -902,12 +898,31 @@ impl Inner {
     }
 }
 
-/// The analysis itself, on its thread.
+/// The analysis itself, on its thread. A result in the cache is read right here: only the
+/// network's work goes to the shared pool, where it would wait for other files' analyses.
 fn run(inner: &Inner, file: &Path, cancel: &AtomicBool, shared: &Shared) -> Result<Beats, BeatError> {
     if cancel.load(Ordering::Relaxed) {
         return Err(BeatError::Cancelled);
     }
     let model = inner.model()?;
+    if let Some(beats) = inner.cache.as_deref().and_then(|dir| beats::cached_beats(file, &model, dir)) {
+        return Ok(beats);
+    }
+    let work = || compute(inner, file, &model, cancel, shared);
+    match pool() {
+        Some(p) => p.install(work),
+        None => work(),
+    }
+}
+
+/// The network's run over `file`, in the pool.
+fn compute(
+    inner: &Inner,
+    file: &Path,
+    model: &BeatModel,
+    cancel: &AtomicBool,
+    shared: &Shared,
+) -> Result<Beats, BeatError> {
     let mut woke = 0.0;
     let mut progress = |p: &beats::Progress| {
         let f = p.fraction();
@@ -922,7 +937,7 @@ fn run(inner: &Inner, file: &Path, cancel: &AtomicBool, shared: &Shared) -> Resu
         shared.update(|s| s.grid = Some(grid));
         shared.wake();
     };
-    beats::analyze_file_with(file, &model, inner.cache.as_deref(), Some(cancel), &mut progress, &mut partial)
+    beats::analyze_file_with(file, model, inner.cache.as_deref(), Some(cancel), &mut progress, &mut partial)
 }
 
 #[derive(Default)]
