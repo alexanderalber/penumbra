@@ -1,10 +1,11 @@
-"""Writes the models of stage_ascent: storey.obj, slab.obj and post.obj, next to this file.
+"""Writes the models of stage_ascent: storey.obj, piece.obj and post.obj, next to this file.
 
 A storey is a ring-shaped floor along the tower's wall, open in the middle: from radius 4.5 to
 6 around the z axis, 48 sectors. storey.obj holds its edges as two rings of 48 quads, 5 cm above
-and 5 cm below the floor, so the wireframe draws them on top and underneath alike. slab.obj is
-the floor itself, the same quads at height 0, once facing up and once facing down: the stage
-draws it black, so a storey hides what lies behind it. post.obj is a thin prism one unit long
+and 5 cm below the floor, so the wireframe draws them on top and underneath alike. piece.obj is
+a piece of the floor itself, a square 1 by 1 facing up and down: the stage lays 48 of them
+along the wall of every storey, grown in from the wall, and draws them black, so a storey hides
+what lies behind it. post.obj is a thin prism one unit long
 along y, centred on the origin: scaled to two centimetres across, its three long edges draw one
 line. Run it with no arguments.
 """
@@ -51,13 +52,11 @@ def main():
         "The wireframe draws their outlines: two circles each and the lines between the sectors.",
     ], top + bottom, top_f + bottom_f)
 
-    slab, up = ring(0.0, 0)
-    down = [list(reversed(f)) for f in up]
-    write("slab.obj", [
-        "The floor of a storey of stage_ascent: a ring from radius 4.5 to 6 around the z axis,",
-        "48 quads at height 0, once facing up and once facing down, z up. The stage draws it",
-        "black, so it hides what lies behind it.",
-    ], slab, up + down)
+    square = [(-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (0.5, 0.5, 0.0), (-0.5, 0.5, 0.0)]
+    write("piece.obj", [
+        "A piece of a storey's floor of stage_ascent: a square 1 by 1 in the xy plane, z up,",
+        "faces on both sides. The stage draws it black, so it hides what lies behind it.",
+    ], square, [[0, 1, 2, 3], [0, 3, 2, 1]])
 
     h = math.sqrt(3.0) / 2.0
     tri = [(0.0, 2.0 * h / 3.0), (-0.5, -h / 3.0), (0.5, -h / 3.0)]

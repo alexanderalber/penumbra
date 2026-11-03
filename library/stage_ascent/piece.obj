@@ -1,0 +1,8 @@
+# A piece of a storey's floor of stage_ascent: a square 1 by 1 in the xy plane, z up,
+# faces on both sides. The stage draws it black, so it hides what lies behind it.
+v -0.50000 -0.50000 0.00000
+v 0.50000 -0.50000 0.00000
+v 0.50000 0.50000 0.00000
+v -0.50000 0.50000 0.00000
+f 1 2 3 4
+f 1 4 3 2

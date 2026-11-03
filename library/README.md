@@ -330,6 +330,18 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   left, and those lines bend up into the tunnel's rings; the ceiling grid fades out. Both
   stages show the same lines through the fade, so the switch's crossfade reads as one floor
   rolling up.
+- **Turning the tunnel up into the ascent.** `stage_tunnel` and `stage_ascent` both have
+  `turn_up`. Bind both to the share of the fade between them (the part of the `stage` channel
+  beyond 1). While the switch fades, the tunnel's wall, long lines and chevrons go, and its
+  rings thin out to free hoops, one every `storey_beats` beats. The hoops move apart to the
+  storeys' spacing and widen to the tower's radius. Then the tube turns upright in front of the
+  camera, and the hoops sink past it as storeys. The ascent draws the same hoops through the
+  fade, lying down at first, and builds its posts and floors as it stands. Both stages show the
+  same hoops at the same places, so the crossfade reads as one movement. The camera stays
+  level: the hoops turn, not the camera. For the cameras to match, bind the tunnel's inner
+  `toward` (a `chan.constant`: `height`, `pitch`, `roll`, `fov`, `side`) to the ascent's pose
+  through a `chan.select`: the tunnel's camera then glides into the ascent's over the first
+  third of the fade. The reverse walk runs the same way back.
 
 ### stage_synthwave
 
@@ -409,7 +421,10 @@ rolling the plane up above).
   radius); `lines` (long lines along the wall, up to 24); `line_width`; `roll_up` (1 the tube,
   towards 0 a flat floor of lines); `roll_bars` (bars from one turn of the tube to the next, 8;
   0 never turns); `roll_length` (bars a turn takes, 2); `pulse` (the light of the pulses and
-  dashes, 1; 0 none); `marks` (the chevrons' light, 1; 0 none).
+  dashes, 1; 0 none); `marks` (the chevrons' light, 1; 0 none); `turn_up` (0 the tube, towards 1
+  hoops that turn upright into a tower; see the paragraph on turning up above); `storey`,
+  `storey_beats` and `tower_radius` (where the hoops end up: 3 m apart, one every 4 beats, 6 m
+  wide, as on `stage_ascent`). `curve` in the pose falls to 0 as the tube turns up.
 - Camera: `camera`, `glide` and `presets` as on `stage_synthwave`, with presets of the same
   meaning for the tube: 0 low flight at 1.8 m, 1 higher and looking down for a build, 2 high and
   wide for a drop (3.4 m, 76 degrees), 3 still and nearly level for a break, 4 and 5 two tilted
@@ -450,7 +465,10 @@ swap.
   from one storey to the next: 3); `storey_beats` (beats to climb one storey: 4); `orbit` (beats
   for one turn of the tower: 128); `radius` (the tower's radius: 6 m; the camera rises halfway
   between its axis and its wall); `twist` (how far the tower sways with the lane: 1 turns it by
-  the lane's swing over the radius); `lines` (posts around the tower, up to 24); `line_width`.
+  the lane's swing over the radius); `lines` (posts around the tower, up to 24); `line_width`;
+  `turn_up` (1 the tower stands; towards 0 it lies down along the view as a tube of hoops, the
+  way `stage_tunnel` turns up); `tube_radius` (the lying tube's radius: 4 m, as the tunnel's).
+  `curve` in the pose rises to 1 as the tower lies down.
 - Camera: `camera`, `glide` and `presets` as on `stage_synthwave`, with presets of the same
   meaning for the shaft, all looking up a little: 0 at 1.5 m and 8 degrees up, 1 lower and looking
   up more for a build, 2 wide for a drop (80 degrees), 3 still and nearly level for a break, 4 and

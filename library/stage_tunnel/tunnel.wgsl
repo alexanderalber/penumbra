@@ -23,6 +23,15 @@
 // downbeats), the long lines and chevrons fade, and the wall opens from the top down in slats
 // that narrow, so the sky shows through. In the open middle of a gap nothing is left.
 //
+// The turn up: `turn_up` 1 makes the tube a tower of hoops standing upright, the camera rising
+// through it. Over its first third the long lines, dashes, chevrons, the pulse and the wall go
+// (the wall opens from the top down as in a gap), and the rings thin out to one every
+// `storey_beats` beats (every second ring goes first). From 0.2 to 0.8 the hoops move apart to
+// `storey` metres and widen to `tower_radius`. From a third to 1 the tube turns upright about a
+// line across the view, as far ahead of the camera's floor as up, so the hoops sink past the
+// camera. stage_ascent lying down (its `turn_up` at the same share) draws the same hoops at the
+// same places, so a cross between the two stages reads as one movement.
+//
 // in0: the stage's twist picture (lane.wgsl, `what` twist): red the lane's swing in metres,
 // alpha the tube (1 where it stands whole, 0 in the open middle of a gap).
 // Rings and walls: one texel per piece, render 64 x 48; column k is ring k (on beat `whole` - 4
@@ -54,6 +63,10 @@
 // @param roll_length float = 2 0.25..8 -- bars a turn takes
 // @param pulse float = 1 0..3 -- the light of the pulse that runs down the tube on every beat, and the dashes on every bar
 // @param marks float = 1 0..3 -- the chevrons' light on the tube's bottom
+// @param turn_up float = 0 0..1 -- 0 the tube, towards 1 it becomes hoops that turn upright into a tower
+// @param storey float = 3 1..10 -- metres between two hoops once the tube has turned up
+// @param storey_beats float = 4 1..16 -- beats from one hoop to the next once the tube has turned up
+// @param tower_radius float = 6 1..20 -- the hoops' radius once the tube has turned up, metres
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
@@ -74,10 +87,72 @@ const MARK_HALF: f32 = 0.5;
 const MARK_TIP: f32 = 0.45;
 const PI: f32 = 3.14159265;
 const TAU: f32 = 6.2831853;
+const HALF_PI: f32 = 1.5707963;
+
+fn up_share() -> f32 {
+    return clamp(params.turn_up, 0.0, 1.0);
+}
+
+// What is left of the long lines, the wall, the chevrons and the pulse: they go over the first
+// third of the turn up.
+fn bare() -> f32 {
+    return 1.0 - smoothstep(0.0, 1.0 / 3.0, up_share());
+}
+
+// How far the hoops have moved apart and widened.
+fn grown() -> f32 {
+    return smoothstep(0.2, 0.8, up_share());
+}
+
+// How far the tube has turned upright.
+fn stood() -> f32 {
+    return smoothstep(1.0 / 3.0, 1.0, up_share());
+}
+
+// The tube's radius now.
+fn radius_now() -> f32 {
+    return mix(params.radius, params.tower_radius, grown());
+}
+
+// Metres the world moves per beat now.
+fn per_beat() -> f32 {
+    return mix(params.step, params.storey / max(params.storey_beats, 0.25), grown());
+}
+
+// A point of the tube as the turn up places it. The tube lies with its bottom on the floor at
+// first. As it widens it sinks, so that it turns about the same line as a lying stage_ascent:
+// across the view, `radius` x 0.75 ahead and up.
+fn stand(p: vec3f) -> vec3f {
+    let pivot = 0.75 * params.radius;
+    let q = p + vec3f(0.0, 0.0, 1.5 * (params.radius - radius_now()));
+    let a = HALF_PI * stood();
+    let d = q - vec3f(0.0, pivot, pivot);
+    return vec3f(d.x, pivot + d.y * cos(a) - d.z * sin(a), pivot + d.y * sin(a) + d.z * cos(a));
+}
+
+// A direction turned with the tube.
+fn stand_dir(d: vec3f) -> vec3f {
+    let a = HALF_PI * stood();
+    return vec3f(d.x, d.y * cos(a) - d.z * sin(a), d.y * sin(a) + d.z * cos(a));
+}
+
+// How much of ring k is left as the rings thin out to one every `storey_beats` beats. The
+// ring on such a beat stays; of the others the ones on odd beats go first.
+fn hoop_left(k: f32) -> f32 {
+    let sb = max(round(params.storey_beats), 1.0);
+    let beat = params.whole - BEHIND + k;
+    let m = beat - sb * floor(beat / sb);
+    if m < 0.5 {
+        return 1.0;
+    }
+    let odd = m - 2.0 * floor(0.5 * m) > 0.5;
+    let u = up_share();
+    return select(1.0 - smoothstep(0.12, 0.3, u), 1.0 - smoothstep(0.02, 0.18, u), odd);
+}
 
 // Metres ahead of the camera of ring k.
 fn ring_y(k: f32) -> f32 {
-    return (k - BEHIND - params.phase) * params.step;
+    return (k - BEHIND - params.phase) * per_beat();
 }
 
 fn lane_at(y: f32) -> vec4f {
@@ -110,9 +185,10 @@ fn ring_left(k: f32) -> f32 {
     return smoothstep(0.65, 0.9, t);
 }
 
-// How much of the long lines and chevrons is left `y` metres ahead.
+// How much of the long lines and chevrons is left `y` metres ahead: they go where the tube
+// runs out and as it turns up.
 fn line_left(y: f32) -> f32 {
-    return smoothstep(0.4, 0.9, tube(y));
+    return smoothstep(0.4, 0.9, min(tube(y), bare()));
 }
 
 // How wide a slat of the wall is `y` metres ahead, as a share of a whole wall, for the slat
@@ -120,12 +196,12 @@ fn line_left(y: f32) -> f32 {
 // the top down: the roof goes first, the bottom last, so the tube becomes a trough before it
 // ends. Each slat has a little draw of its own, so the edge is ragged.
 fn wall_left(y: f32, s: f32, k: f32, i: u32) -> f32 {
-    let r = max(params.radius, 0.1);
+    let r = max(radius_now(), 0.1);
     let up = clamp(abs(s) / (PI * r), 0.0, 1.0);
     let n = bitcast<u32>(i32(params.whole + k));
     let draw = f32(pn_hash(vec3u(n, i, 17u)).x) / 4294967296.0;
     let edge = mix(0.05, 0.5, up) + 0.12 * (draw - 0.5);
-    return smoothstep(edge, edge + 0.4, tube(y));
+    return smoothstep(edge, edge + 0.4, min(tube(y), bare()));
 }
 
 // How far the sheet is rolled up: 0 flat, 1 the tube. The plane's floor gives way first.
@@ -157,14 +233,14 @@ fn turning() -> f32 {
 
 // The roll of the long lines at ring k, radians: with the lane, and the whole tube's turn.
 fn roll(k: f32) -> f32 {
-    let r = max(params.radius, 0.1);
+    let r = max(radius_now(), 0.1);
     return -params.twist * lane_at(ring_y(k)).r / r + turning();
 }
 
 // A point of the sheet: `s` metres around from the tube's bottom, `y` ahead, `out` metres
 // outside the sheet. Rolled up, s = radius x angle.
 fn sheet(s: f32, y: f32, out: f32) -> vec3f {
-    let r = max(params.radius, 0.1);
+    let r = max(radius_now(), 0.1);
     let bend = curl() / r;
     if bend < 0.0001 {
         return vec3f(s, y, -out);
@@ -178,7 +254,7 @@ fn sheet(s: f32, y: f32, out: f32) -> vec3f {
 // sheet's two edges meet at the top.
 fn around(a: f32) -> f32 {
     let w = a - TAU * floor((a + PI) / TAU);
-    return w * params.radius;
+    return w * radius_now();
 }
 
 // Where line j meets ring k.
@@ -204,7 +280,7 @@ fn downbeat(k: f32) -> f32 {
 fn pulse_at(y: f32) -> f32 {
     let b = clamp(params.beat, 0.0, 1.0);
     let d = (y - b * PULSE_RUN) / 1.2;
-    return params.pulse * exp(-d * d) * (1.0 - b);
+    return params.pulse * bare() * exp(-d * d) * (1.0 - b);
 }
 
 // The dash on a line at y metres ahead: a bright stretch running ahead, two in each bar.
@@ -221,7 +297,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         return vec4f(0.0, 0.0, 0.0, 1.0);
     }
     let k = f32(cell.x);
-    let r = max(params.radius, 0.1);
+    let r = max(radius_now(), 0.1);
     let bass = clamp(params.bass, 0.0, 1.0);
     let w = params.what;
     let width = TAU * r / f32(PIECES);
@@ -235,13 +311,13 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         let a = sheet(s0, y, squeeze);
         let b = sheet(s0 + width, y, squeeze);
         if w == what_ring_place {
-            return vec4f(0.5 * (a + b), 1.0);
+            return vec4f(stand(0.5 * (a + b)), 1.0);
         }
         if w == what_ring_aim {
-            return vec4f(b - a, 1.0);
+            return vec4f(stand_dir(b - a), 1.0);
         }
-        // A ring thins out where the tube runs out.
-        let here = ring_left(k);
+        // A ring thins out where the tube runs out and as it turns up.
+        let here = ring_left(k) * hoop_left(k);
         if w == what_ring_scale {
             let on = here >= 0.03;
             let t = select(0.0, THIN * params.thickness, on);
@@ -249,18 +325,20 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         }
         // White as the plane's floor while flat, the tube's colour rolled up.
         let tint = warm_cold(vec3f(1.0, 0.62, 0.32), vec3f(0.55, 0.8, 1.0));
-        let lit = tint * (0.35 + 0.35 * bass) * downbeat(k) * (1.0 + 2.5 * pulse_at(y));
+        // Every hoop left lit as a downbeat's ring, as stage_ascent's hoops are.
+        let down = mix(downbeat(k), 1.4, grown());
+        let lit = tint * (0.35 + 0.35 * bass) * down * (1.0 + 2.5 * pulse_at(y));
         let c = mix(vec3f(1.0), lit, smoothstep(0.3, 1.0, curl()));
         return vec4f(c * here, 1.0);
     }
     if w == what_wall_place || w == what_wall_aim || w == what_wall_scale {
-        let y = ring_y(k) + 0.5 * params.step;
+        let y = ring_y(k) + 0.5 * per_beat();
         let s = -PI * r + (i + 0.5) * width;
         if w == what_wall_place {
-            return vec4f(sheet(s, y, WALL_OUT), 1.0);
+            return vec4f(stand(sheet(s, y, WALL_OUT)), 1.0);
         }
         if w == what_wall_aim {
-            return vec4f(sheet(s + 0.01, y, WALL_OUT) - sheet(s - 0.01, y, WALL_OUT), 1.0);
+            return vec4f(stand_dir(sheet(s + 0.01, y, WALL_OUT) - sheet(s - 0.01, y, WALL_OUT)), 1.0);
         }
         // The wall opens from the top down where the tube runs out, its slats narrowing, and
         // closes in slats as the sheet rolls up.
@@ -268,21 +346,21 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         let shut = closing();
         let on = here >= 0.02 && shut > 0.01;
         let across = width * (r + WALL_OUT) / r * 1.04 * here;
-        return vec4f(select(0.0, params.step * shut, on), select(0.0, across, on), 1.0, 1.0);
+        return vec4f(select(0.0, per_beat() * shut, on), select(0.0, across, on), 1.0, 1.0);
     }
     if w == what_mark_place || w == what_mark_aim || w == what_mark_scale || w == what_mark_light {
         // A chevron every other ring, fixed to the world, its tip pointing ahead.
         let even = (params.whole + k) - 2.0 * floor(0.5 * (params.whole + k)) < 0.5;
         let side = select(-1.0, 1.0, cell.y == 1u);
-        let y = ring_y(k) + 0.5 * params.step;
+        let y = ring_y(k) + 0.5 * per_beat();
         let turn = around(turning());
         let a = sheet(turn + side * MARK_HALF, y - 0.5 * MARK_TIP, -0.01);
         let b = sheet(turn, y + 0.5 * MARK_TIP, -0.01);
         if w == what_mark_place {
-            return vec4f(0.5 * (a + b), 1.0);
+            return vec4f(stand(0.5 * (a + b)), 1.0);
         }
         if w == what_mark_aim {
-            return vec4f(b - a, 1.0);
+            return vec4f(stand_dir(b - a), 1.0);
         }
         let shut = closing();
         if w == what_mark_scale {
@@ -303,16 +381,16 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let a = on_wall(k, j);
     let b = on_wall(k + 1.0, j);
     if w == what_line_place {
-        return vec4f(0.5 * (a + b), 1.0);
+        return vec4f(stand(0.5 * (a + b)), 1.0);
     }
     if w == what_line_aim {
-        return vec4f(b - a, 1.0);
+        return vec4f(stand_dir(b - a), 1.0);
     }
     let here = line_left(0.5 * (a.y + b.y));
     let shut = closing();
     if w == what_line_scale {
         // A line crossing the sheet's open edge would span it while the sheet is not closed.
-        let on = shown && here >= 0.03 && shut > 0.02 && length(b - a) < 2.0 * params.step + 1.0;
+        let on = shown && here >= 0.03 && shut > 0.02 && length(b - a) < 2.0 * per_beat() + 1.0;
         let t = select(0.0, params.thickness, on);
         return vec4f(t, select(0.0, length(b - a), on), t, 1.0);
     }
