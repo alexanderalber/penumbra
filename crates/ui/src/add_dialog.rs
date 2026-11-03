@@ -18,8 +18,9 @@
 //! finds `tex.from_chan`) or a file name extension it reads (`fbx` finds `geo.file`). The
 //! summary names the tag. Families with a match are marked in their tab (bright text, a bar
 //! underneath), the others dimmed; the dialog never switches the tab by itself. Enter takes the
-//! first match of the active tab, one found by its name before one found by a tag, Tab switches to the next tab, Escape or a
-//! click outside closes. Opened by double-click on empty canvas or Tab in the editor, and by "Replace
+//! first match of the active tab: the type named exactly so, then one whose name starts with the
+//! text, then any other found by its name, then one found by a tag. Tab switches to the next
+//! tab, Escape or a click outside closes. Opened by double-click on empty canvas or Tab in the editor, and by "Replace
 //! node..." in the node menu, where choosing replaces that node.
 //!
 //! The component ports (`tex.in`, `chan.out`, ...) are greyed out and cannot be chosen at the
@@ -231,6 +232,30 @@ fn short(kind: &str) -> &str {
     kind.split_once('.').map_or(kind, |(_, s)| s)
 }
 
+/// Enter's choice among `kinds` (in grid order) for the trimmed, lower-case `filter`: the type
+/// named exactly so, then one whose name starts with it, then any found by its name, then one
+/// found by a tag. So `noise` takes `tex.noise`, not `tex.denoise` above it.
+fn enter_choice<'k>(
+    kinds: impl Iterator<Item = &'k str> + Clone,
+    usable: Usable<'_>,
+    filter: &str,
+) -> Option<String> {
+    let hits = kinds.filter(|k| usable.hit(k, filter));
+    let by_name = hits.clone().filter(|k| usable.tag(k, filter).is_none());
+    // Spaces, underscores and dots do not count, as in the search itself.
+    let plain =
+        |t: &str| t.chars().filter(|c| !matches!(c, ' ' | '_' | '.')).collect::<String>().to_lowercase();
+    let wanted = plain(filter);
+    let name = |k: &&str| plain(short(k));
+    by_name
+        .clone()
+        .find(|k| name(k) == wanted)
+        .or_else(|| by_name.clone().find(|k| name(k).starts_with(&wanted)))
+        .or_else(|| by_name.clone().next())
+        .or_else(|| hits.clone().next())
+        .map(str::to_string)
+}
+
 fn matches(kind: &str, filter: &str) -> bool {
     kind != GAP && penumbra_graph::name_found(kind, filter)
 }
@@ -302,6 +327,9 @@ impl AddDialog {
         if tab && !groups.is_empty() {
             active = (active + 1) % groups.len();
             self.focus = true;
+            // egui moves the focus on Tab before the key is consumed here; without this the
+            // close button gets it, and the next Enter presses it instead of choosing.
+            ui.memory_mut(|m| m.move_focus(egui::FocusDirection::None));
         }
         let group: &[String] = groups.get(active).map_or(&[], Vec::as_slice);
         if !group.contains(&self.family) {
@@ -312,14 +340,7 @@ impl AddDialog {
         }
 
         let (cells, sections) = cells(types, group, library);
-        // Enter takes a type found by its name before one found by a tag.
-        let hit = |by_name: bool| {
-            cells
-                .iter()
-                .map(|c| &c.kind)
-                .find(|k| usable.hit(k, &filter) && usable.tag(k, &filter).is_none() == by_name)
-        };
-        let first = hit(true).or_else(|| hit(false)).cloned();
+        let first = enter_choice(cells.iter().map(|c| c.kind.as_str()), usable, &filter);
         if enter && let Some(k) = &first {
             outcome = Outcome::Chosen(k.clone());
         }
@@ -378,7 +399,8 @@ impl AddDialog {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let r = icons::small_button(ui, Icon::Remove).on_hover_text("Close (Esc)");
                 auto.add("add.close", r.rect, "close");
-                if r.clicked() {
+                // Enter's choice wins over a press of the button in the same frame.
+                if r.clicked() && matches!(outcome, Outcome::Open) {
                     *outcome = Outcome::Close;
                 }
             });
@@ -777,5 +799,19 @@ mod tests {
         assert!(!u.hit("tex.from_chan", "to"), "a tag is found from its start");
         assert!(u.hit("tex.lens_distort", "lens distort"), "spaces count as nothing");
         assert!(u.tag("tex.lens_distort", "lens distort").is_none());
+    }
+
+    #[test]
+    fn enter_takes_the_exact_name_before_one_that_only_contains_it() {
+        let types = penumbra_ops::builtin_types().unwrap();
+        let u = Usable { types: &types, in_component: false };
+        let kinds = ["tex.denoise", "tex.level", "tex.noise", "tex.lens_distort", "geo.file"];
+        let choice = |f: &str| enter_choice(kinds.iter().copied(), u, f);
+        assert_eq!(choice("noise").as_deref(), Some("tex.noise"));
+        assert_eq!(choice("nois").as_deref(), Some("tex.noise"), "a name starting with the text");
+        assert_eq!(choice("oise").as_deref(), Some("tex.denoise"), "else the first containing it");
+        assert_eq!(choice("lens distort").as_deref(), Some("tex.lens_distort"));
+        assert_eq!(choice("fbx").as_deref(), Some("geo.file"), "a tag last");
+        assert_eq!(choice("zzz"), None);
     }
 }
