@@ -1,7 +1,8 @@
 // Pillars in lines beside the lane of the synthwave stage, one per texel, drawn by
 // geo.tex_instance with a prism. A column of texels is a line of pillars (left lines first, then
 // right ones, `rows` per side, at most 3), a row a pillar along it. The pillars stand
-// `spacing` bars of travel apart, so they pass in rhythm: one passes the camera on a downbeat.
+// `spacing` bars of travel apart, so they pass in rhythm: one passes the camera on a downbeat;
+// the second line on a side stands half a gap later, so the two lines interleave.
 // They follow the lane at a fixed distance from its edge. A pillar keeps its place on the floor
 // while it comes nearer, since the lane is fixed to the floor.
 // in0: the stage's lane picture (its `lane` output): red the lane's x, green its sideways slope
@@ -13,12 +14,12 @@
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid)
 // @param drift float = 0 -100..100 -- where the bars stand against `beats`, in bars (drift of a chan.beat_grid)
 // @param beat float = 0 0..1 -- how far the current beat has gone (beat of a chan.beat_grid): the pillars stretch a little on its start
-// @param presence float = 1 0..1 -- how many pillars stand: 1 all, towards 0 they sink into the floor one after another, 0 none
+// @param presence float = 1 0..1 -- how many pillars stand: 1 all, towards 0 they shrink away one after another, 0 none
 // @param spacing float = 1 0.25..8 -- bars of travel between two pillars of a line
 // @param beats_per_bar float = 4 2..8 -- beats in a bar
-// @param tall float = 2.4 0.2..6 -- height of a pillar, in metres (the camera is 2 m up, the ceiling 4 m)
+// @param tall float = 2.4 1.2..6 -- height of a pillar, in metres (the camera is 2 m up, the ceiling 4 m); none stands lower than 1.2 m
 // @param across float = 0.3 0.05..2 -- width of a pillar, in metres
-// @param rows int = 1 1..3 -- lines of pillars on each side of the lane
+// @param rows int = 2 1..3 -- lines of pillars on each side of the lane
 // @param gap float = 1.2 0.3..5 -- metres between two lines on one side
 // @param pulse float = 0.1 0..0.5 -- how far a pillar stretches on the beat, as a share of its height
 // @param lane float = 1.6 0..5 -- half the width of the free lane; the nearest line stands just outside it
@@ -30,6 +31,8 @@ const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
 // Metres a pillar's base stands above the floor.
 const LIFT: f32 = 0.02;
+// The lowest pillar, in metres: lower ones read as stumps between the many tall lines.
+const LOWEST: f32 = 1.2;
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
@@ -53,9 +56,11 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let travel = (params.beats / bpb + params.drift) / spacing;
     let whole = floor(travel);
     let part = travel - whole;
-    let first = ceil(params.near / gap_y + part);
+    // Every second line half a gap later.
+    let shift = 0.5 * f32(row % 2u);
+    let first = ceil(params.near / gap_y + part - shift);
     let k = first + f32(cell.y);
-    let y = gap_y * (k - part);
+    let y = gap_y * (k - part + shift);
     if y > params.far {
         return vec4f(0.0);
     }
@@ -68,21 +73,23 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let sign = select(-1.0, 1.0, side == 1u);
     let off = params.lane + 0.5 * params.across * (1.0 + abs(lane.g)) + f32(row) * params.gap;
     let x = lane.r + sign * off;
-    var height = params.tall * mix(0.85, 1.1, r.x);
+    var height = max(params.tall * mix(0.85, 1.1, r.x), LOWEST);
     // A little taller on the start of each beat, rising quickly and settling over the beat.
     let b = clamp(params.beat, 0.0, 1.0);
     let kick = smoothstep(0.0, 0.08, b) * (1.0 - b) * (1.0 - b) * (1.0 - b);
     height *= 1.0 + params.pulse * kick;
-    // Presence: each pillar has its own share of it, so as presence falls the pillars sink into
-    // the floor one after another. At 0.5 about half the height is left.
-    let own = clamp(params.presence * 2.0 - r.y, 0.0, 1.0);
-    height *= own * own * (3.0 - 2.0 * own);
-    // Where the floor has a gap, the pillars go with it.
-    height *= clamp(lane.a, 0.0, 1.0);
+    // Presence: each pillar has its own share of it, so as presence falls the pillars shrink
+    // away whole, one after another; at a steady presence a pillar stands at full size or not
+    // at all, so no stumps stand between the lines. Where the floor has a gap, the pillars
+    // shrink with it.
+    let own = clamp((params.presence * 2.0 - r.y) * 8.0, 0.0, 1.0);
+    var size = own * own * (3.0 - 2.0 * own);
+    size *= clamp(lane.a, 0.0, 1.0);
+    height *= size;
     // A pillar under 3 cm is left out, and every pillar stands `LIFT` above the floor, so its
     // base does not flicker against the floor's lines.
     if height < 0.03 {
         return vec4f(x, y, 0.0, 0.0);
     }
-    return vec4f(x, y, 0.5 * height + LIFT, params.across);
+    return vec4f(x, y, 0.5 * height + LIFT, params.across * size);
 }

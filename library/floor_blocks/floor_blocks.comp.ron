@@ -12,7 +12,7 @@
         "/floor_blocks/block_lines": (kind: "mat.wireframe", params: {"line_width": 2.0}, pos: [-600.0, -150.0]),
         "/floor_blocks/block": (kind: "geo.assign_material", inputs: {"in": "box", "mat": "block_lines"}, pos: [-400.0, -200.0]),
         "/floor_blocks/walls": (kind: "geo.primitive", params: {"size": [0.98, 0.98, 0.98]}, pos: [-600.0, -400.0]),
-        "/floor_blocks/wall_mat": (kind: "mat.constant", params: {"color": [0.0, 0.0, 0.0, 1.0]}, pos: [-600.0, -320.0]),
+        "/floor_blocks/wall_mat": (kind: "mat.occluder", params: {"shows": "black"}, pos: [-600.0, -320.0]),
         "/floor_blocks/wall": (kind: "geo.assign_material", inputs: {"in": "walls", "mat": "wall_mat"}, pos: [-400.0, -350.0]),
         "/floor_blocks/model": (kind: "geo.merge", inputs: {"in0": "block", "in1": "wall"}, pos: [-200.0, -250.0]),
         "/floor_blocks/blocks": (kind: "geo.tex_instance", params: {"extent": 20.0}, inputs: {"in": "model", "position": "places", "scale": "sizes"}, pos: [0.0, 0.0]),

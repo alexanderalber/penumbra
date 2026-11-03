@@ -27,7 +27,7 @@
         "/stage_ascent/slab_model": (kind: "geo.file", params: {"file": "library/stage_ascent/slab.obj", "up": "z"}, pos: [-200.0, 400.0]),
         "/stage_ascent/post_model": (kind: "geo.file", params: {"file": "library/stage_ascent/post.obj", "up": "z"}, pos: [-200.0, 650.0]),
         "/stage_ascent/tower_lines": (kind: "mat.wireframe", params: {"line_width": 2.0}, pos: [-200.0, 100.0]),
-        "/stage_ascent/slab_mat": (kind: "mat.constant", params: {"color": [0.0, 0.0, 0.0, 1.0]}, pos: [-200.0, 500.0]),
+        "/stage_ascent/slab_mat": (kind: "mat.occluder", params: {"shows": "black"}, pos: [-200.0, 500.0]),
         "/stage_ascent/storey_wire": (kind: "geo.assign_material", inputs: {"in": "storey_model", "mat": "tower_lines"}, pos: [0.0, 200.0]),
         "/stage_ascent/slab_cover": (kind: "geo.assign_material", inputs: {"in": "slab_model", "mat": "slab_mat"}, pos: [0.0, 400.0]),
         "/stage_ascent/post_wire": (kind: "geo.assign_material", inputs: {"in": "post_model", "mat": "tower_lines"}, pos: [0.0, 650.0]),

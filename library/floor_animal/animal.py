@@ -1,8 +1,10 @@
-"""Writes pose_0.obj to pose_7.obj: a low-poly horse in eight poses of one gallop stride.
+"""Writes pose_0.obj to pose_23.obj: a low-poly horse in 24 poses of one gallop stride.
 
-The stride is a transverse gallop as Muybridge photographed it: left hind, right hind, left fore
-and right fore come down one after another, then all four legs leave the ground together. Pose k
-shows the stride at k / 8 of the way through. The body rocks and bobs with the legs, the neck
+The stride is a slow transverse gallop: left hind, right hind, left fore and right fore come down
+one after another as Muybridge photographed it, then all four legs leave the ground together.
+Pose k shows the stride at k / 24 of the way through. A hoof on the ground moves back under the
+body at an even pace, `STRIDE` metres per stride, so a horse moved forwards by `STRIDE` per
+stride does not slide on its floor. The body rocks and bobs with the legs, the neck
 swings against the body, the tail streams back. A horse 1.6 m to the withers and 3 m from nose
 to tail, in metres, z up, the nose towards +y, the origin on the ground under the middle of the
 body. Run with no arguments; the files land next to this script. Standard library only.
@@ -12,7 +14,10 @@ import math
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-POSES = 8
+POSES = 24
+# Metres the horse moves forwards in one stride: floor_animal's run.wgsl takes this number. At
+# the stage's 0.5 m per beat, turned 30 degrees, one stride takes 2 beats.
+STRIDE = 1.155
 DEG = math.pi / 180.0
 
 # The body's rings from the buttock to the chest: y, top, bottom, half width (metres).
@@ -41,10 +46,10 @@ STANCE_X = 0.16
 # The gallop: when each leg's hoof is on the ground, as shares of the stride.
 # name, which leg, x side (-1 left), start of the stance, its length.
 LEGS = [
-    ("left_hind", HIND, -1.0, 0.00, 0.32),
-    ("right_hind", HIND, 1.0, 0.10, 0.32),
-    ("left_fore", FORE, -1.0, 0.32, 0.30),
-    ("right_fore", FORE, 1.0, 0.42, 0.30),
+    ("left_hind", HIND, -1.0, 0.00, 0.42),
+    ("right_hind", HIND, 1.0, 0.10, 0.42),
+    ("left_fore", FORE, -1.0, 0.36, 0.42),
+    ("right_fore", FORE, 1.0, 0.46, 0.42),
 ]
 
 
@@ -153,26 +158,23 @@ def leg_points(leg, phase, start, share, body_turn, bob):
     top = turn_yz(leg["top"], PIVOT, body_turn)
     top = (top[0], top[1] + bob)
     l1, l2, l3 = leg["bones"]
-    full = l1 + l2 + l3
     fore = leg["bend"] > 0
-    reach, back = (32.0 * DEG, 26.0 * DEG) if fore else (24.0 * DEG, 34.0 * DEG)
+    # The hoof's way on the ground, centred under the leg's top as it stands unturned: forwards
+    # by half of it, back by half, at the floor's pace.
+    sweep = share * STRIDE
+    front = leg["top"][0] + 0.5 * sweep
+    rear = leg["top"][0] - 0.5 * sweep
     t = (phase - start) % 1.0
     if t < share:
-        # On the ground: the hoof sweeps from ahead of the top joint to behind it.
         s = t / share
-        ang = reach + (-back - reach) * s
-        hoof = (top[0] + top[1] * math.tan(ang), 0.0)
+        hoof = (front + (rear - front) * s, 0.0)
         lift = 0.0
     else:
-        # In the air: back to the front, folded most half way.
+        # In the air: from behind back to the front in an arc, highest half way.
         s = (t - share) / (1.0 - share)
-        ang = -back + (reach + back) * smooth(s)
-        fold = math.sin(math.pi * min(s * 1.15, 1.0)) * (0.42 if fore else 0.34)
-        length = full * (1.0 - fold)
-        hoof = (top[0] + length * math.sin(ang), top[1] - length * math.cos(ang))
+        height = 0.32 if fore else 0.26
         lift = math.sin(math.pi * s)
-        if hoof[1] < 0.01:
-            hoof = (hoof[0], 0.01)
+        hoof = (rear + (front - rear) * smooth(s), max(height * lift, 0.01))
     # Fetlock: above the hoof; in the air the pastern flips back behind the cannon.
     flick = (0.9 if fore else 0.6) * lift
     pastern = (-math.sin(flick) * l3, math.cos(flick) * l3)

@@ -5,7 +5,8 @@
     nodes: {
         "/stage_synthwave": (kind: "comp.base", params: {"expose": "warmth = palette.cross\nlift = energy_lift.b\nenergy_curve = energy_curve.b\nbars_per_turn = lane_map.bars_per_turn\nswing = lane_map.swing\nturn = lane_map.turn\nstep = controls.value0\nbeats_per_bar = lane_map.beats_per_bar\nstart = fade.start\nend = fade.end\ndim = nebula_dim.brightness\ncamera = preset.row\nglide = glide.rise\npresets = presets.text
 gap = lane_map.gap
-gap_length = lane_map.gap_length"}),
+gap_length = lane_map.gap_length
+ground = ground.ground"}),
         "/stage_synthwave/bus": (kind: "chan.in", pos: [-1400.0, 0.0]),
         "/stage_synthwave/floor": (kind: "geo.in", pos: [400.0, 300.0]),
         "/stage_synthwave/mid": (kind: "geo.in", pos: [400.0, 450.0]),
@@ -68,7 +69,8 @@ gap_length = lane_map.gap_length"}),
         "/stage_synthwave/nebula_tinted": (kind: "tex.composite", params: {"op": "color"}, inputs: {"in0": "nebula", "in1": "palette"}, pos: [200.0, -500.0]),
         "/stage_synthwave/nebula_dim": (kind: "tex.level", params: {"brightness": 0.45}, inputs: {"in": "nebula_tinted"}, pos: [400.0, -500.0]),
         "/stage_synthwave/sky_over": (kind: "tex.composite", params: {"op": "screen"}, inputs: {"in0": "nebula_dim", "in1": "sky"}, pos: [1000.0, -550.0]),
-        "/stage_synthwave/picture": (kind: "tex.composite", inputs: {"in0": "sky_over", "in1": "fade"}, pos: [1200.0, -100.0]),
+        "/stage_synthwave/ground": (kind: "tex.shader", params: {"file": "library/stage_synthwave/ground.wgsl", "ground": 0.0, "soft": 0.012, "reach": 10.0}, inputs: {"in0": "sky_over"}, binds: {"eye": "glide:height", "pitch": "glide:pitch", "fov": "glide:fov", "roll": "glide:roll", "side": "glide:side"}, pos: [1100.0, -400.0]),
+        "/stage_synthwave/picture": (kind: "tex.composite", inputs: {"in0": "ground", "in1": "fade"}, pos: [1200.0, -100.0]),
         "/stage_synthwave/out": (kind: "tex.out", inputs: {"in": "picture"}, pos: [1400.0, -100.0]),
         "/stage_synthwave/pose": (kind: "chan.out", inputs: {"in": "glide"}, pos: [200.0, 950.0]),
     },

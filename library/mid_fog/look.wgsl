@@ -24,6 +24,9 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         let flip = select(-1.0, 1.0, r.z < 0.5);
         return vec4f(flip * params.across * mix(0.7, 1.3, r.x) * on, on, params.tall * mix(0.7, 1.3, r.y) * on, 1.0);
     }
-    let near = smoothstep(0.3, params.fade, p.y) * (1.0 - smoothstep(params.start, params.end, p.y));
+    // Squared, so the banks' light (up to 4 times a line's) is as faint far away as the stage's
+    // lines there; far banks would otherwise stand out as bright stripes over the horizon.
+    let away = 1.0 - smoothstep(params.start, params.end, p.y);
+    let near = smoothstep(0.3, params.fade, p.y) * away * away;
     return vec4f(vec3f(p.a * near * params.brightness * mix(params.quiet, 1.0, clamp(params.bass, 0.0, 1.0))), 1.0);
 }

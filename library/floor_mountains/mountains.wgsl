@@ -11,7 +11,7 @@
 // Out: x, y, z of the peak's centre in rgb, its width in alpha (0 where no peak stands). A
 // second node (sizes.wgsl) turns that into the peaks' scale. Render it at most 32 x 64.
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid): the grid's tempo, smoothed and added up
-// @param presence float = 1 0..1 -- how much of the range stands: 1 all of it, towards 0 the peaks sink back into the floor one after another, 0 none
+// @param presence float = 1 0..1 -- how much of the range stands: 1 all of it, towards 0 the peaks shrink away one after another, 0 none
 // @param seed int = 1 0..1000 -- another number gives another range
 // @param tallest float = 2.6 0.2..6 -- height of the tallest peaks, in metres (the camera is 2 m up, the ceiling 4 m)
 // @param base float = 1.8 0.2..5 -- width of a peak's foot across, in metres
@@ -29,6 +29,10 @@ const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
 // Metres a peak's base stands above the floor.
 const LIFT: f32 = 0.02;
+// The lowest peak, in metres, and the lowest as a share of its width: lower ones read as flat
+// plates. They are left out; peaks near the limit shrink whole instead of flattening.
+const LOWEST: f32 = 0.9;
+const STEEPEST_LOW: f32 = 0.5;
 
 fn hash(i: vec2i, seed: u32) -> f32 {
     return f32(pn_hash(vec3u(bitcast<vec2u>(i), seed)).x) / 4294967296.0;
@@ -104,21 +108,25 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let rise = smoothstep(0.0, max(params.foot, 0.01), free);
     let crest = ridges(vec2f(x, ground) / max(params.peaks, 0.1), seed);
     let share = rise * crest * mix(0.8, 1.0, r.x);
-    // Peaks fade out towards `valleys` instead of cutting off there: the lane swings, so a peak
-    // at its edge would otherwise pop in and out as its share crosses the line.
-    let keep = smoothstep(params.valleys, params.valleys + 0.15, share);
-    var height = params.tallest * share * keep;
-    // Presence: each peak has its own share of it, so as presence falls the peaks sink back into
-    // the floor one after another. At 0.5 about half the range's height is left.
+    let tall = params.tallest * share;
+    // Every way a peak goes scales it whole, width with height, so no flat plates appear. Peaks
+    // fade out towards `valleys` and towards the lowest height instead of cutting off there: the
+    // lane swings, so a peak at its edge would otherwise pop in and out as it crosses the line.
+    let lowest = max(LOWEST, STEEPEST_LOW * w);
+    var whole = smoothstep(params.valleys, params.valleys + 0.15, share);
+    whole *= smoothstep(lowest, lowest + 0.4, tall);
+    // Presence: each peak has its own share of it, so as presence falls the peaks shrink away
+    // one after another.
     let order = fract(r.z * 61.0 + r.y * 11.0);
     let own = clamp(params.presence * 2.0 - order, 0.0, 1.0);
-    height *= own * own * (3.0 - 2.0 * own);
+    whole *= own * own * (3.0 - 2.0 * own);
     // Where the floor has a gap, the peaks go with it.
-    height *= clamp(lane.a, 0.0, 1.0);
+    whole *= clamp(lane.a, 0.0, 1.0);
+    let height = tall * whole;
     // A peak under 3 cm is left out, and every peak stands `LIFT` above the floor, so its base does
     // not flicker against the floor's lines.
     if height < 0.03 {
         return vec4f(x, y, 0.0, 0.0);
     }
-    return vec4f(x, y, 0.5 * height + LIFT, w);
+    return vec4f(x, y, 0.5 * height + LIFT, w * whole);
 }

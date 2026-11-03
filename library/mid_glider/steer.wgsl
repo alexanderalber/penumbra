@@ -10,7 +10,7 @@
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
 // Metres the glider flies ahead of `at` at presence 0 (flight.wgsl's AWAY).
-const AWAY: f32 = 12.0;
+const AWAY: f32 = 6.0;
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {

@@ -1,0 +1,20 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/floor_hexfield": (kind: "comp.base", params: {"expose": "presence = places.presence\nseed = places.seed\nradius = places.radius\nfill = places.fill\nlowest = places.lowest\ntallest = places.tallest\nhills = places.hills\npulse = places.pulse\nlane = places.lane\nnear = places.near\nfar = places.far\ncolor = hex_lines.color\nline_width = hex_lines.line_width\nextent = field.extent"}),
+        "/floor_hexfield/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
+        "/floor_hexfield/lane": (kind: "tex.in", pos: [-600.0, 150.0]),
+        "/floor_hexfield/places": (kind: "tex.shader", params: {"file": "library/floor_hexfield/field.wgsl", "resolution": "custom", "width": 32, "height": 32, "keep_size": true, "presence": 1.0, "seed": 1, "radius": 0.35, "fill": 0.92, "lowest": 0.4, "tallest": 3.2, "hills": 3.0, "pulse": 0.06, "lane": 1.6, "near": -2.0, "far": 14.0}, inputs: {"in0": "lane"}, binds: {"beat": "bus:beat", "beats": "bus:travelled"}, pos: [-400.0, 100.0]),
+        "/floor_hexfield/sizes": (kind: "tex.shader", params: {"file": "library/floor_hexfield/sizes.wgsl"}, inputs: {"in0": "places"}, pos: [-200.0, 200.0]),
+        "/floor_hexfield/hex": (kind: "geo.file", params: {"file": "library/floor_hexfield/hex.obj", "up": "z"}, pos: [-800.0, -300.0]),
+        "/floor_hexfield/hex_lines": (kind: "mat.wireframe", params: {"faces": "hidden", "line_width": 1.5}, pos: [-600.0, -150.0]),
+        "/floor_hexfield/hex_wire": (kind: "geo.assign_material", inputs: {"in": "hex", "mat": "hex_lines"}, pos: [-400.0, -200.0]),
+        "/floor_hexfield/cover_mat": (kind: "mat.occluder", params: {"shows": "black"}, pos: [-600.0, -320.0]),
+        "/floor_hexfield/cover": (kind: "geo.assign_material", inputs: {"in": "hex", "mat": "cover_mat"}, pos: [-400.0, -350.0]),
+        "/floor_hexfield/model": (kind: "geo.merge", inputs: {"in0": "hex_wire", "in1": "cover"}, pos: [-200.0, -250.0]),
+        "/floor_hexfield/field": (kind: "geo.tex_instance", params: {"extent": 30.0}, inputs: {"in": "model", "position": "places", "scale": "sizes"}, pos: [0.0, 0.0]),
+        "/floor_hexfield/out": (kind: "geo.out", inputs: {"in": "field"}, pos: [200.0, 0.0]),
+    },
+)

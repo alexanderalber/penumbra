@@ -28,7 +28,7 @@
         "/stage_tunnel/band_model": (kind: "geo.file", params: {"file": "library/stage_tunnel/band.obj", "up": "z"}, pos: [-200.0, 400.0]),
         "/stage_tunnel/segment_model": (kind: "geo.file", params: {"file": "library/stage_tunnel/segment.obj", "up": "z"}, pos: [-200.0, 650.0]),
         "/stage_tunnel/tube_lines": (kind: "mat.wireframe", params: {"line_width": 2.0}, pos: [-200.0, 100.0]),
-        "/stage_tunnel/wall_mat": (kind: "mat.constant", params: {"color": [0.0, 0.0, 0.0, 1.0]}, pos: [-200.0, 500.0]),
+        "/stage_tunnel/wall_mat": (kind: "mat.occluder", params: {"shows": "black"}, pos: [-200.0, 500.0]),
         "/stage_tunnel/ring_wire": (kind: "geo.assign_material", inputs: {"in": "ring_model", "mat": "tube_lines"}, pos: [0.0, 200.0]),
         "/stage_tunnel/band_cover": (kind: "geo.assign_material", inputs: {"in": "band_model", "mat": "wall_mat"}, pos: [0.0, 400.0]),
         "/stage_tunnel/segment_wire": (kind: "geo.assign_material", inputs: {"in": "segment_model", "mat": "tube_lines"}, pos: [0.0, 650.0]),

@@ -264,7 +264,7 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
 - **Sky elements** draw a picture over black. Their output goes into the stage's `sky`, screened
   over the nebula. Several go through a `tex.composite` with `op: screen`. The sky lies behind
   everything the stage renders: the solid bodies of floor and mid elements are black and hide
-  it. Screening only adds light, so a sky element cannot darken the nebula. Every sky element
+  it. They are a `mat.occluder` with `shows: black`, so they also fade into the sky with distance. Screening only adds light, so a sky element cannot darken the nebula. Every sky element
   except `sky_galaxy` also takes the stage's `pose`, so its horizon moves with the camera.
 - **Post elements** change the finished picture. Each takes a picture in `in` and `bus`, and
   gives the changed picture in `out`. Chain them after the stage's `out`: stage, then
@@ -324,7 +324,10 @@ glider is the element `mid_glider`.
   `fov`, `side`; wire it into the sky elements that take it).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift` (added to the bass, e.g. before a
   change), `energy_curve`, `dim` (the nebula's light); the lane's `bars_per_turn`, `swing`, `turn`,
-  `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade.
+  `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade; `ground` (how
+  dark the sky gets below the horizon: 0 not at all, 1 black, so the floor stands on black. Bind
+  it to the sun's presence: the sun is cut hard at the horizon, and black ground fits that cut,
+  with or without the floor's lines and in a gap).
 - Camera: `camera` (the preset, 0 to 5), `glide` (seconds the camera takes to reach a new preset:
   most of the way after about 3 times this), `presets` (a csv table, one row per preset: `height`
   in metres, `pitch` in degrees up, `roll` in degrees, `fov` in degrees, `side` in degrees to the
@@ -429,7 +432,10 @@ into the lane. The heights come from noise fixed to the floor, so a ridge keeps 
 comes nearer. Another `seed` gives another range.
 
 - In: `bus`, `lane`. Out: `out`.
-- Params: `presence` (towards 0 the peaks sink into the floor one after another), `seed`,
+Peaks lower than 0.9 m, or lower than half their width, are left out. Near that height a peak
+shrinks whole instead of flattening, so no flat plates appear.
+
+- Params: `presence` (towards 0 the peaks shrink away one after another), `seed`,
   `height` (the tallest peaks, metres; the camera is 2 m up, the ceiling 4 m), `width` (a peak's
   foot across), `length` (along the lane, as a multiple of `width`), `spacing` (between peaks),
   `peaks` (metres between summits: smaller is more jagged), `valleys` (peaks lower than this share
@@ -441,15 +447,35 @@ comes nearer. Another `seed` gives another range.
 ![floor_pillars](floor_pillars/preview.png)
 
 Tall wireframe pillars in lines on both sides of the lane, like an avenue. A pillar stands every
-`spacing` bars of travel, so the pillars pass the camera on downbeats. The lines follow the lane's
-zigzag at a fixed distance from its edge. On each beat the pillars stretch a little.
+`spacing` bars of travel, so the pillars pass the camera on downbeats. The second line on a side
+stands half a gap later, so the two lines interleave. The lines follow the lane's zigzag at a
+fixed distance from its edge. On each beat the pillars stretch a little. No pillar is lower than
+1.2 m: between so many upright lines a stump looks wrong.
 
 - In: `bus`, `lane`. Out: `out`.
-- Params: `presence` (towards 0 the pillars sink into the floor one after another), `spacing`
-  (bars between two pillars), `height` (metres; the camera is 2 m up, the ceiling 4 m), `width`,
-  `rows` (lines on each side, 1 to 3), `gap` (metres between lines), `pulse` (how far they stretch
-  on a beat), `lane` (as on `floor_blocks`, 1.6), `near`, `far`, `beats_per_bar`, `color`,
-  `extent`.
+- Params: `presence` (towards 0 the pillars shrink away whole, one after another; at a steady
+  presence a pillar stands at full size or not at all), `spacing` (bars between two pillars),
+  `height` (metres, at least 1.2; the camera is 2 m up, the ceiling 4 m), `width`, `rows` (lines
+  on each side, 1 to 3, default 2), `gap` (metres between lines), `pulse` (how far they stretch on
+  a beat), `lane` (as on `floor_blocks`, 1.6), `near`, `far`, `beats_per_bar`, `color`, `extent`.
+
+### floor_hexfield
+
+![floor_hexfield](floor_hexfield/preview.png)
+
+A dense field of hexagonal wireframe prisms side by side on both sides of the lane, like basalt
+columns. The prisms stand in a honeycomb fixed to the floor, so the field comes nearer with the
+floor. Their heights come from noise fixed to the floor, from 0.4 to 3.2 m, so hills and valleys
+of prisms keep their shape as they come nearer. On each beat the prisms rise a little. The lane
+stays free: prisms at its edge shrink whole. The bodies are black and hide the sky behind them.
+`hexfield.py` in the folder writes the model.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (towards 0 the prisms sink into the floor one after another), `seed`,
+  `radius` (metres from a prism's middle to a corner), `fill` (how much of its cell a prism
+  fills; 1 without a gap), `lowest`, `tallest` (metres), `hills` (metres between two hills: smaller
+  is more broken), `pulse` (how far they rise on a beat), `lane` (1.6), `near`, `far`, `color`,
+  `line_width`, `extent`.
 
 ### floor_waves
 
@@ -509,16 +535,18 @@ per two beats, wider with the mids. `palm.py` in the folder writes the two model
 
 A wireframe horse galloping beside the lane. It runs a little faster than the flight for a while,
 then a little slower, so it gains on the camera and falls back again, 3.5 to 6.5 m ahead. One
-cycle takes 16 to 32 bars; `seed` sets its length. The legs go through one stride per beat, two
-per beat below 100 BPM. The stride is a gallop as Muybridge photographed it: the hind legs land,
-then the forelegs, then all four leave the ground. The body rocks, the neck swings, the tail
-streams back. The horse faces 30 degrees in towards the lane, so the camera sees its flank. Its
-body is black and hides the sky behind it. `animal.py` in the folder writes the eight poses.
+cycle takes 16 to 32 bars; `seed` sets its length. The legs follow the horse's way over the
+floor: one stride per 1.155 m along its body, so a hoof on the ground stands still on the floor.
+At the stage's 0.5 m per beat that is a stride every 2 beats, a little faster while the horse
+gains on the camera. The stride is a slow gallop in the order Muybridge photographed: the hind
+legs land, then the forelegs, then all four leave the ground. The body rocks, the neck swings, the
+tail streams back. The horse faces 30 degrees in towards the lane, so the camera sees its flank.
+Its body is black and hides the sky behind it. `animal.py` in the folder writes the 24 poses.
 
 - In: `bus`, `lane`. Out: `out`.
 - Params: `presence` (towards 0 the horse runs off ahead and shrinks, 0 none), `at` (metres
   ahead on average), `range` (metres it gains and falls back), `cycle_min` and `cycle_max` (bars
-  of one cycle), `seed`, `fast` (BPM from which a stride takes a whole beat), `side` (1 right of
+  of one cycle), `seed`, `side` (1 right of
   the lane, -1 left), `lane` (1.6), `clear` (metres from the lane's edge to the horse's middle),
   `turn` (degrees it faces in towards the lane), `size` (1 is 1.6 m to the withers),
   `beats_per_bar`, `color`, `line_width`.
@@ -550,12 +578,14 @@ number instead; the grid's sections know a track's number but no name. The bus c
 ![mid_glider](mid_glider/preview.png)
 
 The glider: a wireframe hover craft flying ahead of the camera along the lane. It turns with the
-lane, leans into each turn and bobs slowly. Towards `presence` 0 it climbs away ahead and fades
-into the distance; at 0 it is gone. In a break `beats.arrange` keeps it at 0.6: about 4 m further
-ahead and 0.6 m higher, small against the sky.
+lane, leans into each turn and bobs slowly. Towards `presence` 0 it climbs away ahead, up to 6 m
+further and 1 m higher, and shrinks over the last quarter; at 0 it is gone. The glider smooths
+`presence` itself, so it glides in and out over about 4 seconds even when the arrangement fades
+faster. In a break `beats.arrange` keeps it at 0.6: about 2 m further ahead and 0.35 m higher.
 
 - In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
-- Params: `presence`, `at` (metres ahead of the camera), `bank` (how far it leans into a turn),
+- Params: `presence`, `at` (metres ahead of the camera), `arrive` (seconds to cover 63 % of a
+  change of `presence`, default 2), `bank` (how far it leans into a turn),
   `bob` (metres up and down), `scale` (0.16 makes it 2.4 m long), `hover` (metres above the
   floor).
 
@@ -605,8 +635,11 @@ so the banks need no sorting.
   `quiet` (the light left without bass), `fade` (metres before the camera where a bank is gone),
   `start`, `end` (the distance fade; keep them at the stage's), `detail`, `thickness` (how much of
   a bank the fog fills), `cover` (how much it hides), `line_width`, `color`.
-- The stage's distance fade goes by the render's data pass, which leaves out a surface this
-  faint. So the banks fade with distance by themselves, through `start` and `end`.
+- The stage's distance fade goes by the render's data pass, which leaves out a surface under 5 %
+  alpha. Keep `cover` under 0.05, or the fog takes the place of the lines behind it there. So the
+  banks fade with distance by themselves, through `start` and `end` (2.5 and 7 m, nearer than the
+  stage's fade: the banks shine brighter than a line, and far banks stood out as stripes over the
+  horizon).
 
 ### mid_swarm
 
@@ -724,22 +757,25 @@ the models.
 
 ![ceiling_lights](ceiling_lights/preview.png)
 
-Two rows of lamps under the ceiling, one on each side of the lane. A running light switches
-along each row: on every beat the next lamp ahead lights up. The lamps behind it glow on dimmer
-for a few beats. The light runs away from the camera, faster than the floor comes towards it.
-The pattern repeats every 8 lamps, and the right row runs half a pattern behind the left one.
-Each lamp of a pattern has its own colour from the warm or cold palette. In a drop every lamp is
-on, and the drop's flash lights them all up. A lit lamp sends short rays down. `lamp.py` in the
-folder writes the models.
+Two rows of paper lanterns under the ceiling, one on each side of the lane. Each lantern hangs on
+a short string: a body of 8 ribs and 3 rings round an ellipsoid, with a tassel. The lanterns swing
+a little to and fro, more with the mids. A running light switches along each row: on every beat
+the next lantern ahead lights up. The lanterns behind it glow on dimmer for a few beats. The light
+runs away from the camera, faster than the floor comes towards it. The pattern repeats every 8
+lanterns, and the right row runs half a pattern behind the left one. Each lantern of a pattern has
+its own colour from the warm or cold palette. A lit lantern shines brighter and shows a light
+inside and a soft shell of light around it, all as lines. In a drop every lantern is on, and the
+drop's flash lights them all up. `lantern.py` in the folder writes the models.
 
 - In: `bus` (it reads `beat_index`, `section_role` and `drop`), `lane`. Out: `out` (into the
   stage's `ceiling`).
-- Params: `presence` (towards 0 the lamps draw up into the ceiling one after another), `spacing`
-  (beats of travel between two lamps), `period` (lamps from one running light to the next),
-  `trail` (dimmer lamps behind it, 0 to 4), `apart` (metres from the lane's middle to each row),
-  `size` (1 hangs 0.73 m and its rays reach 1 m down; at most 1.2), `idle` (a dark lamp's light),
-  `full` (every lamp's light in a drop), `glow` (the rays' light), `warmth`, `ceiling`, `near`,
-  `far`, `line_width`, `extent`.
+- Params: `presence` (towards 0 the lanterns draw up into the ceiling one after another),
+  `spacing` (beats of travel between two lanterns), `period` (lanterns from one running light to
+  the next), `trail` (dimmer lanterns behind it, 0 to 4), `apart` (metres from the lane's middle to
+  each row), `size` (1 reaches 0.98 m down with its tassel; at most 1.2), `idle` (a dark lantern's
+  light), `full` (every lantern's light in a drop), `glow` (the light around a lit lantern), `swing`
+  (degrees at full mids, 7), `calm` (the share of the swing left without mids), `warmth`,
+  `ceiling`, `near`, `far`, `line_width`, `extent`.
 
 ### sky_galaxy
 

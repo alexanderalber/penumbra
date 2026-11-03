@@ -14,7 +14,7 @@
 // @param high float = 2.6 0..4 -- the highest, metres (the camera is 1.1 to 2.9 m up)
 // @param sway float = 0.6 0..3 -- metres a bank drifts sideways while it comes nearer
 // @param near float = -1 -8..2 -- where a bank leaves, behind the camera
-// @param far float = 12 4..56 -- where it appears
+// @param far float = 8 4..56 -- where it appears
 // @param step float = 0.5 0.1..2 -- metres per beat while no lane picture is wired; with one, the stage's step
 
 const LANE_NEAR: f32 = -8.0;

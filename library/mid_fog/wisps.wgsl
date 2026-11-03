@@ -4,7 +4,7 @@
 // @param drift float = 0 0..20000 -- moves the noise; bind it to travelled
 // @param detail float = 3 0.5..12 -- noise cells across a bank
 // @param thickness float = 0.8 0..1 -- how much of the oval the fog fills
-// @param cover float = 0.06 0..0.5 -- how much a dense spot hides what lies behind
+// @param cover float = 0.04 0..0.5 -- how much a dense spot hides what lies behind; under 0.05 the fog never takes the place of the lines behind it in the stage's distance fade
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
     let p = (v.uv - 0.5) * 2.0;

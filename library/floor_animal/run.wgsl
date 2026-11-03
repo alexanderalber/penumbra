@@ -1,11 +1,13 @@
-// Where the galloping horse of floor_animal runs, which way it faces and which of its eight poses
+// Where the galloping horse of floor_animal runs, which way it faces and which of its 24 poses
 // shows. Render it 1 x 1 for each geo.tex_instance: one node writes the place, one the aim, and
 // one per pose the scale, which is 0 for every pose but the one of the moment.
 // The horse runs beside the lane, `at` metres ahead on average. It runs a little faster than the
 // flight for half of a long cycle and a little slower for the other half, so it overtakes the
 // camera's view and falls back by `range` metres each way. The cycle takes `cycle_min` to
-// `cycle_max` bars, set by `seed`. Its legs go through one stride per beat, two per beat below
-// `fast` beats per minute, so the gallop keeps a lively pace in slow music.
+// `cycle_max` bars, set by `seed`. Its legs follow its way over the floor: a stride per
+// `STRIDE` metres the horse moves on the floor (animal.py's STRIDE, along its turned body), so the
+// hooves on the ground stand still on it. At the stage's 0.5 m per beat that is a stride per 2
+// beats, a little faster while it gains on the camera, slower while it falls back.
 // in0: the stage's lane picture (its `lane` output): red the lane's x, green its sideways slope
 // per metre ahead, blue the metres per beat, alpha the floor (0 in a gap), texel i covering
 // y = -8 + i * 0.25 to -8 + (i + 1) * 0.25 metres ahead. Unconnected: a straight lane at x = 0
@@ -13,9 +15,8 @@
 // `what` place: where the model's origin goes (the ground under the middle of its body). aim:
 // where its nose points: along the lane, turned in by `turn`. scale: its size, 0 unless `pose` is the pose of the moment.
 // @param what choice(place|aim|scale) = place -- what this node writes
-// @param pose int = 0 0..7 -- the pose this node's scale is for
+// @param pose int = 0 0..23 -- the pose this node's scale is for
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid)
-// @param bpm float = 120 20..400 -- the pace of travel (travel_bpm of a chan.beat_grid)
 // @param presence float = 1 0..1 -- 1 the horse runs beside the camera, towards 0 it runs off ahead and shrinks, 0 none
 // @param seed int = 1 0..1000 -- another number gives another length of the cycle and another start in it
 // @param at float = 5 2..8 -- metres ahead of the camera the horse runs on average
@@ -23,7 +24,6 @@
 // @param cycle_min float = 16 2..128 -- the shortest cycle of gaining and falling back, in bars
 // @param cycle_max float = 32 2..128 -- the longest one
 // @param beats_per_bar float = 4 2..8 -- beats in a bar
-// @param fast float = 100 40..240 -- beats per minute from which the legs take one stride per beat; below, two
 // @param side float = 1 -1..1 -- which side of the lane it runs on: 1 right, -1 left
 // @param lane float = 1.6 0..5 -- half the width of the free lane
 // @param clear float = 1.3 0..5 -- metres between the lane's edge and the middle of the horse
@@ -32,7 +32,9 @@
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
-const POSES: f32 = 8.0;
+const POSES: f32 = 24.0;
+// Metres the horse moves forwards in one stride (animal.py's STRIDE).
+const STRIDE: f32 = 1.155;
 // Metres the horse runs ahead at presence 0, out through the stage's distance fade.
 const AWAY: f32 = 8.0;
 const TAU: f32 = 6.2831853;
@@ -65,9 +67,14 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         let a = sign * radians(params.turn);
         return vec4f(cos(a) * d.x - sin(a) * d.y, sin(a) * d.x + cos(a) * d.y, 0.0, 1.0);
     }
-    // One stride per beat at a lively pace, two in slow music; the pose of the moment.
-    let strides = select(2.0, 1.0, params.bpm >= params.fast);
-    let phase = fract(fract(params.beats) * strides);
+    // The stride follows the horse's way over the floor: the camera's travel plus its own place
+    // ahead. Its body is turned by `turn`, so it moves forwards by STRIDE x cos(turn) along the
+    // lane per stride. The whole beats are split off first, for precision late in a file.
+    let step = select(0.5, lane0.b, wired);
+    let along = STRIDE * max(cos(radians(params.turn)), 0.2);
+    let whole = floor(params.beats);
+    let ground = fract(whole * step / along) + ((params.beats - whole) * step + y) / along;
+    let phase = fract(ground);
     let now = min(floor(phase * POSES), POSES - 1.0);
     // A horse over a gap in the floor goes with it; towards presence 0 it shrinks away.
     var s = size * smoothstep(0.0, 0.35, p) * clamp(lane.a, 0.0, 1.0);
