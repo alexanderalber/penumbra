@@ -13,6 +13,7 @@ pub mod light;
 pub mod mapping;
 pub mod mat;
 pub mod meters;
+pub mod midi;
 pub mod mouse;
 pub mod note;
 pub mod osc;
@@ -48,6 +49,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     keyboard::register(types)?;
     light::register(types)?;
     mat::register(types)?;
+    midi::register(types)?;
     mouse::register(types)?;
     note::register(types)?;
     osc::register(types)?;

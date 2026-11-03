@@ -236,14 +236,15 @@ impl Store {
     }
 }
 
-/// Where a message came from: OSC over UDP, or HTTP and WebSocket (`penumbra-http`, which hands
-/// its messages over with [`Hub::feed`]).
+/// Where a message came from: OSC over UDP, HTTP and WebSocket (`penumbra-http`), or a MIDI
+/// device (`penumbra-midi`); the last two hand their messages over with [`Hub::feed`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Via {
     #[default]
     Osc,
     Http,
+    Midi,
 }
 
 /// A message waiting to become a param edit.
@@ -636,7 +637,7 @@ impl Hub {
         self.inner.armed.load(Ordering::Acquire)
     }
 
-    /// Messages that came by another transport than UDP (HTTP, WebSocket), on the listener
+    /// Messages that came by another transport than UDP (HTTP, WebSocket, MIDI), on the listener
     /// that `port` names for that transport: queued for the params when `params` is
     /// `Some(controls_only)`, offered to learn unless `busy` says the address was busy when
     /// learn was armed. The transport keeps its own store of what arrived.

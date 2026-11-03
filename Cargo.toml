@@ -24,6 +24,7 @@ penumbra-gpu = { path = "crates/gpu" }
 penumbra-graph = { path = "crates/graph" }
 penumbra-http = { path = "crates/http" }
 penumbra-mesh = { path = "crates/mesh" }
+penumbra-midi = { path = "crates/midi" }
 penumbra-ops = { path = "crates/ops" }
 penumbra-ndi = { path = "crates/ndi" }
 penumbra-nn = { path = "crates/nn" }
@@ -78,6 +79,8 @@ filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0b
 # The MP4/MOV sample tables for HAP, which FilmCraft does not decode; HAP's second stage is Snappy.
 filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
 snap = "1"
+# MIDI devices (WinMM on Windows, ALSA on Linux, CoreMIDI on macOS).
+midir = "0.11"
 # zlib for the arrays in FBX files (crates/fbx); already in the tree through flate2.
 miniz_oxide = "0.9.1"
 # Recording (crates/record): FilmCraft's encoders and its MP4/MOV writer, same pin as the decoders.

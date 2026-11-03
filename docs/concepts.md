@@ -319,6 +319,47 @@ wheel).
 the same time. **learn from OSC** also takes the 3D mouse while such a node exists: press a
 button, or push the cap clearly along one axis.
 
+### MIDI controllers
+
+`chan.midi_in` turns a MIDI controller into channels. Its `device` is a part of the device's
+name, such as `easy control`; the … menu beside it lists the devices. Empty, it reads every
+MIDI input. Each control you move becomes a channel, named after its MIDI channel (1 to 16)
+and number:
+
+- `cc_1_24`: control change 24 on channel 1, a fader, knob or button, 0 to 1.
+- `note_1_36`: a key or pad, 1 while held. A tap shorter than a frame still shows for one
+  frame. `note_1_36_vel` holds how hard it was hit, 0 to 1, and keeps it after the release.
+- `bend_1` (-1 to 1), `pressure_1` (0 to 1), `program_1` (the number, 0 to 127).
+
+A control appears only after it has moved once. **learn from OSC** in a param's link menu
+takes MIDI too: move a fader, and the param is bound to it. A pad binds its `note_` channel.
+The channels hold their last value when the device is unplugged. penumbra looks for the
+device every second, so a device plugged in again goes on by itself. Many controllers send
+7-bit steps, which can show on a slow fade; a `chan.filter` after the node smooths them.
+`pairs` reads 14-bit controls (control changes 32 to 63 refining 0 to 31). Leave it off for a
+controller that uses 32 to 63 as controls of their own, as most do.
+
+MIDI clock from a drum machine or another program becomes a tempo on the same node, with the
+channels `chan.beat_analysis` has: `bpm`, `beat` (0 at a beat, rising to 1), `tick` (1 for a
+frame on each beat), `bar`, `bar_beat`. `beats` counts beats since the start, `playing` is 1
+between start and stop, `clock` is 1 while clocks arrive. Bind to these instead of the audio
+analysis, and the show follows the device's tempo exactly.
+
+`chan.midi_out` sends its input's channels to a device, named as `chan.midi_in` names them:
+`cc_1_24` sends control change 24, `note_1_36` a note on while above 0 (its value the
+velocity, or the value of `note_1_36_vel` when that channel comes too) and a note off at 0. Without a MIDI channel in the name (`cc_24`, `note_36`) the
+node's `channel` is used. This lights pads and moves motor faders on controllers that take it,
+or drives another program. It sends only what changed, and everything again when the device
+is opened anew.
+
+From the control channel: `midi.status` (the devices, what is open, recent messages, the
+clock's tempo), `midi.inject {device, bytes}` (bytes as if a device had sent them, to try a
+project without the controller), `midi.send {device, bytes}` and `midi.config {enabled}`.
+
+Under Windows a device may be open in one program at a time (unless Windows MIDI Services
+is installed). If another program holds it, the node says so and penumbra tries again every
+second.
+
 ### A control page in the browser
 
 `chan.http_in` makes a web page a control surface: a phone or tablet on the same network, or

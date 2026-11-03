@@ -27,6 +27,7 @@ pub mod keyboard;
 pub mod memory;
 pub mod mesh_out;
 pub mod meter;
+pub mod midi;
 pub mod mouse;
 pub mod navigation;
 pub mod ndi;
@@ -86,6 +87,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
     http::register(&mut registry, engine);
+    midi::register(&mut registry, engine);
     keyboard::register(&mut registry, engine);
     buttons::register(&mut registry, engine);
     mouse::register(&mut registry, engine);

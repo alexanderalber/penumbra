@@ -1113,9 +1113,9 @@ Outputs:
 
 ## chan
 
-[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
+[chan.audio_envelope](#chanaudio_envelope), [chan.audio_spectrum](#chanaudio_spectrum), [chan.beat_analysis](#chanbeat_analysis), [chan.beat_grid](#chanbeat_grid), [chan.button](#chanbutton), [chan.clock](#chanclock), [chan.constant](#chanconstant), [chan.derivative](#chanderivative), [chan.envelope](#chanenvelope), [chan.filter](#chanfilter), [chan.from_table](#chanfrom_table), [chan.from_tex](#chanfrom_tex), [chan.integrator](#chanintegrator), [chan.lfo](#chanlfo), [chan.math](#chanmath), [chan.merge](#chanmerge), [chan.midi_out](#chanmidi_out), [chan.noise](#channoise), [chan.null](#channull), [chan.osc_out](#chanosc_out), [chan.rename](#chanrename), [chan.select](#chanselect), [chan.sequence](#chansequence), [chan.slider](#chanslider), [chan.trail](#chantrail)
 
-*inputs:* [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
+*inputs:* [chan.dmx_in](#chandmx_in), [chan.http_in](#chanhttp_in), [chan.keyboard_in](#chankeyboard_in), [chan.midi_in](#chanmidi_in), [chan.mouse_in](#chanmouse_in), [chan.osc_in](#chanosc_in), [chan.spacemouse_in](#chanspacemouse_in)
 
 ### chan.audio_envelope
 
@@ -1498,6 +1498,41 @@ Inputs:
 - `in0 .. in63` (chan): The channels to put together, in0's first. A name an earlier input already has gets a number: the second `value` becomes `value1`. Any number, up to 64: each one wired adds a free slot below it
 
 Outputs: `out` (chan).
+
+### chan.midi_in
+
+A MIDI controller's faders, knobs, pads and keys, and its MIDI clock as a tempo: every control a channel
+
+Inputs: none.
+
+Outputs:
+
+- `out` (chan): A channel per control moved: cc_1_7 (control change 7 on MIDI channel 1, 0 to 1), note_1_36 (1 while held) and note_1_36_vel, bend_1 (-1 to 1), pressure_1, program_1. With MIDI clock: bpm, beat, tick, bar, bar_beat as chan.beat_analysis has them, beats (since the start), playing, clock (1 while clocks arrive)
+- `messages` (table): Every control moved: device, channel name, count, value
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `device` | text |  |  | Part of the device's name, any case, e.g. `easy control` (the … menu lists them); empty: every MIDI input |
+| `beats_per_bar` | int | `4` | 2 to 8 (soft) | Beats in one bar of the MIDI clock: how often bar and bar_beat come round |
+| `pairs` *(more)* | bool | `false` |  | 14-bit controls: control changes 32 to 63 make the controls 0 to 31 finer instead of being controls of their own. Only for a device that sends such pairs |
+
+### chan.midi_out
+
+Sends channels to a MIDI device: pad lights, motor faders, another program
+
+Follows the show clock: cooks again whenever time moves.
+
+Inputs:
+
+- `chans` (chan): Channels named as chan.midi_in makes them: cc_1_7 (0 to 1), note_1_36 (above 0 is on, its value the velocity, or note_1_36_vel's when that channel is there too), bend_1 (-1 to 1), pressure_1, program_1; cc_7, note_36 and so on use `channel`. A chan.midi_in wired straight in sends its controls back
+
+Outputs: none.
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `device` | text |  |  | Part of the output's name, any case, e.g. `easy control` (the … menu lists them) |
+| `channel` | int | `1` | 1 to 16 | MIDI channel for channels named without one: cc_7, note_36 |
+| `rate` *(more)* | float | `60` | 1 to 120 Hz (soft) | Sends per second at most |
 
 ### chan.mouse_in
 

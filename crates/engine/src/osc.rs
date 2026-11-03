@@ -14,7 +14,8 @@
 //!   params.
 //! - **Learn** (`osc.learn`): the next address with a number binds the param to that address's
 //!   channel on the `chan.osc_in` that takes it (or the `chan.http_in`, for a message that came
-//!   over HTTP or a WebSocket: the HTTP hub hands its messages to the OSC hub); one undo step.
+//!   over HTTP or a WebSocket: the HTTP hub hands its messages to the OSC hub; or the
+//!   `chan.midi_in` that reads the device, for a MIDI control moved); one undo step.
 //!   A key pressed meanwhile that a `chan.keyboard_in` lists counts too: the param is bound to
 //!   that key's gate. So does the 3D mouse while a `chan.spacemouse_in` exists: a button pressed, or an axis pushed past half
 //!   way, binds the param to that channel.
@@ -30,6 +31,7 @@ use penumbra_core::{Name, NodeId, NodePath, ParamKind, ParamPath, ParamSpec, Val
 use penumbra_graph::{Network, NodeDef, NodeTypes, Op};
 use penumbra_ops::http::HTTP_IN;
 use penumbra_ops::keyboard::{DEFAULT_KEYS, KEYBOARD_IN, Key, Keyboard, parse_keys};
+use penumbra_ops::midi::MIDI_IN;
 use penumbra_ops::osc::{Filter, OSC_IN, channels_of};
 use penumbra_ops::spacemouse::{SPACEMOUSE_IN, heard as spacemouse_heard};
 use penumbra_osc::codec::{self, Arg, Message};
@@ -567,7 +569,10 @@ fn learn_step(session: &Session, shared: &OscShared, now: Instant) {
         }
         return;
     };
-    let result = bind_learned(session, &learning, &heard);
+    let result = match heard.via {
+        Via::Midi => bind_learned_midi(session, &learning, &heard.address),
+        Via::Osc | Via::Http => bind_learned(session, &learning, &heard),
+    };
     let (from, channels, error) = match result {
         Ok((from, channels)) => (Some(from), channels, None),
         Err(e) => (None, Vec::new(), Some(e)),
@@ -587,6 +592,7 @@ fn bind_learned(
     let kind = match heard.via {
         Via::Osc => OSC_IN,
         Via::Http => HTTP_IN,
+        Via::Midi => MIDI_IN,
     };
     let net = session.doc().snapshot();
     let types = session.types();
@@ -633,6 +639,37 @@ fn bind_learned(
         .edit(Actor::Osc, &ops, None, &format!("learn {} from {address}", learning.param), Instant::now())
         .map_err(|e| e.0)?;
     Ok((from.to_string(), used))
+}
+
+/// Binds the learning param to the control a MIDI `address` names (`/midi/<device>/cc/1/7`), on
+/// the first `chan.midi_in` (by path) whose `device` takes that device: a note binds its gate.
+fn bind_learned_midi(
+    session: &Session,
+    learning: &Learning,
+    address: &str,
+) -> Result<(String, Vec<String>), String> {
+    let (key, control) =
+        penumbra_midi::parse_address(address).ok_or_else(|| format!("{address} is no MIDI control"))?;
+    let net = session.doc().snapshot();
+    let types = session.types();
+    let desc = types.desc(MIDI_IN).ok_or_else(|| format!("no {MIDI_IN} node type"))?;
+    let mut nodes: Vec<NodePath> = net
+        .nodes()
+        .filter(|n| n.kind == MIDI_IN)
+        .filter(|n| {
+            // The address holds the device's key, so the pattern is compared as a key too.
+            let pattern = n.param(desc, "device").and_then(Value::as_str).unwrap_or("").trim();
+            pattern.is_empty() || key.contains(&penumbra_midi::device_key(pattern))
+        })
+        .filter_map(|n| net.path_of(n.id))
+        .collect();
+    nodes.sort();
+    let from = nodes
+        .first()
+        .ok_or_else(|| format!("no {MIDI_IN} takes the device of {address} (see its device)"))?;
+    let channel = control.channel();
+    bind_one(session, &net, learning, from, &channel, &format!("MIDI {channel}"))?;
+    Ok((from.to_string(), vec![channel]))
 }
 
 /// Binds the learning param to `key`'s gate on the first `chan.keyboard_in` (by path) that
@@ -729,7 +766,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "osc.learn",
-        "Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}",
+        "Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or a MIDI control a chan.midi_in reads; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}",
         osc_learn,
     );
     add(

@@ -17,6 +17,7 @@ use penumbra_dmx::Hub as DmxHub;
 use penumbra_dmx::Inputs as DmxInputs;
 use penumbra_graph::{Cooker, Network, NodeTypes};
 use penumbra_http::Hub as HttpHub;
+use penumbra_midi::Hub as MidiHub;
 use penumbra_ops::audio::beat_grid::BeatFiles;
 use penumbra_ops::audio::file::SoundFiles;
 use penumbra_ops::chan::controls::Buttons;
@@ -50,6 +51,8 @@ pub struct Hubs {
     pub osc: Arc<OscShared>,
     /// HTTP and WebSocket in (`chan.http_in`); hands its messages to the OSC hub.
     pub http: HttpHub,
+    /// MIDI devices (`chan.midi_in`, `chan.midi_out`); hands its controls to the OSC hub's learn.
+    pub midi: MidiHub,
     pub audio: AudioHub,
     /// The audio outputs: one bus per device the `out.audio` nodes play on.
     pub audio_out: AudioOutputs,
@@ -82,6 +85,7 @@ impl Hubs {
         let osc = penumbra_osc::Hub::new();
         Hubs {
             http: HttpHub::new(osc.clone()),
+            midi: MidiHub::new(osc.clone()),
             osc: Arc::new(OscShared::new(osc, keyboard.clone(), spacenav.clone())),
             audio: AudioHub::new(),
             // The engine's own tests play into buses without a device, never on a speaker.
@@ -103,11 +107,12 @@ impl Hubs {
     /// Every hub, in the order they shut down. Recordings come first: when the app closes, the
     /// cook thread has dropped its nodes and every recording is finishing its file, which the
     /// shutdown waits for.
-    pub fn all(&self) -> [&dyn DeviceHub; 15] {
+    pub fn all(&self) -> [&dyn DeviceHub; 16] {
         // Destructured so that a field missing here does not compile.
         let Hubs {
             osc,
             http,
+            midi,
             audio,
             audio_out,
             dmx,
@@ -126,6 +131,7 @@ impl Hubs {
             record,
             osc.as_ref(),
             http,
+            midi,
             audio,
             audio_out,
             dmx,
@@ -173,6 +179,21 @@ impl DeviceHub for HttpHub {
 
     fn shutdown(&self) {
         HttpHub::shutdown(self);
+    }
+}
+
+impl DeviceHub for MidiHub {
+    fn provide(&self, cooker: &mut Cooker) {
+        cooker.provide(self.clone());
+    }
+
+    fn network_changed(&self, net: &Network, types: &NodeTypes) {
+        let (inputs, outputs) = penumbra_ops::midi::wants(net, types);
+        self.set_wanted(&inputs, &outputs);
+    }
+
+    fn shutdown(&self) {
+        MidiHub::shutdown(self);
     }
 }
 
@@ -376,6 +397,7 @@ mod tests {
         }
         assert!(cooker.resource::<penumbra_osc::Hub>().is_some());
         assert!(cooker.resource::<HttpHub>().is_some());
+        assert!(cooker.resource::<MidiHub>().is_some());
         assert!(cooker.resource::<AudioHub>().is_some());
         assert!(cooker.resource::<AudioOutputs>().is_some());
         assert!(cooker.resource::<DmxHub>().is_some());

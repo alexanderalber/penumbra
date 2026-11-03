@@ -1255,6 +1255,11 @@ impl Engine {
         &self.hubs.http
     }
 
+    /// MIDI devices: the inputs and outputs of the `chan.midi_in` and `chan.midi_out` nodes.
+    pub fn midi(&self) -> &penumbra_midi::Hub {
+        &self.hubs.midi
+    }
+
     /// The audio inputs.
     pub fn audio(&self) -> &AudioHub {
         &self.hubs.audio

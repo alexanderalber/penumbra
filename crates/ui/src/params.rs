@@ -82,6 +82,9 @@ pub struct ParamPanel {
     cameras: Option<(String, Result<Vec<penumbra_camera::DeviceInfo>, String>)>,
     /// Spout senders offered for a `tex.spout_in`'s `sender`, listed when the menu opens.
     spout_senders: Option<(String, Vec<penumbra_spout::Listing>)>,
+    /// MIDI devices offered for a `chan.midi_in`'s or `chan.midi_out`'s `device`, listed when
+    /// the menu opens.
+    midi_ports: Option<(String, penumbra_midi::Ports)>,
     /// The faces of the scene a `tex.face_content` names, listed when its face menu opens.
     faces: Option<(String, Result<Vec<FaceOffer>, String>)>,
     /// Actions a widget asked for that are not edits of the param (a face's template).
@@ -998,6 +1001,11 @@ impl ParamPanel {
                             .to_string();
                         self.face_menu(ui, input.project_dir, &scene, key, auto, new);
                     }
+                    if (node.kind == penumbra_ops::midi::MIDI_IN || node.kind == penumbra_ops::midi::MIDI_OUT)
+                        && spec.name == "device"
+                    {
+                        self.midi_menu(ui, key, node.kind == penumbra_ops::midi::MIDI_OUT, auto, new);
+                    }
                     if node.kind == penumbra_ops::tex::SPOUT_IN && spec.name == "sender" {
                         self.spout_menu(ui, key, auto, new);
                     }
@@ -1248,6 +1256,56 @@ impl ParamPanel {
         auto.add(format!("param.{key}.menu"), r.response.rect, "Spout senders");
         if r.inner.is_none() && self.spout_senders.as_ref().is_some_and(|(k, _)| k == key) {
             self.spout_senders = None;
+        }
+    }
+
+    /// The MIDI inputs (or outputs) of this machine for a `chan.midi_in`'s (or `chan.midi_out`'s)
+    /// `device` (`param.<path>.menu`, entries `midi.all` for an input and `midi.<i>`).
+    fn midi_menu(
+        &mut self,
+        ui: &mut Ui,
+        key: &str,
+        outputs: bool,
+        auto: &mut automation::Registry,
+        new: &mut Option<Value>,
+    ) {
+        let r = ui.menu_button("\u{2026}", |ui| {
+            if self.midi_ports.as_ref().is_none_or(|(k, _)| k != key) {
+                self.midi_ports = Some((key.to_string(), penumbra_midi::hub::list()));
+            }
+            if !outputs {
+                let r = ui.button("every MIDI input").on_hover_text("Leaves `device` empty");
+                auto.add("midi.all", r.rect, "every input");
+                if r.clicked() {
+                    *new = Some(Value::Text(String::new()));
+                    ui.close();
+                }
+            }
+            let Some((_, ports)) = self.midi_ports.as_ref() else { return };
+            if let Some(e) = &ports.error {
+                ui.colored_label(theme::WARNING, e);
+            }
+            let list = if outputs { &ports.outputs } else { &ports.inputs };
+            if list.is_empty() {
+                let text = if outputs { "no MIDI outputs found" } else { "no MIDI inputs found" };
+                ui.label(RichText::new(text).color(theme::TEXT_WEAK));
+            }
+            for (i, name) in list.iter().enumerate() {
+                let r = ui.button(name);
+                auto.add(format!("midi.{i}"), r.rect, name.clone());
+                if r.clicked() {
+                    *new = Some(Value::Text(name.clone()));
+                    ui.close();
+                }
+            }
+        });
+        auto.add(
+            format!("param.{key}.menu"),
+            r.response.rect,
+            if outputs { "MIDI outputs" } else { "MIDI inputs" },
+        );
+        if r.inner.is_none() && self.midi_ports.as_ref().is_some_and(|(k, _)| k == key) {
+            self.midi_ports = None;
         }
     }
 
@@ -2127,15 +2185,16 @@ fn bind_menu(
         let listening = input.net.nodes().any(|n| {
             n.kind == penumbra_ops::osc::OSC_IN
                 || n.kind == penumbra_ops::http::HTTP_IN
+                || n.kind == penumbra_ops::midi::MIDI_IN
                 || n.kind == penumbra_ops::keyboard::KEYBOARD_IN
                 || n.kind == penumbra_ops::spacemouse::SPACEMOUSE_IN
         });
         let needs =
-            "Needs a chan.osc_in, chan.http_in, chan.keyboard_in or chan.spacemouse_in node: Tab > chan > osc_in";
+            "Needs a chan.osc_in, chan.http_in, chan.midi_in, chan.keyboard_in or chan.spacemouse_in node: Tab > chan > osc_in";
         let r = ui
             .add_enabled(listening && input.can_edit, egui::Button::new("learn from OSC"))
             .on_hover_text(if listening {
-                "Bind to the next OSC address that arrives with a number (a vector: one number per component),                  to the next key a chan.keyboard_in lists, or to the 3D mouse's button or axis moved most"
+                "Bind to the next OSC address that arrives with a number (a vector: one number per component),                  to the next MIDI control moved that a chan.midi_in reads, to the next key a chan.keyboard_in lists, or to the 3D mouse's button or axis moved most"
             } else {
                 needs
             })

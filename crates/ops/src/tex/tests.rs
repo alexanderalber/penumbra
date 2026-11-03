@@ -121,7 +121,7 @@ impl Rig {
         let http = penumbra_http::Hub::new(hub.clone());
         http.set_wanted(&crate::http::wants(&net, &types));
         cooker.provide(http);
-        cooker.provide(hub);
+        cooker.provide(hub.clone());
         let audio = penumbra_audio::Hub::new();
         audio.feed("test", 48_000, 2, &[0.0; 2]).unwrap();
         cooker.provide(audio.clone());
@@ -132,6 +132,11 @@ impl Rig {
         cooker.provide(camera.clone());
         cooker.provide(penumbra_dmx::Hub::new());
         cooker.provide(penumbra_dmx::Inputs::new());
+        // A MIDI input and output that are no device.
+        let midi = penumbra_midi::Hub::new(hub.clone());
+        midi.inject("test", &[0xB0, 1, 64], None);
+        midi.capture("test");
+        cooker.provide(midi);
         // The tests share one software adapter; a busy machine can keep a frame's readback
         // waiting for longer than a recording would in a show.
         let record = penumbra_record::Hub::with_planes_timeout(Duration::from_secs(60));
@@ -581,6 +586,7 @@ fn every_builtin_cooks_without_warnings() {
     let mut ops = vec![
         create("/feed", "tex.constant", &size()),
         create("/chan_feed", "chan.constant", &[]),
+        create("/midi_feed", "chan.constant", &[("name0", "cc_1_1".into())]),
         create("/table_feed", "table.text", &[]),
         create("/geo_feed", "geo.primitive", &[]),
         create("/mat_feed", "mat.constant", &[]),
@@ -654,6 +660,7 @@ fn every_builtin_cooks_without_warnings() {
                 ("count", Value::Int(4)),
             ]),
             "tex.video_in" => params.push(("device", "test".into())),
+            "chan.midi_in" | "chan.midi_out" => params.push(("device", "test".into())),
             "chan.sequence" => params.push(("steps", "a 1".into())),
             // Its trace input gets the black feed: the whole picture is one dark region, on a
             // surface of the feed's size.
@@ -668,6 +675,11 @@ fn every_builtin_cooks_without_warnings() {
             let family = kind.split_once('.').map_or("", |(f, _)| f);
             let input = kinds.iter().position(|k| *k == format!("{family}.in")).unwrap();
             ops.push(connect(&path_of(input, &kinds[input]), &path, 0));
+            continue;
+        }
+        // A MIDI output warns about channels that are no MIDI control.
+        if kind == crate::midi::MIDI_OUT {
+            ops.push(connect("/midi_feed", &path, 0));
             continue;
         }
         // The beat grid reads the file of the audio.file it is wired to.

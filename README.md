@@ -122,7 +122,7 @@ lists every one.
 | Mouse, keyboard | yes | | `chan.mouse_in`, `chan.keyboard_in` | the pointer anywhere on the desktop; keys while a penumbra window has the focus |
 | 3D mouse | yes | | `chan.spacemouse_in` | 3Dconnexion SpaceNavigator, also steers the 3D viewer; without the vendor driver |
 | Control channel | yes | yes | | JSON lines over TCP on localhost, every command of the app |
-| MIDI | | | | not built |
+| MIDI | yes | yes | `chan.midi_in`, `chan.midi_out` | controllers by name, every control a channel; learn binds a param to the next control moved; MIDI clock as a tempo. A device unplugged during a show comes back by itself |
 | Depth cameras | | | | not built (no Kinect, RealSense, ZED) |
 
 ## Compared with TouchDesigner
@@ -133,7 +133,7 @@ one person's installations and has far fewer nodes in each family.
 
 Not in penumbra, as of now. Some of this is planned, some stays out, see [Scope](#scope):
 
-- MIDI, timecode (LTC, MTC), VST plugins.
+- Timecode (LTC, MTC), VST plugins.
 - Depth cameras and other tracking hardware (Kinect, RealSense, ZED, Leap Motion).
 - Python expressions on parameters. Parameters are driven by binding them to channels. Python
   runs only in script nodes.

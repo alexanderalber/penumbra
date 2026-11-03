@@ -170,6 +170,15 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | `mesh_out.status` | Mesh files: node, file, format, mode, written_seconds_ago, triangles, parts, copies, bytes, writing, error; {path?} |
 | `mesh_out.write` | Write an out.mesh's input to its file now, in either mode; {path}; answers with the status once written, fails with the node's error |
 
+## midi
+
+| command | |
+|---|---|
+| `midi.config` | MIDI settings for this run: {enabled?}; off closes every device |
+| `midi.inject` | Take in MIDI bytes as if the input `device` had sent them (made if no device has that name): {device, bytes: [176, 7, 127]}. For trying a project without the controller |
+| `midi.send` | Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (a chan.midi_out names it) |
+| `midi.status` | MIDI devices of this machine, the inputs and outputs open (messages, drops, errors, the clock's tempo), recent messages |
+
 ## mouse
 
 | command | |
@@ -215,7 +224,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `osc.config` | OSC settings for this run: {enabled?, max_packet?, rate?, burst?, pattern_rate?, max_addresses?} |
-| `osc.learn` | Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true} |
+| `osc.learn` | Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or a MIDI control a chan.midi_in reads; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true} |
 | `osc.send` | Send one OSC message; {host?, port, address, args?: [numbers, strings, booleans]} |
 | `osc.status` | OSC listeners (port, bound, packets, drops, sources), senders, recent messages, params set by address, learn |
 

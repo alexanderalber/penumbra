@@ -122,7 +122,7 @@ details.target { outline: 2px solid var(--accent); }
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
 <p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-ui">ui</a> <a href="#family-component-ports">Component ports</a></p>
-<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-app">app</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-beats">beats</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-camera">camera</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-http">http</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
+<p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-app">app</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-beats">beats</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-camera">camera</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-http">http</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-midi">midi</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
 <h2>Guides</h2>
@@ -390,6 +390,21 @@ moss = #1b4332 #52b788
 <h4 id="concepts-mouse-and-3d-mouse">Mouse and 3D mouse</h4>
 <p><a class="ref" href="#chan.mouse_in"><code>chan.mouse_in</code></a> turns the mouse pointer into channels, wherever it is on the desktop, inside penumbra or not: <code>x</code> and <code>y</code> are shares of a display, 0 to 1 from its bottom left (<code>y</code> is 1 at the top); <code>inside</code> is 1 while the pointer is on that display; <code>left</code>, <code>right</code> and <code>middle</code> are 1 while held. Its <code>display</code> names the display as an output's <code>display</code> does (or <code>\\.\DISPLAY2</code>); empty, it is the display the pointer is on. On a named display <code>x</code> and <code>y</code> keep following the pointer past 0 and 1 when it leaves. Name a projector's display, and the pointer over the projection is a position in the projector's picture. <code>wheel</code> sums the notches turned anywhere (up positive); headless runs have no wheel. The node reads the pointer once a frame, so a click shorter than a frame can be missed. From the control channel: <a class="ref" href="#mouse.status"><code>mouse.status</code></a> (pointer, displays, wheel) and <a class="ref" href="#mouse.fake"><code>mouse.fake {x, y, buttons?}</code></a> (desktop pixels; <code>{real: true}</code> ends it; <code>{wheel}</code> turns the wheel).</p>
 <p><a class="ref" href="#chan.spacemouse_in"><code>chan.spacemouse_in</code></a> turns the 3D mouse (see <a href="#navigation">navigation</a>) into channels, each -1 to 1: <code>right</code>, <code>up</code>, <code>forward</code> (slide, lift, push the cap away), <code>pitch</code>, <code>yaw</code>, <code>roll</code> (tilt it nose up, twist it clockwise, tilt it to the right), <code>button_left</code> and <code>button_right</code> (1 while held), <code>connected</code>. A viewer flying a free view and the node both follow the cap at the same time. <strong>learn from OSC</strong> also takes the 3D mouse while such a node exists: press a button, or push the cap clearly along one axis.</p>
+<h4 id="concepts-midi-controllers">MIDI controllers</h4>
+<p><a class="ref" href="#chan.midi_in"><code>chan.midi_in</code></a> turns a MIDI controller into channels. Its <code>device</code> is a part of the device's name, such as <code>easy control</code>; the … menu beside it lists the devices. Empty, it reads every MIDI input. Each control you move becomes a channel, named after its MIDI channel (1 to 16) and number:</p>
+<ul>
+<li><code>cc_1_24</code>: control change 24 on channel 1, a fader, knob or button, 0 to 1.
+</li>
+<li><code>note_1_36</code>: a key or pad, 1 while held. A tap shorter than a frame still shows for one frame. <code>note_1_36_vel</code> holds how hard it was hit, 0 to 1, and keeps it after the release.
+</li>
+<li><code>bend_1</code> (-1 to 1), <code>pressure_1</code> (0 to 1), <code>program_1</code> (the number, 0 to 127).
+</li>
+</ul>
+<p>A control appears only after it has moved once. <strong>learn from OSC</strong> in a param's link menu takes MIDI too: move a fader, and the param is bound to it. A pad binds its <code>note_</code> channel. The channels hold their last value when the device is unplugged. penumbra looks for the device every second, so a device plugged in again goes on by itself. Many controllers send 7-bit steps, which can show on a slow fade; a <a class="ref" href="#chan.filter"><code>chan.filter</code></a> after the node smooths them. <code>pairs</code> reads 14-bit controls (control changes 32 to 63 refining 0 to 31). Leave it off for a controller that uses 32 to 63 as controls of their own, as most do.</p>
+<p>MIDI clock from a drum machine or another program becomes a tempo on the same node, with the channels <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> has: <code>bpm</code>, <code>beat</code> (0 at a beat, rising to 1), <code>tick</code> (1 for a frame on each beat), <code>bar</code>, <code>bar_beat</code>. <code>beats</code> counts beats since the start, <code>playing</code> is 1 between start and stop, <code>clock</code> is 1 while clocks arrive. Bind to these instead of the audio analysis, and the show follows the device's tempo exactly.</p>
+<p><a class="ref" href="#chan.midi_out"><code>chan.midi_out</code></a> sends its input's channels to a device, named as <a class="ref" href="#chan.midi_in"><code>chan.midi_in</code></a> names them: <code>cc_1_24</code> sends control change 24, <code>note_1_36</code> a note on while above 0 (its value the velocity, or the value of <code>note_1_36_vel</code> when that channel comes too) and a note off at 0. Without a MIDI channel in the name (<code>cc_24</code>, <code>note_36</code>) the node's <code>channel</code> is used. This lights pads and moves motor faders on controllers that take it, or drives another program. It sends only what changed, and everything again when the device is opened anew.</p>
+<p>From the control channel: <a class="ref" href="#midi.status"><code>midi.status</code></a> (the devices, what is open, recent messages, the clock's tempo), <a class="ref" href="#midi.inject"><code>midi.inject {device, bytes}</code></a> (bytes as if a device had sent them, to try a project without the controller), <a class="ref" href="#midi.send"><code>midi.send {device, bytes}</code></a> and <a class="ref" href="#midi.config"><code>midi.config {enabled}</code></a>.</p>
+<p>Under Windows a device may be open in one program at a time (unless Windows MIDI Services is installed). If another program holds it, the node says so and penumbra tries again every second.</p>
 <h4 id="concepts-a-control-page-in-the-browser">A control page in the browser</h4>
 <p><a class="ref" href="#chan.http_in"><code>chan.http_in</code></a> makes a web page a control surface: a phone or tablet on the same network, or another program. <strong>The built-in page:</strong> add a <a class="ref" href="#chan.http_in"><code>chan.http_in</code></a> and open <code>http://localhost:8090/</code>. The page shows every <a class="ref" href="#chan.slider"><code>chan.slider</code></a> and <a class="ref" href="#chan.button"><code>chan.button</code></a> with <code>show</code> ticked, in the order of the show screen. Sliders drag, toggles switch, momentary buttons stay pressed while a finger is on them, several at once. All open pages and the show screen show the same values. A control that is bound or locked is greyed out. The node's <code>page</code> param switches the built-in page off. <strong>Your own page:</strong> the node serves the files in its <code>folder</code> (<code>www</code> in the project), so <code>www/index.html</code> replaces the built-in page. With <code>bind</code> at <code>lan</code>, other devices reach it at <code>http://&lt;this computer's address&gt;:8090/</code>; <a class="ref" href="#http.status"><code>http.status</code></a> and <a href="#helpers-http">Helpers &gt; HTTP</a> name the address. <strong>Messages:</strong> a JSON object of addresses and values, sent over a WebSocket at <code>/ws</code>, as <code>POST /set</code>, or as <code>GET /set?fader=0.5</code>. <code>{&quot;/fader&quot;: 0.5}</code> makes channel <code>fader</code>; an array of numbers makes one channel per number (<code>xy_0</code>, <code>xy_1</code>); an array of arrays or of objects is a table on the <code>table</code> output. Bind params to the channels as for OSC. <strong>Show controls:</strong> with <code>params</code> at <code>controls</code> (the default), <code>{&quot;/fade/value&quot;: 0.3}</code> moves the <a class="ref" href="#chan.slider"><code>chan.slider</code></a> <code>/fade</code> flagged <code>show</code>. <strong>Buttons:</strong> <code>{&quot;press&quot;: {&quot;/go&quot;: true}}</code> holds the momentary button <code>/go</code>, <code>{&quot;press&quot;: {&quot;/go&quot;: false}}</code> lets go. A page sends the press again every 250 ms while the finger is down. penumbra lets go of a press that is not renewed for a second, and of every press of a WebSocket that closes. A repeated press while held is no new press, so a held GO counts once. Over <code>POST /set</code> or <a class="ref" href="#http.send"><code>http.send</code></a>, a press is a tap of one frame. <strong>What comes back:</strong> a WebSocket gets <code>{&quot;in&quot;: {...}, &quot;chans&quot;: {...}, &quot;controls&quot;: [...]}</code> whenever something changed, at most <code>rate</code> times a second: what the node received, the channels at its input, and the show controls with their values. A page from another site or a file cannot send. From the control channel: <a class="ref" href="#http.send"><code>http.send {message}</code></a> sends as a page does, <a class="ref" href="#http.status"><code>http.status</code></a> lists clients and drops.</p>
 <pre><code class="lang-html">&lt;input id=&quot;f&quot; type=&quot;range&quot; min=&quot;0&quot; max=&quot;1&quot; step=&quot;0.01&quot;&gt;
@@ -3497,7 +3512,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-chan">
 <h3>chan</h3>
-<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.envelope">chan.envelope</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
+<p class="kinds"><a href="#chan.audio_envelope">chan.audio_envelope</a> <a href="#chan.audio_spectrum">chan.audio_spectrum</a> <a href="#chan.beat_analysis">chan.beat_analysis</a> <a href="#chan.beat_grid">chan.beat_grid</a> <a href="#chan.button">chan.button</a> <a href="#chan.clock">chan.clock</a> <a href="#chan.constant">chan.constant</a> <a href="#chan.derivative">chan.derivative</a> <a href="#chan.dmx_in">chan.dmx_in</a> <a href="#chan.envelope">chan.envelope</a> <a href="#chan.filter">chan.filter</a> <a href="#chan.from_table">chan.from_table</a> <a href="#chan.from_tex">chan.from_tex</a> <a href="#chan.http_in">chan.http_in</a> <a href="#chan.integrator">chan.integrator</a> <a href="#chan.keyboard_in">chan.keyboard_in</a> <a href="#chan.lfo">chan.lfo</a> <a href="#chan.math">chan.math</a> <a href="#chan.merge">chan.merge</a> <a href="#chan.midi_in">chan.midi_in</a> <a href="#chan.midi_out">chan.midi_out</a> <a href="#chan.mouse_in">chan.mouse_in</a> <a href="#chan.noise">chan.noise</a> <a href="#chan.null">chan.null</a> <a href="#chan.osc_in">chan.osc_in</a> <a href="#chan.osc_out">chan.osc_out</a> <a href="#chan.rename">chan.rename</a> <a href="#chan.select">chan.select</a> <a href="#chan.sequence">chan.sequence</a> <a href="#chan.slider">chan.slider</a> <a href="#chan.spacemouse_in">chan.spacemouse_in</a> <a href="#chan.trail">chan.trail</a></p>
 <details class="entry node" id="chan.audio_envelope"><summary><code class="name">chan.audio_envelope</code><span class="sum">How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</span></summary>
 <div class="body">
 <p>How loud a sound is now, per channel, as a number to bind: rises with the sound in attack and falls in release</p>
@@ -3594,7 +3609,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves the width and height of the meters output alone</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#getting-started-the-viewer">Getting started › The viewer</a>, <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a>, <a href="#audio">Audio</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#audio-setting-up">Audio › Setting up</a>, <a href="#audio-beats-of-a-sound-file">Audio › Beats of a sound file</a>, <a href="#ndi-receiving-texndi_in">NDI › Receiving: tex.ndi_in</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="chan.beat_grid"><summary><code class="name">chan.beat_grid</code><span class="sum">The beats and bars of the sound file an audio.file plays, found ahead of time, as numbers to animate with</span></summary>
 <div class="body">
@@ -3826,7 +3841,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h5 id="chan.filter-timing">Timing</h5>
 <p>A channel with one value per frame steps by the time since the last cook. Frames in which nothing asked for the node still count. A channel with many samples is filtered sample by sample at its own rate. The first value of a channel passes unchanged. Switching <code>type</code> or <code>order</code> carries on from the last output. A seek back in time, <a class="ref" href="#node.reset"><code>node.reset</code></a> or R start the node over.</p>
 </div>
-<p class="mentions">Mentioned in: <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#audio-tips">Audio › Tips</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a>, <a href="#concepts-video-clips-on-cue">Concepts › Video clips on cue</a>, <a href="#audio-tips">Audio › Tips</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="chan.from_table"><summary><code class="name">chan.from_table</code><span class="sum">Turns a table of numbers into channels, so its cells can drive params through bindings</span></summary>
 <div class="body">
@@ -4051,6 +4066,50 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#dmx-setting-up">DMX › Setting up</a></p>
 </div></details>
 <details class="entry node" id="chan.mouse_in"><summary><code class="name">chan.mouse_in</code><span class="sum">The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</span></summary>
+<details class="entry node" id="chan.midi_in"><summary><code class="name">chan.midi_in</code><span class="sum">A MIDI controller's faders, knobs, pads and keys, and its MIDI clock as a tempo: every control a channel</span></summary>
+<div class="body">
+<p>A MIDI controller's faders, knobs, pads and keys, and its MIDI clock as a tempo: every control a channel</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">chan</span>: A channel per control moved: cc_1_7 (control change 7 on MIDI channel 1, 0 to 1), note_1_36 (1 while held) and note_1_36_vel, bend_1 (-1 to 1), pressure_1, program_1. With MIDI clock: bpm, beat, tick, bar, bar_beat as chan.beat_analysis has them, beats (since the start), playing, clock (1 while clocks arrive)</li>
+<li><code>messages</code> <span class="kind">table</span>: Every control moved: device, channel name, count, value</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the device's name, any case, e.g. <code>easy control</code> (the … menu lists them); empty: every MIDI input</td></tr>
+<tr><td><code>beats_per_bar</code></td><td>int</td><td><code>4</code></td><td>2 to 8 (soft)</td><td>Beats in one bar of the MIDI clock: how often bar and bar_beat come round</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>pairs</code></td><td>bool</td><td><code>false</code></td><td></td><td>14-bit controls: control changes 32 to 63 make the controls 0 to 31 finer instead of being controls of their own. Only for a device that sends such pairs</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
+</div></details>
+<details class="entry node" id="chan.midi_out"><summary><code class="name">chan.midi_out</code><span class="sum">Sends channels to a MIDI device: pad lights, motor faders, another program</span></summary>
+<div class="body">
+<p>Sends channels to a MIDI device: pad lights, motor faders, another program</p>
+<p class="note">Follows the show clock: cooks again whenever time moves.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>chans</code> <span class="kind">chan</span>: Channels named as chan.midi_in makes them: cc_1_7 (0 to 1), note_1_36 (above 0 is on, its value the velocity, or note_1_36_vel's when that channel is there too), bend_1 (-1 to 1), pressure_1, program_1; cc_7, note_36 and so on use <code>channel</code>. A chan.midi_in wired straight in sends its controls back</li>
+</ul>
+<h4>Outputs</h4>
+<p>none</p>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>device</code></td><td>text</td><td></td><td></td><td>Part of the output's name, any case, e.g. <code>easy control</code> (the … menu lists them)</td></tr>
+<tr><td><code>channel</code></td><td>int</td><td><code>1</code></td><td>1 to 16</td><td>MIDI channel for channels named without one: cc_7, note_36</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>rate</code></td><td>float</td><td><code>60</code></td><td>1 to 120 Hz (soft)</td><td>Sends per second at most</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
+</div></details>
 <div class="body">
 <p>The mouse pointer and its buttons as channels, anywhere on the desktop: steer or trigger things by hand during a show</p>
 <p class="note">Follows the show clock: cooks again whenever time moves.</p>
@@ -5975,6 +6034,29 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div></details>
 </div>
 <div class="group" id="group-mouse">
+<div class="group" id="group-midi">
+<h3>midi</h3>
+<details class="entry command" id="midi.config"><summary><code class="name">midi.config</code><span class="sum">MIDI settings for this run: {enabled?}; off closes every device</span></summary>
+<div class="body">
+<p>MIDI settings for this run: {enabled?}; off closes every device</p>
+<p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
+</div></details>
+<details class="entry command" id="midi.inject"><summary><code class="name">midi.inject</code><span class="sum">Take in MIDI bytes as if the input <code>device</code> had sent them (made if no device has that name): {device, bytes: [176, 7, 127]}. For trying a project without the controller</span></summary>
+<div class="body">
+<p>Take in MIDI bytes as if the input <code>device</code> had sent them (made if no device has that name): {device, bytes: [176, 7, 127]}. For trying a project without the controller</p>
+<p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
+</div></details>
+<details class="entry command" id="midi.send"><summary><code class="name">midi.send</code><span class="sum">Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (a chan.midi_out names it)</span></summary>
+<div class="body">
+<p>Send MIDI messages to an output: {device (part of its name), bytes: [144, 36, 127]}; system exclusive is left out. The output must be open (a chan.midi_out names it)</p>
+<p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
+</div></details>
+<details class="entry command" id="midi.status"><summary><code class="name">midi.status</code><span class="sum">MIDI devices of this machine, the inputs and outputs open (messages, drops, errors, the clock's tempo), recent messages</span></summary>
+<div class="body">
+<p>MIDI devices of this machine, the inputs and outputs open (messages, drops, errors, the clock's tempo), recent messages</p>
+<p class="mentions">Mentioned in: <a href="#concepts-midi-controllers">Concepts › MIDI controllers</a></p>
+</div></details>
+</div>
 <h3>mouse</h3>
 <details class="entry command" id="mouse.fake"><summary><code class="name">mouse.fake</code><span class="sum">Stand in for the mouse, for chan.mouse_in: {x?, y?, buttons?: [left, right, middle], wheel?: notches}; x and y in desktop pixels put a fake pointer in place of the real one, {real: true} brings the real one back; wheel turns it by that many notches (up positive)</span></summary>
 <div class="body">
@@ -6105,9 +6187,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="body">
 <p>OSC settings for this run: {enabled?, max_packet?, rate?, burst?, pattern_rate?, max_addresses?}</p>
 </div></details>
-<details class="entry command" id="osc.learn"><summary><code class="name">osc.learn</code><span class="sum">Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists)</span></summary>
+<details class="entry command" id="osc.learn"><summary><code class="name">osc.learn</code><span class="sum">Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or a MIDI control a chan.midi_in reads; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists)</span></summary>
 <div class="body">
-<p>Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}</p>
+<p>Bind a param to the next OSC address that arrives with a number (also over HTTP or a WebSocket to a chan.http_in; or a MIDI control a chan.midi_in reads; or key a chan.keyboard_in lists, or the 3D mouse's button or axis moved most while a chan.spacemouse_in exists); {param, timeout?, wait?} or {cancel: true}</p>
 </div></details>
 <details class="entry command" id="osc.send"><summary><code class="name">osc.send</code><span class="sum">Send one OSC message</span></summary>
 <div class="body">

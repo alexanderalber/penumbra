@@ -1,0 +1,18 @@
+[package]
+name = "penumbra-midi"
+description = "MIDI in and out: devices by name with hot-plug, a bounded parser, controls as OSC addresses for learn, MIDI clock as a tempo. No GPU, no UI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+penumbra-core.workspace = true
+penumbra-osc.workspace = true
+log.workspace = true
+serde.workspace = true
+midir.workspace = true
+
+[lints]
+workspace = true
