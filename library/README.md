@@ -242,8 +242,8 @@ Glazed tiles with grout and a wooden rim on a rectified face, appearing one by o
 
 ## A stage for music
 
-A synthwave world that moves with a sound file: one stage, and elements that stand in it. They
-all take the same music bus, the whole output of a `chan.beat_grid`. A project has one
+A world that moves with a sound file: a stage (a synthwave floor or a tunnel), and elements in it.
+They all take the same music bus, the whole output of a `chan.beat_grid`. A project has one
 `chan.beat_grid` and wires it into the `bus` input of the stage and of every element:
 `node.connect {"from": "/grid", "to": "/stage", "input": "bus"}`. Each component reads the
 channels it needs by name. `travelled` moves the world, `drift` puts the lane's turns on
@@ -282,13 +282,19 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   they are off in an intro, outro and break and come on at a drop.
 - **The camera** takes one of six presets of the stage. The arrangement's `camera` column picks
   one per section, and the stage glides to it.
-- **Two stages.** A project can hold several stages side by side, each with its own floor, sky
-  and ceiling elements. Wire their `out` into a `tex.switch`, or a `tex.cross` for two stages.
-  Give `beats.arrange` the stages as a list and the switch's param:
-  `stage: ["/stage_a", "/stage_b"], switch: "/stages.index"`. The `stage` column then changes at
-  a strong track start, at most once in 8 minutes. A `tex.cross` (`switch: "/stages.cross"`)
-  fades between the two stages through the row's fade; a `tex.switch` cuts half way through it.
-  Wire the mid and post elements into every stage, or after the switch.
+- **Two stages.** A project can hold several stages side by side: `stage_synthwave` and
+  `stage_tunnel` take the same inputs and give the same outputs. Each has its own floor, sky and
+  ceiling elements. Wire their `out` into a `tex.switch`, or a `tex.cross` for two stages, and
+  that into the post chain. Give `beats.arrange` the stages as a list and the switch's param:
+  `stage: ["/stage", "/tunnel"], switch: "/stages.cross"`. The `stage` column then changes at a
+  strong track start, at most once in 8 minutes. A `tex.cross` fades between the two stages
+  through the row's fade; a `tex.switch` (`switch: "/stages.index"`) cuts half way through it.
+  Both stages render all the time, so the hidden one costs as much as the one on show. The mid
+  and sky elements can go into both stages. They read one `lane` and one `pose`: blend the two
+  stages' lanes with a second `tex.cross` and their poses with `chan.math` (b minus a, times the
+  share, plus a), and bind both shares to the arrangement's `stage` channel (`_mix:stage`), so
+  the glider and the horizon move over with the picture. Floor and ceiling elements need a flat
+  floor and a flat ceiling: wire them into `stage_synthwave` only.
 
 ### stage_synthwave
 
@@ -322,6 +328,39 @@ glider is the element `mid_glider`.
   near edge passes the camera on a downbeat. The lane floats on over nothing. Floor elements read
   the gaps from `lane` and sink there too. A gap that opens or closes fades. `beats.arrange`
   binds `gap` to its `gaps` column: 0.3 in a build, 0.6 in a break.
+
+### stage_tunnel
+
+![stage_tunnel](stage_tunnel/preview.png)
+
+A second world for the same elements: the camera flies through a wireframe tube towards the sky
+at its end. The tube has a ring on every beat of `travelled` and long lines along its wall. It
+rolls with the lane, so the lane always lies at the tube's bottom, straight ahead, and the long
+lines twist as the lane zigzags. The wall is black and hides what lies outside the tube. Far
+away the tube fades out, so the sky (nebula and `sky`) shows as a disc at its end. Palette,
+nebula, distance fade and camera presets work as on `stage_synthwave`, so the two stages can
+swap.
+
+- In: `bus`, `mid` (geometry in the tube, such as the glider), `sky` (a picture screened over
+  the nebula), `floor` and `ceiling` (merged into the scene, but the tube has no flat floor or
+  ceiling: floor elements sink away, since the lane's alpha is 0, and ceiling elements hang at
+  their own `ceiling` height in the middle of the tube; leave both unwired).
+- Out: `out` (the picture), `lane` (the layout of `stage_synthwave`'s lane: red and green 0,
+  since the lane lies straight at the tube's bottom, blue `step`, alpha 0, since nothing can
+  stand on the curved bottom), `pose` (the camera as it glides: channels `height`, `pitch`,
+  `roll`, `fov`, `side`).
+- Params: `warmth` (0 the warm palette, 1 the cold one), `lift`, `energy_curve`, `dim`; the
+  lane's `bars_per_turn`, `swing`, `turn`, `beats_per_bar`; `step` (metres per beat: the
+  distance between two rings); `start`, `end` of the distance fade (6 and 20 m: the tube is
+  seen further than the synthwave floor); `ceiling` (the tube's height, twice its radius: 8 m);
+  `twist` (how far the tube rolls with the lane: 1 turns it by the lane's swing over the
+  radius); `lines` (long lines along the wall, up to 24); `line_width`.
+- Camera: `camera`, `glide` and `presets` as on `stage_synthwave`, with presets of the same
+  meaning for the tube: 0 low flight at 1.8 m, 1 higher and looking down for a build, 2 high and
+  wide for a drop (3.4 m, 76 degrees), 3 still and nearly level for a break, 4 and 5 two tilted
+  variants.
+- Gaps: `gap` and `gap_length` as on `stage_synthwave`: stretches of the tube break off, and
+  the sky shows through them.
 
 ### floor_blocks
 
