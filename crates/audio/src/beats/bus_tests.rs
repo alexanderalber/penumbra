@@ -108,6 +108,50 @@ fn travel_adds_up_a_smoothed_and_clamped_tempo() {
     assert!(odd.at(1.0).0.is_finite());
 }
 
+/// A break of 13 s without beats between two runs at 120 beats per minute: the drift runs evenly
+/// through it, so the bars travelled keep moving, and outside it differs from the grid's own
+/// count by whole bars only, so the downbeats stay where they were.
+#[test]
+fn drift_bridges_a_break_without_beats() {
+    let step = 4.0 * 512.0 / 48_000.0;
+    let mut beats: Vec<f64> = (0..=40).map(|i| f64::from(i) * 0.5).collect();
+    beats.extend((0..=54).map(|i| 33.0 + f64::from(i) * 0.5));
+    let downs: Vec<f64> = beats.iter().step_by(4).copied().collect();
+    let g = BeatGrid::new(&beats, &downs);
+    let t = Travel::new(&g, 60.0, step, TRAVEL_FLOOR, TRAVEL_CAP);
+    let raw = |s: f64| {
+        let p = g.at(s).unwrap_or_else(|| panic!("no position at {s}"));
+        (p.bar as f64 + p.bar_phase, p.bar as f64 + p.bar_phase - t.at(s).0 / 4.0)
+    };
+    let mut before: Option<f64> = None;
+    let mut moved_in_break = Vec::new();
+    for k in 0..6000 {
+        let s = f64::from(k) * 0.01;
+        let (bars, r) = raw(s);
+        let d = t.drift(s, bars);
+        if let Some(b) = before {
+            assert!((d - b).abs() < 0.01, "{s}: the drift jumps from {b} to {d}");
+        }
+        before = Some(d);
+        if !(20.0..33.0).contains(&s) {
+            let off = d - r;
+            assert!((off - off.round()).abs() < 1e-6, "{s}: off by {off} bars");
+        } else {
+            moved_in_break.push(t.at(s).0 / 4.0 + d);
+        }
+    }
+    // Over the break the bars travelled move on at about their speed, not standing still: 13 s
+    // at two beats a second are 6.5 bars, and the drift takes off less than half a bar.
+    let first = moved_in_break.first().copied().unwrap_or(0.0);
+    let last = moved_in_break.last().copied().unwrap_or(0.0);
+    assert!((last - first - 6.5).abs() < 0.55, "{first} to {last}");
+    assert!(moved_in_break.windows(2).all(|w| w[1] > w[0]));
+    // Without a break the drift is the plain difference.
+    let plain = Travel::new(&steady(0.5, 60.0), 60.0, step, TRAVEL_FLOOR, TRAVEL_CAP);
+    assert!((plain.drift(10.0, 5.0) - (5.0 - plain.at(10.0).0 / 4.0)).abs() < 1e-9);
+    assert!(Travel::default().drift(1.0, 2.0).is_finite());
+}
+
 /// 20 s quiet, then 20 s loud: the energies tell them apart and the loud half begins with a
 /// drop that falls over half a second.
 #[test]

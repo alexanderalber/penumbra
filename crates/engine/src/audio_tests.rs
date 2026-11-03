@@ -708,7 +708,8 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     }
     let r = f.call("beats.arrange", args(json!({})));
     assert_eq!(r["history"], "new", "{r}");
-    assert_eq!(r["rows"], 4, "{r}");
+    // The first section is the opening: one row with the sky alone, one that brings the floor.
+    assert_eq!(r["rows"], 5, "{r}");
     assert_eq!(r["created"].as_array().map(Vec::len), Some(12), "{r}");
     assert_eq!(
         r["bound"],
@@ -733,8 +734,9 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps",
         "{table}"
     );
-    assert_eq!(lines.len(), 5, "{table}");
-    assert!(lines[1].starts_with("0,") && lines[1].contains(",intro,0,0.4,0,1,0,0.3"), "{table}");
+    assert_eq!(lines.len(), 6, "{table}");
+    assert!(lines[1].starts_with("0,") && lines[1].contains(",intro,0,0,0,1,0,0.3"), "{table}");
+    assert!(lines[2].contains(",intro,0,0.4,0,1,0,0.3"), "{table}");
     let cues = f.call("node.info", json!({"path": "/cues"}));
     assert_eq!(cues["binds"], json!([{"param": "clock", "from": "/g:seconds"}]), "{cues}");
     assert_eq!(param(&cues, "names"), "row");
@@ -752,8 +754,8 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     // The camera preset jumps half way through a fade; the stage glides to it.
     let preset = f.call("node.info", json!({"path": "/stage/preset"}));
     assert_eq!(preset["binds"], json!([{"param": "row", "from": "/arrangement_pick:camera"}]), "{preset}");
-    // The floor's gaps fade with the rows.
-    let lane = f.call("node.info", json!({"path": "/stage/lane_map"}));
+    // The floor's gaps follow the rows, through the gaps' memory.
+    let lane = f.call("node.info", json!({"path": "/stage/gap_memory"}));
     assert!(
         lane["binds"]
             .as_array()
@@ -798,7 +800,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         }
     });
     // Again, with a weight: nothing new is created, the table is written again.
-    let weighted = json!({"fade_min": 0.5, "stage_fade": 6.0, "dwell": 2, "gaps": {"build": 0.5, "break": 0.0}, "slots": {"floor": ["/blocks", {"path": "/mountains", "weight": 3, "stages": ["/stage"]}], "sky": ["/galaxy"]}});
+    let weighted = json!({"opening": false, "fade_min": 0.5, "stage_fade": 6.0, "dwell": 2, "gaps": {"build": 0.5, "break": 0.0}, "slots": {"floor": ["/blocks", {"path": "/mountains", "weight": 3, "stages": ["/stage"]}], "sky": ["/galaxy"]}});
     let again = f.call("beats.arrange", args(weighted));
     assert_eq!(again["created"], json!([]), "{again}");
     assert_eq!(again["rows"], 4, "{again}");

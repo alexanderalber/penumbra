@@ -40,6 +40,10 @@
 //!   starts with a `change` of at least [`STAGE_CHANGE`], and at most once per [`STAGE_GAP`].
 //!   It walks to the next stage and back again (0, 1, 2, 1, 0, 1, ...), so every change goes to a
 //!   neighbour in the list: a blending switch fades between the two and never through a third.
+//! - **Opening:** the file's first section brings its slots in one after another, at bar starts:
+//!   first the sky, then the mid slot, then the floor and the other slots, the ceiling last. It
+//!   is split into one row per step ([`opening`]), at least [`OPENING_BARS`] bars each, and each
+//!   step fades in over a bar. The steps count as one section for the dwell.
 //! - **Gaps:** the row says how much of the floor breaks off into gaps: [`GAPS_BUILD`] in a
 //!   build, [`GAPS_BREAK`] in a break, none elsewhere. The caller may give other shares
 //!   ([`Gaps`]).
@@ -108,6 +112,8 @@ pub const CAMERA_VARIANTS: [usize; 2] = [4, 5];
 pub const STAGE_CHANGE: f64 = 0.8;
 /// The least time between two switches of the stage, in seconds; the file's start counts as one.
 pub const STAGE_GAP: f64 = 480.0;
+/// The fewest bars a step of the opening lasts ([`opening`]).
+pub const OPENING_BARS: usize = 2;
 /// The share of the floor in gaps during a build.
 pub const GAPS_BUILD: f64 = 0.3;
 /// The share of the floor in gaps during a break.
@@ -127,19 +133,77 @@ impl Default for Gaps {
     }
 }
 
-/// What the caller may set of the rules: the floor's gaps and the dwell.
+/// What the caller may set of the rules: the floor's gaps, the dwell and the opening.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rules {
     pub gaps: Gaps,
     /// The sections an element stays on before it gives way at the next boundary from
     /// [`CHANGE_SMALL`]; 0 turns the rule off.
     pub dwell: usize,
+    /// How many of the first parts are the steps of the opening ([`opening`]): their rows bring
+    /// the slots in one after another. 0 or 1: no opening.
+    pub opening: usize,
 }
 
 impl Default for Rules {
     fn default() -> Rules {
-        Rules { gaps: Gaps::default(), dwell: DWELL }
+        Rules { gaps: Gaps::default(), dwell: DWELL, opening: 0 }
     }
+}
+
+/// The order the opening brings the slots in, as indices into `slots`: the sky, the mid slot,
+/// the others in their order, the ceiling last. The post slot is left out: it is off in an
+/// intro anyway.
+fn opening_order(slots: &[Slot]) -> Vec<usize> {
+    let rank = |s: &Slot| match s.name.as_str() {
+        SKY => 0,
+        MID => 1,
+        CEILING => 3,
+        _ => 2,
+    };
+    let mut order: Vec<usize> =
+        (0..slots.len()).filter(|&i| slots.get(i).is_some_and(|s| s.name != POST)).collect();
+    order.sort_by_key(|&i| slots.get(i).map_or(0, rank));
+    order
+}
+
+/// The parts with the first one split into the steps of the opening: one step per slot the
+/// opening brings in (fewer when the first part has fewer than [`OPENING_BARS`] bars per step),
+/// each beginning on one of `bars` (the bar starts, seconds) and fading in over that bar. Also the
+/// number of steps, the `opening` of [`Rules`]: 1 where the first part stays whole.
+pub fn opening(parts: &[Part], slots: &[Slot], bars: &[f64]) -> (Vec<Part>, usize) {
+    let Some(first) = parts.first().copied() else { return (Vec::new(), 0) };
+    let inside: Vec<f64> =
+        bars.iter().copied().filter(|b| b.is_finite() && *b > first.start && *b < first.end).collect();
+    let wanted = opening_order(slots).len();
+    let n = wanted.min((inside.len() + 1) / OPENING_BARS);
+    if n < 2 {
+        return (parts.to_vec(), 1);
+    }
+    let mut out = Vec::with_capacity(parts.len() + n - 1);
+    let mut start = first.start;
+    let mut zone = first.zone;
+    for k in 1..=n {
+        let end = if k == n {
+            first.end
+        } else {
+            // `as`: small counts.
+            let at = ((k * inside.len()) as f64 / n as f64).round() as usize;
+            inside.get(at.min(inside.len() - 1)).copied().unwrap_or(first.end)
+        };
+        out.push(Part { start, end, zone, change: if k == 1 { first.change } else { 0.0 }, ..first });
+        // The next step fades in over the bar it begins with.
+        let bar_end = bars.iter().copied().find(|b| *b > end).unwrap_or(end).min(first.end);
+        zone = (end, bar_end);
+        start = end;
+    }
+    for (k, p) in out.iter_mut().enumerate() {
+        if k > 0 {
+            p.track_start = false;
+        }
+    }
+    out.extend(parts.iter().skip(1).copied());
+    (out, n)
 }
 
 impl Gaps {
@@ -430,6 +494,17 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
     let mut switched = 0.0f64;
     // Per slot, the sections its element has been on, hidden by the stage or not.
     let mut since = vec![0usize; slots.len()];
+    // The opening's steps, and the slots each brings: step k brings the first of `order` up to
+    // its share of them.
+    let steps = if rules.opening >= 2 { rules.opening } else { 0 };
+    let order = opening_order(slots);
+    let brought = |row: usize, slot: usize| -> bool {
+        if row >= steps {
+            return true;
+        }
+        let count = ((row + 1) * order.len()).div_ceil(steps);
+        order.iter().take(count).any(|&s| s == slot)
+    };
     let mut out = Vec::with_capacity(parts.len());
     for (i, part) in parts.iter().enumerate() {
         let change = if i == 0 { 0.0 } else { unit(part.change) };
@@ -477,8 +552,11 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                 x.swap(&|j| slot.shows_in(j, stage));
             }
         }
-        for ((n, x), b) in since.iter_mut().zip(&state).zip(&before) {
-            *n = if i > 0 && x.on() == *b { *n + 1 } else { 1 };
+        // The opening's steps count as one section.
+        if i == 0 || i >= steps {
+            for ((n, x), b) in since.iter_mut().zip(&state).zip(&before) {
+                *n = if i > 0 && x.on() == *b { *n + 1 } else { 1 };
+            }
         }
         // The post slot follows the role: off where it is calm, on at a drop.
         for x in &mut state {
@@ -509,7 +587,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                 (Role::Break, true) => BREAK_SKY,
                 _ => 1.0,
             };
-            let level = if empty && Some(s) != kept { 0.0 } else { level };
+            let level = if (empty && Some(s) != kept) || !brought(i, s) { 0.0 } else { level };
             match x {
                 State::One { on, weights, .. } => presence.extend(
                     (0..weights.len()).map(|j| if j == *on && slot.shows_in(j, stage) { level } else { 0.0 }),
@@ -1292,5 +1370,57 @@ mod tests {
         // Hostile: no number takes the default, too long the longest.
         assert_eq!(steps_with(&p, &[0, 0, 1, 1], 125.0, 2.0, f64::NAN, "x").unwrap().fades[2], STAGE_FADE);
         assert_eq!(steps_with(&p, &[0, 0, 1, 1], 300.0, 2.0, 1e9, "x").unwrap().fades[2], FADE_MIN_MAX);
+    }
+
+    /// The opening brings the sky, the mid slot, the floor and the ceiling in one after another,
+    /// each on a bar start and fading in over a bar; then the arrangement goes on as before.
+    #[test]
+    fn the_opening_brings_the_slots_in_one_after_another() {
+        let slots = vec![
+            Slot::new("ceiling", &["lights"]),
+            Slot::new("floor", &["blocks", "mountains"]),
+            Slot::new("mid", &["glider"]),
+            Slot::new("post", &["scan"]),
+            Slot::new("sky", &["galaxy"]),
+        ];
+        let p = parts(&[(Role::Intro, 0.0), (Role::Drop, 0.8)]);
+        let bars: Vec<f64> = (0..30).map(|i| f64::from(i) * 2.0).collect();
+        let (split, n) = opening(&p, &slots, &bars);
+        assert_eq!(n, 4);
+        assert_eq!(split.len(), 5);
+        assert_eq!(split[0].start, 0.0);
+        assert_eq!(split[3].end, 30.0);
+        assert_eq!(split[4], p[1]);
+        for k in 1..4 {
+            assert!(bars.contains(&split[k].start), "{k} starts on a bar: {:?}", split[k]);
+            assert_eq!(split[k].zone, (split[k].start, split[k].start + 2.0));
+            assert_eq!(split[k].change, 0.0);
+            assert_eq!(split[k - 1].end, split[k].start);
+        }
+        let r = rows_with(&split, &slots, 1, Rules { opening: n, ..Rules::default() });
+        let cols = columns(&slots);
+        let on = |row: &Row, name: &str| {
+            cols.iter().position(|c| c == name).is_some_and(|i| row.presence[i] > 0.0)
+        };
+        let want = [
+            ["galaxy"].as_slice(),
+            &["galaxy", "glider"],
+            &["galaxy", "glider", "blocks"],
+            &["galaxy", "glider", "blocks", "lights"],
+        ];
+        for (row, names) in r.iter().zip(want) {
+            for c in &cols {
+                assert_eq!(on(row, c), names.contains(&c.as_str()), "{c} in {row:?}");
+            }
+        }
+        // The drop after it: everything on, the floor swapped once as without the opening.
+        let plain = rows(&p, &slots, 1);
+        assert_eq!(r[4].presence, plain[1].presence);
+        // A short first section brings several slots at once; a very short one stays whole.
+        let short = parts(&[(Role::Intro, 0.0)]);
+        let few: Vec<f64> = vec![0.0, 10.0, 20.0, 25.0];
+        assert_eq!(opening(&short, &slots, &few).1, 2);
+        assert_eq!(opening(&short, &slots, &[0.0, 10.0]).1, 1);
+        assert_eq!(opening(&[], &slots, &bars).1, 0);
     }
 }

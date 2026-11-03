@@ -250,7 +250,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
              travelled counts the beats travelled since the file's start. It rises at travel_bpm: the grid's tempo, kept between travel_floor and travel_cap and smoothed over 1.5 s. \
              A world moved by travelled moves with the music, steadily through breaks and tempo changes. travelled starts at 0 again in each pass of a looped file. \
              beat_length is how many travelled beats one grid beat takes: 1 where the tempo is steady. \
-             drift is the bars the grid counts (bar_index plus bar) minus travelled divided by the bar length most bars of the file have. It changes slowly. \
+             drift is the bars the grid counts (bar_index plus bar) minus travelled divided by the bar length most bars of the file have. It changes slowly.              Through a break without beats it runs evenly from its value before to its value after, less whole bars, so things placed by it keep moving. \
              An event lands on a downbeat where travelled divided by that bar length, plus drift, is a whole number. \
              energy, energy_low, energy_mid and energy_high are level, bass, mid and treble from 0 (the quietest 5 % of the file) to 1 (the loudest 5 %), smoothed (0.05 s up, 0.3 s down). \
              Unlike level, they compare across the whole file. section_energy is the mean energy of the section under the playhead. \
@@ -1101,7 +1101,7 @@ pub(crate) fn bus_values(
             let length = if p.bpm > 0.0 && p.bpm.is_finite() { r.travel_bpm / p.bpm } else { 0.0 };
             // `as`: counts far below 2^53.
             let bars = p.bar as f64 + p.bar_phase;
-            (length, bars - r.travelled / bus.bar_beats().max(1) as f64)
+            (length, travel.unwrap_or(bus.travel()).drift(t, bars))
         }
         None => (0.0, 0.0),
     };

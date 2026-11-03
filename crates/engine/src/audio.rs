@@ -145,7 +145,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          next, also where the music cuts), stage_fade? (s, default 4: the shortest fade into a row whose \
          stage changes), dwell? (sections, default 3: an element on that long gives way at the next \
          boundary with change 0.3 or more, its slot's turn or not; a slot its stage hides counts on; 0 \
-         turns it off), gaps? ({build?, break?}: the share of the floor in gaps, default \
+         turns it off), opening? (default true: the file's first section brings its slots in one after another          on bar starts, sky first, then mid, the floor and the rest, the ceiling last, a row per step of at least 2 bars), gaps? ({build?, break?}: the share of the floor in gaps, default \
          0.3 in a build and 0.6 in a break)}. The table has a row per section: start, end, role, change, the \
          presence of each element (the column is named as the element), warmth, intensity, camera (the \
          stage's camera preset: low in a main section, higher in a build, high and wide on a drop, level in \
@@ -773,6 +773,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         fade_min: Option<f64>,
         stage_fade: Option<f64>,
         dwell: Option<f64>,
+        opening: Option<bool>,
         gaps: Option<GapShares>,
     }
     #[derive(Deserialize)]
@@ -958,7 +959,12 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         })
         .collect();
     let end = s.envelopes.as_ref().map_or(0.0, |env| env.len() as f64 * env.hop_seconds());
-    let rows = arrange::rows_with(&parts, &slots, stages.len(), arrange::Rules { gaps, dwell });
+    // The file's first section brings its slots in one after another, at the grid's bar starts.
+    let (parts, opening) = match (a.opening.unwrap_or(true), s.grid.as_ref()) {
+        (true, Some(grid)) => arrange::opening(&parts, &slots, &grid.bars),
+        _ => (parts, 1),
+    };
+    let rows = arrange::rows_with(&parts, &slots, stages.len(), arrange::Rules { gaps, dwell, opening });
     let table = arrange::table(&slots, &rows);
     if table.len() > penumbra_core::param::MAX_TEXT {
         return Err(CommandError(format!("{} rows do not fit into a table.text", rows.len())));

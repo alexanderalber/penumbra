@@ -73,6 +73,10 @@ const DB_FLOOR: f64 = -120.0;
 const DB_STEP: f64 = 0.5;
 const DB_BINS: usize = 256;
 
+/// A spacing of the grid longer than this many beats of the tempo around it is a break: a
+/// stretch in which the network found no beat, which the fold left open.
+pub const BREAK_SPACINGS: f64 = 1.5;
+
 /// The beats travelled over a file: a smoothed and clamped tempo, added up.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Travel {
@@ -84,6 +88,23 @@ pub struct Travel {
     bpm: Vec<f32>,
     /// The beats travelled at each sample.
     beats: Vec<f64>,
+    /// The bar length most bars of the grid have, in beats.
+    bar_beats: f64,
+    /// The grid's breaks, in order, for [`Travel::drift`].
+    breaks: Vec<Break>,
+}
+
+/// A break of the grid as [`Travel::drift`] bridges it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Break {
+    /// The beats before and after it, seconds.
+    start: f64,
+    end: f64,
+    /// The drift at its start and its end, with the whole bars of every break up to it taken off.
+    from: f64,
+    to: f64,
+    /// The whole bars taken off the drift after it, this break's and those before.
+    after: f64,
 }
 
 impl Travel {
@@ -134,7 +155,61 @@ impl Travel {
             travelled.push(sum);
             last = now;
         }
-        Travel { floor, cap, step, bpm, beats: travelled }
+        let mut travel = Travel {
+            floor,
+            cap,
+            step,
+            bpm,
+            beats: travelled,
+            bar_beats: bar_beats(grid) as f64,
+            breaks: Vec::new(),
+        };
+        travel.breaks = travel.find_breaks(grid);
+        travel
+    }
+
+    /// The grid's breaks: the spacings longer than [`BREAK_SPACINGS`] beats of their tempo.
+    fn find_breaks(&self, grid: &BeatGrid) -> Vec<Break> {
+        let (beats, tempo) = (grid.beats(), grid.tempo());
+        let mut out = Vec::new();
+        let mut before = 0.0;
+        for (i, w) in beats.windows(2).enumerate() {
+            let [start, end] = *w else { continue };
+            let bpm = tempo.get(i).copied().unwrap_or(0.0);
+            if !(bpm > 0.0 && bpm.is_finite()) || end - start <= BREAK_SPACINGS * 60.0 / bpm {
+                continue;
+            }
+            let (Some(a), Some(b)) = (grid.at(start), grid.at(end)) else { continue };
+            // `as`: counts far below 2^53.
+            let raw = |t: f64, p: super::Position| p.bar as f64 + p.bar_phase - self.at(t).0 / self.bar_beats;
+            let (from, to) = (raw(start, a) - before, raw(end, b) - before);
+            // The whole bars that bring the end nearest the start: the drift then changes by
+            // less than half a bar over the break.
+            let shift = (to - from).round();
+            out.push(Break { start, end, from, to: to - shift, after: before + shift });
+            before += shift;
+        }
+        out
+    }
+
+    /// Where the bars stand against the beats travelled at `t` seconds into the file, in bars:
+    /// `bars` (the bars the grid counts there, with the fraction of the bar) minus the beats
+    /// travelled over the usual bar length. In a break the grid counts one beat over the whole
+    /// break while the beats travelled go on, so this would fall fast there and things placed by
+    /// the bars would stop. Instead it runs evenly through each break, from its value at the
+    /// break's start to its value at the end less whole bars, and keeps those whole bars off
+    /// after the break. So it changes slowly everywhere, and a downbeat still falls where it adds
+    /// to a whole number with the beats travelled over the bar length.
+    pub fn drift(&self, t: f64, bars: f64) -> f64 {
+        let raw = bars - self.at(t).0 / self.bar_beats.max(1.0);
+        let k = self.breaks.partition_point(|b| b.start <= t);
+        match k.checked_sub(1).and_then(|i| self.breaks.get(i)) {
+            None => raw,
+            Some(b) if t < b.end && b.end > b.start => {
+                b.from + (b.to - b.from) * (t - b.start) / (b.end - b.start)
+            }
+            Some(b) => raw - b.after,
+        }
     }
 
     /// The floor and the cap it was made with.
@@ -175,7 +250,9 @@ impl Travel {
 
     /// Bytes it takes in memory.
     pub fn bytes(&self) -> usize {
-        self.bpm.len() * std::mem::size_of::<f32>() + self.beats.len() * std::mem::size_of::<f64>()
+        self.bpm.len() * std::mem::size_of::<f32>()
+            + self.beats.len() * std::mem::size_of::<f64>()
+            + self.breaks.len() * std::mem::size_of::<Break>()
     }
 }
 
