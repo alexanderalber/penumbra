@@ -803,4 +803,32 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     assert!(f.fail("node.info", json!({"path": "/cues"})).contains("no node"));
     let places = f.call("node.info", json!({"path": "/blocks/places"}));
     assert!(!places["binds"].as_array().unwrap().iter().any(|b| b["param"] == "presence"), "{places}");
+
+    // Three stages: a blending switch fades, a cutting one jumps, a cross takes only two; each
+    // list of params takes the same column.
+    f.call("comp.load", json!({"file": "stage_tunnel", "path": "/tunnel"}));
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/stages", "kind": "tex.switch", "params": {"blend": true}},
+            {"op": "create", "path": "/lanes", "kind": "tex.switch"},
+            {"op": "create", "path": "/cross", "kind": "tex.cross"},
+        ]}),
+    );
+    let three = json!({"stage": ["/stage", "/tunnel", "/galaxy"]});
+    let mut crossed = three.clone();
+    crossed["switch"] = json!("/cross.cross");
+    let e = f.fail("beats.arrange", args(crossed));
+    assert!(e.contains("a tex.cross fades between two stages"), "{e}");
+    let mut listed = three;
+    listed["switch"] = json!(["/stages.index", "/lanes.index"]);
+    listed["intensity"] = json!(["/stage.dim", "/tunnel.dim"]);
+    let r = f.call("beats.arrange", args(listed));
+    let bound = r["bound"].as_array().unwrap();
+    for b in ["/stages.index", "/lanes.index", "/stage.dim", "/tunnel.dim", "/tunnel.camera"] {
+        assert!(bound.iter().any(|x| x == b), "{b}: {r}");
+    }
+    let from = |path: &str| f.call("node.info", json!({"path": path}))["binds"].clone();
+    assert_eq!(from("/stages"), json!([{"param": "index", "from": "/arrangement_mix:stage"}]));
+    assert_eq!(from("/lanes"), json!([{"param": "index", "from": "/arrangement_pick:stage"}]));
 }

@@ -1,0 +1,12 @@
+# A post of stage_ascent: a thin triangular prism one unit long along y, centred on the
+# origin, z up, one unit across. Scaled to two centimetres across, the wireframe draws its
+# three long edges as one line.
+v 0.00000 -0.50000 0.57735
+v -0.50000 -0.50000 -0.28868
+v 0.50000 -0.50000 -0.28868
+v 0.00000 0.50000 0.57735
+v -0.50000 0.50000 -0.28868
+v 0.50000 0.50000 -0.28868
+f 1 2 5 4
+f 2 3 6 5
+f 3 1 4 6

@@ -31,6 +31,8 @@
 //!   a break, and a variant per track in an intro, an outro and a main section that starts a track.
 //! - **Stage:** with several stages, the row says which one shows. It changes only where a track
 //!   starts with a `change` of at least [`STAGE_CHANGE`], and at most once per [`STAGE_GAP`].
+//!   It walks to the next stage and back again (0, 1, 2, 1, 0, 1, ...), so every change goes to a
+//!   neighbour in the list: a blending switch fades between the two and never through a third.
 //! - **Gaps:** the row says how much of the floor breaks off into gaps: [`GAPS_BUILD`] in a
 //!   build, [`GAPS_BREAK`] in a break, none elsewhere. The caller may give other shares
 //!   ([`Gaps`]).
@@ -327,6 +329,18 @@ impl State {
     }
 }
 
+/// The stage after `stage` of `stages`, walking onward or back, and the way the walk goes on: it
+/// turns at either end of the list.
+fn next_stage(stage: usize, onward: bool, stages: usize) -> (usize, bool) {
+    let last = stages.saturating_sub(1);
+    if last == 0 {
+        return (0, true);
+    }
+    let onward = stage < last && (stage == 0 || onward);
+    let next = if onward { stage + 1 } else { stage - 1 };
+    (next.min(last), onward)
+}
+
 /// The rows of the arrangement, one per part, for `stages` stages side by side (0 counts as 1),
 /// with the gaps of [`Gaps::default`].
 pub fn rows(parts: &[Part], slots: &[Slot], stages: usize) -> Vec<Row> {
@@ -356,6 +370,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> V
     let mut dense = 0usize;
     let mut track = 0usize;
     let mut stage = 0usize;
+    let mut onward = true;
     let mut switched = 0.0f64;
     let mut out = Vec::with_capacity(parts.len());
     for (i, part) in parts.iter().enumerate() {
@@ -382,7 +397,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, gaps: Gaps) -> V
             }
             let start = if part.start.is_finite() { part.start } else { 0.0 };
             if stages > 1 && part.track_start && change >= STAGE_CHANGE && start - switched >= STAGE_GAP {
-                stage = (stage + 1) % stages;
+                (stage, onward) = next_stage(stage, onward, stages);
                 switched = start;
             }
         }
@@ -926,6 +941,18 @@ mod tests {
         assert!(stages.iter().all(|s| *s < 3));
         // One stage: always 0.
         assert!(rows(&p, &slots(), 1).iter().all(|r| r.stage == 0));
+        // With every track start strong and far enough apart, the stage walks to the end of the
+        // list and back, one neighbour at a time.
+        for (k, part) in p.iter_mut().enumerate() {
+            part.start = 100.0 * k as f64;
+            if part.track_start {
+                part.change = 0.9;
+            }
+        }
+        for (n, walk) in [(2, vec![0, 1, 0, 1, 0, 1, 0, 1, 0, 1]), (3, vec![0, 1, 2, 1, 0, 1, 2, 1, 0, 1])] {
+            let at: Vec<usize> = rows(&p, &slots(), n).iter().step_by(6).map(|r| r.stage).collect();
+            assert_eq!(at, walk, "{n} stages");
+        }
         assert!(rows(&p, &slots(), 0).iter().all(|r| r.stage == 0));
     }
 

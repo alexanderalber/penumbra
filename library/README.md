@@ -242,7 +242,8 @@ Glazed tiles with grout and a wooden rim on a rectified face, appearing one by o
 
 ## A stage for music
 
-A world that moves with a sound file: a stage (a synthwave floor or a tunnel), and elements in it.
+A world that moves with a sound file: a stage (a synthwave floor, a tunnel or a tower to climb),
+and elements in it.
 They all take the same music bus, the whole output of a `chan.beat_grid`. A project has one
 `chan.beat_grid` and wires it into the `bus` input of the stage and of every element:
 `node.connect {"from": "/grid", "to": "/stage", "input": "bus"}`. Each component reads the
@@ -282,19 +283,26 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   they are off in an intro, outro and break and come on at a drop.
 - **The camera** takes one of six presets of the stage. The arrangement's `camera` column picks
   one per section, and the stage glides to it.
-- **Two stages.** A project can hold several stages side by side: `stage_synthwave` and
-  `stage_tunnel` take the same inputs and give the same outputs. Each has its own floor, sky and
-  ceiling elements. Wire their `out` into a `tex.switch`, or a `tex.cross` for two stages, and
+- **Several stages.** A project can hold several stages side by side: `stage_synthwave`,
+  `stage_tunnel` and `stage_ascent` take the same inputs and give the same outputs. Each has its
+  own floor, sky and ceiling elements. Wire their `out` into a `tex.switch` with `blend` on and
   that into the post chain. Give `beats.arrange` the stages as a list and the switch's param:
-  `stage: ["/stage", "/tunnel"], switch: "/stages.cross"`. The `stage` column then changes at a
-  strong track start, at most once in 8 minutes. A `tex.cross` fades between the two stages
-  through the row's fade; a `tex.switch` (`switch: "/stages.index"`) cuts half way through it.
-  Both stages render all the time, so the hidden one costs as much as the one on show. The mid
-  and sky elements can go into both stages. They read one `lane` and one `pose`: blend the two
-  stages' lanes with a second `tex.cross` and their poses with `chan.math` (b minus a, times the
-  share, plus a), and bind both shares to the arrangement's `stage` channel (`_mix:stage`), so
-  the glider and the horizon move over with the picture. Floor and ceiling elements need a flat
-  floor and a flat ceiling: wire them into `stage_synthwave` only.
+  `stage: ["/stage", "/tunnel", "/ascent"], switch: "/stages.index"`. The `stage` column then
+  changes at a strong track start, at most once in 8 minutes. It walks to the next stage in the
+  list and back again (0, 1, 2, 1, 0), so every change goes between neighbours. A blending
+  switch fades between the two through the row's fade; with `blend` off it cuts half way
+  through it. With `inactive: skip` on the switch only the stage on show renders, and both
+  stages of a fade while it lasts. For two stages a `tex.cross` (`switch: "/stages.cross"`) fades
+  too, but then both stages always render. The mid and sky elements can go into every stage. They
+  read one `lane` and one `pose`. Blend the stages' lanes with a second blending `tex.switch` and
+  give `switch` both params as a list: `switch: ["/stages.index", "/lanes.index"]`. Blend the
+  poses with `chan.math`: take the `stage` channel of the arrangement's `_mix` (a `chan.select`),
+  cut it into one share per fade (for three stages: its part up to 1 with `min` 1, and its part
+  beyond 1 with `subtract` 1 and `max` 0), and add each neighbour's difference times its share
+  to the first stage's pose. So the glider and the horizon move over with the picture.
+  `intensity` takes a list too: `intensity: ["/stage.dim", "/tunnel.dim", "/ascent.dim"]`. Floor
+  and ceiling elements need a flat floor and a flat ceiling: wire them into `stage_synthwave`
+  only.
 
 ### stage_synthwave
 
@@ -361,6 +369,43 @@ swap.
   variants.
 - Gaps: `gap` and `gap_length` as on `stage_synthwave`: stretches of the tube break off, and
   the sky shows through them.
+
+### stage_ascent
+
+![stage_ascent](stage_ascent/preview.png)
+
+A third world for the same elements: the camera climbs inside a wireframe tower. Each storey is
+a black floor along the tower's wall with glowing edges, open in the middle where the camera
+rises. A storey passes downwards every `storey_beats` beats of `travelled`. Posts and braces of
+lines join the storeys. The tower turns slowly around its axis, once in `orbit` beats, and sways
+with the lane, so the camera seems to circle inside the shaft. The walls are open: the sky
+(nebula and `sky`) shows through them, and the storeys high above fade into it. The mid elements
+fly ahead of the camera as on the other stages, straight through the middle of the shaft.
+Palette, nebula, distance fade and camera presets work as on `stage_synthwave`, so the stages can
+swap.
+
+- In: `bus`, `mid` (geometry in the shaft, such as the glider), `sky` (a picture screened over the
+  nebula), `floor` and `ceiling` (merged into the scene, but the shaft has no floor: floor
+  elements sink away, since the lane's alpha is 0, and ceiling elements hang at their own height
+  in the middle of the shaft; leave both unwired).
+- Out: `out` (the picture), `lane` (the layout of `stage_synthwave`'s lane: red and green 0,
+  since the lane runs straight ahead, blue `step`, alpha 0, since there is no floor to stand
+  on), `pose` (the camera as it glides: channels `height`, `pitch`, `roll`, `fov`, `side`;
+  `height` is the camera's height above the floor it would stand on, the same on every storey).
+- Params: `warmth` (0 the warm palette, 1 the cold one), `lift`, `energy_curve`, `dim`; the
+  lane's `bars_per_turn`, `swing`, `turn`, `beats_per_bar` (they set the sway); `step` (metres per
+  beat, for the mid elements); `start`, `end` of the distance fade (8 and 24 m); `ceiling` (metres
+  from one storey to the next: 3); `storey_beats` (beats to climb one storey: 4); `orbit` (beats
+  for one turn of the tower: 128); `radius` (the tower's radius: 6 m; the camera rises halfway
+  between its axis and its wall); `twist` (how far the tower sways with the lane: 1 turns it by
+  the lane's swing over the radius); `lines` (posts around the tower, up to 24); `line_width`.
+- Camera: `camera`, `glide` and `presets` as on `stage_synthwave`, with presets of the same
+  meaning for the shaft, all looking up a little: 0 at 1.5 m and 8 degrees up, 1 lower and looking
+  up more for a build, 2 wide for a drop (80 degrees), 3 still and nearly level for a break, 4 and
+  5 two tilted variants. The heights stay near the glider's, so the glider stays in view.
+- Gaps: `gap` (the share of the storeys that break off, 0 to 1) and `gap_length` (metres a gap
+  runs up the tower, rounded to whole storeys). In a gap only the posts and braces stand, and
+  the sky shows between them.
 
 ### floor_blocks
 

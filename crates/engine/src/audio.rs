@@ -138,14 +138,15 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          effects that are on or off each by itself (off in an intro, outro or break, on from a drop), every \
          other slot (floor, ceiling) follows the floor's rules), stage? (a path, or a list of stages side by \
          side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
-         e.g. \"/stages.index\" of a tex.switch; on a tex.cross it fades), intensity? (a param that gets \
-         intensity, e.g. \"/stage.dim\"), fade_min? (s, default 2: the shortest fade from one row into the \
+         e.g. \"/stages.index\" of a tex.switch, or a list of them; it fades on a tex.cross, for two stages, \
+         and on a tex.switch with blend on), intensity? (a param that gets intensity, e.g. \"/stage.dim\", \
+         or a list), fade_min? (s, default 2: the shortest fade from one row into the \
          next, also where the music cuts), gaps? ({build?, break?}: the share of the floor in gaps, default \
          0.3 in a build and 0.6 in a break)}. The table has a row per section: start, end, role, change, the \
          presence of each element (the column is named as the element), warmth, intensity, camera (the \
          stage's camera preset: low in a main section, higher in a build, high and wide on a drop, level in \
          a break, a variant per track), stage (changes only at a track start with change 0.8 or more, \
-         at most once in 8 minutes) and gaps (the share of the floor broken off: only in a build and a \
+         at most once in 8 minutes, to the next stage in the list and back again: 0, 1, 2, 1, 0) and gaps (the share of the floor broken off: only in a build and a \
          break). A strong boundary into a main section may leave the stage and one slot \
          alone, drawn from the section's seed. Edit the table by hand to override a row. The sequence gets a \
          step per row, its clock on the grid's seconds. Beside the table it creates or updates <table>_now, \
@@ -722,6 +723,23 @@ enum Stages {
     Many(Vec<NodePath>),
 }
 
+/// One param or several that take the same column.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Targets {
+    One(ParamPath),
+    Many(Vec<ParamPath>),
+}
+
+impl Targets {
+    fn list(self) -> Vec<ParamPath> {
+        match self {
+            Targets::One(p) => vec![p],
+            Targets::Many(v) => v,
+        }
+    }
+}
+
 /// An element in a slot: its path, or its path and how often it comes on.
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -739,8 +757,8 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         sequence: NodePath,
         slots: BTreeMap<String, Vec<Entry>>,
         stage: Option<Stages>,
-        switch: Option<ParamPath>,
-        intensity: Option<ParamPath>,
+        switch: Option<Targets>,
+        intensity: Option<Targets>,
         fade_min: Option<f64>,
         gaps: Option<GapShares>,
     }
@@ -768,6 +786,8 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         Some(Stages::One(p)) => vec![p],
         Some(Stages::Many(v)) => v,
     };
+    let switches = a.switch.map(Targets::list).unwrap_or_default();
+    let intensities = a.intensity.map(Targets::list).unwrap_or_default();
     let fade_min = a.fade_min.unwrap_or(arrange::FADE_MIN);
     if !fade_min.is_finite() || !(0.0..=arrange::FADE_MIN_MAX).contains(&fade_min) {
         return Err(CommandError(format!("fade_min is seconds from 0 to {}", arrange::FADE_MIN_MAX)));
@@ -824,22 +844,30 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             return Err(CommandError(format!("{stage} has no param warmth")));
         }
     }
-    if let Some(target) = &a.switch {
+    for target in switches.iter().chain(&intensities) {
         require(&net, target.node())?;
         if !has_param(e, &net, target.node(), target.param().as_str()) {
             return Err(CommandError(format!("{} has no param {}", target.node(), target.param())));
-        }
-        if stages.len() < 2 {
-            return Err(CommandError(
-                "switch picks between stages: give them as stage: [\"/stage_a\", \"/stage_b\", ...]".into(),
-            ));
         }
     }
-    if let Some(target) = &a.intensity {
-        require(&net, target.node())?;
-        if !has_param(e, &net, target.node(), target.param().as_str()) {
-            return Err(CommandError(format!("{} has no param {}", target.node(), target.param())));
+    if !switches.is_empty() && stages.len() < 2 {
+        return Err(CommandError(
+            "switch picks between stages: give them as stage: [\"/stage_a\", \"/stage_b\", ...]".into(),
+        ));
+    }
+    // How each switch follows the column: through the row's fade, or with a jump half way.
+    let mut fades: Vec<bool> = Vec::new();
+    for target in &switches {
+        let node = net.resolve(target.node()).and_then(|id| net.node(id));
+        let kind = node.map(|n| n.kind.as_str()).unwrap_or_default();
+        let blend = node.and_then(|n| n.params.get("blend")).and_then(Value::as_bool) == Some(true);
+        if kind == "tex.cross" && stages.len() > 2 {
+            return Err(CommandError(format!(
+                "{target}: a tex.cross fades between two stages; for {} take a tex.switch with blend on",
+                stages.len()
+            )));
         }
+        fades.push(kind == "tex.cross" || (kind == "tex.switch" && blend));
     }
     // The readers beside the table.
     let mut readers: Vec<NodePath> = Vec::new();
@@ -1025,13 +1053,13 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         ops.push(bind_to(param_of(path, "gap")?, mix, "gaps")?);
         bound.push(format!("{path}.gap"));
     }
-    if let Some(target) = &a.switch {
-        // A cross fades between two stages through the fade; anything else takes the index.
-        let blends = kind_at(target.node()).is_some_and(|k| k == "tex.cross");
-        ops.push(bind_to(target.clone(), if blends { mix } else { pick }, "stage")?);
+    // A cross or a blending switch fades between two stages through the fade; anything else
+    // takes the index. The stage only ever moves to a neighbour, so a fade never shows a third.
+    for (target, fades) in switches.iter().zip(&fades) {
+        ops.push(bind_to(target.clone(), if *fades { mix } else { pick }, "stage")?);
         bound.push(target.to_string());
     }
-    if let Some(target) = &a.intensity {
+    for target in &intensities {
         ops.push(bind_to(target.clone(), mix, "intensity")?);
         bound.push(target.to_string());
     }
