@@ -17,7 +17,7 @@
         "/floor_waves/curtain": (kind: "geo.file", params: {"file": "library/floor_waves/curtain.obj", "up": "z"}, pos: [-800.0, -600.0]),
         "/floor_waves/wave_lines": (kind: "mat.wireframe", params: {"line_width": 2.0}, pos: [-600.0, -350.0]),
         "/floor_waves/wave_wire": (kind: "geo.assign_material", inputs: {"in": "segment", "mat": "wave_lines"}, pos: [-400.0, -400.0]),
-        "/floor_waves/cover_mat": (kind: "mat.occluder", pos: [-600.0, -550.0]),
+        "/floor_waves/cover_mat": (kind: "mat.constant", params: {"color": [0.0, 0.0, 0.0, 1.0]}, pos: [-600.0, -550.0]),
         "/floor_waves/cover": (kind: "geo.assign_material", inputs: {"in": "curtain", "mat": "cover_mat"}, pos: [-400.0, -550.0]),
         "/floor_waves/model": (kind: "geo.merge", inputs: {"in0": "wave_wire", "in1": "cover"}, pos: [-200.0, -450.0]),
         "/floor_waves/waves": (kind: "geo.tex_instance", params: {"extent": 24.0}, inputs: {"in": "model", "position": "places", "aim": "heading", "scale": "sizes", "color": "light"}, pos: [0.0, 0.0]),

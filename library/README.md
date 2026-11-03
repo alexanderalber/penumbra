@@ -259,7 +259,11 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   `lane` and give geometry, as floor elements do. Their output goes into the stage's `ceiling`.
   Towards `presence` 0 they draw up into the ceiling.
 - **Sky elements** draw a picture over black. Their output goes into the stage's `sky`, screened
-  over the nebula. Several go through a `tex.composite` with `op: screen`.
+  over the nebula. Several go through a `tex.composite` with `op: screen`. The sky lies behind
+  everything the stage renders: the solid bodies of floor and mid elements are black and hide
+  it. Screening only adds light, so a sky element cannot darken the nebula. `sky_planet`,
+  `sky_bars`, `sky_city`, `sky_figure` and `sky_eyes` also take the stage's `pose`, so their
+  horizon moves with the camera.
 - **Post elements** change the finished picture. Each takes a picture in `in` and `bus`, and
   gives the changed picture in `out`. Chain them after the stage's `out`: stage, then
   `post_scanlines`, then the next one, then the output. At `presence` 0 a post element passes the
@@ -292,15 +296,17 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
 The world: a camera flying over a wireframe floor, under a wireframe ceiling, towards a nebula
 in a warm or cold palette. The world moves one grid cell per beat of `travelled`. The lane
 zigzags to the other side every two bars, each turn starting on a downbeat. The bass brightens
-the nebula. Lines fade out with distance from the camera. The glider is the element
-`mid_glider`.
+the nebula. Lines fade out with distance from the camera. The sky (nebula and `sky`) lies behind
+the render: what the render draws solid hides it, and far things melt into it as they fade. The
+glider is the element `mid_glider`.
 
 - In: `bus`, `floor` (geometry standing on the grid), `mid` (geometry in front of the camera,
   such as the glider), `ceiling` (geometry hanging from the ceiling grid), `sky` (a picture
   screened over the nebula).
 - Out: `out` (the picture), `lane` (256 x 1: per texel i, -8 + 0.25 i metres ahead, red the
   lane's x in metres, green its sideways slope per metre, blue `step`, alpha the floor: 1 where
-  it stands, 0 in a gap).
+  it stands, 0 in a gap), `pose` (the camera as it glides: channels `height`, `pitch`, `roll`,
+  `fov`, `side`; wire it into the sky elements that take it).
 - Params: `warmth` (0 the warm palette, 1 the cold one), `lift` (added to the bass, e.g. before a
   change), `energy_curve`, `dim` (the nebula's light); the lane's `bars_per_turn`, `swing`, `turn`,
   `beats_per_bar`; `step` (metres per beat); `start`, `end` of the distance fade.
@@ -583,6 +589,80 @@ brightens them.
   to magenta, 1 green to violet, as on the stage), `bands` (1 to 5), `height` (the lowest hem over
   the horizon, in picture heights), `speed` (per beat travelled), `glow`, `horizon` (as on
   `sky_sun`).
+
+### sky_planet
+
+![sky_planet](sky_planet/preview.png)
+
+A planet with a tilted ring over the horizon. Bands of cloud in the palette run around it and
+drift as it turns. The planet grows over each track: small at the track's start, twice the size
+and a little higher at its end. The bass makes it breathe. The ring's near half passes in front
+of the disc, its far half behind it.
+
+- In: `bus` (it reads `track_phase`), `pose` (the stage's). Out: `out`.
+- Params: `presence` (towards 0 the planet dims to a dark sky), `brightness`, `warmth`, `size`
+  (radius at a track's start, in picture heights), `growth` (how much larger at a track's end: 1
+  twice), `place` (across the sky), `height` (its centre over the horizon), `rise` (how much
+  higher at a track's end), `tilt`, `open` (how far the ring opens towards the viewer), `bands`,
+  `spin` (turns per beat), `breathe`, `reach` (metres ahead where the floor fades out: the
+  stage's `end`, where the horizon lies).
+
+### sky_bars
+
+![sky_bars](sky_bars/preview.png)
+
+A row of glowing bars on the horizon, like an equaliser: the bass in the middle, the mids beside
+it, the treble at both ends. Each bar is a stack of cells and moves a little by itself. The bus
+has three levels, not a spectrum, so the bars between the bands blend them. An onset lifts
+every bar for a moment.
+
+- In: `bus`, `pose`. Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `count` (bars), `span` (half the row's width, in
+  picture heights), `tall` (a bar at full level), `gap` (dark share between bars), `cells` (0
+  draws solid bars), `jitter` (how much each bar moves by itself), `kick` (the lift on an onset),
+  `glow`, `reach`.
+
+### sky_city
+
+![sky_city](sky_city/preview.png)
+
+A skyline on the horizon: two rows of towers, the far one lower and dimmer, some with a mast and a
+blinking light. The outlines glow in the palette. Windows light up and go out, and the louder the
+mids, the more are lit. The skyline slides slowly sideways as the world travels, the far row at
+half the pace. The towers' bodies only glow faintly, so the nebula shows through them a little.
+
+- In: `bus`, `pose`. Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `seed` (another number, another skyline), `tall`
+  (the tallest towers, in picture heights), `slide` (picture heights per beat), `windows` (share
+  lit in quiet passages), `flicker` (how much the mids light more and how often windows change),
+  `edge` (the outlines' light), `reach`.
+
+### sky_figure
+
+![sky_figure](sky_figure/preview.png)
+
+A huge figure of lines standing on the horizon. It stands still, and on every second bar it
+sways with one arm out. Its arms rise through a build and are up through a drop, and the drop's
+flash makes it jump. It bobs on the beats.
+
+- In: `bus`, `pose`. Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `tall` (its height standing, in picture heights;
+  arms up reach a fifth higher), `place` (across the sky), `thickness` (pixels), `glow`, `reach`
+  (as on `sky_planet`).
+
+### sky_eyes
+
+![sky_eyes](sky_eyes/preview.png)
+
+Pairs of eyes in the dark sky. Each eye is a glowing almond with an iris in the palette. The
+pupils follow the lane and look the way it turns. Now and then a pair blinks: shut for about four
+frames, on a bar that its own number picks. The eyes suit breaks and intros, but the arrangement
+treats them like any sky element.
+
+- In: `bus`, `pose`, `lane` (the stage's; without it the pupils swing with `drift`). Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `pairs` (1 to 6), `seed` (where the pairs sit and
+  when they blink), `size` (an eye's half width, in picture heights), `look` (how far the pupils
+  move), `blinks` (share of bars with a blink), `reach`.
 
 ### post_scanlines
 

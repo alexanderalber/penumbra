@@ -70,5 +70,6 @@ gap_length = lane_map.gap_length"}),
         "/stage_synthwave/sky_over": (kind: "tex.composite", params: {"op": "screen"}, inputs: {"in0": "nebula_dim", "in1": "sky"}, pos: [1000.0, -550.0]),
         "/stage_synthwave/picture": (kind: "tex.composite", inputs: {"in0": "sky_over", "in1": "fade"}, pos: [1200.0, -100.0]),
         "/stage_synthwave/out": (kind: "tex.out", inputs: {"in": "picture"}, pos: [1400.0, -100.0]),
+        "/stage_synthwave/pose": (kind: "chan.out", inputs: {"in": "glide"}, pos: [200.0, 950.0]),
     },
 )

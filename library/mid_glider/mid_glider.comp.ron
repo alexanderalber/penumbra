@@ -19,7 +19,7 @@
         "/mid_glider/fan_places": (kind: "table.text", params: {"format": "csv", "text": "tx,ty,tz,rx,sx\n3.15,4.5,-0.32,-3.44,1\n-3.15,4.5,-0.32,-3.44,-1\n3.15,-4.4,-0.32,6.88,-1\n-3.15,-4.4,-0.32,6.88,1"}, pos: [-800.0, 750.0]),
         "/mid_glider/fans": (kind: "geo.instance", inputs: {"in": "fan_turn", "table": "fan_places"}, pos: [-600.0, 650.0]),
         "/mid_glider/craft": (kind: "geo.merge", inputs: {"in0": "courier", "in1": "fans"}, pos: [-400.0, 550.0]),
-        "/mid_glider/hull_mat": (kind: "mat.occluder", pos: [-400.0, 400.0]),
+        "/mid_glider/hull_mat": (kind: "mat.constant", params: {"color": [0.0, 0.0, 0.0, 1.0]}, pos: [-400.0, 400.0]),
         "/mid_glider/ship_lines": (kind: "mat.wireframe", params: {"faces": "hidden", "line_width": 2.0}, pos: [-400.0, 700.0]),
         "/mid_glider/ship_cover": (kind: "geo.assign_material", inputs: {"in": "craft", "mat": "hull_mat"}, pos: [-200.0, 450.0]),
         "/mid_glider/ship_paint": (kind: "geo.assign_material", inputs: {"in": "craft", "mat": "ship_lines"}, pos: [-200.0, 600.0]),

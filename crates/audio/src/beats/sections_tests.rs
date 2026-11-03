@@ -307,3 +307,19 @@ fn seeds_differ_by_label_and_fit_an_f32() {
         assert!(seeds[i + 1..].iter().all(|b| b != a));
     }
 }
+
+#[test]
+fn the_track_phase_rises_through_each_track() {
+    let s = synthetic();
+    let list = s.list();
+    let second = list.iter().find(|x| x.track == 1).unwrap();
+    let first_end = list.iter().filter(|x| x.track == 0).map(|x| x.end).fold(0.0, f64::max);
+    let last_end = list.iter().map(|x| x.end).fold(0.0, f64::max);
+    let at = |t: f64| s.at(t).unwrap().track_phase;
+    assert!(at(list[0].start + 0.01) < 0.01);
+    assert!((at(0.5 * first_end) - 0.5).abs() < 0.02, "{}", at(0.5 * first_end));
+    assert!(at(first_end - 0.01) > 0.99);
+    assert!(at(second.start + 0.01) < 0.01);
+    let middle = 0.5 * (second.start + last_end);
+    assert!((at(middle) - 0.5).abs() < 0.02, "{}", at(middle));
+}

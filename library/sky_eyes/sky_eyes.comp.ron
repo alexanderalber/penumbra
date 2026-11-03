@@ -1,0 +1,21 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/sky_eyes": (kind: "comp.base", params: {"expose": "presence = eyes.presence
+brightness = eyes.brightness
+warmth = eyes.warmth
+pairs = eyes.pairs
+seed = eyes.seed
+size = eyes.size
+look = eyes.look
+blinks = eyes.blinks
+reach = eyes.reach"}),
+        "/sky_eyes/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
+        "/sky_eyes/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
+        "/sky_eyes/lane": (kind: "tex.in", pos: [-600.0, 300.0]),
+        "/sky_eyes/eyes": (kind: "tex.shader", params: {"file": "library/sky_eyes/eyes.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "pairs": 3, "seed": 1, "size": 0.045, "look": 0.3, "blinks": 0.35, "reach": 10.0}, inputs: {"in0": "lane"}, binds: {"beats": "bus:travelled", "bpm": "bus:travel_bpm", "drift": "bus:drift", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side"}, pos: [-300.0, 0.0]),
+        "/sky_eyes/out": (kind: "tex.out", inputs: {"in": "eyes"}, pos: [0.0, 0.0]),
+    },
+)

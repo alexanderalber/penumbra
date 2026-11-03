@@ -143,6 +143,9 @@ pub struct SectionPosition {
     pub transition: f64,
     pub transition_from: usize,
     pub transition_to: usize,
+    /// How far through its track the moment is: 0 at the track's first section's start, 1 at
+    /// its last section's end.
+    pub track_phase: f64,
     /// The moment lies between the first bar's start and the file's end.
     pub inside: bool,
 }
@@ -406,6 +409,7 @@ impl Sections {
             transition: 0.0,
             transition_from: s.label,
             transition_to: s.label,
+            track_phase: self.track_phase(k, t),
             inside: self.bars.first().is_some_and(|b| t >= *b) && t < self.end,
         };
         // Still in the blend into this section, or already in the blend into the next.
@@ -419,6 +423,16 @@ impl Sections {
             (p.transition, p.transition_from, p.transition_to) = (v.clamp(0.0, 1.0), from, to);
         }
         Some(p)
+    }
+
+    /// How far through the track of section `k` the moment `t` is, 0 to 1.
+    fn track_phase(&self, k: usize, t: f64) -> f64 {
+        let Some(s) = self.sections.get(k) else { return 0.0 };
+        let same = |x: &&Section| x.track == s.track;
+        let first = self.sections.get(..=k).and_then(|a| a.iter().rev().take_while(same).last());
+        let last = self.sections.get(k..).and_then(|a| a.iter().take_while(same).last());
+        let (start, end) = (first.map_or(s.start, |x| x.start), last.map_or(s.end, |x| x.end));
+        if end > start { ((t - start) / (end - start)).clamp(0.0, 1.0) } else { 0.0 }
     }
 
     /// `t` in bars from the first bar's start, with the fraction of the bar; before the first

@@ -1,5 +1,5 @@
 """Writes floor_waves' two models next to this file: segment.obj (a thin prism one unit long,
-drawn as one line) and curtain.obj (a sheet hanging under it, drawn as an occluder). Run with no
+drawn as one line) and curtain.obj (a sheet hanging under it, drawn black). Run with no
 arguments."""
 
 from pathlib import Path
@@ -23,7 +23,7 @@ def main():
     cur = [
         "# The sheet under a segment of a wave line: upright in the segment's plane, from 1.5 cm under",
         "# the line down to 3 m, a little longer than the segment so that neighbours overlap.",
-        "# floor_waves draws it as an occluder, so a wave hides the lines and the floor behind it.",
+        "# floor_waves draws it black, so a wave hides the lines, the floor and the sky behind it.",
         "# Written by waves.py.",
         "v 0 -0.55 -0.015",
         "v 0 0.55 -0.015",

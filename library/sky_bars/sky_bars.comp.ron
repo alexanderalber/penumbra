@@ -1,0 +1,23 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/sky_bars": (kind: "comp.base", params: {"expose": "presence = bars.presence
+brightness = bars.brightness
+warmth = bars.warmth
+count = bars.count
+span = bars.span
+tall = bars.tall
+gap = bars.gap
+cells = bars.cells
+jitter = bars.jitter
+kick = bars.kick
+glow = bars.glow
+reach = bars.reach"}),
+        "/sky_bars/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
+        "/sky_bars/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
+        "/sky_bars/bars": (kind: "tex.shader", params: {"file": "library/sky_bars/bars.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "count": 24, "span": 0.62, "tall": 0.12, "gap": 0.3, "cells": 9, "jitter": 0.5, "kick": 0.25, "glow": 0.5, "reach": 10.0}, binds: {"beats": "bus:travelled", "low": "bus:energy_low", "mid": "bus:energy_mid", "high": "bus:energy_high", "onset": "bus:onset", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side"}, pos: [-300.0, 0.0]),
+        "/sky_bars/out": (kind: "tex.out", inputs: {"in": "bars"}, pos: [0.0, 0.0]),
+    },
+)

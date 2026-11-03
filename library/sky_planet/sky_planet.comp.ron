@@ -1,0 +1,25 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/sky_planet": (kind: "comp.base", params: {"expose": "presence = planet.presence
+brightness = planet.brightness
+warmth = planet.warmth
+size = planet.size
+growth = planet.growth
+place = planet.place
+height = planet.above
+rise = planet.rise
+tilt = planet.tilt
+open = planet.open
+bands = planet.bands
+spin = planet.spin
+breathe = planet.breathe
+reach = planet.reach"}),
+        "/sky_planet/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
+        "/sky_planet/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
+        "/sky_planet/planet": (kind: "tex.shader", params: {"file": "library/sky_planet/planet.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "size": 0.09, "growth": 1.0, "place": -0.42, "above": 0.16, "rise": 0.1, "tilt": 18.0, "open": 0.3, "bands": 7.0, "spin": 0.01, "breathe": 0.06, "reach": 10.0}, binds: {"beats": "bus:travelled", "energy": "bus:energy_low", "grow": "bus:track_phase", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side"}, pos: [-300.0, 0.0]),
+        "/sky_planet/out": (kind: "tex.out", inputs: {"in": "planet"}, pos: [0.0, 0.0]),
+    },
+)
