@@ -17,6 +17,8 @@
 
 // Alpha from which a pixel is opaque (render::OPAQUE).
 const OPAQUE: f32 = 0.998;
+// Alpha below which a surface is left out of the data pass: it lets nearly everything through.
+const FAINT: f32 = 0.05;
 
 // gpu::render::Light.
 struct Light {
@@ -711,10 +713,16 @@ fn fs_measure(v: VOut) -> @location(0) vec4f {
 @fragment
 fn fs_data(v: VOut) -> @location(0) vec4f {
     let line = lines(v);
+    let t = texel(v);
     if draw.shading == 3u {
         return vec4f(0.0);
     }
     if line < 0.5 && faces() != 1u {
+        discard;
+    }
+    // A surface that lets nearly all light through, such as a faint haze, is not what the pixel
+    // shows: what lies behind it keeps the pixel.
+    if surface(t, line).a < FAINT {
         discard;
     }
     return vec4f(v.uv, f32(draw.part + 1u), dot(frame.view_z, vec4f(v.world, 1.0)));

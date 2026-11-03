@@ -1,0 +1,22 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/mid_swarm": (kind: "comp.base", params: {"expose": "presence = controls.value0\nagents = controls.value1\nat = controls.value2\nhover = controls.value3\nsize = scale.size\nwander = boids.wander\nspeed = boids.speed\nscatter = boids.scatter\ncolor = dart_lines.color\nextent = swarm.extent"}),
+        "/mid_swarm/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
+        "/mid_swarm/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
+        "/mid_swarm/controls": (kind: "chan.constant", params: {"name0": "presence", "value0": 1.0, "name1": "agents", "value1": 200.0, "name2": "at", "value2": 6.0, "name3": "hover", "value3": 2.2, "rows": 4}, pos: [-1000.0, 300.0]),
+        "/mid_swarm/start": (kind: "tex.constant", params: {"width": 32, "height": 16, "keep_size": true, "color": [0.0, 0.0, 0.0, 0.0]}, pos: [-1000.0, 450.0]),
+        "/mid_swarm/memory": (kind: "tex.feedback", inputs: {"initial": "start", "previous": "boids"}, pos: [-800.0, 450.0]),
+        "/mid_swarm/boids": (kind: "tex.shader", params: {"file": "library/mid_swarm/boids.wgsl", "resolution": "custom", "width": 32, "height": 16, "keep_size": true, "agents": 200, "at": 6.0, "hover": 2.2, "wander": 1.2, "speed": 3.0, "scatter": 10.0}, inputs: {"in0": "memory", "in1": "lane"}, binds: {"beats": "bus:travelled", "build": "bus:build", "drop": "bus:drop", "agents": "controls:agents", "at": "controls:at", "hover": "controls:hover"}, pos: [-600.0, 300.0]),
+        "/mid_swarm/place": (kind: "tex.shader", params: {"file": "library/mid_swarm/look.wgsl", "what": "place", "resolution": "custom", "width": 16, "height": 16, "keep_size": true}, inputs: {"in0": "boids"}, binds: {"at": "controls:at", "hover": "controls:hover"}, pos: [-400.0, 100.0]),
+        "/mid_swarm/heading": (kind: "tex.shader", params: {"file": "library/mid_swarm/look.wgsl", "what": "aim", "resolution": "custom", "width": 16, "height": 16, "keep_size": true}, inputs: {"in0": "boids"}, pos: [-400.0, 200.0]),
+        "/mid_swarm/scale": (kind: "tex.shader", params: {"file": "library/mid_swarm/look.wgsl", "what": "scale", "resolution": "custom", "width": 16, "height": 16, "keep_size": true, "size": 0.12}, inputs: {"in0": "boids"}, binds: {"presence": "controls:presence", "agents": "controls:agents"}, pos: [-400.0, 300.0]),
+        "/mid_swarm/dart": (kind: "geo.file", params: {"file": "library/mid_swarm/dart.obj", "up": "z"}, pos: [-600.0, -300.0]),
+        "/mid_swarm/dart_lines": (kind: "mat.wireframe", params: {"edges": "triangles", "line_width": 1.5}, pos: [-600.0, -200.0]),
+        "/mid_swarm/dart_wire": (kind: "geo.assign_material", inputs: {"in": "dart", "mat": "dart_lines"}, pos: [-400.0, -250.0]),
+        "/mid_swarm/swarm": (kind: "geo.tex_instance", params: {"extent": 20.0}, inputs: {"in": "dart_wire", "position": "place", "aim": "heading", "scale": "scale"}, pos: [0.0, 0.0]),
+        "/mid_swarm/out": (kind: "geo.out", inputs: {"in": "swarm"}, pos: [200.0, 0.0]),
+    },
+)

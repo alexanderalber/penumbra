@@ -735,7 +735,7 @@ Inputs:
 Outputs:
 
 - `out` (tex): The rendered picture
-- `data` (tex): Texture coordinates in red and green, part id + 1 in blue (0 where nothing was drawn), distance along the view in metres in alpha. Data for shaders and masks, not something to look at
+- `data` (tex): Texture coordinates in red and green, part id + 1 in blue (0 where nothing was drawn), distance along the view in metres in alpha. A surface under 5 % alpha, such as a faint haze, is left out: the pixel keeps what lies behind it. Data for shaders and masks, not something to look at
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|

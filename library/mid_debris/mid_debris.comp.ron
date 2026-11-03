@@ -1,0 +1,32 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/mid_debris": (kind: "comp.base", params: {"expose": "presence = controls.value0\nsize = controls.value1\ncount = places.count\nseed = places.seed\nspeed = places.speed\nspread = places.spread\nclear = places.clear\nlow = places.low\nhigh = places.high\nnear = places.near\nfar = places.far\nspin = spin.spin\nburst = burst.burst\nevery = burst.every\nbeats_per_bar = burst.beats_per_bar\nshard_beats = shard_places.last\nreach = shard_places.reach\ncolor = rock_lines.color\nextent = rocks.extent"}),
+        "/mid_debris/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
+        "/mid_debris/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
+        "/mid_debris/controls": (kind: "chan.constant", params: {"name0": "presence", "value0": 1.0, "name1": "size", "value1": 0.35, "rows": 2}, pos: [-1000.0, 300.0]),
+        "/mid_debris/start": (kind: "tex.constant", params: {"width": 1, "height": 1, "keep_size": true, "color": [0.0, 0.0, 0.0, 0.0]}, pos: [-1000.0, 450.0]),
+        "/mid_debris/memory": (kind: "tex.feedback", inputs: {"initial": "start", "previous": "burst"}, pos: [-800.0, 450.0]),
+        "/mid_debris/places": (kind: "tex.shader", params: {"file": "library/mid_debris/rocks.wgsl", "resolution": "custom", "width": 8, "height": 8, "keep_size": true, "count": 40, "seed": 0, "speed": 1.8, "spread": 3.5, "clear": 1.0, "low": 0.8, "high": 3.6, "near": -2.0, "far": 14.0, "presence": 1.0, "size": 0.35}, inputs: {"in0": "lane", "in1": "memory"}, binds: {"beats": "bus:travelled", "presence": "controls:presence", "size": "controls:size"}, pos: [-600.0, 100.0]),
+        "/mid_debris/burst": (kind: "tex.shader", params: {"file": "library/mid_debris/burst.wgsl", "resolution": "custom", "width": 1, "height": 1, "keep_size": true, "burst": true, "every": 2.0, "beats_per_bar": 4.0, "at": 5.0, "presence": 1.0}, inputs: {"in0": "memory", "in1": "places"}, binds: {"beats": "bus:travelled", "kick": "bus:kick", "role": "bus:section_role", "presence": "controls:presence"}, pos: [-400.0, 450.0]),
+        "/mid_debris/sizes": (kind: "tex.shader", params: {"file": "library/mid_debris/sizes.wgsl", "stretch": 0.35}, inputs: {"in0": "places"}, pos: [-400.0, 200.0]),
+        "/mid_debris/spin": (kind: "tex.shader", params: {"file": "library/mid_debris/spin.wgsl", "resolution": "custom", "width": 8, "height": 8, "keep_size": true, "spin": 0.12}, binds: {"beats": "bus:travelled"}, pos: [-400.0, 300.0]),
+        "/mid_debris/rock": (kind: "geo.file", params: {"file": "library/mid_debris/rock.obj", "up": "z"}, pos: [-800.0, -350.0]),
+        "/mid_debris/rock_lines": (kind: "mat.wireframe", params: {"faces": "hidden", "edges": "triangles", "line_width": 1.5}, pos: [-600.0, -200.0]),
+        "/mid_debris/rock_wire": (kind: "geo.assign_material", inputs: {"in": "rock", "mat": "rock_lines"}, pos: [-400.0, -250.0]),
+        "/mid_debris/cover_mat": (kind: "mat.occluder", pos: [-600.0, -350.0]),
+        "/mid_debris/cover": (kind: "geo.assign_material", inputs: {"in": "rock", "mat": "cover_mat"}, pos: [-400.0, -380.0]),
+        "/mid_debris/model": (kind: "geo.merge", inputs: {"in0": "rock_wire", "in1": "cover"}, pos: [-200.0, -300.0]),
+        "/mid_debris/rocks": (kind: "geo.tex_instance", params: {"extent": 20.0}, inputs: {"in": "model", "position": "places", "scale": "sizes", "aim": "spin"}, pos: [0.0, 0.0]),
+        "/mid_debris/shard_places": (kind: "tex.shader", params: {"file": "library/mid_debris/shards.wgsl", "resolution": "custom", "width": 4, "height": 4, "keep_size": true, "last": 4.0, "reach": 1.4, "size": 0.35}, inputs: {"in0": "burst", "in1": "places"}, binds: {"size": "controls:size"}, pos: [-200.0, 550.0]),
+        "/mid_debris/shard_sizes": (kind: "tex.shader", params: {"file": "library/mid_debris/sizes.wgsl", "stretch": 0.5}, inputs: {"in0": "shard_places"}, pos: [0.0, 650.0]),
+        "/mid_debris/shard_spin": (kind: "tex.shader", params: {"file": "library/mid_debris/spin.wgsl", "resolution": "custom", "width": 4, "height": 4, "keep_size": true, "spin": 0.8}, binds: {"beats": "bus:travelled"}, pos: [0.0, 750.0]),
+        "/mid_debris/shard": (kind: "geo.file", params: {"file": "library/mid_debris/shard.obj", "up": "z"}, pos: [-200.0, 850.0]),
+        "/mid_debris/shard_wire": (kind: "geo.assign_material", inputs: {"in": "shard", "mat": "rock_lines"}, pos: [0.0, 850.0]),
+        "/mid_debris/shards": (kind: "geo.tex_instance", params: {"extent": 20.0}, inputs: {"in": "shard_wire", "position": "shard_places", "scale": "shard_sizes", "aim": "shard_spin"}, pos: [200.0, 650.0]),
+        "/mid_debris/debris": (kind: "geo.merge", inputs: {"in0": "rocks", "in1": "shards"}, pos: [400.0, 200.0]),
+        "/mid_debris/out": (kind: "geo.out", inputs: {"in": "debris"}, pos: [600.0, 200.0]),
+    },
+)

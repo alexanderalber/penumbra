@@ -254,7 +254,7 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   `lane` output, so they keep the glider's lane free. Their output goes into the stage's `floor`;
   several go through a `geo.merge`.
 - **Mid elements** fly in front of the camera, on the lane. They take `bus` and `lane` too. Their
-  output goes into the stage's `mid`.
+  output goes into the stage's `mid`; several go through a `geo.merge`.
 - **Ceiling elements** hang from the ceiling grid, 4 m above the floor. They take `bus` and
   `lane` and give geometry, as floor elements do. Their output goes into the stage's `ceiling`.
   Towards `presence` 0 they draw up into the ceiling.
@@ -367,6 +367,72 @@ ahead and 0.6 m higher, small against the sky.
 - Params: `presence`, `at` (metres ahead of the camera), `bank` (how far it leans into a turn),
   `bob` (metres up and down), `scale` (0.16 makes it 2.4 m long), `hover` (metres above the
   floor).
+
+### mid_particles
+
+![mid_particles](mid_particles/preview.png)
+
+A warp stream: short white streaks fly at the camera, much faster than the floor, and pass it on
+all sides. Busy music sends more of them; faster music draws them longer. They keep out of the
+camera's line of sight and out of the glider's space, low in the middle.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- Params: `presence` (towards 0 the stream thins out), `density` (the share of streaks in quiet
+  music; onsets raise it to all), `busy` (seconds the onsets take to settle), `speed` (times the
+  floor's speed), `length` (metres at 120 BPM), `spread` (half the stream's width), `near`, `far`,
+  `thickness`, `color`, `line_width`.
+
+### mid_debris
+
+![mid_debris](mid_debris/preview.png)
+
+Low-poly wireframe rocks come at the camera, tumbling, and pass it on both sides. No rock comes
+nearer than `clear` metres to the lane's middle or to the camera. In a drop, a kick bursts the
+rock nearest 5 m ahead into shards, at most once every 2 bars. The shards fly out and shrink away
+within a bar.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- Params: `presence` (towards 0 the rocks shrink away one after another), `count` (up to 64),
+  `seed` (other places), `size` (a rock's mean size, metres), `speed` (times the floor's speed),
+  `spread`, `clear`, `low`, `high` (the band of heights, metres), `near`, `far`, `spin` (turns per
+  beat); the burst's `burst` (on or off), `every` (bars between bursts), `beats_per_bar`,
+  `shard_beats` (how long the shards fly), `reach` (metres they fly out); `color`, `extent`.
+
+### mid_fog
+
+![mid_fog](mid_fog/preview.png)
+
+Banks of fog ahead on the lane, drawn as glowing horizontal lines. The banks stand still over the
+floor, so the camera flies through them. Drifting noise lights the lines, brighter with the bass.
+A bank fades out shortly before the camera reaches it. The light is faint and adds to the picture,
+so the banks need no sorting.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- Params: `presence` (towards 0 the banks fade one after another), `count` (up to 12), `seed`,
+  `spread` (metres beside the lane), `low`, `high` (heights of the banks' middles), `sway`
+  (sideways drift), `near`, `far`, `width`, `height` (a bank's size, metres), `brightness`,
+  `quiet` (the light left without bass), `fade` (metres before the camera where a bank is gone),
+  `start`, `end` (the distance fade; keep them at the stage's), `detail`, `thickness` (how much of
+  a bank the fog fills), `cover` (how much it hides), `line_width`, `color`.
+- The stage's distance fade goes by the render's data pass, which leaves out a surface this
+  faint. So the banks fade with distance by themselves, through `start` and `end`.
+
+### mid_swarm
+
+![mid_swarm](mid_swarm/preview.png)
+
+A swarm of up to 256 wireframe darts flying ahead of the glider. Each dart is a boid: it keeps its
+distance from its neighbours, matches their heading and keeps to their middle. The swarm follows a
+leader that wanders along the lane. Through the build before a boundary the swarm draws together.
+A drop scatters it. The darts stay above the floor, under the ceiling and 4.5 to 9 m ahead.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- Params: `presence` (towards 0 the darts shrink away one after another), `agents`, `at` (metres
+  ahead), `hover` (metres up), `size` (a dart's length), `wander` (how far the leader strays
+  sideways), `speed` (metres per second), `scatter` (how hard a drop throws them apart), `color`,
+  `extent`.
+- The swarm's state lives in a `tex.feedback`, so the flight carries on from frame to frame. After
+  a seek the swarm flies on from where it was.
 
 ### sky_galaxy
 

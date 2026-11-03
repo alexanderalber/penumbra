@@ -1,0 +1,19 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/mid_particles": (kind: "comp.base", params: {"expose": "presence = places.presence\ndensity = places.density\nspeed = places.speed\nlength = places.length\nspread = places.spread\nnear = places.near\nfar = places.far\nthickness = sizes.thickness\nbusy = busy.fall\ncolor = streak_lines.color\nline_width = streak_lines.line_width"}),
+        "/mid_particles/bus": (kind: "chan.in", pos: [-800.0, 0.0]),
+        "/mid_particles/lane": (kind: "tex.in", pos: [-800.0, 150.0]),
+        "/mid_particles/onset": (kind: "chan.select", params: {"channels": "onset"}, inputs: {"in": "bus"}, pos: [-600.0, -100.0]),
+        "/mid_particles/busy": (kind: "chan.filter", params: {"type": "first_order", "rise": 0.05, "fall": 0.8}, inputs: {"in": "onset"}, pos: [-400.0, -100.0]),
+        "/mid_particles/places": (kind: "tex.shader", params: {"density": 0.45, "far": 14.0, "file": "library/mid_particles/streaks.wgsl", "height": 16, "keep_size": true, "length": 0.8, "near": -1.5, "presence": 1.0, "resolution": "custom", "speed": 6.0, "spread": 5.0, "width": 64}, inputs: {"in0": "lane"}, binds: {"beats": "bus:travelled", "bpm": "bus:travel_bpm", "onset": "busy:onset"}, pos: [-400.0, 100.0]),
+        "/mid_particles/sizes": (kind: "tex.shader", params: {"file": "library/mid_particles/sizes.wgsl", "thickness": 0.01}, inputs: {"in0": "places"}, pos: [-200.0, 200.0]),
+        "/mid_particles/streak": (kind: "geo.file", params: {"file": "library/mid_particles/streak.obj", "up": "z"}, pos: [-600.0, -300.0]),
+        "/mid_particles/streak_lines": (kind: "mat.wireframe", params: {"line_width": 1.5}, pos: [-600.0, -200.0]),
+        "/mid_particles/streak_wire": (kind: "geo.assign_material", inputs: {"in": "streak", "mat": "streak_lines"}, pos: [-400.0, -250.0]),
+        "/mid_particles/streaks": (kind: "geo.tex_instance", params: {"extent": 20.0}, inputs: {"in": "streak_wire", "position": "places", "scale": "sizes"}, pos: [0.0, 0.0]),
+        "/mid_particles/out": (kind: "geo.out", inputs: {"in": "streaks"}, pos: [200.0, 0.0]),
+    },
+)

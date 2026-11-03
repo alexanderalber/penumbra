@@ -1,6 +1,7 @@
 // The render faded with distance, so the lines melt into the sky towards the horizon.
 // in0: the render's picture, in1: its data output (the distance from the camera in alpha, 0
-// where nothing was drawn).
+// where nothing was drawn). The data pass leaves out a faint haze (under 5 % alpha), which
+// fades itself: a pixel with no distance in or around it and under 5 % alpha keeps its colour.
 // @param start float = 5 0..50 -- metres where the fade begins
 // @param end float = 11 0..100 -- metres where nothing is left
 @fragment
@@ -20,6 +21,9 @@ fn main(v: PnVertex) -> @location(0) vec4f {
                     d = min(d, n);
                 }
             }
+        }
+        if d > 1e8 && c.a < 0.05 {
+            return c;
         }
     }
     return c * (1.0 - smoothstep(params.start, params.end, d));
