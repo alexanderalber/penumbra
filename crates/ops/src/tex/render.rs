@@ -323,7 +323,8 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         "data",
         "Texture coordinates in red and green, part id + 1 in blue (0 where nothing was drawn), distance \
          along the view in metres in alpha. A surface under 5 % alpha, such as a faint haze, is left out: \
-         the pixel keeps what lies behind it. Data for shaders and masks, not something to look at",
+         the pixel keeps what lies behind it. A wireframe's line counts wherever it touches a pixel, its \
+         soft edge included. Data for shaders and masks, not something to look at",
     )
     .describe_input("geo", "What to render")
     .describe_input("texture", "Put on the geometry when `surface` is texture or auto")

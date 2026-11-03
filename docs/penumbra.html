@@ -3022,7 +3022,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">tex</span>: The rendered picture</li>
-<li><code>data</code> <span class="kind">tex</span>: Texture coordinates in red and green, part id + 1 in blue (0 where nothing was drawn), distance along the view in metres in alpha. A surface under 5 % alpha, such as a faint haze, is left out: the pixel keeps what lies behind it. Data for shaders and masks, not something to look at</li>
+<li><code>data</code> <span class="kind">tex</span>: Texture coordinates in red and green, part id + 1 in blue (0 where nothing was drawn), distance along the view in metres in alpha. A surface under 5 % alpha, such as a faint haze, is left out: the pixel keeps what lies behind it. A wireframe's line counts wherever it touches a pixel, its soft edge included. Data for shaders and masks, not something to look at</li>
 </ul>
 <h4>Params</h4>
 <table class="params">

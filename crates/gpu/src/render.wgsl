@@ -58,7 +58,7 @@ struct Frame {
     // x: texels across a shadow map; y: across a tint map; z: 1 where the tint maps hold
     // anything; w: 1 where ambient occlusion was drawn.
     shadow: vec4f,
-    // xy: the size in pixels of what the frame draws into.
+    // xy: the size in pixels of what the frame draws into; z: its samples per pixel.
     pixels: vec4f,
     lights: array<Light, 16>,
 };
@@ -248,8 +248,22 @@ fn vs_wire(
     let short_bc = sliver && length(sc - sb) < 2.0;
     let short = select(0u, 1u << k2, short_ab) | select(0u, 1u << k1, short_ac) | select(0u, 1u << k, short_bc);
     let inside = u32(edge.w + 0.5) & 7u;
-    o.edge.w = f32(inside | (short << 3u));
     let skip_inner = draw.wire.y > 0.5;
+    // Half of a thin quad: a corner between a short edge and one inside the polygon, with a line
+    // opposite. The quad's other long side runs through that corner, parallel to the line, and
+    // belongs to the other half; both halves draw both sides (bits 6 and 7: the corner + 1), or
+    // each side would end at the diagonal, which crosses the whole width of a thin quad.
+    let off = select(0u, inside, skip_inner) | short;
+    var quad = 0u;
+    for (var j = 0u; j < 3u; j++) {
+        let e1 = 1u << ((j + 1u) % 3u);
+        let e2 = 1u << ((j + 2u) % 3u);
+        let corner = ((short & e1) != 0u && (inside & e2) != 0u) || ((inside & e1) != 0u && (short & e2) != 0u);
+        if quad == 0u && skip_inner && corner && (off & (1u << j)) == 0u {
+            quad = j + 1u;
+        }
+    }
+    o.edge.w = f32(inside | (short << 3u) | (quad << 6u));
     // Outward normals in the triangle's plane of the two edges through this corner: a to b lies
     // opposite c (corner k + 2), a to c opposite b (corner k + 1).
     var push = vec3f(0.0);
@@ -279,6 +293,16 @@ fn vs_wire(
         push = m1;
     } else if use2 {
         push = m2;
+    } else if quad == k + 1u {
+        // The thin quad's corner: it moves away from the line opposite, as far as the quad's
+        // other half moves it across its own line. Both halves then meet along the same moved
+        // diagonal; left in place, the corner would pull this half's diagonal in and open a hole
+        // down the middle of the line.
+        var m3 = normalize(cross(c - b, normal));
+        if dot(m3, a - b) > 0.0 {
+            m3 = -m3;
+        }
+        push = -m3;
     } else {
         return o;
     }
@@ -312,32 +336,113 @@ fn texel(v: VOut) -> vec4f {
     return textureSample(tex, samp, v.uv) * vec4f(v.tint, 1.0);
 }
 
-// How much of the pixel a wireframe's lines cover; 1 on a whole surface. Uses derivatives:
-// call in uniform control flow.
+// How much of the pixel a wireframe's lines cover, as opacity (a thin line's fade included);
+// 1 on a whole surface. Uses derivatives: call in uniform control flow.
 fn lines(v: VOut) -> f32 {
+    return reach(v) * select(1.0, line_fade(), draw.wire.x > 0.0);
+}
+
+// How much of the pixel a wireframe's lines cover, without a thin line's fade; 1 on a whole
+// surface. Uses derivatives: call in uniform control flow.
+fn reach(v: VOut) -> f32 {
     let b = v.edge.xyz;
     let gx = dpdx(b);
     let gy = dpdy(b);
-    let across = sqrt(gx * gx + gy * gy);
     if draw.wire.x <= 0.0 {
         return 1.0;
     }
-    // Pixels to each edge; the edges inside flat polygons far away where they are left out.
-    var d = b / max(across, vec3f(1e-9));
-    let bits = u32(v.edge.w + 0.5);
+    let across = sqrt(gx * gx + gy * gy);
+    let near = nearest(b, across, edges_off(v), quad_corner(v));
+    return clamp(0.5 * line_width() + 0.5 - near, 0.0, 1.0);
+}
+
+// Thinner than 1.2 pixels a line would break up: it keeps that width and fades instead.
+fn line_width() -> f32 {
+    return max(draw.wire.x, 1.2);
+}
+
+fn line_fade() -> f32 {
+    return min(draw.wire.x / 1.2, 1.0);
+}
+
+// The edges that get no line: bits 0 to 2 by the corner opposite.
+fn edges_off(v: VOut) -> u32 {
+    let bits = u32(v.edge.w + 0.5) & 63u;
     // Bits 3 to 5: a widened sliver's short edges, which never get a line.
     var off = bits >> 3u;
     if draw.wire.y > 0.5 {
         off |= bits;
     }
+    return off & 7u;
+}
+
+// The corner + 1 through which a thin quad's other long side runs (vs_wire), 0 for none.
+fn quad_corner(v: VOut) -> u32 {
+    return (u32(v.edge.w + 0.5) >> 6u) & 3u;
+}
+
+// Pixels from barycentric coordinates `b` to the nearest line, `across` the coordinates' change
+// per pixel, `quad` as quad_corner. Beyond an edge (only a widened thin triangle has fragments
+// there) a line reaches half as far as inside, so a thin prism's line is about as wide as a near
+// one's.
+fn nearest(b: vec3f, across: vec3f, off: u32, quad: u32) -> f32 {
+    var d = b / max(across, vec3f(1e-9));
     d = select(d, vec3f(1e9), (vec3u(off) & vec3u(1u, 2u, 4u)) != vec3u(0u));
-    // Beyond an edge (a widened thin triangle) the line reaches half as far as inside, so a
-    // thin prism's line is about as wide as a near one's.
     let out = select(abs(d), 2.0 * abs(d), d < vec3f(0.0));
-    let near = min(out.x, min(out.y, out.z));
-    // Thinner than 1.2 pixels a line would break up: it keeps that width and fades instead.
-    let width = max(draw.wire.x, 1.2);
-    return clamp(0.5 * width + 0.5 - near, 0.0, 1.0) * min(draw.wire.x / 1.2, 1.0);
+    var near = min(out.x, min(out.y, out.z));
+    if quad > 0u {
+        // The quad's other side: where this corner's coordinate is 1; beyond it lies outside.
+        let j = quad - 1u;
+        let e = (1.0 - b[j]) / max(across[j], 1e-9);
+        near = min(near, select(e, -2.0 * e, e < 0.0));
+    }
+    return near;
+}
+
+// The four samples of a pixel with four, from its centre (the standard pattern).
+const SAMPLES = array<vec2f, 4>(
+    vec2f(-0.125, -0.375),
+    vec2f(0.375, -0.125),
+    vec2f(-0.375, 0.125),
+    vec2f(0.125, 0.375),
+);
+
+// What the colour pass draws of a wireframe's lines at a fragment: `alpha` their opacity there,
+// `mask` the samples they cover.
+struct Cover {
+    alpha: f32,
+    mask: u32,
+};
+
+// With four samples per pixel each sample is tested against the lines on its own. Where lines
+// overlap, as the faces of a thin prism do along their shared edges, a sample is drawn once
+// instead of their soft edges piling up; nearer lines hide farther ones sample by sample, and the
+// pixel's four samples give the line its soft edge. With one sample, or over filled faces that
+// cover every sample anyway, the coverage at the pixel's centre goes into alpha. Uses
+// derivatives: call in uniform control flow.
+fn coverage(v: VOut) -> Cover {
+    let b = v.edge.xyz;
+    let gx = dpdx(b);
+    let gy = dpdy(b);
+    if draw.wire.x <= 0.0 {
+        return Cover(1.0, 0xffffffffu);
+    }
+    let across = sqrt(gx * gx + gy * gy);
+    let off = edges_off(v);
+    let quad = quad_corner(v);
+    if frame.pixels.z < 3.5 || faces() == 1u {
+        let near = nearest(b, across, off, quad);
+        return Cover(clamp(0.5 * line_width() + 0.5 - near, 0.0, 1.0) * line_fade(), 0xffffffffu);
+    }
+    let half = 0.5 * line_width();
+    var mask = 0u;
+    for (var i = 0u; i < 4u; i++) {
+        let o = SAMPLES[i];
+        if nearest(b + gx * o.x + gy * o.y, across, off, quad) <= half {
+            mask |= 1u << i;
+        }
+    }
+    return Cover(select(0.0, line_fade(), mask != 0u), mask);
 }
 
 // A distinct colour per part id: hues a golden angle apart.
@@ -662,40 +767,48 @@ fn occlusion(v: VOut) -> f32 {
     return best;
 }
 
+// A colour pass's fragment: its colour and the samples it covers.
+struct Colour {
+    @location(0) color: vec4f,
+    @builtin(sample_mask) mask: u32,
+};
+
 // The colour pass's opaque pixels, writing depth.
 @fragment
-fn fs_solid(v: VOut) -> @location(0) vec4f {
+fn fs_solid(v: VOut) -> Colour {
     // An occluder: depth only, the colour as it is (it draws first, so that is the background);
     // a black cover opaque black.
     if draw.shading >= 3u {
-        return vec4f(0.0, 0.0, 0.0, select(0.0, 1.0, draw.shading == 4u));
+        return Colour(vec4f(0.0, 0.0, 0.0, select(0.0, 1.0, draw.shading == 4u)), 0xffffffffu);
     }
-    let c = shade(v, occlusion(v));
-    if c.a < OPAQUE {
+    let line = coverage(v);
+    let c = shade(v, occlusion(v), line.alpha);
+    if c.a < OPAQUE || line.mask == 0u {
         discard;
     }
-    return c;
+    return Colour(c, line.mask);
 }
 
 // The colour pass's see-through pixels, over what is behind them.
 @fragment
-fn fs_blend(v: VOut) -> @location(0) vec4f {
+fn fs_blend(v: VOut) -> Colour {
+    let line = coverage(v);
     // Ambient occlusion holds what lies behind a see-through surface, not the surface.
-    let c = shade(v, 1.0);
-    if c.a >= OPAQUE || c.a < 0.002 {
+    let c = shade(v, 1.0, line.alpha);
+    if c.a >= OPAQUE || c.a < 0.002 || line.mask == 0u {
         discard;
     }
-    return c;
+    return Colour(c, line.mask);
 }
 
-// `open`: what ambient occlusion leaves of ambient and environment light.
-fn shade(v: VOut, open: f32) -> vec4f {
+// `open`: what ambient occlusion leaves of ambient and environment light; `line`: the lines'
+// opacity at the fragment (coverage), 1 on a whole surface.
+fn shade(v: VOut, open: f32, line: f32) -> vec4f {
     let t = texel(v);
     // Derivatives in uniform control flow, before any branch.
     world_dx = dpdx(v.world);
     world_dy = dpdy(v.world);
     let r = density(v.uv);
-    let line = lines(v);
     var n = v.normal;
     if dot(n, n) < 1e-12 {
         n = to_viewer(v.world);
@@ -749,8 +862,9 @@ fn fs_hide(v: VOut) -> @location(0) vec4f {
 
 // ... then their lines where that depth is the nearest; the faces between leave the colour.
 @fragment
-fn fs_over(v: VOut) -> @location(0) vec4f {
-    return shade(v, 1.0);
+fn fs_over(v: VOut) -> Colour {
+    let line = coverage(v);
+    return Colour(shade(v, 1.0, line.alpha), line.mask);
 }
 
 // For ambient occlusion, the opaque pixels as fs_solid draws them: the position and the distance
@@ -808,8 +922,10 @@ fn fs_tint(v: VOut) -> @location(0) vec4f {
 }
 
 // The measuring and data passes: an occluder writes nothing (as the cleared target) but hides
-// what is behind it, a black cover counts as a surface in the data pass; a wireframe only where
-// its lines cover at least half the pixel, one with filled faces as a whole surface.
+// what is behind it, a black cover counts as a surface in the data pass; a wireframe with
+// filled faces as a whole surface. The measuring pass takes open wireframes where their lines
+// cover at least half the pixel. The data pass takes them wherever their lines touch the pixel:
+// the colour pass draws a line's soft edge there, and a thin line covers no pixel by half.
 @fragment
 fn fs_measure(v: VOut) -> @location(0) vec4f {
     let d = vec4f(dpdx(v.uv), dpdy(v.uv));
@@ -825,7 +941,7 @@ fn fs_measure(v: VOut) -> @location(0) vec4f {
 
 @fragment
 fn fs_data(v: VOut) -> @location(0) vec4f {
-    let line = lines(v);
+    let line = reach(v);
     let t = texel(v);
     if draw.shading == 3u {
         return vec4f(0.0);
@@ -833,12 +949,16 @@ fn fs_data(v: VOut) -> @location(0) vec4f {
     if draw.shading == 4u {
         return vec4f(v.uv, f32(draw.part + 1u), dot(frame.view_z, vec4f(v.world, 1.0)));
     }
-    if line < 0.5 && faces() != 1u {
+    let open = faces() != 1u;
+    if line <= 0.0 && open {
         discard;
     }
     // A surface that lets nearly all light through, such as a faint haze, is not what the pixel
-    // shows: what lies behind it keeps the pixel.
-    if surface(t, line).a < FAINT {
+    // shows: what lies behind it keeps the pixel. Open lines count by their material and a thin
+    // line's fade, not by how much of the pixel they cover.
+    let fade = select(1.0, line_fade(), draw.wire.x > 0.0);
+    let seen = select(surface(t, line * fade).a, surface(t, 1.0).a * fade, open);
+    if seen < FAINT {
         discard;
     }
     return vec4f(v.uv, f32(draw.part + 1u), dot(frame.view_z, vec4f(v.world, 1.0)));

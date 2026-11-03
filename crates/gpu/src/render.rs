@@ -1193,10 +1193,17 @@ impl Renderer {
         let shared = self.shared(gpu)?;
 
         let pixels = [size.0, size.1];
-        let maps = Maps { shadow: shadow_size, tint: tint_size, tinted, ao: ao.is_some(), pixels };
+        let maps = Maps {
+            shadow: shadow_size,
+            tint: tint_size,
+            tinted,
+            ao: ao.is_some(),
+            pixels,
+            samples: wanted.samples,
+        };
         for (p, buffer) in placed.iter().filter_map(|p| p.layer.map(|_| p)).zip(&self.shadow_frames) {
             let from = View { clip_from_world: p.clip, view_z: [0.0; 4], eye: [0.0; 3], parallel: false };
-            let shadow = Maps { pixels: [shadow_size; 2], ..maps };
+            let shadow = Maps { pixels: [shadow_size; 2], samples: 1, ..maps };
             gpu.queue().write_buffer(buffer, 0, &frame_bytes(&from, look, shadow, &[], &[]));
         }
         gpu.queue().write_buffer(&shared.frame, 0, &frame_bytes(view, look, maps, lights, &placed));
@@ -1444,7 +1451,8 @@ fn ambient_occlusion(look: &Look, lights: &[Light], placed: &[Placed]) -> Option
 }
 
 /// The sizes of the shadow and tint maps, whether the tint maps hold anything, whether
-/// ambient occlusion was drawn, and the size in pixels of what the frame draws into.
+/// ambient occlusion was drawn, and the size in pixels and the samples per pixel of what the
+/// frame draws into.
 #[derive(Clone, Copy, Debug)]
 struct Maps {
     shadow: u32,
@@ -1452,6 +1460,7 @@ struct Maps {
     tinted: bool,
     ao: bool,
     pixels: [u32; 2],
+    samples: u32,
 }
 
 /// Column-major `f32`s of a row-major matrix (WGSL's layout).
@@ -1505,7 +1514,7 @@ fn frame_bytes(view: &View, look: &Look, maps: Maps, lights: &[Light], placed: &
     for v in [maps.shadow as f32, maps.tint as f32, flag(maps.tinted), flag(maps.ao)] {
         b.extend_from_slice(&v.to_le_bytes());
     }
-    for v in [maps.pixels[0] as f32, maps.pixels[1] as f32, 0.0, 0.0] {
+    for v in [maps.pixels[0] as f32, maps.pixels[1] as f32, maps.samples as f32, 0.0] {
         b.extend_from_slice(&v.to_le_bytes());
     }
     for (l, p) in lights.iter().zip(placed) {

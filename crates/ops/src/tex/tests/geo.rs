@@ -1541,6 +1541,68 @@ fn wireframes_show_edges_and_occluders_hide() {
     assert_eq!(at(&d, 4, cy)[2].round(), 1.0, "the wall is part 0");
 }
 
+/// A far thin prism, thinner than a pixel and a little off the vertical, as a wireframe with
+/// four samples per pixel: a whole line with soft edges, as bright along its length as across
+/// it allows, and present in the data pass on every row. A line thinner than a pixel fades and
+/// still reaches every row.
+#[test]
+fn far_thin_lines_stay_whole_and_soft() {
+    let Some(gpu) = gpu() else { return };
+    let (w, h) = (160u32, 120u32);
+    // A triangular prism 4 m long and 1 cm across, its sides quads.
+    let dir = scratch("geo-thin-lines");
+    let (r, z) = (0.005, 2.0);
+    let mut obj = String::new();
+    for zz in [z, -z] {
+        for (x, y) in [(r, 0.0), (-0.5 * r, r), (-0.5 * r, -r)] {
+            obj += &format!("v {x} {y} {zz}\n");
+        }
+    }
+    obj += "f 1 2 5 4\nf 2 3 6 5\nf 3 1 4 6\n";
+    std::fs::write(dir.join("rod.obj"), obj).unwrap();
+    let mut ops = vec![
+        create("/rod", "geo.file", &[("file", "rod.obj".into()), ("up", "z".into())]),
+        create("/rod_at", "geo.transform", &[("rotate", Value::Vec3([0.0, 7.0, 0.0]))]),
+        connect("/rod", "/rod_at", 0),
+    ];
+    for (name, width) in [("wide", 2.5), ("thin", 0.3)] {
+        ops.push(create(&format!("/{name}_mat"), "mat.wireframe", &[("line_width", Value::Float(width))]));
+        ops.push(create(&format!("/{name}"), "geo.assign_material", &[]));
+        ops.push(connect("/rod_at", &format!("/{name}"), 0));
+        ops.push(connect(&format!("/{name}_mat"), &format!("/{name}"), 1));
+        ops.push(create(
+            &format!("/{name}_seen"),
+            "tex.render",
+            &[
+                ("width", Value::Int(i64::from(w))),
+                ("height", Value::Int(i64::from(h))),
+                ("position", Value::Vec3([0.0, -10.0, 0.0])),
+                ("fov", Value::Float(40.0)),
+            ],
+        ));
+        ops.push(connect(&format!("/{name}"), &format!("/{name}_seen"), 0));
+    }
+    let mut rig = rig(gpu, Some(&dir), &ops);
+    // Rows well inside the rod's ends (it spans about 66 rows around the middle).
+    let rows = (h / 2 - 24)..(h / 2 + 24);
+    for (name, least, most) in [("wide", 0.9, 3.0), ("thin", 0.08, 0.6)] {
+        let path = format!("/{name}_seen");
+        let px = rig.pixels(&path);
+        let sums: Vec<f32> = rows.clone().map(|y| (0..w).map(|x| at(&px, x, y)[3]).sum::<f32>()).collect();
+        let (low, high) = sums.iter().fold((f32::MAX, 0.0f32), |(l, m), &s| (l.min(s), m.max(s)));
+        assert!(low >= least && high <= most, "{name}: alpha per row {low}..{high}: {sums:?}");
+        assert!(high <= low * 1.6, "{name}: as bright along the line as the samples allow: {sums:?}");
+        if name == "wide" {
+            let soft = px.data.iter().filter(|p| p[3] > 0.15 && p[3] < 0.85).count();
+            assert!(soft >= rows.len(), "{name}: soft edges ({soft} partly covered pixels)");
+        }
+        rig.cook(&path);
+        let d = data(&rig, &path);
+        let missing: Vec<u32> = rows.clone().filter(|&y| (0..w).all(|x| at(&d, x, y)[3] <= 0.0)).collect();
+        assert!(missing.is_empty(), "{name}: rows without the line's distance: {missing:?}");
+    }
+}
+
 #[test]
 fn instance_places_a_copy_per_row() {
     let (places, warning) = crate::geo::placements(
