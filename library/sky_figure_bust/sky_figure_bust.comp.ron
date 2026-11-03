@@ -1,0 +1,23 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/sky_figure_bust": (kind: "comp.base", params: {"expose": "presence = figure.presence
+brightness = figure.brightness
+warmth = figure.warmth
+tall = figure.tall
+place = figure.place
+tube = figure.tube
+thickness = figure.thickness
+rim = figure.rim
+fill = figure.fill
+eyes = figure.eyes
+reach = figure.reach
+ring = figure.ring"}),
+        "/sky_figure_bust/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
+        "/sky_figure_bust/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
+        "/sky_figure_bust/figure": (kind: "tex.shader", params: {"file": "library/sky_figure_bust/bust.wgsl", "resolution": "custom", "presence": 1.0, "brightness": 1.0, "warmth": 0.0, "place": 0.0, "reach": 10.0, "ring": 0.17, "tall": 0.55, "thickness": 1.4, "rim": 1.0, "fill": 0.06, "eyes": 1.2}, binds: {"beats": "bus:travelled", "bar": "bus:bar", "bar_index": "bus:bar_index", "build": "bus:build", "drop": "bus:drop", "role": "bus:section_role", "energy": "bus:energy_low", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "bend": "pose:curve"}, pos: [-300.0, 0.0]),
+        "/sky_figure_bust/out": (kind: "tex.out", inputs: {"in": "figure"}, pos: [0.0, 0.0]),
+    },
+)

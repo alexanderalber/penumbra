@@ -919,6 +919,62 @@ flash makes it jump. It bobs on the beats.
   arms up reach a fifth higher), `place` (across the sky), `thickness` (pixels), `glow`, `reach`
   (as on `sky_planet`).
 
+The six figures below are variants of `sky_figure`. Each takes the same poses on the same channels, so any of them can stand in its place in the sky slot. Each also stands in the tunnel: bind `bend` to the pose's `curve` (the component does) and the figure stands smaller on the bottom of the tube's far end.
+
+### sky_figure_solid
+
+![sky_figure_solid](sky_figure_solid/preview.png)
+
+A variant of `sky_figure`: a filled low-poly silhouette. Each limb and the trunk are a few flat facets of dark fill, lit from the upper left, inside a bright edge.
+
+- In: `bus`, `pose`. Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness` (the edge, pixels), `fill` (the facets' light), `seams` (the lines between facets), `glow`, `reach`, `ring`.
+
+### sky_figure_robot
+
+![sky_figure_robot](sky_figure_robot/preview.png)
+
+A variant of `sky_figure`: a robot of boxes. Every part is a wireframe box with a black inside, so a box in front hides the lines behind it. Two eyes glow in the head, and the antenna's tip flashes on each beat. It moves in steps: the arms in quarters, the sway at once with the bar, a drop of the body on each beat.
+
+- In: `bus`, `pose`. Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness`, `depth` (how far the back faces lie), `eyes`, `glow`, `reach`, `ring`.
+
+### sky_figure_dancer
+
+![sky_figure_dancer](sky_figure_dancer/preview.png)
+
+A variant of `sky_figure`: a slim dancer with a cloak of lines. The lines hang from the shoulders, the arms and the wrists. They swing with the mids, the outer ones a little later, so the cloak trails the arms. With the arms up the cloak opens like wings.
+
+- In: `bus`, `pose`. Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness`, `strands` (lines per side), `cloak` (their light), `hem` (the cloak's lower edge), `swing`, `glow`, `reach`, `ring`.
+
+### sky_figure_joints
+
+![sky_figure_joints](sky_figure_joints/preview.png)
+
+A variant of `sky_figure`: glowing joints and thin faint bones, like a figure in Tron. On each beat a pulse runs from the neck along the bones to the hands and feet, and each joint flashes as it passes.
+
+- In: `bus`, `pose`. Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness` (the bones), `dots` (a joint's radius), `bones` (their light), `pulse`, `glow`, `reach`, `ring`.
+
+### sky_figure_giant
+
+![sky_figure_giant](sky_figure_giant/preview.png)
+
+A variant of `sky_figure`: a giant seen from below. The legs are huge, and the body narrows upwards to a small head. The silhouette is filled, with dark bands across its lower part like the sun's, rolling slowly down.
+
+- In: `bus`, `pose`. Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness`, `depth` (how much narrower the top is), `spread` (the feet's width), `lines` (bands), `glow`, `reach`, `ring`.
+
+### sky_figure_bust
+
+![sky_figure_bust](sky_figure_bust/preview.png)
+
+A variant of `sky_figure`: only head and shoulders, huge over the horizon, as a wireframe of latitude and longitude lines with glowing eyes and a mouth. The poses become the head's: it tilts to the side on the sway, lifts through a build, tilts far back in a drop and nods on each beat. The drop's flash makes the whole bust jump.
+
+- In: `bus`, `pose`. Out: `out`.
+- Params: `presence`, `brightness`, `warmth`, `tall`, `place`, `tube` (its height in the tunnel), `thickness`, `rim` (the light where a surface turns away), `fill`, `eyes`, `reach`, `ring`.
+
 ### sky_eyes
 
 ![sky_eyes](sky_eyes/preview.png)
