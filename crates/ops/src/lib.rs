@@ -24,6 +24,7 @@ pub mod script;
 pub mod seek;
 pub mod sequence;
 pub mod shapes;
+mod show;
 pub mod spacemouse;
 pub mod table;
 pub mod tex;

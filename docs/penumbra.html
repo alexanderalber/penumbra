@@ -272,9 +272,9 @@ details.target { outline: 2px solid var(--accent); }
 <ul>
 <li><strong>Feedback (<code>previous</code>).</strong> A <a class="ref" href="#tex.feedback"><code>tex.feedback</code></a>'s <code>previous</code> input sees what its source made in the frame before. The wire into it may run backwards and close a loop; it is drawn dashed. This is the only way to build a loop.
 </li>
-<li><strong>Inputs a node skips.</strong> <a class="ref" href="#tex.switch"><code>tex.switch</code></a> with <code>inactive: skip</code> and <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> cook only the inputs they show. The chains behind the others stand still and cost nothing until they are shown again. A feedback loop, cache or time machine there carries on from where it stopped.
+<li><strong>Inputs a node skips.</strong> <a class="ref" href="#tex.switch"><code>tex.switch</code></a> with <code>inactive: skip</code> and <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a> cook only the inputs they show. So do <a class="ref" href="#geo.merge"><code>geo.merge</code></a> and <a class="ref" href="#tex.composite"><code>tex.composite</code></a> with a <code>show</code> input: channel k of <code>show</code> says whether <code>in&lt;k&gt;</code> shows, and at 0 or below it does not. The chains behind the others stand still and cost nothing until they are shown again. A feedback loop, cache or time machine there carries on from where it stopped.
 </li>
-<li><strong>Steering inputs.</strong> <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a>'s <code>sequence</code> input decides which inputs are needed. So it cooks first, before the inputs, whichever piece is shown.
+<li><strong>Steering inputs.</strong> <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a>'s <code>sequence</code> input and the <code>show</code> input of <a class="ref" href="#geo.merge"><code>geo.merge</code></a> and <a class="ref" href="#tex.composite"><code>tex.composite</code></a> decide which inputs are needed. So they cook first, before the inputs.
 </li>
 <li><strong>Every frame (eager).</strong> <a class="ref" href="#chan.clock"><code>chan.clock</code></a> and <a class="ref" href="#chan.sequence"><code>chan.sequence</code></a> cook in every pass, wanted or not. So a clock sees its <code>run</code> turn off and on while the piece it drives is skipped. The reference marks such nodes &quot;Cooks in every frame&quot;.
 </li>
@@ -2206,6 +2206,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Inputs</h4>
 <ul>
 <li><code>in0 .. in63</code> <span class="kind">tex</span>: The layers, in0 at the bottom. The output has the size of the first connected layer Any number, up to 64: each one wired adds a free slot below it.</li>
+<li><code>show</code> <span class="kind">chan</span>: Which inputs show. Channel k is for in&lt;k&gt;, counted in order whatever its name. At 0 or below the input is left out and does not cook. Inputs past the last channel show. Wire a chan.select of the presence channels here, in the order of the inputs</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -2219,7 +2220,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>swap</code></td><td>bool</td><td><code>false</code></td><td></td><td>Swap the order of each step: the picture below onto the layer (TouchDesigner's Swap Operation Order)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#mapping-without-camera-masks-light-only-part-of-the-surface">Mapping without a camera › Masks: light only part of the surface</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#mapping-without-camera-masks-light-only-part-of-the-surface">Mapping without a camera › Masks: light only part of the surface</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a>, <a href="#scanning-7-the-network">Scanning › 7. The network</a>, <a href="#scanning-8-content-delivered-per-face">Scanning › 8. Content delivered per face</a>, <a href="#shaders-from-a-snippet-to-a-loop-that-moves-with-the-music">Shaders › From a snippet to a loop that moves with the music</a></p>
 </div></details>
 <details class="entry node" id="tex.constant"><summary><code class="name">tex.constant</code><span class="sum">A picture in one colour: a background, a fill, a black to start from</span></summary>
 <div class="body">
@@ -4712,12 +4713,13 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Inputs</h4>
 <ul>
 <li><code>in0 .. in63</code> <span class="kind">geo</span>: The pieces of geometry Any number, up to 64: each one wired adds a free slot below it.</li>
+<li><code>show</code> <span class="kind">chan</span>: Which inputs show. Channel k is for in&lt;k&gt;, counted in order whatever its name. At 0 or below the input is left out and does not cook. Inputs past the last channel show. Wire a chan.select of the presence channels here, in the order of the inputs</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">geo</span>: All inputs as one; part ids continue from input to input</li>
 </ul>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-inputs-and-nodes-that-cook-differently">Concepts › Inputs and nodes that cook differently</a>, <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="geo.null"><summary><code class="name">geo.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
 <div class="body">

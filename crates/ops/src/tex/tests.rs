@@ -2023,6 +2023,73 @@ fn a_switch_that_skips_cooks_only_what_it_shows() {
 }
 
 #[test]
+fn show_leaves_out_the_layers_and_pieces_it_hides() {
+    let Some(gpu) = gpu() else { return };
+    let show = penumbra_graph::MAX_RUN as u32;
+    let ops = [
+        constant("/a", 0.2),
+        constant("/b", 0.6),
+        create(
+            "/k",
+            "chan.constant",
+            &[("rows", Value::Int(2)), ("value0", Value::Float(0.0)), ("value1", Value::Float(1.0))],
+        ),
+        create("/sum", "tex.composite", &[("op", "add".into())]),
+        connect("/a", "/sum", 0),
+        connect("/b", "/sum", 1),
+        create("/pick", "chan.select", &[("channels", "chan0 chan1".into())]),
+        connect("/k", "/pick", 0),
+        connect("/pick", "/sum", show),
+        create("/box", "geo.primitive", &[]),
+        create("/ball", "geo.primitive", &[("shape", "sphere".into())]),
+        create("/both", "geo.merge", &[]),
+        connect("/box", "/both", 0),
+        connect("/ball", "/both", 1),
+        connect("/k", "/both", show),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let cooked = |rig: &Rig, p: &str| rig.cooker.outputs(rig.id(p)).is_some();
+    assert!((red(&mut rig, "/sum") - 0.6).abs() < 0.01, "only the second layer");
+    assert!(!cooked(&rig, "/a"), "a hidden layer does not cook");
+    rig.cook("/both");
+    assert!(!cooked(&rig, "/box") && cooked(&rig, "/ball"));
+    let parts = |rig: &Rig| {
+        let port = Port { node: rig.id("/both"), output: 0 };
+        rig.cooker.output(port).and_then(|d| d.get::<penumbra_gpu::Geo>().map(|g| g.items.len()))
+    };
+    assert_eq!(parts(&rig), Some(1));
+    rig.edit(&[set("/k.value0", Value::Float(0.5))]);
+    assert!((red(&mut rig, "/sum") - 0.8).abs() < 0.01, "both layers");
+    // Everything hidden gives black and no geometry, not the last result.
+    rig.edit(&[set("/k.value0", Value::Float(0.0)), set("/k.value1", Value::Float(0.0))]);
+    assert!(red(&mut rig, "/sum").abs() < 0.01);
+    rig.cook("/both");
+    assert_eq!(parts(&rig), Some(0));
+}
+
+#[test]
+fn show_can_hide_every_layer_but_one_past_the_fourth() {
+    let Some(gpu) = gpu() else { return };
+    let show = penumbra_graph::MAX_RUN as u32;
+    let ops = [
+        constant("/a", 0.2),
+        constant("/b", 0.4),
+        constant("/c", 0.6),
+        create("/k", "chan.constant", &[("rows", Value::Int(6)), ("value0", Value::Float(1.0))]),
+        create("/sum", "tex.composite", &[("op", "screen".into())]),
+        connect("/a", "/sum", 0),
+        connect("/b", "/sum", 1),
+        connect("/c", "/sum", 5),
+        connect("/k", "/sum", show),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    assert!((red(&mut rig, "/sum") - 0.2).abs() < 0.01, "the first layer alone");
+    // The size comes from the one layer left, though it is not among the first four.
+    rig.edit(&[set("/k.value0", Value::Float(0.0)), set("/k.value5", Value::Float(1.0))]);
+    assert!((red(&mut rig, "/sum") - 0.6).abs() < 0.01, "the layer at in5 alone");
+}
+
+#[test]
 fn cache_outputs_frames_back() {
     let Some(gpu) = gpu() else { return };
     let ops = [

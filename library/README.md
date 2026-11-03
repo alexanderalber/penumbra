@@ -274,6 +274,14 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   the floor towards 0, a mid element flies away, a sky element dims. To swap two elements, ramp
   one's `presence` down while the other's goes up, for example through the blend between two
   sections.
+- **Elements that are out cost nothing** once the slot's `geo.merge` or `tex.composite` knows
+  their `presence`. Wire a `chan.select` of the presence channels into its `show` input, in the
+  order of its inputs: `blocks mountains pillars` for a merge of `/blocks` in `in0`, `/mountains`
+  in `in1` and `/pillars` in `in2`. An input whose channel is 0 then does not cook, nor does
+  anything inside its element. A stage of many elements runs about three times faster that way.
+  Leave out an element that fades out by itself after its `presence` reaches 0: `mid_glider`
+  flies away for a few seconds more. Put it after the inputs the channels name, so it always
+  shows.
 - **`beats.arrange`** does those swaps for a whole sound file. It writes a table with a row per
   section (the `presence` of each element, `warmth`, `intensity`) and binds the elements to it.
   Edit the table to change a section's picture. [An arrangement from the

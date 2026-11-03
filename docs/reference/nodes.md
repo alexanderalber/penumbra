@@ -147,6 +147,7 @@ Lays pictures on top of each other: over, add, multiply, screen and other blend 
 Inputs:
 
 - `in0 .. in63` (tex): The layers, in0 at the bottom. The output has the size of the first connected layer. Any number, up to 64: each one wired adds a free slot below it
+- `show` (chan): Which inputs show. Channel k is for in<k>, counted in order whatever its name. At 0 or below the input is left out and does not cook. Inputs past the last channel show. Wire a chan.select of the presence channels here, in the order of the inputs
 
 Outputs: `out` (tex).
 
@@ -2005,6 +2006,7 @@ Combines several pieces of geometry into one, to render them together
 Inputs:
 
 - `in0 .. in63` (geo): The pieces of geometry. Any number, up to 64: each one wired adds a free slot below it
+- `show` (chan): Which inputs show. Channel k is for in<k>, counted in order whatever its name. At 0 or below the input is left out and does not cook. Inputs past the last channel show. Wire a chan.select of the presence channels here, in the order of the inputs
 
 Outputs:
 

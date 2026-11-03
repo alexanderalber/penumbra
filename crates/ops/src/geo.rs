@@ -164,13 +164,21 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .output("out", DataKind::Geo),
         || Box::new(PutMaterial) as Box<dyn Operator>,
     ))?;
-    types.register(FnNodeType::new(
-        NodeDesc::new("geo.merge", "Combines several pieces of geometry into one, to render them together")
+    types.register(
+        FnNodeType::new(
+            NodeDesc::new(
+                "geo.merge",
+                "Combines several pieces of geometry into one, to render them together",
+            )
             .input_run("in", DataKind::Geo, 2, "The pieces of geometry")
+            .input_steering("show")
+            .describe_input("show", crate::show::SHOW_DOC)
             .output("out", DataKind::Geo)
             .describe_output("out", "All inputs as one; part ids continue from input to input"),
-        || Box::new(Merge) as Box<dyn Operator>,
-    ))?;
+            || Box::new(Merge) as Box<dyn Operator>,
+        )
+        .choose_inputs(crate::show::choose),
+    )?;
     types.register(FnNodeType::new(
         NodeDesc::new(
             "geo.instance",
@@ -668,7 +676,7 @@ impl Operator for Merge {
             items.extend(g.items.iter().map(|i| Item { part_offset: i.part_offset + offset, ..i.clone() }));
             offset += g.part_count();
         }
-        if !any {
+        if !any && !crate::show::all_hidden(cx) {
             return Err(waiting(cx));
         }
         let geo = Geo { items, preview: None };

@@ -47,10 +47,12 @@ explained [below](#bindings), references under [Paths](#paths).
   the frame before. The wire into it may run backwards and close a loop; it is drawn dashed.
   This is the only way to build a loop.
 - **Inputs a node skips.** `tex.switch` with `inactive: skip` and `tex.sequence` cook only the
-  inputs they show. The chains behind the others stand still and cost nothing until they are
-  shown again. A feedback loop, cache or time machine there carries on from where it stopped.
-- **Steering inputs.** `tex.sequence`'s `sequence` input decides which inputs are needed. So it
-  cooks first, before the inputs, whichever piece is shown.
+  inputs they show. So do `geo.merge` and `tex.composite` with a `show` input: channel k of
+  `show` says whether `in<k>` shows, and at 0 or below it does not. The chains behind the others
+  stand still and cost nothing until they are shown again. A feedback loop, cache or time
+  machine there carries on from where it stopped.
+- **Steering inputs.** `tex.sequence`'s `sequence` input and the `show` input of `geo.merge`
+  and `tex.composite` decide which inputs are needed. So they cook first, before the inputs.
 - **Every frame (eager).** `chan.clock` and `chan.sequence` cook in every pass, wanted or not.
   So a clock sees its `run` turn off and on while the piece it drives is skipped. The reference
   marks such nodes "Cooks in every frame".

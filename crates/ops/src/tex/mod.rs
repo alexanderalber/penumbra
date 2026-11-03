@@ -413,6 +413,8 @@ fn core_builtins() -> Vec<Builtin> {
             .renamed_input("layer2", "in1")
             .renamed_input("layer3", "in2")
             .renamed_input("layer4", "in3")
+            .input_steering("show")
+            .describe_input("show", crate::show::SHOW_DOC)
             .output("out", DataKind::Tex),
             source: include_str!("composite.wgsl"),
             size: Size::Input,
@@ -496,21 +498,22 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         let b = Arc::new(b);
         let desc = b.desc.clone();
         let warm = b.clone();
-        types.register(
-            FnNodeType::new(desc, move || {
-                Box::new(BuiltinOp {
-                    palettes: Default::default(),
-                    node: b.clone(),
-                    pass: PassCell::default(),
-                    ring: TexRing::new(),
-                    animated: false,
-                    sizes: None,
-                }) as Box<dyn Operator>
-            })
-            .warm_up(on_gpu(move |gpu| {
-                gpu.cached_pass(&warm.desc.kind, warm.source, &warm.desc.params).map(|_| ())
-            })),
-        )?;
+        let fold = b.fold;
+        let ty = FnNodeType::new(desc, move || {
+            Box::new(BuiltinOp {
+                palettes: Default::default(),
+                node: b.clone(),
+                pass: PassCell::default(),
+                ring: TexRing::new(),
+                animated: false,
+                sizes: None,
+            }) as Box<dyn Operator>
+        })
+        .warm_up(on_gpu(move |gpu| {
+            gpu.cached_pass(&warm.desc.kind, warm.source, &warm.desc.params).map(|_| ())
+        }));
+        // A fold's layers are what `show` picks from.
+        types.register(if fold { ty.choose_inputs(crate::show::choose) } else { ty })?;
     }
     blob_track::register(types)?;
     blend_weight::register(types)?;
@@ -585,7 +588,20 @@ impl Operator for BuiltinOp {
         let gpu = gpu(cx)?;
         let pass = self.pass.get(gpu, |gpu| gpu.cached_pass(&b.desc.kind, b.source, &b.desc.params))?;
         let inputs = inputs(cx);
-        let first = || inputs.iter().flatten().next().map(|t| t.size()).ok_or_else(|| waiting(cx));
+        // Every layer hidden by `show`: nothing at the size of the last result, not that result.
+        let hidden = b.fold && crate::show::all_hidden(cx);
+        let last = self.sizes.map(|s| s.output).filter(|_| hidden);
+        // A fold takes its size from the first layer there, past the first four too: `show`
+        // may leave out the ones before.
+        let layers = (0..cx.def().inputs.len()).take(if b.fold { usize::MAX } else { inputs.len() });
+        let first = || {
+            layers
+                .clone()
+                .find_map(|k| cx.input_as::<Tex>(k))
+                .map(|t| t.size())
+                .or(last)
+                .ok_or_else(|| waiting(cx))
+        };
         let (w, h) = match b.size {
             Size::Params => (side(cx, "width")?, side(cx, "height")?),
             Size::Input => first()?,
