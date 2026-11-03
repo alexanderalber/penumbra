@@ -13,7 +13,11 @@
 // every pass; the faces between them show nothing, a fill colour, or nothing while hiding the
 // lines behind them (drawn last: fs_hide writes the faces' depth, then fs_over, or the data and
 // measuring passes' own, the lines where it is the nearest).
-// Occluders draw first, write depth and leave the colour as it is.
+// A triangle thinner on screen than its lines is widened in its own plane (vs_wire), so a far
+// thin prism stays a whole line instead of breaking into the pixels it happens to hit; its lines
+// reach a little beyond its edges there.
+// Occluders draw first and write depth; they leave the colour as it is, or, as a black cover,
+// draw opaque black and write their distance in the data pass.
 
 // Alpha from which a pixel is opaque (render::OPAQUE).
 const OPAQUE: f32 = 0.998;
@@ -54,6 +58,8 @@ struct Frame {
     // x: texels across a shadow map; y: across a tint map; z: 1 where the tint maps hold
     // anything; w: 1 where ambient occlusion was drawn.
     shadow: vec4f,
+    // xy: the size in pixels of what the frame draws into.
+    pixels: vec4f,
     lights: array<Light, 16>,
 };
 
@@ -67,7 +73,7 @@ struct Draw {
     specular: vec4f,
     emit: vec4f,
     part: u32,
-    // 0 constant, 1 phong, 2 pbr, 3 occluder.
+    // 0 constant, 1 phong, 2 pbr, 3 occluder, 4 occluder drawn black.
     shading: u32,
     metallic: f32,
     roughness: f32,
@@ -196,10 +202,108 @@ fn vs_wire(
     @location(1) n: vec3f,
     @location(2) uv: vec2f,
     @location(3) edge: vec4f,
+    @location(4) next: vec3f,
+    @location(5) previous: vec3f,
     @builtin(instance_index) i: u32,
 ) -> VOut {
     var o = place(p, n, uv, i);
     o.edge = edge;
+    // Filled faces would show their fill beyond their edges: they keep their size.
+    if draw.wire.x <= 0.0 || faces() == 1u {
+        return o;
+    }
+    let a = o.world;
+    let b = place(next, n, uv, i).world;
+    let c = place(previous, n, uv, i).world;
+    let ca = frame.clip * vec4f(a, 1.0);
+    let cb = frame.clip * vec4f(b, 1.0);
+    let cc = frame.clip * vec4f(c, 1.0);
+    // Only triangles wholly in front of the eye.
+    if min(ca.w, min(cb.w, cc.w)) <= 1e-6 {
+        return o;
+    }
+    let half = 0.5 * frame.pixels.xy;
+    let sa = ca.xy / ca.w * half;
+    let sb = cb.xy / cb.w * half;
+    let sc = cc.xy / cc.w * half;
+    let area = abs((sb.x - sa.x) * (sc.y - sa.y) - (sb.y - sa.y) * (sc.x - sa.x));
+    let longest = max(length(sb - sa), max(length(sc - sb), length(sa - sc)));
+    // The triangle's thickness on screen: its smallest height in pixels.
+    let thick = area / max(longest, 1e-6);
+    let grow = 1.0 - smoothstep(2.0, 4.0, thick);
+    let normal = cross(b - a, c - a);
+    if grow <= 0.0 || dot(normal, normal) < 1e-24 {
+        return o;
+    }
+    // Which corner this is: the barycentric coordinate that is 1.
+    let k = select(select(2u, 1u, edge.y > 0.5), 0u, edge.x > 0.5);
+    let k1 = (k + 1u) % 3u;
+    let k2 = (k + 2u) % 3u;
+    // A sliver's short edges (the ends of a thin prism) would draw a blot across its line: they
+    // get none and do not widen it. Bits 3 to 5 of `edge.w`, by the corner opposite, as the
+    // edges inside flat polygons; every corner of the triangle finds the same.
+    let sliver = longest > 4.0;
+    let short_ab = sliver && length(sb - sa) < 2.0;
+    let short_ac = sliver && length(sc - sa) < 2.0;
+    let short_bc = sliver && length(sc - sb) < 2.0;
+    let short = select(0u, 1u << k2, short_ab) | select(0u, 1u << k1, short_ac) | select(0u, 1u << k, short_bc);
+    let inside = u32(edge.w + 0.5) & 7u;
+    o.edge.w = f32(inside | (short << 3u));
+    let skip_inner = draw.wire.y > 0.5;
+    // Outward normals in the triangle's plane of the two edges through this corner: a to b lies
+    // opposite c (corner k + 2), a to c opposite b (corner k + 1).
+    var push = vec3f(0.0);
+    var m1 = normalize(cross(b - a, normal));
+    if dot(m1, c - a) > 0.0 {
+        m1 = -m1;
+    }
+    var m2 = normalize(cross(c - a, normal));
+    if dot(m2, b - a) > 0.0 {
+        m2 = -m2;
+    }
+    let use1 = !short_ab && !(skip_inner && (inside & (1u << k2)) != 0u);
+    let use2 = !short_ac && !(skip_inner && (inside & (1u << k1)) != 0u);
+    if use1 && use2 {
+        // The mitre: both edges move out by one step; at a sharp corner it is capped at one step
+        // along the middle.
+        let m = m1 + m2;
+        let fold = 1.0 + dot(m1, m2);
+        if fold > 0.5 {
+            push = m / fold;
+        } else if dot(m, m) > 1e-12 {
+            push = normalize(m);
+        } else {
+            push = m1;
+        }
+    } else if use1 {
+        push = m1;
+    } else if use2 {
+        push = m2;
+    } else {
+        return o;
+    }
+    // A pixel's size in the world at this corner, along the screen's height: the clip matrix's
+    // y row is the camera's up times the projection's scale.
+    let up = length(vec3f(frame.clip[0][1], frame.clip[1][1], frame.clip[2][1]));
+    let scale = 2.0 * ca.w / max(up * frame.pixels.y, 1e-6);
+    let reach = (0.5 * max(draw.wire.x, 1.2) + 1.0) * grow;
+    let moved = a + push * (reach * scale);
+    // The moved corner's barycentric coordinates in the original triangle, so the lines keep
+    // their place and width.
+    let total = dot(normal, normal);
+    let la = dot(cross(b - moved, c - moved), normal) / total;
+    let lb = dot(cross(c - moved, a - moved), normal) / total;
+    let lc = 1.0 - la - lb;
+    var bary = vec3f(la, lb, lc);
+    if k == 1u {
+        bary = vec3f(lc, la, lb);
+    } else if k == 2u {
+        bary = vec3f(lb, lc, la);
+    }
+    let w = vec4f(moved, 1.0);
+    o.pos = frame.clip * w;
+    o.world = moved;
+    o.edge = vec4f(bary, o.edge.w);
     return o;
 }
 
@@ -220,12 +324,20 @@ fn lines(v: VOut) -> f32 {
     }
     // Pixels to each edge; the edges inside flat polygons far away where they are left out.
     var d = b / max(across, vec3f(1e-9));
+    let bits = u32(v.edge.w + 0.5);
+    // Bits 3 to 5: a widened sliver's short edges, which never get a line.
+    var off = bits >> 3u;
     if draw.wire.y > 0.5 {
-        let inside = u32(v.edge.w + 0.5);
-        d = select(d, vec3f(1e9), (vec3u(inside) & vec3u(1u, 2u, 4u)) != vec3u(0u));
+        off |= bits;
     }
-    let near = min(d.x, min(d.y, d.z));
-    return clamp(0.5 * draw.wire.x + 0.5 - near, 0.0, 1.0);
+    d = select(d, vec3f(1e9), (vec3u(off) & vec3u(1u, 2u, 4u)) != vec3u(0u));
+    // Beyond an edge (a widened thin triangle) the line reaches half as far as inside, so a
+    // thin prism's line is about as wide as a near one's.
+    let out = select(abs(d), 2.0 * abs(d), d < vec3f(0.0));
+    let near = min(out.x, min(out.y, out.z));
+    // Thinner than 1.2 pixels a line would break up: it keeps that width and fades instead.
+    let width = max(draw.wire.x, 1.2);
+    return clamp(0.5 * width + 0.5 - near, 0.0, 1.0) * min(draw.wire.x / 1.2, 1.0);
 }
 
 // A distinct colour per part id: hues a golden angle apart.
@@ -553,9 +665,10 @@ fn occlusion(v: VOut) -> f32 {
 // The colour pass's opaque pixels, writing depth.
 @fragment
 fn fs_solid(v: VOut) -> @location(0) vec4f {
-    // An occluder: depth only, the colour as it is (it draws first, so that is the background).
-    if draw.shading == 3u {
-        return vec4f(0.0);
+    // An occluder: depth only, the colour as it is (it draws first, so that is the background);
+    // a black cover opaque black.
+    if draw.shading >= 3u {
+        return vec4f(0.0, 0.0, 0.0, select(0.0, 1.0, draw.shading == 4u));
     }
     let c = shade(v, occlusion(v));
     if c.a < OPAQUE {
@@ -695,13 +808,13 @@ fn fs_tint(v: VOut) -> @location(0) vec4f {
 }
 
 // The measuring and data passes: an occluder writes nothing (as the cleared target) but hides
-// what is behind it; a wireframe only where its lines cover at least half the pixel, one with
-// filled faces as a whole surface.
+// what is behind it, a black cover counts as a surface in the data pass; a wireframe only where
+// its lines cover at least half the pixel, one with filled faces as a whole surface.
 @fragment
 fn fs_measure(v: VOut) -> @location(0) vec4f {
     let d = vec4f(dpdx(v.uv), dpdy(v.uv));
     let line = lines(v);
-    if draw.shading == 3u {
+    if draw.shading >= 3u {
         return vec4f(0.0);
     }
     if line < 0.5 && faces() != 1u {
@@ -716,6 +829,9 @@ fn fs_data(v: VOut) -> @location(0) vec4f {
     let t = texel(v);
     if draw.shading == 3u {
         return vec4f(0.0);
+    }
+    if draw.shading == 4u {
+        return vec4f(v.uv, f32(draw.part + 1u), dot(frame.view_z, vec4f(v.world, 1.0)));
     }
     if line < 0.5 && faces() != 1u {
         discard;

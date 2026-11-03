@@ -79,7 +79,7 @@ fn frame_layout_matches_the_shader() {
         shadow_size: 1024,
         ao: None,
     };
-    let maps = Maps { shadow: 1024, tint: 512, tinted: true, ao: true };
+    let maps = Maps { shadow: 1024, tint: 512, tinted: true, ao: true, pixels: [640, 360] };
     let (l, p) = light();
     let b = frame_bytes(&view(), &look, maps, &[l], &[p]);
     assert_eq!(b.len() as u64, FRAME_BYTES);
@@ -96,6 +96,7 @@ fn frame_layout_matches_the_shader() {
     assert_eq!(f("overlay_factor"), 11.0);
     assert_eq!(f("overlay_cap"), 14.0);
     assert_eq!(f("shadow"), 1024.0);
+    assert_eq!(f("pixels"), 640.0);
     assert_eq!(f("lights"), 1.5);
 }
 

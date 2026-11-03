@@ -2072,6 +2072,10 @@ Inputs: none.
 
 Outputs: `out` (mat).
 
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `shows` | background \| black | `"background"` |  | What shows where it stands; background: the render's background, as if nothing were there; black: opaque black, with its distance in the render's data output: it also hides a picture laid under the render, such as a sky, and fades with distance like any surface |
+
 ### mat.pbr
 
 A realistic surface, metal or plastic, rough or glossy, lit by the render's lights; best with a light.environment

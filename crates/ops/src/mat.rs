@@ -1,7 +1,7 @@
 //! `mat` nodes: materials as in TouchDesigner, put on geometry by `geo.assign_material`. `mat.constant`
 //! shows its colour as it is, with or without lights; `mat.phong` and `mat.pbr` (metallic and rough
 //! as in glTF) answer the render's lights and are black without them. `mat.wireframe` draws only
-//! the edges, unlit; `mat.occluder` draws nothing but hides what is behind it.
+//! the edges, unlit; `mat.occluder` draws nothing (or black) but hides what is behind it.
 //!
 //! A material replaces the file's colours and textures: its colour, times its texture input
 //! where connected. The data on a `mat` connection is a [`Mat`]: the
@@ -114,6 +114,15 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             "mat.occluder",
             "Invisible, but hides what is behind it: a real object in front of a projection; casts shadows",
         )
+        .param(
+            ParamSpec::choice("shows", &["background", "black"])
+                .doc("What shows where it stands")
+                .choice_doc("background", "the render's background, as if nothing were there")
+                .choice_doc(
+                    "black",
+                    "opaque black, with its distance in the render's data output: it also hides a picture laid under the render, such as a sky, and fades with distance like any surface",
+                ),
+        )
         .output("out", DataKind::Mat),
         || Box::new(MatNode::new(Shading::Occluder)) as Box<dyn Operator>,
     ))?;
@@ -210,7 +219,13 @@ impl Operator for MatNode {
     fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
         let gpu = crate::gpu(cx)?;
         let mut material = Material { shading: self.shading, ..Material::constant() };
-        if self.shading != Shading::Occluder {
+        if self.shading == Shading::Occluder {
+            material.cover = match cx.text("shows")? {
+                "background" => false,
+                "black" => true,
+                other => return Err(CookError::failed(format!("unknown shows `{other}`"))),
+            };
+        } else {
             material.color = rgba(cx, "color")?;
         }
         if self.wire {

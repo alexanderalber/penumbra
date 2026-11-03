@@ -82,7 +82,7 @@ pub const MAX_SHADOWS: usize = 8;
 /// Most projector lights with a picture in one render; further ones are left out.
 pub const MAX_PROJECTORS: usize = 4;
 const LIGHT_BYTES: u64 = 128;
-const FRAME_BYTES: u64 = 144 + MAX_LIGHTS as u64 * LIGHT_BYTES;
+const FRAME_BYTES: u64 = 160 + MAX_LIGHTS as u64 * LIGHT_BYTES;
 const DRAW_BYTES: u64 = 224;
 const AO_BYTES: u64 = 96;
 /// Most draws (runs of one part and material, over all models) in one render.
@@ -686,8 +686,11 @@ impl Pipelines {
             wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 0, shader_location: 0 },
             wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 12, shader_location: 1 },
             wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x2, offset: 24, shader_location: 2 },
-            // Wireframes only: barycentric coordinates and the edges inside flat polygons.
+            // Wireframes only: barycentric coordinates and the edges inside flat polygons, then
+            // the triangle's other two corners.
             wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x4, offset: 32, shader_location: 3 },
+            wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 48, shader_location: 4 },
+            wgpu::VertexAttribute { format: wgpu::VertexFormat::Float32x3, offset: 60, shader_location: 5 },
         ];
         let (entry, stride, attributes) = if wire {
             ("vs_wire", WIRE_BYTES, &attributes[..])
@@ -741,8 +744,12 @@ impl Pipelines {
                     stencil: wgpu::StencilState::default(),
                     // Against acne where a surface is seen at a slant from the light; the rest is
                     // the colour pass's normal offset.
+                    // Hidden faces and their lines a hair nearer: where a solid cover lies on the
+                    // same faces, the lines still win against its depth.
                     bias: if shadow {
                         wgpu::DepthBiasState { constant: 2, slope_scale: 1.5, clamp: 0.0 }
+                    } else if stage != Stage::Draw {
+                        wgpu::DepthBiasState { constant: -16, slope_scale: -1.0, clamp: 0.0 }
                     } else {
                         wgpu::DepthBiasState::default()
                     },
@@ -1185,10 +1192,12 @@ impl Renderer {
         self.ensure_maps(gpu, shadow_size, tint_size, layers, tinted)?;
         let shared = self.shared(gpu)?;
 
-        let maps = Maps { shadow: shadow_size, tint: tint_size, tinted, ao: ao.is_some() };
+        let pixels = [size.0, size.1];
+        let maps = Maps { shadow: shadow_size, tint: tint_size, tinted, ao: ao.is_some(), pixels };
         for (p, buffer) in placed.iter().filter_map(|p| p.layer.map(|_| p)).zip(&self.shadow_frames) {
             let from = View { clip_from_world: p.clip, view_z: [0.0; 4], eye: [0.0; 3], parallel: false };
-            gpu.queue().write_buffer(buffer, 0, &frame_bytes(&from, look, maps, &[], &[]));
+            let shadow = Maps { pixels: [shadow_size; 2], ..maps };
+            gpu.queue().write_buffer(buffer, 0, &frame_bytes(&from, look, shadow, &[], &[]));
         }
         gpu.queue().write_buffer(&shared.frame, 0, &frame_bytes(view, look, maps, lights, &placed));
         if let (Some(a), Some(buffer)) = (ao, &self.ao_uniforms) {
@@ -1434,14 +1443,15 @@ fn ambient_occlusion(look: &Look, lights: &[Light], placed: &[Placed]) -> Option
     })
 }
 
-/// The sizes of the shadow and tint maps, whether the tint maps hold anything, and whether
-/// ambient occlusion was drawn.
+/// The sizes of the shadow and tint maps, whether the tint maps hold anything, whether
+/// ambient occlusion was drawn, and the size in pixels of what the frame draws into.
 #[derive(Clone, Copy, Debug)]
 struct Maps {
     shadow: u32,
     tint: u32,
     tinted: bool,
     ao: bool,
+    pixels: [u32; 2],
 }
 
 /// Column-major `f32`s of a row-major matrix (WGSL's layout).
@@ -1493,6 +1503,9 @@ fn frame_bytes(view: &View, look: &Look, maps: Maps, lights: &[Light], placed: &
     }
     let flag = |on: bool| if on { 1.0 } else { 0.0 };
     for v in [maps.shadow as f32, maps.tint as f32, flag(maps.tinted), flag(maps.ao)] {
+        b.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in [maps.pixels[0] as f32, maps.pixels[1] as f32, 0.0, 0.0] {
         b.extend_from_slice(&v.to_le_bytes());
     }
     for (l, p) in lights.iter().zip(placed) {
@@ -1605,6 +1618,7 @@ fn draw_slot(
         Shading::Constant => 0,
         Shading::Phong => 1,
         Shading::Pbr => 2,
+        Shading::Occluder if occluder && m.cover => 4,
         Shading::Occluder if occluder => 3,
         Shading::Occluder => 0,
     };

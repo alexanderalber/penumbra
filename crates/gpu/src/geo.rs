@@ -21,8 +21,9 @@ use crate::{Gpu, Tex};
 /// Bytes of one vertex on the GPU: position, normal, uv as `f32`.
 pub const VERTEX_BYTES: u64 = 32;
 /// Bytes of one corner of a wireframe's triangle: a vertex, then its barycentric coordinates and
-/// which of the triangle's edges lie inside a flat polygon.
-pub const WIRE_BYTES: u64 = 48;
+/// which of the triangle's edges lie inside a flat polygon, then the positions of the next and
+/// the previous corner (so a triangle thinner than its lines can be widened on screen).
+pub const WIRE_BYTES: u64 = 72;
 /// Faces whose normals differ by less than this cosine (about one degree) count as one flat
 /// polygon for a wireframe's `polygons` edges.
 const FLAT: f32 = 0.99985;
@@ -210,7 +211,7 @@ impl Model {
     /// The vertices a wireframe draws: three per triangle in index order (so a run of indices
     /// draws the same corners unindexed), each with its barycentric coordinates and, in the
     /// fourth float, a bit per edge that lies inside a flat polygon (bit k: the edge opposite
-    /// corner k). Made once, on first use.
+    /// corner k), then the next and the previous corner's position. Made once, on first use.
     pub(crate) fn wire(&self, gpu: &Gpu) -> Result<wgpu::Buffer, Error> {
         let mut slot = lock(&self.wire);
         if let Some(b) = slot.as_ref() {
@@ -227,13 +228,22 @@ impl Model {
         let mut data = Vec::with_capacity(bytes as usize);
         for (t, corners) in self.mesh.indices.as_chunks::<3>().0.iter().enumerate() {
             let mask = f32::from(inside.get(t).copied().unwrap_or(0));
-            for (k, i) in corners.iter().enumerate() {
-                let v = self.mesh.vertices.get(*i as usize).copied().unwrap_or_default();
+            let at = |k: usize| {
+                corners
+                    .get(k % 3)
+                    .and_then(|i| self.mesh.vertices.get(*i as usize))
+                    .copied()
+                    .unwrap_or_default()
+            };
+            for k in 0..3 {
+                let v = at(k);
+                let (next, previous) = (at(k + 1).position, at(k + 2).position);
                 let mut bary = [0.0f32; 3];
                 if let Some(b) = bary.get_mut(k) {
                     *b = 1.0;
                 }
-                for f in v.position.iter().chain(&v.normal).chain(&v.uv).chain(&bary).chain([&mask]) {
+                let floats = v.position.iter().chain(&v.normal).chain(&v.uv).chain(&bary).chain([&mask]);
+                for f in floats.chain(&next).chain(&previous) {
                     data.extend_from_slice(&f.to_le_bytes());
                 }
             }
@@ -449,6 +459,9 @@ pub struct Material {
     pub wire: Option<Wire>,
     /// Casts shadows from the lights that cast them, and tints their light where see-through.
     pub shadows: bool,
+    /// An occluder only: opaque black where it stands instead of the render's background, with
+    /// its distance in the data pass, so a picture laid under the render stays hidden there too.
+    pub cover: bool,
 }
 
 impl Material {
@@ -465,6 +478,7 @@ impl Material {
             texture: None,
             wire: None,
             shadows: true,
+            cover: false,
         }
     }
 }
