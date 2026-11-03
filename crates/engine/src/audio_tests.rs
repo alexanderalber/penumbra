@@ -688,6 +688,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         (json!({"slots": {"floor": ["/n"]}}), "no param presence"),
         (json!({"slots": {"floor": ["/blocks", "/blocks"]}}), "twice"),
         (json!({"slots": {}}), "no elements"),
+        (json!({"slots": {"floor": [{"path": "/blocks", "weight": 0.0}]}}), "weight is a number above 0"),
         (json!({"stage": "/n"}), "no param warmth"),
         (json!({"intensity": "/stage.nope"}), "no param nope"),
         (json!({"fade_min": -1.0}), "fade_min"),
@@ -777,9 +778,11 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
             c.fract() == 0.0 && (0.0..6.0).contains(&c) && channel(&m, "stage") == 0.0
         }
     });
-    // Again: nothing new is created, the table is written again.
-    let again = f.call("beats.arrange", args(json!({"fade_min": 0.5})));
+    // Again, with a weight: nothing new is created, the table is written again.
+    let weighted = json!({"fade_min": 0.5, "slots": {"floor": ["/blocks", {"path": "/mountains", "weight": 3}], "sky": ["/galaxy"]}});
+    let again = f.call("beats.arrange", args(weighted));
     assert_eq!(again["created"], json!([]), "{again}");
+    assert_eq!(again["rows"], 4, "{again}");
     // One undo takes the second run back, another the first.
     f.call("history.undo", json!({}));
     f.call("history.undo", json!({}));

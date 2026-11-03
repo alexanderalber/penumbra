@@ -11,6 +11,10 @@
 //!   section shows the first element of each slot.
 //! - At a boundary below [`CHANGE_SMALL`] nothing swaps. From [`CHANGE_SMALL`] one slot swaps to
 //!   its next element; the slots take turns. From [`CHANGE_BIG`] every slot swaps.
+//! - **Weights:** an element of weight 3 comes on three times as often as one of weight 1. The
+//!   next element is the one owed the most turns (smooth weighted round robin), so the turns of a
+//!   heavy element spread out evenly and the same file always gives the same table. With equal
+//!   weights the slot goes through its elements in order.
 //! - The colour walks on at every boundary by `change` times [`WALK_STEP`] (twice that from
 //!   [`CHANGE_BIG`]) and never walks back: a place grows, and `warmth` goes 0, 1, 0, ... along it.
 //! - The role of a section sets the rest: calm in an intro or outro, an empty floor in a break,
@@ -120,6 +124,32 @@ pub struct Slot {
     pub name: String,
     /// The elements' column names.
     pub elements: Vec<String>,
+    /// How often each element comes on, against the others in the slot: one per element, or
+    /// empty for 1 each. A weight that is no number above 0 counts as 1. The post slot ignores
+    /// them (its elements are on or off each by itself).
+    pub weights: Vec<f64>,
+}
+
+/// The heaviest weight an element takes; heavier ones count as this.
+pub const WEIGHT_MAX: f64 = 100.0;
+
+impl Slot {
+    /// A slot whose elements weigh 1 each.
+    pub fn new(name: &str, elements: &[&str]) -> Slot {
+        Slot {
+            name: name.into(),
+            elements: elements.iter().map(|e| e.to_string()).collect(),
+            weights: Vec::new(),
+        }
+    }
+
+    /// The weight of element `i`: its own, 1 where none or none usable is given.
+    pub fn weight(&self, i: usize) -> f64 {
+        match self.weights.get(i) {
+            Some(w) if w.is_finite() && *w > 0.0 => w.min(WEIGHT_MAX),
+            _ => 1.0,
+        }
+    }
 }
 
 /// One row of the arrangement.
@@ -198,8 +228,8 @@ pub fn draw(seed: u32, row: usize) -> f64 {
 
 /// What one slot shows while the rows are made.
 enum State {
-    /// One element on: which, of how many.
-    One(usize, usize),
+    /// One element on: which, the elements' weights, and the turns each is owed.
+    One { on: usize, weights: Vec<f64>, owed: Vec<f64> },
     /// The post slot: each element on or off, and which one a swap switches next.
     Each(Vec<bool>, usize),
 }
@@ -207,15 +237,43 @@ enum State {
 impl State {
     fn swappable(&self) -> bool {
         match self {
-            State::One(_, n) => *n > 1,
+            State::One { weights, .. } => weights.len() > 1,
             State::Each(on, _) => !on.is_empty(),
         }
     }
 
+    /// A slot with one element on, the first, as though the round robin had just picked it.
+    fn one(weights: Vec<f64>) -> State {
+        let total: f64 = weights.iter().sum();
+        let mut owed = weights.clone();
+        if let Some(first) = owed.first_mut() {
+            *first -= total;
+        }
+        State::One { on: 0, weights, owed }
+    }
+
     /// One swap: the next element on; in the post slot the next element switched.
+    /// The next element is the one owed the most turns, never the one on; ties go to the first.
     fn swap(&mut self) {
         match self {
-            State::One(k, n) => *k = (*k + 1) % (*n).max(1),
+            State::One { on, weights, owed } => {
+                let total: f64 = weights.iter().sum();
+                for (o, w) in owed.iter_mut().zip(weights.iter()) {
+                    *o += *w;
+                }
+                let mut best: Option<usize> = None;
+                for (j, o) in owed.iter().enumerate() {
+                    if j != *on && best.is_none_or(|b| owed.get(b).is_some_and(|ob| o > ob)) {
+                        best = Some(j);
+                    }
+                }
+                if let Some(b) = best {
+                    if let Some(o) = owed.get_mut(b) {
+                        *o -= total;
+                    }
+                    *on = b;
+                }
+            }
             State::Each(on, next) => {
                 let at = *next % on.len().max(1);
                 if let Some(x) = on.get_mut(at) {
@@ -229,7 +287,7 @@ impl State {
     /// A big change: every element of the post slot switches, any other slot takes its next.
     fn swap_all(&mut self) {
         match self {
-            State::One(..) => self.swap(),
+            State::One { .. } => self.swap(),
             State::Each(on, _) => on.iter_mut().for_each(|x| *x = !*x),
         }
     }
@@ -243,7 +301,7 @@ pub fn rows(parts: &[Part], slots: &[Slot], stages: usize) -> Vec<Row> {
             if s.name == POST {
                 State::Each(vec![false; s.elements.len()], 0)
             } else {
-                State::One(0, s.elements.len())
+                State::one((0..s.elements.len()).map(|i| s.weight(i)).collect())
             }
         })
         .collect();
@@ -319,7 +377,9 @@ pub fn rows(parts: &[Part], slots: &[Slot], stages: usize) -> Vec<Row> {
             };
             let level = if empty && Some(s) != kept { 0.0 } else { level };
             match x {
-                State::One(k, n) => presence.extend((0..*n).map(|j| if j == *k { level } else { 0.0 })),
+                State::One { on, weights, .. } => {
+                    presence.extend((0..weights.len()).map(|j| if j == *on { level } else { 0.0 }))
+                }
                 State::Each(on, _) => {
                     presence.extend(on.iter().map(|o| if *o && !empty { 1.0 } else { 0.0 }))
                 }
@@ -489,10 +549,7 @@ mod tests {
     use crate::sequence::Show;
 
     fn slots() -> Vec<Slot> {
-        vec![
-            Slot { name: "floor".into(), elements: vec!["blocks".into(), "mountains".into()] },
-            Slot { name: "sky".into(), elements: vec!["galaxy".into()] },
-        ]
+        vec![Slot::new("floor", &["blocks", "mountains"]), Slot::new("sky", &["galaxy"])]
     }
 
     /// Parts of 30 s each with the given roles and changes, energy 0.6, cuts.
@@ -547,10 +604,7 @@ mod tests {
         assert_eq!(presence(&r), [[1.0, 0.0, 1.0], [0.0, 1.0, 1.0]]);
         assert!((r[1].walk - 0.8 * WALK_STEP * 2.0).abs() < 1e-12);
         // Two floor slots: a big change swaps both, a medium one only one.
-        let two = vec![
-            Slot { name: "floor".into(), elements: vec!["a".into(), "b".into()] },
-            Slot { name: "mid".into(), elements: vec!["c".into(), "d".into(), "e".into()] },
-        ];
+        let two = vec![Slot::new("floor", &["a", "b"]), Slot::new("mid", &["c", "d", "e"])];
         let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 1.0), (Role::Main, 0.5)]), &two, 1);
         assert_eq!(r[1].presence, [0.0, 1.0, 0.0, 1.0, 0.0]);
         assert_eq!(r[2].presence, [1.0, 0.0, 0.0, 1.0, 0.0]);
@@ -559,9 +613,9 @@ mod tests {
     #[test]
     fn slots_take_turns_and_a_slot_of_one_element_never_swaps() {
         let s = vec![
-            Slot { name: "floor".into(), elements: vec!["a".into(), "b".into()] },
-            Slot { name: "mid".into(), elements: vec!["c".into(), "d".into(), "e".into()] },
-            Slot { name: "sky".into(), elements: vec!["g".into()] },
+            Slot::new("floor", &["a", "b"]),
+            Slot::new("mid", &["c", "d", "e"]),
+            Slot::new("sky", &["g"]),
         ];
         let p = parts(&[
             (Role::Main, 0.0),
@@ -580,7 +634,7 @@ mod tests {
         assert_eq!(on(&r[3]), [0, 3, 5], "floor again");
         assert_eq!(on(&r[4]), [0, 4, 5]);
         // Only one-element slots: nothing can swap.
-        let single = vec![Slot { name: "sky".into(), elements: vec!["g".into()] }];
+        let single = vec![Slot::new("sky", &["g"])];
         let r = rows(&parts(&[(Role::Main, 0.0), (Role::Main, 0.5), (Role::Main, 1.0)]), &single, 1);
         assert!(r.iter().all(|r| r.presence == [1.0]));
     }
@@ -614,10 +668,10 @@ mod tests {
     #[test]
     fn the_mid_slot_follows_the_sky_and_other_slots_the_floor() {
         let s = vec![
-            Slot { name: "ceiling".into(), elements: vec!["c".into()] },
-            Slot { name: "mid".into(), elements: vec!["g".into()] },
-            Slot { name: "other".into(), elements: vec!["p".into()] },
-            Slot { name: "sky".into(), elements: vec!["s".into()] },
+            Slot::new("ceiling", &["c"]),
+            Slot::new("mid", &["g"]),
+            Slot::new("other", &["p"]),
+            Slot::new("sky", &["s"]),
         ];
         let p = parts(&[(Role::Intro, 0.0), (Role::Break, 0.5), (Role::Drop, 0.9), (Role::Outro, 0.1)]);
         let r: Vec<Vec<f64>> = rows(&p, &s, 1).into_iter().map(|r| r.presence).collect();
@@ -672,9 +726,7 @@ mod tests {
         assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0");
         assert_eq!(lines.len(), 3);
         assert!(check(&slots()).is_ok());
-        let bad = |e: &[&str]| {
-            vec![Slot { name: "floor".into(), elements: e.iter().map(|s| s.to_string()).collect() }]
-        };
+        let bad = |e: &[&str]| vec![Slot::new("floor", e)];
         assert!(check(&bad(&["a", "a"])).unwrap_err().contains("twice"));
         assert!(check(&bad(&["warmth"])).unwrap_err().contains("column"));
         assert!(check(&bad(&["camera"])).unwrap_err().contains("column"));
@@ -686,10 +738,7 @@ mod tests {
 
     #[test]
     fn post_elements_are_on_each_by_itself_off_where_calm_and_on_from_a_drop() {
-        let s = vec![
-            Slot { name: "floor".into(), elements: vec!["a".into()] },
-            Slot { name: "post".into(), elements: vec!["lines".into(), "glow".into()] },
-        ];
+        let s = vec![Slot::new("floor", &["a"]), Slot::new("post", &["lines", "glow"])];
         let p = parts(&[
             (Role::Intro, 0.0),
             (Role::Main, 0.1),
@@ -717,7 +766,7 @@ mod tests {
         assert_eq!(r[8], [1.0, 1.0, 1.0]);
         assert_eq!(r[9], [CALM_PRESENCE, 0.0, 0.0]);
         // A ceiling slot follows the floor: empty in a break.
-        let c = vec![Slot { name: CEILING.into(), elements: vec!["chase".into()] }];
+        let c = vec![Slot::new(CEILING, &["chase"])];
         let r = rows(&parts(&[(Role::Main, 0.0), (Role::Break, 0.5), (Role::Intro, 0.9)]), &c, 1);
         let r: Vec<f64> = r.iter().map(|r| r.presence[0]).collect();
         assert_eq!(r, [1.0, 0.0, CALM_PRESENCE]);
@@ -726,11 +775,11 @@ mod tests {
     /// Five slots, three full sections, then a main section at `change` with `seed`.
     fn empty_case(change: f64, seed: u32) -> Row {
         let s = vec![
-            Slot { name: "ceiling".into(), elements: vec!["c".into()] },
-            Slot { name: "floor".into(), elements: vec!["a".into(), "b".into()] },
-            Slot { name: "mid".into(), elements: vec!["g".into()] },
-            Slot { name: "post".into(), elements: vec!["p".into()] },
-            Slot { name: "sky".into(), elements: vec!["s".into()] },
+            Slot::new("ceiling", &["c"]),
+            Slot::new("floor", &["a", "b"]),
+            Slot::new("mid", &["g"]),
+            Slot::new("post", &["p"]),
+            Slot::new("sky", &["s"]),
         ];
         let mut p = parts(&[(Role::Drop, 0.0), (Role::Main, 0.1), (Role::Main, 0.1), (Role::Main, change)]);
         p[3].seed = seed;
@@ -756,7 +805,7 @@ mod tests {
         assert!(!empty_case(1.0, full).empty);
         assert!(!empty_case(CHANGE_BIG - 0.01, seed).empty);
         // Fewer full sections before: none.
-        let s = vec![Slot { name: "floor".into(), elements: vec!["a".into()] }];
+        let s = vec![Slot::new("floor", &["a"])];
         let mut p = parts(&[(Role::Main, 0.0), (Role::Break, 0.1), (Role::Main, 0.1), (Role::Main, 1.0)]);
         p[3].seed = seed;
         assert!(!rows(&p, &s, 1)[3].empty, "a break two rows before resets the count");
@@ -872,5 +921,39 @@ mod tests {
             assert!(s.begins.windows(2).all(|w| w[1] >= w[0] + 0.1), "{:?}", s.begins);
         }
         assert!(steps(&[], 10.0, 2.0, "x").is_err());
+    }
+
+    #[test]
+    fn a_heavy_element_comes_on_as_often_as_its_weight_spread_out_and_the_same_every_time() {
+        let names = ["glider", "a", "b", "c", "d", "e", "f", "g"];
+        let mut slot = Slot::new("mid", &names);
+        slot.weights = vec![3.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0];
+        let mut of = vec![(Role::Main, 0.0)];
+        of.extend(std::iter::repeat_n((Role::Main, 0.5), 99));
+        let p = parts(&of);
+        let on = |r: &[Row]| -> Vec<usize> {
+            r.iter().map(|r| r.presence.iter().position(|x| *x > 0.0).unwrap_or(usize::MAX)).collect()
+        };
+        let picks = on(&rows(&p, std::slice::from_ref(&slot), 1));
+        assert_eq!(picks, on(&rows(&p, std::slice::from_ref(&slot), 1)), "the same every time");
+        assert_eq!(picks[0], 0, "the first element starts");
+        // 100 rows, weights 3 of 10: the glider in 30, each other element in 10.
+        let count = |k: usize| picks.iter().filter(|x| **x == k).count();
+        assert_eq!(count(0), 30, "{picks:?}");
+        for k in 1..names.len() {
+            assert_eq!(count(k), 10, "{k}: {picks:?}");
+        }
+        // Every row swaps, and the glider's turns spread out: never more than 5 rows apart.
+        assert!(picks.windows(2).all(|w| w[0] != w[1]), "{picks:?}");
+        let at: Vec<usize> = picks.iter().enumerate().filter(|(_, x)| **x == 0).map(|(i, _)| i).collect();
+        assert!(at.windows(2).all(|w| w[1] - w[0] <= 5), "{at:?}");
+        // Equal weights, or weights that are no number, go through the elements in order.
+        let mut plain = Slot::new("mid", &["a", "b", "c"]);
+        for w in [vec![], vec![1.0, 1.0, 1.0], vec![f64::NAN, -2.0, 0.0]] {
+            plain.weights = w;
+            let r = rows(&p[..7], std::slice::from_ref(&plain), 1);
+            assert_eq!(on(&r), [0, 1, 2, 0, 1, 2, 0]);
+        }
+        assert_eq!(Slot { weights: vec![1e9], ..Slot::new("x", &["a"]) }.weight(0), WEIGHT_MAX);
     }
 }

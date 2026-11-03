@@ -434,6 +434,58 @@ A drop scatters it. The darts stay above the floor, under the ceiling and 4.5 to
 - The swarm's state lives in a `tex.feedback`, so the flight carries on from frame to frame. After
   a seek the swarm flies on from where it was.
 
+### mid_shapes
+
+![mid_shapes](mid_shapes/preview.png)
+
+Wireframe solids fly in a ring ahead of the camera, above the glider: octahedra, tori and
+icosahedra. The ring turns on at every bar. Each solid makes a quick turn on every beat. Through
+the build before a boundary the ring draws together. A drop throws the solids apart, and they
+gather again within a few seconds. Towards `presence` 0 the solids shrink away one after
+another, and the ring flies off ahead.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- Params: `presence`, `count` (3 to 7 solids), `seed` (which solid takes which shape), `size`
+  (metres across), `at` (metres ahead), `hover` (metres up), `radius` (the ring's half width),
+  `depth` (its half depth along the flight), `tilt` (how much higher its far side flies),
+  `tight` (how much a build draws it together), `scatter` (how far a drop throws the solids),
+  `turn` (the share of a step the ring turns on per bar), `spin` (turns per beat), `color`,
+  `line_width`.
+- The shapes come from `shapes.py` in the folder.
+
+### mid_lasers
+
+![mid_lasers](mid_lasers/preview.png)
+
+A fan of laser beams. The beams start at one point low over the lane, where the floor fades
+into the distance, and pass the camera above and on both sides. The fan swings from side to side
+once every two bars. Every kick takes the beams out for one frame, so they flicker with the
+beat. The fan suits a drop; `beats.arrange` decides when it shows. Towards `presence` 0 the
+outer beams draw back into their point first.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- Params: `presence`, `count` (5 to 15 beams), `origin` (metres ahead where the beams start),
+  `low` (their height there), `reach` (metres ahead where they end; below 0 behind the camera),
+  `across` (how far out the outer beams end), `up` (how high the middle beam ends), `open`
+  (degrees from the middle to the outer beams), `sweep` (degrees the middle swings), `strobe`
+  (on or off), `thickness`, `color`, `line_width`.
+
+### mid_scope
+
+![mid_scope](mid_scope/preview.png)
+
+A green line in the air over the lane, like an oscilloscope. It is a Lissajous figure of the
+music's levels, not its waveform. The bus carries levels only. Two sine waves draw the figure, one
+across and one up and down. The mids set the frequency across and the treble the one up and
+down. The bass makes the figure larger. Each beat turns the figure on by a step. The line is
+closed and made of 192 short segments. Towards `presence` 0 the line shortens until it is gone.
+
+- In: `bus`, `lane`. Out: `out` (into the stage's `mid`).
+- Params: `presence`, `segments` (16 to 256), `at` (metres ahead), `hover` (metres up),
+  `across`, `tall` (half the figure's width and height, metres), `depth` (how far the line bends
+  towards the camera), `grow` (how much the bass enlarges it), `kick` (turns per beat),
+  `smooth` (seconds the levels take to fall), `thickness`, `color`, `line_width`.
+
 ### sky_galaxy
 
 ![sky_galaxy](sky_galaxy/preview.png)

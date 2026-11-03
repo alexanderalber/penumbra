@@ -1,0 +1,20 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/mid_lasers": (kind: "comp.base", params: {"expose": "presence = controls.value0\ncount = controls.value1\nfrom = controls.value2\nlow = controls.value3\nreach = controls.value4\nacross = controls.value5\nup = controls.value6\nopen = controls.value7\nsweep = controls.value8\nstrobe = controls.value9\nstrobe = sizes.strobe
+thickness = sizes.thickness\ncolor = beam_lines.color\nline_width = beam_lines.line_width"}),
+        "/mid_lasers/bus": (kind: "chan.in", pos: [-1000.0, 0.0]),
+        "/mid_lasers/lane": (kind: "tex.in", pos: [-1000.0, 150.0]),
+        "/mid_lasers/controls": (kind: "chan.constant", params: {"rows": 9, "name0": "presence", "value0": 1.0, "name1": "count", "value1": 9.0, "name2": "origin", "value2": 10.0, "name3": "low", "value3": 0.5, "name4": "reach", "value4": -1.0, "name5": "across", "value5": 6.0, "name6": "up", "value6": 3.2, "name7": "open", "value7": 55.0, "name8": "sweep", "value8": 20.0}, pos: [-1000.0, 300.0]),
+        "/mid_lasers/places": (kind: "tex.shader", params: {"resolution": "custom", "width": 16, "height": 1, "keep_size": true, "file": "library/mid_lasers/beams.wgsl", "what": "place", "presence": 1.0, "count": 9, "origin": 10.0, "low": 0.5, "reach": -1.0, "across": 6.0, "up": 3.2, "open": 55.0, "sweep": 20.0, "strobe": true}, inputs: {"in0": "lane"}, binds: {"bar_index": "bus:bar_index", "bar": "bus:bar", "presence": "controls:presence", "count": "controls:count", "origin": "controls:origin", "low": "controls:low", "reach": "controls:reach", "across": "controls:across", "up": "controls:up", "open": "controls:open", "sweep": "controls:sweep"}, pos: [-700.0, 0.0]),
+        "/mid_lasers/heading": (kind: "tex.shader", params: {"resolution": "custom", "width": 16, "height": 1, "keep_size": true, "file": "library/mid_lasers/beams.wgsl", "what": "aim", "presence": 1.0, "count": 9, "origin": 10.0, "low": 0.5, "reach": -1.0, "across": 6.0, "up": 3.2, "open": 55.0, "sweep": 20.0, "strobe": true}, inputs: {"in0": "lane"}, binds: {"bar_index": "bus:bar_index", "bar": "bus:bar", "presence": "controls:presence", "count": "controls:count", "origin": "controls:origin", "low": "controls:low", "reach": "controls:reach", "across": "controls:across", "up": "controls:up", "open": "controls:open", "sweep": "controls:sweep"}, pos: [-700.0, 150.0]),
+        "/mid_lasers/sizes": (kind: "tex.shader", params: {"resolution": "custom", "width": 16, "height": 1, "keep_size": true, "file": "library/mid_lasers/beams.wgsl", "what": "scale", "thickness": 0.015, "presence": 1.0, "count": 9, "origin": 10.0, "low": 0.5, "reach": -1.0, "across": 6.0, "up": 3.2, "open": 55.0, "sweep": 20.0, "strobe": true}, inputs: {"in0": "lane"}, binds: {"bar_index": "bus:bar_index", "bar": "bus:bar", "kick": "bus:kick", "presence": "controls:presence", "count": "controls:count", "origin": "controls:origin", "low": "controls:low", "reach": "controls:reach", "across": "controls:across", "up": "controls:up", "open": "controls:open", "sweep": "controls:sweep"}, pos: [-700.0, 300.0]),
+        "/mid_lasers/beam": (kind: "geo.file", params: {"file": "library/mid_lasers/beam.obj", "up": "z"}, pos: [-700.0, -300.0]),
+        "/mid_lasers/beam_lines": (kind: "mat.wireframe", params: {"color": [1.0, 0.18, 0.55, 1.0], "line_width": 3.0}, pos: [-700.0, -150.0]),
+        "/mid_lasers/beam_wire": (kind: "geo.assign_material", inputs: {"in": "beam", "mat": "beam_lines"}, pos: [-400.0, -200.0]),
+        "/mid_lasers/beams": (kind: "geo.tex_instance", params: {"extent": 20.0}, inputs: {"in": "beam_wire", "position": "places", "aim": "heading", "scale": "sizes"}, pos: [0.0, 0.0]),
+        "/mid_lasers/out": (kind: "geo.out", inputs: {"in": "beams"}, pos: [200.0, 0.0]),
+    },
+)

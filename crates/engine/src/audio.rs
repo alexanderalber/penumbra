@@ -132,8 +132,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "Writes the arrangement of a music stage from the sections of the file a chan.beat_grid reads, as one \
          undoable edit: {path (the chan.beat_grid), table (a table.text, created when missing), sequence (a \
          chan.sequence, created when missing), slots ({slot: [element paths]}, e.g. {floor: [\"/blocks\", \
-         \"/mountains\"], sky: [\"/galaxy\"]}: the first element of each slot is on at the start, slots take \
-         turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
+         \"/mountains\"], sky: [\"/galaxy\"]}; an element may be {path, weight} instead, e.g. {path: \
+         \"/glider\", weight: 3}, to come on three times as often as one of weight 1 (default 1, at most \
+         100): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
          effects that are on or off each by itself (off in an intro, outro or break, on from a drop), every \
          other slot (floor, ceiling) follows the floor's rules), stage? (a path, or a list of stages side by \
          side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
@@ -719,6 +720,14 @@ enum Stages {
     Many(Vec<NodePath>),
 }
 
+/// An element in a slot: its path, or its path and how often it comes on.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Entry {
+    Path(NodePath),
+    Weighted { path: NodePath, weight: f64 },
+}
+
 fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -726,7 +735,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         path: NodePath,
         table: NodePath,
         sequence: NodePath,
-        slots: BTreeMap<String, Vec<NodePath>>,
+        slots: BTreeMap<String, Vec<Entry>>,
         stage: Option<Stages>,
         switch: Option<ParamPath>,
         intensity: Option<ParamPath>,
@@ -763,9 +772,21 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     };
     let mut slots = Vec::new();
     let mut elements: Vec<NodePath> = Vec::new();
-    for (slot, paths) in &a.slots {
+    for (slot, entries) in &a.slots {
         let mut names = Vec::new();
-        for path in paths {
+        let mut weights = Vec::new();
+        for entry in entries {
+            let (path, weight) = match entry {
+                Entry::Path(path) => (path, 1.0),
+                Entry::Weighted { path, weight } => (path, *weight),
+            };
+            if !weight.is_finite() || !(weight > 0.0 && weight <= arrange::WEIGHT_MAX) {
+                return Err(CommandError(format!(
+                    "{path}: weight is a number above 0, at most {}",
+                    arrange::WEIGHT_MAX
+                )));
+            }
+            weights.push(weight);
             require(&net, path)?;
             if !has_param(e, &net, path, "presence") {
                 return Err(CommandError(format!("{path} has no param presence: an element needs one")));
@@ -773,7 +794,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             names.push(path.name().map(|n| n.as_str().to_string()).unwrap_or_default());
             elements.push(path.clone());
         }
-        slots.push(Slot { name: slot.clone(), elements: names });
+        slots.push(Slot { name: slot.clone(), elements: names, weights });
     }
     arrange::check(&slots).map_err(CommandError)?;
     for stage in &stages {
