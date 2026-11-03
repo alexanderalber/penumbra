@@ -1,8 +1,8 @@
 // The synthwave sun over black: a big disc standing on the horizon, dark horizontal lines cut
 // into its lower half (wider towards the bottom, drifting slowly down), and a glow around it.
 // Its colour runs from top to bottom through a warm gradient (yellow, orange, magenta) or a cold
-// one (cyan, blue, violet). Nothing below the horizon. Black where the sky is empty, so it can
-// be screened over another sky.
+// one (cyan, blue, violet). Below the horizon it shines through the floor, dimmed by `through`.
+// Black where the sky is empty, so it can be screened over another sky.
 // @param above float = 0.2 -0.5..1 -- how far the sun's centre stands above the horizon, in picture heights
 // @param size float = 0.26 0.02..1 -- the sun's radius, in picture heights
 // @param lines int = 8 0..24 -- dark lines across the lower half
@@ -19,6 +19,7 @@
 // @param roll float = 0 -45..45 -- the camera's roll, degrees (roll of the stage's pose)
 // @param side float = 0 -45..45 -- the camera's turn to the right, degrees (side of the stage's pose)
 // @param reach float = 10 1..100 -- metres ahead where the floor fades out, the stage's `end`: the horizon lies there
+// @param through float = 1 0..1 -- how much of the sun shines through the floor below the horizon: 1 all of it, 0 none (the sun is cut at the horizon)
 
 // Where this pixel lies in the sky, in picture heights of a 60 degree view: x from straight ahead,
 // y up from the horizon. The horizon is where the floor fades out, `reach` metres ahead, as the
@@ -75,7 +76,8 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let halo = (params.glow + 0.8 * flash) * (0.5 * exp(-out * 4.0) + 0.25 * exp(-out * 1.2)) * (1.0 - disc);
     var light = colour * disc * (0.85 + 0.35 * energy + 0.6 * flash) + mid * halo * (0.7 + 0.5 * energy);
 
-    // Nothing below the horizon: the floor stands there. A thin soft line keeps the cut clean.
-    light *= smoothstep(-1.5 * at.z, 1.5 * at.z, p.y);
+    // Below the horizon the floor stands; the sun shines through it by `through`. A thin soft line
+    // keeps the cut clean.
+    light *= mix(clamp(params.through, 0.0, 1.0), 1.0, smoothstep(-1.5 * at.z, 1.5 * at.z, p.y));
     return vec4f(light * params.brightness * clamp(params.presence, 0.0, 1.0), 1.0);
 }

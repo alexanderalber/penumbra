@@ -13,6 +13,9 @@
 // `what` lane: the lane picture for the mid elements, in the same layout. The lane lies straight
 // at the tube's bottom, so red and green are 0. Blue is `step`. Alpha is 0: the tube's bottom is
 // curved, so no floor element can stand on it, and floor elements sink away where alpha is 0.
+// in0: the gaps' memory (gaps.wgsl), optional: with it a change of `gap` reaches only the tube
+// beyond the fade's end and comes towards the camera with the tube; without it the gaps follow
+// `gap` at once.
 // @param what choice(twist|lane) = twist -- which picture
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid)
 // @param drift float = 0 -100..100 -- where the bars stand against `beats`, in bars (drift of a chan.beat_grid)
@@ -22,7 +25,7 @@
 // @param turn float = 4 0.1..8 -- beats a turn takes
 // @param swing float = 1.5 0..5 -- how far the lane swings to either side at most, in metres
 // @param origin float = 11 1..50 -- metres ahead where the lane's turns are counted: a corner passes there on a downbeat
-// @param gap float = 0 0..1 -- share of the tube that runs out into gaps: 0 none, 1 all of it
+// @param gap float = 0 0..1 -- share of the tube that runs out into gaps: 0 none, 1 all of it (read while in0 is not wired)
 // @param gap_length float = 8 1..40 -- metres a gap runs along the tube, rounded to whole bars
 
 const LANE_NEAR: f32 = -8.0;
@@ -104,11 +107,30 @@ const GAP_SOFT: f32 = 0.08;
 const RUN_OUT_SHARE: f32 = 0.4;
 const RUN_OUT_MOST: f32 = 4.0;
 
+// Cells of the gaps' memory (gaps.wgsl) in in0.
+const GAP_CELLS: f32 = 512.0;
+
+// The share of the tube in gaps that stretch `i` (of `bars` bars) keeps: what the gaps' memory in
+// in0 held at its first cell when that cell was last out of sight, so a change of `gap` comes in
+// from the far end. Without the memory, `gap` itself.
+fn gap_of(i: f32, bars: f32, bpb: f32) -> f32 {
+    if textureDimensions(in0).x < u32(GAP_CELLS) {
+        return params.gap;
+    }
+    let first = floor((i * bars - params.drift) * bpb);
+    let k = i32(first - GAP_CELLS * floor(first / GAP_CELLS));
+    return textureLoad(in0, vec2i(k, 0), 0).r;
+}
+
 // How far stretch `i` is open: 0 the tube, 1 a gap. A stretch is a gap when its draw lies under
-// `gap`.
-fn opened(i: f32) -> f32 {
+// its share of gaps (gap_of).
+fn opened(i: f32, bars: f32, bpb: f32) -> f32 {
+    let gap = gap_of(i, bars, bpb);
+    if gap <= 0.0 {
+        return 0.0;
+    }
     let draw = f32(pn_hash(vec3u(bitcast<u32>(i32(i)), 23u, 5u)).x) / 4294967296.0;
-    return smoothstep(0.0, GAP_SOFT, params.gap * (1.0 + GAP_SOFT) - draw);
+    return smoothstep(0.0, GAP_SOFT, gap * (1.0 + GAP_SOFT) - draw);
 }
 
 // The tube at the point that passes the camera when `travelled` is `c` beats: 1 where it stands
@@ -118,23 +140,20 @@ fn opened(i: f32) -> f32 {
 // lines and wall there. Where two gaps follow each other the tube does not come back between
 // them.
 fn ground(c: f32) -> f32 {
-    if params.gap <= 0.0 {
-        return 1.0;
-    }
     let bpb = max(params.beats_per_bar, 1.0);
     let step = max(params.step, 0.01);
     let bars = max(round(params.gap_length / (bpb * step)), 1.0);
     let at = (c / bpb + params.drift) / bars;
     let stretch = floor(at);
     let f = at - stretch;
-    let open = opened(stretch);
+    let open = opened(stretch, bars, bpb);
     if open <= 0.0 {
         return 1.0;
     }
     let span = bars * bpb * step;
     let ramp = max(min(RUN_OUT_SHARE * span, RUN_OUT_MOST), 0.01);
-    let from_start = mix(smoothstep(0.0, ramp, f * span), 1.0, opened(stretch - 1.0));
-    let to_end = mix(smoothstep(0.0, ramp, (1.0 - f) * span), 1.0, opened(stretch + 1.0));
+    let from_start = mix(smoothstep(0.0, ramp, f * span), 1.0, opened(stretch - 1.0, bars, bpb));
+    let to_end = mix(smoothstep(0.0, ramp, (1.0 - f) * span), 1.0, opened(stretch + 1.0, bars, bpb));
     return 1.0 - open * min(from_start, to_end);
 }
 

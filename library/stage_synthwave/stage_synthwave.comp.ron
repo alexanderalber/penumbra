@@ -4,7 +4,7 @@
     version: 2,
     nodes: {
         "/stage_synthwave": (kind: "comp.base", params: {"expose": "warmth = palette.cross\nlift = energy_lift.b\nenergy_curve = energy_curve.b\nbars_per_turn = lane_map.bars_per_turn\nswing = lane_map.swing\nturn = lane_map.turn\nstep = controls.value0\nbeats_per_bar = lane_map.beats_per_bar\nstart = fade.start\nend = shape.value4\ndim = nebula_dim.brightness\ncamera = preset.row\nglide = glide.rise\npresets = presets.text
-gap = lane_map.gap
+gap = gap_memory.gap
 gap_length = lane_map.gap_length
 ground = ground.ground\nroll_up = controls.value1"}),
         "/stage_synthwave/bus": (kind: "chan.in", pos: [-1400.0, 0.0]),
@@ -19,7 +19,9 @@ ground = ground.ground\nroll_up = controls.value1"}),
         "/stage_synthwave/energy_lift": (kind: "chan.math", params: {"b": 0.0, "op": "add"}, inputs: {"a": "energy_curve"}, pos: [-800.0, -900.0]),
         "/stage_synthwave/nebula_lift_gain": (kind: "chan.math", params: {"b": 0.7, "op": "multiply"}, inputs: {"a": "energy_lift"}, pos: [-600.0, -900.0]),
         "/stage_synthwave/nebula_lift": (kind: "chan.math", params: {"b": 0.8}, inputs: {"a": "nebula_lift_gain"}, pos: [-400.0, -900.0]),
-        "/stage_synthwave/lane_map": (kind: "tex.shader", params: {"bars_per_turn": 2.0, "beats_per_bar": 4.0, "file": "library/stage_synthwave/lane.wgsl", "height": 1, "keep_size": true, "resolution": "custom", "swing": 0.9, "turn": 4, "width": 256}, binds: {"beats": "bus:travelled", "drift": "bus:drift", "step": "controls:step"}, pos: [-1000.0, 0.0]),
+        "/stage_synthwave/lane_map": (kind: "tex.shader", params: {"bars_per_turn": 2.0, "beats_per_bar": 4.0, "file": "library/stage_synthwave/lane.wgsl", "height": 1, "keep_size": true, "resolution": "custom", "swing": 0.9, "turn": 4, "width": 256}, inputs: {"in0": "gap_memory"}, binds: {"beats": "bus:travelled", "drift": "bus:drift", "step": "controls:step"}, pos: [-1000.0, 0.0]),
+        "/stage_synthwave/gap_memory": (kind: "tex.shader", params: {"file": "library/stage_synthwave/gaps.wgsl", "resolution": "custom", "width": 512, "height": 1, "keep_size": true}, inputs: {"in0": "gap_loop"}, binds: {"beats": "bus:travelled", "step": "controls:step", "far": "shape:far"}, pos: [-1250.0, 150.0]),
+        "/stage_synthwave/gap_loop": (kind: "tex.feedback", inputs: {"previous": "gap_memory"}, pos: [-1450.0, 150.0]),
         "/stage_synthwave/lane": (kind: "tex.out", inputs: {"in": "lane_map"}, pos: [-800.0, 150.0]),
         "/stage_synthwave/grid_plane": (kind: "geo.primitive", params: {"cells": 80, "shape": "plane", "size": [40.0, 1.0, 40.0]}, pos: [-200.0, 100.0]),
         "/stage_synthwave/grid_lines": (kind: "mat.wireframe", params: {"line_width": 2.0}, pos: [-200.0, 200.0]),

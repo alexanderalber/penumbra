@@ -24,6 +24,8 @@
 // @param near float = -1 -8..10 -- where the peaks leave, behind the camera
 // @param far float = 12 1..56 -- where they appear
 // @param step float = 0.5 0.1..2 -- metres per beat while no lane picture is wired; with one, the stage's step
+// @param beat float = 0 0..1 -- how far the current beat has gone (beat of a chan.beat_grid): the peaks nod on its start
+// @param nod float = 0.2 0..1 -- how much taller the peaks grow on each beat, as a share of their height; 0 keeps them still
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
@@ -45,6 +47,10 @@ const LIFT: f32 = 0.02;
 // plates or as tiny pyramids. They are left out, also after a peak has shrunk whole.
 const LOWEST: f32 = 0.9;
 const STEEPEST_LOW: f32 = 0.5;
+// Metres below the lowest height over which a peak shrinks away instead of vanishing at once.
+// A peak's height wobbles by a centimetre or two as the lane under it is sampled and as the bars
+// stand against the beats; a hard cut there made a peak blink in and out.
+const LOWEST_SOFT: f32 = 0.2;
 
 fn hash(i: vec2i, seed: u32) -> f32 {
     return f32(pn_hash(vec3u(bitcast<vec2u>(i), seed)).x) / 4294967296.0;
@@ -138,10 +144,19 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     }
     let height = tall * whole;
     // A peak that shrinks below the lowest height (by presence, a gap or the fades above) is left
-    // out rather than drawn small, so no pyramids of a few centimetres stand on the grid. Every
-    // peak stands `LIFT` above the floor, so its base does not flicker against the floor's lines.
-    if height < max(LOWEST, STEEPEST_LOW * w * whole) {
+    // out rather than drawn small, so no pyramids of a few centimetres stand on the grid. Just
+    // below that height it shrinks away whole over `LOWEST_SOFT`, so a peak that stands right at
+    // the limit keeps its place instead of blinking. Every peak stands `LIFT` above the floor, so
+    // its base does not flicker against the floor's lines.
+    let limit = max(LOWEST, STEEPEST_LOW * w * whole);
+    let keep = smoothstep(limit - LOWEST_SOFT, limit, height);
+    if keep <= 0.0 {
         return vec4f(x, y, 0.0, 0.0);
     }
-    return vec4f(x, y, 0.5 * height + LIFT, w * whole);
+    // The nod: on each beat the peak grows taller and settles back over the beat, quickly up and
+    // slowly down. Only the height nods; whether a peak stands is decided before.
+    let b = clamp(params.beat, 0.0, 1.0);
+    let kick = smoothstep(0.0, 0.08, b) * (1.0 - b) * (1.0 - b) * (1.0 - b);
+    let drawn = height * keep * (1.0 + max(params.nod, 0.0) * kick);
+    return vec4f(x, y, 0.5 * drawn + LIFT, w * whole * keep);
 }

@@ -13,6 +13,9 @@
 // The lane is fixed to the floor: a point of the floor keeps its lane value as it comes nearer.
 // So are the gaps: a gap begins where a bar begins, so its near edge passes the camera on a
 // downbeat. Floor elements read alpha to sink where the floor has gone.
+// in0: the gaps' memory (gaps.wgsl), optional: with it a change of `gap` reaches only the floor
+// beyond the fade's end and comes towards the camera with the floor; without it the gaps follow
+// `gap` at once.
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid)
 // @param drift float = 0 -100..100 -- where the bars stand against `beats`, in bars (drift of a chan.beat_grid)
 // @param step float = 0.5 0.1..2 -- metres the floor moves per beat; one grid cell
@@ -21,7 +24,7 @@
 // @param turn float = 4 0.1..8 -- beats a turn takes
 // @param swing float = 1.5 0..5 -- how far the lane swings to either side at most, in metres
 // @param origin float = 11 1..50 -- metres ahead where the lane's turns are counted: a corner passes there on a downbeat
-// @param gap float = 0 0..1 -- share of the floor that breaks off into gaps: 0 none, 1 all of it
+// @param gap float = 0 0..1 -- share of the floor that breaks off into gaps: 0 none, 1 all of it (read while in0 is not wired)
 // @param gap_length float = 8 1..40 -- metres a gap runs along the floor, rounded to whole bars
 
 const LANE_NEAR: f32 = -8.0;
@@ -98,21 +101,36 @@ fn lane_slope(c: f32) -> f32 {
 
 // Share of a gap's growth over which it opens: a gap fades in as `gap` rises past its draw.
 const GAP_SOFT: f32 = 0.08;
+// Cells of the gaps' memory (gaps.wgsl) in in0.
+const GAP_CELLS: f32 = 512.0;
+
+// The share of the floor in gaps that stretch `stretch` (of `bars` bars) keeps: what the gaps'
+// memory in in0 held at its first cell when that cell was last out of sight, so a change of `gap`
+// comes in from the horizon. Without the memory, `gap` itself.
+fn gap_of(stretch: f32, bars: f32, bpb: f32) -> f32 {
+    if textureDimensions(in0).x < u32(GAP_CELLS) {
+        return params.gap;
+    }
+    let first = ceil((stretch * bars - params.drift) * bpb - 0.5);
+    let i = i32(first - GAP_CELLS * floor(first / GAP_CELLS));
+    return textureLoad(in0, vec2i(i, 0), 0).r;
+}
 
 // The floor at the point that passes the camera when `travelled` is `c` beats: 1 where it stands,
 // 0 in a gap. The floor is cut into stretches of whole bars, each about `gap_length` long; a
-// stretch is a gap when its draw lies under `gap`. The bar is taken at the middle of the point's
-// beat, so a grid cell is wholly in or out.
+// stretch is a gap when its draw lies under its share of gaps (gap_of). The bar is taken at the
+// middle of the point's beat, so a grid cell is wholly in or out.
 fn ground(c: f32) -> f32 {
-    if params.gap <= 0.0 {
-        return 1.0;
-    }
     let bpb = max(params.beats_per_bar, 1.0);
     let bars = max(round(params.gap_length / max(bpb * params.step, 0.01)), 1.0);
     let bar = floor((floor(c) + 0.5) / bpb + params.drift);
     let stretch = floor(bar / bars);
+    let gap = gap_of(stretch, bars, bpb);
+    if gap <= 0.0 {
+        return 1.0;
+    }
     let draw = f32(pn_hash(vec3u(bitcast<u32>(i32(stretch)), 23u, 5u)).x) / 4294967296.0;
-    let open = smoothstep(0.0, GAP_SOFT, params.gap * (1.0 + GAP_SOFT) - draw);
+    let open = smoothstep(0.0, GAP_SOFT, gap * (1.0 + GAP_SOFT) - draw);
     return 1.0 - open;
 }
 

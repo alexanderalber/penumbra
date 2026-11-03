@@ -380,8 +380,12 @@ glider is the element `mid_glider`.
   `gap_length` (metres a gap runs, rounded to whole bars). A gap begins where a bar begins, so its
   near edge passes the camera on a downbeat. The lane floats on over nothing. Floor elements read
   the gaps from `lane`: a thing whose cell of the floor is in a gap is left out whole, so no stub
-  stands at a gap's edge. A gap that opens or closes fades; the things on it go at its halfway. `beats.arrange`
-  binds `gap` to its `gaps` column: 0.3 in a build, 0.6 in a break.
+  stands at a gap's edge. A change of `gap` reaches only the floor beyond the fade's `end`, out
+  of sight: each stretch of the floor keeps the share it had when it was last out there. So a gap
+  forms behind the horizon and comes towards the camera with the floor, and the floor comes back
+  the same way. `gap_memory` (a `tex.shader` fed back through `gap_loop`, a `tex.feedback`)
+  remembers the shares. `beats.arrange` binds `gap` to its `gaps` column: 0.3 in a build, 0.6 in
+  a break.
 
 ### stage_tunnel
 
@@ -430,7 +434,8 @@ rolling the plane up above).
   wide for a drop (3.4 m, 76 degrees), 3 still and nearly level for a break, 4 and 5 two tilted
   variants.
 - Gaps: `gap` and `gap_length` as on `stage_synthwave`: stretches of the tube run out, and the
-  sky shows through them. A gap starts on a bar. Over its first and last metres (at most 4 m) the
+  sky shows through them. A gap starts on a bar, and a change of `gap` comes in from the far end,
+  as on `stage_synthwave`. Over its first and last metres (at most 4 m) the
   rings thin out: every second ring stays, then every fourth, on the downbeats. The long lines
   and chevrons fade, and the wall opens from the top down in narrowing slats. In the middle of
   the gap nothing is left, and the tube comes back the same way.
@@ -500,14 +505,18 @@ comes nearer. Another `seed` gives another range.
 
 - In: `bus`, `lane`. Out: `out`.
 Peaks lower than 0.9 m, or lower than half their width, are left out. Near that height a peak
-shrinks whole instead of flattening, so no flat plates appear.
+shrinks whole instead of flattening, so no flat plates appear. Just below it a peak shrinks
+away over 20 cm instead of vanishing at once, so a peak right at the limit does not blink. On
+each beat the peaks nod: they grow taller by `nod` and settle back over the beat.
 
 - Params: `presence` (towards 0 the peaks shrink away one after another), `seed`,
   `height` (the tallest peaks, metres; the camera is 2 m up, the ceiling 4 m), `width` (a peak's
   foot across), `length` (along the lane, as a multiple of `width`), `spacing` (between peaks),
   `peaks` (metres between summits: smaller is more jagged), `valleys` (peaks lower than this share
   of `height` are left out, so the floor shows between ridges), `foot`, `lane` (as on
-  `floor_blocks`, 1.6), `spread` (the range's width, both sides), `near`, `far`, `color`, `extent`.
+  `floor_blocks`, 1.6), `spread` (the range's width, both sides), `near`, `far`, `nod` (how much
+  taller the peaks grow on each beat, as a share of their height, 0.2; 0 keeps them still),
+  `color`, `extent`.
 
 ### floor_pillars
 
@@ -890,14 +899,17 @@ with knots of glowing gas, dust lanes. It turns with `travelled` and brightens w
 ![sky_sun](sky_sun/preview.png)
 
 The synthwave sun: a big disc standing on the floor's far edge, with dark lines across its lower
-half that widen towards the bottom and drift slowly down. A glow lies around it. The bass
+half that widen towards the bottom and drift slowly down. Below the horizon it shines through
+the floor. A glow lies around it. The bass
 brightens it and swells it a little, a drop makes it flash.
 
 - In: `bus`, `pose` (the stage's: the horizon moves with the camera). Out: `out`.
 - Params: `presence` (towards 0 the sun dims to a dark sky), `brightness`, `warmth` (0 yellow to
   magenta, 1 cyan to violet, as on the stage), `size` (radius, in picture heights of a 60 degree
   view), `height` (its centre over the horizon, in the same unit), `lines`, `glow`, `reach`
-  (metres ahead where the floor ends: the stage's `end`, 10).
+  (metres ahead where the floor ends: the stage's `end`, 10), `through` (how much of the sun
+  shines through the floor below the horizon: 1 all of it, the default; 0 cuts it at the
+  horizon).
 
 ### sky_aurora
 
