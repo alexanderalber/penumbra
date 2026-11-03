@@ -10,7 +10,7 @@
         "/mid_shapes/places": (kind: "tex.shader", params: {"file": "library/mid_shapes/formation.wgsl", "what": "place", "resolution": "custom", "width": 8, "height": 1, "keep_size": true, "presence": 1.0, "count": 5, "size": 0.7, "at": 6.0, "hover": 2.7, "radius": 2.4, "depth": 1.2, "tilt": 0.35, "tight": 0.6, "scatter": 3.0, "turn": 0.5}, inputs: {"in0": "lane"}, binds: {"bar_index": "bus:bar_index", "bar": "bus:bar", "build": "bus:build", "drop": "bus:drop"}, pos: [-700.0, 100.0]),
         "/mid_shapes/heading": (kind: "tex.shader", params: {"file": "library/mid_shapes/formation.wgsl", "what": "aim", "resolution": "custom", "width": 8, "height": 1, "keep_size": true, "spin": 0.25}, binds: {"beat_index": "bus:beat_index", "beat": "bus:beat"}, pos: [-700.0, 300.0]),
         "/mid_shapes/lines": (kind: "mat.wireframe", params: {"faces": "hidden", "edges": "polygons", "line_width": 1.5}, pos: [-700.0, -300.0]),
-        "/mid_shapes/cover_mat": (kind: "mat.occluder", params: {"shows": "black"}, pos: [-700.0, -450.0]),
+        "/mid_shapes/cover_mat": (kind: "mat.occluder", pos: [-700.0, -450.0]),
         "/mid_shapes/octahedron": (kind: "geo.file", params: {"file": "library/mid_shapes/octahedron.obj", "up": "z"}, pos: [-400.0, -400.0]),
         "/mid_shapes/octahedron_wire": (kind: "geo.assign_material", inputs: {"in": "octahedron", "mat": "lines"}, pos: [-200.0, -450.0]),
         "/mid_shapes/octahedron_cover": (kind: "geo.assign_material", inputs: {"in": "octahedron", "mat": "cover_mat"}, pos: [-200.0, -350.0]),

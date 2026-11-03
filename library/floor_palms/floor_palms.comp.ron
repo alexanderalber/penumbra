@@ -24,7 +24,7 @@
         "/floor_palms/frond_cover": (kind: "geo.assign_material", inputs: {"in": "frond", "mat": "cover_mat"}, pos: [-600.0, -800.0]),
         "/floor_palms/frond_model": (kind: "geo.merge", inputs: {"in0": "frond_wire", "in1": "frond_cover"}, pos: [-400.0, -700.0]),
         "/floor_palms/palm_lines": (kind: "mat.wireframe", params: {"faces": "hidden", "line_width": 2.0}, pos: [-800.0, -950.0]),
-        "/floor_palms/cover_mat": (kind: "mat.occluder", params: {"shows": "black"}, pos: [-800.0, -1100.0]),
+        "/floor_palms/cover_mat": (kind: "mat.occluder", pos: [-800.0, -1100.0]),
         "/floor_palms/trunks": (kind: "geo.tex_instance", params: {"extent": 24.0}, inputs: {"in": "trunk_model", "position": "trunk_place", "aim": "trunk_aim", "scale": "trunk_scale"}, pos: [-200.0, -200.0]),
         "/floor_palms/fronds": (kind: "geo.tex_instance", params: {"extent": 24.0}, inputs: {"in": "frond_model", "position": "frond_place", "aim": "frond_aim", "scale": "frond_scale"}, pos: [-200.0, 0.0]),
         "/floor_palms/palms": (kind: "geo.merge", inputs: {"in0": "trunks", "in1": "fronds"}, pos: [0.0, 0.0]),

@@ -11,7 +11,7 @@
         "/floor_hexfield/hex": (kind: "geo.file", params: {"file": "library/floor_hexfield/hex.obj", "up": "z"}, pos: [-800.0, -300.0]),
         "/floor_hexfield/hex_lines": (kind: "mat.wireframe", params: {"faces": "hidden", "line_width": 1.5}, pos: [-600.0, -150.0]),
         "/floor_hexfield/hex_wire": (kind: "geo.assign_material", inputs: {"in": "hex", "mat": "hex_lines"}, pos: [-400.0, -200.0]),
-        "/floor_hexfield/cover_mat": (kind: "mat.occluder", params: {"shows": "black"}, pos: [-600.0, -320.0]),
+        "/floor_hexfield/cover_mat": (kind: "mat.occluder", pos: [-600.0, -320.0]),
         "/floor_hexfield/cover": (kind: "geo.assign_material", inputs: {"in": "hex", "mat": "cover_mat"}, pos: [-400.0, -350.0]),
         "/floor_hexfield/model": (kind: "geo.merge", inputs: {"in0": "hex_wire", "in1": "cover"}, pos: [-200.0, -250.0]),
         "/floor_hexfield/field": (kind: "geo.tex_instance", params: {"extent": 30.0}, inputs: {"in": "model", "position": "places", "scale": "sizes"}, pos: [0.0, 0.0]),

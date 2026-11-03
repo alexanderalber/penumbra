@@ -83,7 +83,7 @@
         "/floor_animal/run23": (kind: "geo.tex_instance", params: {"extent": 16.0}, inputs: {"in": "pose23", "position": "place", "aim": "aim", "scale": "scale23"}, pos: [-400.0, 280.0]),
         "/floor_animal/poses": (kind: "geo.merge", inputs: {"in0": "run0", "in1": "run1", "in2": "run2", "in3": "run3", "in4": "run4", "in5": "run5", "in6": "run6", "in7": "run7", "in8": "run8", "in9": "run9", "in10": "run10", "in11": "run11", "in12": "run12", "in13": "run13", "in14": "run14", "in15": "run15", "in16": "run16", "in17": "run17", "in18": "run18", "in19": "run19", "in20": "run20", "in21": "run21", "in22": "run22", "in23": "run23"}, pos: [-200.0, -350.0]),
         "/floor_animal/lines": (kind: "mat.wireframe", params: {"faces": "hidden", "line_width": 2.5, "color": [1.0, 0.55, 0.95, 1.0]}, pos: [-200.0, -550.0]),
-        "/floor_animal/cover_mat": (kind: "mat.occluder", params: {"shows": "black"}, pos: [-200.0, -150.0]),
+        "/floor_animal/cover_mat": (kind: "mat.occluder", pos: [-200.0, -150.0]),
         "/floor_animal/wire": (kind: "geo.assign_material", inputs: {"in": "poses", "mat": "lines"}, pos: [0.0, -450.0]),
         "/floor_animal/cover": (kind: "geo.assign_material", inputs: {"in": "poses", "mat": "cover_mat"}, pos: [0.0, -250.0]),
         "/floor_animal/horse": (kind: "geo.merge", inputs: {"in0": "wire", "in1": "cover"}, pos: [200.0, -350.0]),
