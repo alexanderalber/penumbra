@@ -419,6 +419,48 @@ per two beats, wider with the mids. `palm.py` in the folder writes the two model
   trunk, room for the fronds), `near`, `far`, `beats_per_bar`, `smooth` (seconds the mids take to
   fall), `color`, `line_width`, `extent`.
 
+### floor_animal
+
+![floor_animal](floor_animal/preview.png)
+
+A wireframe horse galloping beside the lane. It runs a little faster than the flight for a while,
+then a little slower, so it gains on the camera and falls back again, 3.5 to 6.5 m ahead. One
+cycle takes 16 to 32 bars; `seed` sets its length. The legs go through one stride per beat, two
+per beat below 100 BPM. The stride is a gallop as Muybridge photographed it: the hind legs land,
+then the forelegs, then all four leave the ground. The body rocks, the neck swings, the tail
+streams back. The horse faces 30 degrees in towards the lane, so the camera sees its flank. Its
+body is black and hides the sky behind it. `animal.py` in the folder writes the eight poses.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (towards 0 the horse runs off ahead and shrinks, 0 none), `at` (metres
+  ahead on average), `range` (metres it gains and falls back), `cycle_min` and `cycle_max` (bars
+  of one cycle), `seed`, `fast` (BPM from which a stride takes a whole beat), `side` (1 right of
+  the lane, -1 left), `lane` (1.6), `clear` (metres from the lane's edge to the horse's middle),
+  `turn` (degrees it faces in towards the lane), `size` (1 is 1.6 m to the withers),
+  `beats_per_bar`, `color`, `line_width`.
+
+### floor_title
+
+![floor_title](floor_title/preview.png)
+
+The track's title in huge letters lying across the lane, for the camera to fly over. At the
+start of a track the first copy lies 4 m ahead, and one letter appears with each beat. The copy
+keeps its distance until the last letter is there. Then it stays behind on the floor, and the
+camera flies over it. Another copy follows every 8 bars of travel, all its letters there. The letters
+follow the lane's bends, run through the palette from the first to the last, and sink into gaps
+in the floor. `text` is the title. With `source: track` the letters say `TRACK` and the track's
+number instead; the grid's sections know a track's number but no name. The bus channel
+`track_bars` times the letters.
+
+- In: `bus`, `lane`. Out: `out`.
+- Params: `presence` (from 0.4 every letter, below it the letters go out one after another),
+  `text`, `source` (`text` or `track`), `warmth`, `ahead` (metres to the first copy while
+  its letters appear), `every` (bars between copies), `long` (metres a letter reaches along the
+  floor), `wide` (metres from one letter to the next), `span` (metres the whole title takes at
+  most), `brightness`, `rim` (how bright the outline is), `beats_per_bar`, `fade` and `gone`
+  (metres where the letters fade out). The font is monospaced, so each letter has a place of its
+  own: `JetBrains Mono` inside.
+
 ### mid_glider
 
 ![mid_glider](mid_glider/preview.png)
@@ -742,3 +784,23 @@ The preview is a piece of the picture at full size; scaled down, the lines vanis
   next), `strength` (how dark a line is: 0 none, 1 black), `thickness` (share of the pitch a line
   covers), `roll` (lines the pattern moves per beat travelled), `flicker` (how much darker lines
   and picture get on an onset), `decay` (seconds the flicker takes to fade).
+
+### post_hud
+
+![post_hud](post_hud/preview.png)
+
+A head-up display over the picture, in thin lines of the palette's colour. A crosshair sits in
+the middle. The horizon and a pitch ladder lie where the stage's floor ends, and tilt with the
+camera. A tape on the right reads the camera's height. Top left the bar count and a box per
+beat. Bottom left a radar: the sweep turns once per bar, each section of the track is a blip,
+and the rim fills as the track goes on. The lines dim and drop out for a moment on an onset and
+flash on a drop. They add light to the picture and cover nothing. Chain it last, after
+`post_scanlines`, so the lines stay sharp.
+
+- In: `in` (the picture), `bus`, `pose` (the stage's `pose`; unwired, the horizon stands where
+  the first camera has it). Out: `out`.
+- Params: `presence` (0 passes the picture on unchanged), `warmth`, `brightness`, `thickness`
+  (line width in pixels of a 1080 line picture), `flicker` (how much an onset dims the lines),
+  `decay` (seconds the flicker takes to fade), `reach` (metres to the floor's end, as the stage's
+  fade), `scale` (picture heights of the tape per metre), `beats_per_bar`.
+

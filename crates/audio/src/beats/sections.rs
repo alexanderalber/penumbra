@@ -146,6 +146,11 @@ pub struct SectionPosition {
     /// How far through its track the moment is: 0 at the track's first section's start, 1 at
     /// its last section's end.
     pub track_phase: f64,
+    /// Bars since the track's first section began, with the fraction of the bar.
+    pub track_bars: f64,
+    /// The sections of the track, and which of them the moment lies in (0 is the first).
+    pub track_sections: usize,
+    pub track_section: usize,
     /// The moment lies between the first bar's start and the file's end.
     pub inside: bool,
 }
@@ -410,6 +415,9 @@ impl Sections {
             transition_from: s.label,
             transition_to: s.label,
             track_phase: self.track_phase(k, t),
+            track_bars: 0.0,
+            track_sections: 1,
+            track_section: 0,
             inside: self.bars.first().is_some_and(|b| t >= *b) && t < self.end,
         };
         // Still in the blend into this section, or already in the blend into the next.
@@ -422,7 +430,21 @@ impl Sections {
         if let Some((v, from, to)) = here.or(ahead) {
             (p.transition, p.transition_from, p.transition_to) = (v.clamp(0.0, 1.0), from, to);
         }
+        let (first, count) = self.track_span(k);
+        p.track_sections = count;
+        p.track_section = k.saturating_sub(first);
+        let first_bar = self.sections.get(first).map_or(s.first_bar, |x| x.first_bar) as f64;
+        p.track_bars = (bar - first_bar).max(0.0);
         Some(p)
+    }
+
+    /// The index of the first section of section `k`'s track, and how many sections it has.
+    fn track_span(&self, k: usize) -> (usize, usize) {
+        let Some(s) = self.sections.get(k) else { return (k, 1) };
+        let same = |x: &&Section| x.track == s.track;
+        let before = self.sections.get(..k).map_or(0, |a| a.iter().rev().take_while(same).count());
+        let after = self.sections.get(k..).map_or(1, |a| a.iter().take_while(same).count());
+        (k.saturating_sub(before), before + after.max(1))
     }
 
     /// How far through the track of section `k` the moment `t` is, 0 to 1.

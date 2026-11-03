@@ -1,0 +1,22 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/post_hud": (kind: "comp.base", params: {"expose": "presence = hud.presence\nwarmth = hud.warmth\nbrightness = hud.brightness\nthickness = hud.thickness\nflicker = hud.flicker\ndecay = flash.fall\nreach = hud.reach\nscale = hud.scale\nbeats_per_bar = hud.beats_per_bar"}),
+        "/post_hud/in": (kind: "tex.in", pos: [-800.0, -150.0]),
+        "/post_hud/bus": (kind: "chan.in", pos: [-1000.0, 100.0]),
+        "/post_hud/pose": (kind: "chan.in", pos: [-1000.0, 300.0]),
+        "/post_hud/onset": (kind: "chan.select", params: {"channels": "onset"}, inputs: {"in": "bus"}, pos: [-800.0, 100.0]),
+        "/post_hud/flash": (kind: "chan.filter", params: {"type": "first_order", "rise": 0.0, "fall": 0.15}, inputs: {"in": "onset"}, pos: [-600.0, 100.0]),
+        "/post_hud/bars": (kind: "chan.select", params: {"channels": "bar_index"}, inputs: {"in": "bus"}, pos: [-800.0, 450.0]),
+        "/post_hud/bar_number": (kind: "chan.math", params: {"op": "add", "b": 1.0}, inputs: {"a": "bars"}, pos: [-600.0, 450.0]),
+        "/post_hud/track": (kind: "chan.select", params: {"channels": "track_index"}, inputs: {"in": "bus"}, pos: [-800.0, 600.0]),
+        "/post_hud/track_number": (kind: "chan.math", params: {"op": "add", "b": 1.0}, inputs: {"a": "track"}, pos: [-600.0, 600.0]),
+        "/post_hud/height_text": (kind: "tex.text", params: {"text": "ALT 1.50", "font": "JetBrains Mono", "size": 26.0, "color": [1.0, 1.0, 1.0, 1.0], "position": [0.928, 0.5], "align": "right", "width": 1920, "height": 1080, "keep_size": true}, binds: {"text": (node: "pose", channel: "height", format: "ALT {.2}")}, pos: [-400.0, 300.0]),
+        "/post_hud/bar_text": (kind: "tex.text", params: {"text": "BAR 1", "font": "JetBrains Mono", "size": 26.0, "color": [1.0, 1.0, 1.0, 1.0], "position": [0.026, 0.075], "align": "left", "width": 1920, "height": 1080, "keep_size": true}, binds: {"text": (node: "bar_number", channel: "bar_index", format: "BAR {.0}")}, pos: [-400.0, 450.0]),
+        "/post_hud/track_text": (kind: "tex.text", params: {"text": "TRK 1", "font": "JetBrains Mono", "size": 26.0, "color": [1.0, 1.0, 1.0, 1.0], "position": [0.175, 0.94], "align": "left", "width": 1920, "height": 1080, "keep_size": true}, binds: {"text": (node: "track_number", channel: "track_index", format: "TRK {.0}")}, pos: [-400.0, 600.0]),
+        "/post_hud/hud": (kind: "tex.shader", params: {"file": "library/post_hud/hud.wgsl", "presence": 1.0, "warmth": 0.0, "brightness": 1.0, "thickness": 2.0, "flicker": 0.5, "beats_per_bar": 4.0, "reach": 10.0, "scale": 0.1}, inputs: {"in0": "in", "in1": "height_text", "in2": "bar_text", "in3": "track_text"}, binds: {"beats": "bus:travelled", "bar": "bus:bar", "phase": "bus:track_phase", "sections": "bus:track_sections", "section": "bus:track_section", "drop": "bus:drop", "flash": "flash:onset", "eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side"}, pos: [-200.0, -100.0]),
+        "/post_hud/out": (kind: "tex.out", inputs: {"in": "hud"}, pos: [0.0, -100.0]),
+    },
+)

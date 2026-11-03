@@ -323,3 +323,20 @@ fn the_track_phase_rises_through_each_track() {
     let middle = 0.5 * (second.start + last_end);
     assert!((at(middle) - 0.5).abs() < 0.02, "{}", at(middle));
 }
+
+#[test]
+fn the_track_counts_its_bars_and_sections() {
+    let s = synthetic();
+    let list = s.list();
+    let second = list.iter().position(|x| x.track == 1).unwrap();
+    let in_first = list.iter().filter(|x| x.track == 0).count();
+    let p = s.at(list[0].start + 0.01).unwrap();
+    assert!(p.track_bars < 0.1, "{}", p.track_bars);
+    assert_eq!((p.track_sections, p.track_section), (in_first, 0));
+    let last = s.at(list[in_first - 1].start + 0.01).unwrap();
+    assert_eq!(last.track_section, in_first - 1);
+    let bars_before: usize = list.iter().take(in_first - 1).map(|x| x.bars).sum();
+    assert!((last.track_bars - bars_before as f64).abs() < 0.1, "{} {bars_before}", last.track_bars);
+    let next = s.at(list[second].start + 0.01).unwrap();
+    assert!(next.track_bars < 0.1 && next.track_section == 0, "{next:?}");
+}

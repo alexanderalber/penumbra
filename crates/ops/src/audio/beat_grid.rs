@@ -113,7 +113,7 @@ fn pool() -> Option<&'static rayon::ThreadPool> {
 /// The channels `chan.beat_grid` outputs, in order. The first eight and `level` to `kick` mean
 /// what they mean on `chan.beat_analysis`, so a binding keeps working when one node replaces
 /// the other. New channels go at the end.
-pub const CHANNELS: [&str; 51] = [
+pub const CHANNELS: [&str; 54] = [
     "beat",
     "tick",
     "bar",
@@ -165,6 +165,9 @@ pub const CHANNELS: [&str; 51] = [
     "section_density",
     "section_kick",
     "track_phase",
+    "track_bars",
+    "track_sections",
+    "track_section",
 ];
 /// Where the envelopes begin in [`CHANNELS`].
 const LEVEL: usize = 14;
@@ -256,7 +259,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
              Track starts read near 1, drops and breakdowns about 0.5 to 1, small changes within a track mostly below 0.3. \
              section_role is what the section does in its track: 0 intro, 1 break, 2 build, 3 drop, 4 outro, 5 main. \
              section_bass is the section's mean energy_low, section_density its onsets per beat, section_kick the share of its beats with a kick (0 to 1). \
-             These read 0 until the sections are found.              track_phase rises from 0 to 1 through the track under the playhead, from its first section's start to its last section's end",
+             These read 0 until the sections are found. \
+             track_phase rises from 0 to 1 through the track under the playhead, from its first section's start to its last section's end. \
+             track_bars counts the bars since that start, with the fraction of the bar: track_bars times beats_per_bar is the beats into the track. \
+             track_sections is how many sections the track has, track_section which of them the playhead is in, from 0",
         )
         .describe_output(
             "grid",
@@ -1276,9 +1282,13 @@ impl Operator for GridNode {
         for (v, x) in values.iter_mut().skip(BUS).zip(bus_v) {
             *v = x;
         }
-        if let Some(v) = values.get_mut(TRACK_PHASE) {
-            let p = structure.as_deref().and_then(|s| s.sections.at(ts)).map_or(0.0, |p| p.track_phase);
-            *v = if p.is_finite() { p } else { 0.0 };
+        let here = structure.as_deref().and_then(|s| s.sections.at(ts));
+        let track = here.map_or([0.0; 4], |p| {
+            // `as`: counts far below 2^53.
+            [p.track_phase, p.track_bars, p.track_sections as f64, p.track_section as f64]
+        });
+        for (v, x) in values.iter_mut().skip(TRACK_PHASE).zip(track) {
+            *v = if x.is_finite() { x } else { 0.0 };
         }
         if self.names.len() != CHANNELS.len() {
             self.names = CHANNELS.iter().filter_map(|n| Name::new(n).ok()).collect();
