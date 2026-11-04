@@ -17,6 +17,7 @@
 
 pub mod bc;
 pub mod canvas;
+pub mod deferred;
 pub mod environment;
 pub mod geo;
 pub mod header;
@@ -41,6 +42,7 @@ use std::time::{Duration, Instant};
 use penumbra_core::{Error, lock};
 
 pub use canvas::{Canvas, Paint};
+pub use deferred::{Deferral, Done};
 pub use geo::{Geo, Mat};
 pub use pass::{Batch, Pass, PassInput};
 pub use projection::{MeshVertex, Projection};
@@ -171,6 +173,12 @@ struct Inner {
     quiet: Mutex<Vec<std::thread::ThreadId>>,
     /// Render attachments that renderers of one size share (see [`render::Attachments`]).
     attachments: render::Attachments,
+    /// Passes recorded and not yet submitted (see [`deferred`]).
+    deferred: Mutex<deferred::Deferred>,
+    /// The input bind groups of every pass (see [`Gpu::sweep_input_groups`]).
+    input_groups: Mutex<Vec<std::sync::Weak<pass::InputGroups>>>,
+    /// Calls of [`Gpu::poll`] so far.
+    polls: AtomicU64,
 }
 
 /// Whether the device is lost, why, and who wants to know (see [`Gpu::on_lost`]). Shared with
@@ -200,6 +208,10 @@ impl Lost {
         }
     }
 }
+
+/// Every how many calls of [`Gpu::poll`] the input bind groups are swept (about once a second
+/// at 60 frames a second).
+const SWEEP_POLLS: u64 = 60;
 
 /// The longest [`Gpu::hold`] keeps one submission waiting, however often it is renewed.
 const MAX_HOLD: Duration = Duration::from_millis(400);
@@ -296,6 +308,9 @@ impl Gpu {
                 held_until: Mutex::new(None),
                 quiet: Mutex::new(Vec::new()),
                 attachments: render::Attachments::default(),
+                deferred: Mutex::new(deferred::Deferred::default()),
+                input_groups: Mutex::new(Vec::new()),
+                polls: AtomicU64::new(0),
             }),
         }
     }
@@ -325,7 +340,10 @@ impl Gpu {
         &self.inner.device
     }
 
+    /// The queue, after the passes waiting to be submitted went out (see [`deferred`]): an
+    /// upload through it lands after the passes recorded before it.
     pub fn queue(&self) -> &wgpu::Queue {
+        self.flush();
         &self.inner.queue
     }
 
@@ -387,6 +405,7 @@ impl Gpu {
     /// of resources just dropped is really given back (wgpu frees it once the GPU is done with
     /// it). For a decision based on [`Gpu::vram`] right after letting something big go.
     pub fn settle(&self, timeout: Duration) {
+        self.flush();
         let wait = wgpu::PollType::Wait { submission_index: None, timeout: Some(timeout) };
         if let Err(e) = self.inner.device.poll(wait) {
             log::warn!("GPU settle: {e}");
@@ -429,6 +448,28 @@ impl Gpu {
         if let Err(e) = self.inner.device.poll(wgpu::PollType::Poll) {
             log::warn!("GPU poll: {e}");
         }
+        if self.inner.polls.fetch_add(1, Ordering::Relaxed).is_multiple_of(SWEEP_POLLS) {
+            self.sweep_input_groups();
+        }
+    }
+
+    /// A new, empty set of input bind groups for a pass, swept with the others.
+    pub(crate) fn input_groups(&self) -> std::sync::Arc<pass::InputGroups> {
+        let groups = std::sync::Arc::new(pass::InputGroups::default());
+        lock(&self.inner.input_groups).push(std::sync::Arc::downgrade(&groups));
+        groups
+    }
+
+    /// Lets go of the input bind groups whose textures are gone. A bind group holds its
+    /// textures' memory, and a pass that no node renders with any more would hold it forever.
+    pub fn sweep_input_groups(&self) {
+        lock(&self.inner.input_groups).retain(|weak| match weak.upgrade() {
+            Some(groups) => {
+                lock(&groups).retain(pass::InputGroup::alive);
+                true
+            }
+            None => false,
+        });
     }
 
     /// A pass compiled once per process and shared (built-in nodes). Compiling takes from a few
@@ -450,14 +491,14 @@ impl Gpu {
         Ok(compiled)
     }
 
-    /// Submits command buffers. Everything penumbra submits goes through here (not through
-    /// the queue directly), so [`Gpu::configure_surface`] can keep submissions out while wgpu
-    /// waits for an idle GPU.
+    /// Submits command buffers, after the passes waiting (see [`deferred`]). Everything
+    /// penumbra submits goes through here (not through the queue directly), so
+    /// [`Gpu::configure_surface`] can keep submissions out while wgpu waits for an idle GPU.
     pub fn submit(&self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) -> wgpu::SubmissionIndex {
         let _shared = self.shared();
         let _software =
             (self.inner.info.device_type == wgpu::DeviceType::Cpu).then(|| lock(&SOFTWARE_SUBMIT));
-        self.inner.queue.submit(buffers)
+        self.submit_deferred(buffers)
     }
 
     /// Holds penumbra's submissions and presents back until `until`, at most [`MAX_HOLD`]

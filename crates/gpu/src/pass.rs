@@ -39,10 +39,12 @@
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::Write as _;
 use std::hash::{Hash, Hasher};
+use std::sync::{Arc, Mutex};
 
-use penumbra_core::{Error, ParamKind, ParamSpec, Value, palette};
+use penumbra_core::{Error, ParamKind, ParamSpec, Value, lock, palette};
 
-use crate::{FORMAT, Gpu, Tex};
+use crate::tex::TexKey;
+use crate::{Deferral, Done, FORMAT, Gpu, Tex};
 
 /// Texture inputs every pass has (`in0` to `in3`).
 pub const INPUTS: usize = 4;
@@ -316,32 +318,40 @@ fn pn_band(p: PnPalette, t: f32) -> vec4f {
 }
 "#;
 
-/// Passes recorded to go out in one submission, for a node that runs many passes per cook.
+/// Passes recorded to go out together, at the latest when [`Batch::submit`] is called: for a
+/// node that wants its passes on the GPU at once rather than at the end of the cook pass (a
+/// simulation starting a long job, say), or that runs on a thread of its own. Inside the cook
+/// pass plain [`Pass::render`] calls are collected anyway. Dropped without [`Batch::submit`],
+/// the passes go out with the next submission.
 pub struct Batch<'a> {
     gpu: &'a Gpu,
-    encoder: wgpu::CommandEncoder,
+    label: String,
+    _deferral: Deferral<'a>,
 }
 
 impl<'a> Batch<'a> {
     pub fn new(gpu: &'a Gpu, label: &str) -> Self {
-        let encoder =
-            gpu.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-        Self { gpu, encoder }
+        Self { gpu, label: label.to_string(), _deferral: gpu.defer() }
     }
 
-    pub fn submit(self) {
-        self.gpu.submit([self.encoder.finish()]);
+    /// Submits the passes, after everything recorded before them, and tells without blocking
+    /// when they have finished on the GPU.
+    pub fn submit(self) -> Done {
+        self.gpu.done()
     }
 }
 
 /// The bind group and pipeline layouts every pass shares, plus samplers and a stand-in for
 /// unconnected inputs.
 pub(crate) struct Layouts {
-    group0: wgpu::BindGroupLayout,
+    /// The three uniforms, at dynamic offsets into a block of uniform memory ([`crate::deferred`]).
+    pub(crate) group0: wgpu::BindGroupLayout,
     group1: wgpu::BindGroupLayout,
     pipeline: wgpu::PipelineLayout,
     samplers: [wgpu::Sampler; 3],
     empty: wgpu::TextureView,
+    /// Bytes between the starts of two uniforms in a block.
+    pub(crate) uniform_align: u64,
 }
 
 impl Layouts {
@@ -351,7 +361,7 @@ impl Layouts {
             visibility: wgpu::ShaderStages::FRAGMENT,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
+                has_dynamic_offset: true,
                 min_binding_size: None,
             },
             count: None,
@@ -416,7 +426,8 @@ impl Layouts {
                 view_formats: &[],
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
-        Self { group0, group1, pipeline, samplers, empty }
+        let uniform_align = u64::from(device.limits().min_uniform_buffer_offset_alignment.max(16));
+        Self { group0, group1, pipeline, samplers, empty, uniform_align }
     }
 }
 
@@ -461,6 +472,37 @@ pub struct Pass {
     uniform_size: u64,
     uses_time: bool,
     uses_input: [bool; INPUTS],
+    /// Bind groups of the inputs used lately: making one costs about a fifth of a pass.
+    inputs: Arc<InputGroups>,
+}
+
+/// The input bind groups of one [`Pass`]. [`Gpu::poll`] sweeps out the dead ones now and then
+/// ([`Gpu::sweep_input_groups`]), also of passes no node uses any more.
+pub(crate) type InputGroups = Mutex<Vec<InputGroup>>;
+
+/// Input bind groups a [`Pass`] keeps. Built-in passes are shared by every node of their kind,
+/// and each node's inputs usually circulate through two or three textures.
+const INPUT_GROUPS: usize = 32;
+
+/// The bind group of one set of inputs, `None` where unconnected.
+pub(crate) struct InputGroup {
+    inputs: [Option<TexKey>; INPUTS],
+    group: wgpu::BindGroup,
+}
+
+impl InputGroup {
+    fn matches(&self, inputs: &[Option<&Tex>]) -> bool {
+        self.inputs.iter().enumerate().all(|(i, key)| match (key, inputs.get(i).copied().flatten()) {
+            (None, None) => true,
+            (Some(k), Some(t)) => k.is(t),
+            _ => false,
+        })
+    }
+
+    /// Whether every texture it binds is still held by someone besides the bind group.
+    pub(crate) fn alive(&self) -> bool {
+        self.inputs.iter().flatten().all(TexKey::alive)
+    }
 }
 
 impl Pass {
@@ -532,6 +574,7 @@ impl Pass {
             uniform_size,
             uses_time,
             uses_input,
+            inputs: gpu.input_groups(),
         })
     }
 
@@ -549,87 +592,37 @@ impl Pass {
         self.uses_input.get(index).copied().unwrap_or(false)
     }
 
-    /// Renders into `target` (cleared first) and submits. A validation error of the work
-    /// (a target of the wrong format, say) is returned instead of reaching wgpu's global
-    /// handler, so the node reports it.
+    /// Renders into `target` (cleared first). Submits at once, unless the calling thread
+    /// defers ([`Gpu::defer`]). A validation error of the work (a target of the wrong format,
+    /// say) is returned instead of reaching wgpu's global handler, so the node reports it.
     pub fn render(&self, gpu: &Gpu, target: &Tex, input: &PassInput<'_>) -> Result<(), Error> {
-        let ((), error) = gpu.scoped(|| {
-            let mut batch = Batch::new(gpu, &self.label);
-            self.encode(&mut batch, target, input);
-            batch.submit();
-        });
-        match error {
+        match self.record(gpu, target, input) {
             Some(e) => Err(Error::new(format!("{}: {e}", self.label))),
             None => Ok(()),
         }
     }
 
-    /// Records rendering into `target` (cleared first) into `batch`, submitted with it.
+    /// Records rendering into `target` (cleared first) as part of `batch`. An error is logged.
     pub fn encode(&self, batch: &mut Batch<'_>, target: &Tex, input: &PassInput<'_>) {
-        let gpu = batch.gpu;
-        let encoder = &mut batch.encoder;
-        let device = gpu.device();
-        let layouts = gpu.layouts();
-        let (w, h) = target.size();
-        let frame: Vec<u8> = [w as f32, h as f32, 1.0 / w as f32, 1.0 / h as f32]
-            .iter()
-            .flat_map(|x| x.to_le_bytes())
-            .collect();
-        let time: Vec<u8> = [input.seconds as f32, input.frame as f32, 0.0, 0.0]
-            .iter()
-            .flat_map(|x| x.to_le_bytes())
-            .collect();
-        let params = self.pack(input.param);
-        // One buffer for the three uniforms, each at an aligned offset: creating a buffer costs
-        // more than anything else a pass does on the CPU.
-        let align = device.limits().min_uniform_buffer_offset_alignment.max(16) as usize;
-        let parts = [&frame, &time, &params];
-        let mut offsets = [0usize; 3];
-        let mut contents = Vec::new();
-        for (offset, part) in offsets.iter_mut().zip(parts) {
-            *offset = contents.len().next_multiple_of(align);
-            contents.resize(*offset, 0);
-            contents.extend_from_slice(part);
-            contents.resize(*offset + part.len().max(16).next_multiple_of(16), 0);
+        if let Some(e) = self.record(batch.gpu, target, input) {
+            log::error!("{} ({}): {e}", self.label, batch.label);
         }
-        let buffer = gpu.uniform_buffer("pass uniforms", &contents);
-        let binding = |i: usize| {
-            let offset = offsets.get(i).copied().unwrap_or(0);
-            let size = parts.get(i).map_or(16, |p| p.len().max(16).next_multiple_of(16));
-            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: &buffer,
-                offset: offset as u64,
-                size: wgpu::BufferSize::new(size as u64),
-            })
+    }
+
+    fn record(&self, gpu: &Gpu, target: &Tex, input: &PassInput<'_>) -> Option<String> {
+        let (w, h) = target.size();
+        let words = |v: [f32; 4]| {
+            let mut out = [0u8; 16];
+            for (slot, x) in out.as_chunks_mut::<4>().0.iter_mut().zip(v) {
+                slot.copy_from_slice(&x.to_le_bytes());
+            }
+            out
         };
-        let group0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("pass globals"),
-            layout: &layouts.group0,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: binding(0) },
-                wgpu::BindGroupEntry { binding: 1, resource: binding(1) },
-                wgpu::BindGroupEntry { binding: 2, resource: binding(2) },
-            ],
-        });
-        let view = |i: usize| match input.inputs.get(i).copied().flatten() {
-            Some(t) => t.view(),
-            None => &layouts.empty,
-        };
-        let [clamp, repeat, mirror] = &layouts.samplers;
-        let group1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("pass inputs"),
-            layout: &layouts.group1,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view(0)) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view(1)) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(view(2)) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(view(3)) },
-                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(clamp) },
-                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(repeat) },
-                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(mirror) },
-            ],
-        });
-        {
+        let frame = words([w as f32, h as f32, 1.0 / w as f32, 1.0 / h as f32]);
+        let time = words([input.seconds as f32, input.frame as f32, 0.0, 0.0]);
+        let params = self.pack(input.param);
+        gpu.record(&self.label, [&frame, &time, &params], |encoder, slots| {
+            let group1 = self.input_group(gpu, input.inputs);
             let mut rp = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(&self.label),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -647,10 +640,48 @@ impl Pass {
                 multiview_mask: None,
             });
             rp.set_pipeline(&self.pipeline);
-            rp.set_bind_group(0, &group0, &[]);
+            rp.set_bind_group(0, &slots.group, &slots.offsets);
             rp.set_bind_group(1, &group1, &[]);
             rp.draw(0..3, 0..1);
+        })
+    }
+
+    /// The bind group of `inputs`, made or kept. Groups whose textures are gone otherwise are
+    /// let go, so the cache keeps no texture alive for long.
+    fn input_group(&self, gpu: &Gpu, inputs: &[Option<&Tex>]) -> wgpu::BindGroup {
+        let mut kept = lock(&self.inputs);
+        if let Some(i) = kept.iter().position(|g| g.matches(inputs)) {
+            let g = kept.remove(i);
+            let group = g.group.clone();
+            kept.push(g);
+            return group;
         }
+        kept.retain(InputGroup::alive);
+        if kept.len() >= INPUT_GROUPS {
+            kept.remove(0);
+        }
+        let layouts = gpu.layouts();
+        let view = |i: usize| match inputs.get(i).copied().flatten() {
+            Some(t) => t.view(),
+            None => &layouts.empty,
+        };
+        let [clamp, repeat, mirror] = &layouts.samplers;
+        let group = gpu.device().create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("pass inputs"),
+            layout: &layouts.group1,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(view(0)) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(view(1)) },
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(view(2)) },
+                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(view(3)) },
+                wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(clamp) },
+                wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::Sampler(repeat) },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::Sampler(mirror) },
+            ],
+        });
+        let keys = std::array::from_fn(|i| inputs.get(i).copied().flatten().map(Tex::key));
+        kept.push(InputGroup { inputs: keys, group: group.clone() });
+        group
     }
 
     /// The `params` uniform: every declared value at its offset.

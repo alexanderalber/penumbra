@@ -1,6 +1,6 @@
 //! Textures as they flow between nodes.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use penumbra_core::Error;
 
@@ -105,9 +105,30 @@ impl Tex {
         Arc::ptr_eq(&self.0, &other.0)
     }
 
+    /// Names this texture without holding it.
+    pub(crate) fn key(&self) -> TexKey {
+        TexKey(Arc::downgrade(&self.0))
+    }
+
     /// Held by someone besides the one asking (downstream data, the UI, a snapshot).
     fn shared(&self) -> bool {
         Arc::strong_count(&self.0) > 1
+    }
+}
+
+/// A texture named without holding it, for caches of things made from it.
+pub(crate) struct TexKey(Weak<Inner>);
+
+impl TexKey {
+    /// Whether this names `tex`. The weak reference keeps the allocation, so no other texture
+    /// can come to live at the same address.
+    pub(crate) fn is(&self, tex: &Tex) -> bool {
+        std::ptr::eq(self.0.as_ptr(), Arc::as_ptr(&tex.0))
+    }
+
+    /// Whether the texture still exists.
+    pub(crate) fn alive(&self) -> bool {
+        self.0.strong_count() > 0
     }
 }
 

@@ -453,7 +453,12 @@ impl CookState {
         wanted.extend(request.viewers.iter().copied().filter(|id| net.node(*id).is_some()));
         let shown: Vec<Port> = request.shown.iter().copied().filter(|p| net.node(p.node).is_some()).collect();
         let t_network = Instant::now();
+        // The pass's GPU work goes out a few passes at a time and at its end, and before a node
+        // reads back or uploads: a submission per pass cost more CPU time than the pass.
+        let gpu = self.gpu.clone();
+        let deferral = gpu.as_ref().map(Gpu::defer);
         self.last = self.cooker.cook_showing(&net, self.clock.now(), &wanted, &request.thumbnails, &shown);
+        drop(deferral);
         let t_cook = Instant::now();
         // The blocks the `out.audio` nodes played in this pass go to their devices now. Offline
         // renders (every frame, slower than real time) do not play.
