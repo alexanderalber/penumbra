@@ -135,7 +135,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          \"/mountains\"], sky: [\"/galaxy\"]}; an element may be {path, weight} instead, e.g. {path: \
          \"/glider\", weight: 3}, to come on three times as often as one of weight 1 (default 1, at most \
          100), and with stages: [\"/stage\"] to show only while one of those stages shows (elsewhere it stays at \
-         presence 0 and its slot takes another element): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
+         presence 0 and its slot takes another element), and with instead_of: \"/bars\" to stand in for \
+         that element of any slot on its stages (it takes no turns, shows where /bars would with the same \
+         presence, and /bars stays at 0 there; every other cell stays as without it): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
          effects that are on or off each by itself (off in an intro, outro or break, on from a drop), every \
          other slot (floor, ceiling) follows the floor's rules), stage? (a path, or a list of stages side by \
          side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
@@ -753,8 +755,8 @@ impl Targets {
     }
 }
 
-/// An element in a slot: its path, or its path with how often it comes on and the stages it
-/// shows in.
+/// An element in a slot: its path, or its path with how often it comes on, the stages it
+/// shows in and the element it stands in for.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Entry {
@@ -765,6 +767,8 @@ enum Entry {
         weight: Option<f64>,
         #[serde(default)]
         stages: Option<Vec<NodePath>>,
+        #[serde(default)]
+        instead_of: Option<NodePath>,
     },
 }
 
@@ -859,15 +863,23 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     };
     let mut slots = Vec::new();
     let mut elements: Vec<NodePath> = Vec::new();
+    let mut stand_ins: Vec<(NodePath, NodePath)> = Vec::new();
     for (slot, entries) in &a.slots {
         let mut names = Vec::new();
         let mut weights = Vec::new();
         let mut shows = Vec::new();
+        let mut instead = Vec::new();
         for entry in entries {
-            let (path, weight, on) = match entry {
-                Entry::Path(path) => (path, 1.0, None),
-                Entry::Weighted { path, weight, stages: on } => (path, weight.unwrap_or(1.0), on.as_ref()),
+            let (path, weight, on, of) = match entry {
+                Entry::Path(path) => (path, 1.0, None, None),
+                Entry::Weighted { path, weight, stages: on, instead_of } => {
+                    (path, weight.unwrap_or(1.0), on.as_ref(), instead_of.as_ref())
+                }
             };
+            if let Some(of) = of {
+                stand_ins.push((path.clone(), of.clone()));
+            }
+            instead.push(of.map(|p| p.name().map(|n| n.as_str().to_string()).unwrap_or_default()));
             let mut list = Vec::new();
             for st in on.into_iter().flatten() {
                 let Some(k) = stages.iter().position(|s| s == st) else {
@@ -892,7 +904,14 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             names.push(path.name().map(|n| n.as_str().to_string()).unwrap_or_default());
             elements.push(path.clone());
         }
-        slots.push(Slot { name: slot.clone(), elements: names, weights, stages: shows });
+        slots.push(Slot { name: slot.clone(), elements: names, weights, stages: shows, instead });
+    }
+    for (path, of) in &stand_ins {
+        if !elements.contains(of) {
+            return Err(CommandError(format!(
+                "{path}: instead_of {of} is not an element of a slot: name it in one of the slots too"
+            )));
+        }
     }
     arrange::check(&slots).map_err(CommandError)?;
     for stage in &stages {

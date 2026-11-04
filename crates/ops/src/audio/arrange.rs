@@ -18,6 +18,11 @@
 //! - **Stages per element:** an element may name the stages it shows in. In a row whose stage
 //!   is not among them it stays at presence 0, and the slot's swap passes it by; when the stage
 //!   changes to one it does not show in, its slot takes its next element there.
+//! - **Stand-ins:** an element may stand in for another one, of its own slot or another, on
+//!   its stages. It takes no turns of its own: on its stages it shows wherever the other one
+//!   would, with the same presence, and the other one stays at 0 there. Elsewhere it stays at 0.
+//!   The swaps and turns of every slot stay what they were without it, so adding a stand-in
+//!   changes the table only in the rows where it takes over.
 //! - **Weights:** an element of weight 3 comes on three times as often as one of weight 1. The
 //!   next element is the one owed the most turns (smooth weighted round robin), so the turns of a
 //!   heavy element spread out evenly and the same file always gives the same table. With equal
@@ -295,6 +300,10 @@ pub struct Slot {
     /// The stages each element shows in, by index: one list per element, or none for every
     /// stage. An empty list counts as every stage.
     pub stages: Vec<Vec<usize>>,
+    /// The element each one stands in for, by column name, or none: one entry per element, or
+    /// empty for none at all. A stand-in takes no turns; on its stages it shows where the other
+    /// one would, and the other one stays at 0 there.
+    pub instead: Vec<Option<String>>,
 }
 
 /// The heaviest weight an element takes; heavier ones count as this.
@@ -308,7 +317,19 @@ impl Slot {
             elements: elements.iter().map(|e| e.to_string()).collect(),
             weights: Vec::new(),
             stages: Vec::new(),
+            instead: Vec::new(),
         }
+    }
+
+    /// The element that element `i` stands in for, if it stands in for one.
+    pub fn stands_in_for(&self, i: usize) -> Option<&str> {
+        self.instead.get(i).and_then(|x| x.as_deref())
+    }
+
+    /// Whether element `i` may come on by a swap on stage `stage`: it shows there and is no
+    /// stand-in.
+    fn takes_turns(&self, i: usize, stage: usize) -> bool {
+        self.shows_in(i, stage) && self.stands_in_for(i).is_none()
     }
 
     /// Whether element `i` shows on stage `stage`.
@@ -368,7 +389,8 @@ pub fn columns(slots: &[Slot]) -> Vec<String> {
 }
 
 /// Why `slots` cannot make a table: an element name that is no channel name, a name twice or
-/// one of the table's own columns, or no element at all.
+/// one of the table's own columns, no element at all, or a stand-in for no element, for itself,
+/// for another stand-in or in or for the post slot.
 pub fn check(slots: &[Slot]) -> Result<(), String> {
     let cols = columns(slots);
     if cols.is_empty() {
@@ -386,6 +408,30 @@ pub fn check(slots: &[Slot]) -> Result<(), String> {
         }
         if cols.iter().take(i).any(|d| d == c) {
             return Err(format!("`{c}` is named twice: every element needs a name of its own"));
+        }
+    }
+    for slot in slots {
+        for (i, c) in slot.elements.iter().enumerate() {
+            let Some(other) = slot.stands_in_for(i) else { continue };
+            if slot.name == POST {
+                return Err(format!("`{c}` is in the post slot, whose elements cannot stand in for another"));
+            }
+            if other == c {
+                return Err(format!("`{c}` cannot stand in for itself"));
+            }
+            let Some(of) = slots.iter().find(|s| s.elements.iter().any(|e| e == other)) else {
+                return Err(format!("`{c}` stands in for `{other}`, which is no element of a slot"));
+            };
+            if of.name == POST {
+                return Err(format!("`{c}` cannot stand in for `{other}` of the post slot"));
+            }
+            let j = of.elements.iter().position(|e| e == other).unwrap_or(0);
+            if of.stands_in_for(j).is_some() {
+                return Err(format!("`{c}` stands in for `{other}`, which stands in for another itself"));
+            }
+        }
+        if slot.name != POST && (0..slot.elements.len()).all(|i| slot.stands_in_for(i).is_some()) {
+            return Err(format!("slot `{}` has only stand-ins: it needs an element of its own", slot.name));
         }
     }
     Ok(())
@@ -421,19 +467,22 @@ enum State {
 impl State {
     fn swappable(&self) -> bool {
         match self {
-            State::One { weights, .. } => weights.len() > 1,
+            // A stand-in weighs 0 and takes no turns.
+            State::One { weights, .. } => weights.iter().filter(|w| **w > 0.0).count() > 1,
             State::Each(on, _) => !on.is_empty(),
         }
     }
 
-    /// A slot with one element on, the first, as though the round robin had just picked it.
+    /// A slot with one element on, the first of weight above 0, as though the round robin had
+    /// just picked it.
     fn one(weights: Vec<f64>) -> State {
         let total: f64 = weights.iter().sum();
+        let on = weights.iter().position(|w| *w > 0.0).unwrap_or(0);
         let mut owed = weights.clone();
-        if let Some(first) = owed.first_mut() {
+        if let Some(first) = owed.get_mut(on) {
             *first -= total;
         }
-        State::One { on: 0, weights, owed }
+        State::One { on, weights, owed }
     }
 
     /// One swap: the next element on; in the post slot the next element switched.
@@ -517,7 +566,12 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             if s.name == POST {
                 State::Each(vec![false; s.elements.len()], 0)
             } else {
-                State::one((0..s.elements.len()).map(|i| s.weight(i)).collect())
+                // A stand-in weighs 0, so the turns of the others stay what they are without it.
+                State::one(
+                    (0..s.elements.len())
+                        .map(|i| if s.stands_in_for(i).is_some() { 0.0 } else { s.weight(i) })
+                        .collect(),
+                )
             }
         })
         .collect();
@@ -527,6 +581,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
     let content: Vec<usize> =
         slots.iter().enumerate().filter(|(_, s)| s.name != POST).map(|(i, _)| i).collect();
     let stages = stages.max(1);
+    let cols = columns(slots);
     let mut turn = 0usize;
     let mut walk = 0.0f64;
     let mut dense = 0usize;
@@ -570,14 +625,14 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             if big {
                 for &s in &swappable {
                     if let (Some(x), Some(slot)) = (state.get_mut(s), slots.get(s)) {
-                        x.swap_all(&|j| slot.shows_in(j, stage));
+                        x.swap_all(&|j| slot.takes_turns(j, stage));
                     }
                 }
             } else if change >= CHANGE_SMALL
                 && let Some(&s) = swappable.get(turn % swappable.len().max(1))
             {
                 if let (Some(x), Some(slot)) = (state.get_mut(s), slots.get(s)) {
-                    x.swap(&|j| slot.shows_in(j, stage));
+                    x.swap(&|j| slot.takes_turns(j, stage));
                 }
                 turn += 1;
             }
@@ -586,7 +641,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                 for (s, (x, slot)) in state.iter_mut().zip(slots).enumerate() {
                     let unswapped = x.on().is_some() && x.on() == before.get(s).copied().flatten();
                     if unswapped && since.get(s).is_some_and(|n| *n >= rules.dwell) {
-                        x.swap(&|j| slot.shows_in(j, stage));
+                        x.swap(&|j| slot.takes_turns(j, stage));
                     }
                 }
             }
@@ -596,7 +651,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             if let State::One { on, .. } = x
                 && !slot.shows_in(*on, stage)
             {
-                x.swap(&|j| slot.shows_in(j, stage));
+                x.swap(&|j| slot.takes_turns(j, stage));
             }
         }
         // The opening's steps count as one section.
@@ -645,6 +700,25 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                         .map(|(j, o)| if *o && !empty && slot.shows_in(j, stage) { 1.0 } else { 0.0 }),
                 ),
             }
+        }
+        // A stand-in takes over the presence of the element it stands in for, on its stages.
+        let mut at = 0usize;
+        for slot in slots {
+            for j in 0..slot.elements.len() {
+                if let Some(other) = slot.stands_in_for(j)
+                    && slot.shows_in(j, stage)
+                    && let Some(k) = cols.iter().position(|c| c == other)
+                {
+                    let taken = presence.get(k).copied().unwrap_or(0.0);
+                    if let Some(x) = presence.get_mut(k) {
+                        *x = 0.0;
+                    }
+                    if let Some(x) = presence.get_mut(at + j) {
+                        *x = taken;
+                    }
+                }
+            }
+            at += slot.elements.len();
         }
         let intensity = match part.role {
             Role::Intro | Role::Outro => CALM_INTENSITY,
@@ -1475,6 +1549,74 @@ mod tests {
         let mut every = plain.clone();
         every.stages = vec![vec![], vec![], vec![]];
         assert_eq!(rows(&p, std::slice::from_ref(&plain), 3), rows(&p, std::slice::from_ref(&every), 3));
+    }
+
+    #[test]
+    fn a_stand_in_takes_over_where_its_element_is_on_and_leaves_every_other_cell_as_it_was() {
+        // The bars in the sky on every stage, the rings in the mid slot standing in for them on
+        // stage 1; the same 40 parts as above, so the stage walks 0, 1, 2, 1.
+        let mut p = Vec::new();
+        for i in 0..40 {
+            let start = i as f64 * 60.0;
+            let track_start = i % 10 == 0;
+            let role = [Role::Main, Role::Break, Role::Drop, Role::Intro][i % 4];
+            p.push(Part {
+                start,
+                end: start + 60.0,
+                zone: (start, start),
+                role,
+                change: if track_start { 0.9 } else { 0.4 },
+                energy: 0.6,
+                track_start,
+                seed: i as u32,
+            });
+        }
+        let sky = Slot::new("sky", &["galaxy", "planet", "bars"]);
+        let plain = vec![Slot::new("mid", &["glider", "lasers"]), sky.clone()];
+        let mut mid = Slot::new("mid", &["glider", "lasers", "rings"]);
+        mid.stages = vec![vec![], vec![], vec![1]];
+        mid.instead = vec![None, None, Some("bars".into())];
+        let with = vec![mid, sky];
+        assert_eq!(check(&with), Ok(()));
+        let before = rows(&p, &plain, 3);
+        let after = rows(&p, &with, 3);
+        assert_eq!(before.len(), after.len());
+        let mut took = 0;
+        for (b, a) in before.iter().zip(&after) {
+            // Columns before: glider lasers galaxy planet bars; after: glider lasers rings galaxy
+            // planet bars.
+            let (bars, rings) = (a.presence[5], a.presence[2]);
+            if a.stage == 1 {
+                assert_eq!(bars, 0.0, "the bars never show beside the rings: {a:?}");
+                assert_eq!(rings, b.presence[4], "the rings show as the bars would: {a:?}");
+                took += usize::from(rings > 0.0);
+            } else {
+                assert_eq!(rings, 0.0, "the rings only on their stage: {a:?}");
+                assert_eq!(bars, b.presence[4], "{a:?}");
+            }
+            for (x, y) in [(0, 0), (1, 1), (3, 2), (4, 3)] {
+                assert_eq!(a.presence[x], b.presence[y], "every other cell as before: {a:?} {b:?}");
+            }
+            assert_eq!((a.stage, a.camera, a.warmth), (b.stage, b.camera, b.warmth));
+        }
+        assert!(took > 0, "the rings take over somewhere");
+        // What a stand-in may not be.
+        let bad = |slot: &str, of: &str| {
+            let mut s = Slot::new(slot, &["a", "b"]);
+            s.instead = vec![None, Some(of.into())];
+            check(&[s, Slot::new("sky", &["c"])])
+        };
+        assert!(bad("mid", "x").is_err_and(|e| e.contains("no element")));
+        assert!(bad("mid", "b").is_err_and(|e| e.contains("itself")));
+        assert!(bad("post", "c").is_err_and(|e| e.contains("post")));
+        let mut only = Slot::new("mid", &["a"]);
+        only.instead = vec![Some("c".into())];
+        assert!(check(&[only, Slot::new("sky", &["c"])]).is_err_and(|e| e.contains("only stand-ins")));
+        let mut chain = Slot::new("mid", &["a", "b", "d"]);
+        chain.instead = vec![None, Some("c".into()), Some("b".into())];
+        assert!(
+            check(&[chain, Slot::new("sky", &["c"])]).is_err_and(|e| e.contains("stands in for another"))
+        );
     }
 
     /// Five slots taking turns at medium boundaries, the floor (four elements) on stage 0 only;

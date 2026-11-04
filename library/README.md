@@ -291,6 +291,12 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   `ceiling`, `mid`, `sky` and `post`. `mid` and `sky` stay on through a break; `floor` and
   `ceiling` empty. In `post` every element is on or off by itself, so several can be on at once:
   they are off in an intro, outro and break and come on at a drop.
+- **One element instead of another on a stage.** `mid_equalisers` is the tunnel's version of
+  `sky_bars`: rings of bars to fly through instead of a row at the tube's far end. Give it to
+  `beats.arrange` in the mid slot as `{path: "/equalisers", stages: ["/tunnel"], instead_of:
+  "/bars"}`. In a tunnel row it then shows wherever `/bars` would, and `/bars` stays at 0. So
+  the two never show at once in the tunnel. On the other stages `/bars` shows as before, and the
+  rest of the table stays as it was without `/equalisers`.
 - **Lights for the room** come from `room_lights`: a picture for the room's columns and the
   channels for DMX lights, in the stage's colours and on its beat. Give it to `beats.arrange` as
   `lights: "/room"`, and its `pattern` changes with the sections. See [room_lights](#room_lights).
@@ -330,7 +336,7 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   `walls` is 1. With `curve` the bars and the city stand round the tube's far end, `far` metres
   ahead: a ring of `radius` round the axis, which the camera sees above the vanishing point. The
   figures stand on that ring's bottom and the planet hangs inside it. Wire the blended pose into
-  `mid_lasers` and `mid_glider` as into the sky elements.
+  `mid_lasers`, `mid_glider` and `mid_equalisers` as into the sky elements.
 - **Rolling the plane up into the tunnel.** `stage_synthwave` and `stage_tunnel` both have
   `roll_up`. Bind both to the share of the fade between them (the `min` 1 part of the `stage`
   channel above). While the switch fades, the plane's floor gives way to lines from right to
@@ -849,6 +855,36 @@ closed and made of 192 short segments. Towards `presence` 0 the line shortens un
   towards the camera), `grow` (how much the bass enlarges it), `kick` (turns per beat),
   `smooth` (seconds the levels take to fall), `thickness`, `color`, `line_width`.
 
+### mid_equalisers
+
+![mid_equalisers](mid_equalisers/preview.png)
+
+Rings of equaliser bars on the wall of the tunnel, to fly through. A new ring comes every
+`every` bars of travel. Each ring stands in the world and comes towards the camera, so the
+camera flies through it on a downbeat. About five rings show in a row, the far ones fading in at
+the tube's far end. Each bar stands on the wall and points towards the axis. Round a ring the
+bars show the music as `sky_bars` does: the bass in the middle of the row, the mids beside it,
+the treble at both ends. The row covers `arc` degrees of the ring, and the rest stays open. Each
+ring is turned `turn` degrees against the one before, so the opening winds round the tube from
+ring to ring. The bars jump up on each beat, and an onset lifts them.
+
+The bars stay out of a round space of `open` metres round the flight, `middle` metres above the
+tube's bottom. The bars near the bottom are short or missing there. The glider and the camera
+pass through at every camera preset. Towards `presence` 0 the bars shrink into the wall. The
+element needs a tube: where the stage's `curve` is 0 (the synthwave plane, the shaft) the bars
+are gone.
+
+- In: `bus`, `lane` (for `step`), `pose` (the stage's: `axis`, `radius`, `curve`, `far`). Out:
+  `out` (into the stage's `mid`).
+- Params: `presence`, `warmth`, `brightness`, `every` (bars from one ring to the next, 2),
+  `turn` (degrees each ring turns against the one before, 20), `count` (bars round a ring, 8 to
+  48, 32), `arc` (degrees of the ring the bars cover, 270), `cells` (cells a full bar is stacked
+  of, 1 to 8; 1 draws solid bars), `tall` (metres a bar stands out of the wall at full level,
+  1.6), `open` and `middle` (the free space: radius 2 m, its middle 2 m above the bottom), `gap`
+  (dark share between two bars), `depth` (metres a cell is deep along the tube), `jitter` (how
+  much each bar moves by itself), `kick` (the lift on an onset), `pump` (how far the bars fall
+  over each beat, 0.4), `beats_per_bar`.
+
 ### ceiling_curtains
 
 ![ceiling_curtains](ceiling_curtains/preview.png)
@@ -997,6 +1033,9 @@ every bar for a moment.
   a ring, the bars pointing to its middle: bind it to the pose's `curve`, so in a tube the bars
   stand on the wall of its far end), `axis`, `radius`, `far` (where the tube's far end lies;
   bound to the pose's channels of the same names).
+
+In the tunnel, [mid_equalisers](#mid_equalisers) can take the row's place: rings of bars that
+come nearer and that the camera flies through.
 
 ### sky_city
 

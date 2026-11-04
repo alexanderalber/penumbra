@@ -690,6 +690,14 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         (json!({"slots": {}}), "no elements"),
         (json!({"slots": {"floor": [{"path": "/blocks", "weight": 0.0}]}}), "weight is a number above 0"),
         (json!({"slots": {"floor": [{"path": "/blocks", "stages": ["/galaxy"]}]}}), "not one of the stages"),
+        (
+            json!({"slots": {"floor": ["/blocks", {"path": "/mountains", "instead_of": "/n"}]}}),
+            "not an element of a slot",
+        ),
+        (
+            json!({"slots": {"floor": [{"path": "/blocks", "instead_of": "/galaxy"}], "sky": ["/galaxy"]}}),
+            "only stand-ins",
+        ),
         (json!({"stage": "/n"}), "no param warmth"),
         (json!({"intensity": "/stage.nope"}), "no param nope"),
         (json!({"fade_min": -1.0}), "fade_min"),
