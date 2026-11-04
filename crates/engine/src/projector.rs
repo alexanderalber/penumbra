@@ -85,6 +85,21 @@ pub fn close_window(e: &Engine, node: NodeId) -> Result<(), String> {
     edit_as(&session, Actor::User, &ops, "close the projector's window").map(|_| ()).map_err(|e| e.0)
 }
 
+/// Writes where the user moved or resized a projector's window (`window_place`), outside the
+/// history: moving a window is no edit to undo, and the project keeps the place so the window
+/// opens there again. Refused while Claude holds the claim (the caller tries again later); in
+/// show mode written as the show screen's values are.
+pub fn keep_window_place(e: &Engine, node: NodeId, place: [f64; 4]) -> Result<(), String> {
+    let session = e.session();
+    let path = session.doc().snapshot().path_of(node).ok_or("the projector is gone")?;
+    let name = Name::new("window_place").map_err(|e| e.0)?;
+    let param = ParamPath::new(path, name).map_err(|e| e.0)?;
+    let ops = [Op::Set { param, value: Value::Vec4(place) }];
+    let done =
+        if session.locked() { session.edit_locked(&ops) } else { session.edit_live(&ops, Instant::now()) };
+    done.map(|_| ()).map_err(|e| e.0)
+}
+
 pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     let e = Arc::clone(engine);
     registry.register(FnCommand::new(

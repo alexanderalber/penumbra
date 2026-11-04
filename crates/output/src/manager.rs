@@ -8,15 +8,17 @@
 //! from sleeping.
 //!
 //! A projector with `window` on gets a desktop window of its own instead, keyed by the node
-//! ([`WINDOW`]): decorated, resizable, allowed on the editor's display, never pacing the show
-//! clock. Its close button turns the node's `active` off.
+//! ([`WINDOW`]): resizable, allowed on the editor's display, never pacing the show clock. Its
+//! close button turns the node's `active` off. It opens where the node's `window_place` says and
+//! writes its place there when the user moves it ([`crate::place`]); with `borderless` on it has
+//! no title bar or frame, and a drag on the picture moves it (on its edge, resizes it).
 //!
 //! A projector whose display cannot be found for certain shows nothing: a show must not end up
 //! on another wall. Its node gets the error, and every change of what a projector is shown on
 //! (or why not) is logged once. A display that drops out for a moment (a glitch in the
 //! enumeration) keeps its window for [`GRACE_TICKS`] while the window is still on it.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -25,13 +27,16 @@ use penumbra_engine::Engine;
 use penumbra_gpu::Gpu;
 use penumbra_ops::keyboard::{Key, Source};
 use penumbra_ops::out::{DisplayInfo, OutputBoard, ProjectorState};
+use penumbra_system::pointer::Monitor;
 use penumbra_system::{DisplayDetails, KeepAwake, Problem};
-use winit::event::{ElementState, KeyEvent, WindowEvent};
+use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key as LogicalKey, ModifiersState, PhysicalKey};
 use winit::monitor::MonitorHandle;
 use winit::window::{Fullscreen, WindowId};
 
+use crate::place::{Action, Keeper, Place};
 use crate::window::OutputWindow;
 
 /// How often displays and projectors are looked at.
@@ -49,6 +54,22 @@ const WINDOW_SIZE: (f64, f64) = (960.0, 540.0);
 /// Whether `key` names a projector's desktop window rather than a display.
 fn is_window(key: &str) -> bool {
     key.starts_with(WINDOW)
+}
+
+/// What a projector with `window` on asks of its desktop window.
+struct DeskWant {
+    title: String,
+    node: NodeId,
+    borderless: bool,
+    place: [f64; 4],
+}
+
+/// An open desktop window's state beside its [`OutputWindow`].
+struct Desk {
+    keeper: Keeper,
+    borderless: bool,
+    /// The pointer over it, window pixels, for a drag on a borderless window.
+    cursor: Option<PhysicalPosition<f64>>,
 }
 
 /// Where a projector was last shown.
@@ -83,6 +104,8 @@ pub struct Outputs {
     /// The modifiers held over the output windows: a key pressed with Ctrl, Alt or the
     /// Windows key is a shortcut, not a key for the show.
     modifiers: ModifiersState,
+    /// The open desktop windows (`window` on), by key.
+    desks: HashMap<String, Desk>,
 }
 
 impl Outputs {
@@ -99,6 +122,7 @@ impl Outputs {
             reported: BTreeMap::new(),
             awake: KeepAwake::new(),
             modifiers: ModifiersState::empty(),
+            desks: HashMap::new(),
         }
     }
 
@@ -127,6 +151,32 @@ impl Outputs {
             // Alt+F4 on a projector during a show must not close it; projectors close by
             // deactivating or deleting their node.
             WindowEvent::CloseRequested => log::info!("output {}: close ignored", w.display),
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(d) = self.desks.get_mut(&w.display) {
+                    d.cursor = Some(*position);
+                }
+            }
+            WindowEvent::CursorLeft { .. } => {
+                if let Some(d) = self.desks.get_mut(&w.display) {
+                    d.cursor = None;
+                }
+            }
+            // A borderless window has no title bar to grab: the picture moves it, its edge
+            // resizes it.
+            WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
+                if let Some(d) = self.desks.get(&w.display).filter(|d| d.borderless)
+                    && let Some(at) = d.cursor
+                {
+                    let size = w.window.inner_size();
+                    let done = match crate::place::grip(at.x, at.y, [size.width, size.height]) {
+                        Some(direction) => w.window.drag_resize_window(direction),
+                        None => w.window.drag_window(),
+                    };
+                    if let Err(e) = done {
+                        log::debug!("output {}: cannot drag: {e}", w.display);
+                    }
+                }
+            }
             WindowEvent::ModifiersChanged(m) => self.modifiers = m.state(),
             WindowEvent::KeyboardInput { event, .. } => {
                 let keyboard = self.engine.keyboard();
@@ -175,14 +225,22 @@ impl Outputs {
         let frame = self.engine.output();
         let mut states: BTreeMap<NodeId, ProjectorState> = BTreeMap::new();
         let mut wanted: BTreeMap<String, Vec<NodeId>> = BTreeMap::new();
-        // The title of each desktop window.
-        let mut titles: BTreeMap<String, String> = BTreeMap::new();
+        // What each desktop window is to be.
+        let mut desks: BTreeMap<String, DeskWant> = BTreeMap::new();
         for p in frame.projectors.iter().filter(|p| p.active && (p.window || !p.display.is_empty())) {
             let mut state = ProjectorState::default();
             if p.window {
                 let key = format!("{WINDOW}{}", p.path);
                 state.display = Some(key.clone());
-                titles.insert(key.clone(), format!("penumbra {}", p.path));
+                desks.insert(
+                    key.clone(),
+                    DeskWant {
+                        title: format!("penumbra {}", p.path),
+                        node: p.node,
+                        borderless: p.borderless,
+                        place: p.window_place,
+                    },
+                );
                 wanted.entry(key).or_default().push(p.node);
                 self.shown.remove(&p.node);
                 states.insert(p.node, state);
@@ -265,20 +323,28 @@ impl Outputs {
             }
             log::info!("output {}: closing", w.display);
             let mut w = self.windows.remove(i);
+            self.desks.remove(&w.display);
             w.stop();
         }
+        let rects = rects(&infos);
 
         // Open the missing ones.
         for (display, nodes) in &wanted {
             if self.windows.iter().any(|w| &w.display == display) || self.failed.contains_key(display) {
                 continue;
             }
-            if let Some(title) = titles.get(display) {
-                match self.open_window(event_loop, display, title) {
+            if let Some(want) = desks.get(display) {
+                let (place, keeper) = Keeper::open(want.place, &rects);
+                if let Some(problem) = keeper.problem() {
+                    log::warn!("output {display}: {problem}");
+                }
+                match self.open_window(event_loop, display, want, place) {
                     Ok(w) => {
-                        log::info!("output {display}: open as a window");
+                        log::info!("output {display}: open as a window at {place:?}");
                         w.set_nodes(nodes.clone());
                         self.windows.push(w);
+                        let desk = Desk { keeper, borderless: want.borderless, cursor: None };
+                        self.desks.insert(display.clone(), desk);
                     }
                     Err(e) => {
                         log::error!("output {display}: {e}");
@@ -307,6 +373,7 @@ impl Outputs {
         for w in &self.windows {
             w.set_nodes(wanted.get(&w.display).cloned().unwrap_or_default());
         }
+        self.keep_places(&desks, &rects, now);
         for state in states.values_mut() {
             if let Some(e) = state.display.as_ref().and_then(|d| self.failed.get(d)) {
                 state.error = Some(format!("the output window failed: {e}"));
@@ -318,6 +385,11 @@ impl Outputs {
             {
                 let s = w.window.inner_size();
                 state.size = Some([s.width.max(1), s.height.max(1)]);
+                if let Some(problem) = self.desks.get(&w.display).and_then(|d| d.keeper.problem())
+                    && state.warning.is_none()
+                {
+                    state.warning = Some(problem.to_string());
+                }
             }
         }
         self.report(&frame.projectors, &states, &infos);
@@ -348,6 +420,36 @@ impl Outputs {
             s.keeps_display_awake = awake;
             s.projectors = states;
         });
+    }
+
+    /// Keeps each desktop window and its node's `window_place` in line, and its frame as
+    /// `borderless` says.
+    fn keep_places(&mut self, wants: &BTreeMap<String, DeskWant>, rects: &[Monitor], now: Instant) {
+        for w in &self.windows {
+            let (Some(desk), Some(want)) = (self.desks.get_mut(&w.display), wants.get(&w.display)) else {
+                continue;
+            };
+            if desk.borderless != want.borderless {
+                desk.borderless = want.borderless;
+                w.window.set_decorations(!want.borderless);
+            }
+            let seen = seen(&w.window);
+            match desk.keeper.tick(now, want.place, seen, rects) {
+                Action::Nothing => {}
+                Action::Move(p) => {
+                    log::info!("output {}: moving the window to {p:?}", w.display);
+                    place_window(&w.window, p);
+                }
+                Action::Write(p) => {
+                    if let Err(e) =
+                        penumbra_engine::projector::keep_window_place(&self.engine, want.node, p.to_param())
+                    {
+                        log::debug!("output {}: cannot keep the window's place yet: {e}", w.display);
+                        desk.keeper.write_failed();
+                    }
+                }
+            }
+        }
     }
 
     /// Whether projector `node`, whose display did not resolve this tick, keeps its window for
@@ -451,23 +553,35 @@ impl Outputs {
         )
     }
 
-    /// A projector's desktop window: decorated and resizable, at [`WINDOW_SIZE`] where the
-    /// system puts new windows, presenting at the primary display's refresh rate.
+    /// A projector's desktop window: resizable, at `place`, or at [`WINDOW_SIZE`] where the
+    /// system puts new windows; presenting at the primary display's refresh rate.
     fn open_window(
         &self,
         event_loop: &ActiveEventLoop,
         key: &str,
-        title: &str,
+        want: &DeskWant,
+        place: Option<Place>,
     ) -> Result<OutputWindow, String> {
         let Some((instance, gpu)) = &self.gpu else {
             return Err("no GPU yet".into());
         };
         let attrs = winit::window::Window::default_attributes()
-            .with_title(title)
-            .with_inner_size(winit::dpi::LogicalSize::new(WINDOW_SIZE.0, WINDOW_SIZE.1))
+            .with_title(want.title.as_str())
+            .with_decorations(!want.borderless)
             .with_active(false);
+        let attrs = match place {
+            Some(p) => attrs
+                .with_position(PhysicalPosition::new(p.x, p.y))
+                .with_inner_size(PhysicalSize::new(p.width, p.height)),
+            None => attrs.with_inner_size(winit::dpi::LogicalSize::new(WINDOW_SIZE.0, WINDOW_SIZE.1)),
+        };
         let window =
             Arc::new(event_loop.create_window(attrs).map_err(|e| format!("cannot open the window: {e}"))?);
+        // Once more after it opened: a window created on a display with another scaling than
+        // the one it starts from may have been scaled on the way.
+        if let Some(p) = place {
+            place_window(&window, p);
+        }
         let refresh = event_loop
             .primary_monitor()
             .and_then(|m| m.refresh_rate_millihertz())
@@ -495,6 +609,46 @@ impl Outputs {
             s.managed = false;
         });
     }
+}
+
+/// The window's place now; `None` while minimised or maximised, which is no place to keep.
+fn seen(window: &winit::window::Window) -> Option<Place> {
+    if window.is_minimized() == Some(true) || window.is_maximized() {
+        return None;
+    }
+    let at = window.outer_position().ok()?;
+    let size = window.inner_size();
+    (size.width > 0 && size.height > 0).then_some(Place {
+        x: at.x,
+        y: at.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+/// Moves and sizes the window: the position first, then the size at the scale of the display it
+/// landed on.
+fn place_window(window: &winit::window::Window, p: Place) {
+    window.set_outer_position(PhysicalPosition::new(p.x, p.y));
+    let _ = window.request_inner_size(PhysicalSize::new(p.width, p.height));
+}
+
+/// The displays' rectangles on the desktop, physical pixels.
+fn rects(infos: &[DisplayInfo]) -> Vec<Monitor> {
+    infos
+        .iter()
+        .map(|d| {
+            let (w, h) =
+                (i32::try_from(d.size[0]).unwrap_or(i32::MAX), i32::try_from(d.size[1]).unwrap_or(i32::MAX));
+            Monitor {
+                os_name: d.os_name.clone(),
+                left: d.position[0],
+                top: d.position[1],
+                right: d.position[0].saturating_add(w),
+                bottom: d.position[1].saturating_add(h),
+            }
+        })
+        .collect()
 }
 
 /// The displays winit sees, named by the system crate where it knows them (Windows) and by

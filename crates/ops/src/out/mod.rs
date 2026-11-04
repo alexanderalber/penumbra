@@ -53,7 +53,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use penumbra_core::{Error, NodeId, ParamSpec, Value, lock};
+use penumbra_core::{Error, NodeId, ParamSpec, Unit, Value, lock};
 use penumbra_gpu::Tex;
 use penumbra_gpu::projection::{Correction, Stripes, Test, TestPattern};
 use penumbra_graph::{
@@ -104,6 +104,10 @@ pub struct ProjectorFrame {
     pub active: bool,
     /// Shown in a window of its own on the desktop instead of fullscreen on `display`.
     pub window: bool,
+    /// That window without title bar and frame.
+    pub borderless: bool,
+    /// That window's place as set: x, y, width, height in desktop pixels; all 0 for none.
+    pub window_place: [f64; 4],
     /// x, y, width, height in display sizes (0..1).
     pub viewport: [f64; 4],
     pub fit: Fit,
@@ -251,6 +255,12 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(ParamSpec::bool("window", false).doc(
             "Show the picture in a window of its own on the desktop instead of fullscreen on              `display`: a preview beside the editor, also on the editor's display. It keeps              running smoothly while the editor is minimised. Move and resize it like any window;              closing it turns `active` off. `display` and `viewport` do not apply",
+        ))
+        .param(ParamSpec::bool("borderless", false).doc(
+            "With `window` on: the window without title bar and frame, only the picture. Drag              the picture to move the window, drag its edge to resize it",
+        ))
+        .param(ParamSpec::vec4("window_place", [0.0; 4]).unit(Unit::Pixels).more().doc(
+            "With `window` on: x, y, width and height of the window in desktop pixels, as              output.list gives the displays. x and y are the window's top left corner, title bar              included; width and height the picture's size. Moving or resizing the window writes              it here, so the window opens there again. All 0: where Windows puts a new window,              960 x 540. A place off every connected display is not taken: the window opens as              with all 0, and the place stays until the window is moved",
         ))
         .param(
             ParamSpec::choice("fit", &["fit", "fill", "stretch"])
@@ -546,6 +556,11 @@ pub fn collect(
             display: text("display").trim().to_string(),
             active: !matches!(param("active"), Some(Value::Bool(false))),
             window: matches!(param("window"), Some(Value::Bool(true))),
+            borderless: matches!(param("borderless"), Some(Value::Bool(true))),
+            window_place: match param("window_place") {
+                Some(Value::Vec4(v)) => *v,
+                _ => [0.0; 4],
+            },
             viewport,
             fit,
             source,

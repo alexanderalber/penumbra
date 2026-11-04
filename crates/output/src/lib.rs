@@ -6,6 +6,7 @@
 //! [`Outputs`]. Nothing here is used by headless runs.
 
 pub mod manager;
+pub mod place;
 pub mod window;
 
 pub use manager::Outputs;

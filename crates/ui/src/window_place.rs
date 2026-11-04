@@ -29,10 +29,6 @@ pub struct Place {
 
 /// The smallest and largest inner size taken from a file.
 const SIZE: std::ops::RangeInclusive<u32> = 200..=16384;
-/// How much of the title bar must lie on one display: a strip along the window's top this high,
-/// at least `GRAB` of it.
-const TITLE: i32 = 32;
-const GRAB: [i32; 2] = [120, 24];
 /// How long the place must stand still before it is written.
 const SETTLE: Duration = Duration::from_secs(1);
 
@@ -46,12 +42,7 @@ impl Place {
 
     /// Whether enough of the title bar lies on one of `displays` to grab the window there.
     pub fn reachable(&self, displays: &[penumbra_system::pointer::Monitor]) -> bool {
-        let right = self.x.saturating_add(i32::try_from(self.width).unwrap_or(i32::MAX));
-        displays.iter().any(|d| {
-            let w = right.min(d.right) - self.x.max(d.left);
-            let h = (self.y + TITLE).min(d.bottom) - self.y.max(d.top);
-            w >= GRAB[0] && h >= GRAB[1]
-        })
+        penumbra_system::pointer::grabbable(self.x, self.y, self.width, displays)
     }
 }
 

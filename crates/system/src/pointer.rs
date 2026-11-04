@@ -7,6 +7,9 @@
 //! Coordinates are desktop pixels as the calling process sees them (physical pixels in a
 //! process that is aware of per-monitor DPI, as the windowed app is); the pointer and the
 //! rectangles come from the same process, so shares of a display come out right either way.
+//!
+//! [`grabbable`] tells whether a window placed from a file (the editor's, a projector's) could be
+//! grabbed and moved by the user on the displays connected now.
 
 use serde::Serialize;
 
@@ -78,9 +81,47 @@ pub fn monitors() -> Vec<Monitor> {
     }
 }
 
+/// How much of a window's top must lie on one display for the user to grab it: a strip this
+/// high along the top edge, at least [`GRAB`] of it.
+const TOP_STRIP: i32 = 32;
+const GRAB: [i32; 2] = [120, 24];
+
+/// Whether a window with its outer top left corner at `x, y` and `width` wide has enough of its
+/// top (the title bar) on one of `displays` to be grabbed and moved there. A place kept from
+/// before can lie on a display unplugged since; such a window would open out of reach.
+pub fn grabbable(x: i32, y: i32, width: u32, displays: &[Monitor]) -> bool {
+    let right = x.saturating_add(i32::try_from(width).unwrap_or(i32::MAX));
+    displays.iter().any(|d| {
+        let w = right.min(d.right).saturating_sub(x.max(d.left));
+        let h = y.saturating_add(TOP_STRIP).min(d.bottom).saturating_sub(y.max(d.top));
+        w >= GRAB[0] && h >= GRAB[1]
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn display(left: i32, top: i32, right: i32, bottom: i32) -> Monitor {
+        Monitor { os_name: String::new(), left, top, right, bottom }
+    }
+
+    #[test]
+    fn a_window_is_grabbable_only_with_its_top_on_a_display() {
+        let desk = [display(0, 0, 3840, 2160), display(3840, 1087, 5760, 2167)];
+        assert!(grabbable(100, 100, 1600, &desk));
+        // On the second display, and hanging over the first's left edge with most of it.
+        assert!(grabbable(4000, 1200, 1600, &desk));
+        assert!(grabbable(-1400, 10, 1600, &desk));
+        // Top above the desktop, or the display it was on unplugged.
+        assert!(!grabbable(100, -40, 1600, &desk));
+        assert!(!grabbable(6000, 100, 1600, &desk));
+        assert!(!grabbable(100, 100, 1600, &[]));
+        // Only a sliver of the top left on the display.
+        assert!(!grabbable(3780, 100, 1600, &desk[..1]));
+        // Far out, without overflowing.
+        assert!(!grabbable(i32::MAX - 10, i32::MAX - 10, u32::MAX, &desk));
+    }
 
     #[test]
     fn shares_run_from_the_top_left() {

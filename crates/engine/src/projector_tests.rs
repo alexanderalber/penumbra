@@ -463,6 +463,26 @@ fn projector_test_switches_every_projector() {
 }
 
 #[test]
+fn a_projector_windows_place_is_kept_outside_the_history() {
+    let f = Fixture::new("projector-window-place");
+    f.call("node.create", json!({"path": "/p", "kind": "out.projector", "params": {"window": true}}));
+    let id = f.engine.session().doc().snapshot().resolve(&"/p".parse().unwrap()).unwrap();
+    let place = || {
+        let net = f.engine.session().doc().snapshot();
+        let desc = f.engine.types().desc(penumbra_ops::out::PROJECTOR).unwrap();
+        net.node(id).unwrap().param(desc, "window_place").cloned()
+    };
+    assert_eq!(place(), Some(penumbra_core::Value::Vec4([0.0; 4])));
+    crate::projector::keep_window_place(&f.engine, id, [100.0, -20.0, 800.0, 450.0]).unwrap();
+    assert_eq!(place(), Some(penumbra_core::Value::Vec4([100.0, -20.0, 800.0, 450.0])));
+    assert!(crate::projector::keep_window_place(&f.engine, NodeId(9999), [0.0; 4]).is_err());
+    // No history entry: an undo takes back the node's creation, not the window's move.
+    // (As the user: the move counts as the user's activity, which keeps Claude waiting.)
+    f.engine.session().undo(penumbra_project::Actor::User, Instant::now()).unwrap();
+    assert!(f.engine.session().doc().snapshot().node(id).is_none());
+}
+
+#[test]
 fn projector_match_runs_as_a_job() {
     let f = Fixture::new("projector-match-job");
     let key = Key::new("sim", "");
