@@ -553,8 +553,12 @@ A second family of worlds: the camera flies low over a dark lake in a valley at 
 the first light of dawn on the horizon. The sky is night blue near the horizon and black
 overhead. The dawn lies on the horizon as a band of light: `dawn` 0 is a thin dark red line, 1 a
 broad copper band with a gold core. The band never becomes a sun. The lake mirrors the sky, the
-band and the stars, blurred and broken up by ripples. The mirror is faint near the camera and
-strong towards the horizon. A low mist drifts on the water near the camera; the bass thickens
+band and the stars, blurred and broken up by ripples. It also mirrors what stands on it: the
+floor, mid and ceiling elements. A black body stays black in the water, and its rims mirror
+fainter and softer than they shine. The mirror is faint near the camera and strong towards the
+horizon. The stage draws that mirror as a second, small render of the scene from below the
+water, upside down. The stage also cuts every render at the water line, so an element sinks into
+the lake without a sheet of its own. A low mist drifts on the water near the camera; the bass thickens
 it. Ripples and mist come towards the camera one grid cell per beat of `travelled`, as the
 synthwave floor does. The sky elements are `sky_stars`, `sky_horizon_glow`, `sky_volcano` and
 `sky_clouds`. On the shore stand the floor elements `floor_terraces`, `floor_reeds` and
@@ -580,7 +584,10 @@ glow. So a breakdown raises the light on the horizon, and the drop takes it back
   than on `stage_synthwave`), `swing`, `turn`, `beats_per_bar`; `step`; `start`, `end` of the
   distance fade (12 and 40 m: the valley is wide). The water: `ground` (1: below the horizon
   only the water shows; 0 the sky elements show through it), `reflection` (1), `ripple` (1),
-  `mist` (1; 0 none), `shore` (how much of the reflection shows where the shore stands: 0.5).
+  `mist` (1; 0 none), `shore` (how much of the reflection shows where the shore stands: 0.5),
+  `mirror` (how much the water mirrors what stands on it: 1 fully, 0 only the sky; turn it down
+  where a projector shows too much), `mirror_size` (the size of the mirror's render as a share
+  of 1920x1080: 0.25; a larger one is sharper).
 - Camera: `camera`, `glide` (3 s) and `presets` as on `stage_synthwave`, lower and slower: 0 low
   flight at 1.2 m, 1 at 1.8 m looking down a little for a build, 2 high and wide for a drop
   (2.4 m, 70 degrees), 3 level for a break at 1.6 m, 4 and 5 two tilted variants (0.9 m and
@@ -802,8 +809,8 @@ in the folder writes the models.
   it), `lane` (1.6), `clear` (metres between the lane's edge and the near line, 2.2), `near`,
   `far` (36 m), `beats_per_bar`, `smooth` (seconds the bass takes to fall), `line_width`,
   `extent`.
-- The platforms sink below a sheet at the water line that hides what lies under it. Floor
-  elements in the same render cannot reach below the water line while this element is on.
+- The platforms sink below the water line. `stage_valley` cuts its renders there, so on that
+  stage the sunk part stays hidden. On another stage it would show below the floor.
 
 ### floor_reeds
 
@@ -847,7 +854,8 @@ in the folder writes the models.
   from the lane towards the camera, 30), `warmth` (0 copper light, 1 jade; `beats.arrange`
   binds it), `lane` (1.6), `clear` (metres between the lane's edge and a stela, 1.3), `near`,
   `far` (36 m), `smooth`, `groove` (how bright a groove's floor is), `line_width`.
-- The stelae sink below a sheet at the water line, as `floor_terraces` do.
+- The stelae sink below the water line, as `floor_terraces` do: `stage_valley` hides what lies
+  under it.
 
 ### mid_glider
 

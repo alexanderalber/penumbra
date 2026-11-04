@@ -34,11 +34,7 @@
         "/floor_stelae/face3": (kind: "geo.assign_material", inputs: {"in": "stone3", "mat": "face_mat"}, pos: [-800.0, -200.0]),
         "/floor_stelae/model3": (kind: "geo.merge", inputs: {"in0": "face3", "in1": "rim"}, pos: [-600.0, -200.0]),
         "/floor_stelae/stelae3": (kind: "geo.tex_instance", params: {"extent": 40.0}, inputs: {"in": "model3", "position": "place", "aim": "aim", "scale": "size3", "color": "light"}, pos: [-200.0, 200.0]),
-        "/floor_stelae/water_sheet": (kind: "geo.primitive", params: {"shape": "plane", "size": [160.0, 1.0, 160.0]}, pos: [-800.0, 900.0]),
-        "/floor_stelae/water_flat": (kind: "geo.transform", params: {"rotate": [90.0, 0.0, 0.0], "translate": [0.0, 60.0, 0.0]}, inputs: {"in": "water_sheet"}, pos: [-600.0, 900.0]),
-        "/floor_stelae/water_mat": (kind: "mat.occluder", pos: [-800.0, 780.0]),
-        "/floor_stelae/water": (kind: "geo.assign_material", inputs: {"in": "water_flat", "mat": "water_mat"}, pos: [-400.0, 900.0]),
-        "/floor_stelae/all": (kind: "geo.merge", inputs: {"in0": "stelae1", "in1": "stelae2", "in2": "stelae3", "in3": "water"}, pos: [0.0, 0.0]),
+        "/floor_stelae/all": (kind: "geo.merge", inputs: {"in0": "stelae1", "in1": "stelae2", "in2": "stelae3"}, pos: [0.0, 0.0]),
         "/floor_stelae/out": (kind: "geo.out", inputs: {"in": "all"}, pos: [200.0, 0.0]),
     },
 )

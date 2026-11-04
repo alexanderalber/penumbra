@@ -1,5 +1,5 @@
 // The valley's lake: below the horizon a dark water that mirrors the sky picture in in0 (the
-// band and the stars), blurred and broken up by ripples, faint near the camera and strong towards
+// band and the stars) and what stands on the water (in3), blurred and broken up by ripples, faint near the camera and strong towards
 // the horizon. Above the horizon in0 passes unchanged. The ripples and a low mist are fixed to
 // the water and come towards the camera with the floor, `step` metres per beat of `beats`. Where
 // the shore stands (alpha 1 in the lane picture in in1) the reflection is dimmer and rougher; in a
@@ -8,6 +8,9 @@
 // in1: the stage's lane picture (lane.wgsl), optional: alpha is the shore.
 // in2: a smaller, blurred copy of in0, optional: the water mirrors that one, so single stars
 // melt into a faint glow in the reflection. Without it the water mirrors in0 itself.
+// in3: what stands on the water as the water mirrors it (mirror.wgsl), optional: lined up with this
+// picture, premultiplied. It covers the sky's reflection, so a black silhouette stays black in the
+// water and its rims mirror dimmer than they shine.
 // @param eye float = 1.2 0..10 -- the camera's height over the water, metres (height of the stage's pose)
 // @param pitch float = -1 -60..60 -- the camera's tilt up, degrees
 // @param fov float = 58 10..120 -- the camera's vertical field of view, degrees
@@ -23,6 +26,7 @@
 // @param ripple float = 1 0..3 -- how much the ripples break up the reflection
 // @param mist float = 1 0..3 -- the mist on the water near the camera; 0 none
 // @param shore float = 0.5 0..1 -- how much of the reflection shows where the shore stands: 1 as in open water
+// @param mirror float = 1 0..1 -- how much the water mirrors what stands on it (in3): 0 only the sky
 
 fn tan_down() -> f32 {
     return tan(atan(max(params.eye, 0.0) / max(params.reach, 0.1)) + radians(params.pitch));
@@ -55,6 +59,8 @@ fn sky_uv(s: vec2f) -> vec2f {
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
 const TAPS: i32 = 6;
+// How bright the mirrored rims are against the rims themselves, before the fresnel.
+const RIM_MIRROR: f32 = 0.6;
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
@@ -96,19 +102,26 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     // A blur along the vertical that grows towards the camera, as on real water.
     let spread = (0.05 * b + 3.0 * px) * (0.5 + 0.5 * rough);
     let soft = textureDimensions(in2).x > 1u;
+    let things = textureDimensions(in3).x > 1u;
+    let cover = clamp(params.mirror, 0.0, 1.0);
     var mirrored = vec3f(0.0);
     for (var k = 0; k < TAPS; k++) {
         let f = (f32(k) + 0.5) / f32(TAPS) - 0.5;
         let s = vec2f(at.x + sway, max(b + shift + f * spread, 0.0));
         let uv = sky_uv(s);
-        let sharp = textureSampleLevel(in0, pn_clamp, uv, 0.0).rgb;
+        var tap = textureSampleLevel(in0, pn_clamp, uv, 0.0).rgb;
         if soft {
             // Close under the horizon the band's thin core still mirrors sharply.
             let blurred = textureSampleLevel(in2, pn_clamp, uv, 0.0).rgb;
-            mirrored += mix(sharp, blurred, smoothstep(0.0, 0.04, b));
-        } else {
-            mirrored += sharp;
+            tap = mix(tap, blurred, smoothstep(0.0, 0.04, b));
         }
+        if things {
+            // The same ripple moves the mirrored things: their mirror at this tap lies as far below
+            // the horizon as the sky's lies above it.
+            let g = textureSampleLevel(in3, pn_clamp, sky_uv(vec2f(s.x, -s.y)), 0.0) * cover;
+            tap = tap * (1.0 - g.a) + g.rgb * RIM_MIRROR;
+        }
+        mirrored += tap;
     }
     mirrored /= f32(TAPS);
     // Near the horizon the water mirrors most, looking down it shows little.

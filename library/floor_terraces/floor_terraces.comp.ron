@@ -30,11 +30,7 @@
         "/floor_terraces/pyramid_model": (kind: "geo.merge", inputs: {"in0": "pyramid_black", "in1": "pyramid_rim"}, pos: [-400.0, -490.0]),
         "/floor_terraces/terraces": (kind: "geo.tex_instance", params: {"extent": 40.0}, inputs: {"in": "terrace_model", "position": "place", "aim": "aim", "scale": "terrace_size", "color": "rim_light"}, pos: [-200.0, -200.0]),
         "/floor_terraces/pyramids": (kind: "geo.tex_instance", params: {"extent": 40.0}, inputs: {"in": "pyramid_model", "position": "place", "aim": "aim", "scale": "pyramid_size", "color": "rim_light"}, pos: [-200.0, 0.0]),
-        "/floor_terraces/water_sheet": (kind: "geo.primitive", params: {"shape": "plane", "size": [160.0, 1.0, 160.0]}, pos: [-800.0, 700.0]),
-        "/floor_terraces/water_flat": (kind: "geo.transform", params: {"rotate": [90.0, 0.0, 0.0], "translate": [0.0, 60.0, 0.0]}, inputs: {"in": "water_sheet"}, pos: [-600.0, 700.0]),
-        "/floor_terraces/water_mat": (kind: "mat.occluder", pos: [-800.0, 580.0]),
-        "/floor_terraces/water": (kind: "geo.assign_material", inputs: {"in": "water_flat", "mat": "water_mat"}, pos: [-400.0, 700.0]),
-        "/floor_terraces/all": (kind: "geo.merge", inputs: {"in0": "terraces", "in1": "pyramids", "in2": "water"}, pos: [0.0, 0.0]),
+        "/floor_terraces/all": (kind: "geo.merge", inputs: {"in0": "terraces", "in1": "pyramids"}, pos: [0.0, 0.0]),
         "/floor_terraces/out": (kind: "geo.out", inputs: {"in": "all"}, pos: [200.0, 0.0]),
     },
 )
