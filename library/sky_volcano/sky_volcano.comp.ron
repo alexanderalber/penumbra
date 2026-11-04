@@ -1,0 +1,27 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/sky_volcano": (kind: "comp.base", params: {"expose": "presence = volcano.presence
+brightness = volcano.brightness
+place = volcano.place
+tall = volcano.tall
+wide = volcano.wide
+crater = volcano.crater
+lava = volcano.lava
+plume = volcano.plume
+rise = volcano.rise
+wind = volcano.wind
+rim = volcano.rim
+warmth = volcano.warmth
+seed = volcano.seed
+sink = flare_lag.fall"}),
+        "/sky_volcano/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
+        "/sky_volcano/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
+        "/sky_volcano/drop": (kind: "chan.select", params: {"channels": "drop"}, inputs: {"in": "bus"}, pos: [-600.0, -150.0]),
+        "/sky_volcano/flare_lag": (kind: "chan.filter", params: {"type": "first_order", "rise": 0.05, "fall": 2.5}, inputs: {"in": "drop"}, pos: [-450.0, -150.0]),
+        "/sky_volcano/volcano": (kind: "tex.shader", params: {"file": "library/sky_volcano/volcano.wgsl", "presence": 1.0, "brightness": 1.0, "place": 0.62, "tall": 0.09, "wide": 3.2, "crater": 1.0, "lava": 1.0, "plume": 1.0, "rise": 0.3, "wind": 0.6, "rim": 1.0, "warmth": 0.0, "seed": 0}, binds: {"eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "reach": "pose:far", "dawn": "pose:dawn", "beats": "bus:travelled", "bass": "bus:energy_low", "flare": "flare_lag:drop"}, pos: [-300.0, 0.0]),
+        "/sky_volcano/out": (kind: "tex.out", inputs: {"in": "volcano"}, pos: [0.0, 0.0]),
+    },
+)

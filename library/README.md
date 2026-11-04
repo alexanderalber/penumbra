@@ -556,8 +556,9 @@ broad copper band with a gold core. The band never becomes a sun. The lake mirro
 band and the stars, blurred and broken up by ripples. The mirror is faint near the camera and
 strong towards the horizon. A low mist drifts on the water near the camera; the bass thickens
 it. Ripples and mist come towards the camera one grid cell per beat of `travelled`, as the
-synthwave floor does. The stars are the sky element `sky_stars`. On the shore stand the floor
-elements `floor_terraces`, `floor_reeds` and `floor_stelae`.
+synthwave floor does. The sky elements are `sky_stars`, `sky_horizon_glow`, `sky_volcano` and
+`sky_clouds`. On the shore stand the floor elements `floor_terraces`, `floor_reeds` and
+`floor_stelae`.
 
 The stage has a slow signal of its own, the swell. It rises over about 8 seconds while the music
 is quiet (a breakdown) and over the 8 bars before a new section (the grid's `build`), and it
@@ -1212,6 +1213,61 @@ moves.
   `venus_x` and `venus_y` (where Venus stands, in picture heights from straight ahead and above
   the horizon: -0.32 and 0.1), `thin` (how high above the horizon the dawn thins the stars:
   0.35 picture heights).
+
+### sky_horizon_glow
+
+![sky_horizon_glow](sky_horizon_glow/preview.png)
+
+A second layer of the dawn for `stage_valley`, screened over the stage's band: broad soft rays
+fan up from below the horizon, and a faint halo lies over the band. Both follow the stage's
+swell. They are strongest in a breakdown and sink back to about a third (`calm`) on the drop. Towards
+`dawn` 1 the rays reach higher and the halo grows wider. The glow has no disc: its light comes
+from below the horizon, so it never becomes a sun. The rays wander slowly as the world travels.
+
+- In: `bus`, `pose` (the stage's: the horizon, `swell` and `dawn` come from it). Out: `out`.
+- Params: `presence`, `brightness`, `rays` (the rays' light, 1; 0 only the halo), `count`
+  (about how many rays: 7), `tall` (how high the rays reach at swell and dawn 1: 0.45 picture
+  heights), `halo` (1; 0 only the rays), `calm` (the light left in a full beat, when the swell
+  is 0: 0.35), `warmth` (0 copper rays and an amber halo, 1 pale bronze rays and a jade halo),
+  `seed`, `turn` (how fast the rays wander).
+
+### sky_volcano
+
+![sky_volcano](sky_volcano/preview.png)
+
+A volcano far off to one side of the horizon of `stage_valley`, with a smoke plume. Its crater
+glows like embers, and the bass makes them flicker a little. A drop makes the crater flare: the
+glow, a few lava lines down the flank and the bottom of the plume brighten, then sink back over
+about 3 seconds. The plume rises from the crater and leans away from the middle, lit from below.
+The sky is screened, so the mountain cannot darken the stars or the band. A thin rim of dawn
+light draws its outline instead, brighter on the side towards the band.
+
+- In: `bus` (`drop`, the bass and `travelled`), `pose` (the horizon and `dawn`). Out: `out`.
+- Params: `presence`, `brightness`, `place` (where it stands, in picture heights from straight
+  ahead: 0.62, to the right; negative to the left), `tall` (its height: 0.09 picture heights),
+  `wide` (the foot's half width in heights: 3.2), `crater` (the embers between drops), `lava`
+  (the lava lines on a flare; 0 none), `plume` (0 no smoke), `rise` (how high the plume rises:
+  0.3 picture heights), `wind` (how far it leans), `rim` (the outline's light), `warmth` (1
+  turns the rim jade; the embers stay), `seed`, `sink` (seconds the flare takes to fall to a
+  third: 2.5).
+
+### sky_clouds
+
+![sky_clouds](sky_clouds/preview.png)
+
+A deck of clouds low over the horizon of `stage_valley`. The band lights the clouds from below:
+their lower edges glow copper, most in the middle over the band, at dawn and in the swell.
+Above, the clouds stay dark. The clouds crowd together towards the horizon, as a flat layer
+seen from below does. The deck drifts slowly towards the camera as the world travels, and a
+little sideways. The sky is screened, so the clouds cannot hide the stars or the band.
+
+- In: `bus` (`travelled`), `pose` (the horizon, `swell` and `dawn`). Out: `out`.
+- Params: `presence` (towards 0 the deck dims and thins out), `brightness`, `cover` (how much
+  of the deck is cloud: 0.55), `low` and `top` (where the deck begins and ends above the
+  horizon: 0.025 and 0.22 picture heights), `size`, `spread` (how far to the sides the band
+  lights the clouds: 0.8 picture heights), `under` (the light on the undersides), `drift` and
+  `wind` (per beat travelled, towards the camera and sideways), `warmth` (1 pale bronze edges
+  and jade-tinted tops), `seed`.
 
 ### sky_sun
 
