@@ -21,8 +21,8 @@ pub mod watch;
 mod testing;
 
 pub use cook::{
-    CookContext, CookReport, CookStats, Cooker, InputChoice, Kept, NodeStatus, ResetOutcome, ThumbnailMode,
-    ThumbnailPolicy, Waker,
+    CookContext, CookReport, CookStats, Cooker, InputChoice, Kept, NodeSpent, NodeStatus, PassSpent, Profile,
+    ResetOutcome, ThumbnailMode, ThumbnailPolicy, Waker,
 };
 pub use document::{Document, EditOutcome};
 pub use history::{Entry, History, Recorded, Source};

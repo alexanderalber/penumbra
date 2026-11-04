@@ -94,6 +94,7 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 |---|---|
 | `cook.meter` | Pass times of the last 8 s: last, smoothed (1 s lag), median, 1 % high, max, cook thread busy; {samples?: [seconds ago, ms] per pass} |
 | `cook.play` | Run or stop the show clock; {playing?} (default true) |
+| `cook.profile` | Where the frame time went since the last reset, in ms per frame: the steps of a frame, the steps of the cook pass, and the nodes under {under?} (default /) summed by its children, by kind and one by one (the {top?} most, default 30). A node's `cook_ms` is its operator's work, `visit_ms` adds what the scheduler spends on it; {reset?} |
 | `cook.stats` | Cook pass timings since the last reset: passes, slowest pass, longest gap, late frames, stalls; {reset?} |
 | `cook.status` | Show clock, last cook pass, watched nodes, thumbnail policy |
 | `cook.step` | Cook frames at once while stepping, each one frame of show time after the last (while the clock plays); {frames?} (default 1, at most 3600); answers with the frame and the pass |

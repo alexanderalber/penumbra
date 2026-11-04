@@ -443,6 +443,46 @@ impl CookStats {
     }
 }
 
+/// Where one node's time went since the profile was last taken ([`Cooker::take_profile`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct NodeSpent {
+    /// Calls to the operator's cook.
+    pub cooks: u64,
+    /// Time in the operator's cook: its own work, GPU commands recorded and submitted.
+    pub cook: Duration,
+    pub cook_max: Duration,
+    /// Times a pass looked at the node, whether it then cooked or not.
+    pub visits: u64,
+    /// Time those looks took, the operator's cook included: bound values read, inputs
+    /// gathered, deciding whether to cook. Minus [`NodeSpent::cook`], what the node costs the
+    /// scheduler.
+    pub visit: Duration,
+}
+
+/// Where the cook passes' time went since the profile was last taken, by step of the pass.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PassSpent {
+    pub passes: u64,
+    /// Bringing the runtimes in line with a changed network.
+    pub sync: Duration,
+    /// Working out which lazy outputs are read.
+    pub reads: Duration,
+    /// Evaluating what the outputs, viewers and eager nodes need.
+    pub outputs: Duration,
+    /// Evaluating thumbnails.
+    pub thumbnails: Duration,
+    /// Trimming idle operators.
+    pub trim: Duration,
+}
+
+/// What [`Cooker::take_profile`] hands back.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Profile {
+    pub passes: PassSpent,
+    /// Every node a pass looked at, in id order.
+    pub nodes: Vec<(NodeId, NodeSpent)>,
+}
+
 /// Everything known about one node at runtime.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NodeStatus {
@@ -529,6 +569,8 @@ struct Runtime {
     error: Option<String>,
     warning: Option<String>,
     stats: CookStats,
+    /// Time spent since the profile was last taken.
+    spent: NodeSpent,
     /// [`Operator::gpu_bytes`] after the last cook or trim.
     gpu_bytes: u64,
     /// State restored before the operator existed, handed to it before its first cook.
@@ -607,6 +649,7 @@ impl Runtime {
             error: None,
             warning: None,
             stats: CookStats::default(),
+            spent: NodeSpent::default(),
             gpu_bytes: 0,
             blank_previous: false,
             restored: None,
@@ -644,6 +687,8 @@ pub struct Cooker {
     eager: Vec<NodeId>,
     /// Nodes are evaluated for thumbnails now, which does not count as use.
     for_thumbnails: bool,
+    /// Time of the passes since the profile was last taken.
+    spent: PassSpent,
 }
 
 impl Cooker {
@@ -667,6 +712,7 @@ impl Cooker {
             read_all: BTreeSet::new(),
             eager: Vec::new(),
             for_thumbnails: false,
+            spent: PassSpent::default(),
         }
     }
 
@@ -729,21 +775,56 @@ impl Cooker {
                 rt.notified = true;
             }
         }
+        let synced = Instant::now();
         self.find_reads(outputs, thumbnails, shown);
+        let found = Instant::now();
         for &id in outputs.iter().chain(shown.iter().map(|p| &p.node)) {
             self.evaluate(id, time, &mut report);
         }
         for id in self.eager.clone() {
             self.evaluate(id, time, &mut report);
         }
+        let evaluated = Instant::now();
         self.for_thumbnails = true;
         self.cook_thumbnails(thumbnails, time, start, &mut report);
         self.for_thumbnails = false;
+        let thumbs = Instant::now();
         if self.pass.is_multiple_of(TRIM_CHECK_EVERY) {
             self.trim_idle();
         }
-        report.elapsed = start.elapsed();
+        let end = Instant::now();
+        let spent = &mut self.spent;
+        spent.passes += 1;
+        spent.sync += synced - start;
+        spent.reads += found - synced;
+        spent.outputs += evaluated - found;
+        spent.thumbnails += thumbs - evaluated;
+        spent.trim += end - thumbs;
+        report.elapsed = end - start;
         report
+    }
+
+    /// Where the time of the passes went since the last call with `reset` (or since the
+    /// cooker started): per step of the pass, and per node that a pass looked at. With
+    /// `reset`, counting starts afresh.
+    pub fn take_profile(&mut self, reset: bool) -> Profile {
+        let passes = self.spent;
+        let nodes = self
+            .runtimes
+            .iter_mut()
+            .filter(|(_, rt)| rt.spent.visits > 0)
+            .map(|(id, rt)| {
+                let spent = rt.spent;
+                if reset {
+                    rt.spent = NodeSpent::default();
+                }
+                (*id, spent)
+            })
+            .collect();
+        if reset {
+            self.spent = PassSpent::default();
+        }
+        Profile { passes, nodes }
     }
 
     /// Trims the operators of nodes that have not cooked for [`TRIM_AFTER_PASSES`]
@@ -913,7 +994,13 @@ impl Cooker {
             let Some(rt) = self.runtimes.get(&id) else { continue };
             let upstream: Vec<NodeId> = match visit {
                 Visit::Cook => {
+                    let started = Instant::now();
                     self.cook_one(id, time, report);
+                    let took = started.elapsed();
+                    if let Some(rt) = self.runtimes.get_mut(&id) {
+                        rt.spent.visits += 1;
+                        rt.spent.visit += took;
+                    }
                     continue;
                 }
                 Visit::Expand => {
@@ -1182,6 +1269,9 @@ impl Cooker {
         rt.notified = false;
         rt.blank_previous = false;
         rt.stats.add(elapsed);
+        rt.spent.cooks += 1;
+        rt.spent.cook += elapsed;
+        rt.spent.cook_max = rt.spent.cook_max.max(elapsed);
         rt.measure(id);
         report.cooked.push(id);
     }
@@ -1986,6 +2076,25 @@ mod tests {
         // Nothing changed: nothing cooks, even as time moves (no node is time-dependent).
         f.clock.advance(1);
         assert!(f.cook(&["/out"]).is_empty());
+    }
+
+    #[test]
+    fn the_profile_counts_visits_and_cooks_until_reset() {
+        let mut f = sum_network();
+        f.cook(&["/out"]);
+        f.cook(&["/out"]);
+        let profile = f.cooker.take_profile(true);
+        assert_eq!(profile.passes.passes, 2);
+        assert_eq!(profile.nodes.len(), 4, "{profile:?}");
+        let sum = profile.nodes.iter().find(|(id, _)| *id == f.id("/sum")).map(|(_, s)| *s).unwrap();
+        assert_eq!((sum.visits, sum.cooks), (2, 1), "cooked once, looked at in both passes");
+        assert!(sum.visit >= sum.cook);
+        let after = f.cooker.take_profile(false);
+        assert_eq!(after, Profile::default(), "reset");
+        f.set("/b.value", Value::Float(1.0));
+        f.cook(&["/out"]);
+        let a = f.cooker.take_profile(false).nodes.iter().find(|(id, _)| *id == f.id("/a")).map(|(_, s)| *s);
+        assert_eq!(a.map(|s| (s.visits, s.cooks)), Some((1, 0)), "clean, only looked at");
     }
 
     #[test]

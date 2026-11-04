@@ -197,6 +197,22 @@ Some nodes are edited right in the viewer: a mapper's corners and mesh, a `tex.s
 and a `tex.image_file` showing a scanned scene's `regions_camera.png`, whose faces are grouped
 into regions there ([Scanning](scanning.md#51-regions-scanregions)).
 
+## When a frame takes too long
+
+The status bar shows how long a frame takes. Above 16.7 ms a 60 Hz output shows frames twice.
+`cook.profile` tells where that time goes, in milliseconds per frame:
+
+- `frame_ms` splits the frame into its steps: the cook pass, handing pictures to the editor
+  (`publish`), drawing free views, and so on.
+- `pass_ms` splits the cook pass. `nodes_cook` is the nodes' own work. `walking` and the gap
+  between `nodes_visit` and `nodes_cook` are what the scheduler spends.
+- `groups` sums the nodes by component, `kinds` by node kind, `nodes` lists them one by one.
+  `under` narrows all three to one component: `{"under": "/stage"}` sums by its children.
+
+The numbers add up from the last `{"reset": true}`. So reset, let the show play the part that
+is slow, then read. A node's `cook_ms` is CPU time: for a `tex` node, recording and handing
+its work to the GPU. The time the GPU itself takes is not in it.
+
 ## When the GPU gives up
 
 penumbra stops creating GPU memory at 90 % of what Windows grants it, so a node asking for too

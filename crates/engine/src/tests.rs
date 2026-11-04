@@ -1105,6 +1105,16 @@ fn nothing_is_saved_before_the_saved_state_was_read() {
     let m = f.call("cook.meter", json!({"samples": true}));
     assert!(m["passes"].as_u64().unwrap() > 0 && m["smoothed_ms"].as_f64().unwrap() > 0.0, "{m}");
     assert_eq!(m["passes"].as_u64(), m["samples"].as_array().map(|s| s.len() as u64), "{m}");
+    let prof = f.call("cook.profile", json!({"reset": true}));
+    assert!(prof["frames"].as_u64().unwrap() > 0 && prof["passes"].as_u64().unwrap() > 0, "{prof}");
+    assert!(
+        prof["frame_ms"]["total"].as_f64().unwrap() >= prof["frame_ms"]["cook"].as_f64().unwrap(),
+        "{prof}"
+    );
+    let k = prof["nodes"].as_array().and_then(|n| n.iter().find(|n| n["path"] == "/k"));
+    assert_eq!(k.map(|k| k["kind"].clone()), Some(json!("chan.constant")), "{prof}");
+    assert_eq!(prof["groups"][0]["path"], "/k", "{prof}");
+    assert!(f.fail("cook.profile", json!({"under": "/nowhere"})).contains("no node"));
 }
 
 #[path = "osc_tests.rs"]

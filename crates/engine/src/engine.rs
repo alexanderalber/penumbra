@@ -260,6 +260,36 @@ impl PassStats {
     }
 }
 
+/// Where the frames' time went since the last `cook.profile` reset, by step of the frame.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FrameSpent {
+    pub frames: u64,
+    /// When counting started.
+    pub since: Option<Instant>,
+    /// Taking the network snapshot, and telling the hubs when it changed.
+    pub network: Duration,
+    /// The cook pass ([`penumbra_graph::PassSpent`] splits it).
+    pub cook: Duration,
+    /// Handing the audio blocks of the pass to the devices.
+    pub audio: Duration,
+    /// Collecting the projector outputs.
+    pub outputs: Duration,
+    /// Dropping what deleted nodes left in the shared resources.
+    pub prune: Duration,
+    /// The resolution analysis.
+    pub resolution: Duration,
+    /// Polling the GPU.
+    pub gpu_poll: Duration,
+    /// State snapshots.
+    pub state: Duration,
+    /// Drawing the free views the editor asks for.
+    pub free_views: Duration,
+    /// Publishing statuses, thumbnails and viewer pictures to the editor.
+    pub publish: Duration,
+    /// The whole frame.
+    pub total: Duration,
+}
+
 /// What the cook thread publishes after every pass for the projector outputs.
 #[derive(Clone, Default)]
 pub struct OutputFrame {
@@ -301,6 +331,8 @@ pub struct CookState {
     pub state: StateKeeper,
     /// Cook pass timings since the last `cook.stats` reset.
     pub stats: PassStats,
+    /// Frame steps since the last `cook.profile` reset.
+    pub spent: FrameSpent,
     /// Told what the network wants when it changes.
     hubs: Arc<Hubs>,
     /// The show clock moves only by [`Engine::step`]: no passes on the timer or on vsyncs.
@@ -420,10 +452,13 @@ impl CookState {
         let request = lock(&self.view.request).clone();
         wanted.extend(request.viewers.iter().copied().filter(|id| net.node(*id).is_some()));
         let shown: Vec<Port> = request.shown.iter().copied().filter(|p| net.node(p.node).is_some()).collect();
+        let t_network = Instant::now();
         self.last = self.cooker.cook_showing(&net, self.clock.now(), &wanted, &request.thumbnails, &shown);
+        let t_cook = Instant::now();
         // The blocks the `out.audio` nodes played in this pass go to their devices now. Offline
         // renders (every frame, slower than real time) do not play.
         self.hubs.audio_out.after_pass(self.clock.is_playing(), self.clock.policy() == LatePolicy::Realtime);
+        let t_audio = Instant::now();
         let output = OutputFrame {
             pass: self.pass_base + self.last.pass,
             time: Some(self.clock.now()),
@@ -431,6 +466,7 @@ impl CookState {
         };
         *lock(&self.view.output) = Arc::new(output);
         self.view.output_ready.notify_all();
+        let t_outputs = Instant::now();
         self.mappers.prune(&net);
         self.renders.prune(&net);
         if let Some(t) = self.cooker.resource::<penumbra_ops::tex::blob_track::BlobTracks>() {
@@ -454,13 +490,33 @@ impl CookState {
         if let Some(t) = self.cooker.resource::<penumbra_ops::out::mesh::MeshOuts>() {
             t.prune(|id| net.node(id).is_some());
         }
+        let t_prune = Instant::now();
         self.refresh_resolution(&net, session.types(), request.resolution);
+        let t_resolution = Instant::now();
         if let Some(gpu) = &self.gpu {
             gpu.poll();
         }
+        let t_poll = Instant::now();
         self.state.after_pass(&self.cooker, &net, self.gpu.as_ref(), self.clock.now().frame);
+        let t_state = Instant::now();
         let free = self.draw_free_views(&net, &request.free);
+        let t_free = Instant::now();
         self.publish(&net, session.types(), &request, now, free);
+        let t_publish = Instant::now();
+        let spent = &mut self.spent;
+        spent.since.get_or_insert(started);
+        spent.frames += 1;
+        spent.network += t_network - started;
+        spent.cook += t_cook - t_network;
+        spent.audio += t_audio - t_cook;
+        spent.outputs += t_outputs - t_audio;
+        spent.prune += t_prune - t_outputs;
+        spent.resolution += t_resolution - t_prune;
+        spent.gpu_poll += t_poll - t_resolution;
+        spent.state += t_state - t_poll;
+        spent.free_views += t_free - t_state;
+        spent.publish += t_publish - t_free;
+        spent.total += t_publish - started;
         self.stats.add(started, self.last.elapsed, due, self.clock.now().rate.period());
         // The whole pass, not only the cooking: outputs, free views and publishing take from
         // the same frame.
@@ -788,6 +844,7 @@ impl Engine {
             resolution: None,
             state: StateKeeper::new(self.state.clone(), session.dir()),
             stats: PassStats::default(),
+            spent: FrameSpent::default(),
             hubs: self.hubs.clone(),
             pass_base,
             stepping: false,

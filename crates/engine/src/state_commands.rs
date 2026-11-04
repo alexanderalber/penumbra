@@ -2,7 +2,8 @@
 //! time) and `system.process` (memory, handles, threads, GPU memory), the last two for the soak
 //! test and for looking at a long-running show; `cook.meter` and `system.load` (the last seconds'
 //! pass times, CPU and GPU load), what the status bar's cook time shows; `node.memory` (video
-//! memory per node against what wgpu has allocated).
+//! memory per node against what wgpu has allocated); `cook.profile` (where the frame time goes,
+//! by step and by node).
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -51,6 +52,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "cook.stats",
         "Cook pass timings since the last reset: passes, slowest pass, longest gap, late frames, stalls; {reset?}",
         cook_stats,
+    );
+    add(
+        "cook.profile",
+        "Where the frame time went since the last reset, in ms per frame: the steps of a frame, the steps of the cook pass, and the nodes under {under?} (default /) summed by its children, by kind and one by one (the {top?} most, default 30). A node's `cook_ms` is its operator's work, `visit_ms` adds what the scheduler spends on it; {reset?}",
+        cook_profile,
     );
     add(
         "cook.meter",
@@ -210,6 +216,168 @@ fn cook_stats(e: &Engine, p: &Json) -> Result<Json> {
         o.insert("pass".into(), json!(pass));
     }
     Ok(out)
+}
+
+/// Nodes `cook.profile` lists one by one when not told otherwise.
+const PROFILE_TOP: usize = 30;
+
+/// One line of `cook.profile`: a node, a group under the asked-for path, or a kind.
+#[derive(Default)]
+struct Spent {
+    nodes: u64,
+    cooks: u64,
+    cook: f64,
+    cook_max: f64,
+    visit: f64,
+}
+
+impl Spent {
+    fn add(&mut self, s: &penumbra_graph::NodeSpent) {
+        self.nodes += 1;
+        self.cooks += s.cooks;
+        self.cook += s.cook.as_secs_f64();
+        self.cook_max = self.cook_max.max(s.cook_max.as_secs_f64());
+        self.visit += s.visit.as_secs_f64();
+    }
+
+    fn json(&self, passes: f64) -> serde_json::Map<String, Json> {
+        let mut o = serde_json::Map::new();
+        o.insert("cook_ms".into(), json!(round(self.cook * 1000.0 / passes)));
+        o.insert("visit_ms".into(), json!(round(self.visit * 1000.0 / passes)));
+        o.insert("cooks_per_frame".into(), json!(round(self.cooks as f64 / passes)));
+        o
+    }
+}
+
+/// Milliseconds to three decimals: microseconds are the finest step worth reading.
+fn round(ms: f64) -> f64 {
+    (ms * 1000.0).round() / 1000.0
+}
+
+fn cook_profile(e: &Engine, p: &Json) -> Result<Json> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct A {
+        reset: Option<bool>,
+        under: Option<String>,
+        top: Option<usize>,
+    }
+    let a: A = args(p)?;
+    let reset = a.reset.unwrap_or(false);
+    let top = a.top.unwrap_or(PROFILE_TOP);
+    let under = a.under.unwrap_or_else(|| "/".into());
+    let under = under.trim_end_matches('/').to_string();
+    let session = e.session().clone();
+    let net = session.doc().snapshot();
+    if !under.is_empty() {
+        let path: penumbra_core::NodePath =
+            under.parse().map_err(|err| CommandError(format!("`{under}`: {err}")))?;
+        if net.resolve(&path).is_none() {
+            return Err(CommandError(format!("no node `{under}`")));
+        }
+    }
+    let (frames, profile) = e.on_cook(move |st| {
+        let frames = st.spent;
+        if reset {
+            st.spent = crate::engine::FrameSpent::default();
+        }
+        (frames, st.cooker.take_profile(reset))
+    })?;
+    let passes = profile.passes.passes.max(1) as f64;
+    let per_frame = |d: Duration| json!(round(d.as_secs_f64() * 1000.0 / frames.frames.max(1) as f64));
+    let per_pass = |d: Duration| json!(round(d.as_secs_f64() * 1000.0 / passes));
+
+    let prefix = format!("{under}/");
+    let mut groups: std::collections::BTreeMap<String, Spent> = Default::default();
+    let mut kinds: std::collections::BTreeMap<String, Spent> = Default::default();
+    let mut nodes: Vec<(String, String, penumbra_graph::NodeSpent)> = Vec::new();
+    let mut visit_all = Duration::ZERO;
+    let mut cook_all = Duration::ZERO;
+    for (id, spent) in &profile.nodes {
+        visit_all += spent.visit;
+        cook_all += spent.cook;
+        let (Some(path), Some(def)) = (net.path_of(*id), net.node(*id)) else { continue };
+        let path = path.to_string();
+        let Some(rest) = path.strip_prefix(&prefix) else { continue };
+        let child = rest.split('/').next().unwrap_or(rest);
+        groups.entry(format!("{prefix}{child}")).or_default().add(spent);
+        kinds.entry(def.kind.clone()).or_default().add(spent);
+        nodes.push((path, def.kind.clone(), *spent));
+    }
+    let mut groups: Vec<(String, Spent)> = groups.into_iter().collect();
+    groups.sort_by(|a, b| b.1.visit.total_cmp(&a.1.visit));
+    let mut kinds: Vec<(String, Spent)> = kinds.into_iter().collect();
+    kinds.sort_by(|a, b| b.1.visit.total_cmp(&a.1.visit));
+    nodes.sort_by_key(|a| std::cmp::Reverse(a.2.visit));
+    let listed = nodes.len();
+    let groups: Vec<Json> = groups
+        .iter()
+        .map(|(path, s)| {
+            let mut o = s.json(passes);
+            o.insert("path".into(), json!(path));
+            o.insert("nodes".into(), json!(s.nodes));
+            Json::Object(o)
+        })
+        .collect();
+    let kinds: Vec<Json> = kinds
+        .iter()
+        .take(top)
+        .map(|(kind, s)| {
+            let mut o = s.json(passes);
+            o.insert("kind".into(), json!(kind));
+            o.insert("nodes".into(), json!(s.nodes));
+            Json::Object(o)
+        })
+        .collect();
+    let nodes: Vec<Json> = nodes
+        .iter()
+        .take(top)
+        .map(|(path, kind, spent)| {
+            let mut s = Spent::default();
+            s.add(spent);
+            let mut o = s.json(passes);
+            o.insert("path".into(), json!(path));
+            o.insert("kind".into(), json!(kind));
+            o.insert("cook_ms_max".into(), json!(round(s.cook_max * 1000.0)));
+            Json::Object(o)
+        })
+        .collect();
+    let pass = profile.passes;
+    let evaluating = pass.outputs + pass.thumbnails;
+    Ok(json!({
+        "seconds": frames.since.map(|t| t.elapsed().as_secs_f64()),
+        "frames": frames.frames,
+        "passes": pass.passes,
+        "frame_ms": {
+            "total": per_frame(frames.total),
+            "network": per_frame(frames.network),
+            "cook": per_frame(frames.cook),
+            "audio": per_frame(frames.audio),
+            "outputs": per_frame(frames.outputs),
+            "prune": per_frame(frames.prune),
+            "resolution": per_frame(frames.resolution),
+            "gpu_poll": per_frame(frames.gpu_poll),
+            "state": per_frame(frames.state),
+            "free_views": per_frame(frames.free_views),
+            "publish": per_frame(frames.publish),
+        },
+        "pass_ms": {
+            "sync": per_pass(pass.sync),
+            "reads": per_pass(pass.reads),
+            "outputs": per_pass(pass.outputs),
+            "thumbnails": per_pass(pass.thumbnails),
+            "trim": per_pass(pass.trim),
+            "nodes_cook": per_pass(cook_all),
+            "nodes_visit": per_pass(visit_all),
+            "walking": per_pass(evaluating.saturating_sub(visit_all)),
+        },
+        "under": if under.is_empty() { "/" } else { under.as_str() },
+        "groups": groups,
+        "kinds": kinds,
+        "nodes": nodes,
+        "nodes_seen": listed,
+        "not_counted": "GPU execution time (a node's cook_ms holds recording and submitting its GPU work, not the GPU running it); the editor's own drawing; output windows presenting",
+    }))
 }
 
 fn cook_meter(e: &Engine, p: &Json) -> Result<Json> {
