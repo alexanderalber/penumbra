@@ -731,7 +731,8 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     let table = param(&f.call("node.info", json!({"path": "/arrangement"})), "text");
     let lines: Vec<&str> = table.as_str().unwrap().lines().collect();
     assert_eq!(
-        lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight",
+        lines[0],
+        "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight,pattern",
         "{table}"
     );
     assert_eq!(lines.len(), 6, "{table}");
@@ -787,6 +788,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
                 "stage",
                 "gaps",
                 "flight",
+                "pattern",
             ]
             && (0.0..=1.0).contains(&channel(&m, "galaxy"))
     });
@@ -847,4 +849,22 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     let r = f.call("beats.arrange", flying);
     assert!(r["bound"].as_array().unwrap().iter().any(|x| x == "/glider.flight"), "{r}");
     assert_eq!(from("/glider/style"), json!([{"param": "row", "from": "/arrangement_pick:flight"}]));
+
+    // The room's lights: the pattern jumps through `_pick`, colour and brightness fade with `_mix`.
+    f.call("comp.load", json!({"file": "room_lights", "path": "/room"}));
+    let mut lit = args(json!({"lights": "/n"}));
+    let e = f.fail("beats.arrange", lit.clone());
+    assert!(e.contains("no param pattern"), "{e}");
+    lit["lights"] = json!(["/room"]);
+    let r = f.call("beats.arrange", lit);
+    let bound = r["bound"].as_array().unwrap();
+    for b in ["/room.pattern", "/room.warmth", "/room.intensity"] {
+        assert!(bound.iter().any(|x| x == b), "{b}: {r}");
+    }
+    assert_eq!(from("/room/style"), json!([{"param": "row", "from": "/arrangement_pick:pattern"}]));
+    let controls = from("/room/controls");
+    for (param, column) in [("value0", "warmth"), ("value1", "intensity")] {
+        let want = json!({"param": param, "from": format!("/arrangement_mix:{column}")});
+        assert!(controls.as_array().unwrap().contains(&want), "{controls}");
+    }
 }

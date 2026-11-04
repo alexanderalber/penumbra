@@ -41,6 +41,11 @@
 //!   along the turns with a roll on a downbeat ([`FLIGHT_ROLL`]), or straight with a lean on each
 //!   downbeat ([`FLIGHT_BANK`]). Straight in a break, rolls on a drop, the lean in a build, and a
 //!   variant per track in an intro, an outro and a main section ([`FLIGHT_VARIANTS`]).
+//! - **Pattern:** each row names the pattern the lights of the room show (a `room_lights` in the
+//!   library): stripes rising up the columns ([`PATTERN_STRIPES`]), every column flashing on the
+//!   beat ([`PATTERN_PULSE`]), or one column after the other ([`PATTERN_CHASE`]). Stripes where
+//!   it is calm (an intro, an outro, a break), the chase in a build, the pulse on a drop, and a
+//!   variant per track in a main section ([`PATTERN_VARIANTS`]).
 //! - **Stage:** with several stages, the row says which one shows. It changes only where a track
 //!   starts with a `change` of at least [`STAGE_CHANGE`], and at most once per [`STAGE_GAP`].
 //!   It walks to the next stage and back again (0, 1, 2, 1, 0, 1, ...), so every change goes to a
@@ -123,6 +128,14 @@ pub const FLIGHT_ROLL: usize = 2;
 pub const FLIGHT_BANK: usize = 3;
 /// The flights the tracks take in turn in an intro, an outro and a main section.
 pub const FLIGHT_VARIANTS: [usize; 3] = [FLIGHT_SLALOM, FLIGHT_STRAIGHT, FLIGHT_BANK];
+/// The room's columns show stripes that rise slowly: calm sections.
+pub const PATTERN_STRIPES: usize = 0;
+/// Every column flashes on the beat: a drop.
+pub const PATTERN_PULSE: usize = 1;
+/// The light runs from one column to the next on each beat: a build.
+pub const PATTERN_CHASE: usize = 2;
+/// The patterns the tracks take in turn in a main section.
+pub const PATTERN_VARIANTS: [usize; 2] = [PATTERN_CHASE, PATTERN_PULSE];
 /// The least `change` at a track start that may switch the stage.
 pub const STAGE_CHANGE: f64 = 0.8;
 /// The least time between two switches of the stage, in seconds; the file's start counts as one.
@@ -233,7 +246,7 @@ impl Gaps {
 }
 /// The columns before the elements and after them.
 pub const LEADING: [&str; 4] = ["start", "end", "role", "change"];
-pub const TRAILING: [&str; 6] = ["warmth", "intensity", "camera", "stage", "gaps", "flight"];
+pub const TRAILING: [&str; 7] = ["warmth", "intensity", "camera", "stage", "gaps", "flight", "pattern"];
 /// The piece every step names: the rows differ by their table row, not by a piece.
 pub const PIECE: &str = "row";
 
@@ -328,6 +341,8 @@ pub struct Row {
     pub gaps: f64,
     /// How the glider flies: [`FLIGHT_SLALOM`] and the others.
     pub flight: usize,
+    /// What the room's lights show: [`PATTERN_STRIPES`] and the others.
+    pub pattern: usize,
     /// The section keeps the stage and one slot only.
     pub empty: bool,
 }
@@ -638,6 +653,14 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                 FLIGHT_VARIANTS.get(track % FLIGHT_VARIANTS.len()).copied().unwrap_or(FLIGHT_SLALOM)
             }
         };
+        let pattern = match part.role {
+            Role::Intro | Role::Outro | Role::Break => PATTERN_STRIPES,
+            Role::Build => PATTERN_CHASE,
+            Role::Drop => PATTERN_PULSE,
+            Role::Main => {
+                PATTERN_VARIANTS.get(track % PATTERN_VARIANTS.len()).copied().unwrap_or(PATTERN_STRIPES)
+            }
+        };
         out.push(Row {
             start: part.start,
             end: part.end,
@@ -651,6 +674,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             stage,
             gaps: gaps.of(part.role),
             flight,
+            pattern,
             empty,
         });
     }
@@ -688,6 +712,7 @@ pub fn table(slots: &[Slot], rows: &[Row]) -> String {
         cells.push(r.stage.to_string());
         cells.push(num(r.gaps));
         cells.push(r.flight.to_string());
+        cells.push(r.pattern.to_string());
         text.push_str(&cells.join(","));
         text.push('\n');
     }
@@ -983,10 +1008,10 @@ mod tests {
         let lines: Vec<&str> = t.lines().collect();
         assert_eq!(
             lines[0],
-            "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight"
+            "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight,pattern"
         );
-        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3,4,0,0,0");
-        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0,0,2");
+        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3,4,0,0,0,0");
+        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0,0,2,1");
         assert_eq!(lines.len(), 3);
         assert!(check(&slots()).is_ok());
         let bad = |e: &[&str]| vec![Slot::new("floor", e)];
@@ -1140,8 +1165,35 @@ mod tests {
         assert_eq!(flights, [a, a, FLIGHT_BANK, FLIGHT_ROLL, FLIGHT_STRAIGHT, a, b, b, c, a]);
         // The column comes last, as a whole number.
         let text = table(&slots(), &r);
-        assert!(text.lines().next().is_some_and(|h| h.ends_with(",gaps,flight")));
-        assert!(text.lines().nth(4).is_some_and(|l| l.ends_with(&format!(",{FLIGHT_ROLL}"))));
+        assert!(text.lines().next().is_some_and(|h| h.ends_with(",gaps,flight,pattern")));
+        assert!(text.lines().nth(4).is_some_and(|l| l.ends_with(&format!(",{FLIGHT_ROLL},{PATTERN_PULSE}"))));
+    }
+
+    #[test]
+    fn the_pattern_follows_the_role_and_each_track_takes_a_variant_in_a_main_section() {
+        let mut p = parts(&[
+            (Role::Intro, 0.0),
+            (Role::Main, 0.2),
+            (Role::Build, 0.3),
+            (Role::Drop, 0.9),
+            (Role::Break, 0.6),
+            (Role::Outro, 0.3),
+            (Role::Intro, 0.9),
+            (Role::Main, 0.5),
+            (Role::Main, 0.9),
+        ]);
+        p[0].track_start = true;
+        p[6].track_start = true;
+        p[8].track_start = true;
+        let r = rows(&p, &slots(), 1);
+        let patterns: Vec<usize> = r.iter().map(|r| r.pattern).collect();
+        let [a, b] = PATTERN_VARIANTS;
+        let calm = PATTERN_STRIPES;
+        assert_eq!(patterns, [calm, a, PATTERN_CHASE, PATTERN_PULSE, calm, calm, calm, b, a]);
+        // The column comes last, as a whole number.
+        let text = table(&slots(), &r);
+        assert!(text.lines().next().is_some_and(|h| h.ends_with(",flight,pattern")));
+        assert!(text.lines().nth(3).is_some_and(|l| l.ends_with(&format!(",{PATTERN_CHASE}"))));
     }
 
     #[test]
@@ -1253,7 +1305,7 @@ mod tests {
                 .all(|r| r.gaps == 0.0)
         );
         let t = table(&slots(), &rows(&p, &slots(), 1));
-        assert!(t.lines().nth(5).is_some_and(|l| l.ends_with(",0.6,1")), "{t}");
+        assert!(t.lines().nth(5).is_some_and(|l| l.ends_with(",0.6,1,0")), "{t}");
     }
 
     #[test]

@@ -141,7 +141,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
          e.g. \"/stages.index\" of a tex.switch, or a list of them; it fades on a tex.cross, for two stages, \
          and on a tex.switch with blend on), intensity? (a param that gets intensity, e.g. \"/stage.dim\", \
-         or a list), fade_min? (s, default 2: the shortest fade from one row into the \
+         or a list), lights? (a path or a list: what lights the room beside the stage, such as a \
+         room_lights from the library; each gets pattern, and warmth and intensity where it has them), \
+         fade_min? (s, default 2: the shortest fade from one row into the \
          next, also where the music cuts), stage_fade? (s, default 4: the shortest fade into a row whose \
          stage changes), dwell? (sections, default 3: an element on that long gives way at the next \
          boundary with change 0.3 or more, its slot's turn or not; a slot its stage hides counts on; 0 \
@@ -153,12 +155,15 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          at most once in 8 minutes, to the next stage in the list and back again: 0, 1, 2, 1, 0), gaps (the share of the floor broken off: only in a build and a \
          break) and flight (how the glider flies: 0 along the lane's turns, 1 straight, 2 along the turns \
          with a roll on a downbeat, 3 straight with a lean on each downbeat; straight in a break, a roll on a \
-         drop, the lean in a build, 0, 1 and 3 by turns from track to track elsewhere). A strong boundary into a main section may leave the stage and one slot \
+         drop, the lean in a build, 0, 1 and 3 by turns from track to track elsewhere) and pattern (what \
+         the room's lights show: 0 stripes in an intro, outro or break, 2 a chase in a build, 1 a pulse on \
+         a drop, 2 and 1 by turns from track to track in a main section). A strong boundary into a main section may leave the stage and one slot \
          alone, drawn from the section's seed. Edit the table by hand to override a row. The sequence gets a \
          step per row, its clock on the grid's seconds. Beside the table it creates or updates <table>_now, \
          _plus, _next, _diff, _ramp, _mix, _half, _snap, _jump and _pick; _mix has a channel per column that \
          moves through each fade, _pick jumps to the next row half way through it. Binds each element's \
-         presence, warmth, camera, gap (on a stage that has it), flight (on an element that has it) and switch to them, and intensity. Run it again after the file changes: \
+         presence, warmth, camera, gap (on a stage that has it), flight (on an element that has it), \
+         pattern (on the lights) and switch to them, and intensity. Run it again after the file changes: \
          it overwrites the table",
         beats_arrange,
     );
@@ -707,7 +712,7 @@ fn bind_to(param: ParamPath, from: &NodePath, channel: &str) -> CmdResult<Op> {
 
 /// The kinds of the readers `beats.arrange` puts beside its table, by the end of their names.
 /// `_mix` moves through each fade; `_pick` jumps from one row to the next half way through it,
-/// for the columns that are an index (camera, stage, flight).
+/// for the columns that are an index (camera, stage, flight, pattern).
 const READERS: [(&str, &str); 10] = [
     ("now", FROM_TABLE),
     ("plus", "chan.math"),
@@ -772,6 +777,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         stage: Option<Stages>,
         switch: Option<Targets>,
         intensity: Option<Targets>,
+        lights: Option<Stages>,
         fade_min: Option<f64>,
         stage_fade: Option<f64>,
         dwell: Option<f64>,
@@ -798,6 +804,11 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         }
     }
     let stages: Vec<NodePath> = match a.stage {
+        None => Vec::new(),
+        Some(Stages::One(p)) => vec![p],
+        Some(Stages::Many(v)) => v,
+    };
+    let lights: Vec<NodePath> = match a.lights {
         None => Vec::new(),
         Some(Stages::One(p)) => vec![p],
         Some(Stages::Many(v)) => v,
@@ -886,6 +897,17 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         require(&net, stage)?;
         if !has_param(e, &net, stage, "warmth") {
             return Err(CommandError(format!("{stage} has no param warmth")));
+        }
+    }
+    for light in &lights {
+        require(&net, light)?;
+        if !has_param(e, &net, light, "pattern") {
+            return Err(CommandError(format!(
+                "{light} has no param pattern: lights take the pattern column, as a room_lights does"
+            )));
+        }
+        if stages.contains(light) || elements.contains(light) {
+            return Err(CommandError(format!("{light} is a stage or an element already, not a light")));
         }
     }
     for target in switches.iter().chain(&intensities) {
@@ -1118,6 +1140,17 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     for target in &intensities {
         ops.push(bind_to(target.clone(), mix, "intensity")?);
         bound.push(target.to_string());
+    }
+    // The room's lights: the pattern is an index and jumps half way; colour and brightness fade.
+    for light in &lights {
+        ops.push(bind_to(param_of(light, "pattern")?, pick, "pattern")?);
+        bound.push(format!("{light}.pattern"));
+        for column in ["warmth", "intensity"] {
+            if has_param(e, &net, light, column) {
+                ops.push(bind_to(param_of(light, column)?, mix, column)?);
+                bound.push(format!("{light}.{column}"));
+            }
+        }
     }
     let label = format!("arrangement from the sections of {file_name}");
     let out = edit(e, &ops, &label)?;

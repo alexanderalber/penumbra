@@ -291,6 +291,9 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   `ceiling`, `mid`, `sky` and `post`. `mid` and `sky` stay on through a break; `floor` and
   `ceiling` empty. In `post` every element is on or off by itself, so several can be on at once:
   they are off in an intro, outro and break and come on at a drop.
+- **Lights for the room** come from `room_lights`: a picture for the room's columns and the
+  channels for DMX lights, in the stage's colours and on its beat. Give it to `beats.arrange` as
+  `lights: "/room"`, and its `pattern` changes with the sections. See [room_lights](#room_lights).
 - **The camera** takes one of six presets of the stage. The arrangement's `camera` column picks
   one per section, and the stage glides to it.
 - **Several stages.** A project can hold several stages side by side: `stage_synthwave`,
@@ -1112,3 +1115,52 @@ flash on a drop. They add light to the picture and cover nothing. Chain it last,
   `decay` (seconds the flicker takes to fade), `reach` (metres to the floor's end, as the stage's
   fade), `scale` (picture heights of the tape per metre), `beats_per_bar`.
 
+### room_lights
+
+![room_lights](room_lights/preview.png)
+
+The lights of the room around the screen, from the same arrangement as the stage. The
+`pattern` output is a picture for the room's columns: one band per column, side by side, from
+the floor at the bottom to the top. The `colours` output holds channels for DMX lights. Both
+use the same two colours: an accent and a deep colour. `warmth` moves them from warm (orange and
+crimson) through pink and purple at 0.5 to cold (cyan and blue) at 1.
+
+The picture shows one of three patterns, picked by `pattern`:
+
+- 0 stripes: stripes rise slowly up the columns, neighbouring columns half a stripe apart. They
+  widen over each 8-bar phrase.
+- 1 pulse: every column flashes on the beat, brightest at the floor. Neighbouring columns and
+  every other beat take turns between accent and deep colour. The first beat of a phrase is
+  nearly white.
+- 2 chase: one column lights up after the other, one step per beat, with a trail. The chase
+  turns round at each phrase. In the second half of a build it steps twice per beat.
+
+A change of `pattern` crossfades over about a second. `beats.arrange {lights: "/room"}` writes
+a `pattern` column: stripes in an intro, an outro and a break, the chase in a build, the pulse
+on a drop, chase and pulse by turns from track to track in a main section. It also binds
+`warmth` and `intensity`, so the room dims and changes colour with the stage.
+
+**The `colours` channels** (all 0 to 1):
+
+| channel | what |
+|---|---|
+| `red`, `green`, `blue` | the accent colour |
+| `red2`, `green2`, `blue2` | the deep colour |
+| `level` | a dimmer: `intensity`, pumping on the beat between a quarter and all of it |
+| `beat` | 1 on the beat, falling to 0 before the next one |
+| `warmth`, `intensity` | as the arrangement gives them |
+| `build`, `drop`, `phrase` | from the music bus: the rise before a section, the flash of a drop, the way through the phrase |
+
+For a light with dimmer and colour, pick its slots in order with a `chan.select` (`level red
+green blue`) and wire that into an `out.dmx`. [DMX](../docs/dmx.md#lights-from-a-music-stage)
+shows the whole route.
+
+- In: `bus`. Out: `pattern` (picture), `colours` (channels).
+- Params: `pattern` (0 to 2, above), `warmth`, `intensity`, `columns` (bands in the picture, 1
+  to 16, default 4), `bands` (stripes up a column), `rise` (stripes the pattern rises per beat
+  travelled), `tail` (columns the chase's light trails behind it), `snap` (how fast the beat
+  flash falls: a power of the beat, default 3), `patterns` (a csv table, one row per pattern:
+  the shares of `stripes`, `pulse` and `chase`; shares between mix them), `pattern_glide`
+  (seconds to cover 63 % of a change of pattern, default 0.4), `width` and `height` of the
+  picture (1024 x 512). The colours at `warmth` 0, 0.5 and 1 are the `chan.constant` nodes `warm`, `mid` and `cold`
+  inside.

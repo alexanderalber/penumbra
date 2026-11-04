@@ -39,6 +39,24 @@ can listen on port 6454). In QLC+, turn on the ArtNet input on 127.0.0.1 in the 
 tab and open the DMX Monitor. QLC+ counts universes from 1, so its universe 1 receives
 penumbra's universe 0: set the `out.dmx`'s `universe` to 0.
 
+## Lights from a music stage
+
+The library's `room_lights` gives channels for lights from a music stage's arrangement: an
+accent colour (`red`, `green`, `blue`), a deep colour (`red2`, `green2`, `blue2`), a dimmer
+`level` that pumps on the beat, `beat`, `build`, `drop` and more ([room_lights](../library/README.md#room_lights)).
+To drive a light with four slots (dimmer, red, green, blue) from address 1:
+
+1. Wire the music bus into the component: `node.connect {"from": "/grid", "to": "/room",
+   "input": "bus"}`. Let `beats.arrange` drive it with `lights: "/room"`.
+2. Add a `chan.select` with `channels` `level red green blue` and wire the component's `colours`
+   output into it: `node.connect {"from": "/room", "output": "colours", "to": "/fixture"}`.
+3. Wire the `chan.select` into an `out.dmx` with `address` 1 and `values` `unit`.
+
+The order in `channels` is the order of the slots. A second light at address 5 takes its own
+`chan.select` and `out.dmx`, for example `level red2 green2 blue2` for the deep colour. Without a
+light, check the slots as [Trying it without a light](#trying-it-without-a-light) says: Art-Net to
+`127.0.0.1` and a `chan.dmx_in` with `count` 4.
+
 ## How it sends
 
 Each target (a port, an address) has a thread of its own that sends the newest frame `rate`
