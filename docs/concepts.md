@@ -560,6 +560,11 @@ wired to the component outside comes out of its `tex.in` inside. The port nodes 
 no files or devices: that is the job of the `out` nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may
 reach anywhere.
 
+Commands name a component's sockets by the names of its port nodes. `node.connect` wires them,
+and `chan.read`, `table.read`, `geo.info` and `node.snapshot` read them, with `output` set to
+the port node's name (`/room` with `output: "colours"`). Without `output`, a read takes the
+first output of the kind it reads.
+
 - **Group:** select nodes and press Ctrl+G. Ports are added where wires cross.
 - **Enter and leave:** I or a double-click goes in, U or the breadcrumb at the top left goes
   up. Wires from outside the level shown end in a stub labelled with where they go.

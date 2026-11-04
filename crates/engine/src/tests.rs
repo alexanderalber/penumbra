@@ -2634,3 +2634,38 @@ fn a_stepping_clock_moves_only_by_steps() {
     f.call("cook.stepping", json!({"on": false}));
     eventually("the timer to move the clock", || f.engine.view().time.is_some_and(|t| t.frame > start + 4));
 }
+
+/// `chan.read` and `node.snapshot` take a component's outputs as `node.connect` does: by the
+/// name of the output node inside, or without a name the first output of a kind they read.
+#[test]
+fn reading_a_component_reads_its_output_nodes() {
+    let f = Fixture::new("read-component");
+    let gpu = match penumbra_gpu::Gpu::headless(penumbra_gpu::AdapterChoice::Software) {
+        Ok(g) => g,
+        Err(e) if cfg!(windows) => panic!("WARP must exist on Windows: {e}"),
+        Err(_) => return,
+    };
+    f.engine.attach_gpu(gpu).unwrap();
+    f.call("node.create", json!({"path": "/c", "kind": "comp.base"}));
+    f.call("node.create", json!({"path": "/c/k", "kind": "chan.constant", "params": {"value0": 3.0}}));
+    f.call("node.create", json!({"path": "/c/n", "kind": "tex.noise", "params": {"width": 16, "height": 8}}));
+    f.call("node.create", json!({"path": "/c/picture", "kind": "tex.out"}));
+    f.call("node.create", json!({"path": "/c/values", "kind": "chan.out"}));
+    f.call("node.connect", json!({"from": "/c/k", "to": "/c/values"}));
+    f.call("node.connect", json!({"from": "/c/n", "to": "/c/picture"}));
+
+    for args in [json!({"path": "/c", "output": "values"}), json!({"path": "/c"})] {
+        let read = f.call("chan.read", args);
+        assert_eq!(read["channels"][0]["value"], 3.0, "{read}");
+    }
+    for args in [json!({"path": "/c", "output": "picture"}), json!({"path": "/c"})] {
+        let r = f.call("node.snapshot", args);
+        assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(16), Some(8)), "{r}");
+    }
+    let e = f.fail("chan.read", json!({"path": "/c", "output": "nope"}));
+    assert!(e.contains("picture, values"), "{e}");
+    assert!(f.fail("node.snapshot", json!({"path": "/c", "output": "values"})).contains("not a texture"));
+    assert!(
+        f.fail("table.read", json!({"path": "/c"})).contains("no Table output; outputs: picture, values")
+    );
+}

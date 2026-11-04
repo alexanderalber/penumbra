@@ -464,6 +464,7 @@ water      15
 <p>Where a path refers to another node (a wire's source in the project file, a binding, the <code>node</code> param of <a class="ref" href="#tex.select"><code>tex.select</code></a>), it is read from the level of the node it belongs to: <code>/a/b</code> is absolute, <code>x</code> is the node <code>x</code> beside it, <code>sub/x</code> is below that, <code>../x</code> one level up. So a component's inside refers to its own nodes by name and keeps working when the component is moved or saved to a file.</p>
 <h3 id="concepts-components">Components</h3>
 <p>A <a class="ref" href="#comp.base"><code>comp.base</code></a> holds nodes. Its input and output sockets are port nodes inside it, one pair per data kind: <a class="ref" href="#tex.in"><code>tex.in</code></a> and <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#chan.out"><code>chan.out</code></a>, and so on for <code>table</code>, <code>geo</code>, <code>mat</code>, <code>light</code> and <code>view</code> (<a href="#family-component-ports">Component ports</a>). What is wired to the component outside comes out of its <a class="ref" href="#tex.in"><code>tex.in</code></a> inside. The port nodes read or write no files or devices: that is the job of the <code>out</code> nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may reach anywhere.</p>
+<p>Commands name a component's sockets by the names of its port nodes. <a class="ref" href="#node.connect"><code>node.connect</code></a> wires them, and <a class="ref" href="#chan.read"><code>chan.read</code></a>, <a class="ref" href="#table.read"><code>table.read</code></a>, <a class="ref" href="#geo.info"><code>geo.info</code></a> and <a class="ref" href="#node.snapshot"><code>node.snapshot</code></a> read them, with <code>output</code> set to the port node's name (<code>/room</code> with <code>output: &quot;colours&quot;</code>). Without <code>output</code>, a read takes the first output of the kind it reads.</p>
 <ul>
 <li><strong>Group:</strong> select nodes and press Ctrl+G. Ports are added where wires cross.
 </li>
@@ -5902,7 +5903,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="chan.read"><summary><code class="name">chan.read</code><span class="sum">Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block</span></summary>
 <div class="body">
 <p>Cook a chan or audio node and read its channels (values now, for sound also peak and rms of the block; {samples: true} for all); {path, output?, samples?}</p>
-<p class="mentions">Mentioned in: <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#audio-sound-is-its-own-family">Audio › Sound is its own family</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 </div>
 <div class="group" id="group-comp">
@@ -6008,7 +6009,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="geo.info"><summary><code class="name">geo.info</code><span class="sum">Cook a geo node and describe it: parts (id, name, triangles), bounds, counts</span></summary>
 <div class="body">
 <p>Cook a geo node and describe it: parts (id, name, triangles), bounds, counts; {path, output?}</p>
-<p class="mentions">Mentioned in: <a href="#control-looking-at-results">Control › Looking at results</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 </div>
 <div class="group" id="group-gpu">
@@ -6160,7 +6161,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="node.connect"><summary><code class="name">node.connect</code><span class="sum">Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers)</span></summary>
 <div class="body">
 <p>Connect an output to an input; without input: the first of its kind, or the next free one of a run (a composite's layers); {from, output?, to, input?}</p>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#dmx-lights-from-a-music-stage">DMX › Lights from a music stage</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-components">Concepts › Components</a>, <a href="#dmx-lights-from-a-music-stage">DMX › Lights from a music stage</a></p>
 </div></details>
 <details class="entry command" id="node.copy"><summary><code class="name">node.copy</code><span class="sum">Copy side-by-side nodes with everything inside them; returns the text</span></summary>
 <div class="body">
@@ -6238,7 +6239,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="node.snapshot"><summary><code class="name">node.snapshot</code><span class="sum">Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB)</span></summary>
 <div class="body">
 <p>Cook a tex node (or a geo node: its picture) and write its output as PNG (8-bit sRGB); {path, output?, file? (relative to the project; default in the temp directory)}</p>
-<p class="mentions">Mentioned in: <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#control-mcp-server">Control › MCP server</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#audio-the-meters-as-a-picture">Audio › The meters as a picture</a>, <a href="#control-mcp-server">Control › MCP server</a>, <a href="#control-taking-turns">Control › Taking turns</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 <details class="entry command" id="node.unbind"><summary><code class="name">node.unbind</code><span class="sum">Back to the param's stored value</span></summary>
 <div class="body">
@@ -6577,7 +6578,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="table.read"><summary><code class="name">table.read</code><span class="sum">Cook a table node and read its rows</span></summary>
 <div class="body">
 <p>Cook a table node and read its rows; {path, output?, rows?} (rows: at most, default 100)</p>
-<p class="mentions">Mentioned in: <a href="#control-looking-at-results">Control › Looking at results</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-components">Concepts › Components</a>, <a href="#control-looking-at-results">Control › Looking at results</a></p>
 </div></details>
 </div>
 <div class="group" id="group-table_out">

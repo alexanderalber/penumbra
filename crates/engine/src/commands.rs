@@ -1198,7 +1198,46 @@ pub(crate) fn result_of(path: &NodePath, data: Option<Data>, error: Option<Strin
     })
 }
 
-/// Cooks the node at `path` and returns output `output` (default the first of kind `kind`).
+/// A component's output named by `output`, or without one its first output of the first kind in
+/// `kinds` that it has (its first output when `kinds` is empty), as the output node inside that
+/// passes it on. `None` when `path` is not a component. Commands that read a result take a
+/// component's output the way `node.connect` does.
+pub(crate) fn component_output(
+    e: &Engine,
+    net: &Network,
+    path: &NodePath,
+    output: Option<&Slot>,
+    kinds: &[penumbra_graph::DataKind],
+) -> Result<Option<NodePath>> {
+    if let Some(slot) = output {
+        return crate::components::port_node(e, net, path, &slot.json(), PortRole::Out);
+    }
+    let id = require(net, path)?;
+    let types = e.types();
+    if !net.node(id).and_then(|n| types.desc(&n.kind)).is_some_and(|d| d.container) {
+        return Ok(None);
+    }
+    let (_, outs) = net.comp_ports(types, id);
+    let kind_of = |p: NodeId| {
+        net.node(p).and_then(|n| types.desc(&n.kind)).and_then(|d| d.outputs.first()).map(|o| o.kind)
+    };
+    let found = match kinds {
+        [] => outs.first().copied(),
+        _ => kinds.iter().find_map(|k| outs.iter().copied().find(|p| kind_of(*p) == Some(*k))),
+    };
+    let names: Vec<String> = outs.iter().filter_map(|p| net.node(*p).map(|n| n.name.to_string())).collect();
+    let id = found.ok_or_else(|| match kinds {
+        [] => format!("{path} has no outputs"),
+        _ => {
+            let kinds: Vec<String> = kinds.iter().map(|k| format!("{k:?}")).collect();
+            format!("{path} has no {} output; outputs: {}", kinds.join(" or "), names.join(", "))
+        }
+    })?;
+    Ok(Some(net.path_of(id).ok_or("port vanished")?))
+}
+
+/// Cooks the node at `path` and returns output `output` (default the first of kind `kind`). On a
+/// component, the output node behind that output.
 fn read_output(
     e: &Engine,
     path: &NodePath,
@@ -1206,6 +1245,11 @@ fn read_output(
     kind: penumbra_graph::DataKind,
 ) -> Result<(Data, Option<NodeStatus>)> {
     let net = e.session().doc().snapshot();
+    let port = component_output(e, &net, path, output, &[kind])?;
+    let (path, output) = match &port {
+        Some(p) => (p, Some(&Slot::Index(0))),
+        None => (path, output),
+    };
     let id = require(&net, path)?;
     let desc = kind_at(e, &net, path)?;
     let names: Vec<&str> = desc.outputs.iter().map(|o| o.name.as_str()).collect();
@@ -1232,10 +1276,14 @@ fn chan_read(e: &Engine, p: &Json) -> Result<Json> {
         #[serde(default)]
         samples: bool,
     }
-    let a: A = args(p)?;
+    let mut a: A = args(p)?;
     use penumbra_graph::DataKind;
     // Without an output named, the first chan output, else the first audio one.
     let net = e.session().doc().snapshot();
+    let kinds = [DataKind::Chan, DataKind::Audio];
+    if let Some(port) = component_output(e, &net, &a.path, a.output.as_ref(), &kinds)? {
+        (a.path, a.output) = (port, Some(Slot::Index(0)));
+    }
     let kind = match a.output {
         Some(_) => DataKind::Chan,
         None => {
@@ -1422,9 +1470,14 @@ fn node_snapshot(e: &Engine, p: &Json) -> Result<Json> {
         output: Option<Slot>,
         file: Option<PathBuf>,
     }
-    let a: A = args(p)?;
+    let mut a: A = args(p)?;
     let gpu = e.gpu().ok_or("no GPU yet (the window opens it)")?.clone();
     let net = e.session().doc().snapshot();
+    // A component's picture is that of its output node (its first tex output, else geo).
+    let kinds = [penumbra_graph::DataKind::Tex, penumbra_graph::DataKind::Geo];
+    if let Some(port) = component_output(e, &net, &a.path, a.output.as_ref(), &kinds)? {
+        (a.path, a.output) = (port, None);
+    }
     let id = require(&net, &a.path)?;
     let desc = kind_at(e, &net, &a.path)?;
     let names: Vec<&str> = desc.outputs.iter().map(|o| o.name.as_str()).collect();
