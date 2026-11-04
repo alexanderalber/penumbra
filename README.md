@@ -131,6 +131,12 @@ The node kinds map roughly onto TouchDesigner's families: `tex` onto TOPs, `chan
 `table` onto DATs, `geo` onto SOPs, `mat` onto MATs, `comp` onto COMPs. penumbra was built for
 one person's installations and has far fewer nodes in each family.
 
+A TouchDesigner project does not open in penumbra; it is rebuilt. The
+[Claude Code skill](.claude/skills/port-from-touchdesigner/SKILL.md) for that walks a session
+through it. It dumps the `.toe` as text with TouchDesigner's own `toeexpand`. It maps the
+operators, GLSL shaders and Python to penumbra nodes, and it compares the port with a
+screenshot of the original.
+
 Not in penumbra, as of now. Some of this is planned, some stays out, see [Scope](#scope):
 
 - Timecode (LTC, MTC), VST plugins.
