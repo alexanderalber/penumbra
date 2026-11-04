@@ -31,9 +31,12 @@
 //! another rate is left out and counted. An MP4 gets AAC, a MOV 24-bit PCM
 //! ([`penumbra_record::audio`]). Loops made of the file are silent.
 //!
-//! The input is cooked only while `audio` uses it, recording or not: a source on the show clock
-//! (an `audio.file` beside the `tex.video_file` of the same clip) keeps its place in time, as it
-//! does under an `out.audio`. With `audio` at `all` or `off` the chain wired to it costs nothing.
+//! The sound input is cooked only while `audio` uses it, recording or not: a source on the show
+//! clock (an `audio.file` beside the `tex.video_file` of the same clip) keeps its place in time,
+//! as it does under an `out.audio`. With `audio` at `all` or `off` the chain wired to it costs
+//! nothing. The picture is cooked only while `record` is on: a recorder on a chain that nothing
+//! else shows (a view of the room for judging a show, say) costs nothing between recordings. That
+//! chain starts cooking in the frame the recording starts.
 //!
 //! With `loop` set, a finished recording is made into a loop as well
 //! ([`penumbra_record::looping`]), on a thread of the record hub's; the node warns while it runs.
@@ -93,13 +96,21 @@ fn sound_of(choice: &str, wired: bool) -> Sound {
     }
 }
 
-/// The sound input is cooked only while `audio` takes it.
+/// The picture is cooked only while `record` is on, so a recorder of a chain nothing else shows
+/// costs nothing between recordings. The sound input is cooked while `audio` takes it, recording
+/// or not, so a sound file on it keeps its place in time.
 fn choose_inputs(cx: &InputChoice<'_>) -> Option<Vec<usize>> {
     let wired = cx.connected(AUDIO_INPUT);
-    match sound_of(cx.text("audio").unwrap_or("auto"), wired) {
-        Sound::Input => None,
-        Sound::All | Sound::Off => Some(vec![0]),
+    let sound = sound_of(cx.text("audio").unwrap_or("auto"), wired) == Sound::Input;
+    let record = cx.bool("record").unwrap_or(false);
+    let mut needed = Vec::with_capacity(2);
+    if record {
+        needed.push(0);
     }
+    if sound {
+        needed.push(AUDIO_INPUT);
+    }
+    Some(needed)
 }
 
 pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
@@ -160,7 +171,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
             .param(ParamSpec::bool("record", false).opens_at_default().doc(
                 "Recording while on: turning record on starts a new file, turning record off finishes the \
                  file. The record button above and video_out.start / .stop switch this param; bind it to a \
-                 channel to start and stop from OSC or a button. A project always opens with record off",
+                 channel to start and stop from OSC or a button. A project always opens with record off. While                  off, the picture's chain is not cooked for this node: a chain only it takes costs nothing",
             ))
             .param(codec)
             .param(

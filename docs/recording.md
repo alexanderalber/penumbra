@@ -19,6 +19,11 @@ drives `record`, the button is greyed and the commands refuse. A project always 
 When a recording cannot start or ends with an error, the node shows why and does not try again
 until `record` turns off and on.
 
+While `record` is off, the `out.video` does not cook its picture. A chain that only the
+`out.video` takes costs nothing between recordings: a view of the room for judging a show, say.
+That chain starts cooking in the frame the recording starts. A video file in it may need a frame
+or two to catch up, and those frames are counted as dropped.
+
 `file` empty records to `recordings/<node name>.mp4` (or `.mov`) in the project folder. A
 file that exists is never overwritten: the next recording goes to `<name>_2`, `<name>_3`, ...
 and the status says which. A name without an extension gets the codec's.

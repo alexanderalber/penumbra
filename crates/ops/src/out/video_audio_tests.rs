@@ -136,13 +136,16 @@ impl Rig {
         }
     }
 
-    /// Cooks the first frame until the picture is there; the sound is running by then.
+    /// Cooks the first frame until the picture is there; the sound is running by then. The
+    /// recorder takes its picture only while it records, so the picture is cooked beside it.
     fn warm_up(&mut self) {
         let picture = self.id("/picture");
         let deadline = Instant::now() + Duration::from_secs(60);
         while self.cooker.outputs(picture).is_none_or(<[_]>::is_empty) {
             assert!(Instant::now() < deadline, "no picture");
             self.pass();
+            self.cooker.cook(&self.net, self.clock.now(), &[picture], &[]);
+            self.gpu.poll();
             std::thread::sleep(Duration::from_millis(5));
         }
     }
@@ -395,6 +398,28 @@ fn the_audio_input_records_a_tone_no_speaker_plays_in_step_with_the_picture() {
         // Straight from the oscillator: no limiter, the full amplitude.
         assert!(channels[0].iter().all(|v| (v.abs() - 0.25).abs() < 1e-6), "{choice}");
     }
+}
+
+/// Between recordings the recorder leaves its picture alone, so a chain only it takes costs
+/// nothing; the sound input still cooks, so a sound file on it keeps its place in time.
+#[test]
+fn the_picture_cooks_only_while_recording() {
+    let Some(gpu) = gpu() else { return };
+    let extra = [
+        create("/tone", "audio.oscillator", &[("frequency", Value::Float(1000.0))]),
+        connect_to("/tone", "/rec", 1),
+    ];
+    let mut rig = Rig::new(gpu, "idle", "idle.mov", &extra);
+    let (picture, tone) = (rig.id("/picture"), rig.id("/tone"));
+    rig.frames(5);
+    assert!(rig.cooker.outputs(picture).is_none_or(<[_]>::is_empty), "the picture was cooked");
+    assert!(rig.cooker.outputs(tone).is_some_and(|o| !o.is_empty()), "the sound input was not cooked");
+    rig.start();
+    rig.frames(5);
+    assert!(rig.cooker.outputs(picture).is_some_and(|o| !o.is_empty()), "no picture while recording");
+    let s = rig.stop();
+    assert_eq!(s.error, None);
+    assert!(s.frames > 0, "{s:?}");
 }
 
 /// With the input wired, `all` still records what `out.audio` plays and `off` records nothing;

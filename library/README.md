@@ -294,6 +294,10 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
 - **Lights for the room** come from `room_lights`: a picture for the room's columns and the
   channels for DMX lights, in the stage's colours and on its beat. Give it to `beats.arrange` as
   `lights: "/room"`, and its `pattern` changes with the sections. See [room_lights](#room_lights).
+- **A room to judge it in** comes from `previs_room`: the stage on the main wall, the columns
+  showing `room_lights`' picture and wash lights in its colours, seen from the audience. Record
+  it with an `out.video` to judge the arrangement without standing in a room. See
+  [previs_room](#previs_room).
 - **The camera** takes one of six presets of the stage. The arrangement's `camera` column picks
   one per section, and the stage glides to it.
 - **Several stages.** A project can hold several stages side by side: `stage_synthwave`,
@@ -1164,3 +1168,29 @@ shows the whole route.
   (seconds to cover 63 % of a change of pattern, default 0.4), `width` and `height` of the
   picture (1024 x 512). The colours at `warmth` 0, 0.5 and 1 are the `chan.constant` nodes `warm`, `mid` and `cold`
   inside.
+
+### previs_room
+
+![previs_room](previs_room/preview.png)
+
+A room seen from the audience, for judging a show without standing in one. The main wall shows
+the `main` picture through a projector, 9.6 x 5.4 m. Four columns stand beside it, two on each
+side, and show the bands of the `pattern` picture: column 1 on the left takes the left band,
+floor at the bottom. Four wash lights take the `colours` channels: two from the ceiling in the
+accent colour, dimmed by `level`; two from the floor up the side walls in the deep colour,
+dimmed by `intensity`.
+
+Wire it to a music stage and its `room_lights`: `main` from the stage's finished picture,
+`pattern` and `colours` from `room_lights`. The room renders only while something takes its
+picture: the viewer, or an `out.video` while it records. An `out.video` that does not record
+leaves it alone, so the room costs nothing in a show.
+
+- In: `main` (picture), `pattern` (picture, four bands side by side), `colours` (channels as
+  `room_lights` gives them). Out: `out` (picture).
+- Params: `width` and `height` of the picture (1280 x 720), `eye` and `look_at` (where the
+  viewer stands and looks, in metres, z up), `fov` (55 degrees), `brightness` (the main wall's
+  projector, 1), `wash` (the ceiling lights' level times this, 1.5), `deep` (the floor lights'
+  intensity times this, 1), `ambient` (0.04), `walls` and `floor` (their colours).
+- The room is 16 m wide, 12 m deep and 6 m high, the main wall at y = 2. The four columns are
+  0.7 m wide and 5.2 m high, at x = -6.9, -5.7, 5.7 and 6.9. `room_lights` with `columns` other
+  than 4 does not fit them.
