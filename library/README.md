@@ -556,7 +556,8 @@ broad copper band with a gold core. The band never becomes a sun. The lake mirro
 band and the stars, blurred and broken up by ripples. The mirror is faint near the camera and
 strong towards the horizon. A low mist drifts on the water near the camera; the bass thickens
 it. Ripples and mist come towards the camera one grid cell per beat of `travelled`, as the
-synthwave floor does. The stars are the sky element `sky_stars`.
+synthwave floor does. The stars are the sky element `sky_stars`. On the shore stand the floor
+elements `floor_terraces`, `floor_reeds` and `floor_stelae`.
 
 The stage has a slow signal of its own, the swell. It rises over about 8 seconds while the music
 is quiet (a breakdown) and over the 8 bars before a new section (the grid's `build`), and it
@@ -774,6 +775,78 @@ number instead; the grid's sections know a track's number but no name. The bus c
   most), `brightness`, `rim` (how bright the outline is), `beats_per_bar`, `fade` and `gone`
   (metres where the letters fade out). The font is monospaced, so each letter has a place of its
   own: `JetBrains Mono` inside.
+
+### floor_terraces
+
+![floor_terraces](floor_terraces/preview.png)
+
+Stepped platforms on the shore of `stage_valley`, black against the night, with a thin rim of
+copper light on their edges. They stand in two lines on each side of the lane and pass with the
+floor. Each platform has three tiers that step up away from the lane. The near line is lower
+than the camera, the back line taller. About one place in five on the back line holds a small
+stepped pyramid instead, its stair turned towards the lane and the camera. Some places stay
+empty, so water shows between the platforms. The bass brightens the rims, and each beat adds a
+small pulse; the shapes stay still. The rims brighten a little towards `dawn` 1. `terraces.py`
+in the folder writes the models.
+
+- In: `bus`, `lane`, `pose` (the stage's: `dawn` comes from it). Out: `out`.
+- Params: `presence` (towards 0 the platforms sink into the water one after another; at a
+  steady presence a platform stands whole or not at all), `spacing` (bars between two places,
+  3), `fill` (share of the places that hold something, 0.75), `height` (the near line, metres,
+  0.9), `back` (the back line's height as a multiple of `height`, 2.4), `depth` (metres a
+  platform reaches back, 2.4), `pyramids` (share of the back line's places with a pyramid,
+  0.2), `pyramid` (a pyramid's size: 0.75 is about 4 m wide and high), `face` (degrees a stair
+  turns towards the camera, 25), `rim` (brightness of the rims), `pulse` (how much the rims
+  brighten on a beat), `warmth` (0 copper rims, 1 a cooler pale bronze; `beats.arrange` binds
+  it), `lane` (1.6), `clear` (metres between the lane's edge and the near line, 2.2), `near`,
+  `far` (36 m), `beats_per_bar`, `smooth` (seconds the bass takes to fall), `line_width`,
+  `extent`.
+- The platforms sink below a sheet at the water line that hides what lies under it. Floor
+  elements in the same render cannot reach below the water line while this element is on.
+
+### floor_reeds
+
+![floor_reeds](floor_reeds/preview.png)
+
+Reeds at the water's edge of `stage_valley`: two lines of clumps on each side of the lane, thin
+dark lines with jade tips. A clump stands about every 0.55 m, and a few places stay empty. The
+reeds sway across the lane in a wave that runs along the line towards the camera. The bass
+widens the sway. The stage's swell lights the tips: faint in a loud section, a jade glint in a
+breakdown, each clump catching the light at its own moment. All reeds are one
+`geo.tex_instance` of one clump, so they cost little. `reeds.py` in the folder writes the clump.
+
+- In: `bus`, `lane`, `pose` (the stage's: `swell` comes from it). Out: `out`.
+- Params: `presence` (towards 0 the clumps shrink into the water one after another), `spacing`
+  (metres between two clumps of a line), `fill` (share of the places with a clump, 0.8), `size`
+  (a clump's height, metres, 1.2), `sway` (degrees the reeds lean to either side at full bass,
+  7), `calm` (share of the sway left in a quiet bass, 0.3), `wave` (metres between two crests of
+  the sway), `glint` (how bright the tips glint at full swell, 3), `lane` (1.6), `edge` (metres
+  between the lane's edge and the first line, 0.2), `depth` (metres between the two lines),
+  `near`, `far` (30 m), `smooth` (seconds the bass takes to fall), `line_width`, `colors` (the
+  ramp from the foot of a blade, position 0, to its tip, 1).
+
+### floor_stelae
+
+![floor_stelae](floor_stelae/preview.png)
+
+Upright stones on the turns of `stage_valley`'s lane, each with a carved glyph on its front. A
+stela stands on the outside of every turn, close to the lane, its front turned towards the lane
+and the camera. The glyph is one of three: a squared spiral, a step fret (a staircase ending in a
+hook) or a square of dots, each over a number in dots and bars. The light comes from the band on
+the horizon: the grooves stay dark, their lower walls and the rims catch copper light. The light
+grows towards `dawn` 1 and with the stage's swell, and each beat adds a small pulse. The stelae
+find the turns in the stage's `lane` picture, so they follow any `bars_per_turn`. `stelae.py`
+in the folder writes the models.
+
+- In: `bus`, `lane`, `pose` (the stage's: `dawn` and `swell` come from it). Out: `out`.
+- Params: `presence` (towards 0 the stelae sink into the water one after another; at a steady
+  presence a stela stands whole or not at all), `seed` (other glyphs and sizes), `height`
+  (metres, 2.4), `width` (metres, 0.9), `thick` (metres, 0.35), `light` (brightness of rim and
+  glyph), `pulse` (how much the light brightens on a beat), `face` (degrees the front turns
+  from the lane towards the camera, 30), `warmth` (0 copper light, 1 jade; `beats.arrange`
+  binds it), `lane` (1.6), `clear` (metres between the lane's edge and a stela, 1.3), `near`,
+  `far` (36 m), `smooth`, `groove` (how bright a groove's floor is), `line_width`.
+- The stelae sink below a sheet at the water line, as `floor_terraces` do.
 
 ### mid_glider
 
