@@ -731,7 +731,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     let table = param(&f.call("node.info", json!({"path": "/arrangement"})), "text");
     let lines: Vec<&str> = table.as_str().unwrap().lines().collect();
     assert_eq!(
-        lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps",
+        lines[0], "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight",
         "{table}"
     );
     assert_eq!(lines.len(), 6, "{table}");
@@ -786,6 +786,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
                 "camera",
                 "stage",
                 "gaps",
+                "flight",
             ]
             && (0.0..=1.0).contains(&channel(&m, "galaxy"))
     });
@@ -838,4 +839,12 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     let from = |path: &str| f.call("node.info", json!({"path": path}))["binds"].clone();
     assert_eq!(from("/stages"), json!([{"param": "index", "from": "/arrangement_mix:stage"}]));
     assert_eq!(from("/lanes"), json!([{"param": "index", "from": "/arrangement_pick:stage"}]));
+
+    // The glider's flight is an index: it follows `_pick`, and its style glides from there.
+    f.call("comp.load", json!({"file": "mid_glider", "path": "/glider"}));
+    let mut flying = args(json!({}));
+    flying["slots"]["mid"] = json!(["/glider"]);
+    let r = f.call("beats.arrange", flying);
+    assert!(r["bound"].as_array().unwrap().iter().any(|x| x == "/glider.flight"), "{r}");
+    assert_eq!(from("/glider/style"), json!([{"param": "row", "from": "/arrangement_pick:flight"}]));
 }

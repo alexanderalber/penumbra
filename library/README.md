@@ -682,12 +682,30 @@ straight up out of the picture instead, and comes back down from above. The glid
 `presence` itself, so it glides in and out over about 4 seconds even when the arrangement fades
 faster. In a break `beats.arrange` keeps it at 0.6: about 2 m further ahead and 0.35 m higher.
 
-- In: `bus`, `lane`, `pose` (the stage's, for `walls`; unwired, it climbs away ahead). Out:
-  `out` (into the stage's `mid`).
-- Params: `presence`, `at` (metres ahead of the camera), `arrive` (seconds to cover 63 % of a
-  change of `presence`, default 2), `bank` (how far it leans into a turn),
-  `bob` (metres up and down), `scale` (0.16 makes it 2.4 m long), `hover` (metres above the
-  floor).
+The glider flies in one of four ways, picked by `flight`:
+
+- 0 slalom: along the lane's turns, leaning into each one.
+- 1 straight: down the lane's middle, nose ahead and level. On the synthwave stage the middle
+  stays inside the free lane, so floor elements stay clear of it.
+- 2 roll: the slalom, and once every `roll_bars` bars the glider rolls round its length on the
+  downbeat, the other way round each time.
+- 3 lean: straight, and on each downbeat the glider leans to one side and drifts a little that
+  way, back over the bar, the other side on the next bar.
+
+A change of `flight` glides over about 2 seconds. `beats.arrange` picks one per section in its
+`flight` column: straight in a break, the roll on a drop, the lean in a build, and in the other
+sections slalom, straight and lean by turns from track to track.
+
+- In: `bus` (`travelled` and `drift` time the roll and the lean), `lane`, `pose` (the stage's,
+  for `walls`; unwired, it climbs away ahead). Out: `out` (into the stage's `mid`).
+- Params: `presence`, `at` (metres ahead of the camera), `flight` (0 to 3, above), `arrive`
+  (seconds to cover 63 % of a change of `presence`, default 2), `bank` (how far it leans into a
+  turn), `bob` (metres up and down), `scale` (0.16 makes it 2.4 m long), `hover` (metres above
+  the floor), `flights` (a csv table, one row per flight: `follow` 1 along the turns or 0
+  straight, `roll` 1 to roll, `lean` 1 to lean on the downbeat; shares between mix the two),
+  `flight_glide` (seconds to cover 63 % of a change of flight, default 0.8), `roll_bars` (bars
+  from one roll to the next, default 4), `roll_beats` (beats a roll takes, default 2),
+  `lean_angle` (degrees of the lean, default 22), `beats_per_bar`.
 
 ### mid_particles
 

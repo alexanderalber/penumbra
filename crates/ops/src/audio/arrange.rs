@@ -36,6 +36,11 @@
 //! - **Camera:** each row names one of the stage's camera presets ([`CAMERA_MAIN`] and the
 //!   others): low flight in a main section, climbing in a build, high and wide on a drop, still in
 //!   a break, and a variant per track in an intro, an outro and a main section that starts a track.
+//! - **Flight:** each row names how a mid element that flies (the glider) moves: along the
+//!   lane's turns ([`FLIGHT_SLALOM`]), straight down the lane's middle ([`FLIGHT_STRAIGHT`]),
+//!   along the turns with a roll on a downbeat ([`FLIGHT_ROLL`]), or straight with a lean on each
+//!   downbeat ([`FLIGHT_BANK`]). Straight in a break, rolls on a drop, the lean in a build, and a
+//!   variant per track in an intro, an outro and a main section ([`FLIGHT_VARIANTS`]).
 //! - **Stage:** with several stages, the row says which one shows. It changes only where a track
 //!   starts with a `change` of at least [`STAGE_CHANGE`], and at most once per [`STAGE_GAP`].
 //!   It walks to the next stage and back again (0, 1, 2, 1, 0, 1, ...), so every change goes to a
@@ -108,6 +113,16 @@ pub const CAMERA_DROP: usize = 2;
 pub const CAMERA_BREAK: usize = 3;
 /// The variants the tracks take in turn: an intro, an outro, a main section at a track start.
 pub const CAMERA_VARIANTS: [usize; 2] = [4, 5];
+/// The glider follows the lane's turns and leans into them.
+pub const FLIGHT_SLALOM: usize = 0;
+/// The glider flies straight down the lane's middle, level.
+pub const FLIGHT_STRAIGHT: usize = 1;
+/// The glider follows the turns and rolls once on a downbeat every few bars.
+pub const FLIGHT_ROLL: usize = 2;
+/// The glider flies straight and leans to one side and back on each downbeat.
+pub const FLIGHT_BANK: usize = 3;
+/// The flights the tracks take in turn in an intro, an outro and a main section.
+pub const FLIGHT_VARIANTS: [usize; 3] = [FLIGHT_SLALOM, FLIGHT_STRAIGHT, FLIGHT_BANK];
 /// The least `change` at a track start that may switch the stage.
 pub const STAGE_CHANGE: f64 = 0.8;
 /// The least time between two switches of the stage, in seconds; the file's start counts as one.
@@ -218,7 +233,7 @@ impl Gaps {
 }
 /// The columns before the elements and after them.
 pub const LEADING: [&str; 4] = ["start", "end", "role", "change"];
-pub const TRAILING: [&str; 5] = ["warmth", "intensity", "camera", "stage", "gaps"];
+pub const TRAILING: [&str; 6] = ["warmth", "intensity", "camera", "stage", "gaps", "flight"];
 /// The piece every step names: the rows differ by their table row, not by a piece.
 pub const PIECE: &str = "row";
 
@@ -311,6 +326,8 @@ pub struct Row {
     pub stage: usize,
     /// The share of the floor in gaps, 0 to 1.
     pub gaps: f64,
+    /// How the glider flies: [`FLIGHT_SLALOM`] and the others.
+    pub flight: usize,
     /// The section keeps the stage and one slot only.
     pub empty: bool,
 }
@@ -613,6 +630,14 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             Role::Main if part.track_start => variant,
             Role::Main => CAMERA_MAIN,
         };
+        let flight = match part.role {
+            Role::Break => FLIGHT_STRAIGHT,
+            Role::Drop => FLIGHT_ROLL,
+            Role::Build => FLIGHT_BANK,
+            Role::Intro | Role::Outro | Role::Main => {
+                FLIGHT_VARIANTS.get(track % FLIGHT_VARIANTS.len()).copied().unwrap_or(FLIGHT_SLALOM)
+            }
+        };
         out.push(Row {
             start: part.start,
             end: part.end,
@@ -625,6 +650,7 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             camera,
             stage,
             gaps: gaps.of(part.role),
+            flight,
             empty,
         });
     }
@@ -661,6 +687,7 @@ pub fn table(slots: &[Slot], rows: &[Row]) -> String {
         cells.push(r.camera.to_string());
         cells.push(r.stage.to_string());
         cells.push(num(r.gaps));
+        cells.push(r.flight.to_string());
         text.push_str(&cells.join(","));
         text.push('\n');
     }
@@ -956,10 +983,10 @@ mod tests {
         let lines: Vec<&str> = t.lines().collect();
         assert_eq!(
             lines[0],
-            "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps"
+            "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight"
         );
-        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3,4,0,0");
-        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0,0");
+        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3,4,0,0,0");
+        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0,0,2");
         assert_eq!(lines.len(), 3);
         assert!(check(&slots()).is_ok());
         let bad = |e: &[&str]| vec![Slot::new("floor", e)];
@@ -1090,6 +1117,34 @@ mod tests {
     }
 
     #[test]
+    fn the_flight_follows_the_role_and_each_track_takes_a_variant() {
+        let mut p = parts(&[
+            (Role::Intro, 0.0),
+            (Role::Main, 0.2),
+            (Role::Build, 0.3),
+            (Role::Drop, 0.9),
+            (Role::Break, 0.6),
+            (Role::Outro, 0.3),
+            (Role::Main, 0.9),
+            (Role::Main, 0.1),
+            (Role::Intro, 0.95),
+            (Role::Main, 0.5),
+        ]);
+        p[0].track_start = true;
+        p[6].track_start = true;
+        p[8].track_start = true;
+        p[9].track_start = true;
+        let r = rows(&p, &slots(), 1);
+        let flights: Vec<usize> = r.iter().map(|r| r.flight).collect();
+        let [a, b, c] = FLIGHT_VARIANTS;
+        assert_eq!(flights, [a, a, FLIGHT_BANK, FLIGHT_ROLL, FLIGHT_STRAIGHT, a, b, b, c, a]);
+        // The column comes last, as a whole number.
+        let text = table(&slots(), &r);
+        assert!(text.lines().next().is_some_and(|h| h.ends_with(",gaps,flight")));
+        assert!(text.lines().nth(4).is_some_and(|l| l.ends_with(&format!(",{FLIGHT_ROLL}"))));
+    }
+
+    #[test]
     fn the_stage_changes_only_at_a_strong_track_start_and_not_twice_in_its_gap() {
         // A track start every 3 minutes (6 parts of 30 s); every fourth is weak.
         let mut of = Vec::new();
@@ -1198,7 +1253,7 @@ mod tests {
                 .all(|r| r.gaps == 0.0)
         );
         let t = table(&slots(), &rows(&p, &slots(), 1));
-        assert!(t.lines().nth(5).is_some_and(|l| l.ends_with(",0.6")), "{t}");
+        assert!(t.lines().nth(5).is_some_and(|l| l.ends_with(",0.6,1")), "{t}");
     }
 
     #[test]

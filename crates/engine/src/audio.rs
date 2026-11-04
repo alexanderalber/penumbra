@@ -150,13 +150,15 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          presence of each element (the column is named as the element), warmth, intensity, camera (the \
          stage's camera preset: low in a main section, higher in a build, high and wide on a drop, level in \
          a break, a variant per track), stage (changes only at a track start with change 0.8 or more, \
-         at most once in 8 minutes, to the next stage in the list and back again: 0, 1, 2, 1, 0) and gaps (the share of the floor broken off: only in a build and a \
-         break). A strong boundary into a main section may leave the stage and one slot \
+         at most once in 8 minutes, to the next stage in the list and back again: 0, 1, 2, 1, 0), gaps (the share of the floor broken off: only in a build and a \
+         break) and flight (how the glider flies: 0 along the lane's turns, 1 straight, 2 along the turns \
+         with a roll on a downbeat, 3 straight with a lean on each downbeat; straight in a break, a roll on a \
+         drop, the lean in a build, 0, 1 and 3 by turns from track to track elsewhere). A strong boundary into a main section may leave the stage and one slot \
          alone, drawn from the section's seed. Edit the table by hand to override a row. The sequence gets a \
          step per row, its clock on the grid's seconds. Beside the table it creates or updates <table>_now, \
          _plus, _next, _diff, _ramp, _mix, _half, _snap, _jump and _pick; _mix has a channel per column that \
          moves through each fade, _pick jumps to the next row half way through it. Binds each element's \
-         presence, warmth, camera, gap (on a stage that has it) and switch to them, and intensity. Run it again after the file changes: \
+         presence, warmth, camera, gap (on a stage that has it), flight (on an element that has it) and switch to them, and intensity. Run it again after the file changes: \
          it overwrites the table",
         beats_arrange,
     );
@@ -705,7 +707,7 @@ fn bind_to(param: ParamPath, from: &NodePath, channel: &str) -> CmdResult<Op> {
 
 /// The kinds of the readers `beats.arrange` puts beside its table, by the end of their names.
 /// `_mix` moves through each fade; `_pick` jumps from one row to the next half way through it,
-/// for the columns that are an index (camera, stage).
+/// for the columns that are an index (camera, stage, flight).
 const READERS: [(&str, &str); 10] = [
     ("now", FROM_TABLE),
     ("plus", "chan.math"),
@@ -1096,6 +1098,11 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     for path in stages.iter().filter(|p| has_param(e, &net, p, "camera")) {
         ops.push(bind_to(param_of(path, "camera")?, pick, "camera")?);
         bound.push(format!("{path}.camera"));
+    }
+    // The flight is an index too: an element that flies (the glider) glides to the new one.
+    for path in elements.iter().filter(|p| !stages.contains(p) && has_param(e, &net, p, "flight")) {
+        ops.push(bind_to(param_of(path, "flight")?, pick, "flight")?);
+        bound.push(format!("{path}.flight"));
     }
     // The gaps fade in and out with the rows, on every stage that has them.
     for path in stages.iter().filter(|p| has_param(e, &net, p, "gap")) {
