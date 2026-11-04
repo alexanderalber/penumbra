@@ -57,8 +57,8 @@ use penumbra_core::{Error, NodeId, ParamSpec, Unit, Value, lock};
 use penumbra_gpu::Tex;
 use penumbra_gpu::projection::{Correction, Stripes, Test, TestPattern};
 use penumbra_graph::{
-    CookContext, CookError, Cooked, Cooker, Data, DataKind, FnNodeType, Network, NodeDesc, NodeTypes,
-    Operator,
+    CookContext, CookError, Cooked, Cooker, Data, DataKind, FnNodeType, InputChoice, Network, NodeDesc,
+    NodeTypes, Operator,
 };
 use serde::Serialize;
 
@@ -251,7 +251,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         )
         .param(
             ParamSpec::bool("active", true)
-                .doc("Open the output window on its display. Off closes the window and the node does nothing"),
+                .doc("Open the output window on its display. Off closes the window and the node does nothing: its inputs are not cooked for it, so a chain only it shows costs nothing"),
         )
         .param(ParamSpec::bool("window", false).doc(
             "Show the picture in a window of its own on the desktop instead of fullscreen on              `display`: a preview beside the editor, also on the editor's display. It keeps              running smoothly while the editor is minimised. Move and resize it like any window;              closing it turns `active` off. `display` and `viewport` do not apply",
@@ -332,7 +332,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         // Not reading the clock; declared so the node picks up what the output side reports
         // (a display plugged in or out) every frame. Cooking it costs nothing.
         .time_dependent();
-    types.register(FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>))?;
+    types.register(
+        FnNodeType::new(desc, || Box::new(Projector) as Box<dyn Operator>).choose_inputs(projector_inputs),
+    )?;
     audio::register(types)?;
     audio_file::register(types)?;
     ndi::register(types)?;
@@ -362,6 +364,16 @@ fn viewport_of(value: Option<&Value>) -> [f64; 4] {
     match value.and_then(Value::components) {
         Some(&[x, y, w, h]) => [x, y, w, h],
         _ => [0.0, 0.0, 1.0, 1.0],
+    }
+}
+
+/// A projector that is not active shows nothing, so it takes none of its inputs: a chain only it
+/// shows (a preview window turned off, say) costs nothing. The chain starts cooking in the frame
+/// the projector turns active.
+fn projector_inputs(cx: &InputChoice<'_>) -> Option<Vec<usize>> {
+    match cx.bool("active") {
+        Some(false) => Some(Vec::new()),
+        _ => None,
     }
 }
 
@@ -840,6 +852,50 @@ mod tests {
         assert_eq!(raster(Some(&board.state()), p, [0.5, 0.0, 0.5, 0.5]), (800, 450));
         let frames = collect(&net, &types, &cooker, &mut Mappings::default());
         assert!(frames[0].window && frames[0].active);
+    }
+
+    /// A projector that is not active takes none of its inputs: the chain only it shows does not
+    /// cook, and starts cooking in the frame the projector turns active.
+    #[test]
+    fn an_inactive_projector_leaves_its_input_alone() {
+        let types = Arc::new(builtin_types().unwrap());
+        let set = |p: &str, v: Value| Op::Set { param: ParamPath::parse(p).unwrap(), value: v };
+        let ops = [
+            Op::Create {
+                path: NodePath::parse("/n").unwrap(),
+                kind: "tex.noise".into(),
+                params: Default::default(),
+            },
+            Op::Create {
+                path: NodePath::parse("/p").unwrap(),
+                kind: PROJECTOR.into(),
+                params: Default::default(),
+            },
+            Op::Connect {
+                from: NodePath::parse("/n").unwrap(),
+                output: 0,
+                to: NodePath::parse("/p").unwrap(),
+                input: 0,
+            },
+            set("/p.window", Value::Bool(true)),
+            set("/p.active", Value::Bool(false)),
+        ];
+        let net = Arc::new(Network::new().apply(&types, &ops).unwrap().network);
+        let (n, p) =
+            (net.resolve(&"/n".parse().unwrap()).unwrap(), net.resolve(&"/p".parse().unwrap()).unwrap());
+        let mut cooker = Cooker::new(types.clone(), Arc::new(JobPool::new(1).unwrap()));
+        let mut clock = ShowClock::new(Rate::FPS_60, LatePolicy::Realtime);
+        for _ in 0..3 {
+            cooker.cook(&net, clock.now(), &[p], &[]);
+            clock.advance(1);
+        }
+        assert!(cooker.status(p).is_some(), "the projector itself cooks");
+        let cooks = |c: &Cooker| c.status(n).map_or(0, |s| s.stats.cooks);
+        assert_eq!(cooks(&cooker), 0, "the input cooked for an inactive projector");
+        let on = [set("/p.active", Value::Bool(true))];
+        let net = Arc::new(net.apply(&types, &on).unwrap().network);
+        cooker.cook(&net, clock.now(), &[p], &[]);
+        assert!(cooks(&cooker) > 0, "the input did not cook for an active projector");
     }
 
     #[test]

@@ -2473,7 +2473,7 @@ Outputs: none.
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `display` | text |  |  | Display id from output.list, e.g. `EPSON PJ [SECA519] @ target 168194` (model and connector) or `AW3225QF [DELA246 #BY4BYZ3]` (model and serial number). The monitor name alone works when unique |
-| `active` | bool | `true` |  | Open the output window on its display. Off closes the window and the node does nothing |
+| `active` | bool | `true` |  | Open the output window on its display. Off closes the window and the node does nothing: its inputs are not cooked for it, so a chain only it shows costs nothing |
 | `window` | bool | `false` |  | Show the picture in a window of its own on the desktop instead of fullscreen on `display`: a preview beside the editor, also on the editor's display. It keeps running smoothly while the editor is minimised. Move and resize it like any window; closing it turns `active` off. `display` and `viewport` do not apply |
 | `borderless` | bool | `false` |  | With `window` on: the window without title bar and frame, only the picture. Drag the picture to move the window, drag its edge to resize it |
 | `window_place` *(more)* | vec4 | `[0, 0, 0, 0]` | px | With `window` on: x, y, width and height of the window in desktop pixels, as output.list gives the displays. x and y are the window's top left corner, title bar included; width and height the picture's size. Moving or resizing the window writes it here, so the window opens there again. All 0: where Windows puts a new window, 960 x 540. A place off every connected display is not taken: the window opens as with all 0, and the place stays until the window is moved |

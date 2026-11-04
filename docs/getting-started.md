@@ -119,7 +119,7 @@ it.
    fullscreen window opens on that display. Without a second display, turn `window` on: the
    picture opens in a window of its own beside the editor. It keeps running smoothly while the
    editor is minimised, which the viewer's window does not. The window opens again where you
-   last moved it (param `window_place`); `borderless` drops its title bar. For projection mapping, put a `tex.mapper`
+   last moved it (param `window_place`); `borderless` drops its title bar. With `active` off, the window closes and the chain that only this projector shows stops cooking. For projection mapping, put a `tex.mapper`
    between the content and the projector: its corners and mesh are dragged in the viewer (see
    [Mapping without a camera](mapping-without-camera.md)).
 
