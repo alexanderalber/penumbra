@@ -883,6 +883,22 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     assert!(r["columns"].as_array().unwrap().iter().any(|x| x == "traps"), "{r}");
     assert_eq!(from("/traps/controls"), json!([{"param": "value0", "from": "/arrangement_mix:traps"}]));
 
+    // The rings come now and then by themselves: an extra, lively or calm.
+    f.call("comp.load", json!({"file": "mid_rings", "path": "/rings"}));
+    let mut ringed = args(json!({}));
+    ringed["slots"]["mid"] = json!(["/glider", {"path": "/rings", "extra": "loud"}]);
+    let e = f.fail("beats.arrange", ringed.clone());
+    assert!(e.contains("extra is lively or calm"), "{e}");
+    ringed["slots"]["mid"] = json!(["/glider", {"path": "/rings", "extra": "lively"}]);
+    let r = f.call("beats.arrange", ringed);
+    assert!(r["bound"].as_array().unwrap().iter().any(|x| x == "/rings.presence"), "{r}");
+    assert!(r["columns"].as_array().unwrap().iter().any(|x| x == "rings"), "{r}");
+    let rings = from("/rings/controls");
+    for (param, column) in [("value0", "rings"), ("value1", "warmth")] {
+        let want = json!({"param": param, "from": format!("/arrangement_mix:{column}")});
+        assert!(rings.as_array().unwrap().contains(&want), "{rings}");
+    }
+
     // The room's lights: the pattern jumps through `_pick`, colour and brightness fade with `_mix`.
     f.call("comp.load", json!({"file": "room_lights", "path": "/room"}));
     let mut lit = args(json!({"lights": "/n"}));

@@ -304,6 +304,12 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   a main section below energy 0.8, where the glider is the only mid element on. In those rows
   the `flight` column says 4, so the glider follows the free corridor through the beams. Every
   other cell stays as it was without the traps. See [mid_traps](#mid_traps).
+- **Rings around the tower.** `mid_rings` puts broad rings around `stage_ascent`'s tower, outside
+  its wall. Give it to `beats.arrange` in the mid slot as `{path: "/rings", stages: ["/ascent"],
+  extra: "lively"}`. An extra takes no turns: the rings come by themselves in every second
+  stretch of lively rows on the ascent (drops, builds, main sections from energy 0.8). Every
+  other cell stays as it was without them. `extra: "calm"` brings an element in intros, outros
+  and breaks instead. See [mid_rings](#mid_rings).
 - **Lights for the room** come from `room_lights`: a picture for the room's columns and the
   channels for DMX lights, in the stage's colours and on its beat. Give it to `beats.arrange` as
   `lights: "/room"`, and its `pattern` changes with the sections. See [room_lights](#room_lights).
@@ -343,7 +349,8 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   `walls` is 1. With `curve` the bars and the city stand round the tube's far end, `far` metres
   ahead: a ring of `radius` round the axis, which the camera sees above the vanishing point. The
   figures stand on that ring's bottom and the planet hangs inside it. Wire the blended pose into
-  `mid_lasers`, `mid_glider`, `mid_equalisers` and `mid_traps` as into the sky elements.
+  `mid_lasers`, `mid_glider`, `mid_equalisers`, `mid_traps` and `mid_rings` as into the sky
+  elements.
 - **Rolling the plane up into the tunnel.** `stage_synthwave` and `stage_tunnel` both have
   `roll_up`. Bind both to the share of the fade between them (the `min` 1 part of the `stage`
   channel above). While the switch fades, the plane's floor gives way to lines from right to
@@ -942,6 +949,30 @@ camera. The beams also stand where the tube runs out into a gap.
   `brightness`, `flicker` (0 to 1, 0.3), `color` (red), `thickness`, `line_width` (the beam's
   core, 2 px), `glow_width` (its glow, 7 px), `arrive` and `leave` (seconds the beams take to
   follow a rise and a fall of `presence`, 1 and 0.15), `beats_per_bar`.
+
+### mid_rings
+
+![mid_rings](mid_rings/preview.png)
+
+Broad rings around the tower of `stage_ascent`, outside its wall, seen through the open walls.
+Each ring is a band of 12 black segments with glowing edges, in the storeys' colours. The rings
+stand in the world and pass downwards with the storeys as the camera climbs. Only some storeys
+have one, halfway between two floors, and never two storeys in a row: two or three rings show at
+a time. Each ring leans by up to `tilt` degrees and turns once in `orbit` beats. Half of them
+turn one way and half the other, so they turn against each other and against the tower. The
+edges brighten with the bass and flash on each beat.
+
+Towards `presence` 0 the rings widen out into the distance and dim, so they fade into the sky.
+They do the same where the tower lies down as a tube (the pose's `curve` towards 1), so they are
+gone through a turn-up. The rings stay outside the wall, away from the glider and the camera.
+
+- In: `bus`, `pose` (the stage's: `radius`, `curve`). Out: `out` (into the stage's `mid`).
+- Params: `presence`, `warmth`, `brightness`, `storey` and `storey_beats` (as the stage's
+  `ceiling` and `storey_beats`: 3 m, 4 beats), `chance` (how many storeys have a ring: 0.35;
+  at 1 about every third), `inner` and `outer` (metres from the axis to the outer edge of the
+  smallest and the largest ring: 7.5 and 10), `band` (metres a band is high, 0.35), `tilt`
+  (degrees the most tilted ring leans, 10), `orbit` (beats a ring takes to turn once, 256), `pulse`
+  (the flash on each beat, 0.5), `line_width`.
 
 ### ceiling_curtains
 

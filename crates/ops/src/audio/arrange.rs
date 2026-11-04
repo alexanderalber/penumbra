@@ -28,6 +28,12 @@
 //!   below [`COMPANION_ENERGY`], where the other one is the only element of its slot on, with
 //!   the other one's presence; not in the rows on either side of a change of stage. In those rows
 //!   the glider flies through it ([`FLIGHT_THREAD`]). Every other cell stays as without it.
+//! - **Extras:** an element may come now and then by itself, in lively rows (a drop, a build, a
+//!   main section of energy from [`LIVELY_ENERGY`]) or in calm ones (an intro, an outro, a
+//!   break) ([`Extra`]). It takes no turns either. On its stages it shows in every second stretch
+//!   of such rows, the first one included, with its slot's presence for the row; a stretch is the
+//!   rows of that kind that follow each other, counted per stage. Not in the rows on either side
+//!   of a change of stage. Every other cell stays as without it.
 //! - **Weights:** an element of weight 3 comes on three times as often as one of weight 1. The
 //!   next element is the one owed the most turns (smooth weighted round robin), so the turns of a
 //!   heavy element spread out evenly and the same file always gives the same table. With equal
@@ -169,6 +175,49 @@ pub const SEE_THROUGH: f64 = 1.0;
 /// A companion comes along in a main section only below this energy: a calmer stretch, not the
 /// height of a track.
 pub const COMPANION_ENERGY: f64 = 0.8;
+/// A main section counts as lively for an extra from this energy on: the height of a track.
+pub const LIVELY_ENERGY: f64 = 0.8;
+
+/// The stretches of one kind of extra's rows: how many each stage has shown, whether the one
+/// going on brings the extras, and whether the row before was of the kind.
+struct Run {
+    kind: Extra,
+    stretches: Vec<usize>,
+    open: bool,
+    before: bool,
+}
+
+/// When an extra comes ([`Slot::extra`]): in lively rows or in calm ones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Extra {
+    /// A drop, a build, or a main section of energy from [`LIVELY_ENERGY`].
+    Lively,
+    /// An intro, an outro or a break.
+    Calm,
+}
+
+impl Extra {
+    /// The kind by its name in the command: `lively` or `calm`.
+    pub fn named(name: &str) -> Option<Extra> {
+        match name {
+            "lively" => Some(Extra::Lively),
+            "calm" => Some(Extra::Calm),
+            _ => None,
+        }
+    }
+
+    /// Whether a section of `role` and `energy` is one of this kind.
+    pub fn fits(self, role: Role, energy: f64) -> bool {
+        match self {
+            Extra::Lively => match role {
+                Role::Drop | Role::Build => true,
+                Role::Main => energy.is_finite() && energy >= LIVELY_ENERGY,
+                _ => false,
+            },
+            Extra::Calm => matches!(role, Role::Intro | Role::Outro | Role::Break),
+        }
+    }
+}
 
 /// How much of the floor breaks off into gaps, per role: a share from 0 to 1 for a build and a
 /// break; every other role keeps its floor whole.
@@ -318,6 +367,9 @@ pub struct Slot {
     /// The element each one comes along with, by column name, or none: one entry per element, or
     /// empty for none at all. A companion takes no turns; see the module's notes.
     pub with: Vec<Option<String>>,
+    /// When each element comes by itself as an extra, or none: one entry per element, or empty
+    /// for none at all. An extra takes no turns; see the module's notes.
+    pub extra: Vec<Option<Extra>>,
 }
 
 /// The heaviest weight an element takes; heavier ones count as this.
@@ -333,6 +385,7 @@ impl Slot {
             stages: Vec::new(),
             instead: Vec::new(),
             with: Vec::new(),
+            extra: Vec::new(),
         }
     }
 
@@ -346,9 +399,14 @@ impl Slot {
         self.with.get(i).and_then(|x| x.as_deref())
     }
 
-    /// Whether element `i` takes no turns of its own: a stand-in or a companion.
+    /// When element `i` comes by itself, if it is an extra.
+    pub fn extra_of(&self, i: usize) -> Option<Extra> {
+        self.extra.get(i).copied().flatten()
+    }
+
+    /// Whether element `i` takes no turns of its own: a stand-in, a companion or an extra.
     fn follows(&self, i: usize) -> bool {
-        self.stands_in_for(i).is_some() || self.comes_with(i).is_some()
+        self.stands_in_for(i).is_some() || self.comes_with(i).is_some() || self.extra_of(i).is_some()
     }
 
     /// Whether element `i` may come on by a swap on stage `stage`: it shows there and is no
@@ -414,8 +472,9 @@ pub fn columns(slots: &[Slot]) -> Vec<String> {
 }
 
 /// Why `slots` cannot make a table: an element name that is no channel name, a name twice or
-/// one of the table's own columns, no element at all, or a stand-in or companion for no element,
-/// for itself, for another stand-in or companion, or in or for the post slot.
+/// one of the table's own columns, no element at all, a stand-in or companion for no element,
+/// for itself, for another stand-in, companion or extra, or in or for the post slot, or an extra
+/// in the post slot or one that also stands in for or comes with another.
 pub fn check(slots: &[Slot]) -> Result<(), String> {
     let cols = columns(slots);
     if cols.is_empty() {
@@ -442,6 +501,16 @@ pub fn check(slots: &[Slot]) -> Result<(), String> {
                     "`{c}` either stands in for another element or comes with one, not both"
                 ));
             }
+            if slot.extra_of(i).is_some() {
+                if slot.name == POST {
+                    return Err(format!("`{c}` is in the post slot, whose elements cannot be extras"));
+                }
+                if slot.stands_in_for(i).is_some() || slot.comes_with(i).is_some() {
+                    return Err(format!(
+                        "`{c}` is an extra: it comes by itself and cannot stand in for or come with another"
+                    ));
+                }
+            }
             for (other, does) in [(slot.stands_in_for(i), "stand in for"), (slot.comes_with(i), "come with")]
             {
                 let Some(other) = other else { continue };
@@ -460,14 +529,14 @@ pub fn check(slots: &[Slot]) -> Result<(), String> {
                 let j = of.elements.iter().position(|e| e == other).unwrap_or(0);
                 if of.follows(j) {
                     return Err(format!(
-                        "`{c}` cannot {does} `{other}`, which stands in for or comes with another itself"
+                        "`{c}` cannot {does} `{other}`, which stands in for or comes with another itself, or is an extra"
                     ));
                 }
             }
         }
         if slot.name != POST && (0..slot.elements.len()).all(|i| slot.follows(i)) {
             return Err(format!(
-                "slot `{}` has only stand-ins and companions: it needs an element of its own",
+                "slot `{}` has only stand-ins, companions and extras: it needs an element of its own",
                 slot.name
             ));
         }
@@ -631,6 +700,13 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
     let mut stretches = vec![0usize; stages];
     let mut open = false;
     let mut calm_before = false;
+    // The same for the extras, per kind: lively, then calm.
+    let mut runs = [Extra::Lively, Extra::Calm].map(|kind| Run {
+        kind,
+        stretches: vec![0; stages],
+        open: false,
+        before: false,
+    });
     // Per slot, the sections its element has been on, hidden by the stage or not.
     let mut since = vec![0usize; slots.len()];
     // The opening's steps, and the slots each brings: step k brings the first of `order` up to
@@ -717,6 +793,23 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             Role::Main | Role::Build | Role::Drop if !empty => dense + 1,
             _ => 0,
         };
+        // Whether the extras of each kind come in this row: every second stretch of their kind.
+        let mut now = Vec::with_capacity(runs.len());
+        for run in &mut runs {
+            let fits = run.kind.fits(part.role, part.energy);
+            if fits && !run.before {
+                let seen = run.stretches.get(stage).copied().unwrap_or(0);
+                run.open = seen % 2 == 0;
+                if let Some(n) = run.stretches.get_mut(stage) {
+                    *n += 1;
+                }
+            }
+            run.before = fits;
+            if fits && run.open {
+                now.push(run.kind);
+            }
+        }
+        let comes = |slot: &Slot, j: usize| slot.extra_of(j).is_some_and(|x| now.contains(&x));
         let mut presence = Vec::new();
         for (s, (slot, x)) in slots.iter().zip(&state).enumerate() {
             let sky = slot.name == SKY || slot.name == MID;
@@ -728,9 +821,10 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             };
             let level = if (empty && Some(s) != kept) || !brought(i, s) { 0.0 } else { level };
             match x {
-                State::One { on, weights, .. } => presence.extend(
-                    (0..weights.len()).map(|j| if j == *on && slot.shows_in(j, stage) { level } else { 0.0 }),
-                ),
+                State::One { on, weights, .. } => presence.extend((0..weights.len()).map(|j| {
+                    let shown = j == *on || comes(slot, j);
+                    if shown && slot.shows_in(j, stage) { level } else { 0.0 }
+                })),
                 State::Each(on, _) => presence.extend(
                     on.iter()
                         .enumerate()
@@ -814,7 +908,14 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             empty,
         });
     }
-    // The walls stay closed next to a change of stage, and no companion comes there.
+    // The walls stay closed next to a change of stage, and no companion or extra comes there.
+    let extras: Vec<usize> = slots
+        .iter()
+        .flat_map(|s| (0..s.elements.len()).map(move |j| s.extra_of(j).is_some()))
+        .enumerate()
+        .filter(|(_, x)| *x)
+        .map(|(i, _)| i)
+        .collect();
     let at: Vec<usize> = out.iter().map(|r| r.stage).collect();
     for (i, row) in out.iter_mut().enumerate() {
         let before = i.checked_sub(1).and_then(|k| at.get(k));
@@ -822,6 +923,11 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
         let turning = before.is_some_and(|s| *s != row.stage) || after.is_some_and(|s| *s != row.stage);
         if turning {
             row.see_through = 0.0;
+            for &k in &extras {
+                if let Some(x) = row.presence.get_mut(k) {
+                    *x = 0.0;
+                }
+            }
         }
         let calm_enough = match parts.get(i).map(|p| (p.role, p.energy)) {
             Some((Role::Build, _)) => true,
@@ -857,6 +963,7 @@ fn come_along(slots: &[Slot], cols: &[String], row: &mut Row) {
                     alone = (0..n).all(|e| {
                         first + e == k
                             || s.comes_with(e).is_some()
+                            || s.extra_of(e).is_some()
                             || row.presence.get(first + e).is_none_or(|p| *p <= 0.0)
                     });
                     break;
@@ -1634,6 +1741,113 @@ mod tests {
         let mut every = plain.clone();
         every.stages = vec![vec![], vec![], vec![]];
         assert_eq!(rows(&p, std::slice::from_ref(&plain), 3), rows(&p, std::slice::from_ref(&every), 3));
+    }
+
+    #[test]
+    fn an_extra_comes_in_every_second_stretch_of_its_rows_and_leaves_every_other_cell_as_it_was() {
+        // 80 parts, a track every 10, so the stage walks 0, 1, 2, 1, 0, 1, 2, 1; the roles in an
+        // uneven cycle so that stretches of calm and of lively rows follow each other.
+        let mut p = Vec::new();
+        let cycle = [
+            Role::Intro,
+            Role::Main,
+            Role::Main,
+            Role::Drop,
+            Role::Break,
+            Role::Build,
+            Role::Drop,
+            Role::Outro,
+        ];
+        for i in 0..80 {
+            let start = i as f64 * 60.0;
+            let track_start = i % 10 == 0;
+            p.push(Part {
+                start,
+                end: start + 60.0,
+                zone: (start, start),
+                role: cycle[i % cycle.len()],
+                change: if track_start { 0.9 } else { 0.4 },
+                energy: if i % 3 == 0 { 0.9 } else { 0.5 },
+                track_start,
+                seed: i as u32,
+            });
+        }
+        let sky = Slot::new("sky", &["galaxy", "planet"]);
+        let plain = vec![Slot::new("mid", &["glider", "lasers"]), sky.clone()];
+        let mut mid = Slot::new("mid", &["glider", "lasers", "rings"]);
+        mid.stages = vec![vec![], vec![], vec![2]];
+        mid.extra = vec![None, None, Some(Extra::Lively)];
+        let mut far = Slot::new("sky", &["galaxy", "planet", "ships"]);
+        far.stages = vec![vec![], vec![], vec![2]];
+        far.extra = vec![None, None, Some(Extra::Calm)];
+        let with = vec![mid, far];
+        assert_eq!(check(&with), Ok(()));
+        let before = rows(&p, &plain, 3);
+        let after = rows(&p, &with, 3);
+        assert_eq!(before.len(), after.len());
+        // Columns before: glider lasers galaxy planet; after: glider lasers rings galaxy planet ships.
+        for (i, (b, a)) in before.iter().zip(&after).enumerate() {
+            for (x, y) in [(0, 0), (1, 1), (3, 2), (4, 3)] {
+                assert_eq!(a.presence[x], b.presence[y], "every other cell as before: {a:?} {b:?}");
+            }
+            assert_eq!((a.stage, a.camera, a.warmth, a.flight), (b.stage, b.camera, b.warmth, b.flight));
+            let turning = (i > 0 && after[i - 1].stage != a.stage)
+                || after.get(i + 1).is_some_and(|n| n.stage != a.stage);
+            for (col, kind, slot) in [(2, Extra::Lively, MID), (5, Extra::Calm, SKY)] {
+                let x = a.presence[col];
+                if a.stage != 2 || turning || !kind.fits(p[i].role, p[i].energy) {
+                    assert_eq!(x, 0.0, "only on its stage, in its rows, not at a change: {i} {a:?}");
+                } else if x > 0.0 {
+                    // The slot's presence for the row: a break keeps the sky and the mid slot at 0.6.
+                    let want = if a.role == Role::Break { BREAK_SKY } else { 1.0 };
+                    assert_eq!(x, want, "{slot} {i} {a:?}");
+                }
+            }
+        }
+        // Every second stretch of each kind on the ascent shows, the first one included.
+        for (col, kind) in [(2, Extra::Lively), (5, Extra::Calm)] {
+            let mut stretches: Vec<Vec<f64>> = Vec::new();
+            let mut last: Option<usize> = None;
+            for (i, a) in after.iter().enumerate() {
+                if a.stage == 2 && kind.fits(p[i].role, p[i].energy) {
+                    if last != Some(i.wrapping_sub(1)) || after[i - 1].stage != 2 {
+                        stretches.push(Vec::new());
+                    }
+                    if let Some(s) = stretches.last_mut() {
+                        s.push(a.presence[col]);
+                    }
+                    last = Some(i);
+                }
+            }
+            assert!(stretches.len() >= 3, "{kind:?}: {stretches:?}");
+            for (n, s) in stretches.iter().enumerate() {
+                let on = s.iter().any(|x| *x > 0.0);
+                if n % 2 == 1 {
+                    assert!(!on, "{kind:?}: every second stretch stays out: {stretches:?}");
+                }
+            }
+            assert!(
+                stretches.iter().step_by(2).filter(|s| s.iter().any(|x| *x > 0.0)).count() >= 2,
+                "{kind:?}: {stretches:?}"
+            );
+        }
+        // What an extra may not be.
+        let mut post = Slot::new("post", &["a"]);
+        post.extra = vec![Some(Extra::Calm)];
+        assert!(check(&[Slot::new("sky", &["c"]), post]).is_err_and(|e| e.contains("post")));
+        let mut both = Slot::new("mid", &["a", "b"]);
+        both.extra = vec![None, Some(Extra::Lively)];
+        both.with = vec![None, Some("a".into())];
+        assert!(check(&[both]).is_err_and(|e| e.contains("extra")));
+        let mut only = Slot::new("mid", &["a"]);
+        only.extra = vec![Some(Extra::Lively)];
+        assert!(check(&[only, Slot::new("sky", &["c"])]).is_err_and(|e| e.contains("only stand-ins")));
+        let mut follow = Slot::new("mid", &["a", "b", "d"]);
+        follow.extra = vec![None, Some(Extra::Lively), None];
+        follow.instead = vec![None, None, Some("b".into())];
+        assert!(check(&[follow]).is_err_and(|e| e.contains("is an extra")));
+        assert_eq!(Extra::named("calm"), Some(Extra::Calm));
+        assert_eq!(Extra::named("loud"), None);
     }
 
     #[test]
