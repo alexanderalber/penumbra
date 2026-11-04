@@ -268,6 +268,11 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   shape of nebula with its own edges. Screening only adds light, so a sky element cannot darken
   the nebula. Every sky element
   except `sky_galaxy` also takes the stage's `pose`, so its horizon moves with the camera.
+- **Outside elements** are geometry far outside `stage_ascent`'s tower, such as ships. Their
+  output goes into the ascent's `outside` input; several go through a `geo.merge`. The ascent
+  draws them behind the tower, without its distance fade, so they stay sharp hundreds of metres
+  away. Their solid bodies are black and hide the nebula behind them. Only `stage_ascent` has
+  this input.
 - **Post elements** change the finished picture. Each takes a picture in `in` and `bus`, and
   gives the changed picture in `out`. Chain them after the stage's `out`: stage, then
   `post_scanlines`, then the next one, then the output. At `presence` 0 a post element passes the
@@ -310,6 +315,12 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   stretch of lively rows on the ascent (drops, builds, main sections from energy 0.8). Every
   other cell stays as it was without them. `extra: "calm"` brings an element in intros, outros
   and breaks instead. See [mid_rings](#mid_rings).
+- **Ships beyond the tower.** `outside_ships` sends huge ships across the ascent's sky. Wire its
+  `out` through a `geo.merge` (its `show` the ships' presence channel) into the ascent's
+  `outside`. Bind the ascent's `outside` to the same channel, so the ascent skips that render
+  while no ship shows. Give it to `beats.arrange` in the sky slot as `{path: "/ships", stages:
+  ["/ascent"], extra: "calm"}`: the ships come in every second stretch of intros, outros and
+  breaks on the ascent. See [outside_ships](#outside_ships).
 - **Lights for the room** come from `room_lights`: a picture for the room's columns and the
   channels for DMX lights, in the stage's colours and on its beat. Give it to `beats.arrange` as
   `lights: "/room"`, and its `pattern` changes with the sections. See [room_lights](#room_lights).
@@ -493,7 +504,8 @@ Palette, nebula, distance fade and camera presets work as on `stage_synthwave`, 
 swap.
 
 - In: `bus`, `mid` (geometry in the shaft, such as the glider), `sky` (a picture screened over the
-  nebula), `floor` and `ceiling` (merged into the scene, but the shaft has no floor: floor
+  nebula), `outside` (geometry far outside the tower, such as `outside_ships`: drawn behind the
+  tower through the same camera, out to 5 km, without the distance fade), `floor` and `ceiling` (merged into the scene, but the shaft has no floor: floor
   elements sink away, since the lane's alpha is 0, and ceiling elements hang at their own height
   in the middle of the shaft; leave both unwired).
 - Out: `out` (the picture), `lane` (the layout of `stage_synthwave`'s lane: red and green 0,
@@ -510,7 +522,9 @@ swap.
   between its axis and its wall); `twist` (how far the tower sways with the lane: 1 turns it by
   the lane's swing over the radius); `lines` (posts around the tower, up to 24); `line_width`;
   `turn_up` (1 the tower stands; towards 0 it lies down along the view as a tube of hoops, the
-  way `stage_tunnel` turns up); `tube_radius` (the lying tube's radius: 4 m, as the tunnel's).
+  way `stage_tunnel` turns up); `tube_radius` (the lying tube's radius: 4 m, as the tunnel's);
+  `outside` (1 draws the `outside` input, 0 skips its render: bind it to the presence of what
+  goes in, so an empty input costs nothing).
   `curve` in the pose rises to 1 as the tower lies down.
 - Camera: `camera`, `glide` and `presets` as on `stage_synthwave`, with presets of the same
   meaning for the shaft, all looking up a little: 0 at 1.5 m and 8 degrees up, 1 lower and looking
@@ -1224,6 +1238,37 @@ treats them like any sky element.
 - Params: `presence`, `brightness`, `warmth`, `pairs` (1 to 6), `seed` (where the pairs sit and
   when they blink), `size` (an eye's half width, in picture heights), `look` (how far the pupils
   move), `blinks` (share of bars with a blink), `reach`.
+
+### outside_ships
+
+![outside_ships](outside_ships/preview.png)
+
+Huge ships far outside the tower of `stage_ascent`, seen through its open walls. Each ship is a
+wireframe hull with a black body, engines glowing at its stern and running lights that blink:
+red on the left, green on the right, white strobes, red beacons and amber lights. Three hulls
+take turns: a hauler (a spine with cargo blocks), a wedge with two engine pods, and a ring ship.
+
+**Crossing.** Each of `ships` lanes sends one ship at a time. A ship takes `cross` beats from
+far out on one side to far out on the other, and is in view for about 40 % of them: about a
+minute at 130 BPM with the defaults. Then its lane rests for `rest` beats. Each ship takes its
+own hull, distance (`near` to `far` metres), height, heading and length (around `length`).
+`seed` gives other ships.
+
+**Parallax.** The tower's storeys pass down at the full climb. The ships sink by only `sink`
+times the climb, and the nebula not at all. So the ships hang far behind the tower and drift
+slowly against it.
+
+**Presence.** Towards `presence` 0 the ships fade into the sky: edges, engines and lights dim,
+and the black bodies turn see-through. They do the same where the tower lies down as a tube
+(the pose's `curve` towards 1), so they are gone through a turn-up.
+
+- In: `bus`, `pose` (the stage's: `curve`). Out: `out` (into the ascent's `outside`).
+- Params: `presence`, `warmth`, `brightness`, `ships` (lanes, 1 to 6, 4), `cross` (beats a
+  crossing takes, 384), `rest` (beats a lane waits, 256), `near` and `far` (metres to the
+  ships' paths, 150 and 340), `length` (metres a ship is long on average, 200), `sink` (share
+  of the climb the ships sink by, 0.15), `storey` and `storey_beats` (as the stage's `ceiling`
+  and `storey_beats`), `blink` (beats from one flash of a light to the next, 2), `seed`,
+  `line_width`.
 
 ### post_scanlines
 
