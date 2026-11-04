@@ -36,6 +36,8 @@
 //! [`resolve`] also takes the OS name (`\\.\DISPLAY2`), the monitor name alone when it is unique
 //! (`EPSON PJ`), the name with the PnP id (`EPSON PJ [SECA519]`) and the old ids
 //! (`EPSON PJ @ port 4`) when their monitor name is unique. The old port number never decides.
+//! [`resolve_following`] adds the one case where an id without a serial leaves its connector:
+//! the only connected display of its model, when no other stored id names that model.
 
 use penumbra_core::Error;
 use serde::Serialize;
@@ -244,6 +246,10 @@ pub enum Resolved<'a> {
     ByName(&'a DisplayDetails),
     /// An old id (`EPSON PJ @ port 4`) whose monitor name exactly one connected display has.
     OldId(&'a DisplayDetails),
+    /// An id without a serial (`EPSON PJ [SECA519] @ target 168194`) whose connector shows no
+    /// display of its model, followed to the only connected display of that model, which no
+    /// other stored id claims (see [`resolve_following`]).
+    ByModel(&'a DisplayDetails),
     /// Nothing that is certainly this display. `similar`: displays of the same model on other
     /// connectors, which may or may not be the same unit.
     NotConnected { similar: Vec<&'a DisplayDetails> },
@@ -254,7 +260,7 @@ pub enum Resolved<'a> {
 impl<'a> Resolved<'a> {
     pub fn display(&self) -> Option<&'a DisplayDetails> {
         match self {
-            Resolved::Exact(d) | Resolved::ByName(d) | Resolved::OldId(d) => Some(d),
+            Resolved::Exact(d) | Resolved::ByName(d) | Resolved::OldId(d) | Resolved::ByModel(d) => Some(d),
             _ => None,
         }
     }
@@ -273,6 +279,11 @@ impl<'a> Resolved<'a> {
                 "`{stored}` is an old id with a port number that shifts when displays are added; \
                  shown on `{}`, the only `{}`. Choose the display again to store its stable id",
                 d.id, d.monitor
+            ))),
+            Resolved::ByModel(d) => Some(Problem::Warning(format!(
+                "display `{stored}` is not on its connector any more. It is shown on `{}`, the only connected `{}`.                  Check with `test` that this is the right projector, then choose the display again to store its new id",
+                d.id,
+                d.edid.as_deref().unwrap_or(&d.monitor)
             ))),
             Resolved::NotConnected { similar } if !similar.is_empty() => Some(Problem::Error(format!(
                 "display `{stored}` is not connected, nothing is shown. The same model is connected \
@@ -393,6 +404,27 @@ pub fn resolve<'a>(id: &str, displays: &'a [DisplayDetails]) -> Resolved<'a> {
     }
     let list = displays.iter().filter(model).filter(|d| d.monitor == w.name).collect();
     decide(list, if w.place == Place::OldPort { Resolved::OldId } else { Resolved::ByName })
+}
+
+/// [`resolve`], and when that finds nothing: an id without a serial, whose connector shows no
+/// display of its model, follows the model to another connector when exactly one connected
+/// display has that model, that display has no serial either, and none of `others` (the ids
+/// the other projectors store) names that model or resolves to that display. A swap of two
+/// projector cables of different models then keeps both projectors showing; two units of one
+/// model are still never guessed between.
+pub fn resolve_following<'a>(id: &str, displays: &'a [DisplayDetails], others: &[&str]) -> Resolved<'a> {
+    let resolved = resolve(id, displays);
+    let Resolved::NotConnected { similar } = &resolved else { return resolved };
+    let w = parse(id.trim());
+    let (Some(pnp), None, Place::Target { .. }) = (w.pnp, w.serial, w.place) else { return resolved };
+    let [d] = similar.as_slice() else { return resolved };
+    if d.serial.is_some() {
+        return resolved;
+    }
+    let claimed = others.iter().any(|o| {
+        parse(o.trim()).pnp == Some(pnp) || resolve(o, displays).display().is_some_and(|x| x.id == d.id)
+    });
+    if claimed { resolved } else { Resolved::ByModel(d) }
 }
 
 #[cfg(test)]
@@ -640,6 +672,80 @@ mod tests {
         assert_eq!(edid_serial(&no_header), None);
         let garbage: Vec<u8> = (0..300u32).map(|i| (i * 37 % 251) as u8).collect();
         assert_eq!(edid_serial(&garbage), None);
+    }
+
+    /// The laptop after swapping the DP cables of two projectors of different models.
+    fn swapped() -> Vec<DisplayDetails> {
+        name_displays(
+            &[
+                raw("L1", "Panel", DELL, Some("P1"), 4096),
+                raw("L2", "EPSON PJ", EPSON_A514, None, 4352),
+                raw("L3", "EPSON PJ", EPSON_A519, None, 4354),
+            ],
+            &[],
+        )
+    }
+
+    const A: &str = "EPSON PJ [SECA514] @ target 4354";
+    const B: &str = "EPSON PJ [SECA519] @ target 4352";
+
+    #[test]
+    fn a_swapped_cable_is_followed_by_model() {
+        let list = swapped();
+        let a = resolve_following(A, &list, &[B]);
+        assert!(matches!(a, Resolved::ByModel(d) if d.os_name == "L2"), "{a:?}");
+        let b = resolve_following(B, &list, &[A]);
+        assert!(matches!(b, Resolved::ByModel(d) if d.os_name == "L3"), "{b:?}");
+        let Some(Problem::Warning(text)) = a.problem(A, &list) else { panic!() };
+        assert!(
+            text.contains("shown on `EPSON PJ [SECA514] @ target 4352`, the only connected `SECA514`"),
+            "{text}"
+        );
+        // Without the following, nothing is shown.
+        assert!(matches!(resolve(A, &list), Resolved::NotConnected { similar } if similar.len() == 1));
+        // An id that resolves stays exact.
+        assert!(matches!(
+            resolve_following("EPSON PJ [SECA514] @ target 4352", &list, &[]),
+            Resolved::Exact(_)
+        ));
+    }
+
+    #[test]
+    fn following_by_model_never_guesses() {
+        let list = swapped();
+        // Another projector names the same model, on any connector.
+        let r = resolve_following(A, &list, &["EPSON PJ [SECA514] @ target 9"]);
+        assert!(matches!(r, Resolved::NotConnected { .. }));
+        let r = resolve_following(A, &list, &["X [SECA514]"]);
+        assert!(matches!(r, Resolved::NotConnected { .. }));
+        // Another projector reaches that display by another kind of id.
+        assert!(matches!(resolve_following(A, &list, &["L2"]), Resolved::NotConnected { .. }));
+        // Two of the model connected.
+        let two = name_displays(
+            &[raw("L2", "EPSON PJ", EPSON_A514, None, 4352), raw("L4", "EPSON PJ", EPSON_A514, None, 4360)],
+            &[],
+        );
+        assert!(
+            matches!(resolve_following(A, &two, &[]), Resolved::NotConnected { similar } if similar.len() == 2)
+        );
+        // The only one of the model has a serial: another unit.
+        let serial = name_displays(&[raw("L2", "EPSON PJ", EPSON_A514, Some("X5ZK1"), 4352)], &[]);
+        assert!(matches!(resolve_following(A, &serial, &[]), Resolved::NotConnected { .. }));
+        // Ids with a serial, without a connector, or without a model are not followed.
+        let moved = name_displays(&[raw("D9", "AW3225QF", DELL, Some("ZZ0001"), 1)], &[]);
+        assert!(matches!(
+            resolve_following("AW3225QF [DELA246 #BY4]", &moved, &[]),
+            Resolved::NotConnected { .. }
+        ));
+        assert!(matches!(
+            resolve_following("display @ target 4354", &list, &[]),
+            Resolved::NotConnected { .. }
+        ));
+        assert!(matches!(resolve_following("EPSON PJ @ port 4", &list, &[]), Resolved::Ambiguous(_)));
+        // Nothing of the model connected.
+        assert!(
+            matches!(resolve_following(A, &list[..1], &[]), Resolved::NotConnected { similar } if similar.is_empty())
+        );
     }
 
     /// Prints what this machine reports (`cargo test -p penumbra-system -- --nocapture`).

@@ -35,9 +35,15 @@ gives the display (`\.\DISPLAY2`).
 
 When a projector's display is not certainly there, the projector shows nothing rather than
 something on the wrong wall: its node shows the error, and the log names the stored id and what
-is connected. A display without a serial number that turns up on another connector is not
-followed (it may be the other unit of the same model); the error names it, so you can choose it
-after checking. A display that drops out for a moment keeps its window for a second.
+is connected. A display that drops out for a moment keeps its window for a second.
+
+A display without a serial number that turns up on another connector is followed by its model
+when that is certain: exactly one connected display has the model, and no other projector in
+the project names that model. Swapping the cables of two projectors of different models (say
+`SECA514` and `SECA519`) then keeps both showing. The projector's node, the Helpers window and
+`output.list` show a warning until you choose the display again. Two units of the same model are
+never guessed between: the error names the other connector, so you can choose it after checking
+with `test`.
 
 Projects from before this scheme store ids like `EPSON PJ @ port 4`. Port numbers shifted when
 displays were added, so they no longer decide: such an id still works when only one display has

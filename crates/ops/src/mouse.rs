@@ -186,7 +186,9 @@ impl MouseIn {
 fn resolve(text: &str) -> Result<String, String> {
     let list = penumbra_system::displays().map_err(|e| format!("cannot list the displays: {}", e.0))?;
     match penumbra_system::resolve(text, &list) {
-        Resolved::Exact(d) | Resolved::ByName(d) | Resolved::OldId(d) => Ok(d.os_name.clone()),
+        Resolved::Exact(d) | Resolved::ByName(d) | Resolved::OldId(d) | Resolved::ByModel(d) => {
+            Ok(d.os_name.clone())
+        }
         Resolved::NotConnected { .. } => Err(format!("display `{text}` is not connected")),
         Resolved::Ambiguous(_) => Err(format!("`{text}` fits several displays; use the full id")),
     }

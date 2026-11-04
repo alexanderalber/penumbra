@@ -188,7 +188,15 @@ impl Outputs {
                 states.insert(p.node, state);
                 continue;
             }
-            let resolved = penumbra_system::resolve(&p.display, &details);
+            // The ids the other projectors store, which a display followed by its model must
+            // not be claimed by.
+            let others: Vec<&str> = frame
+                .projectors
+                .iter()
+                .filter(|o| o.node != p.node && !o.display.trim().is_empty())
+                .map(|o| o.display.as_str())
+                .collect();
+            let resolved = penumbra_system::resolve_following(&p.display, &details, &others);
             match resolved.problem(&p.display, &details) {
                 Some(Problem::Error(e)) => state.error = Some(e),
                 Some(Problem::Warning(w)) => state.warning = Some(w),
