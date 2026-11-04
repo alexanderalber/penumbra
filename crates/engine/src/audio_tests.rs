@@ -912,6 +912,28 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         assert!(structure.as_array().unwrap().contains(&want), "{structure}");
     }
 
+    // The mountains as the floor's base: on wherever the blocks are, with their presence.
+    let mut based = args(json!({}));
+    based["slots"]["floor"] =
+        json!([{"path": "/blocks", "base": true}, {"path": "/mountains", "base": true}]);
+    let e = f.fail("beats.arrange", based.clone());
+    assert!(e.contains("two bases") && e.contains("`blocks`") && e.contains("`mountains`"), "{e}");
+    based["slots"]["floor"] = json!(["/blocks", {"path": "/mountains", "base": true}]);
+    let r = f.call("beats.arrange", based);
+    assert!(r["bound"].as_array().unwrap().iter().any(|x| x == "/mountains.presence"), "{r}");
+    let table = param(&f.call("node.info", json!({"path": "/arrangement"})), "text");
+    let lines: Vec<&str> = table.as_str().unwrap().lines().collect();
+    let head: Vec<&str> = lines[0].split(',').collect();
+    let col = |name: &str| head.iter().position(|h| *h == name).unwrap();
+    let (blocks, mountains) = (col("blocks"), col("mountains"));
+    let mut on = 0;
+    for line in &lines[1..] {
+        let cells: Vec<&str> = line.split(',').collect();
+        assert_eq!(cells[mountains], cells[blocks], "{table}");
+        on += usize::from(cells[mountains] != "0");
+    }
+    assert!(on >= 3, "{table}");
+
     // The room's lights: the pattern jumps through `_pick`, colour and brightness fade with `_mix`.
     f.call("comp.load", json!({"file": "room_lights", "path": "/room"}));
     let mut lit = args(json!({"lights": "/n"}));

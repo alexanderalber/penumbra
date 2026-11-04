@@ -34,6 +34,11 @@
 //!   of such rows, the first one included, with its slot's presence for the row; a stretch is the
 //!   rows of that kind that follow each other, counted per stage. Not in the rows on either side
 //!   of a change of stage. Every other cell stays as without it.
+//! - **Base:** a slot may hold one base element. It takes no turns: it stays on under whichever
+//!   element has the slot's turn, with the presence an element of the slot would have on (calm
+//!   in an intro or outro, off where a break or the opening leaves the slot empty), on its stages.
+//!   An empty section keeps no base, since it keeps one element only. The swaps and turns of
+//!   every slot stay what they were without it, and no companion counts it as on.
 //! - **Weights:** an element of weight 3 comes on three times as often as one of weight 1. The
 //!   next element is the one owed the most turns (smooth weighted round robin), so the turns of a
 //!   heavy element spread out evenly and the same file always gives the same table. With equal
@@ -375,6 +380,9 @@ pub struct Slot {
     /// When each element comes by itself as an extra, or none: one entry per element, or empty
     /// for none at all. An extra takes no turns; see the module's notes.
     pub extra: Vec<Option<Extra>>,
+    /// Whether each element is the slot's base: one entry per element, or empty for none at all.
+    /// At most one per slot. A base takes no turns; see the module's notes.
+    pub base: Vec<bool>,
 }
 
 /// The heaviest weight an element takes; heavier ones count as this.
@@ -391,7 +399,13 @@ impl Slot {
             instead: Vec::new(),
             with: Vec::new(),
             extra: Vec::new(),
+            base: Vec::new(),
         }
+    }
+
+    /// Whether element `i` is the slot's base.
+    pub fn is_base(&self, i: usize) -> bool {
+        self.base.get(i).copied().unwrap_or(false)
     }
 
     /// The element that element `i` stands in for, if it stands in for one.
@@ -409,9 +423,12 @@ impl Slot {
         self.extra.get(i).copied().flatten()
     }
 
-    /// Whether element `i` takes no turns of its own: a stand-in, a companion or an extra.
+    /// Whether element `i` takes no turns of its own: a stand-in, a companion, an extra or the base.
     fn follows(&self, i: usize) -> bool {
-        self.stands_in_for(i).is_some() || self.comes_with(i).is_some() || self.extra_of(i).is_some()
+        self.stands_in_for(i).is_some()
+            || self.comes_with(i).is_some()
+            || self.extra_of(i).is_some()
+            || self.is_base(i)
     }
 
     /// Whether element `i` may come on by a swap on stage `stage`: it shows there and is no
@@ -478,8 +495,9 @@ pub fn columns(slots: &[Slot]) -> Vec<String> {
 
 /// Why `slots` cannot make a table: an element name that is no channel name, a name twice or
 /// one of the table's own columns, no element at all, a stand-in or companion for no element,
-/// for itself, for another stand-in, companion or extra, or in or for the post slot, or an extra
-/// in the post slot or one that also stands in for or comes with another.
+/// for itself, for another stand-in, companion, extra or base, or in or for the post slot, an extra
+/// in the post slot or one that also stands in for or comes with another, or a base that is also
+/// one of those, one in the post slot, or a second base in a slot.
 pub fn check(slots: &[Slot]) -> Result<(), String> {
     let cols = columns(slots);
     if cols.is_empty() {
@@ -500,7 +518,29 @@ pub fn check(slots: &[Slot]) -> Result<(), String> {
         }
     }
     for slot in slots {
+        let bases: Vec<&String> =
+            slot.elements.iter().enumerate().filter(|(i, _)| slot.is_base(*i)).map(|(_, c)| c).collect();
+        if let [first, second, ..] = bases[..] {
+            return Err(format!(
+                "slot `{}` has two bases, `{first}` and `{second}`: a slot takes one base at most",
+                slot.name
+            ));
+        }
         for (i, c) in slot.elements.iter().enumerate() {
+            if slot.is_base(i) {
+                if slot.name == POST {
+                    return Err(format!("`{c}` is in the post slot, whose elements cannot be a base"));
+                }
+                if slot.stands_in_for(i).is_some()
+                    || slot.comes_with(i).is_some()
+                    || slot.extra_of(i).is_some()
+                {
+                    return Err(format!(
+                        "`{c}` is the base of slot `{}`: a base cannot also stand in for or come with another, or be an extra",
+                        slot.name
+                    ));
+                }
+            }
             if slot.stands_in_for(i).is_some() && slot.comes_with(i).is_some() {
                 return Err(format!(
                     "`{c}` either stands in for another element or comes with one, not both"
@@ -534,14 +574,14 @@ pub fn check(slots: &[Slot]) -> Result<(), String> {
                 let j = of.elements.iter().position(|e| e == other).unwrap_or(0);
                 if of.follows(j) {
                     return Err(format!(
-                        "`{c}` cannot {does} `{other}`, which stands in for or comes with another itself, or is an extra"
+                        "`{c}` cannot {does} `{other}`, which stands in for or comes with another itself, or is an extra or a base"
                     ));
                 }
             }
         }
         if slot.name != POST && (0..slot.elements.len()).all(|i| slot.follows(i)) {
             return Err(format!(
-                "slot `{}` has only stand-ins, companions and extras: it needs an element of its own",
+                "slot `{}` has only stand-ins, companions, extras and a base: it needs an element of its own",
                 slot.name
             ));
         }
@@ -678,8 +718,8 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             if s.name == POST {
                 State::Each(vec![false; s.elements.len()], 0)
             } else {
-                // A stand-in or a companion weighs 0, so the turns of the others stay what they
-                // are without it.
+                // A stand-in, a companion, an extra or the base weighs 0, so the turns of the others
+                // stay what they are without it.
                 State::one(
                     (0..s.elements.len()).map(|i| if s.follows(i) { 0.0 } else { s.weight(i) }).collect(),
                 )
@@ -827,7 +867,8 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             let level = if (empty && Some(s) != kept) || !brought(i, s) { 0.0 } else { level };
             match x {
                 State::One { on, weights, .. } => presence.extend((0..weights.len()).map(|j| {
-                    let shown = j == *on || comes(slot, j);
+                    let base = slot.is_base(j) && !empty;
+                    let shown = j == *on || comes(slot, j) || base;
                     if shown && slot.shows_in(j, stage) { level } else { 0.0 }
                 })),
                 State::Each(on, _) => presence.extend(
@@ -969,6 +1010,7 @@ fn come_along(slots: &[Slot], cols: &[String], row: &mut Row) {
                         first + e == k
                             || s.comes_with(e).is_some()
                             || s.extra_of(e).is_some()
+                            || s.is_base(e)
                             || row.presence.get(first + e).is_none_or(|p| *p <= 0.0)
                     });
                     break;
@@ -2040,6 +2082,118 @@ mod tests {
         both.instead = vec![None, Some("c".into())];
         both.with = vec![None, Some("a".into())];
         assert!(check(&[both, Slot::new("sky", &["c"])]).is_err_and(|e| e.contains("not both")));
+    }
+
+    #[test]
+    fn a_base_stays_on_under_every_turn_of_its_slot_and_leaves_every_other_cell_as_it_was() {
+        // Two stages; a track start every 10 parts of 60 s switches the stage.
+        let roles = [Role::Intro, Role::Main, Role::Build, Role::Drop, Role::Break, Role::Main, Role::Outro];
+        let p: Vec<Part> = (0..50)
+            .map(|i| {
+                let start = i as f64 * 60.0;
+                let track_start = i % 10 == 0;
+                Part {
+                    start,
+                    end: start + 60.0,
+                    zone: (start, start),
+                    role: roles[i % roles.len()],
+                    change: if track_start {
+                        0.9
+                    } else if i % 2 == 0 {
+                        0.5
+                    } else {
+                        0.2
+                    },
+                    energy: if i % 3 == 0 { 0.9 } else { 0.6 },
+                    track_start,
+                    seed: i as u32,
+                }
+            })
+            .collect();
+        let mut mid = Slot::new("mid", &["glider", "traps"]);
+        mid.with = vec![None, Some("glider".into())];
+        let plain = vec![
+            Slot::new("floor", &["terraces", "stelae"]),
+            mid.clone(),
+            Slot::new("sky", &["glow", "clouds"]),
+        ];
+        // The reeds as the floor's base, on every stage; the stars as the sky's, on stage 1 only,
+        // first in the list; a mid base beside the glider, so its companion must not count it.
+        let mut floor = Slot::new("floor", &["terraces", "reeds", "stelae"]);
+        floor.base = vec![false, true, false];
+        let mut sky = Slot::new("sky", &["stars", "glow", "clouds"]);
+        sky.base = vec![true];
+        sky.stages = vec![vec![1]];
+        let mut mid_base = Slot::new("mid", &["glider", "traps", "smoke"]);
+        mid_base.with = vec![None, Some("glider".into()), None];
+        mid_base.base = vec![false, false, true];
+        let with = vec![floor, mid_base, sky];
+        assert_eq!(check(&with), Ok(()));
+        let before = rows(&p, &plain, 2);
+        let after = rows(&p, &with, 2);
+        assert_eq!(before.len(), after.len());
+        // Columns before: terraces stelae glider traps glow clouds;
+        // after: terraces reeds stelae glider traps smoke stars glow clouds.
+        let (mut shown, mut dark) = (0, 0);
+        for (b, a) in before.iter().zip(&after) {
+            for (x, y) in [(0, 0), (2, 1), (3, 2), (4, 3), (7, 4), (8, 5)] {
+                assert_eq!(a.presence[x], b.presence[y], "every other cell as before: {a:?} {b:?}");
+            }
+            assert_eq!(
+                (a.stage, a.camera, a.warmth, a.flight, a.empty),
+                (b.stage, b.camera, b.warmth, b.flight, b.empty)
+            );
+            // A base takes its slot's presence for the row; an empty row keeps no base.
+            let floor = b.presence[0] + b.presence[1];
+            let mid = b.presence[2];
+            let sky = b.presence[4] + b.presence[5];
+            assert_eq!(a.presence[1], if a.empty { 0.0 } else { floor }, "the reeds: {a:?} {b:?}");
+            assert_eq!(a.presence[5], if a.empty { 0.0 } else { mid }, "the smoke: {a:?} {b:?}");
+            let stars = if a.empty || a.stage != 1 { 0.0 } else { sky };
+            assert_eq!(a.presence[6], stars, "the stars, on stage 1 only: {a:?} {b:?}");
+            if a.presence[1] > 0.0 {
+                shown += 1;
+            } else {
+                dark += 1;
+            }
+        }
+        assert!(shown > 20 && dark > 3, "{shown} {dark}");
+        assert!(after.iter().any(|r| r.role == Role::Intro && r.presence[1] == CALM_PRESENCE));
+        assert!(after.iter().any(|r| r.role == Role::Break && r.stage == 1 && r.presence[6] == BREAK_SKY));
+        assert!(after.iter().any(|r| r.presence[4] > 0.0), "the traps still come with the glider");
+        // An empty row keeps one element and no base.
+        let s = vec![
+            Slot { base: vec![false, false, true], ..Slot::new("floor", &["a", "b", "r"]) },
+            Slot::new("sky", &["s"]),
+        ];
+        let seed = (0..10_000u32).find(|&k| draw(k, 3) < 0.3 * EMPTY_CHANCE).unwrap_or(0);
+        let mut q = parts(&[(Role::Drop, 0.0), (Role::Main, 0.1), (Role::Main, 0.1), (Role::Main, 1.0)]);
+        q[3].seed = seed;
+        let r = rows(&q, &s, 1);
+        assert!(r[3].empty);
+        assert_eq!(r[3].presence.iter().filter(|p| **p > 0.0).count(), 1, "{:?}", r[3].presence);
+        assert_eq!(r[3].presence[2], 0.0);
+        assert_eq!(r[2].presence, [1.0, 0.0, 1.0, 1.0], "the base on beside the first element");
+        // What a base may not be.
+        let mut two = Slot::new("floor", &["a", "b", "c"]);
+        two.base = vec![true, false, true];
+        assert!(
+            check(&[two]).is_err_and(|e| e.contains("`a`") && e.contains("`c`") && e.contains("two bases"))
+        );
+        let mut post = Slot::new("post", &["a", "b"]);
+        post.base = vec![true];
+        assert!(check(&[Slot::new("sky", &["c"]), post]).is_err_and(|e| e.contains("post")));
+        let mut lone = Slot::new("floor", &["a"]);
+        lone.base = vec![true];
+        assert!(check(&[lone]).is_err_and(|e| e.contains("needs an element of its own")));
+        let mut extra = Slot::new("floor", &["a", "b"]);
+        extra.base = vec![false, true];
+        extra.extra = vec![None, Some(Extra::Calm)];
+        assert!(check(&[extra]).is_err_and(|e| e.contains("base")));
+        let mut on_base = Slot::new("floor", &["a", "b", "c"]);
+        on_base.base = vec![false, true, false];
+        on_base.instead = vec![None, None, Some("b".into())];
+        assert!(check(&[on_base]).is_err_and(|e| e.contains("or a base")));
     }
 
     /// Five slots taking turns at medium boundaries, the floor (four elements) on stage 0 only;

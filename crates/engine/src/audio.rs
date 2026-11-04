@@ -145,7 +145,10 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          its stages (it takes no turns, shows with its slot's presence in every second stretch of lively \
          rows, a drop, a build or a main section of energy from 0.8, of calm rows, an intro, an outro or a \
          break, or of steady rows, a main section below energy 0.8, not next to a change of stage; every \
-         other cell stays as without it): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
+         other cell stays as without it), and with base: true to be the slot's base, at most one per slot \
+         (it takes no turns and stays on under whichever element has the slot's turn, with that element's \
+         presence, on its stages; an empty section keeps no base; every other cell stays as without it): \
+         the first element of each slot that is no base is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
          effects that are on or off each by itself (off in an intro, outro or break, on from a drop), every \
          other slot (floor, ceiling) follows the floor's rules), stage? (a path, or a list of stages side by \
          side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
@@ -766,7 +769,8 @@ impl Targets {
 }
 
 /// An element in a slot: its path, or its path with how often it comes on, the stages it
-/// shows in, the element it stands in for or comes with, and when it comes by itself.
+/// shows in, the element it stands in for or comes with, when it comes by itself, and whether it is
+/// the slot's base.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Entry {
@@ -783,6 +787,8 @@ enum Entry {
         with: Option<NodePath>,
         #[serde(default)]
         extra: Option<String>,
+        #[serde(default)]
+        base: Option<bool>,
     },
 }
 
@@ -885,18 +891,21 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         let mut instead = Vec::new();
         let mut along = Vec::new();
         let mut extras = Vec::new();
+        let mut bases = Vec::new();
         for entry in entries {
-            let (path, weight, on, of, with, extra) = match entry {
-                Entry::Path(path) => (path, 1.0, None, None, None, None),
-                Entry::Weighted { path, weight, stages: on, instead_of, with, extra } => (
+            let (path, weight, on, of, with, extra, base) = match entry {
+                Entry::Path(path) => (path, 1.0, None, None, None, None, false),
+                Entry::Weighted { path, weight, stages: on, instead_of, with, extra, base } => (
                     path,
                     weight.unwrap_or(1.0),
                     on.as_ref(),
                     instead_of.as_ref(),
                     with.as_ref(),
                     extra.as_deref(),
+                    base.unwrap_or(false),
                 ),
             };
+            bases.push(base);
             let extra = match extra {
                 None => None,
                 Some(name) => Some(arrange::Extra::named(name).ok_or_else(|| {
@@ -945,6 +954,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             instead,
             with: along,
             extra: extras,
+            base: bases,
         });
     }
     for (path, of, field) in &stand_ins {
