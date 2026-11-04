@@ -562,7 +562,8 @@ the lake without a sheet of its own. A low mist drifts on the water near the cam
 it. Ripples and mist come towards the camera one grid cell per beat of `travelled`, as the
 synthwave floor does. The sky elements are `sky_stars`, `sky_horizon_glow`, `sky_volcano` and
 `sky_clouds`. On the shore stand the floor elements `floor_terraces`, `floor_reeds` and
-`floor_stelae`.
+`floor_stelae`. In the air hang the mid elements `mid_glyphs` (rings of light that open in a
+breakdown), `mid_smoke` and `mid_birds`.
 
 The stage has a slow signal of its own, the swell. It rises over about 8 seconds while the music
 is quiet (a breakdown) and over the 8 bars before a new section (the grid's `build`), and it
@@ -1122,6 +1123,88 @@ gone through a turn-up. The rings stay outside the wall, away from the glider an
   smallest and the largest ring: 7.5 and 10), `band` (metres a band is high, 0.35), `tilt`
   (degrees the most tilted ring leans, 10), `orbit` (beats a ring takes to turn once, 256), `pulse`
   (the flash on each beat, 0.5), `line_width`.
+
+### mid_glyphs
+
+![mid_glyphs](mid_glyphs/preview.png)
+
+Seven rings of light hanging in the air ahead over the lane of `stage_valley`, one inside the
+other: plain circles, a ring of short ticks and two step-fret rings (a staircase up, a run along
+the top, a drop and a hook, cell after cell around the ring). The inner fret is jade, the rest
+copper. Each ring turns slowly in its own plane, every second one the other way. The rings are
+lines only, lit from behind by the band: brightest where a ring crosses the horizon. This is the
+valley's counterpart to the glider, the thing the eye follows.
+
+The rings open in a quiet stretch and close on the drop. The stage's swell opens them: each ring
+grows, steps forwards or back and tilts about an axis of its own, so the flat glyph unfolds into
+a cage of rings. A drop shuts them within a beat or so, and they stay shut for a few seconds.
+The rings grow brighter as they open, towards `dawn` 1 and for a moment after a drop. Each beat
+adds a small pulse.
+
+- In: `bus`, `lane`, `pose` (the stage's: `swell`, `dawn`, `height` and `far` come from it).
+  Out: `out` (into the stage's `mid`).
+- Params: `presence` (towards 0 the rings draw back from the outside in, each around its turn),
+  `open` (opens the rings at least this far, whatever the swell: for a still or a hand edit),
+  `open_at` and `open_full` (the swell where the rings begin to open and where they are fully
+  open: 0.15 and 0.6), `size` (1: the outer ring is 3.2 m across), `at` (metres ahead, 9),
+  `hover` (metres above the water, 2.2), `follow` (how far the rings follow the lane's swing,
+  0.7), `spread` (how much they grow apart when open), `depth` (metres between two rings along
+  the view when open, 0.8), `tilt` (degrees they tilt when open, 50), `turn` (beats the inner ring
+  takes to turn once, 96), `light`, `pulse` (the pulse on each beat, 0.25), `warmth` (0 copper,
+  1 pale bronze with both frets jade; `beats.arrange` binds it), `close` (seconds the drop takes
+  to shut the rings, 0.25), `hold` (seconds they take to be free again, 4), `thickness`,
+  `line_width`, `extent`.
+
+### mid_smoke
+
+![mid_smoke](mid_smoke/preview.png)
+
+Copal smoke over the lake of `stage_valley`: twelve veils of smoke hanging low across the lane,
+3 m apart. The veils stand still on the water and come towards the camera with it, so the
+camera flies through them. Each veil drifts slowly to one side as it comes and always faces the
+camera. The smoke is thick near the water and frays into wisps upwards. The wisps curl and drift
+with the beats travelled. The band lights the smoke from behind in its colour: dark ember red at
+`dawn` 0, copper towards 1. The thin edges and the tops of the puffs glow most.
+
+The stage's swell thickens the smoke: more of each veil fills and it glows brighter in a quiet
+stretch. The smoke adds light and hides almost nothing, so floor elements behind it stay
+visible. The lake mirrors it.
+
+- In: `bus`, `lane`, `pose` (the stage's: `swell` and `dawn` come from it). Out: `out` (into
+  the stage's `mid`).
+- Params: `presence` (towards 0 the veils fade out one after another), `brightness`, `calm`
+  (share of the light left without swell, 0.45), `veils` (1 to 12), `spacing` (metres between two
+  veils, 3), `wide` and `tall` (a veil's size, metres, 9 and 2.4 on average), `spread` (metres a
+  veil's middle lies from the lane's at most, 3), `wind` (metres a veil drifts sideways per metre
+  it comes nearer, 0.04), `fade` (metres before the camera where a veil starts to fade out, 5),
+  `start` and `end` (metres where far veils fade in, 14 and 38), `near`, `seed` (other places,
+  sizes and smoke), `warmth` (0 ember and copper, 1 towards jade grey; `beats.arrange` binds it),
+  `cover` (how much of a veil holds smoke without swell, 0.3), `cover_swell` (how much more the
+  full swell covers, 0.3), `curl` (how much the wisps curl), `speed` (how fast they change),
+  `extent`.
+- `veils.py` in the folder writes the three veil models.
+
+### mid_birds
+
+![mid_birds](mid_birds/preview.png)
+
+A flock of birds crossing the view far ahead, black against the band of first light on the
+horizon of `stage_valley`. A crossing starts every 64 beats of travel and takes 48, from the
+left or from the right. The 24 birds fly in a loose, wavering skein about 17 m ahead. Each beats
+its wings once a beat in its own phase and glides now and then. The flock keeps its height above
+the horizon as the camera rises and falls, so it stays in the band on every camera preset. The
+lake mirrors the birds. Made for a calm extra: `{path: "/birds", extra: "calm"}` in the mid
+slot of `beats.arrange` brings the flock into every second stretch of intros, outros and breaks.
+
+- In: `bus`, `pose` (the stage's: `height`, `side` and `far` come from it). Out: `out` (into the
+  stage's `mid`).
+- Params: `presence` (towards 0 fewer birds, 0 none), `birds` (1 to 32), `size` (a bird's
+  wingspan, metres, 0.9), `at` (metres ahead where the flock crosses, 17), `low` and `high` (the
+  lowest and highest a flock flies, in picture heights above the horizon: 0.012 and 0.045),
+  `every` (beats from one crossing to the next, 64), `cross` (beats a crossing takes, 48), `gap`
+  (metres between two birds, 1), `flap` (wingbeats per beat, 1), `phase` (beats added for the
+  crossings: a larger value brings the first flock earlier), `seed` (other flocks), `extent`.
+- `birds.py` in the folder writes the body and the wings.
 
 ### ceiling_curtains
 

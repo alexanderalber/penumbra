@@ -1,0 +1,11 @@
+# A veil of mid_smoke: an upright quad, 1 wide and 1 high, its foot on z = 0, facing -y.
+# Its texture coordinates take third 2 of the smoke picture (1 is the top one).
+v -0.5 0 0
+v 0.5 0 0
+v 0.5 0 1
+v -0.5 0 1
+vt 0 0.3373
+vt 1 0.3373
+vt 1 0.6627
+vt 0 0.6627
+f 1/1 2/2 3/3 4/4
