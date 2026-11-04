@@ -82,6 +82,7 @@ pub struct CookContext<'a> {
     wanted: &'a [bool],
     wanted_changed: bool,
     since_last_use: Option<f64>,
+    exact: bool,
     spawner: &'a Spawner,
     services: &'a Services,
     warning: RefCell<Option<String>>,
@@ -188,6 +189,14 @@ impl<'a> CookContext<'a> {
     /// reason for this cook, when nothing else changed).
     pub fn outputs_wanted_changed(&self) -> bool {
         self.wanted_changed
+    }
+
+    /// Whether the show clock waits for this frame however long it takes (stepping, offline
+    /// recording; [`Cooker::set_exact_frames`]). An operator that would hand on an older result
+    /// when a fresh one is slow (a readback, a job) waits for the fresh one then, so the same
+    /// frame gives the same picture on every run and every machine.
+    pub fn exact_frames(&self) -> bool {
+        self.exact
     }
 
     /// A shared service the host provided with [`Cooker::provide`], e.g. the GPU.
@@ -689,6 +698,8 @@ pub struct Cooker {
     for_thumbnails: bool,
     /// Time of the passes since the profile was last taken.
     spent: PassSpent,
+    /// The clock waits for every frame ([`CookContext::exact_frames`]).
+    exact: bool,
 }
 
 impl Cooker {
@@ -713,6 +724,7 @@ impl Cooker {
             eager: Vec::new(),
             for_thumbnails: false,
             spent: PassSpent::default(),
+            exact: false,
         }
     }
 
@@ -734,6 +746,13 @@ impl Cooker {
     /// The directory relative file parameters are resolved against (the project directory).
     pub fn set_base_dir(&mut self, dir: Option<PathBuf>) {
         self.services.base_dir = dir;
+    }
+
+    /// Whether the show clock waits for every frame from now on (stepping, offline recording),
+    /// so operators wait for slow results instead of handing on older ones
+    /// ([`CookContext::exact_frames`]).
+    pub fn set_exact_frames(&mut self, on: bool) {
+        self.exact = on;
     }
 
     pub fn thumbnail_policy(&self) -> ThumbnailPolicy {
@@ -1206,6 +1225,7 @@ impl Cooker {
             wanted: &wanted,
             wanted_changed,
             since_last_use,
+            exact: self.exact,
             spawner: &self.spawner,
             services: &self.services,
             warning: RefCell::new(None),
@@ -2095,6 +2115,17 @@ mod tests {
         f.cook(&["/out"]);
         let a = f.cooker.take_profile(false).nodes.iter().find(|(id, _)| *id == f.id("/a")).map(|(_, s)| *s);
         assert_eq!(a.map(|s| (s.visits, s.cooks)), Some((1, 0)), "clean, only looked at");
+    }
+
+    #[test]
+    fn operators_learn_whether_the_clock_waits_for_every_frame() {
+        let mut f = Fixture::new(&[create("/e", "test.exact")]);
+        f.cook(&["/e"]);
+        assert_eq!(f.value("/e"), Some(0.0), "live by default");
+        f.cooker.set_exact_frames(true);
+        f.clock.advance(1);
+        f.cook(&["/e"]);
+        assert_eq!(f.value("/e"), Some(1.0));
     }
 
     #[test]

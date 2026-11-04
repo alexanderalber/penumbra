@@ -452,6 +452,7 @@ impl CookState {
         let request = lock(&self.view.request).clone();
         wanted.extend(request.viewers.iter().copied().filter(|id| net.node(*id).is_some()));
         let shown: Vec<Port> = request.shown.iter().copied().filter(|p| net.node(p.node).is_some()).collect();
+        self.cooker.set_exact_frames(self.stepping);
         let t_network = Instant::now();
         // The pass's GPU work goes out a few passes at a time and at its end, and before a node
         // reads back or uploads: a submission per pass cost more CPU time than the pass.

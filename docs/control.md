@@ -171,6 +171,9 @@ both at the start. `fps` must divide the show rate: 30 or 60 for a 60 fps show, 
 neither the timer nor a projector's vsync moves the clock. Each `cook.step` cooks the given
 number of frames at once and answers with the frame and the pass. Stepping off, the show goes on
 from where the steps left it.
+While stepping, a node that reads a picture back (`chan.from_tex`, `tex.blob_track`) waits for
+the GPU. So its channels belong to the frame they were read in, however slow the GPU. Live, it
+waits at most 4 ms and otherwise shows the result a frame later.
 
 ## Environment variables
 

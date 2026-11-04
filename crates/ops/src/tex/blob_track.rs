@@ -35,6 +35,14 @@ const SOURCE: &str = include_str!("blob_track.wgsl");
 pub const WAIT: Duration = Duration::from_millis(4);
 /// A readback older than this is given up.
 const STALE: Duration = Duration::from_secs(2);
+
+/// How long a cook waits for its readback: [`WAIT`] in a live show, where a late result shows a
+/// frame later rather than holding up the frame; up to [`STALE`] while the clock waits for every
+/// frame, so the result belongs to the frame that asked for it on every run.
+fn wait_for(cx: &CookContext<'_>) -> Duration {
+    if cx.exact_frames() { STALE } else { WAIT }
+}
+
 /// Most slots in `chans`.
 const MAX_SLOTS: i64 = 32;
 /// Columns of `blobs`.
@@ -295,7 +303,7 @@ impl Operator for BlobTrack {
             self.start(cx, gpu, src)?;
         }
         let ready = match &self.pending {
-            Some((read, _)) => read.wait(gpu, WAIT),
+            Some((read, _)) => read.wait(gpu, wait_for(cx)),
             None => ReadState::Waiting,
         };
         match ready {

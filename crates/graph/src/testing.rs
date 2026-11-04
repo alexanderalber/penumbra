@@ -64,6 +64,16 @@ pub fn test_types() -> NodeTypes {
     );
     simple(
         &mut t,
+        NodeDesc::new("test.exact", "1 while the clock waits for every frame, else 0")
+            .time_dependent()
+            .output("out", DataKind::Chan),
+        |cx| {
+            cx.time();
+            chan(if cx.exact_frames() { 1.0 } else { 0.0 })
+        },
+    );
+    simple(
+        &mut t,
         NodeDesc::new("test.since", "Seconds since last in use, -1 for none")
             .time_dependent()
             .output("out", DataKind::Chan),

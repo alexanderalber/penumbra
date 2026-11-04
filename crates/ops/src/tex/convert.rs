@@ -14,6 +14,8 @@
 //! The readback waits up to [`WAIT`] within the cook, so with a quick GPU the channels belong to
 //! the frame that just arrived; when it takes longer the node cooks again once the copy is
 //! there, and a frame arriving in between is skipped rather than queued.
+//! While the clock waits for every frame (stepping, recording), the cook waits for the copy
+//! instead, so every frame's channels belong to that frame.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -37,6 +39,13 @@ const SHRINK: &str = include_str!("shrink.wgsl");
 const WAIT: Duration = Duration::from_millis(4);
 /// A readback older than this is given up.
 const STALE: Duration = Duration::from_secs(2);
+
+/// How long a cook waits for its readback: [`WAIT`] in a live show, where a late result shows a
+/// frame later rather than holding up the frame; up to [`STALE`] while the clock waits for every
+/// frame, so the result belongs to the frame that asked for it on every run.
+fn wait_for(cx: &CookContext<'_>) -> Duration {
+    if cx.exact_frames() { STALE } else { WAIT }
+}
 /// Most a shrink pass reduces by along each axis while still averaging every texel
 /// (`pn_area` takes up to 8 bilinear samples, each the mean of 2 texels across).
 const SHRINK_STEP: u32 = 16;
@@ -303,7 +312,7 @@ impl Operator for FromTex {
             self.start(cx, gpu, src)?;
         }
         let ready = match &self.pending {
-            Some((read, _, _)) => read.wait(gpu, WAIT),
+            Some((read, _, _)) => read.wait(gpu, wait_for(cx)),
             None => ReadState::Waiting,
         };
         match ready {

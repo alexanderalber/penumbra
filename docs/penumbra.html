@@ -2041,7 +2041,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <li><code>resize</code> is refused while recording: every frame has one size.
 </li>
 </ul>
-<p><a class="ref" href="#cook.stepping"><code>cook.stepping {on?}</code></a> and <a class="ref" href="#cook.step"><code>cook.step {frames?}</code></a> are the commands underneath. With stepping on, neither the timer nor a projector's vsync moves the clock. Each <a class="ref" href="#cook.step"><code>cook.step</code></a> cooks the given number of frames at once and answers with the frame and the pass. Stepping off, the show goes on from where the steps left it.</p>
+<p><a class="ref" href="#cook.stepping"><code>cook.stepping {on?}</code></a> and <a class="ref" href="#cook.step"><code>cook.step {frames?}</code></a> are the commands underneath. With stepping on, neither the timer nor a projector's vsync moves the clock. Each <a class="ref" href="#cook.step"><code>cook.step</code></a> cooks the given number of frames at once and answers with the frame and the pass. Stepping off, the show goes on from where the steps left it. While stepping, a node that reads a picture back (<a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a>, <a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a>) waits for the GPU. So its channels belong to the frame they were read in, however slow the GPU. Live, it waits at most 4 ms and otherwise shows the result a frame later.</p>
 <h3 id="control-environment-variables">Environment variables</h3>
 <table>
 <thead><tr><th></th><th></th></tr></thead>
@@ -2128,7 +2128,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>slots</code></td><td>int</td><td><code>4</code></td><td>0 to 8 (soft)</td><td>Blobs in <code>chans</code>, each as id, x, y, area with the slot's number (id 0: empty)</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#tracking">Tracking</a></p>
+<p class="mentions">Mentioned in: <a href="#tracking">Tracking</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
 </div></details>
 <details class="entry node" id="tex.blur"><summary><code class="name">tex.blur</code><span class="sum">Softens a picture: a Gaussian blur, in every direction or only across or only up and down</span></summary>
 <div class="body">
@@ -3950,7 +3950,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>components</code></td><td>rgba | rgb | red | luminance</td><td><code>&quot;rgba&quot;</code></td><td></td><td>Which channels a row gives; values are linear and premultiplied, as the picture holds them<ul><li><code>rgba</code>: r, g, b and a</li><li><code>rgb</code>: r, g and b</li><li><code>red</code>: r only</li><li><code>luminance</code>: lum, the brightness as the eye weighs it (Rec. 709)</li></ul></td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#control-recording-a-headless-run">Control › Recording a headless run</a></p>
 </div></details>
 <details class="entry node" id="chan.http_in"><summary><code class="name">chan.http_in</code><span class="sum">A control page in the browser (a phone on the LAN) or another program sends JSON over HTTP or a WebSocket: every address a channel</span></summary>
 <div class="body">
