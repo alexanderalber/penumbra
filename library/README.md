@@ -3,7 +3,8 @@
 Ready-made effects, one component each. Most are content for scanned objects. They take what a
 scan leaves behind (`scan.scene`'s and `scan.regions`' pictures, camera stills), never the face or
 region numbers of one particular scene, so they fit any scanned scene. The last group is a stage
-for music: a synthwave world that a `chan.beat_grid` drives, with elements to swap in and out.
+for music: worlds that a `chan.beat_grid` drives (a synthwave world, a valley at night), with
+elements to swap in and out.
 
 Each folder holds the component (`<name>.comp.ron`), its shaders and pictures, and `preview.png`.
 For a scan effect the preview is the effect rendered headless on a real scan of a few crates with
@@ -242,8 +243,8 @@ Glazed tiles with grout and a wooden rim on a rectified face, appearing one by o
 
 ## A stage for music
 
-A world that moves with a sound file: a stage (a synthwave floor, a tunnel or a tower to climb),
-and elements in it.
+A world that moves with a sound file: a stage (a synthwave floor, a tunnel, a tower to climb or
+a lake in a valley at night), and elements in it.
 They all take the same music bus, the whole output of a `chan.beat_grid`. A project has one
 `chan.beat_grid` and wires it into the `bus` input of the stage and of every element:
 `node.connect {"from": "/grid", "to": "/stage", "input": "bus"}`. Each component reads the
@@ -340,7 +341,8 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
 - **The camera** takes one of six presets of the stage. The arrangement's `camera` column picks
   one per section, and the stage glides to it.
 - **Several stages.** A project can hold several stages side by side: `stage_synthwave`,
-  `stage_tunnel` and `stage_ascent` take the same inputs and give the same outputs. Each has its
+  `stage_tunnel`, `stage_ascent` and `stage_valley` take the same inputs and give the same
+  outputs. Each has its
   own floor, sky and ceiling elements. Wire their `out` into a `tex.switch` with `blend` on and
   that into the post chain. Give `beats.arrange` the stages as a list and the switch's param:
   `stage: ["/stage", "/tunnel", "/ascent"], switch: "/stages.index"`. The `stage` column then
@@ -542,6 +544,48 @@ swap.
 - Gaps: `gap` (the share of the storeys that break off, 0 to 1) and `gap_length` (metres a gap
   runs up the tower, rounded to whole storeys). In a gap only the posts and braces stand, and
   the sky shows between them.
+
+### stage_valley
+
+![stage_valley](stage_valley/preview.png)
+
+A second family of worlds: the camera flies low over a dark lake in a valley at night, towards
+the first light of dawn on the horizon. The sky is night blue near the horizon and black
+overhead. The dawn lies on the horizon as a band of light: `dawn` 0 is a thin dark red line, 1 a
+broad copper band with a gold core. The band never becomes a sun. The lake mirrors the sky, the
+band and the stars, blurred and broken up by ripples. The mirror is faint near the camera and
+strong towards the horizon. A low mist drifts on the water near the camera; the bass thickens
+it. Ripples and mist come towards the camera one grid cell per beat of `travelled`, as the
+synthwave floor does. The stars are the sky element `sky_stars`.
+
+The stage has a slow signal of its own, the swell. It rises over about 8 seconds while the music
+is quiet (a breakdown) and over the 8 bars before a new section (the grid's `build`), and it
+falls over about 3 seconds when the kick comes back. The swell lifts the band and makes it
+glow. So a breakdown raises the light on the horizon, and the drop takes it back.
+
+- In: `bus`, `floor`, `mid`, `ceiling`, `sky` (a picture screened over the night sky), as on
+  `stage_synthwave`. The stage has no floor grid: floor elements stand on the shore, and the
+  lane's alpha is 1 where the shore stands.
+- Out: `out` (the picture), `lane` (the layout of `stage_synthwave`'s lane), `pose` (the camera
+  as it glides, and the stage's shape: `axis` 0.5, `walls` 0, `curve` 0, `radius` 0, `far` the
+  fade's `end`, 40 m; plus `swell` and `dawn`, 0 to 1, for elements that follow them).
+- Params: `warmth` (0 the ember palette with an amber glow above the band, 1 the jade palette
+  with a cold blue-green glow and a greener mist), `lift`, `energy_curve`, `dim` (the sky's
+  light: 1 full, 0 half; `beats.arrange` binds it as `intensity`), `dawn` (0 to 1: bind it to
+  the file's `progress`), `swell_rise` (8 s) and `swell_fall` (3 s), `band_height` (how far the
+  band reaches up at `dawn` 1, in picture heights: 0.1), `band_width` (how far it reaches to
+  either side at `dawn` 1: 0.9). The lane's `bars_per_turn` (4: one turn every 4 bars, slower
+  than on `stage_synthwave`), `swing`, `turn`, `beats_per_bar`; `step`; `start`, `end` of the
+  distance fade (12 and 40 m: the valley is wide). The water: `ground` (1: below the horizon
+  only the water shows; 0 the sky elements show through it), `reflection` (1), `ripple` (1),
+  `mist` (1; 0 none), `shore` (how much of the reflection shows where the shore stands: 0.5).
+- Camera: `camera`, `glide` (3 s) and `presets` as on `stage_synthwave`, lower and slower: 0 low
+  flight at 1.2 m, 1 at 1.8 m looking down a little for a build, 2 high and wide for a drop
+  (2.4 m, 70 degrees), 3 level for a break at 1.6 m, 4 and 5 two tilted variants (0.9 m and
+  1.8 m).
+- Gaps: `gap` and `gap_length` as on `stage_synthwave`. Stretches of the shore fall away into
+  open water. Floor elements leave those stretches out. The open water mirrors the sky more
+  clearly and has less mist. A gap comes in from beyond the horizon, as on `stage_synthwave`.
 
 ### floor_blocks
 
@@ -1077,6 +1121,24 @@ with knots of glowing gas, dust lanes. It turns with `travelled` and brightens w
 - Params: `presence` (towards 0 the galaxy dims to a dark sky), `brightness`, `warmth` (the
   palette, as on the stage), `spin` (degrees per beat), `lift`, `energy_curve`; its shape: `tilt`, `angle`, `size`,
   `twist`, `arms`, `bulge`, `dust`, `center`.
+
+### sky_stars
+
+![sky_stars](sky_stars/preview.png)
+
+A night sky of stars over black, for `stage_valley`: many faint stars, fewer medium ones and a
+few bright ones, in patches of denser and sparser sky. Venus is the brightest point, steady,
+low over the horizon. The treble makes the stars twinkle. Towards the stage's `dawn` 1 the stars
+near the horizon fade; Venus stays. The stars keep their place in the sky when the camera
+moves.
+
+- In: `bus`, `pose` (the stage's: the horizon, `far` and `dawn` come from it). Out: `out`.
+- Params: `presence` (towards 0 the stars dim to a black sky), `brightness`, `seed` (another
+  star field), `density` (1 the usual sky, 0 only the brightest stars), `size` (a star's size in
+  pixels: 0.8), `twinkle` (1; 0 the stars stand still), `venus` (Venus's light, 1; 0 none),
+  `venus_x` and `venus_y` (where Venus stands, in picture heights from straight ahead and above
+  the horizon: -0.32 and 0.1), `thin` (how high above the horizon the dawn thins the stars:
+  0.35 picture heights).
 
 ### sky_sun
 

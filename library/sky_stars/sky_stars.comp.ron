@@ -1,0 +1,12 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/sky_stars": (kind: "comp.base", params: {"expose": "presence = stars.presence\nbrightness = stars.brightness\nseed = stars.seed\ndensity = stars.density\nsize = stars.size\ntwinkle = stars.twinkle\nvenus = stars.venus\nvenus_x = stars.venus_x\nvenus_y = stars.venus_y\nthin = stars.thin"}),
+        "/sky_stars/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
+        "/sky_stars/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
+        "/sky_stars/stars": (kind: "tex.shader", params: {"file": "library/sky_stars/stars.wgsl", "presence": 1.0, "brightness": 1.0, "seed": 0, "density": 1.0, "size": 0.8, "twinkle": 1.0, "venus": 1.0, "venus_x": -0.32, "venus_y": 0.1, "thin": 0.35}, binds: {"eye": "pose:height", "pitch": "pose:pitch", "fov": "pose:fov", "roll": "pose:roll", "side": "pose:side", "reach": "pose:far", "dawn": "pose:dawn", "beats": "bus:travelled", "sparkle": "bus:energy_high"}, pos: [-300.0, 0.0]),
+        "/sky_stars/out": (kind: "tex.out", inputs: {"in": "stars"}, pos: [0.0, 0.0]),
+    },
+)
