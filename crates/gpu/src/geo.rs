@@ -462,6 +462,9 @@ pub struct Material {
     /// An occluder only: opaque black where it stands instead of the render's background, with
     /// its distance in the data pass, so a picture laid under the render stays hidden there too.
     pub cover: bool,
+    /// An occluder's black cover only: how much of the black shows, 0 to 1. Below 1 the picture
+    /// under the render shows through; the occluder still hides what is behind it.
+    pub opacity: f32,
 }
 
 impl Material {
@@ -479,6 +482,7 @@ impl Material {
             wire: None,
             shadows: true,
             cover: false,
+            opacity: 1.0,
         }
     }
 }

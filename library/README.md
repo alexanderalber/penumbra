@@ -349,6 +349,10 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   `toward` (a `chan.constant`: `height`, `pitch`, `roll`, `fov`, `side`) to the ascent's pose
   through a `chan.select`: the tunnel's camera then glides into the ascent's over the first
   third of the fade. The reverse walk runs the same way back.
+- **Seeing through the tunnel.** `beats.arrange` binds `stage_tunnel`'s `see_through` to its
+  `see_through` column. Now and then the tube's wall opens through a break or a build: every
+  second stretch of breaks and builds on the stage. The wall stays closed in the rows on either
+  side of a change of stage, so the roll-up and the turn-up look as before.
 
 ### stage_synthwave
 
@@ -402,7 +406,9 @@ A second world for the same elements: the camera flies through a wireframe tube 
 at its end. The tube has a ring on every beat of `travelled` and long lines along its wall. It
 rolls with the lane, so the lane always lies at the tube's bottom, straight ahead, and the long
 lines twist as the lane zigzags. The wall is black and hides what lies outside the tube. Far
-away the tube fades out, so the sky (nebula and `sky`) shows as a disc at its end. Palette,
+away the tube fades out, so the sky (nebula and `sky`) shows as a disc at its end. With
+`see_through` the wall's black fades out, and the sky shows through the whole tube between its
+rings and long lines. Palette,
 nebula, distance fade and camera presets work as on `stage_synthwave`, so the two stages can
 swap.
 
@@ -436,6 +442,11 @@ rolling the plane up above).
   hoops that turn upright into a tower; see the paragraph on turning up above); `storey`,
   `storey_beats` and `tower_radius` (where the hoops end up: 3 m apart, one every 4 beats, 6 m
   wide, as on `stage_ascent`). `curve` in the pose falls to 0 as the tube turns up.
+  `see_through` (0 the black wall, the default; towards 1 the wall's black fades out, so nebula
+  and `sky` show through the whole tube; rings, long lines and chevrons stay). A change of
+  `see_through` takes about a second, so it never switches. The wall still hides what lies
+  outside the tube, such as debris that flies beyond it. `beats.arrange` binds it to its
+  `see_through` column.
 - Camera: `camera`, `glide` and `presets` as on `stage_synthwave`, with presets of the same
   meaning for the tube: 0 low flight at 1.8 m, 1 higher and looking down for a build, 2 high and
   wide for a drop (3.4 m, 76 degrees), 3 still and nearly level for a break, 4 and 5 two tilted

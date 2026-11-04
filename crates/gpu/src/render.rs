@@ -1611,6 +1611,12 @@ fn draw_slot(
         }
         f(0.0);
     }
+    // A black cover carries its opacity in the colour's alpha.
+    let color = if occluder && m.shading == Shading::Occluder && m.cover {
+        [0.0, 0.0, 0.0, m.opacity.clamp(0.0, 1.0)]
+    } else {
+        color
+    };
     for v in color {
         f(v);
     }

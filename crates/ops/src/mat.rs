@@ -123,6 +123,11 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                     "opaque black, with its distance in the render's data output: it also hides a picture laid under the render, such as a sky, and fades with distance like any surface",
                 ),
         )
+        .param(
+            ParamSpec::float("opacity", 1.0)
+                .clamp(0.0, 1.0)
+                .doc("How much of the black shows where `shows` is black: 1 opaque; towards 0 a picture laid under the render shows through, and the occluder still hides what is behind it"),
+        )
         .output("out", DataKind::Mat),
         || Box::new(MatNode::new(Shading::Occluder)) as Box<dyn Operator>,
     ))?;
@@ -225,6 +230,8 @@ impl Operator for MatNode {
                 "black" => true,
                 other => return Err(CookError::failed(format!("unknown shows `{other}`"))),
             };
+            let opacity = cx.float("opacity")? as f32;
+            material.opacity = if opacity.is_finite() { opacity.clamp(0.0, 1.0) } else { 1.0 };
         } else {
             material.color = rgba(cx, "color")?;
         }

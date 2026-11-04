@@ -1541,6 +1541,52 @@ fn wireframes_show_edges_and_occluders_hide() {
     assert_eq!(at(&d, 4, cy)[2].round(), 1.0, "the wall is part 0");
 }
 
+/// A black cover is black at its opacity: below 1 the background shows through by the rest,
+/// and it still hides what is behind it and keeps its distance in the data pass.
+#[test]
+fn a_black_cover_shows_its_opacity_and_still_hides() {
+    let Some(gpu) = gpu() else { return };
+    let ops = vec![
+        create("/box", "geo.primitive", &[("size", Value::Vec3([1.0, 1.0, 1.0]))]),
+        create(
+            "/wall",
+            "geo.primitive",
+            &[("shape", "plane".into()), ("size", Value::Vec3([5.0, 1.0, 3.0]))],
+        ),
+        create("/wall_at", "geo.transform", &[("translate", Value::Vec3([0.0, 1.0, 0.0]))]),
+        connect("/wall", "/wall_at", 0),
+        create("/red", "mat.constant", &[("color", Value::Vec4([1.0, 0.0, 0.0, 1.0]))]),
+        create("/red_wall", "geo.assign_material", &[]),
+        connect("/wall_at", "/red_wall", 0),
+        connect("/red", "/red_wall", 1),
+        create("/cover", "mat.occluder", &[("shows", "black".into()), ("opacity", Value::Float(0.25))]),
+        create("/covered", "geo.assign_material", &[]),
+        connect("/box", "/covered", 0),
+        connect("/cover", "/covered", 1),
+        create("/both", "geo.merge", &[]),
+        connect("/red_wall", "/both", 0),
+        connect("/covered", "/both", 1),
+        render("/seen", &[("position", Value::Vec3([0.0, -2.5, 0.0])), ("fov", Value::Float(40.0))]),
+        connect("/both", "/seen", 0),
+    ];
+    let mut rig = rig(gpu, None, &ops);
+    let (cx, cy) = ((super::W / 2) as u32, (super::H / 2) as u32);
+    let px = rig.pixels("/seen");
+    let mid = at(&px, cx, cy);
+    assert!(mid[0] < 0.01 && (mid[3] - 0.25).abs() < 0.01, "a quarter black, the wall hidden: {mid:?}");
+    let side = at(&px, 4, cy);
+    assert!(side[0] > 0.99 && side[3] > 0.99, "the wall beside it: {side:?}");
+    rig.cook("/seen");
+    let d = data(&rig, "/seen");
+    assert!(at(&d, cx, cy)[3] > 0.0, "the cover keeps its distance: {:?}", at(&d, cx, cy));
+    rig.edit(&[set("/cover.opacity", Value::Float(1.0))]);
+    let px = rig.pixels("/seen");
+    assert_eq!(at(&px, cx, cy), [0.0, 0.0, 0.0, 1.0], "opaque black by default");
+    rig.edit(&[set("/cover.opacity", Value::Float(0.0))]);
+    let px = rig.pixels("/seen");
+    assert_eq!(at(&px, cx, cy), [0.0; 4], "nothing of the black, the wall still hidden");
+}
+
 /// A far thin prism, thinner than a pixel and a little off the vertical, as a wireframe with
 /// four samples per pixel: a whole line with soft edges, as bright along its length as across
 /// it allows, and present in the data pass on every row. A line thinner than a pixel fades and

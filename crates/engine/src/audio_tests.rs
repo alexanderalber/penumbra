@@ -732,7 +732,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     let lines: Vec<&str> = table.as_str().unwrap().lines().collect();
     assert_eq!(
         lines[0],
-        "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight,pattern",
+        "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight,pattern,see_through",
         "{table}"
     );
     assert_eq!(lines.len(), 6, "{table}");
@@ -789,6 +789,7 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
                 "gaps",
                 "flight",
                 "pattern",
+                "see_through",
             ]
             && (0.0..=1.0).contains(&channel(&m, "galaxy"))
     });
@@ -835,10 +836,22 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     listed["intensity"] = json!(["/stage.dim", "/tunnel.dim"]);
     let r = f.call("beats.arrange", args(listed));
     let bound = r["bound"].as_array().unwrap();
-    for b in ["/stages.index", "/lanes.index", "/stage.dim", "/tunnel.dim", "/tunnel.camera"] {
+    for b in [
+        "/stages.index",
+        "/lanes.index",
+        "/stage.dim",
+        "/tunnel.dim",
+        "/tunnel.camera",
+        "/tunnel.see_through",
+    ] {
         assert!(bound.iter().any(|x| x == b), "{b}: {r}");
     }
+    // Only the tunnel has walls to see through.
+    assert!(!bound.iter().any(|x| x == "/stage.see_through"), "{r}");
     let from = |path: &str| f.call("node.info", json!({"path": path}))["binds"].clone();
+    let walls = from("/tunnel/controls");
+    let want = json!({"param": "value14", "from": "/arrangement_mix:see_through"});
+    assert!(walls.as_array().unwrap().contains(&want), "{walls}");
     assert_eq!(from("/stages"), json!([{"param": "index", "from": "/arrangement_mix:stage"}]));
     assert_eq!(from("/lanes"), json!([{"param": "index", "from": "/arrangement_pick:stage"}]));
 

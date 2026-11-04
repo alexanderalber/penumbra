@@ -57,6 +57,11 @@
 //! - **Gaps:** the row says how much of the floor breaks off into gaps: [`GAPS_BUILD`] in a
 //!   build, [`GAPS_BREAK`] in a break, none elsewhere. The caller may give other shares
 //!   ([`Gaps`]).
+//! - **See-through:** the row says how far a stage with walls (the tunnel) opens them, so the sky
+//!   shows through. Every second stretch of breaks and builds on each stage opens to
+//!   [`SEE_THROUGH`], the first one included; a stretch is the rows of breaks and builds that
+//!   follow each other. Every other row keeps the walls closed, and so do the rows on either side
+//!   of a change of stage, so the walls never open while one stage fades into the next.
 //!
 //! The rows go into a `table.text` and a `chan.sequence` with one step per row, its clock on the
 //! file's seconds, so the user can edit the table by hand and the picture follows the edit.
@@ -146,6 +151,8 @@ pub const OPENING_BARS: usize = 2;
 pub const GAPS_BUILD: f64 = 0.3;
 /// The share of the floor in gaps during a break.
 pub const GAPS_BREAK: f64 = 0.6;
+/// How far the walls open in a row that sees through them: wholly.
+pub const SEE_THROUGH: f64 = 1.0;
 
 /// How much of the floor breaks off into gaps, per role: a share from 0 to 1 for a build and a
 /// break; every other role keeps its floor whole.
@@ -246,7 +253,8 @@ impl Gaps {
 }
 /// The columns before the elements and after them.
 pub const LEADING: [&str; 4] = ["start", "end", "role", "change"];
-pub const TRAILING: [&str; 7] = ["warmth", "intensity", "camera", "stage", "gaps", "flight", "pattern"];
+pub const TRAILING: [&str; 8] =
+    ["warmth", "intensity", "camera", "stage", "gaps", "flight", "pattern", "see_through"];
 /// The piece every step names: the rows differ by their table row, not by a piece.
 pub const PIECE: &str = "row";
 
@@ -343,6 +351,8 @@ pub struct Row {
     pub flight: usize,
     /// What the room's lights show: [`PATTERN_STRIPES`] and the others.
     pub pattern: usize,
+    /// How far a stage with walls opens them, 0 to 1 ([`SEE_THROUGH`]).
+    pub see_through: f64,
     /// The section keeps the stage and one slot only.
     pub empty: bool,
 }
@@ -524,6 +534,11 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
     let mut stage = 0usize;
     let mut onward = true;
     let mut switched = 0.0f64;
+    // Per stage, the stretches of breaks and builds it has shown, and whether the stretch
+    // going on opens the walls.
+    let mut stretches = vec![0usize; stages];
+    let mut open = false;
+    let mut calm_before = false;
     // Per slot, the sections its element has been on, hidden by the stage or not.
     let mut since = vec![0usize; slots.len()];
     // The opening's steps, and the slots each brings: step k brings the first of `order` up to
@@ -661,6 +676,15 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                 PATTERN_VARIANTS.get(track % PATTERN_VARIANTS.len()).copied().unwrap_or(PATTERN_STRIPES)
             }
         };
+        let calm = matches!(part.role, Role::Break | Role::Build);
+        if calm && !calm_before {
+            let seen = stretches.get(stage).copied().unwrap_or(0);
+            open = seen % 2 == 0;
+            if let Some(n) = stretches.get_mut(stage) {
+                *n += 1;
+            }
+        }
+        calm_before = calm;
         out.push(Row {
             start: part.start,
             end: part.end,
@@ -675,8 +699,18 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             gaps: gaps.of(part.role),
             flight,
             pattern,
+            see_through: if calm && open { SEE_THROUGH } else { 0.0 },
             empty,
         });
+    }
+    // The walls stay closed next to a change of stage.
+    let at: Vec<usize> = out.iter().map(|r| r.stage).collect();
+    for (i, row) in out.iter_mut().enumerate() {
+        let before = i.checked_sub(1).and_then(|k| at.get(k));
+        let after = at.get(i + 1);
+        if before.is_some_and(|s| *s != row.stage) || after.is_some_and(|s| *s != row.stage) {
+            row.see_through = 0.0;
+        }
     }
     out
 }
@@ -713,6 +747,7 @@ pub fn table(slots: &[Slot], rows: &[Row]) -> String {
         cells.push(num(r.gaps));
         cells.push(r.flight.to_string());
         cells.push(r.pattern.to_string());
+        cells.push(num(r.see_through));
         text.push_str(&cells.join(","));
         text.push('\n');
     }
@@ -1008,10 +1043,10 @@ mod tests {
         let lines: Vec<&str> = t.lines().collect();
         assert_eq!(
             lines[0],
-            "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight,pattern"
+            "start,end,role,change,blocks,mountains,galaxy,warmth,intensity,camera,stage,gaps,flight,pattern,see_through"
         );
-        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3,4,0,0,0,0");
-        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0,0,2,1");
+        assert_eq!(lines[1], "0,30,intro,0,0.4,0,1,0,0.3,4,0,0,0,0,0");
+        assert_eq!(lines[2], "30,60,drop,0.9,0,1,1,0.45,1,2,0,0,2,1,0");
         assert_eq!(lines.len(), 3);
         assert!(check(&slots()).is_ok());
         let bad = |e: &[&str]| vec![Slot::new("floor", e)];
@@ -1020,6 +1055,7 @@ mod tests {
         assert!(check(&bad(&["camera"])).unwrap_err().contains("column"));
         assert!(check(&bad(&["stage"])).unwrap_err().contains("column"));
         assert!(check(&bad(&["gaps"])).unwrap_err().contains("column"));
+        assert!(check(&bad(&["see_through"])).unwrap_err().contains("column"));
         assert!(check(&bad(&["a b"])).unwrap_err().contains("column name"));
         assert!(check(&bad(&[])).unwrap_err().contains("no elements"));
         assert!(check(&[]).is_err());
@@ -1165,8 +1201,10 @@ mod tests {
         assert_eq!(flights, [a, a, FLIGHT_BANK, FLIGHT_ROLL, FLIGHT_STRAIGHT, a, b, b, c, a]);
         // The column comes last, as a whole number.
         let text = table(&slots(), &r);
-        assert!(text.lines().next().is_some_and(|h| h.ends_with(",gaps,flight,pattern")));
-        assert!(text.lines().nth(4).is_some_and(|l| l.ends_with(&format!(",{FLIGHT_ROLL},{PATTERN_PULSE}"))));
+        assert!(text.lines().next().is_some_and(|h| h.ends_with(",gaps,flight,pattern,see_through")));
+        assert!(
+            text.lines().nth(4).is_some_and(|l| l.ends_with(&format!(",{FLIGHT_ROLL},{PATTERN_PULSE},0")))
+        );
     }
 
     #[test]
@@ -1192,8 +1230,61 @@ mod tests {
         assert_eq!(patterns, [calm, a, PATTERN_CHASE, PATTERN_PULSE, calm, calm, calm, b, a]);
         // The column comes last, as a whole number.
         let text = table(&slots(), &r);
-        assert!(text.lines().next().is_some_and(|h| h.ends_with(",flight,pattern")));
-        assert!(text.lines().nth(3).is_some_and(|l| l.ends_with(&format!(",{PATTERN_CHASE}"))));
+        assert!(text.lines().next().is_some_and(|h| h.ends_with(",flight,pattern,see_through")));
+        assert!(text.lines().nth(3).is_some_and(|l| l.ends_with(&format!(",{PATTERN_CHASE},1"))));
+    }
+
+    #[test]
+    fn every_second_stretch_of_breaks_and_builds_sees_through_the_walls_but_not_next_to_a_stage_change() {
+        let roles = [
+            (Role::Intro, 0.0),
+            (Role::Break, 0.5),
+            (Role::Build, 0.3),
+            (Role::Drop, 0.9),
+            (Role::Break, 0.6),
+            (Role::Main, 0.4),
+            (Role::Build, 0.5),
+            (Role::Drop, 0.9),
+            (Role::Outro, 0.3),
+        ];
+        let r = rows(&parts(&roles), &slots(), 1);
+        let open: Vec<f64> = r.iter().map(|r| r.see_through).collect();
+        // Stretches: rows 1 and 2 (open), row 4 (closed), row 6 (open).
+        let s = SEE_THROUGH;
+        assert_eq!(open, [0.0, s, s, 0.0, 0.0, 0.0, s, 0.0, 0.0]);
+        let text = table(&slots(), &r);
+        assert!(text.lines().nth(2).is_some_and(|l| l.ends_with(",1")), "{text}");
+        assert!(text.lines().nth(5).is_some_and(|l| l.ends_with(",0")), "{text}");
+
+        // Two stages: each counts its own stretches, and the rows on either side of a change
+        // stay closed.
+        let mut p = parts(&[
+            (Role::Intro, 0.0),
+            (Role::Break, 0.5),
+            (Role::Main, 0.4),
+            (Role::Break, 0.5),
+            (Role::Intro, 0.9),
+            (Role::Break, 0.5),
+            (Role::Main, 0.4),
+            (Role::Break, 0.5),
+            (Role::Main, 0.4),
+            (Role::Break, 0.5),
+            (Role::Intro, 0.9),
+        ]);
+        for (i, part) in p.iter_mut().enumerate() {
+            part.start = i as f64 * STAGE_GAP;
+            part.end = part.start + STAGE_GAP;
+            part.zone = (part.start, part.start);
+        }
+        p[4].track_start = true;
+        p[10].track_start = true;
+        let r = rows(&p, &slots(), 2);
+        let stage: Vec<usize> = r.iter().map(|r| r.stage).collect();
+        assert_eq!(stage, [0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0]);
+        let open: Vec<f64> = r.iter().map(|r| r.see_through).collect();
+        // Stage 0: rows 1 (open) and 3 (its second stretch, closed; the change follows anyway).
+        // Stage 1: rows 5 (open), 7 (closed), 9 (open but before the change: closed).
+        assert_eq!(open, [0.0, s, 0.0, 0.0, 0.0, s, 0.0, 0.0, 0.0, 0.0, 0.0]);
     }
 
     #[test]
@@ -1305,7 +1396,7 @@ mod tests {
                 .all(|r| r.gaps == 0.0)
         );
         let t = table(&slots(), &rows(&p, &slots(), 1));
-        assert!(t.lines().nth(5).is_some_and(|l| l.ends_with(",0.6,1,0")), "{t}");
+        assert!(t.lines().nth(5).is_some_and(|l| l.ends_with(",0.6,1,0,0")), "{t}");
     }
 
     #[test]

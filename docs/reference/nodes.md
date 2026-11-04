@@ -2112,6 +2112,7 @@ Outputs: `out` (mat).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `shows` | background \| black | `"background"` |  | What shows where it stands; background: the render's background, as if nothing were there; black: opaque black, with its distance in the render's data output: it also hides a picture laid under the render, such as a sky, and fades with distance like any surface |
+| `opacity` | float | `1` | 0 to 1 | How much of the black shows where `shows` is black: 1 opaque; towards 0 a picture laid under the render shows through, and the occluder still hides what is behind it |
 
 ### mat.pbr
 

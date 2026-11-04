@@ -777,9 +777,9 @@ struct Colour {
 @fragment
 fn fs_solid(v: VOut) -> Colour {
     // An occluder: depth only, the colour as it is (it draws first, so that is the background);
-    // a black cover opaque black.
+    // a black cover black at its opacity, the colour's alpha.
     if draw.shading >= 3u {
-        return Colour(vec4f(0.0, 0.0, 0.0, select(0.0, 1.0, draw.shading == 4u)), 0xffffffffu);
+        return Colour(vec4f(0.0, 0.0, 0.0, select(0.0, clamp(draw.color.a, 0.0, 1.0), draw.shading == 4u)), 0xffffffffu);
     }
     let line = coverage(v);
     let c = shade(v, occlusion(v), line.alpha);

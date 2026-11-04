@@ -157,12 +157,14 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          with a roll on a downbeat, 3 straight with a lean on each downbeat; straight in a break, a roll on a \
          drop, the lean in a build, 0, 1 and 3 by turns from track to track elsewhere) and pattern (what \
          the room's lights show: 0 stripes in an intro, outro or break, 2 a chase in a build, 1 a pulse on \
-         a drop, 2 and 1 by turns from track to track in a main section). A strong boundary into a main section may leave the stage and one slot \
+         a drop, 2 and 1 by turns from track to track in a main section) and see_through (how far a \
+         stage with walls opens them: 1 in every second stretch of breaks and builds on each stage, \
+         not next to a change of stage, else 0). A strong boundary into a main section may leave the stage and one slot \
          alone, drawn from the section's seed. Edit the table by hand to override a row. The sequence gets a \
          step per row, its clock on the grid's seconds. Beside the table it creates or updates <table>_now, \
          _plus, _next, _diff, _ramp, _mix, _half, _snap, _jump and _pick; _mix has a channel per column that \
          moves through each fade, _pick jumps to the next row half way through it. Binds each element's \
-         presence, warmth, camera, gap (on a stage that has it), flight (on an element that has it), \
+         presence, warmth, camera, gap and see_through (on a stage that has them), flight (on an element that has it), \
          pattern (on the lights) and switch to them, and intensity. Run it again after the file changes: \
          it overwrites the table",
         beats_arrange,
@@ -1130,6 +1132,11 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     for path in stages.iter().filter(|p| has_param(e, &net, p, "gap")) {
         ops.push(bind_to(param_of(path, "gap")?, mix, "gaps")?);
         bound.push(format!("{path}.gap"));
+    }
+    // The walls open and close through the fades, on every stage that has them.
+    for path in stages.iter().filter(|p| has_param(e, &net, p, "see_through")) {
+        ops.push(bind_to(param_of(path, "see_through")?, mix, "see_through")?);
+        bound.push(format!("{path}.see_through"));
     }
     // A cross or a blending switch fades between two stages through the fade; anything else
     // takes the index. The stage only ever moves to a neighbour, so a fade never shows a third.
