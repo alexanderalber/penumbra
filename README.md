@@ -89,7 +89,7 @@ lists every one.
 - **For running a show:** a failing node shows an error and the rest keeps running (no panics
   by design). Feedback loops and caches survive a restart. Nodes that sit idle give their video
   memory back. The app checks for Windows settings that interfere with a show (Game Bar,
-  notification banners), fixes them and restores them afterwards. A cook-time meter shows GPU
+  notification banners, displays set to Duplicate), fixes them and restores them afterwards. A cook-time meter shows GPU
   load, memory and temperature, and each node shows its cook time and video memory. The app recovers after the GPU device is lost. Show mode locks
   the project against edits during a performance. After a crash the app starts again and the
   show goes on at its cue, with the values set by OSC or the show screen.

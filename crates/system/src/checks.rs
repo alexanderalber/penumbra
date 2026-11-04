@@ -6,6 +6,8 @@
 //! - `gaming_overlay`: Game Bar and game capture. With them on, Windows took a fullscreen output
 //!   for a game and popped up "Get an app to open this 'ms-gamingoverlay' link" during testing.
 //! - `notifications`: toast notifications, which pop up over whatever is on the main display.
+//! - `display_arrangement`: Win+P's arrangement, Extend wanted ([`crate::arrangement`]). It
+//!   reads the display configuration instead of the registry.
 
 use penumbra_core::Error;
 use serde::{Deserialize, Serialize};
@@ -105,7 +107,7 @@ const DEFINITIONS: &[Definition] = &[
 
 fn definition(id: &str) -> Result<&'static Definition, Error> {
     DEFINITIONS.iter().find(|d| d.id == id).ok_or_else(|| {
-        let ids: Vec<&str> = DEFINITIONS.iter().map(|d| d.id).collect();
+        let ids: Vec<&str> = DEFINITIONS.iter().map(|d| d.id).chain([crate::arrangement::ID]).collect();
         Error::new(format!("no check `{id}`; checks: {}", ids.join(", ")))
     })
 }
@@ -224,14 +226,25 @@ impl Registry for SystemRegistry {
 
 /// The checks of this machine (none on platforms without a backend yet).
 pub fn run() -> Vec<Check> {
-    if cfg!(windows) { run_with(&SystemRegistry) } else { Vec::new() }
+    if !cfg!(windows) {
+        return Vec::new();
+    }
+    let mut checks = run_with(&SystemRegistry);
+    checks.push(crate::arrangement::check_with(&crate::arrangement::SystemDisplays));
+    checks
 }
 
 pub fn fix(id: &str) -> Result<Previous, Error> {
+    if id == crate::arrangement::ID {
+        return crate::arrangement::fix_with(&mut crate::arrangement::SystemDisplays);
+    }
     fix_with(id, &mut SystemRegistry)
 }
 
 pub fn restore(previous: &Previous) -> Result<(), Error> {
+    if previous.id == crate::arrangement::ID {
+        return crate::arrangement::restore_with(previous, &mut crate::arrangement::SystemDisplays);
+    }
     restore_with(previous, &mut SystemRegistry)
 }
 

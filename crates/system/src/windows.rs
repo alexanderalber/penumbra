@@ -1,5 +1,6 @@
-//! The Windows calls behind [`crate::display`], [`crate::checks`] and [`crate::awake`]: display
-//! configuration (`QueryDisplayConfig`), the monitors' EDIDs and the current user's settings in
+//! The Windows calls behind [`crate::display`], [`crate::checks`], [`crate::arrangement`] and
+//! [`crate::awake`]: display configuration (`QueryDisplayConfig`, and `SetDisplayConfig` for
+//! the Win+P arrangement), the monitors' EDIDs and the current user's settings in
 //! the registry, power requests, and the mouse pointer with the displays' rectangles. With
 //! NVML's loader the crate's only `unsafe`; every call checks its status code and every buffer is
 //! sized by the API or by its type.
@@ -12,7 +13,9 @@ use windows_sys::Win32::Devices::Display::{
     DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
     DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
     DISPLAYCONFIG_SOURCE_DEVICE_NAME, DISPLAYCONFIG_TARGET_DEVICE_NAME, DisplayConfigGetDeviceInfo,
-    GetDisplayConfigBufferSizes, QDC_ALL_PATHS, QDC_ONLY_ACTIVE_PATHS, QueryDisplayConfig,
+    GetDisplayConfigBufferSizes, QDC_ALL_PATHS, QDC_DATABASE_CURRENT, QDC_ONLY_ACTIVE_PATHS,
+    QueryDisplayConfig, SDC_APPLY, SDC_TOPOLOGY_CLONE, SDC_TOPOLOGY_EXTEND, SDC_TOPOLOGY_EXTERNAL,
+    SDC_TOPOLOGY_INTERNAL, SDC_VALIDATE, SetDisplayConfig,
 };
 use windows_sys::Win32::Foundation::{
     ERROR_FILE_NOT_FOUND, ERROR_INSUFFICIENT_BUFFER, ERROR_MORE_DATA, ERROR_SUCCESS, LUID,
@@ -40,11 +43,69 @@ pub fn connectors() -> Result<Vec<(i64, u32)>, Error> {
     Ok(list)
 }
 
+/// How the connected displays are arranged: the active paths, the connectors with a display
+/// attached and the arrangement Win+P shows (`None` when it is a custom one or unreadable).
+pub fn arrangement() -> Result<crate::arrangement::Arrangement, Error> {
+    let id = |adapter: LUID, id: u32| (luid(adapter), id);
+    let active = query(QDC_ONLY_ACTIVE_PATHS)?
+        .iter()
+        .map(|p| (id(p.sourceInfo.adapterId, p.sourceInfo.id), id(p.targetInfo.adapterId, p.targetInfo.id)))
+        .collect();
+    let connected = query(QDC_ALL_PATHS)?
+        .iter()
+        .filter(|p| p.targetInfo.targetAvailable != 0)
+        .map(|p| id(p.targetInfo.adapterId, p.targetInfo.id))
+        .collect();
+    let mut raw = 0i32;
+    let stored = match query_with(QDC_DATABASE_CURRENT, Some(&mut raw)) {
+        Ok(_) => crate::arrangement::Topology::from_raw(raw),
+        Err(e) => {
+            log::debug!("display arrangement: {}", e.0);
+            None
+        }
+    };
+    Ok(crate::arrangement::Arrangement { stored, active, connected })
+}
+
+fn topology_flag(topology: crate::arrangement::Topology) -> u32 {
+    use crate::arrangement::Topology;
+    match topology {
+        Topology::Internal => SDC_TOPOLOGY_INTERNAL,
+        Topology::Clone => SDC_TOPOLOGY_CLONE,
+        Topology::Extend => SDC_TOPOLOGY_EXTEND,
+        Topology::External => SDC_TOPOLOGY_EXTERNAL,
+    }
+}
+
+fn set_display_config(flags: u32) -> Result<(), Error> {
+    // SAFETY: with a SDC_TOPOLOGY_* flag both arrays must be null and their counts zero.
+    let status = unsafe { SetDisplayConfig(0, std::ptr::null(), 0, std::ptr::null(), flags) };
+    if status == 0 { Ok(()) } else { Err(Error::new(format!("SetDisplayConfig failed ({status})"))) }
+}
+
+/// Asks Windows whether it can switch to `topology`, without changing anything (`SDC_VALIDATE`).
+pub fn validate_topology(topology: crate::arrangement::Topology) -> Result<(), Error> {
+    set_display_config(topology_flag(topology) | SDC_VALIDATE)
+        .map_err(|e| Error::new(format!("Windows cannot switch to {topology:?}: {}", e.0)))
+}
+
+/// Switches to `topology` as Win+P does, after validating it.
+pub fn set_topology(topology: crate::arrangement::Topology) -> Result<(), Error> {
+    validate_topology(topology)?;
+    set_display_config(topology_flag(topology) | SDC_APPLY)
+}
+
 fn luid(l: LUID) -> i64 {
     (i64::from(l.HighPart) << 32) | i64::from(l.LowPart)
 }
 
 fn query(flags: u32) -> Result<Vec<DISPLAYCONFIG_PATH_INFO>, Error> {
+    query_with(flags, None)
+}
+
+/// `topology` receives the arrangement Win+P shows; it is needed with `QDC_DATABASE_CURRENT`
+/// and must be `None` otherwise.
+fn query_with(flags: u32, mut topology: Option<&mut i32>) -> Result<Vec<DISPLAYCONFIG_PATH_INFO>, Error> {
     // The configuration can change between sizing and querying; retry a few times.
     for _ in 0..4 {
         let (mut n_paths, mut n_modes) = (0u32, 0u32);
@@ -55,8 +116,9 @@ fn query(flags: u32) -> Result<Vec<DISPLAYCONFIG_PATH_INFO>, Error> {
         }
         let mut paths = vec![DISPLAYCONFIG_PATH_INFO::default(); n_paths as usize];
         let mut modes = vec![DISPLAYCONFIG_MODE_INFO::default(); n_modes as usize];
-        // SAFETY: the arrays hold exactly the counts passed; the topology pointer may be null
-        // without QDC_DATABASE_CURRENT.
+        let topology_ptr = topology.as_deref_mut().map_or(std::ptr::null_mut(), std::ptr::from_mut);
+        // SAFETY: the arrays hold exactly the counts passed; the topology pointer is valid or,
+        // without QDC_DATABASE_CURRENT, may be null.
         let status = unsafe {
             QueryDisplayConfig(
                 flags,
@@ -64,7 +126,7 @@ fn query(flags: u32) -> Result<Vec<DISPLAYCONFIG_PATH_INFO>, Error> {
                 paths.as_mut_ptr(),
                 &mut n_modes,
                 modes.as_mut_ptr(),
-                std::ptr::null_mut(),
+                topology_ptr,
             )
         };
         if status == ERROR_INSUFFICIENT_BUFFER {

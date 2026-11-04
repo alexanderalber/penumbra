@@ -715,9 +715,12 @@ water      15
 <h3 id="helpers-show-machine">Show machine</h3>
 <p>Windows settings that can ruin a show, each with a <strong>Fix</strong> and, after fixing, a <strong>Restore</strong> that puts back what the fix replaced:</p>
 <ul>
-<li><strong>Gaming overlay:</strong> Windows may treat a fullscreen output as a game and show the Game Bar over it. The fix turns off game capture and the Game Bar for the current user.
+<li><p><strong>Gaming overlay:</strong> Windows may treat a fullscreen output as a game and show the Game Bar over it. The fix turns off game capture and the Game Bar for the current user.</p>
 </li>
-<li><strong>Notifications:</strong> banners for updates, mail and chat pop up on the main display. The fix turns notification banners off for the current user.
+<li><p><strong>Notifications:</strong> banners for updates, mail and chat pop up on the main display. The fix turns notification banners off for the current user.</p>
+</li>
+<li><p><strong>Display arrangement:</strong> with Duplicate (Win+P), the projectors show the main display's picture. With &quot;PC screen only&quot; or &quot;Second screen only&quot;, some connected displays stay dark. The fix sets Extend for the displays connected now.</p>
+<p>Windows stores one arrangement for each combination of connected displays. The check sees only the combination connected now. If one projector's cable comes loose during a show, Windows switches to the arrangement stored for the remaining displays. When that one is Duplicate, every projector shows the main display. Before a show, unplug each projector once and choose Extend with Win+P for the displays that remain. Then a loose cable darkens only its own projector.</p>
 </li>
 </ul>
 <p>Not checked here, because it lives in the graphics driver: with G-Sync (or FreeSync) enabled for windowed mode, the monitor follows the frame rate of the focused window. The editor redraws at about 60 Hz while nothing moves, so a 240 Hz monitor drops to 60 Hz (the mouse pointer turns choppy) as long as penumbra has the focus. Enable G-Sync for fullscreen only, or set <strong>Monitor Technology</strong> to <strong>Fixed Refresh</strong> for <code>penumbra.exe</code> in the NVIDIA Control Panel. The output windows are not affected; they present at their display's fixed vsync.</p>
@@ -6529,9 +6532,9 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="group-system">
 <h3>system</h3>
-<details class="entry command" id="system.check"><summary><code class="name">system.check</code><span class="sum">Show-machine settings that can ruin a show (gaming overlay, notifications)</span></summary>
+<details class="entry command" id="system.check"><summary><code class="name">system.check</code><span class="sum">Show-machine settings that can ruin a show (gaming overlay, notifications, display arrangement)</span></summary>
 <div class="body">
-<p>Show-machine settings that can ruin a show (gaming overlay, notifications)</p>
+<p>Show-machine settings that can ruin a show (gaming overlay, notifications, display arrangement)</p>
 </div></details>
 <details class="entry command" id="system.fix"><summary><code class="name">system.fix</code><span class="sum">Apply one check's fix; replies with what it replaced</span></summary>
 <div class="body">

@@ -397,6 +397,16 @@ that puts back what the fix replaced:
   over it. The fix turns off game capture and the Game Bar for the current user.
 - **Notifications:** banners for updates, mail and chat pop up on the main display. The fix
   turns notification banners off for the current user.
+- **Display arrangement:** with Duplicate (Win+P), the projectors show the main display's
+  picture. With "PC screen only" or "Second screen only", some connected displays stay dark.
+  The fix sets Extend for the displays connected now.
+
+  Windows stores one arrangement for each combination of connected displays. The check sees
+  only the combination connected now. If one projector's cable comes loose during a show,
+  Windows switches to the arrangement stored for the remaining displays. When that one is
+  Duplicate, every projector shows the main display. Before a show, unplug each projector once
+  and choose Extend with Win+P for the displays that remain. Then a loose cable darkens only its
+  own projector.
 
 Not checked here, because it lives in the graphics driver: with G-Sync (or FreeSync) enabled
 for windowed mode, the monitor follows the frame rate of the focused window. The editor

@@ -197,7 +197,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
     );
     add(
         "system.check",
-        "Show-machine settings that can ruin a show (gaming overlay, notifications)",
+        "Show-machine settings that can ruin a show (gaming overlay, notifications, display arrangement)",
         system_check,
     );
     add("system.fix", "Apply one check's fix; replies with what it replaced; {id}", system_fix);
