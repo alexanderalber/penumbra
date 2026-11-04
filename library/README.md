@@ -588,7 +588,9 @@ glow. So a breakdown raises the light on the horizon, and the drop takes it back
   `mist` (1; 0 none), `shore` (how much of the reflection shows where the shore stands: 0.5),
   `mirror` (how much the water mirrors what stands on it: 1 fully, 0 only the sky; turn it down
   where a projector shows too much), `mirror_size` (the size of the mirror's render as a share
-  of 1920x1080: 0.25; a larger one is sharper).
+  of 1920x1080: 0.5; a larger one is sharper, 0.25 costs less and blurs thin rims). Things high
+  in the air, such as `mid_glyphs`, mirror close to the camera, faint and rippled. A bright rim
+  mirrors relatively dimmer than a faint one, so a ring of light does not mirror as a glowing disc.
 - Camera: `camera`, `glide` (3 s) and `presets` as on `stage_synthwave`, lower and slower: 0 low
   flight at 1.2 m, 1 at 1.8 m looking down a little for a build, 2 high and wide for a drop
   (2.4 m, 70 degrees), 3 level for a break at 1.6 m, 4 and 5 two tilted variants (0.9 m and

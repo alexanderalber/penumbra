@@ -61,6 +61,15 @@ const LANE_FAR: f32 = 56.0;
 const TAPS: i32 = 6;
 // How bright the mirrored rims are against the rims themselves, before the fresnel.
 const RIM_MIRROR: f32 = 0.6;
+// What stands on the water mirrors with less of the vertical blur than the sky, so thin rims stay
+// lines; a small sideways wobble breaks them into ripples instead.
+const THING_SPREAD: f32 = 0.5;
+const THING_WOBBLE: f32 = 0.04;
+// Bright rims mirror relatively dimmer, so a ring of light does not mirror as a glowing disc.
+const THING_KNEE: f32 = 2.0;
+// The mirror of things fades faster than the sky's as the water is seen further down: a thing
+// high in the air mirrors close to the camera, where real water shows little of it.
+const THING_FALL: f32 = 4.0;
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
@@ -118,8 +127,15 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         if things {
             // The same ripple moves the mirrored things: their mirror at this tap lies as far below
             // the horizon as the sky's lies above it.
-            let g = textureSampleLevel(in3, pn_clamp, sky_uv(vec2f(s.x, -s.y)), 0.0) * cover;
-            tap = tap * (1.0 - g.a) + g.rgb * RIM_MIRROR;
+            let w3 = pn_noise(vec3f(across * 2.2, along * 7.0, params.beats * 0.2), 11u);
+            let st = vec2f(
+                s.x + THING_WOBBLE * rough * w3 * (b + 2.0 * px),
+                max(b + shift + f * spread * THING_SPREAD, 0.0),
+            );
+            let g = textureSampleLevel(in3, pn_clamp, sky_uv(vec2f(st.x, -st.y)), 0.0) * cover;
+            let lum = max(g.r, max(g.g, g.b));
+            let rim = g.rgb * RIM_MIRROR * exp(-b * THING_FALL) / (1.0 + THING_KNEE * lum);
+            tap = tap * (1.0 - g.a) + rim;
         }
         mirrored += tap;
     }
