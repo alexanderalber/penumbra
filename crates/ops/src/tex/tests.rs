@@ -1061,14 +1061,12 @@ fn image_file_as_data_keeps_every_channel_where_alpha_is_0() {
     for (px, s) in read.iter().zip(samples.as_chunks::<4>().0) {
         assert_eq!(*px, s.map(|v| f32::from(v) / 65535.0));
     }
-    // As colour (the default) the same EXR is premultiplied: nothing left where alpha is 0.
+    // As colour (the default) the EXR comes back as stored too: EXR colour is premultiplied by
+    // the format's convention, so it is not multiplied by alpha again.
     let version = rig.version("/exr");
     rig.edit(&[set("/exr.values", "color".into())]);
     let colour = rig.cook_until_new("/exr", version);
-    let px = rig.gpu.read(&colour).unwrap().data;
-    assert_eq!(px[0], [0.0; 4]);
-    let [r, g, b, a] = rgba[1];
-    assert_eq!(px[1], [r * a, g * a, b * a, a]);
+    assert_eq!(rig.gpu.read(&colour).unwrap().data, rgba);
 }
 
 #[test]

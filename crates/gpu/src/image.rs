@@ -2,8 +2,10 @@
 //! TGA, GIF, QOI, PNM; 8-bit, 16-bit and float.
 //!
 //! Integer samples are taken as sRGB-encoded and linearised; float samples (EXR, HDR, PFM) as
-//! linear already. Alpha is premultiplied on the way in. ICC profiles are ignored
-//! (no colour management). [`decode_data`] reads a file as data instead: samples as stored.
+//! linear already. Colour comes out premultiplied by alpha: straight-alpha files are multiplied
+//! on the way in, flat OpenEXR files are taken as stored, since EXR colour is premultiplied by
+//! the format's convention. ICC profiles are ignored (no colour management). [`decode_data`]
+//! reads a file as data instead: samples as stored.
 //!
 //! Decoding runs off the cook thread (the image node's job). Memory is the real risk with
 //! hostile files, not panics: [`limits`] rejects anything too large from the header before a
@@ -101,8 +103,9 @@ pub fn decode_file_picture(path: &std::path::Path, max_side: u32) -> Result<Pict
 pub fn decode_picture(bytes: &[u8], max_side: u32) -> Result<Picture, Error> {
     let opts = DecodeOptions { limits: limits(max_side), keep_orientation: false };
     let image = photocraft_codecs::decode_with(bytes, &opts).map_err(|e| Error::new(e.to_string()))?;
+    let premultiplied = stored_premultiplied(bytes, &image);
     if image.sample_type() != SampleType::F32 {
-        return Ok(Picture::Half(to_linear(&image)?));
+        return Ok(Picture::Half(to_linear(&image, premultiplied)?));
     }
     let (width, height) = image.dimensions();
     let source = format!("{} float", format!("{:?}", image.layout()).to_lowercase());
@@ -116,7 +119,7 @@ pub fn decode_picture(bytes: &[u8], max_side: u32) -> Result<Picture, Error> {
         .iter()
         .map(|[r, g, b, a]| {
             let a = a.clamp(0.0, 1.0);
-            [r * a, g * a, b * a, a]
+            if premultiplied { [*r, *g, *b, a] } else { [r * a, g * a, b * a, a] }
         })
         .collect();
     if pixels.len() as u64 != u64::from(width) * u64::from(height) {
@@ -167,10 +170,20 @@ pub fn decode_data(bytes: &[u8], max_side: u32) -> Result<Picture, Error> {
 pub fn decode(bytes: &[u8], max_side: u32) -> Result<Decoded, Error> {
     let opts = DecodeOptions { limits: limits(max_side), keep_orientation: false };
     let image = photocraft_codecs::decode_with(bytes, &opts).map_err(|e| Error::new(e.to_string()))?;
-    to_linear(&image)
+    to_linear(&image, stored_premultiplied(bytes, &image))
 }
 
-fn to_linear(image: &Image) -> Result<Decoded, Error> {
+/// Whether `image`'s colour is premultiplied by its alpha already. True for flat OpenEXR files:
+/// the format stores premultiplied colour, and the codec hands their samples on as stored. The
+/// codec composites deep EXRs and un-premultiplies the result, so those come as straight alpha,
+/// as do all other formats (TIFF's associated alpha included).
+fn stored_premultiplied(bytes: &[u8], image: &Image) -> bool {
+    photocraft_codecs::detect(bytes) == Some(photocraft_codecs::Format::OpenExr)
+        && !image.warnings.iter().any(|w| matches!(w, photocraft_codecs::DecodeWarning::DeepFlattened { .. }))
+}
+
+/// `image` as linear premultiplied half floats; `premultiplied` says its colour is so already.
+fn to_linear(image: &Image, premultiplied: bool) -> Result<Decoded, Error> {
     let (width, height) = image.dimensions();
     let sample = image.sample_type();
     let source = format!(
@@ -191,7 +204,8 @@ fn to_linear(image: &Image) -> Result<Decoded, Error> {
     let mut out = Vec::with_capacity(n);
     // Premultiplies straight alpha; `c` is linear already.
     let mut push = |rgb: [f32; 3], a: f32| {
-        out.extend(rgb.map(|c| f16::from_f32(c * a)));
+        let k = if premultiplied { 1.0 } else { a };
+        out.extend(rgb.map(|c| f16::from_f32(c * k)));
         out.push(f16::from_f32(a));
     };
     match target {
@@ -465,6 +479,45 @@ mod tests {
         assert_eq!(v[..4], [0.25, -1.0, 0.75, 1.0]);
         assert_eq!(v[4..], [2.5, 0.5, 0.0, 1.0]);
         assert_eq!(d.source, "rgba float");
+    }
+
+    #[test]
+    fn a_premultiplied_exr_is_not_multiplied_by_alpha_again() {
+        // A soft edge as a renderer writes it: colour 0.4 at alpha 0.5 is a straight 0.8.
+        let px = [[0.4, 0.2, 0.1, 0.5], [0.3, 0.0, 0.6, 0.0], [0.5, 0.25, 0.125, 1.0]];
+        let exr = encode_exr_rgba32f(3, 1, &px).unwrap();
+        let Picture::Float(f) = decode_picture(&exr, 64).unwrap() else {
+            panic!("a float file stays 32-bit")
+        };
+        assert_eq!(f.rgba, px);
+        let d = decode(&exr, 64).unwrap();
+        let v: Vec<f32> = d.rgba.iter().map(|h| h.to_f32()).collect();
+        let half: Vec<f32> = px.iter().flatten().map(|c| f16::from_f32(*c).to_f32()).collect();
+        assert_eq!(v, half);
+        // The same pixels as a straight-alpha float TIFF are multiplied.
+        let img = Image::from_f32(3, 1, ChannelLayout::Rgba, &px.concat()).unwrap();
+        let tiff = photocraft_codecs::encode(&img, Format::Tiff, &EncodeOptions::default()).unwrap();
+        let Picture::Float(f) = decode_picture(&tiff, 64).unwrap() else {
+            panic!("a float file stays 32-bit")
+        };
+        assert_eq!(f.rgba[0], [0.2, 0.1, 0.05, 0.5]);
+        assert_eq!(f.rgba[1], [0.0; 4]);
+    }
+
+    #[test]
+    fn a_flattened_deep_exr_counts_as_straight_alpha() {
+        let exr = encode_exr_rgba32f(1, 1, &[[0.4, 0.2, 0.1, 0.5]]).unwrap();
+        let mut image = photocraft_codecs::decode(&exr).unwrap();
+        assert!(stored_premultiplied(&exr, &image));
+        image.warnings.push(photocraft_codecs::DecodeWarning::DeepFlattened {
+            format: Format::OpenExr,
+            max_samples_per_pixel: 2,
+        });
+        assert!(!stored_premultiplied(&exr, &image));
+        assert!(!stored_premultiplied(
+            &png16(1, 1, &[0, 0, 0, 0]),
+            &photocraft_codecs::decode(&png16(1, 1, &[0; 4])).unwrap()
+        ));
     }
 
     #[test]

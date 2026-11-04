@@ -420,7 +420,7 @@ Outputs: `out` (tex).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `file` | file (png, jpg, jpeg, tif, tiff, exr, hdr, webp, bmp, tga, gif, qoi, pfm, ppm, pgm) |  |  | The picture file, relative to the project directory; saving it again reloads the node |
-| `values` | color \| data | `"color"` |  | How the file's samples become the picture; color: a picture: 8- and 16-bit files are sRGB, colour is multiplied by alpha; data: every channel as stored, for maps, positions and normals: no sRGB decode, colour kept where alpha is 0; 16-bit files keep their precision |
+| `values` | color \| data | `"color"` |  | How the file's samples become the picture; color: a picture: 8- and 16-bit files are sRGB, colour is multiplied by alpha; EXR colour is taken as stored, since EXR stores it premultiplied; data: every channel as stored, for maps, positions and normals: no sRGB decode, colour kept where alpha is 0; 16-bit files keep their precision |
 
 ### tex.layer
 

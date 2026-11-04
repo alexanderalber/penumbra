@@ -27,7 +27,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         .param(
             ParamSpec::choice("values", &["color", "data"])
                 .doc("How the file's samples become the picture")
-                .choice_doc("color", "a picture: 8- and 16-bit files are sRGB, colour is multiplied by alpha")
+                .choice_doc("color", "a picture: 8- and 16-bit files are sRGB, colour is multiplied by alpha; EXR colour is taken as stored, since EXR stores it premultiplied")
                 .choice_doc(
                     "data",
                     "every channel as stored, for maps, positions and normals: no sRGB decode, colour kept where alpha is 0; 16-bit files keep their precision",
