@@ -29,8 +29,8 @@
 //!   the other one's presence; not in the rows on either side of a change of stage. In those rows
 //!   the glider flies through it ([`FLIGHT_THREAD`]). Every other cell stays as without it.
 //! - **Extras:** an element may come now and then by itself, in lively rows (a drop, a build, a
-//!   main section of energy from [`LIVELY_ENERGY`]) or in calm ones (an intro, an outro, a
-//!   break) ([`Extra`]). It takes no turns either. On its stages it shows in every second stretch
+//!   main section of energy from [`LIVELY_ENERGY`]), in calm ones (an intro, an outro, a break)
+//!   or in steady ones (a main section of energy below [`LIVELY_ENERGY`]) ([`Extra`]). It takes no turns either. On its stages it shows in every second stretch
 //!   of such rows, the first one included, with its slot's presence for the row; a stretch is the
 //!   rows of that kind that follow each other, counted per stage. Not in the rows on either side
 //!   of a change of stage. Every other cell stays as without it.
@@ -187,21 +187,25 @@ struct Run {
     before: bool,
 }
 
-/// When an extra comes ([`Slot::extra`]): in lively rows or in calm ones.
+/// When an extra comes ([`Slot::extra`]): in lively rows, in calm ones or in steady ones. No row
+/// is of two kinds, so extras of different kinds never show together.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Extra {
     /// A drop, a build, or a main section of energy from [`LIVELY_ENERGY`].
     Lively,
     /// An intro, an outro or a break.
     Calm,
+    /// A main section of energy below [`LIVELY_ENERGY`].
+    Steady,
 }
 
 impl Extra {
-    /// The kind by its name in the command: `lively` or `calm`.
+    /// The kind by its name in the command: `lively`, `calm` or `steady`.
     pub fn named(name: &str) -> Option<Extra> {
         match name {
             "lively" => Some(Extra::Lively),
             "calm" => Some(Extra::Calm),
+            "steady" => Some(Extra::Steady),
             _ => None,
         }
     }
@@ -215,6 +219,7 @@ impl Extra {
                 _ => false,
             },
             Extra::Calm => matches!(role, Role::Intro | Role::Outro | Role::Break),
+            Extra::Steady => role == Role::Main && energy.is_finite() && energy < LIVELY_ENERGY,
         }
     }
 }
@@ -700,8 +705,8 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
     let mut stretches = vec![0usize; stages];
     let mut open = false;
     let mut calm_before = false;
-    // The same for the extras, per kind: lively, then calm.
-    let mut runs = [Extra::Lively, Extra::Calm].map(|kind| Run {
+    // The same for the extras, per kind: lively, calm, steady.
+    let mut runs = [Extra::Lively, Extra::Calm, Extra::Steady].map(|kind| Run {
         kind,
         stretches: vec![0; stages],
         open: false,
@@ -1848,6 +1853,52 @@ mod tests {
         assert!(check(&[follow]).is_err_and(|e| e.contains("is an extra")));
         assert_eq!(Extra::named("calm"), Some(Extra::Calm));
         assert_eq!(Extra::named("loud"), None);
+    }
+
+    #[test]
+    fn a_steady_extra_comes_in_every_second_stretch_of_calmer_mains_and_never_with_another_extra() {
+        let main = |energy: f64| (Role::Main, energy);
+        let roles = [
+            (Role::Intro, 0.5),
+            main(0.5),
+            main(0.5),
+            (Role::Drop, 0.9),
+            main(0.5),
+            main(0.9),
+            main(0.5),
+            (Role::Break, 0.3),
+            main(0.5),
+            (Role::Outro, 0.3),
+            main(0.5),
+            main(0.5),
+        ];
+        let mut p = parts(&roles.map(|(role, _)| (role, 0.4)));
+        for (part, (_, energy)) in p.iter_mut().zip(roles) {
+            part.energy = energy;
+        }
+        let plain = vec![Slot::new("mid", &["glider", "lasers"]), Slot::new("sky", &["galaxy", "planet"])];
+        let mut mid = Slot::new("mid", &["glider", "lasers", "rings"]);
+        mid.extra = vec![None, None, Some(Extra::Lively)];
+        let mut sky = Slot::new("sky", &["galaxy", "planet", "ships", "structure"]);
+        sky.extra = vec![None, None, Some(Extra::Calm), Some(Extra::Steady)];
+        let with = vec![mid, sky];
+        assert_eq!(check(&with), Ok(()));
+        assert_eq!(Extra::named("steady"), Some(Extra::Steady));
+        let before = rows(&p, &plain, 1);
+        let after = rows(&p, &with, 1);
+        // Columns after: glider lasers rings galaxy planet ships structure.
+        for (b, a) in before.iter().zip(&after) {
+            for (x, y) in [(0, 0), (1, 1), (3, 2), (4, 3)] {
+                assert_eq!(a.presence[x], b.presence[y], "every other cell as before: {a:?} {b:?}");
+            }
+            let extras = [2, 5, 6].iter().filter(|&&k| a.presence[k] > 0.0).count();
+            assert!(extras <= 1, "never two extras at once: {a:?}");
+        }
+        // Steady stretches: rows 1-2, 4, 6, 8, 10-11; the first, third and fifth show.
+        let steady: Vec<f64> = after.iter().map(|r| r.presence[6]).collect();
+        assert_eq!(steady, [0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]);
+        assert!(!Extra::Steady.fits(Role::Main, 0.8) && !Extra::Steady.fits(Role::Build, 0.5));
+        assert!(!Extra::Steady.fits(Role::Main, f64::NAN));
     }
 
     #[test]

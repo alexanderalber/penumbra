@@ -321,6 +321,15 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   while no ship shows. Give it to `beats.arrange` in the sky slot as `{path: "/ships", stages:
   ["/ascent"], extra: "calm"}`: the ships come in every second stretch of intros, outros and
   breaks on the ascent. See [outside_ships](#outside_ships).
+- **A megastructure to climb through.** `outside_megastructure` puts a lattice of girders round
+  the ascent's tower and a colossal ring round a glowing core far ahead. It has two outputs.
+  Wire `near` into the mid slot's `geo.merge` and `out` into the outside merge, with the
+  element's presence channel in both `show` inputs. Bind the ascent's `outside` to the larger
+  of the ships' and the megastructure's presence (a `chan.math` with `op: max`). Give it to
+  `beats.arrange` in the sky slot as `{path: "/megastructure", stages: ["/ascent"], extra:
+  "steady"}`: it comes in every second stretch of main sections below energy 0.8 on the ascent.
+  Those rows are neither lively nor calm, so it never shows with the rings or the ships. See
+  [outside_megastructure](#outside_megastructure).
 - **Lights for the room** come from `room_lights`: a picture for the room's columns and the
   channels for DMX lights, in the stage's colours and on its beat. Give it to `beats.arrange` as
   `lights: "/room"`, and its `pattern` changes with the sections. See [room_lights](#room_lights).
@@ -360,8 +369,8 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   `walls` is 1. With `curve` the bars and the city stand round the tube's far end, `far` metres
   ahead: a ring of `radius` round the axis, which the camera sees above the vanishing point. The
   figures stand on that ring's bottom and the planet hangs inside it. Wire the blended pose into
-  `mid_lasers`, `mid_glider`, `mid_equalisers`, `mid_traps` and `mid_rings` as into the sky
-  elements.
+  `mid_lasers`, `mid_glider`, `mid_equalisers`, `mid_traps`, `mid_rings` and the outside
+  elements as into the sky elements.
 - **Rolling the plane up into the tunnel.** `stage_synthwave` and `stage_tunnel` both have
   `roll_up`. Bind both to the share of the fade between them (the `min` 1 part of the `stage`
   channel above). While the switch fades, the plane's floor gives way to lines from right to
@@ -1269,6 +1278,42 @@ and the black bodies turn see-through. They do the same where the tower lies dow
   of the climb the ships sink by, 0.15), `storey` and `storey_beats` (as the stage's `ceiling`
   and `storey_beats`), `blink` (beats from one flash of a light to the next, 2), `seed`,
   `line_width`.
+
+### outside_megastructure
+
+![outside_megastructure](outside_megastructure/preview.png)
+
+A structure far larger than the tower of `stage_ascent`, which the climb passes through for a
+stretch. Two parts, both wireframe edges on black bodies:
+
+- **The lattice** stands just outside the tower's wall. Every 12 m of climb an octagonal collar
+  of box girders rings the tower, with heavy nodes at its corners. Lattice columns join the
+  collars, and two long trusses run out from each collar into the distance. The lattice passes
+  down with the storeys and turns with the tower. It stays 7 m or more from the tower's axis,
+  away from the glider and the camera.
+- **The ring** stands far ahead: a band of 32 segments 1.3 km across, a lattice ring inside it
+  and four trusses in towards a glowing core with a corona. It turns slowly and hangs above the
+  glider, seen through the open walls.
+
+**Coming and going.** As `presence` rises, the lattice comes down from above and the ring drops
+into view from over the top of the picture. As `presence` falls, both sink away below. The
+movement follows the presence, so a longer fade gives a slower arrival. The edges dim and the
+bodies turn see-through on the way. They do the same where the tower lies down as a tube (the
+pose's `curve` towards 1), so they are gone through a turn-up.
+
+**Layers.** `near` (the lattice) goes into the stage's `mid`. There it hides and is hidden by
+the storeys and posts as it should, and fades with distance like them. `out` (the ring and
+core) goes into the ascent's `outside`. There it stays sharp 1.8 km away.
+
+- In: `bus`, `pose` (the stage's: `radius`, `curve`). Out: `near` (into the stage's `mid`),
+  `out` (into the ascent's `outside`).
+- Params: `presence`, `warmth`, `brightness`, `storey` and `storey_beats` (as the stage's
+  `ceiling` and `storey_beats`: the lattice climbs with the storeys), `orbit` (as the stage's:
+  the lattice turns with the tower, 128), `distance` (metres to the ring, 1800), `height`
+  (metres the ring's middle stands above the camera, 380), `drop` (metres above the lattice
+  starts as it comes in, 40), `far_drop` (the same for the ring, 2400), `spin` (beats the ring
+  takes to turn once, 2048), `pulse` (the flash on each beat, 0.5), `line_width` (the lattice's
+  lines).
 
 ### post_scanlines
 

@@ -141,10 +141,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          \"/glider\" to come along with that element on its stages (it takes no turns, shows with the same \
          presence in a build or a main section of energy below 0.8 where /glider is the only element of \
          its slot on, not next to a change of stage, and flight is 4 there; every other cell stays as \
-         without it), and with extra: \"lively\" or \"calm\" to come now and then by itself on its stages (it \
-         takes no turns, shows with its slot's presence in every second stretch of lively rows, a drop, a \
-         build or a main section of energy from 0.8, or of calm rows, an intro, an outro or a break, not \
-         next to a change of stage; every other cell stays as without it): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
+         without it), and with extra: \"lively\", \"calm\" or \"steady\" to come now and then by itself on \
+         its stages (it takes no turns, shows with its slot's presence in every second stretch of lively \
+         rows, a drop, a build or a main section of energy from 0.8, of calm rows, an intro, an outro or a \
+         break, or of steady rows, a main section below energy 0.8, not next to a change of stage; every \
+         other cell stays as without it): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
          effects that are on or off each by itself (off in an intro, outro or break, on from a drop), every \
          other slot (floor, ceiling) follows the floor's rules), stage? (a path, or a list of stages side by \
          side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
@@ -896,13 +897,12 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
                     extra.as_deref(),
                 ),
             };
-            let extra =
-                match extra {
-                    None => None,
-                    Some(name) => Some(arrange::Extra::named(name).ok_or_else(|| {
-                        CommandError(format!("{path}: extra is lively or calm, not {name}"))
-                    })?),
-                };
+            let extra = match extra {
+                None => None,
+                Some(name) => Some(arrange::Extra::named(name).ok_or_else(|| {
+                    CommandError(format!("{path}: extra is lively, calm or steady, not {name}"))
+                })?),
+            };
             extras.push(extra);
             let column = |p: &NodePath| p.name().map(|n| n.as_str().to_string()).unwrap_or_default();
             if let Some(of) = of {
