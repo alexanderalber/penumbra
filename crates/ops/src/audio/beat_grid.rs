@@ -908,6 +908,9 @@ fn run(inner: &Inner, file: &Path, cancel: &AtomicBool, shared: &Shared) -> Resu
     if let Some(beats) = inner.cache.as_deref().and_then(|dir| beats::cached_beats(file, &model, dir)) {
         return Ok(beats);
     }
+    // A file that does not open as sound says so at once. In the pool its error would wait
+    // behind other files' network runs. Reading the first block is enough to know.
+    penumbra_audio::file::decode_each(file, &mut |_, _| false).map_err(BeatError::Input)?;
     let work = || compute(inner, file, &model, cancel, shared);
     match pool() {
         Some(p) => p.install(work),

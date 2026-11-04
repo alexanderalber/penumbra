@@ -169,20 +169,29 @@ fn the_header_follows_the_recording() {
         .start_sound(node, WavSettings { path: dir.join("live.wav"), format: WavFormat::Float32 })
         .unwrap();
     rec.push(block(0, 2, 4800, 48_000));
-    std::thread::sleep(wav::HEADER_EVERY + Duration::from_millis(50));
-    rec.push(block(4800, 2, 4800, 48_000));
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let file = loop {
-        let s = rec.status();
-        if s.samples == 9600 {
-            break s.file;
+    let samples = |n: u64| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let s = rec.status();
+            if s.samples == n {
+                break s.file;
+            }
+            assert!(Instant::now() < deadline, "{s:?}");
+            std::thread::sleep(Duration::from_millis(5));
         }
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(5));
     };
-    // Without a stop, the header has the second block within the interval.
+    let file = samples(4800);
     let read = || wav::read(std::path::Path::new(&file)).unwrap().channels[0].len();
-    assert!(read() >= 4800);
+    // The interval counts from when the thread made the file, which can be well after the
+    // push on a busy machine: wait for the first block in the header, then send the second.
+    let deadline = Instant::now() + 2 * wav::HEADER_EVERY + Duration::from_millis(500);
+    while read() < 4800 {
+        assert!(Instant::now() < deadline, "the header lags: {}", read());
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    rec.push(block(4800, 2, 4800, 48_000));
+    samples(9600);
+    // Without a stop, the header has the second block within the interval.
     let deadline = Instant::now() + 2 * wav::HEADER_EVERY + Duration::from_millis(500);
     while read() < 9600 {
         assert!(Instant::now() < deadline, "the header lags: {}", read());

@@ -338,9 +338,17 @@ fn a_go_button_held_over_a_resend_is_one_press() {
     f.call("chan.press", json!({"path": "/b", "down": true}));
     eventually("the second cue", || step() == 1.0);
     let before = presses().map_or(0, |p| p.0);
-    std::thread::sleep(Duration::from_millis(2500));
-    let held = presses().unwrap();
-    assert!(held.0 >= before + 2, "resent while held: {held:?}");
+    // Held until two resends arrived. The resends go by show time a second apart, and a busy
+    // machine can push one past a fixed wait.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let held = loop {
+        let p = presses().unwrap();
+        if p.0 >= before + 2 {
+            break p;
+        }
+        assert!(std::time::Instant::now() < deadline, "resent while held: {p:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    };
     assert_eq!(held.1, 1, "one press: {held:?}");
     assert_eq!(step(), 1.0, "no cue skipped");
     f.call("chan.press", json!({"path": "/b", "down": false}));
