@@ -558,12 +558,13 @@ floor, mid and ceiling elements. A black body stays black in the water, and its 
 fainter and softer than they shine. The mirror is faint near the camera and strong towards the
 horizon. The stage draws that mirror as a second, small render of the scene from below the
 water, upside down. The stage also cuts every render at the water line, so an element sinks into
-the lake without a sheet of its own. A low mist drifts on the water near the camera; the bass thickens
-it. Ripples and mist come towards the camera one grid cell per beat of `travelled`, as the
-synthwave floor does. The sky elements are `sky_stars`, `sky_horizon_glow`, `sky_volcano` and
-`sky_clouds`. On the shore stand the floor elements `floor_terraces`, `floor_reeds` and
-`floor_stelae`. In the air hang the mid elements `mid_glyphs` (rings of light that open in a
-breakdown), `mid_smoke` and `mid_birds`.
+the lake without a sheet of its own. A low mist drifts on the water near the camera; the bass
+thickens it. Ripples and mist come towards the camera one grid cell per beat of `travelled`, as
+the synthwave floor does. The sky elements are `sky_stars`, `sky_horizon_glow`, `sky_volcano`
+and `sky_clouds`. On the shore stand the floor elements `floor_terraces`, `floor_reeds`,
+`floor_stelae` and `floor_gates` (gates across the lane that the camera flies through). In the
+air hang the mid elements `mid_glyphs` (rings of light that open in a breakdown), `mid_smoke`
+and `mid_birds`.
 
 The stage has a slow signal of its own, the swell. It rises over about 8 seconds while the music
 is quiet (a breakdown) and over the 8 bars before a new section (the grid's `build`), and it
@@ -840,25 +841,73 @@ breakdown, each clump catching the light at its own moment. All reeds are one
 
 ![floor_stelae](floor_stelae/preview.png)
 
-Upright stones on the turns of `stage_valley`'s lane, each with a carved glyph on its front. A
-stela stands on the outside of every turn, close to the lane, its front turned towards the lane
-and the camera. The glyph is one of three: a squared spiral, a step fret (a staircase ending in a
-hook) or a square of dots, each over a number in dots and bars. The light comes from the band on
-the horizon: the grooves stay dark, their lower walls and the rims catch copper light. The light
-grows towards `dawn` 1 and with the stage's swell, and each beat adds a small pulse. The stelae
-find the turns in the stage's `lane` picture, so they follow any `bars_per_turn`. `stelae.py`
-in the folder writes the models.
+Groups of carved stones on the turns of `stage_valley`'s lane, black against the band, standing
+in the water like a ruin. About one turn in three holds a group of 1 to 5 stones; the other
+turns stay empty, so long stretches pass without any. A group stands on the outside of its turn,
+beyond `clear`, spread along the lane. Its near stones stand further out than its far ones, so
+the group fans out as the camera comes closer. Each stone is one of four models:
+
+- a weathered monolith with a rounded top, its glyphs cut as eroded grooves that glow ember;
+- a slender stone with a broken, slanted top and low relief panels, lit only where the light
+  grazes in from one edge, with thin rim lines on its edges;
+- the monolith broken, leaning and half sunk, its top lying in the water beside it;
+- rarely, a disc on a stepped pedestal, alone or in the middle of a group. Its carved rings fill
+  with light from the middle out as the swell rises, and a ring of light runs out on each beat.
+
+The light comes from the band behind the stones: rims on the edges the camera sees, glowing
+grooves on the fronts. The swell lifts the grooves more than the rims, and `warmth` turns copper
+and ember to jade. The stones of a group glow in turn: on each bar the next one, from near to
+far, lights up to full glow and fades over about three beats, while the others keep a low glow.
+A stone alone brightens a little on each beat instead. A group keeps its place, stones and looks
+as it comes nearer. `stelae.py` in the folder writes the models.
 
 - In: `bus`, `lane`, `pose` (the stage's: `dawn` and `swell` come from it). Out: `out`.
-- Params: `presence` (towards 0 the stelae sink into the water one after another; at a steady
-  presence a stela stands whole or not at all), `seed` (other glyphs and sizes), `height`
-  (metres, 2.4), `width` (metres, 0.9), `thick` (metres, 0.35), `light` (brightness of rim and
-  glyph), `pulse` (how much the light brightens on a beat), `face` (degrees the front turns
-  from the lane towards the camera, 30), `warmth` (0 copper light, 1 jade; `beats.arrange`
-  binds it), `lane` (1.6), `clear` (metres between the lane's edge and a stela, 1.3), `near`,
-  `far` (36 m), `smooth`, `groove` (how bright a groove's floor is), `line_width`.
-- The stelae sink below the water line, as `floor_terraces` do: `stage_valley` hides what lies
+- Params: `presence` (towards 0 the groups sink into the water one after another; at a steady
+  presence a stone stands whole or not at all), `seed` (other groups, stones and sizes),
+  `height` (the monolith's height in metres, 2.6; the other models in proportion), `width` (1),
+  `thick` (0.55), `light` (brightness of rims and grooves), `groove` (how bright a groove's
+  floor glows), `pulse` (how much a stone alone brightens on a beat), `face` (degrees a front
+  turns from the lane towards the camera, 30), `warmth` (0 copper, 1 jade; `beats.arrange`
+  binds it), `lane` (1.6), `clear` (metres between the lane's edge and the nearest stone, 1.3),
+  `near`, `far` (36 m), `smooth`, `line_width`.
+- Groups: `groups` (share of the turns with a group, 0.35), `size` (most stones in a group, 5),
+  `spread` (metres of water between two stones of a group, 1), `scatter` (metres the group fans
+  out away from the lane, 2.5), `disc` (chance that a stone alone or the middle one of an odd
+  group is the disc, 0.6).
+- Glow in turn: `glow_every` (beats between two stones lighting up: 4 on each bar, 1 on each
+  beat), `glow_fall` (beats a lit stone takes to fade, 3), `base` (share of the glow the other
+  stones keep, 0.2).
+- The stones sink below the water line, as `floor_terraces` do: `stage_valley` hides what lies
   under it.
+- The carving is one picture of 2048 x 2048 that cooks once. The light, the swell, the beat and
+  the glow in turn reach the stones as each copy's colour, so a frame costs only small pictures
+  of 5 x 8.
+
+### floor_gates
+
+![floor_gates](floor_gates/preview.png)
+
+Stone gates across `stage_valley`'s lane: two pillars, a lintel and a stepped crest, black
+against the band, and the camera flies through them. A gate stands on every other turn of the
+lane by default. The lintel carries a running step fret, each pillar a column of signs, glowing
+faint ember; rims of copper light run along the edges the band lights from behind. The swell
+makes the carving glow brighter, each beat adds a small pulse, and `warmth` turns it jade.
+
+The camera flies straight ahead while the lane swings to either side of it. A gate stands half
+way between the two and opens wide enough for both, so neither the camera nor anything flying
+along the lane touches a pillar. A pillar passes the camera at least 1.9 m to the side at the
+default params and crosses the picture's edge in about a second.
+
+- In: `bus`, `lane`, `pose` (the stage's: `dawn` and `swell` come from it). Out: `out`.
+- Params: `presence` (towards 0 the gates sink into the water one after another), `seed`
+  (which turns hold a gate first), `height` (to the top of the crest, 3.8 m; the lintel's
+  underside lies at 0.8 of it), `thick` (0.6), `light`, `groove`, `pulse`, `warmth`
+  (`beats.arrange` binds it), `lane` (1.6), `clear` (metres between a pillar and the free path,
+  0.3), `swing` (set it to the stage's `swing`, 0.9), `every` (a gate on every this many turns,
+  2), `near`, `far` (40 m), `smooth`.
+- In the floor slot a gate row shows only gates and the slot's base. Give it a lower weight than
+  the other floor elements, so gates stay an event.
+- `gates.py` in the folder writes the model. The carving cooks once, as on `floor_stelae`.
 
 ### mid_glider
 
