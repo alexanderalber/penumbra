@@ -555,8 +555,8 @@ overhead. The dawn lies on the horizon as a band of light: `dawn` 0 is a thin da
 broad copper band with a gold core. The band never becomes a sun. The lake mirrors the sky, the
 band and the stars, blurred and broken up by ripples. It also mirrors what stands on it: the
 floor, mid and ceiling elements. A black body stays black in the water, and its rims mirror
-fainter and softer than they shine. The mirror is faint near the camera and strong towards the
-horizon. The stage draws that mirror as a second, small render of the scene from below the
+fainter and softer than they shine. The mirror of a thing starts at its foot; the ripples move
+only its far parts. The mirror is faint near the camera and strong towards the horizon. The stage draws that mirror as a second, small render of the scene from below the
 water, upside down. The stage also cuts every render at the water line, so an element sinks into
 the lake without a sheet of its own. A low mist drifts on the water near the camera; the bass
 thickens it. Ripples and mist come towards the camera one grid cell per beat of `travelled`, as
@@ -586,7 +586,7 @@ glow. So a breakdown raises the light on the horizon, and the drop takes it back
   than on `stage_synthwave`), `swing`, `turn`, `beats_per_bar`; `step`; `start`, `end` of the
   distance fade (12 and 40 m: the valley is wide). The water: `ground` (1: below the horizon
   only the water shows; 0 the sky elements show through it), `reflection` (1), `ripple` (1),
-  `mist` (1; 0 none), `shore` (how much of the reflection shows where the shore stands: 0.5),
+  `mist` (1; 0 none; `ripple` moves the sky's and the things' mirror alike), `shore` (how much of the reflection shows where the shore stands: 0.5),
   `mirror` (how much the water mirrors what stands on it: 1 fully, 0 only the sky; turn it down
   where a projector shows too much), `mirror_size` (the size of the mirror's render as a share
   of 1920x1080: 0.5; a larger one is sharper, 0.25 costs less and blurs thin rims). Things high
@@ -813,6 +813,16 @@ in the folder writes the models.
   it), `lane` (1.6), `clear` (metres between the lane's edge and the near line, 2.2), `near`,
   `far` (36 m), `beats_per_bar`, `smooth` (seconds the bass takes to fall), `line_width`,
   `extent`.
+- Rising and sinking: a platform that `presence` brings or takes rises or sinks over `ease`
+  bars (2). Within `hold` metres of the camera (9) a platform keeps what it does until it has
+  passed. So a stretch of platforms begins far ahead and ends behind the camera.
+- The tide: every `tide_bars` bars (2; 1, 2 or 4; 0 none), on the downbeat, one platform between
+  8 and 30 m ahead starts to sink or to rise. It takes the whole period. About `tide_share` of the
+  platforms in view (0.25) lie under water at a time. The tide runs while `tide` is 0.6 or more:
+  bind `tide` to the arrangement's `intensity`, and the tide runs in mains and drops and rests in
+  intros, outros and breaks. Presence still sinks all of them.
+- The component remembers each place from frame to frame (its `memory` node). After a seek
+  every platform starts as presence and the tide want it, without rising.
 - The platforms sink below the water line. `stage_valley` cuts its renders there, so on that
   stage the sunk part stays hidden. On another stage it would show below the floor.
 
@@ -828,7 +838,9 @@ breakdown, each clump catching the light at its own moment. All reeds are one
 `geo.tex_instance` of one clump, so they cost little. `reeds.py` in the folder writes the clump.
 
 - In: `bus`, `lane`, `pose` (the stage's: `swell` comes from it). Out: `out`.
-- Params: `presence` (towards 0 the clumps shrink into the water one after another), `spacing`
+- Params: `presence` (towards 0 the clumps shrink into the water one after another; a clump
+  shrinks or grows over `ease` bars, 2, and within `hold` metres of the camera, 9, it keeps
+  what it does until it has passed), `spacing`
   (metres between two clumps of a line), `fill` (share of the places with a clump, 0.8), `size`
   (a clump's height, metres, 1.2), `sway` (degrees the reeds lean to either side at full bass,
   7), `calm` (share of the sway left in a quiet bass, 0.3), `wave` (metres between two crests of
@@ -877,6 +889,10 @@ as it comes nearer. `stelae.py` in the folder writes the models.
 - Glow in turn: `glow_every` (beats between two stones lighting up: 4 on each bar, 1 on each
   beat), `glow_fall` (beats a lit stone takes to fade, 3), `base` (share of the glow the other
   stones keep, 0.2).
+- Rising and sinking as on `floor_terraces`: `ease` (2 bars), `hold` (9 m), and the tide with
+  `tide_bars` (4: slower than the platforms, since a turn holds only a few stones), `tide_share`
+  (0.25) and `tide` (bind it to the arrangement's `intensity`). The tide moves single stones of
+  a group.
 - The stones sink below the water line, as `floor_terraces` do: `stage_valley` hides what lies
   under it.
 - The carving is one picture of 2048 x 2048 that cooks once. The light, the swell, the beat and
@@ -904,7 +920,9 @@ default params and crosses the picture's edge in about a second.
   underside lies at 0.8 of it), `thick` (0.6), `light`, `groove`, `pulse`, `warmth`
   (`beats.arrange` binds it), `lane` (1.6), `clear` (metres between a pillar and the free path,
   0.3), `swing` (set it to the stage's `swing`, 0.9), `every` (a gate on every this many turns,
-  2), `near`, `far` (40 m), `smooth`.
+  2), `near`, `far` (40 m), `smooth`, `ease` (bars a gate takes to rise or sink when
+  `presence` brings or takes it, 2), `hold` (within this many metres a gate keeps what it does
+  until the camera has flown through, 9). Gates have no tide.
 - In the floor slot a gate row shows only gates and the slot's base. Give it a lower weight than
   the other floor elements, so gates stay an event.
 - `gates.py` in the folder writes the model. The carving cooks once, as on `floor_stelae`.

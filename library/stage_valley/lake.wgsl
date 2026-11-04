@@ -9,8 +9,8 @@
 // in2: a smaller, blurred copy of in0, optional: the water mirrors that one, so single stars
 // melt into a faint glow in the reflection. Without it the water mirrors in0 itself.
 // in3: what stands on the water as the water mirrors it (mirror.wgsl), optional: lined up with this
-// picture, premultiplied. It covers the sky's reflection, so a black silhouette stays black in the
-// water and its rims mirror dimmer than they shine.
+// picture, premultiplied, already broken up by the same ripples. It covers the sky's reflection, so
+// a black silhouette stays black in the water and its rims mirror dimmer than they shine.
 // @param eye float = 1.2 0..10 -- the camera's height over the water, metres (height of the stage's pose)
 // @param pitch float = -1 -60..60 -- the camera's tilt up, degrees
 // @param fov float = 58 10..120 -- the camera's vertical field of view, degrees
@@ -61,10 +61,6 @@ const LANE_FAR: f32 = 56.0;
 const TAPS: i32 = 6;
 // How bright the mirrored rims are against the rims themselves, before the fresnel.
 const RIM_MIRROR: f32 = 0.6;
-// What stands on the water mirrors with less of the vertical blur than the sky, so thin rims stay
-// lines; a small sideways wobble breaks them into ripples instead.
-const THING_SPREAD: f32 = 0.5;
-const THING_WOBBLE: f32 = 0.04;
 // Bright rims mirror relatively dimmer, so a ring of light does not mirror as a glowing disc.
 const THING_KNEE: f32 = 2.0;
 // The mirror of things fades faster than the sky's as the water is seen further down: a thing
@@ -111,8 +107,6 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     // A blur along the vertical that grows towards the camera, as on real water.
     let spread = (0.05 * b + 3.0 * px) * (0.5 + 0.5 * rough);
     let soft = textureDimensions(in2).x > 1u;
-    let things = textureDimensions(in3).x > 1u;
-    let cover = clamp(params.mirror, 0.0, 1.0);
     var mirrored = vec3f(0.0);
     for (var k = 0; k < TAPS; k++) {
         let f = (f32(k) + 0.5) / f32(TAPS) - 0.5;
@@ -124,22 +118,16 @@ fn main(v: PnVertex) -> @location(0) vec4f {
             let blurred = textureSampleLevel(in2, pn_clamp, uv, 0.0).rgb;
             tap = mix(tap, blurred, smoothstep(0.0, 0.04, b));
         }
-        if things {
-            // The same ripple moves the mirrored things: their mirror at this tap lies as far below
-            // the horizon as the sky's lies above it.
-            let w3 = pn_noise(vec3f(across * 2.2, along * 7.0, params.beats * 0.2), 11u);
-            let st = vec2f(
-                s.x + THING_WOBBLE * rough * w3 * (b + 2.0 * px),
-                max(b + shift + f * spread * THING_SPREAD, 0.0),
-            );
-            let g = textureSampleLevel(in3, pn_clamp, sky_uv(vec2f(st.x, -st.y)), 0.0) * cover;
-            let lum = max(g.r, max(g.g, g.b));
-            let rim = g.rgb * RIM_MIRROR * exp(-b * THING_FALL) / (1.0 + THING_KNEE * lum);
-            tap = tap * (1.0 - g.a) + rim;
-        }
         mirrored += tap;
     }
     mirrored /= f32(TAPS);
+    if textureDimensions(in3).x > 1u {
+        // The things over the sky's reflection.
+        let g = textureSampleLevel(in3, pn_clamp, v.pos.xy / pn.resolution, 0.0) * clamp(params.mirror, 0.0, 1.0);
+        let lum = max(g.r, max(g.g, g.b));
+        let rim = g.rgb * RIM_MIRROR * exp(-b * THING_FALL) / (1.0 + THING_KNEE * lum);
+        mirrored = mirrored * (1.0 - g.a) + rim;
+    }
     // Near the horizon the water mirrors most, looking down it shows little.
     let fresnel = mix(0.06, 1.0, exp(-b * 4.0));
     let strength = params.reflection * fresnel * mix(1.0, params.shore, shore_here);

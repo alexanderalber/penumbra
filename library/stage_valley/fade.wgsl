@@ -1,17 +1,12 @@
 // The render faded with distance, so the lines melt into the sky towards the horizon, and cut at
 // the water: what lies below the water line (a terrace sinking, its foot) is left out, so the lake
-// shows there. The same pass makes the lake's mirror of what stands on the water: with `mirrored`
-// on, in0 is a render by a camera mirrored at the water (as far below it as the stage's camera is
-// above, tilted the other way, the roll turned round). The pass turns that render upside down, so
-// each pixel shows what the water at the same pixel of the stage's picture mirrors, and cuts away
-// what the mirrored camera sees below the water.
+// shows there. mirror.wgsl does the same for the lake's mirror of what stands on the water.
 // in0: the render's picture, in1: its data output (the distance from the camera in alpha, 0
 // where nothing was drawn). The data pass leaves out a faint haze (under 5 % alpha), which
 // fades itself: a pixel with no distance in or around it and under 5 % alpha keeps its colour.
 // The cut needs the stage's camera: eye, pitch, fov, roll and side as the lake has them.
 // @param start float = 12 0..50 -- metres where the fade begins
 // @param end float = 40 0..100 -- metres where nothing is left
-// @param mirrored bool = false -- in0 is the mirrored render: turn it upside down and cut what lies below the water as that camera sees it
 // @param eye float = 1.2 0..10 -- the stage camera's height over the water, metres
 // @param pitch float = -1 -60..60 -- the stage camera's tilt up, degrees
 // @param fov float = 58 10..120 -- the stage camera's vertical field of view, degrees
@@ -21,11 +16,7 @@
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
     let last = vec2i(textureDimensions(in0)) - 1;
-    var at = vec2i(v.pos.xy);
-    if params.mirrored != 0u {
-        at.y = last.y - at.y;
-    }
-    at = clamp(at, vec2i(0), last);
+    let at = clamp(vec2i(v.pos.xy), vec2i(0), last);
     let c = textureLoad(in0, at, 0);
     // The data pass has no antialiasing, so the soft edge of a line can fall on a pixel it
     // left empty: there the nearest distance around stands in.
@@ -46,8 +37,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     }
 
     // The ray of the stage's camera through this pixel of its picture, its forward part 1, so the
-    // point lies `d` along it. For the mirrored render that point is the mirror image: as far
-    // below the water as the real one stands above it.
+    // point lies `d` along it.
     let res = pn.resolution;
     let t = tan(radians(0.5 * clamp(params.fov, 1.0, 170.0)));
     let q = vec2f((v.pos.x - 0.5 * res.x) / res.y, 0.5 - v.pos.y / res.y) * 2.0 * t;
@@ -57,10 +47,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let right = normalize(vec3f(ahead.y, -ahead.x, 0.0));
     let up = cross(right, ahead);
     let ray = ahead + p.x * right + p.y * up;
-    var height = max(params.eye, 0.0) + min(d, 1e4) * ray.z;
-    if params.mirrored != 0u {
-        height = -height;
-    }
+    let height = max(params.eye, 0.0) + min(d, 1e4) * ray.z;
     let above = smoothstep(-0.02, 0.02, height);
     return c * above * (1.0 - smoothstep(params.start, params.end, d));
 }

@@ -9,8 +9,14 @@
 // y = -8 + i * 0.25 to -8 + (i + 1) * 0.25 metres ahead. Unconnected: a straight lane at x = 0,
 // no gaps and `step` metres per beat.
 // `what` place: the clump's foot (rgb). aim: its turn and lean. scale: its size (0 where none
-// stands). color: the glint, as a factor on the reeds' ramp. Render each 4 x 72.
-// @param what choice(place|aim|scale|color) = place -- what this node writes
+// stands). color: the glint, as a factor on the reeds' ramp. Render each 4 x 72, with the memory
+// in in1. memory: what each clump remembers from frame to frame. Render it 5 x 128 and feed it
+// back into itself through a tex.feedback into its own in1. A clump that presence brings or takes
+// grows or shrinks over `ease` bars; within `hold` metres of the camera it keeps what it does
+// until it has passed. Texel (column, n modulo 128) holds clump n of that column: red 1 if it
+// stands by presence plus 4 times its lap, green how far it has grown; texel (4, 0) the clock
+// (whole beats modulo 1024, the beat's fraction).
+// @param what choice(place|aim|scale|color|memory) = place -- what this node writes
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid)
 // @param bass float = 0 0..1 -- the bass (energy_low of a chan.beat_grid, smoothed): the reeds sway wider with it
 // @param swell float = 0 0..1 -- the stage's swell: the tips glint with it
@@ -28,9 +34,14 @@
 // @param near float = -3 -8..10 -- where the reeds leave, behind the camera
 // @param far float = 30 1..56 -- where they appear
 // @param step float = 0.5 0.1..2 -- metres per beat while no lane picture is wired; with one, the stage's step
+// @param ease float = 2 0.25..8 -- bars a clump takes to grow or shrink when presence brings or takes it
+// @param hold float = 9 0..30 -- metres ahead within which a clump keeps what presence gave it until it has passed
 
 const LANE_NEAR: f32 = -8.0;
 const LANE_FAR: f32 = 56.0;
+// The memory: clumps per column it holds, and the clock's column.
+const SLOTS: f32 = 128.0;
+const CLOCK: u32 = 4u;
 
 fn on_floor(y: f32, step: f32) -> bool {
     let s = max(step, 0.01);
@@ -38,6 +49,87 @@ fn on_floor(y: f32, step: f32) -> bool {
     let mid = (floor(c + 0.01) + 0.5 - params.beats) * s;
     let texel = clamp(i32(floor((mid - LANE_NEAR) / (LANE_FAR - LANE_NEAR) * 256.0)), 0, 255);
     return textureLoad(in0, vec2i(texel, 0), 0).a >= 0.5;
+}
+
+fn ease(x: f32) -> f32 {
+    let t = clamp(x, 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// Clump n's lap in the memory, as red stores it: 1 to 16.
+fn lap_of(n: f32) -> f32 {
+    let lap = floor(n / SLOTS);
+    return lap - 16.0 * floor(lap / 16.0) + 1.0;
+}
+
+fn slot_of(n: f32) -> i32 {
+    return i32(n - SLOTS * floor(n / SLOTS));
+}
+
+struct Travel {
+    whole: f32,
+    part: f32,
+    // the first clump in view, counted from `whole`
+    first: f32,
+}
+
+// Clump n of a line stands at y = spacing * n - the metres travelled; the whole and the fraction
+// of that count are kept apart to stay exact far into a file.
+fn travel_of(line: u32) -> Travel {
+    var t: Travel;
+    let lane0 = textureLoad(in0, vec2i(0, 0), 0);
+    let step = select(params.step, lane0.b, lane0.b > 0.0);
+    let spacing = max(params.spacing, 0.05);
+    let travel = params.beats * step / spacing + 0.37 * f32(line);
+    t.whole = floor(travel);
+    t.part = travel - t.whole;
+    t.first = ceil(params.near / spacing + t.part);
+    return t;
+}
+
+// Whether presence wants clump n of a column standing: each clump at its own share of it; at a
+// steady presence it stands or not.
+fn wanted(n: i32, column: u32) -> bool {
+    let w = f32(pn_hash(vec3u(bitcast<u32>(n), column, 73u)).x) / 4294967296.0;
+    return params.presence * 1.6 - w >= 1.0 / 16.0;
+}
+
+// One texel of the memory. in1 is the memory of the last frame.
+fn memory(cell: vec2u) -> vec4f {
+    let clock = textureLoad(in1, vec2i(i32(CLOCK), 0), 0);
+    let whole_beats = floor(params.beats);
+    let wrapped = whole_beats - 1024.0 * floor(whole_beats / 1024.0);
+    if cell.x >= CLOCK {
+        return vec4f(wrapped, params.beats - whole_beats, 0.0, 1.0);
+    }
+    // The beats since the last frame. A jump (a seek, the first frame) starts the memory afresh.
+    var dt = wrapped - clock.r;
+    if dt < -512.0 {
+        dt += 1024.0;
+    }
+    dt += params.beats - whole_beats - clock.g;
+    let jump = clock.a < 0.5 || dt < -0.01 || dt > 4.0;
+    let t = travel_of(cell.x % 2u);
+    let n_first = t.whole + t.first - 1.0;
+    let slot = f32(cell.y);
+    let n = n_first + (slot - n_first - SLOTS * floor((slot - n_first) / SLOTS));
+    let y = max(params.spacing, 0.05) * (n - t.whole - t.part);
+    let want = wanted(i32(n), cell.x);
+    let before = textureLoad(in1, vec2i(cell), 0);
+    var by_presence = (i32(round(before.r)) & 1) == 1;
+    var risen = before.g;
+    if jump || f32(i32(round(before.r)) / 4) != lap_of(n) {
+        by_presence = want;
+        risen = select(0.0, 1.0, want);
+    } else {
+        if y > params.hold {
+            by_presence = want;
+        }
+        let bpb = 4.0;
+        let rate = dt / (max(params.ease, 0.05) * bpb);
+        risen = clamp(risen + select(-rate, rate, by_presence), 0.0, 1.0);
+    }
+    return vec4f(select(0.0, 1.0, by_presence) + 4.0 * lap_of(n), risen, 0.0, y);
 }
 
 struct Clump {
@@ -60,15 +152,11 @@ fn clump(cell: vec2u) -> Clump {
     if side > 1u {
         return c;
     }
-    // Clump n of a line stands at y = spacing * n - the metres travelled; the whole and the
-    // fraction of that count are kept apart to stay exact far into a file.
     let spacing = max(params.spacing, 0.05);
-    let travel = params.beats * step / spacing + 0.37 * f32(line);
-    let whole = floor(travel);
-    let part = travel - whole;
-    let first = ceil(params.near / spacing + part);
-    let k = first + f32(cell.y);
-    let n = i32(whole + k);
+    let tr = travel_of(line);
+    let part = tr.part;
+    let k = tr.first + f32(cell.y);
+    let n = i32(tr.whole + k);
     let r = vec4f(vec3f(pn_hash(vec3u(bitcast<u32>(n), cell.x, 71u))), f32(pn_hash(vec3u(bitcast<u32>(n), cell.x, 73u)).x)) / 4294967296.0;
     let y = spacing * (k - part + 0.6 * (r.x - 0.5));
     let u = (y - LANE_NEAR) / (LANE_FAR - LANE_NEAR);
@@ -85,10 +173,15 @@ fn clump(cell: vec2u) -> Clump {
     // aim: the clump's +y points across the lane, tipped down by `lean`, so its +z leans the
     // other way by as much.
     c.aim = vec3f(cos(lean), 0.0, -sin(lean));
-    // Presence: each clump shrinks at its own share of it; at a steady presence it stands whole
-    // or not at all.
-    let own = clamp((params.presence * 1.6 - r.w) * 8.0, 0.0, 1.0);
-    let up = own * own * (3.0 - 2.0 * own);
+    // Presence: how far it stands, from the memory, or without one at once.
+    var up = select(0.0, 1.0, wanted(n, cell.x));
+    if textureDimensions(in1).x > 1u {
+        let nf = tr.whole + k;
+        let m = textureLoad(in1, vec2i(i32(cell.x), slot_of(nf)), 0);
+        if f32(i32(round(m.r)) / 4) == lap_of(nf) {
+            up = ease(m.g);
+        }
+    }
     c.at = vec3f(lane.r + sign * off, y, 0.0);
     let there = r.y * 0.999 + 0.0005 < params.fill;
     if y > params.far || up < 0.02 || !there || (wired && !on_floor(y, step)) {
@@ -103,6 +196,9 @@ fn clump(cell: vec2u) -> Clump {
 
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
+    if params.what == what_memory {
+        return memory(vec2u(v.pos.xy));
+    }
     let c = clump(vec2u(v.pos.xy));
     if params.what == what_place {
         return vec4f(c.at, 1.0);
