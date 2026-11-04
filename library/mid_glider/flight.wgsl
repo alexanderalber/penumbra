@@ -12,9 +12,13 @@
 // @param bob float = 0 -1..1 -- metres up or down on top of `hover`; bind it to a slow wave
 // @param scale float = 0.16 0..1 -- the glider's size; 0.16 makes it 2.4 m long
 // @param walls float = 0 0..1 -- 1 where the stage has walls (walls of its pose): the glider floats up out of the picture instead of climbing away ahead
+// @param thread float = 0 0..1 -- how much the glider follows the traps' corridor: towards 1 it flies at `lift` instead of `hover`, 2 m further ahead
+// @param lift float = 2 0..8 -- the height of the traps' corridor where the glider flies, metres above the floor (steer.wgsl's alpha)
 
 // Metres the glider flies ahead of `at` and climbs at presence 0.
 const AWAY: f32 = 6.0;
+// Metres the glider flies further ahead along the traps' corridor (steer.wgsl's THREAD_AHEAD).
+const THREAD_AHEAD: f32 = 2.0;
 const CLIMB: f32 = 1.0;
 // Metres the glider floats up at presence 0 on a stage with walls: out of the top of the picture
 // at its usual place.
@@ -26,8 +30,9 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let a = 1.0 - p;
     let e = a * a * (3.0 - 2.0 * a);
     let w = clamp(params.walls, 0.0, 1.0);
-    let y = params.at + AWAY * e * (1.0 - w);
-    let z = params.hover + params.bob + mix(CLIMB, FLOAT, w) * e;
+    let y = params.at + AWAY * e * (1.0 - w) + THREAD_AHEAD * clamp(params.thread, 0.0, 1.0);
+    let base = mix(params.hover, params.lift, clamp(params.thread, 0.0, 1.0));
+    let z = base + params.bob + mix(CLIMB, FLOAT, w) * e;
     let shrink = mix(smoothstep(0.0, 0.25, p), 1.0, w);
     let scale = select(0.0, params.scale * shrink, p > 0.001);
     return vec4f(y, z, scale, 1.0);

@@ -23,6 +23,11 @@
 //!   would, with the same presence, and the other one stays at 0 there. Elsewhere it stays at 0.
 //!   The swaps and turns of every slot stay what they were without it, so adding a stand-in
 //!   changes the table only in the rows where it takes over.
+//! - **Companions:** an element may come along with another one (the traps with the glider). It
+//!   takes no turns either. On its stages it shows in a build, or in a main section of energy
+//!   below [`COMPANION_ENERGY`], where the other one is the only element of its slot on, with
+//!   the other one's presence; not in the rows on either side of a change of stage. In those rows
+//!   the glider flies through it ([`FLIGHT_THREAD`]). Every other cell stays as without it.
 //! - **Weights:** an element of weight 3 comes on three times as often as one of weight 1. The
 //!   next element is the one owed the most turns (smooth weighted round robin), so the turns of a
 //!   heavy element spread out evenly and the same file always gives the same table. With equal
@@ -45,7 +50,8 @@
 //!   lane's turns ([`FLIGHT_SLALOM`]), straight down the lane's middle ([`FLIGHT_STRAIGHT`]),
 //!   along the turns with a roll on a downbeat ([`FLIGHT_ROLL`]), or straight with a lean on each
 //!   downbeat ([`FLIGHT_BANK`]). Straight in a break, rolls on a drop, the lean in a build, and a
-//!   variant per track in an intro, an outro and a main section ([`FLIGHT_VARIANTS`]).
+//!   variant per track in an intro, an outro and a main section ([`FLIGHT_VARIANTS`]). Where a
+//!   companion is on, the glider follows its corridor ([`FLIGHT_THREAD`]).
 //! - **Pattern:** each row names the pattern the lights of the room show (a `room_lights` in the
 //!   library): stripes rising up the columns ([`PATTERN_STRIPES`]), every column flashing on the
 //!   beat ([`PATTERN_PULSE`]), or one column after the other ([`PATTERN_CHASE`]). Stripes where
@@ -136,6 +142,8 @@ pub const FLIGHT_STRAIGHT: usize = 1;
 pub const FLIGHT_ROLL: usize = 2;
 /// The glider flies straight and leans to one side and back on each downbeat.
 pub const FLIGHT_BANK: usize = 3;
+/// The glider follows the free corridor through a companion's beams (`mid_traps`).
+pub const FLIGHT_THREAD: usize = 4;
 /// The flights the tracks take in turn in an intro, an outro and a main section.
 pub const FLIGHT_VARIANTS: [usize; 3] = [FLIGHT_SLALOM, FLIGHT_STRAIGHT, FLIGHT_BANK];
 /// The room's columns show stripes that rise slowly: calm sections.
@@ -158,6 +166,9 @@ pub const GAPS_BUILD: f64 = 0.3;
 pub const GAPS_BREAK: f64 = 0.6;
 /// How far the walls open in a row that sees through them: wholly.
 pub const SEE_THROUGH: f64 = 1.0;
+/// A companion comes along in a main section only below this energy: a calmer stretch, not the
+/// height of a track.
+pub const COMPANION_ENERGY: f64 = 0.8;
 
 /// How much of the floor breaks off into gaps, per role: a share from 0 to 1 for a build and a
 /// break; every other role keeps its floor whole.
@@ -304,6 +315,9 @@ pub struct Slot {
     /// empty for none at all. A stand-in takes no turns; on its stages it shows where the other
     /// one would, and the other one stays at 0 there.
     pub instead: Vec<Option<String>>,
+    /// The element each one comes along with, by column name, or none: one entry per element, or
+    /// empty for none at all. A companion takes no turns; see the module's notes.
+    pub with: Vec<Option<String>>,
 }
 
 /// The heaviest weight an element takes; heavier ones count as this.
@@ -318,6 +332,7 @@ impl Slot {
             weights: Vec::new(),
             stages: Vec::new(),
             instead: Vec::new(),
+            with: Vec::new(),
         }
     }
 
@@ -326,10 +341,20 @@ impl Slot {
         self.instead.get(i).and_then(|x| x.as_deref())
     }
 
+    /// The element that element `i` comes along with, if it is a companion.
+    pub fn comes_with(&self, i: usize) -> Option<&str> {
+        self.with.get(i).and_then(|x| x.as_deref())
+    }
+
+    /// Whether element `i` takes no turns of its own: a stand-in or a companion.
+    fn follows(&self, i: usize) -> bool {
+        self.stands_in_for(i).is_some() || self.comes_with(i).is_some()
+    }
+
     /// Whether element `i` may come on by a swap on stage `stage`: it shows there and is no
-    /// stand-in.
+    /// stand-in or companion.
     fn takes_turns(&self, i: usize, stage: usize) -> bool {
-        self.shows_in(i, stage) && self.stands_in_for(i).is_none()
+        self.shows_in(i, stage) && !self.follows(i)
     }
 
     /// Whether element `i` shows on stage `stage`.
@@ -389,8 +414,8 @@ pub fn columns(slots: &[Slot]) -> Vec<String> {
 }
 
 /// Why `slots` cannot make a table: an element name that is no channel name, a name twice or
-/// one of the table's own columns, no element at all, or a stand-in for no element, for itself,
-/// for another stand-in or in or for the post slot.
+/// one of the table's own columns, no element at all, or a stand-in or companion for no element,
+/// for itself, for another stand-in or companion, or in or for the post slot.
 pub fn check(slots: &[Slot]) -> Result<(), String> {
     let cols = columns(slots);
     if cols.is_empty() {
@@ -412,26 +437,39 @@ pub fn check(slots: &[Slot]) -> Result<(), String> {
     }
     for slot in slots {
         for (i, c) in slot.elements.iter().enumerate() {
-            let Some(other) = slot.stands_in_for(i) else { continue };
-            if slot.name == POST {
-                return Err(format!("`{c}` is in the post slot, whose elements cannot stand in for another"));
+            if slot.stands_in_for(i).is_some() && slot.comes_with(i).is_some() {
+                return Err(format!(
+                    "`{c}` either stands in for another element or comes with one, not both"
+                ));
             }
-            if other == c {
-                return Err(format!("`{c}` cannot stand in for itself"));
-            }
-            let Some(of) = slots.iter().find(|s| s.elements.iter().any(|e| e == other)) else {
-                return Err(format!("`{c}` stands in for `{other}`, which is no element of a slot"));
-            };
-            if of.name == POST {
-                return Err(format!("`{c}` cannot stand in for `{other}` of the post slot"));
-            }
-            let j = of.elements.iter().position(|e| e == other).unwrap_or(0);
-            if of.stands_in_for(j).is_some() {
-                return Err(format!("`{c}` stands in for `{other}`, which stands in for another itself"));
+            for (other, does) in [(slot.stands_in_for(i), "stand in for"), (slot.comes_with(i), "come with")]
+            {
+                let Some(other) = other else { continue };
+                if slot.name == POST {
+                    return Err(format!("`{c}` is in the post slot, whose elements cannot {does} another"));
+                }
+                if other == c {
+                    return Err(format!("`{c}` cannot {does} itself"));
+                }
+                let Some(of) = slots.iter().find(|s| s.elements.iter().any(|e| e == other)) else {
+                    return Err(format!("`{c}` cannot {does} `{other}`, which is no element of a slot"));
+                };
+                if of.name == POST {
+                    return Err(format!("`{c}` cannot {does} `{other}` of the post slot"));
+                }
+                let j = of.elements.iter().position(|e| e == other).unwrap_or(0);
+                if of.follows(j) {
+                    return Err(format!(
+                        "`{c}` cannot {does} `{other}`, which stands in for or comes with another itself"
+                    ));
+                }
             }
         }
-        if slot.name != POST && (0..slot.elements.len()).all(|i| slot.stands_in_for(i).is_some()) {
-            return Err(format!("slot `{}` has only stand-ins: it needs an element of its own", slot.name));
+        if slot.name != POST && (0..slot.elements.len()).all(|i| slot.follows(i)) {
+            return Err(format!(
+                "slot `{}` has only stand-ins and companions: it needs an element of its own",
+                slot.name
+            ));
         }
     }
     Ok(())
@@ -566,11 +604,10 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             if s.name == POST {
                 State::Each(vec![false; s.elements.len()], 0)
             } else {
-                // A stand-in weighs 0, so the turns of the others stay what they are without it.
+                // A stand-in or a companion weighs 0, so the turns of the others stay what they
+                // are without it.
                 State::one(
-                    (0..s.elements.len())
-                        .map(|i| if s.stands_in_for(i).is_some() { 0.0 } else { s.weight(i) })
-                        .collect(),
+                    (0..s.elements.len()).map(|i| if s.follows(i) { 0.0 } else { s.weight(i) }).collect(),
                 )
             }
         })
@@ -777,16 +814,64 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
             empty,
         });
     }
-    // The walls stay closed next to a change of stage.
+    // The walls stay closed next to a change of stage, and no companion comes there.
     let at: Vec<usize> = out.iter().map(|r| r.stage).collect();
     for (i, row) in out.iter_mut().enumerate() {
         let before = i.checked_sub(1).and_then(|k| at.get(k));
         let after = at.get(i + 1);
-        if before.is_some_and(|s| *s != row.stage) || after.is_some_and(|s| *s != row.stage) {
+        let turning = before.is_some_and(|s| *s != row.stage) || after.is_some_and(|s| *s != row.stage);
+        if turning {
             row.see_through = 0.0;
+        }
+        let calm_enough = match parts.get(i).map(|p| (p.role, p.energy)) {
+            Some((Role::Build, _)) => true,
+            Some((Role::Main, energy)) => energy.is_finite() && energy < COMPANION_ENERGY,
+            _ => false,
+        };
+        if !turning && calm_enough {
+            come_along(slots, &cols, row);
         }
     }
     out
+}
+
+/// The companions in `row`: each one on its stages shows with the presence of the element it
+/// comes with, where that element is the only one of its slot on (companions aside), and the
+/// glider then flies through it.
+fn come_along(slots: &[Slot], cols: &[String], row: &mut Row) {
+    let mut at = 0usize;
+    for slot in slots {
+        for j in 0..slot.elements.len() {
+            let Some(other) = slot.comes_with(j) else { continue };
+            if !slot.shows_in(j, row.stage) {
+                continue;
+            }
+            let Some(k) = cols.iter().position(|c| c == other) else { continue };
+            let level = row.presence.get(k).copied().unwrap_or(0.0);
+            // The other element's slot: whether anything else of it is on.
+            let mut first = 0usize;
+            let mut alone = false;
+            for s in slots {
+                let n = s.elements.len();
+                if (first..first + n).contains(&k) {
+                    alone = (0..n).all(|e| {
+                        first + e == k
+                            || s.comes_with(e).is_some()
+                            || row.presence.get(first + e).is_none_or(|p| *p <= 0.0)
+                    });
+                    break;
+                }
+                first += n;
+            }
+            if level > 0.0 && alone {
+                if let Some(x) = row.presence.get_mut(at + j) {
+                    *x = level;
+                }
+                row.flight = FLIGHT_THREAD;
+            }
+        }
+        at += slot.elements.len();
+    }
 }
 
 /// A number for the table: at most three decimals, no trailing zeros.
@@ -1615,8 +1700,81 @@ mod tests {
         let mut chain = Slot::new("mid", &["a", "b", "d"]);
         chain.instead = vec![None, Some("c".into()), Some("b".into())];
         assert!(
-            check(&[chain, Slot::new("sky", &["c"])]).is_err_and(|e| e.contains("stands in for another"))
+            check(&[chain, Slot::new("sky", &["c"])])
+                .is_err_and(|e| e.contains("stands in for or comes with another"))
         );
+    }
+
+    #[test]
+    fn a_companion_comes_with_its_element_alone_in_calm_rows_of_its_stage_and_the_glider_threads_it() {
+        // Two stages; a track start every 10 parts of 60 s switches the stage.
+        let roles = [Role::Main, Role::Build, Role::Drop, Role::Main, Role::Intro];
+        let p: Vec<Part> = (0..40)
+            .map(|i| {
+                let start = i as f64 * 60.0;
+                let track_start = i % 10 == 0;
+                Part {
+                    start,
+                    end: start + 60.0,
+                    zone: (start, start),
+                    role: roles[i % roles.len()],
+                    change: if track_start { 0.9 } else { 0.4 },
+                    energy: if i % 3 == 0 { 0.9 } else { 0.6 },
+                    track_start,
+                    seed: i as u32,
+                }
+            })
+            .collect();
+        let sky = Slot::new("sky", &["galaxy", "planet"]);
+        let mut mid = Slot::new("mid", &["glider", "lasers", "traps"]);
+        mid.weights = vec![3.0, 1.0, 1.0];
+        let plain =
+            vec![Slot { elements: vec!["glider".into(), "lasers".into()], ..mid.clone() }, sky.clone()];
+        mid.stages = vec![vec![], vec![], vec![1]];
+        mid.with = vec![None, None, Some("glider".into())];
+        let with = vec![mid, sky];
+        assert_eq!(check(&with), Ok(()));
+        let before = rows(&p, &plain, 2);
+        let after = rows(&p, &with, 2);
+        assert_eq!(before.len(), after.len());
+        let (mut came, mut left_out) = (0, 0);
+        for (i, (b, a)) in before.iter().zip(&after).enumerate() {
+            // Columns before: glider lasers galaxy planet; after: glider lasers traps galaxy planet.
+            for (x, y) in [(0, 0), (1, 1), (3, 2), (4, 3)] {
+                assert_eq!(a.presence[x], b.presence[y], "every other cell as before: {a:?} {b:?}");
+            }
+            assert_eq!(
+                (a.stage, a.camera, a.warmth, a.see_through),
+                (b.stage, b.camera, b.warmth, b.see_through)
+            );
+            let steady = (i == 0 || after[i - 1].stage == a.stage)
+                && after.get(i + 1).is_none_or(|n| n.stage == a.stage);
+            let calm = a.role == Role::Build || (a.role == Role::Main && p[i].energy < COMPANION_ENERGY);
+            let alone = a.presence[0] > 0.0 && a.presence[1] == 0.0;
+            if a.stage == 1 && steady && calm && alone {
+                assert_eq!(a.presence[2], a.presence[0], "the traps come with the glider: {a:?}");
+                assert_eq!(a.flight, FLIGHT_THREAD, "{a:?}");
+                came += 1;
+            } else {
+                assert_eq!(a.presence[2], 0.0, "{i}: {a:?}");
+                assert_eq!(a.flight, b.flight, "{i}: {a:?}");
+                left_out += usize::from(a.stage == 1 && alone);
+            }
+        }
+        assert!(came > 0 && left_out > 0, "{came} {left_out}");
+        // What a companion may not be.
+        let bad = |slot: &str, of: &str| {
+            let mut s = Slot::new(slot, &["a", "b"]);
+            s.with = vec![None, Some(of.into())];
+            check(&[s, Slot::new("sky", &["c"])])
+        };
+        assert!(bad("mid", "x").is_err_and(|e| e.contains("no element")));
+        assert!(bad("mid", "b").is_err_and(|e| e.contains("itself")));
+        assert!(bad("post", "c").is_err_and(|e| e.contains("post")));
+        let mut both = Slot::new("mid", &["a", "b"]);
+        both.instead = vec![None, Some("c".into())];
+        both.with = vec![None, Some("a".into())];
+        assert!(check(&[both, Slot::new("sky", &["c"])]).is_err_and(|e| e.contains("not both")));
     }
 
     /// Five slots taking turns at medium boundaries, the floor (four elements) on stage 0 only;

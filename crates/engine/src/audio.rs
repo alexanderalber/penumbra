@@ -137,7 +137,11 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          100), and with stages: [\"/stage\"] to show only while one of those stages shows (elsewhere it stays at \
          presence 0 and its slot takes another element), and with instead_of: \"/bars\" to stand in for \
          that element of any slot on its stages (it takes no turns, shows where /bars would with the same \
-         presence, and /bars stays at 0 there; every other cell stays as without it): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
+         presence, and /bars stays at 0 there; every other cell stays as without it), and with with: \
+         \"/glider\" to come along with that element on its stages (it takes no turns, shows with the same \
+         presence in a build or a main section of energy below 0.8 where /glider is the only element of \
+         its slot on, not next to a change of stage, and flight is 4 there; every other cell stays as \
+         without it): the first element of each slot is on at the start, slots take turns in name order, the slots named sky and mid stay on through a break, the slot post holds \
          effects that are on or off each by itself (off in an intro, outro or break, on from a drop), every \
          other slot (floor, ceiling) follows the floor's rules), stage? (a path, or a list of stages side by \
          side; each gets warmth, and camera where it has that param), switch? (a param that picks the stage, \
@@ -149,15 +153,17 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          next, also where the music cuts), stage_fade? (s, default 4: the shortest fade into a row whose \
          stage changes), dwell? (sections, default 3: an element on that long gives way at the next \
          boundary with change 0.3 or more, its slot's turn or not; a slot its stage hides counts on; 0 \
-         turns it off), opening? (default true: the file's first section brings its slots in one after another          on bar starts, sky first, then mid, the floor and the rest, the ceiling last, a row per step of at least 2 bars), gaps? ({build?, break?}: the share of the floor in gaps, default \
+         turns it off), opening? (default true: the file's first section brings its slots in one after another \
+         on bar starts, sky first, then mid, the floor and the rest, the ceiling last, a row per step of at least 2 bars), gaps? ({build?, break?}: the share of the floor in gaps, default \
          0.3 in a build and 0.6 in a break)}. The table has a row per section: start, end, role, change, the \
          presence of each element (the column is named as the element), warmth, intensity, camera (the \
          stage's camera preset: low in a main section, higher in a build, high and wide on a drop, level in \
          a break, a variant per track), stage (changes only at a track start with change 0.8 or more, \
          at most once in 8 minutes, to the next stage in the list and back again: 0, 1, 2, 1, 0), gaps (the share of the floor broken off: only in a build and a \
          break) and flight (how the glider flies: 0 along the lane's turns, 1 straight, 2 along the turns \
-         with a roll on a downbeat, 3 straight with a lean on each downbeat; straight in a break, a roll on a \
-         drop, the lean in a build, 0, 1 and 3 by turns from track to track elsewhere) and pattern (what \
+         with a roll on a downbeat, 3 straight with a lean on each downbeat, 4 through the corridor of a \
+         companion such as mid_traps; straight in a break, a roll on a drop, the lean in a build, 0, 1 and \
+         3 by turns from track to track elsewhere, 4 where a companion comes) and pattern (what \
          the room's lights show: 0 stripes in an intro, outro or break, 2 a chase in a build, 1 a pulse on \
          a drop, 2 and 1 by turns from track to track in a main section) and see_through (how far a \
          stage with walls opens them: 1 in every second stretch of breaks and builds on each stage, \
@@ -756,7 +762,7 @@ impl Targets {
 }
 
 /// An element in a slot: its path, or its path with how often it comes on, the stages it
-/// shows in and the element it stands in for.
+/// shows in and the element it stands in for or comes with.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Entry {
@@ -769,6 +775,8 @@ enum Entry {
         stages: Option<Vec<NodePath>>,
         #[serde(default)]
         instead_of: Option<NodePath>,
+        #[serde(default)]
+        with: Option<NodePath>,
     },
 }
 
@@ -863,23 +871,29 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     };
     let mut slots = Vec::new();
     let mut elements: Vec<NodePath> = Vec::new();
-    let mut stand_ins: Vec<(NodePath, NodePath)> = Vec::new();
+    let mut stand_ins: Vec<(NodePath, NodePath, &str)> = Vec::new();
     for (slot, entries) in &a.slots {
         let mut names = Vec::new();
         let mut weights = Vec::new();
         let mut shows = Vec::new();
         let mut instead = Vec::new();
+        let mut along = Vec::new();
         for entry in entries {
-            let (path, weight, on, of) = match entry {
-                Entry::Path(path) => (path, 1.0, None, None),
-                Entry::Weighted { path, weight, stages: on, instead_of } => {
-                    (path, weight.unwrap_or(1.0), on.as_ref(), instead_of.as_ref())
+            let (path, weight, on, of, with) = match entry {
+                Entry::Path(path) => (path, 1.0, None, None, None),
+                Entry::Weighted { path, weight, stages: on, instead_of, with } => {
+                    (path, weight.unwrap_or(1.0), on.as_ref(), instead_of.as_ref(), with.as_ref())
                 }
             };
+            let column = |p: &NodePath| p.name().map(|n| n.as_str().to_string()).unwrap_or_default();
             if let Some(of) = of {
-                stand_ins.push((path.clone(), of.clone()));
+                stand_ins.push((path.clone(), of.clone(), "instead_of"));
             }
-            instead.push(of.map(|p| p.name().map(|n| n.as_str().to_string()).unwrap_or_default()));
+            if let Some(w) = with {
+                stand_ins.push((path.clone(), w.clone(), "with"));
+            }
+            instead.push(of.map(column));
+            along.push(with.map(column));
             let mut list = Vec::new();
             for st in on.into_iter().flatten() {
                 let Some(k) = stages.iter().position(|s| s == st) else {
@@ -904,12 +918,19 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             names.push(path.name().map(|n| n.as_str().to_string()).unwrap_or_default());
             elements.push(path.clone());
         }
-        slots.push(Slot { name: slot.clone(), elements: names, weights, stages: shows, instead });
+        slots.push(Slot {
+            name: slot.clone(),
+            elements: names,
+            weights,
+            stages: shows,
+            instead,
+            with: along,
+        });
     }
-    for (path, of) in &stand_ins {
+    for (path, of, field) in &stand_ins {
         if !elements.contains(of) {
             return Err(CommandError(format!(
-                "{path}: instead_of {of} is not an element of a slot: name it in one of the slots too"
+                "{path}: {field} {of} is not an element of a slot: name it in one of the slots too"
             )));
         }
     }

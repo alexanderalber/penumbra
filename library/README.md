@@ -297,6 +297,13 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   "/bars"}`. In a tunnel row it then shows wherever `/bars` would, and `/bars` stays at 0. So
   the two never show at once in the tunnel. On the other stages `/bars` shows as before, and the
   rest of the table stays as it was without `/equalisers`.
+- **Laser traps for the glider.** `mid_traps` fills stretches of the tunnel with laser beams,
+  and the glider weaves through them. Give it to `beats.arrange` in the mid slot as `{path:
+  "/traps", stages: ["/tunnel"], with: "/glider"}`, and wire its `corridor` output into the
+  glider's `corridor` input. The traps then come with the glider: in a tunnel row of a build or
+  a main section below energy 0.8, where the glider is the only mid element on. In those rows
+  the `flight` column says 4, so the glider follows the free corridor through the beams. Every
+  other cell stays as it was without the traps. See [mid_traps](#mid_traps).
 - **Lights for the room** come from `room_lights`: a picture for the room's columns and the
   channels for DMX lights, in the stage's colours and on its beat. Give it to `beats.arrange` as
   `lights: "/room"`, and its `pattern` changes with the sections. See [room_lights](#room_lights).
@@ -336,7 +343,7 @@ sound file](../docs/audio.md#beats-of-a-sound-file) explains these channels.
   `walls` is 1. With `curve` the bars and the city stand round the tube's far end, `far` metres
   ahead: a ring of `radius` round the axis, which the camera sees above the vanishing point. The
   figures stand on that ring's bottom and the planet hangs inside it. Wire the blended pose into
-  `mid_lasers`, `mid_glider` and `mid_equalisers` as into the sky elements.
+  `mid_lasers`, `mid_glider`, `mid_equalisers` and `mid_traps` as into the sky elements.
 - **Rolling the plane up into the tunnel.** `stage_synthwave` and `stage_tunnel` both have
   `roll_up`. Bind both to the share of the fade between them (the `min` 1 part of the `stage`
   channel above). While the switch fades, the plane's floor gives way to lines from right to
@@ -715,18 +722,25 @@ The glider flies in one of four ways, picked by `flight`:
   downbeat, the other way round each time.
 - 3 lean: straight, and on each downbeat the glider leans to one side and drifts a little that
   way, back over the bar, the other side on the next bar.
+- 4 thread: along the free corridor through the beams of `mid_traps`, 2 m further ahead, nose
+  half along the corridor and leaning into its turns. The glider reads the corridor from its
+  `corridor` input; wire the traps' `corridor` output there. Unwired, it follows the traps'
+  default corridor.
 
 A change of `flight` glides over about 2 seconds. `beats.arrange` picks one per section in its
 `flight` column: straight in a break, the roll on a drop, the lean in a build, and in the other
-sections slalom, straight and lean by turns from track to track.
+sections slalom, straight and lean by turns from track to track. Where `mid_traps` comes with
+the glider, the column says thread.
 
 - In: `bus` (`travelled` and `drift` time the roll and the lean), `lane`, `pose` (the stage's,
-  for `walls`; unwired, it climbs away ahead). Out: `out` (into the stage's `mid`).
+  for `walls`; unwired, it climbs away ahead), `corridor` (the `corridor` output of
+  `mid_traps`). Out: `out` (into the stage's `mid`).
 - Params: `presence`, `at` (metres ahead of the camera), `flight` (0 to 3, above), `arrive`
   (seconds to cover 63 % of a change of `presence`, default 2), `bank` (how far it leans into a
   turn), `bob` (metres up and down), `scale` (0.16 makes it 2.4 m long), `hover` (metres above
   the floor), `flights` (a csv table, one row per flight: `follow` 1 along the turns or 0
-  straight, `roll` 1 to roll, `lean` 1 to lean on the downbeat; shares between mix the two),
+  straight, `roll` 1 to roll, `lean` 1 to lean on the downbeat, `thread` 1 along the traps'
+  corridor; shares between mix the two),
   `flight_glide` (seconds to cover 63 % of a change of flight, default 0.8), `roll_bars` (bars
   from one roll to the next, default 4), `roll_beats` (beats a roll takes, default 2),
   `lean_angle` (degrees of the lean, default 22), `beats_per_bar`.
@@ -884,6 +898,50 @@ are gone.
   (dark share between two bars), `depth` (metres a cell is deep along the tube), `jitter` (how
   much each bar moves by itself), `kick` (the lift on an onset), `pump` (how far the bars fall
   over each beat, 0.4), `beats_per_bar`.
+
+### mid_traps
+
+![mid_traps](mid_traps/preview.png)
+
+Laser traps in the tunnel: thin red beams, each from one point on the tube's wall to another.
+Together they make a maze with one free corridor through it, and the glider flies along that
+corridor (its flight 4). The beams stand in the world and come towards the camera with it, two
+on every beat of travel. Each beam glows, flickers a little by itself and flares on the beat.
+
+**The corridor.** The corridor's middle wanders across the tube. It stands at a knot on every
+second downbeat (`corridor_bars`), left of the tube's middle at one knot and right at the next,
+and up or down by up to `climb`. Between knots it glides over. No beam comes nearer to the
+corridor's middle than `open` metres, so the glider passes untouched. Most beams pass close to
+the corridor, the rest anywhere. The corridor depends only on the distance travelled and `seed`.
+The glider reads the same numbers from the `corridor` output, so it needs nothing from the
+picture.
+
+**The camera** stays on its preset. A beam that would pass within `eye` metres of the line
+straight ahead of the camera stays dark, so the camera never flies through a beam. It passes
+close to some.
+
+**Presence.** Towards 1 the beams come on from the far end of the tube towards the camera;
+towards 0 they go dark from the camera outwards. Through the arrangement's fade the glider takes
+the corridor before the near beams come on, and leaves it after they have gone. Where the
+stage's `curve` is 0 (the synthwave plane, the shaft) the beams are dark.
+
+**The tube's turns.** The beams stay put while the tube rolls with the lane or makes its whole
+turns every `roll_bars` bars. The beams' ends stay on the wall, which is round, but the long lines
+slide past them. A maze that turned with the tube would sweep its beams through the glider and the
+camera. The beams also stand where the tube runs out into a gap.
+
+- In: `bus`, `lane` (for `step`), `pose` (the stage's: `height`, `axis`, `radius`, `curve`,
+  `far`). Out: `out` (into the stage's `mid`), `corridor` (channels `seed`, `corridor_bars`,
+  `wander`, `climb`, `middle`: into the glider's `corridor`).
+- Params: `presence`, `seed` (another number gives another corridor and other beams),
+  `corridor_bars` (bars from one knot to the next, 2), `wander` (metres the corridor moves to
+  either side, 1.2), `climb` (metres up and down, 0.5), `middle` (its middle height above the
+  tube's bottom, 2 m), `open` (the corridor's free radius, 0.9 m), `eye` (the free radius round
+  the camera's line, 0.6 m), `beams` (beams per slice, 1 to 4, 2), `spacing` (beats from one
+  slice to the next, 1), `slant` (metres one end of a beam may lie ahead of the other, 1),
+  `brightness`, `flicker` (0 to 1, 0.3), `color` (red), `thickness`, `line_width` (the beam's
+  core, 2 px), `glow_width` (its glow, 7 px), `arrive` and `leave` (seconds the beams take to
+  follow a rise and a fall of `presence`, 1 and 0.15), `beats_per_bar`.
 
 ### ceiling_curtains
 

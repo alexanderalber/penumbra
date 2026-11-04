@@ -871,6 +871,18 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     assert!(r["bound"].as_array().unwrap().iter().any(|x| x == "/glider.flight"), "{r}");
     assert_eq!(from("/glider/style"), json!([{"param": "row", "from": "/arrangement_pick:flight"}]));
 
+    // The traps come with the glider: a column of their own, bound to their presence.
+    f.call("comp.load", json!({"file": "mid_traps", "path": "/traps"}));
+    let mut trapped = args(json!({}));
+    trapped["slots"]["mid"] = json!(["/glider", {"path": "/traps", "with": "/n"}]);
+    let e = f.fail("beats.arrange", trapped.clone());
+    assert!(e.contains("with /n is not an element of a slot"), "{e}");
+    trapped["slots"]["mid"] = json!(["/glider", {"path": "/traps", "with": "/glider"}]);
+    let r = f.call("beats.arrange", trapped);
+    assert!(r["bound"].as_array().unwrap().iter().any(|x| x == "/traps.presence"), "{r}");
+    assert!(r["columns"].as_array().unwrap().iter().any(|x| x == "traps"), "{r}");
+    assert_eq!(from("/traps/controls"), json!([{"param": "value0", "from": "/arrangement_mix:traps"}]));
+
     // The room's lights: the pattern jumps through `_pick`, colour and brightness fade with `_mix`.
     f.call("comp.load", json!({"file": "room_lights", "path": "/room"}));
     let mut lit = args(json!({"lights": "/n"}));
@@ -888,4 +900,22 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         let want = json!({"param": param, "from": format!("/arrangement_mix:{column}")});
         assert!(controls.as_array().unwrap().contains(&want), "{controls}");
     }
+}
+
+/// The traps' corridor is computed twice, by the traps and by the glider that threads it: both
+/// shaders hold the same code between the markers, so the glider flies where the beams leave room.
+#[test]
+fn the_traps_and_the_glider_share_one_corridor() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library");
+    let block = |file: &str| {
+        let text = std::fs::read_to_string(root.join(file)).unwrap();
+        let start = text.find("// corridor begin").unwrap();
+        let end = text.find("// corridor end").unwrap();
+        // The first line names the other file.
+        let body = &text[start..end];
+        body.split_once('\n').unwrap().1.to_string()
+    };
+    let traps = block("mid_traps/traps.wgsl");
+    assert!(traps.contains("fn corridor("), "{traps}");
+    assert_eq!(traps, block("mid_glider/steer.wgsl"));
 }
