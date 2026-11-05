@@ -161,7 +161,7 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          stage changes), dwell? (sections, default 3: an element on that long gives way at the next \
          boundary with change 0.3 or more, its slot's turn or not; a slot its stage hides counts on; 0 \
          turns it off), opening? (default true: the file's first section brings its slots in one after another \
-         on bar starts, sky first, then mid, the floor and the rest, the ceiling last, a row per step of at least 2 bars), gaps? ({build?, break?}: the share of the floor in gaps, default \
+         on bar starts, sky first, then mid, the floor and the rest, the ceiling last, a row per step of at least 2 bars), apart? (pairs of elements of different slots that never share a row, e.g. [[\"/gates\", \"/rings\"]]: where both would be on, the first gives way for that row and its slot shows its next element; every other cell stays as without it), gaps? ({build?, break?}: the share of the floor in gaps, default \
          0.3 in a build and 0.6 in a break)}. The table has a row per section: start, end, role, change, the \
          presence of each element (the column is named as the element), warmth, intensity, camera (the \
          stage's camera preset: low in a main section, higher in a build, high and wide on a drop, level in \
@@ -809,6 +809,7 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         dwell: Option<f64>,
         opening: Option<bool>,
         gaps: Option<GapShares>,
+        apart: Option<Vec<(NodePath, NodePath)>>,
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -965,6 +966,19 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         }
     }
     arrange::check(&slots).map_err(CommandError)?;
+    let mut apart = Vec::new();
+    for (first, second) in a.apart.iter().flatten() {
+        for path in [first, second] {
+            if !elements.contains(path) {
+                return Err(CommandError(format!(
+                    "apart names {path}, which is not an element of a slot: name it in one of the slots too"
+                )));
+            }
+        }
+        let column = |p: &NodePath| p.name().map(|n| n.as_str().to_string()).unwrap_or_default();
+        apart.push((column(first), column(second)));
+    }
+    arrange::check_apart(&slots, &apart).map_err(CommandError)?;
     for stage in &stages {
         require(&net, stage)?;
         if !has_param(e, &net, stage, "warmth") {
@@ -1060,7 +1074,8 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         (true, Some(grid)) => arrange::opening(&parts, &slots, &grid.bars),
         _ => (parts, 1),
     };
-    let rows = arrange::rows_with(&parts, &slots, stages.len(), arrange::Rules { gaps, dwell, opening });
+    let rows =
+        arrange::rows_with(&parts, &slots, stages.len(), arrange::Rules { gaps, dwell, opening, apart });
     let table = arrange::table(&slots, &rows);
     if table.len() > penumbra_core::param::MAX_TEXT {
         return Err(CommandError(format!("{} rows do not fit into a table.text", rows.len())));

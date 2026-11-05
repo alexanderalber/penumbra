@@ -39,6 +39,10 @@
 //!   in an intro or outro, off where a break or the opening leaves the slot empty), on its stages.
 //!   An empty section keeps no base, since it keeps one element only. The swaps and turns of
 //!   every slot stay what they were without it, and no companion counts it as on.
+//! - **Apart:** a pair of elements of different slots may be kept from sharing a row. Where both
+//!   would be on, the first named gives way for that row: its slot shows the element its next swap
+//!   would bring, with the same presence. The slot's turns stay as they are, so every other cell
+//!   stays as without the pair.
 //! - **Weights:** an element of weight 3 comes on three times as often as one of weight 1. The
 //!   next element is the one owed the most turns (smooth weighted round robin), so the turns of a
 //!   heavy element spread out evenly and the same file always gives the same table. With equal
@@ -243,8 +247,9 @@ impl Default for Gaps {
     }
 }
 
-/// What the caller may set of the rules: the floor's gaps, the dwell and the opening.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// What the caller may set of the rules: the floor's gaps, the dwell, the opening and the pairs
+/// kept apart.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Rules {
     pub gaps: Gaps,
     /// The sections an element stays on before it gives way at the next boundary from
@@ -253,11 +258,13 @@ pub struct Rules {
     /// How many of the first parts are the steps of the opening ([`opening`]): their rows bring
     /// the slots in one after another. 0 or 1: no opening.
     pub opening: usize,
+    /// Pairs of columns that never share a row; the first of a pair gives way ([`check_apart`]).
+    pub apart: Vec<(String, String)>,
 }
 
 impl Default for Rules {
     fn default() -> Rules {
-        Rules { gaps: Gaps::default(), dwell: DWELL, opening: 0 }
+        Rules { gaps: Gaps::default(), dwell: DWELL, opening: 0, apart: Vec::new() }
     }
 }
 
@@ -589,6 +596,41 @@ pub fn check(slots: &[Slot]) -> Result<(), String> {
     Ok(())
 }
 
+/// Checks pairs kept apart: two elements of different slots, none of them in the post slot, no
+/// stand-in and no companion. The first named takes turns, so it has a next element to give way to.
+pub fn check_apart(slots: &[Slot], pairs: &[(String, String)]) -> Result<(), String> {
+    let find = |c: &str| -> Result<(usize, &Slot, usize), String> {
+        slots
+            .iter()
+            .enumerate()
+            .find_map(|(s, slot)| slot.elements.iter().position(|e| e == c).map(|j| (s, slot, j)))
+            .ok_or_else(|| format!("apart names `{c}`, which is no element of a slot"))
+    };
+    for (first, second) in pairs {
+        let (s1, slot1, j1) = find(first)?;
+        let (s2, slot2, j2) = find(second)?;
+        if s1 == s2 {
+            return Err(format!(
+                "apart names `{first}` and `{second}` of one slot: a slot shows one element at a time anyway"
+            ));
+        }
+        for (c, slot, j) in [(first, slot1, j1), (second, slot2, j2)] {
+            if slot.name == POST {
+                return Err(format!("apart cannot name `{c}` of the post slot"));
+            }
+            if slot.stands_in_for(j).is_some() || slot.comes_with(j).is_some() {
+                return Err(format!("apart cannot name `{c}`: it stands in for or comes with another"));
+            }
+        }
+        if slot1.follows(j1) {
+            return Err(format!(
+                "`{first}` is named first in apart, so it gives way, but it takes no turns: name a base or an extra second"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The triangle wave of the walk: 0 at 0, 1 at 1, 0 at 2, ...
 pub fn warmth_at(walk: f64) -> f64 {
     if !walk.is_finite() {
@@ -609,6 +651,7 @@ pub fn draw(seed: u32, row: usize) -> f64 {
 }
 
 /// What one slot shows while the rows are made.
+#[derive(Clone)]
 enum State {
     /// One element on: which, the elements' weights, and the turns each is owed.
     One { on: usize, weights: Vec<f64>, owed: Vec<f64> },
@@ -876,6 +919,55 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                         .enumerate()
                         .map(|(j, o)| if *o && !empty && slot.shows_in(j, stage) { 1.0 } else { 0.0 }),
                 ),
+            }
+        }
+        // Of a pair kept apart the first gives way for this row. Its slot shows what its next swap
+        // would bring; the swap itself stays to come, so the turns stay as without the pair.
+        for (first, second) in &rules.apart {
+            let (Some(a), Some(b)) =
+                (cols.iter().position(|c| c == first), cols.iter().position(|c| c == second))
+            else {
+                continue;
+            };
+            let level = presence.get(a).copied().unwrap_or(0.0);
+            if level <= 0.0 || presence.get(b).copied().unwrap_or(0.0) <= 0.0 {
+                continue;
+            }
+            if let Some(x) = presence.get_mut(a) {
+                *x = 0.0;
+            }
+            let Some(s) = slots.iter().position(|slot| slot.elements.iter().any(|e| e == first)) else {
+                continue;
+            };
+            let (Some(slot), Some(x)) = (slots.get(s), state.get(s)) else { continue };
+            let offset: usize = slots.iter().take(s).map(|o| o.elements.len()).sum();
+            let mut ahead = x.clone();
+            for _ in 0..slot.elements.len() {
+                ahead.swap(&|j| slot.takes_turns(j, stage));
+                let Some(j) = ahead.on() else { break };
+                let Some(name) = slot.elements.get(j) else { break };
+                if name == first {
+                    break;
+                }
+                let clash = rules.apart.iter().any(|(p, q)| {
+                    let partner = if p == name {
+                        q
+                    } else if q == name {
+                        p
+                    } else {
+                        return false;
+                    };
+                    cols.iter()
+                        .position(|c| c == partner)
+                        .and_then(|k| presence.get(k))
+                        .is_some_and(|v| *v > 0.0)
+                });
+                if !clash {
+                    if let Some(v) = presence.get_mut(offset + j) {
+                        *v = level;
+                    }
+                    break;
+                }
             }
         }
         // A stand-in takes over the presence of the element it stands in for, on its stages.
@@ -2082,6 +2174,64 @@ mod tests {
         both.instead = vec![None, Some("c".into())];
         both.with = vec![None, Some("a".into())];
         assert!(check(&[both, Slot::new("sky", &["c"])]).is_err_and(|e| e.contains("not both")));
+    }
+
+    #[test]
+    fn a_pair_kept_apart_never_shares_a_row_and_leaves_every_other_cell_as_it_was() {
+        let slots = [
+            Slot::new("floor", &["stones", "steps", "gates"]),
+            Slot::new("mid", &["rings", "smoke"]),
+            Slot::new("sky", &["stars"]),
+        ];
+        let of: Vec<(Role, f64)> = (0..50)
+            .map(|i| (if i % 7 == 6 { Role::Intro } else { Role::Main }, 0.3 + 0.1 * (i % 5) as f64))
+            .collect();
+        let p = parts(&of);
+        let without = rows(&p, &slots, 1);
+        let cols = columns(&slots);
+        let at = |c: &str| cols.iter().position(|x| x == c).unwrap();
+        let (gates, rings) = (at("gates"), at("rings"));
+        let met = without.iter().filter(|r| r.presence[gates] > 0.0 && r.presence[rings] > 0.0).count();
+        assert!(met > 0, "the test needs rows where both are on");
+        let rules = Rules { apart: vec![("gates".into(), "rings".into())], ..Rules::default() };
+        check_apart(&slots, &rules.apart).unwrap();
+        let with = rows_with(&p, &slots, 1, rules);
+        assert_eq!(with.len(), without.len());
+        for (a, b) in with.iter().zip(&without) {
+            assert!(a.presence[gates] == 0.0 || a.presence[rings] == 0.0, "{a:?}");
+            let met_here = b.presence[gates] > 0.0 && b.presence[rings] > 0.0;
+            if met_here {
+                // The gates' presence went to another element of the floor; the rings stay.
+                assert_eq!(a.presence[rings], b.presence[rings]);
+                let others = a.presence[at("stones")].max(a.presence[at("steps")]);
+                assert_eq!(others, b.presence[gates]);
+                assert_eq!(a.presence.iter().take(3).filter(|v| **v > 0.0).count(), 1);
+            } else {
+                assert_eq!(a, b);
+            }
+            assert_eq!(a.warmth, b.warmth);
+            assert_eq!(a.camera, b.camera);
+        }
+        // The first named only: naming them the other way round moves the rings.
+        let turned = Rules { apart: vec![("rings".into(), "gates".into())], ..Rules::default() };
+        let other = rows_with(&p, &slots, 1, turned);
+        assert!(other.iter().zip(&without).any(|(a, b)| a.presence[gates] == b.presence[gates]
+            && b.presence[gates] > 0.0
+            && a.presence[rings] == 0.0
+            && b.presence[rings] > 0.0));
+        // With nothing else to show the first simply goes.
+        let alone = [Slot::new("floor", &["gates"]), Slot::new("mid", &["rings"])];
+        let rules = Rules { apart: vec![("gates".into(), "rings".into())], ..Rules::default() };
+        for r in rows_with(&p, &alone, 1, rules) {
+            assert!(r.presence[0] == 0.0 || r.presence[1] == 0.0, "{r:?}");
+        }
+        let two = |a: &str, b: &str| vec![(a.to_string(), b.to_string())];
+        assert!(check_apart(&slots, &two("gates", "nope")).unwrap_err().contains("no element"));
+        assert!(check_apart(&slots, &two("gates", "stones")).unwrap_err().contains("one slot"));
+        let mut based = slots.clone();
+        based[0].base = vec![false, false, true];
+        assert!(check_apart(&based, &two("gates", "rings")).unwrap_err().contains("takes no turns"));
+        assert!(check_apart(&based, &two("rings", "gates")).is_ok());
     }
 
     #[test]

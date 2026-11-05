@@ -710,6 +710,8 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         (json!({"switch": "/stage.dim"}), "switch picks between stages"),
         (json!({"stage": ["/stage", "/n"]}), "no param warmth"),
         (json!({"extra": 1}), "extra"),
+        (json!({"apart": [["/n", "/blocks"]]}), "not an element of a slot"),
+        (json!({"apart": [["/blocks", "/mountains"]]}), "of one slot"),
     ] {
         let e = f.fail("beats.arrange", args(extra.clone()));
         assert!(e.contains(says), "{extra}: {e}");
@@ -933,6 +935,30 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         on += usize::from(cells[mountains] != "0");
     }
     assert!(on >= 3, "{table}");
+
+    // The mountains and the galaxy kept apart: the galaxy is on in every row, so the blocks show
+    // wherever the mountains would, and the sky stays as it is.
+    f.call("beats.arrange", args(json!({})));
+    let free = param(&f.call("node.info", json!({"path": "/arrangement"})), "text");
+    f.call("beats.arrange", args(json!({"apart": [["/mountains", "/galaxy"]]})));
+    let kept = param(&f.call("node.info", json!({"path": "/arrangement"})), "text");
+    let rows = |t: &Json| -> Vec<Vec<String>> {
+        t.as_str().unwrap().lines().map(|l| l.split(',').map(str::to_string).collect()).collect()
+    };
+    let (free, kept) = (rows(&free), rows(&kept));
+    let col = |name: &str| free[0].iter().position(|h| h == name).unwrap();
+    let (blocks, mountains, galaxy) = (col("blocks"), col("mountains"), col("galaxy"));
+    assert!(free[1..].iter().any(|r| r[mountains] != "0"), "{free:?}");
+    assert_eq!(free.len(), kept.len());
+    for (a, b) in free[1..].iter().zip(&kept[1..]) {
+        assert_eq!(b[mountains], "0", "{kept:?}");
+        assert_eq!(a[galaxy], b[galaxy]);
+        if a[mountains] != "0" && a[galaxy] != "0" {
+            assert_eq!(b[blocks], a[mountains], "{kept:?}");
+        } else {
+            assert_eq!(a, b);
+        }
+    }
 
     // The room's lights: the pattern jumps through `_pick`, colour and brightness fade with `_mix`.
     f.call("comp.load", json!({"file": "room_lights", "path": "/room"}));
