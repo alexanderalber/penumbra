@@ -45,6 +45,11 @@
 //! first beat of the next pass ([`BeatGrid::at_looped`]). Per cook the node costs one binary
 //! search and a few hops of envelopes.
 //!
+//! **Past the end:** a file played once holds every channel at its last moment. With `run_on`,
+//! `seconds` and `travelled` follow the player's playhead on past the end, at the last tempo, and
+//! the other channels still hold. A show can go on moving in the silence, and a seek or a restart
+//! takes it back as usual.
+//!
 //! **Overview:** the `overview` output is the whole file as a picture ([`super::overview`]):
 //! waveform, bars, sections and playhead, the same the viewer shows. It is drawn only while
 //! something reads it.
@@ -212,6 +217,10 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .doc("Fastest tempo travelled moves by, in beats per minute. A faster grid travels at this tempo. 0 sets no cap. A travel_floor above the cap wins"),
         )
         .param(
+            ParamSpec::bool("run_on", false)
+                .doc("With the file's loop off: seconds and travelled keep rising after the file's end, at the last tempo, so a world moved by them flies on in the silence. The other channels hold at the file's last moment. Off: seconds and travelled stop at the end too"),
+        )
+        .param(
             ParamSpec::float("span", overview::DEFAULT_SPAN)
                 .clamp(overview::MIN_SPAN, overview::MAX_SPAN)
                 .range(10.0, 600.0)
@@ -245,7 +254,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
              section_seed is a number fixed per section_label, for random looks that come back with the music. \
              transition rises from 0 to 1 through the blend from one section into the next, transition_from and transition_to are their labels. \
              sections_ready is 1 once the sections are found, after the whole file is analysed. Until then the section channels read 0. \
-             seconds is the time into the file the channels are read at: the playhead plus offset, within the pass for a looped file, never below 0. \
+             seconds is the time into the file the channels are read at: the playhead plus offset, within the pass for a looped file, never below 0.              With run_on it rises on past the end of a file played once. \
              Bind a chan.sequence's clock to it, and its steps follow the music through seeks and loops. \
              travelled counts the beats travelled since the file's start. It rises at travel_bpm: the grid's tempo, kept between travel_floor and travel_cap and smoothed over 1.5 s. \
              A world moved by travelled moves with the music, steadily through breaks and tempo changes. travelled starts at 0 again in each pass of a looped file. \
@@ -1288,9 +1297,16 @@ impl Operator for GridNode {
             *v = x;
         }
         // The time the section channels are read at, for a chan.sequence's `clock`: never below
-        // 0, so a negative offset at the file's start holds the show at its start.
+        // 0, so a negative offset at the file's start holds the show at its start. `past` is how
+        // far the playhead of a file played once has gone beyond its end.
+        let past = if cx.bool("run_on")? && !status.looping {
+            (status.position - status.in_file).max(0.0)
+        } else {
+            0.0
+        };
+        let shown = ts + past;
         if let Some(v) = values.get_mut(SECONDS) {
-            *v = if ts.is_finite() { ts.max(0.0) } else { 0.0 };
+            *v = if shown.is_finite() { shown.max(0.0) } else { 0.0 };
         }
         // The bus by the time within the pass, as the sections.
         let bus = analysis.bus();
@@ -1299,6 +1315,15 @@ impl Operator for GridNode {
         let bus_v = bus_values(bus.as_deref(), travel.as_deref(), pos.as_ref(), ts);
         for (v, x) in values.iter_mut().skip(BUS).zip(bus_v) {
             *v = x;
+        }
+        // Past the end only the beats travelled move on: the rest of the bus holds at `ts`.
+        if past > 0.0
+            && let Some(b) = &bus
+        {
+            let (travelled, bpm) = travel.as_deref().unwrap_or(b.travel()).at(shown);
+            for (v, x) in values.iter_mut().skip(BUS).zip([travelled, bpm]) {
+                *v = if x.is_finite() { x } else { 0.0 };
+            }
         }
         let here = structure.as_deref().and_then(|s| s.sections.at(ts));
         let track = here.map_or([0.0; 4], |p| {

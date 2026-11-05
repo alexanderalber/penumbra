@@ -943,3 +943,67 @@ fn the_character_of_the_example_track() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// With `run_on`, `seconds` and `travelled` go on past the end of a file played once, at the last
+/// tempo, and every other channel holds. A jump back reads as before; without `run_on` both stop.
+#[test]
+fn run_on_keeps_seconds_and_travelled_rising_past_the_end() {
+    let dir = temp_dir("run-on");
+    let file = clicks(&dir);
+    let cache = dir.join("cache");
+    let mut ops = grid_ops(&file);
+    ops.extend([
+        set("/p.loop", false),
+        create("/o", BEAT_GRID),
+        connect("/p", "/o", 0),
+        set("/o.run_on", true),
+    ]);
+    let mut f = fixture(&ops, &cache);
+    let t = Instant::now();
+    loop {
+        assert!(t.elapsed() < Duration::from_secs(120), "the bus never came");
+        std::thread::sleep(Duration::from_millis(20));
+        // The show stands while the analysis runs, so the file's end is still ahead afterwards.
+        let Some((g, _)) = try_cook_two(&mut f) else { continue };
+        if value(&g, "sections_ready") == 1.0 && value(&g, "analyzing") == 0.0 {
+            break;
+        }
+    }
+    let frames = |f: &mut F, n: u64| {
+        for _ in 0..n {
+            f.clock.advance(1);
+            cook_two(f);
+        }
+        cook_two(f)
+    };
+    // Up to the end the two nodes read the same.
+    let (g, o) = frames(&mut f, 300);
+    assert!(value(&g, "seconds") < 12.0, "{}", value(&g, "seconds"));
+    assert_eq!(bus_of(&g), bus_of(&o));
+    assert_eq!(value(&g, "seconds"), value(&o, "seconds"));
+    // Past the end: 12 s of file, then 6 s more.
+    let now = value(&g, "seconds");
+    let (g, o) = frames(&mut f, ((12.0 - now) * 60.0) as u64 + 2);
+    let (g2, o2) = frames(&mut f, 360);
+    assert!((value(&g, "seconds") - 12.0).abs() < 0.05, "{}", value(&g, "seconds"));
+    assert_eq!(value(&g2, "seconds"), value(&g, "seconds"), "off: seconds stop");
+    assert_eq!(value(&g2, "travelled"), value(&g, "travelled"), "off: travelled stops");
+    assert!((value(&o2, "seconds") - value(&o, "seconds") - 6.0).abs() < 0.02, "{}", value(&o2, "seconds"));
+    let bpm = value(&o2, "travel_bpm");
+    assert!(bpm > 0.0);
+    let moved = value(&o2, "travelled") - value(&o, "travelled");
+    assert!((moved - 6.0 * bpm / 60.0).abs() < 0.05, "{moved} beats at {bpm}");
+    // Everything else holds at the file's last moment, as without run_on.
+    for name in super::beat_grid::CHANNELS {
+        if !["seconds", "travelled"].contains(&name) {
+            assert_eq!(value(&o2, name), value(&g2, name), "{name}");
+        }
+    }
+    // A jump back reads the file again.
+    f.edit(&[set("/p.position", 2.0)]);
+    let (g3, o3) = frames(&mut f, 2);
+    assert!((value(&o3, "seconds") - value(&g3, "seconds")).abs() < 1e-9);
+    assert!(value(&o3, "seconds") < 3.0, "{}", value(&o3, "seconds"));
+    assert_eq!(bus_of(&o3), bus_of(&g3));
+    let _ = std::fs::remove_dir_all(&dir);
+}
