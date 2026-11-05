@@ -3,7 +3,7 @@
 (
     version: 2,
     nodes: {
-        "/sky_stars": (kind: "comp.base", params: {"expose": "presence = stars.presence\nbrightness = stars.brightness\nseed = stars.seed\ndensity = stars.density\nsize = stars.size\ntwinkle = stars.twinkle\nvenus = stars.venus\nvenus_x = stars.venus_x\nvenus_y = stars.venus_y\nthin = stars.thin\nmeteor = meteor_in.value0\nmeteor_seed = stars.meteor_seed\nmeteor_time = flight.decay\ntrail = stars.trail\ntrail_angle = stars.trail_angle\ntrail_light = stars.trail_light\npole_x = stars.pole_x\npole_y = stars.pole_y"}),
+        "/sky_stars": (kind: "comp.base", params: {"expose": "presence = stars.presence\nbrightness = stars.brightness\nseed = stars.seed\ndensity = stars.density\nsize = stars.size\ntwinkle = stars.twinkle\nvenus = stars.venus\nvenus_x = stars.venus_x\nvenus_y = stars.venus_y\nthin = stars.thin\nmeteor = meteor_in.value0\nmeteor_seed = stars.meteor_seed\nmeteor_length = stars.meteor_length\nmeteor_time = flight.decay\ntrail = stars.trail\ntrail_angle = stars.trail_angle\ntrail_light = stars.trail_light\npole_x = stars.pole_x\npole_y = stars.pole_y"}),
         "/sky_stars/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
         "/sky_stars/pose": (kind: "chan.in", pos: [-600.0, 150.0]),
         "/sky_stars/meteor_in": (kind: "chan.constant", params: {"rows": 1, "name0": "meteor", "value0": 0.0}, pos: [-800.0, 300.0]),

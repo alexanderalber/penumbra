@@ -15,6 +15,7 @@
 // @param venus_y float = 0.1 0..1 -- how high Venus stands above the horizon, in picture heights
 // @param meteor_left float = 0 0..1 -- how much of a shooting star's flight is left: 1 it starts, 0 none (the component's `meteor` trigger drives it)
 // @param meteor_seed int = 0 0..1000 -- picks the shooting star's place and direction
+// @param meteor_length float = 0.45 0.02..1 -- how long the shooting star's tail grows, in picture heights
 // @param trail float = 0 0..1 -- how long the arcs are, as a share of `trail_angle`; 0 points only
 // @param trail_angle float = 45 1..180 -- the angle of an arc at `trail` 1, in degrees
 // @param trail_light float = 1 0..2 -- the light of the arcs; turn it down to fade them out at their full length
@@ -138,8 +139,9 @@ fn star_arcs(p: vec2f, px: f32, cell: f32, chance: f32, clumped: bool, power: f3
 }
 
 // A shooting star: a thin head that crosses part of the sky once while `meteor_left` runs from 1 to
-// 0, warm white, with a short tail fading to copper. `meteor_seed` picks where and which way. It
-// stays above the band.
+// 0, warm white, with a tail of up to `meteor_length` fading to copper. The tail starts where the
+// head started and grows behind it, so the head covers about 1.6 tails in a flight. `meteor_seed`
+// picks where and which way. It stays above the band.
 fn meteor_light(p: vec2f, px: f32) -> vec3f {
     let left = clamp(params.meteor_left, 0.0, 1.0);
     if left <= 0.0 {
@@ -151,8 +153,10 @@ fn meteor_light(p: vec2f, px: f32) -> vec3f {
     let slant = radians(mix(12.0, 30.0, fract(h.z * 7.0)));
     let dir = vec2f(way * cos(slant), -sin(slant));
     let start = vec2f(mix(-0.6, 0.6, h.x) - way * 0.15, mix(0.27, 0.37, h.y));
-    let head = start + dir * mix(0.32, 0.46, fract(h.y * 5.0)) * u;
-    let tail = 0.17 * smoothstep(0.0, 0.35, u);
+    let length_max = max(params.meteor_length, 0.02);
+    let gone = length_max * mix(1.4, 1.8, fract(h.y * 5.0)) * u;
+    let head = start + dir * gone;
+    let tail = min(length_max, gone);
     let along = clamp(dot(head - p, dir), 0.0, max(tail, 1e-5));
     let share = along / max(tail, 1e-5);
     let d = length(p - (head - dir * along));

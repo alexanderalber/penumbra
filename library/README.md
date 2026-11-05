@@ -1456,8 +1456,10 @@ drawn as arcs round a pole, as in a long exposure of the night sky.
   the horizon: -0.32 and 0.1), `thin` (how high above the horizon the dawn thins the stars:
   0.35 picture heights).
 - Shooting star: each rise of `meteor` from 0 past 0.5 fires one. It crosses part of the sky in
-  `meteor_time` seconds (1), thin, warm white, with a short tail fading to copper, and stays above
-  the band. `meteor_seed` picks its place and direction; keep the seed still during the flight. To
+  `meteor_time` seconds (1), thin, warm white, with a tail fading to copper, and stays above the
+  band. `meteor_length` is the tail's longest length in picture heights (0.45). The head covers
+  about 1.6 tail lengths in a flight. `meteor_seed` picks its place and direction; keep the seed
+  still during the flight. To
   fire it at a moment of the music, make `meteor` 1 for a short window of the file's seconds, 0.15 s
   for instance. A seek past the window fires nothing.
 - Arcs: `trail` (0 to 1) draws each medium and bright star as an arc that runs back from the star
