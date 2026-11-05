@@ -552,7 +552,8 @@ swap.
 A second family of worlds: the camera flies low over a dark lake in a valley at night, towards
 the first light of dawn on the horizon. The sky is night blue near the horizon and black
 overhead. The dawn lies on the horizon as a band of light: `dawn` 0 is a thin dark red line, 1 a
-broad copper band with a gold core. The band never becomes a sun. The lake mirrors the sky, the
+broad copper band with a gold core. `sun` lifts the top of a sun disc out of the band, copper low
+down, gold towards 1. The disc never turns white. The lake mirrors the sky, the
 band and the stars, blurred and broken up by ripples. It also mirrors what stands on it: the
 floor, mid and ceiling elements. A black body stays black in the water, and its rims mirror
 fainter and softer than they shine. The mirror of a thing starts at its foot; the ripples move
@@ -582,7 +583,10 @@ glow. So a breakdown raises the light on the horizon, and the drop takes it back
 - Params: `warmth` (0 the ember palette with an amber glow above the band, 1 the jade palette
   with a cold blue-green glow and a greener mist), `lift`, `energy_curve`, `dim` (the sky's
   light: 1 full, 0 half; `beats.arrange` binds it as `intensity`), `dawn` (0 to 1: bind it to
-  the file's `progress`), `swell_rise` (8 s) and `swell_fall` (3 s), `band_height` (how far the
+  the file's `progress`), `reveal` (0 to 1, for one moment of the widest light: the band grows
+  wider and taller than at `dawn` 1, and the stage lifts `dawn` to at least this value, so the stars
+  thin and the rims brighten with it), `sun` (0 under the horizon, 1 the disc's top stands half its
+  radius above the horizon), `sun_size` (the disc's radius in picture heights: 0.16), `swell_rise` (8 s) and `swell_fall` (3 s), `band_height` (how far the
   band reaches up at `dawn` 1, in picture heights: 0.1), `band_width` (how far it reaches to
   either side at `dawn` 1: 0.9). The lane's `bars_per_turn` (4: one turn every 4 bars, slower
   than on `stage_synthwave`), `swing`, `turn`, `beats_per_bar`; `step`; `start`, `end` of the
@@ -1440,7 +1444,8 @@ A night sky of stars over black, for `stage_valley`: many faint stars, fewer med
 few bright ones, in patches of denser and sparser sky. Venus is the brightest point, steady,
 low over the horizon. The treble makes the stars twinkle. Towards the stage's `dawn` 1 the stars
 near the horizon fade; Venus stays. The stars keep their place in the sky when the camera
-moves.
+moves. Two things happen only when the project asks for them: one shooting star, and the stars
+drawn as arcs round a pole, as in a long exposure of the night sky.
 
 - In: `bus`, `pose` (the stage's: the horizon, `far` and `dawn` come from it). Out: `out`.
 - Params: `presence` (towards 0 the stars dim to a black sky), `brightness`, `seed` (another
@@ -1449,6 +1454,18 @@ moves.
   `venus_x` and `venus_y` (where Venus stands, in picture heights from straight ahead and above
   the horizon: -0.32 and 0.1), `thin` (how high above the horizon the dawn thins the stars:
   0.35 picture heights).
+- Shooting star: each rise of `meteor` from 0 past 0.5 fires one. It crosses part of the sky in
+  `meteor_time` seconds (1), thin, warm white, with a short tail fading to copper, and stays above
+  the band. `meteor_seed` picks its place and direction; keep the seed still during the flight. To
+  fire it at a moment of the music, make `meteor` 1 for a short window of the file's seconds, 0.15 s
+  for instance. A seek past the window fires nothing.
+- Arcs: `trail` (0 to 1) draws each medium and bright star as an arc that runs back from the star
+  round the pole, brightest at the star. The arc's angle is `trail` times `trail_angle` (45
+  degrees). `pole_x` and `pole_y` place the pole (0.3 and 0.42 picture heights, as for Venus); it
+  may lie outside the picture. `trail_light` (1) is the arcs' light: turn it down to fade them at
+  their full length. The faint stars dim while the arcs show, and Venus stays as she is. The arcs
+  are computed in the shader per frame, with no feedback, so they follow a seek. They cost GPU time
+  only while `trail` is above 0.
 
 ### sky_horizon_glow
 

@@ -1,11 +1,15 @@
 // The valley's night sky before sunrise: a dark gradient from night blue at the horizon to
 // obsidian overhead, and the first light as a band lying on the horizon. `dawn` sets the band:
 // at 0 a thin dark red line, at 1 a broad copper band with a gold core and a faint halo above
-// it. It never shows a sun. The swell (the stage's slow signal, high in a breakdown) lifts the
+// it. `reveal` widens the band beyond that for one moment. `sun` lifts the top of a sun disc out of
+// the band, copper low down and gold towards 1; the disc stays gold and never turns white. The swell (the stage's slow signal, high in a breakdown) lifts the
 // band and makes it glow; the bass pulses its core a little. Black below the horizon, where the
 // lake lies (lake.wgsl). The horizon is where the floor fades out, `reach` metres ahead, as the
 // camera sees it, so it moves with the camera.
 // @param dawn float = 0 0..1 -- the first light: 0 a thin dark red line, 1 a broad copper band with a gold core
+// @param reveal float = 0 0..1 -- a moment of the widest light: towards 1 the band grows wider and taller than at dawn 1. The stage also lifts `dawn` to at least this value
+// @param sun float = 0 0..1 -- how far the sun has risen: 0 under the horizon, 1 the disc's top stands half of `sun_size` above the horizon
+// @param sun_size float = 0.16 0.02..0.6 -- the sun disc's radius, in picture heights
 // @param swell float = 0 0..1 -- the stage's swell: lifts the band and adds to its glow
 // @param energy float = 0 0..1 -- the bass, curved: pulses the band's core a little
 // @param warmth float = 0 0..1 -- 0 the ember palette (amber halo), 1 the jade palette (cold blue-green halo)
@@ -50,8 +54,9 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     var sky = mix(low, high, smoothstep(0.0, 0.7, up)) * (0.75 + 0.25 * light);
 
     // The band: its height and width grow with the dawn, the swell lifts it further.
-    let h = max(params.band_height, 0.001) * mix(0.07, 1.0, dawn) * (1.0 + 0.7 * swell);
-    let w = max(params.band_width, 0.01) * mix(0.4, 1.0, dawn) * (1.0 + 0.25 * swell);
+    let reveal = smoothstep(0.0, 1.0, clamp(params.reveal, 0.0, 1.0));
+    let h = max(params.band_height, 0.001) * mix(0.07, 1.0, dawn) * (1.0 + 0.7 * swell) * (1.0 + 0.15 * reveal);
+    let w = max(params.band_width, 0.01) * mix(0.4, 1.0, dawn) * (1.0 + 0.25 * swell) * (1.0 + 0.9 * reveal);
     let across = exp(-(x * x) / (w * w));
     // Thin bright core, body, and a wide faint halo above.
     let core_h = max(0.22 * h, 1.2 * px);
@@ -66,6 +71,21 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     // The core narrows towards the sides faster than the body: the light gathers in the middle.
     let band = core_c * core * across * across * pulse + body_c * body * across + halo_c * halo * sqrt(across);
     sky += band * glow;
+
+    // The sun: a disc rising behind the band's core, copper at the horizon and gold towards its top.
+    // Its colours stay below white at any height.
+    let sun = clamp(params.sun, 0.0, 1.0);
+    if sun > 0.0 {
+        let radius = max(params.sun_size, 0.001);
+        let top = radius * mix(-0.02, 0.5, sun);
+        let from_rim = length(vec2f(x, y - (top - radius))) - radius;
+        let copper = vec3f(0.60, 0.20, 0.04);
+        let gold = mix(vec3f(0.72, 0.30, 0.06), vec3f(0.88, 0.47, 0.10), sun);
+        let colour = mix(copper, gold, smoothstep(-0.2 * radius, top, y));
+        // Faint light round the disc, then the disc with a soft edge.
+        sky += gold * 0.18 * exp(-max(from_rim, 0.0) / (0.3 * radius)) * smoothstep(0.0, 0.2, sun);
+        sky = mix(sky, colour, smoothstep(0.008, -0.004, from_rim));
+    }
 
     // Below the horizon nothing: the lake goes there. One pixel of soft edge.
     let above = smoothstep(-px, px, y);
