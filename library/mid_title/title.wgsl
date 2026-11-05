@@ -14,7 +14,7 @@
 // @param beat float = 0 0..1 -- how far the current beat has gone (beat of a chan.beat_grid): the light pulses on its start
 // @param bass float = 0 0..1 -- the bass (energy_low of a chan.beat_grid, smoothed): how strong the pulse is
 // @param dawn float = 0 0..1 -- the stage's dawn: the rims catch more of the band's light towards 1
-// @param swell float = 0 0..1 -- the stage's swell: the face glows brighter
+// @param swell float = 0 0..1 -- the stage's swell: rims and the glow at the foot of the letters brighten
 // @param warmth float = 0 0..1 -- 0 copper rims, 1 jade
 // @param presence float = 1 0..1 -- towards 0 the title sinks into the water and dims, 0 none
 // @param at float = 3 0..100000 -- seconds into the file at which the title appears
@@ -55,7 +55,10 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let lit = params.light * up * up * (1.0 + beat);
     if params.what == what_rim {
         let tone = mix(vec3f(1.0, 0.5, 0.2), vec3f(0.45, 1.0, 0.75), warm);
-        return vec4f(tone * lit * (0.9 + 0.3 * dawn + 0.6 * swell), 1.0);
+        // The stage fades what is far away. Far off the rims carry the reading, so they make up for
+        // part of the fade; near, they are about as bright as the shore's rims.
+        let far = 1.0 + 2.5 * smoothstep(10.0, 28.0, ahead());
+        return vec4f(tone * lit * far * (0.3 + 0.12 * dawn + 0.15 * swell), 1.0);
     }
-    return vec4f(vec3f(lit * (0.55 + 0.3 * dawn + 1.0 * swell)), 1.0);
+    return vec4f(vec3f(lit * (0.6 + 0.2 * dawn + 0.3 * swell)), 1.0);
 }

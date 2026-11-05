@@ -1321,8 +1321,9 @@ slot of `beats.arrange` brings the flock into every second stretch of intros, ou
 Solid lettering that stands at one place over the lake of `stage_valley`, for a title at the start
 of a show. It appears `at` seconds into the file, `distance` metres ahead of the camera, and rises
 out of the water. It then stays where it is in the world. The camera comes nearer and passes under
-it. The letters have black bodies, an ember glow low in their faces and bright rims along the
-front's outlines. The swell lifts the glow, and the band's dawn lifts the rims. The lake mirrors the
+it. The letters are black stone with copper rims along the front's outlines and a thin ember glow
+at their foot. Far off, the rims are brighter and carry the reading. The swell lifts rims and glow,
+and the band's dawn lifts them a little more. The lake mirrors the
 lettering faint and rippled.
 
 **Timing.** The camera flies `step` metres per beat: 0.5 m at 125 BPM is about 1 m per second. So
@@ -1340,8 +1341,8 @@ that the title's chain does not cook, and it costs nothing.
 
 - In: `bus`, `pose`.
 - Out: `out`; `shown` (above 0 while the title can still be seen).
-- Params: `text`, `font`, `style`, `size` (font size in metres, 1), `depth` (metres, 0.3), `spacing`,
-  `align` as on `geo.text`; `at` (seconds, 3), `distance` (metres, 30), `height` (metres above the
+- Params: `text`, `font`, `style`, `size` (font size in metres, 1), `depth` (metres, 0.2), `spacing`,
+  `align` as on `geo.text`, Noto Serif with `spacing` 0.07 by default; `at` (seconds, 3), `distance` (metres, 30), `height` (metres above the
   water of the lettering's middle, 4.2; keep the lower edge above the camera), `side` (metres, 0;
   the camera flies along 0), `step` (set it to the stage's `step`, 0.5), `rise` (seconds, 3), `sink`
   (metres it starts below `height` and sinks to, 6), `behind` (metres behind the camera at which it
