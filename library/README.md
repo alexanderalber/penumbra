@@ -844,8 +844,9 @@ Low copper tufts stand in front of them all, between the plants and the lane.
 
 Each clump has its own size. Reeds, cattails, sedge and papyrus sway across the lane in a wave
 that runs along the line towards the camera, stiffer kinds less, and agaves stand still. The bass
-widens the sway. The stage's swell lights the tips: faint in a loud section, a jade glint in a
-breakdown, each clump catching the light at its own moment. Each model is one `geo.tex_instance`,
+widens the sway. The stage's swell lights the jade tips: faint in a loud section, a glint in a
+breakdown, each clump catching the light at its own moment. Copper lines, the tufts and the agaves,
+stay steady: only a slow lift with the swell, the same for all. Each model is one `geo.tex_instance`,
 7 in all, and all but the tufts share one set of place, aim and glint pictures. `plants.py` in the
 folder writes the models.
 

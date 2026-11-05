@@ -11,14 +11,16 @@
 // no gaps and `step` metres per beat.
 // `what` place: the clump's foot (rgb). aim: its turn and lean. scale: its size (0 where none
 // stands), alpha its kind (0 to 4 as in kind_of, 5 tufts, plus 10 when it carries a mast); pick.wgsl
-// makes one model's scale of it. color: the glint, as a factor on the plants' ramp. Render each
+// makes one model's scale of it. color: the glint, as a factor on the plants' ramp. steady: the
+// same factor without the glint, for copper lines: one slow lift with the swell, shared by all
+// clumps. Render each
 // 4 x 72, with the memory in in1. memory: what each clump remembers from frame to frame. Render it
 // 5 x 128 and feed it back into itself through a tex.feedback into its own in1. A clump that
 // presence brings or takes grows or shrinks over `ease` bars; within `hold` metres of the camera
 // it keeps what it does until it has passed. Texel (column, n modulo 128) holds clump n of that
 // column: red 1 if it stands by presence plus 4 times its lap, green how far it has grown; texel
 // (4, 0) the clock (whole beats modulo 1024, the beat's fraction).
-// @param what choice(place|aim|scale|color|memory) = place -- what this node writes
+// @param what choice(place|aim|scale|color|memory|steady) = place -- what this node writes
 // @param front float = 0 0..1 -- 1: the low tufts in front; 0: the stretches of plants
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid)
 // @param bass float = 0 0..1 -- the bass (energy_low of a chan.beat_grid, smoothed): the plants sway wider with it
@@ -31,6 +33,7 @@
 // @param calm float = 0.3 0..1 -- share of the sway left when the bass is quiet
 // @param wave float = 6 1..40 -- metres between two crests of the sway along a line
 // @param glint float = 3 0..10 -- how bright the tips glint at full swell
+// @param rim_lift float = 1 0..4 -- how much the swell lifts copper lines (`what` steady): the factor runs from 0.35 to 0.35 + this
 // @param lane float = 1.6 0..5 -- half the width of the free lane
 // @param edge float = 0.2 0..4 -- metres between the lane's edge and the first line
 // @param depth float = 0.7 0.1..4 -- metres between the first line and the second
@@ -300,6 +303,9 @@ fn clump(cell: vec2u) -> Clump {
 fn main(v: PnVertex) -> @location(0) vec4f {
     if params.what == what_memory {
         return memory(vec2u(v.pos.xy));
+    }
+    if params.what == what_steady {
+        return vec4f(vec3f(0.35 + params.rim_lift * clamp(params.swell, 0.0, 1.0)), 1.0);
     }
     let c = clump(vec2u(v.pos.xy));
     if params.what == what_place {
