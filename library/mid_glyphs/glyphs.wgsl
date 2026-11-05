@@ -12,6 +12,8 @@
 // a straight lane at x = 0.
 // `what` place: the middle of each segment. aim: its direction. scale: `thickness` across, its
 // length along y (0 for none). color: its light. Render it 32 x 16.
+// The head of a ring being drawn also carries a soft glowing ball, a quad from ball.obj with
+// ball.wgsl's picture: `what` ball_place, ball_size and ball_light give each ring's ball. Render them 7 x 1.
 // The rings arrive as an event. Presence rising starts it: on each downbeat one more ring is drawn
 // on from the inside out, by a bright ember head that runs once round and leaves the line behind
 // it. The head fades to the ring's rim light when it closes. Presence falling folds the rings flat
@@ -26,7 +28,7 @@
 // seek, the first frame, the rings not cooked for a while) forgets all of it. One frame later the
 // memory knows whether presence moves: rising or low means an arrival is still to come, anything
 // else shows the rings whole, at once.
-// @param what choice(place|aim|scale|color|memory) = place -- what this node writes
+// @param what choice(place|aim|scale|color|memory|ball_place|ball_size|ball_light) = place -- what this node writes
 // @param beats float = 0 0..20000 -- distance travelled, in beats (travelled of a chan.beat_grid): the rings turn with it
 // @param beat float = 0 0..1 -- how far the current beat has gone (beat of a chan.beat_grid): the light pulses on its start
 // @param swell float = 0 0..1 -- the stage's swell: opens the rings
@@ -81,11 +83,12 @@ const STAGGER: f32 = 0.25;
 const HEAD_FADE: f32 = 0.6;
 // How sharply the bright line behind a head falls off, per turn of the ring.
 const TAIL: f32 = 7.0;
-// The spark on a head: two short crossed lines, half length in metres at full light.
 // Steps the light after the last ring's closing takes to fade.
 const GLOW_STEPS: f32 = 2.0;
-const SPARK_LENGTH: f32 = 0.14;
-const SPARKS: u32 = 14u;
+// The ball on a head: its size across in metres at full light, and the head's light from which it
+// shows. It goes early, so the ball of a closed ring is gone soon after the next ring's starts.
+const BALL_SIZE: f32 = 0.62;
+const BALL_FROM: f32 = 0.55;
 
 // A ring: what it is (0 circle, 1 step fret, 2 ticks), its inner and outer radius in metres at
 // size 1, its cells (a fret's cells, a circle's or the ticks' segments), the first texel it
@@ -159,7 +162,6 @@ struct Segment {
     folded: f32,
     head: f32,
     along: f32,
-    spark: f32,
 }
 
 fn segment(i: u32, opening: f32) -> Segment {
@@ -172,7 +174,6 @@ fn segment(i: u32, opening: f32) -> Segment {
     s.folded = 0.0;
     s.head = 0.0;
     s.along = 0.0;
-    s.spark = 0.0;
     if i >= SEGMENTS {
         return s;
     }
@@ -348,14 +349,11 @@ fn memory(x: i32) -> vec4f {
     return vec4f(drawn, fold, head, 0.0);
 }
 
-// The spark on ring k's head: two crossed lines through the end of the line drawn so far.
-fn spark(i: u32, opening: f32) -> Segment {
-    var s = segment(SEGMENTS, opening);
-    let n = i - SEGMENTS;
-    let k = n / 2u;
+// The ball on ring k's head: rgb the end of the line drawn so far, alpha how much of it shows.
+fn ball(k: u32, opening: f32) -> vec4f {
     let state = ring_state(k);
-    if state.z <= 0.01 || state.x <= 0.0 || state.y > 0.0 {
-        return s;
+    if state.z <= BALL_FROM || state.x <= 0.0 || state.y > 0.0 {
+        return vec4f(0.0);
     }
     let r = ring(k);
     var end = segment(r.first + min(u32(state.x * f32(r.count)), r.count - 1u), opening);
@@ -363,23 +361,9 @@ fn spark(i: u32, opening: f32) -> Segment {
         end = segment(r.first + u32(state.x * f32(r.count)) - 1u, opening);
     }
     if !end.shown {
-        return s;
+        return vec4f(0.0);
     }
-    let tip = end.b;
-    let turn = params.beats * 0.5 + f32(n / 2u) + 0.25 * f32(n % 2u) * TAU;
-    let arm = (SPARK_LENGTH * state.z * state.z) * vec3f(cos(turn), 0.0, sin(turn));
-    s.a = tip - arm;
-    s.b = tip + arm;
-    s.shown = true;
-    s.spark = state.z;
-    return s;
-}
-
-fn any_segment(i: u32, opening: f32) -> Segment {
-    if i >= SEGMENTS && i < SEGMENTS + SPARKS {
-        return spark(i, opening);
-    }
-    return segment(i, opening);
+    return vec4f(end.b, smoothstep(BALL_FROM, 1.0, state.z));
 }
 
 @fragment
@@ -393,7 +377,17 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let snap = clamp(params.snap, 0.0, 1.0);
     let lo = min(params.open_at, params.open_full - 0.01);
     let opening = max(smoothstep(lo, params.open_full, swell) * (1.0 - snap), clamp(params.open, 0.0, 1.0));
-    let s = any_segment(i, opening);
+    if params.what == what_ball_place || params.what == what_ball_size || params.what == what_ball_light {
+        let b = ball(cell.x, opening);
+        if params.what == what_ball_place {
+            return vec4f(b.xyz, 1.0);
+        }
+        if params.what == what_ball_size {
+            return vec4f(vec3f(BALL_SIZE * step(0.001, b.w) * (0.7 + 0.3 * b.w)), 1.0);
+        }
+        return vec4f(vec3f(b.w), 1.0);
+    }
+    let s = segment(i, opening);
     let d = s.b - s.a;
     var len = length(d);
     if !s.shown {
@@ -408,9 +402,6 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         return vec4f(t, len + select(0.0, 0.5 * params.thickness, len > 0.0), t, 1.0);
     }
     if params.what == what_color {
-        if s.spark > 0.0 {
-            return vec4f(vec3f(1.0, 0.62, 0.28) * 1.8 * s.spark * s.spark, 1.0);
-        }
         let m = 0.5 * (s.a + s.b);
         // The band lies where the line from the eye to the horizon passes the segment.
         let band = max(params.eye, 0.0) * (1.0 - max(m.y, 0.0) / max(params.reach, 1.0));
@@ -433,7 +424,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         // The head: a hot point and a line behind it that cools towards the ring's own light.
         let behind = max(s.drawn - s.along, 0.0);
         let tail = s.head * exp(-TAIL * behind);
-        let ember = vec3f(1.0, 0.42, 0.10) * 1.3 * tail + vec3f(1.0, 0.75, 0.45) * 3.0 * pow(tail, 12.0);
+        let ember = vec3f(1.0, 0.42, 0.10) * 1.3 * tail + vec3f(1.0, 0.68, 0.36) * 1.4 * pow(tail, 12.0);
         // Alpha fades a folding ring: a dark line would stand out against the sky.
         return vec4f(tone * level + ember, fade);
     }

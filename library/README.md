@@ -1223,7 +1223,7 @@ lines only, lit from behind by the band: brightest where a ring crosses the hori
 valley's counterpart to the glider, the thing the eye follows.
 
 **Arrival.** When `presence` rises past 0.25, the next downbeat starts the innermost ring, and each following downbeat starts the
-next ring outwards. A bright ember head runs once round the ring within its bar and leaves the
+next ring outwards. A bright ember head, a small glowing ball, runs once round the ring within its bar and leaves the
 line behind it. The step frets are laid segment by segment. When a ring closes, its head fades
 to the ring's rim light. After the seventh ring all rings brighten once and settle over the eighth
 bar. The arrival takes `arrive_bars` (8) bars, however quickly `presence` rose.
