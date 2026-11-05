@@ -1,6 +1,7 @@
 // The smoke of mid_smoke: three veils of copal smoke, one above the other, for the veils' models
 // to show (veil1.obj to veil3.obj take a third each, the top one first). Each veil is thick near
-// its foot and frays into wisps towards the top and the sides. The wisps curl slowly and drift
+// its foot and frays into wisps towards the top and the sides, and reaches nothing at every edge
+// of its third, so no quad shows a straight line. The wisps curl slowly and drift
 // with the beats travelled. The smoke is lit from behind by the band on the horizon: its thin
 // edges and the tops of its puffs glow in the band's colour, the thick parts less.
 // The picture is premultiplied light with almost no alpha (0.3 % where there is smoke): the smoke
@@ -12,7 +13,7 @@
 // @param dawn float = 0 0..1 -- the stage's dawn: 0 a dark ember red, 1 copper
 // @param warmth float = 0 0..1 -- 0 ember and copper, 1 cooler, towards jade grey
 // @param cover float = 0.3 0..1 -- how much of a veil holds smoke in a loud stretch
-// @param cover_swell float = 0.3 0..1 -- how much more the full swell covers
+// @param cover_swell float = 0.24 0..1 -- how much more the full swell covers
 // @param curl float = 1 0..3 -- how much the wisps curl
 // @param speed float = 1 0..4 -- how fast the wisps change
 // @param seed int = 0 0..1000 -- other smoke
@@ -41,15 +42,16 @@ fn density(x: f32, y: f32, row: u32) -> f32 {
     // Strands: thin ridges of a second noise, stretched along the drift, where the smoke is thin.
     let ridge = 1.0 - abs(fbm(q * vec3f(1.6, 3.2, 1.0) + vec3f(7.3, 1.1, 0.0), seed + 307u));
     let strands = pow(clamp(ridge, 0.0, 1.0), 6.0);
-    // Thick in the lower middle, fraying upwards; soft at the sides and at the very foot.
-    let foot = smoothstep(1.0, 0.82, y);
+    // Thick in the lower middle, fraying upwards; nothing at the top, the sides and the foot.
+    let foot = smoothstep(1.0, 0.76, y);
     let up = smoothstep(0.0, 0.7, y);
-    let sides = smoothstep(0.0, 0.22, x) * smoothstep(1.0, 0.78, x);
+    let top = smoothstep(0.0, 0.3, y);
+    let sides = smoothstep(0.0, 0.25, x) * smoothstep(1.0, 0.75, x);
     let swell = clamp(params.swell, 0.0, 1.0);
     let cover = clamp(params.cover + params.cover_swell * swell, 0.0, 1.0) * mix(0.8, 1.0, up);
     let thick = smoothstep(1.0 - cover, 1.0 - cover + 0.4, body);
     let thin = strands * smoothstep(1.0 - cover - 0.2, 1.0 - cover + 0.15, body);
-    return clamp(thick * mix(0.6, 1.0, up) + 0.7 * thin, 0.0, 1.0) * foot * sides;
+    return clamp(thick * mix(0.6, 1.0, up) + 0.7 * thin, 0.0, 1.0) * foot * top * sides;
 }
 
 @fragment

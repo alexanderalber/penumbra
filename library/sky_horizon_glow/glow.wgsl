@@ -2,7 +2,8 @@
 // soft rays fanning up from below the horizon and a faint halo above the band. Both breathe with
 // the stage's swell, so they are strongest in a breakdown and sink back on the drop. The dawn
 // widens them and makes them warmer. There is no disc: the light comes from below the horizon.
-// The rays turn slowly as the world travels. Nothing below the horizon.
+// The rays turn slowly as the world travels. Nothing below the horizon. The picture is light with
+// alpha 0: laid `over` other sky elements it adds to them and hides nothing.
 // @param presence float = 1 0..1 -- how much of the glow is there: 1 all of it, 0 nothing
 // @param brightness float = 1 0..3 -- the light of rays and halo together
 // @param rays float = 1 0..3 -- the rays' light; 0 only the halo
@@ -43,7 +44,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let y = at.y;
     let px = max(at.z, 1e-5);
     if y < -2.0 * px {
-        return vec4f(0.0, 0.0, 0.0, 1.0);
+        return vec4f(0.0);
     }
     let dawn = clamp(params.dawn, 0.0, 1.0);
     let swell = clamp(params.swell, 0.0, 1.0);
@@ -81,5 +82,5 @@ fn main(v: PnVertex) -> @location(0) vec4f {
 
     let edge = smoothstep(-px, px, y);
     let out = (rays + halo) * level * max(params.brightness, 0.0) * clamp(params.presence, 0.0, 1.0) * edge;
-    return vec4f(out, 1.0);
+    return vec4f(out, 0.0);
 }

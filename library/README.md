@@ -558,10 +558,12 @@ floor, mid and ceiling elements. A black body stays black in the water, and its 
 fainter and softer than they shine. The mirror of a thing starts at its foot; the ripples move
 only its far parts. The mirror is faint near the camera and strong towards the horizon. The stage draws that mirror as a second, small render of the scene from below the
 water, upside down. The stage also cuts every render at the water line, so an element sinks into
-the lake without a sheet of its own. A low mist drifts on the water near the camera; the bass
+the lake without a sheet of its own. A flat occluder (`water.obj`) in the main render hides what
+lies under the water, so smoke over a sunken stone stays whole. A low mist drifts on the water near the camera; the bass
 thickens it. Ripples and mist come towards the camera one grid cell per beat of `travelled`, as
 the synthwave floor does. The sky elements are `sky_stars`, `sky_horizon_glow`, `sky_volcano`
-and `sky_clouds`. On the shore stand the floor elements `floor_terraces`, `floor_reeds`,
+and `sky_clouds`. To show several, lay them with a `tex.composite` with `op: over`, `sky_stars`
+first: the volcano and the clouds then hide the stars behind them, and the glow adds its light. On the shore stand the floor elements `floor_terraces`, `floor_reeds`,
 `floor_stelae` and `floor_gates` (gates across the lane that the camera flies through). In the
 air hang the mid elements `mid_glyphs` (rings of light that open in a breakdown), `mid_smoke`
 and `mid_birds`.
@@ -1231,7 +1233,8 @@ adds a small pulse.
 Copal smoke over the lake of `stage_valley`: twelve veils of smoke hanging low across the lane,
 3 m apart. The veils stand still on the water and come towards the camera with it, so the
 camera flies through them. Each veil drifts slowly to one side as it comes and always faces the
-camera. The smoke is thick near the water and frays into wisps upwards. The wisps curl and drift
+camera. The smoke is thick near the water and frays into wisps upwards. It fades to nothing
+towards every edge of a veil, so no veil shows a straight line. The wisps curl and drift
 with the beats travelled. The band lights the smoke from behind in its colour: dark ember red at
 `dawn` 0, copper towards 1. The thin edges and the tops of the puffs glow most.
 
@@ -1242,14 +1245,15 @@ visible. The lake mirrors it.
 - In: `bus`, `lane`, `pose` (the stage's: `swell` and `dawn` come from it). Out: `out` (into
   the stage's `mid`).
 - Params: `presence` (towards 0 the veils fade out one after another), `brightness`, `calm`
-  (share of the light left without swell, 0.45), `veils` (1 to 12), `spacing` (metres between two
-  veils, 3), `wide` and `tall` (a veil's size, metres, 9 and 2.4 on average), `spread` (metres a
+  (share of the light left without swell, 0.58), `peak` (share of the light at the full swell,
+  0.82), `veils` (1 to 12), `spacing` (metres between two
+  veils, 3), `wide` and `tall` (a veil's size, metres, 9 and 3 on average), `spread` (metres a
   veil's middle lies from the lane's at most, 3), `wind` (metres a veil drifts sideways per metre
   it comes nearer, 0.04), `fade` (metres before the camera where a veil starts to fade out, 5),
   `start` and `end` (metres where far veils fade in, 14 and 38), `near`, `seed` (other places,
   sizes and smoke), `warmth` (0 ember and copper, 1 towards jade grey; `beats.arrange` binds it),
   `cover` (how much of a veil holds smoke without swell, 0.3), `cover_swell` (how much more the
-  full swell covers, 0.3), `curl` (how much the wisps curl), `speed` (how fast they change),
+  full swell covers, 0.24), `curl` (how much the wisps curl), `speed` (how fast they change),
   `extent`.
 - `veils.py` in the folder writes the three veil models.
 
@@ -1383,6 +1387,8 @@ fan up from below the horizon, and a faint halo lies over the band. Both follow 
 swell. They are strongest in a breakdown and sink back to about a third (`calm`) on the drop. Towards
 `dawn` 1 the rays reach higher and the halo grows wider. The glow has no disc: its light comes
 from below the horizon, so it never becomes a sun. The rays wander slowly as the world travels.
+The picture is light with alpha 0: in a `tex.composite` with `op: over` it adds to what lies below
+and hides nothing.
 
 - In: `bus`, `pose` (the stage's: the horizon, `swell` and `dawn` come from it). Out: `out`.
 - Params: `presence`, `brightness`, `rays` (the rays' light, 1; 0 only the halo), `count`
@@ -1399,8 +1405,9 @@ A volcano far off to one side of the horizon of `stage_valley`, with a smoke plu
 glows like embers, and the bass makes them flicker a little. A drop makes the crater flare: the
 glow, a few lava lines down the flank and the bottom of the plume brighten, then sink back over
 about 3 seconds. The plume rises from the crater and leans away from the middle, lit from below.
-The sky is screened, so the mountain cannot darken the stars or the band. A thin rim of dawn
-light draws its outline instead, brighter on the side towards the band.
+In a `tex.composite` with `op: over` the mountain and the plume hide the stars behind them. The
+stage screens the sky onto the band, so the band stays lit behind the mountain. A thin rim of dawn
+light draws its outline, brighter on the side towards the band.
 
 - In: `bus` (`drop`, the bass and `travelled`), `pose` (the horizon and `dawn`). Out: `out`.
 - Params: `presence`, `brightness`, `place` (where it stands, in picture heights from straight
@@ -1419,7 +1426,8 @@ A deck of clouds low over the horizon of `stage_valley`. The band lights the clo
 their lower edges glow copper, most in the middle over the band, at dawn and in the swell.
 Above, the clouds stay dark. The clouds crowd together towards the horizon, as a flat layer
 seen from below does. The deck drifts slowly towards the camera as the world travels, and a
-little sideways. The sky is screened, so the clouds cannot hide the stars or the band.
+little sideways. In a `tex.composite` with `op: over` thick cloud hides the stars behind it. The
+stage screens the sky onto the band, so the band stays lit behind the clouds.
 
 - In: `bus` (`travelled`), `pose` (the horizon, `swell` and `dawn`). Out: `out`.
 - Params: `presence` (towards 0 the deck dims and thins out), `brightness`, `cover` (how much

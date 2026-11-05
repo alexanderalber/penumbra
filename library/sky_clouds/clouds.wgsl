@@ -1,8 +1,10 @@
 // A deck of clouds low over the horizon, over black, to screen over the sky of `stage_valley`.
 // The band below lights the clouds from underneath: their lower edges glow copper, most in the
-// middle over the band and most at dawn and in the swell. Above, the clouds stay dark. The sky
-// is screened, so the clouds cannot hide the stars or the band. The deck drifts slowly towards
-// the camera as the world travels, and a little sideways. Nothing below the horizon.
+// middle over the band and most at dawn and in the swell. Above, the clouds stay dark. The picture
+// is light plus an alpha: thick cloud covers the stars when a tex.composite lays it `over` them,
+// and the light adds on top. The band stays lit behind it, since the stage screens the sky onto the
+// band. The deck drifts slowly towards the camera as the world travels, and a little sideways.
+// Nothing below the horizon.
 // @param presence float = 1 0..1 -- how much of the deck is there: 1 all of it, 0 nothing (it thins out towards 0)
 // @param brightness float = 1 0..3 -- the light of everything
 // @param cover float = 0.55 0..1 -- how much of the deck is cloud: 0 a few wisps, 1 nearly closed
@@ -80,7 +82,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let y = at.y;
     let px = max(at.z, 1e-5);
     if y < -2.0 * px {
-        return vec4f(0.0, 0.0, 0.0, 1.0);
+        return vec4f(0.0);
     }
     let dawn = clamp(params.dawn, 0.0, 1.0);
     let swell = clamp(params.swell, 0.0, 1.0);
@@ -88,7 +90,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
 
     let d = density(x, y);
     if d <= 0.0 {
-        return vec4f(0.0, 0.0, 0.0, 1.0);
+        return vec4f(0.0);
     }
     // The underside: cloud here but less of it just below, so the light from the band reaches it.
     let dy = max(0.006, 3.0 * px);
@@ -109,6 +111,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     light += mix(vec3f(0.004, 0.005, 0.010), vec3f(0.002, 0.008, 0.007), jade) * d * (1.0 - near_band);
 
     let edge = smoothstep(-px, px, y);
-    let out = light * max(params.brightness, 0.0) * clamp(params.presence, 0.0, 1.0) * edge;
-    return vec4f(out, 1.0);
+    let there = clamp(params.presence, 0.0, 1.0) * edge;
+    // Clouds at half presence (a breakdown dims the sky) still cover the stars; presence thins them.
+    return vec4f(light * max(params.brightness, 0.0) * there, clamp(1.5 * d, 0.0, 1.0) * smoothstep(0.0, 0.35, there));
 }

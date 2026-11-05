@@ -1,7 +1,9 @@
-// A volcano far off to one side of the horizon, over black, to screen over the sky of
-// `stage_valley`. The sky is screened, so the mountain cannot darken it: its outline carries a
-// thin rim of the dawn's light on the side towards the band, and its flank towards the band a
-// faint sheen. Its crater glows like embers. A drop makes the crater flare: the glow, the lava
+// A volcano far off to one side of the horizon, over black, for the sky of `stage_valley`. The
+// picture is light plus an alpha: the mountain and its plume cover what they stand in front of
+// when a tex.composite lays them `over` the stars, and the light adds on top. The band stays lit
+// behind it, since the stage screens the sky onto the band. Its outline carries a thin rim of the
+// dawn's light on the side towards the band, and its flank towards the band a faint sheen. Its
+// crater glows like embers. A drop makes the crater flare: the glow, the lava
 // lines down the flank and the underside of the smoke plume brighten and sink back over a few
 // seconds. The plume rises from the crater and leans with the wind, dark above, lit from below.
 // The bass makes the embers flicker a little. Nothing below the horizon.
@@ -69,13 +71,17 @@ fn ridge(dx: f32, h: f32, hw: f32, cw: f32, s: f32) -> f32 {
     return top;
 }
 
+fn below_of(dx: f32, y: f32, h: f32, hw: f32, cw: f32, s: f32) -> f32 {
+    return ridge(dx, h, hw, cw, s) - y;
+}
+
 @fragment
 fn main(v: PnVertex) -> @location(0) vec4f {
     let at = sky_at(v.pos.xy);
     let y = at.y;
     let px = max(at.z, 1e-5);
     if y < -2.0 * px {
-        return vec4f(0.0, 0.0, 0.0, 1.0);
+        return vec4f(0.0);
     }
     let dawn = clamp(params.dawn, 0.0, 1.0);
     let jade = clamp(params.warmth, 0.0, 1.0);
@@ -90,6 +96,8 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let inner = smoothstep(-0.3 * hw, 0.3 * hw, dx * toward);
 
     var light = vec3f(0.0);
+    // How much of what lies behind the mountain and the plume hide.
+    var hides = smoothstep(-px, px, below_of(dx, y, h, hw, cw, s));
     let top = ridge(dx, h, hw, cw, s);
     let below = top - y;
     let summit = h * 0.95;
@@ -151,10 +159,12 @@ fn main(v: PnVertex) -> @location(0) vec4f {
             let underlit = exp(-u / (0.06 + 0.06 * flare)) * (0.10 + 0.9 * ember);
             let col = ember_c * 0.30 * underlit + vec3f(0.016, 0.019, 0.030) * (0.4 + 0.6 * dawn);
             light += col * dens * max(params.plume, 0.0);
+            hides = max(hides, clamp(dens * max(params.plume, 0.0), 0.0, 0.85));
         }
     }
 
     let edge = smoothstep(-px, px, y);
-    let out = light * max(params.brightness, 0.0) * clamp(params.presence, 0.0, 1.0) * edge;
-    return vec4f(out, 1.0);
+    let there = clamp(params.presence, 0.0, 1.0) * edge;
+    // A mountain at half presence (a breakdown dims the sky) still stands whole in front of the stars.
+    return vec4f(light * max(params.brightness, 0.0) * there, hides * smoothstep(0.0, 0.35, there));
 }

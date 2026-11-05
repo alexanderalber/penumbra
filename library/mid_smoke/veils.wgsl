@@ -17,11 +17,12 @@
 // @param dawn float = 0 0..1 -- the stage's dawn: more of the band's light towards 1
 // @param presence float = 1 0..1 -- how many veils hang: towards 0 they fade out one after another, 0 none
 // @param brightness float = 1.6 0..4 -- the smoke's light
-// @param calm float = 0.45 0..1 -- share of the light left without swell
+// @param calm float = 0.58 0..1 -- share of the light left without swell
+// @param peak float = 0.82 0..1 -- share of the light at the full swell
 // @param veils int = 12 1..12 -- veils at a time
 // @param spacing float = 3 1..10 -- metres between two veils along the lane
 // @param wide float = 9 1..30 -- a veil's width, metres, on average
-// @param tall float = 2.4 0.3..8 -- a veil's height, metres, on average
+// @param tall float = 3 0.3..8 -- a veil's height, metres, on average
 // @param spread float = 3 0..15 -- metres a veil's middle lies from the lane's at most
 // @param wind float = 0.04 0..0.5 -- metres a veil drifts sideways per metre it comes nearer
 // @param fade float = 5 0.5..20 -- metres before the camera where a veil starts to fade out (gone at a fifth of it)
@@ -77,7 +78,8 @@ fn veil(i: u32) -> Veil {
     let far = params.near + spacing * f32(count);
     let side = select(-1.0, 1.0, q.x < 0.5);
     let x = lane + params.spread * (2.0 * r.x - 1.0) + side * params.wind * (far - y);
-    w.at = vec3f(x, y, -0.05 - 0.1 * r.y);
+    // The foot just above the water: the smoke has faded to nothing there, so the water cuts no line.
+    w.at = vec3f(x, y, 0.02 + 0.1 * r.y);
     // Width and height vary; every second one is mirrored, so six looks come from three veils.
     let mirror = select(-1.0, 1.0, q.y < 0.5);
     w.size = vec3f(mirror * params.wide * (0.7 + 0.6 * r.z), 1.0, params.tall * (0.7 + 0.6 * q.z));
@@ -93,7 +95,7 @@ fn veil(i: u32) -> Veil {
     // Lit from behind by the band: a near veil has less of it behind than a far one.
     let backlit = mix(0.5, 1.0, smoothstep(4.0, 18.0, y));
     let own = clamp((clamp(params.presence, 0.0, 1.0) * 1.25 - q.z * 0.999) * 4.0, 0.0, 1.0);
-    w.light = params.brightness * mix(params.calm, 1.0, swell) * mix(0.6, 1.0, dawn) * close * distant * edge * own * backlit
+    w.light = params.brightness * mix(params.calm, params.peak, swell) * mix(0.6, 1.0, dawn) * close * distant * edge * own * backlit
         * (0.75 + 0.5 * r.z);
     if params.presence < 0.001 {
         w.light = 0.0;
