@@ -1217,7 +1217,29 @@ copper. Each ring turns slowly in its own plane, every second one the other way.
 lines only, lit from behind by the band: brightest where a ring crosses the horizon. This is the
 valley's counterpart to the glider, the thing the eye follows.
 
-The rings open in a quiet stretch and close on the drop. The stage's swell opens them: each ring
+**Arrival.** When `presence` rises past 0.25, the next downbeat starts the innermost ring, and each following downbeat starts the
+next ring outwards. A bright ember head runs once round the ring within its bar and leaves the
+line behind it. The step frets are laid segment by segment. When a ring closes, its head fades
+to the ring's rim light. After the seventh ring all rings brighten once and settle over the eighth
+bar. The arrival takes `arrive_bars` (8) bars, however quickly `presence` rose.
+
+**Leaving.** When `presence` falls past 0.5, the rings fold flat and dim, from the outside in, over
+`leave_bars` (2) bars. An arrival cut short stops where it is and folds what it has drawn. When
+`presence` rises again during a leaving, rings still partly there unfold, and the rings already
+gone are drawn again, one per bar.
+
+**Seek.** After a seek or any other jump in the bars, rings with `presence` on show whole at once,
+with no arrival. If `presence` is rising at that moment, the rings arrive. To watch an arrival, seek
+to a moment before `presence` rises.
+
+**In a slot.** Keep the rings cooking while `presence` is 0: give their `geo.merge` `show` input 1
+for this element. A chain that `show` stops vanishes at once, without its leaving. It may also
+compile too late to see `presence` rise. Rings at `presence` 0 draw nothing and cost about
+0.35 ms per frame (CPU, 1920x1080).
+`chan.beat_grid` must feed `bus`: the arrival reads `bar_index` and `bar` from it.
+
+The rings open in a quiet stretch and close on the drop, also during an arrival or a leaving:
+opening and closing move whatever is drawn so far. The stage's swell opens them: each ring
 grows, steps forwards or back and tilts about an axis of its own, so the flat glyph unfolds into
 a cage of rings. A drop shuts them within a beat or so, and they stay shut for a few seconds.
 The rings grow brighter as they open, towards `dawn` 1 and for a moment after a drop. Each beat
@@ -1225,7 +1247,9 @@ adds a small pulse.
 
 - In: `bus`, `lane`, `pose` (the stage's: `swell`, `dawn`, `height` and `far` come from it).
   Out: `out` (into the stage's `mid`).
-- Params: `presence` (towards 0 the rings draw back from the outside in, each around its turn),
+- Params: `presence` (rising past 0.25 the rings arrive, falling past 0.5 they leave),
+  `arrive_bars` (bars an arrival takes, 8: a ring per eighth, the last eighth to settle; with 4
+  each ring takes half a bar), `leave_bars` (bars the rings take to fold away, 2),
   `open` (opens the rings at least this far, whatever the swell: for a still or a hand edit),
   `open_at` and `open_full` (the swell where the rings begin to open and where they are fully
   open: 0.15 and 0.6), `size` (1: the outer ring is 3.2 m across), `at` (metres ahead, 9),
