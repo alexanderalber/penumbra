@@ -565,7 +565,8 @@ thickens it. Ripples and mist come towards the camera one grid cell per beat of 
 the synthwave floor does. The sky elements are `sky_stars`, `sky_horizon_glow`, `sky_volcano`
 and `sky_clouds`. To show several, lay them with a `tex.composite` with `op: over`, `sky_stars`
 first: the volcano and the clouds then hide the stars behind them, and the glow adds its light. On the shore stand the floor elements `floor_terraces`, `floor_reeds`,
-`floor_stelae` and `floor_gates` (gates across the lane that the camera flies through). In the
+`floor_stelae`, `floor_gates` (gates across the lane that the camera flies through) and
+`floor_cenote` (a rare rock ring with a pool of jade light that the camera flies over). In the
 air hang the mid elements `mid_glyphs` (rings of light that open in a breakdown), `mid_smoke`,
 `mid_birds` and `mid_title` (lettering the camera passes under, once).
 
@@ -944,6 +945,36 @@ default params and crosses the picture's edge in about a second.
 - In the floor slot a gate row shows only gates and the slot's base. Give it a lower weight than
   the other floor elements, so gates stay an event.
 - `gates.py` in the folder writes the model. The carving cooks once, as on `floor_stelae`.
+
+### floor_cenote
+
+![floor_cenote](floor_cenote/preview.png)
+
+A low ring of broken rock in `stage_valley`'s lake. A pool of jade light lies inside it, and a shaft
+of pale light falls in from above. The camera flies over the ring. From far off the shaft shows
+where the ring stands. Up close, seven hot spots in the pool flash in turn on the beat, in an order
+that jumps across the pool. The rock stays black with a thin copper edge, and `warmth` turns the
+edge jade. The pool stays jade.
+
+The ring stands where you say, so it stays rare. Each of `at1`, `at2` and `at3` is a place on the
+floor in beats of `travelled`. To put a ring at a moment of the music, read `travelled` of the grid
+at that moment. The camera passes the ring's middle then. A seek finds the ring in the same place.
+
+- In: `bus`, `lane`, `pose` (the stage's: `dawn` and `swell` come from it). Out: `out`, and
+  `cleared`, the lane with open water where the rings stand. Wire `cleared` into the `lane` input of
+  the other floor elements, and nothing grows inside a ring.
+- Params: `at1`, `at2`, `at3` (0 means no ring), `radius` (5 m), `rim` (the height of the highest
+  block, 0.6 m, so the camera clears it at every height of the stage's poses), `side` (metres to
+  the right of the camera's line), `light`, `flash` (a hot spot at its brightest, 3), `idle` (a
+  hot spot between its flashes, 0.12), `decay` (how fast a flash dies away, per beat, 1.5),
+  `shaft_height` (18 m), `shaft_light` (0.5; 0 turns the shaft off), `near`, `far` (42 m), `warmth`,
+  `margin` (metres of open water before and after a ring, 2), `smooth`.
+- It costs little when no ring is near if it shows only then: give the `show` input of the slot's
+  `geo.merge` a channel that is 1 for about 48 s before the camera passes and 14 s after. The
+  `cleared` lane is one small pass and cooks all the time.
+- It takes no turns in a slot. Leave it out of `beats.arrange`, so no other cell of the table moves.
+- `cenote.py` in the folder writes the models. Stone, pool, hot spot and shaft are still pictures
+  that cook once.
 
 ### mid_glider
 
