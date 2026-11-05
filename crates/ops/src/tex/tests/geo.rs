@@ -2092,3 +2092,43 @@ fn a_material_takes_the_picture_once_a_failed_shader_is_repaired() {
         std::thread::sleep(Duration::from_millis(5));
     }
 }
+
+/// Solid text renders with the hole of an O open, and empty text renders nothing without failing
+/// the render.
+#[test]
+fn text_renders_and_empty_text_is_nothing() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        create("/t", "geo.text", &[("text", "O".into()), ("size", Value::Float(1.0))]),
+        render(
+            "/r",
+            &[("position", Value::Vec3([0.0, -4.0, 0.0])), ("target", Value::Vec3([0.0, 0.0, 0.0]))],
+        ),
+        connect("/t", "/r", 0),
+    ];
+    let mut rig = rig(gpu, None, &ops);
+    let ink = |px: &Pixels| px.data.iter().filter(|p| p[3] > 0.5).count();
+    let mut drawn = 0;
+    for _ in 0..2000 {
+        rig.cook("/r");
+        if rig.tex("/r").is_some() {
+            drawn = ink(&rig.pixels("/r"));
+            if drawn > 20 {
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(drawn > 20, "the letter draws: {drawn}");
+    let px = rig.pixels("/r");
+    assert!(at(&px, px.width / 2, px.height / 2)[3] < 0.5, "the O has its hole");
+    rig.edit(&[set("/t.text", "".into())]);
+    for _ in 0..2000 {
+        rig.cook("/r");
+        if ink(&rig.pixels("/r")) == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(ink(&rig.pixels("/r")), 0, "empty text draws nothing");
+}

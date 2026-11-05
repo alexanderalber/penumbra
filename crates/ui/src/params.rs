@@ -955,7 +955,7 @@ impl ParamPanel {
                 });
             }
             ParamKind::Text | ParamKind::File { .. } => {
-                if node.kind == penumbra_ops::tex::TEXT
+                if (node.kind == penumbra_ops::tex::TEXT || node.kind == penumbra_ops::geo_text::GEO_TEXT)
                     && let Some(options) = font_options(node, spec)
                 {
                     let current = value.as_str().unwrap_or("");
@@ -1906,7 +1906,7 @@ fn choice_box(ui: &mut Ui, key: &str, current: &str, options: &[&str], new: &mut
         });
 }
 
-/// What `tex.text`'s `font` and `style` offer: the installed and bundled families, and the
+/// What the `font` and `style` of `tex.text` and `geo.text` offer: the installed and bundled families, and the
 /// styles of the node's family. `None` (a plain text box) while the fonts are being scanned,
 /// for any other param, and for the style of a family that is not installed.
 fn font_options(node: &NodeDef, spec: &ParamSpec) -> Option<Vec<String>> {

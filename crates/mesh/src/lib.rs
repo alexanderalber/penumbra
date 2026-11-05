@@ -13,6 +13,7 @@
 //! is flipped on the way in). Triangles are lists of three indices; the winding is kept as in the
 //! file but not relied on (the renderer does not cull by default).
 
+pub mod extrude;
 mod fbx;
 mod gltf;
 pub mod motion;

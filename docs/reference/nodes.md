@@ -1948,7 +1948,7 @@ Outputs: `out` (table).
 
 ## geo
 
-[geo.assign_material](#geoassign_material), [geo.file](#geofile), [geo.instance](#geoinstance), [geo.merge](#geomerge), [geo.null](#geonull), [geo.primitive](#geoprimitive), [geo.tex_instance](#geotex_instance), [geo.transform](#geotransform)
+[geo.assign_material](#geoassign_material), [geo.file](#geofile), [geo.instance](#geoinstance), [geo.merge](#geomerge), [geo.null](#geonull), [geo.primitive](#geoprimitive), [geo.tex_instance](#geotex_instance), [geo.text](#geotext), [geo.transform](#geotransform)
 
 ### geo.assign_material
 
@@ -2054,6 +2054,27 @@ Outputs: `out` (geo).
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `extent` *(more)* | float | `10` | 0.1 to 1000 (soft) | Half the side of a box around the origin that holds every copy. Framing and shadow maps use this box, since the positions stay on the GPU |
+
+### geo.text
+
+Text as solid 3D letters: front, back and sides, with the holes in letters open. Upright, facing -y, centred on the origin
+
+Inputs: none.
+
+Outputs:
+
+- `out` (geo): The closed body. With mat.wireframe and `edges` on polygons, lines show the outlines of front and back and the corners of the sides, without the triangles or the steps of curves
+- `front` (geo): The front face alone, at the same place: for a second material on it, a picture or a glow. Texture coordinates span the block of text
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `text` | text | `"Text"` |  | What is written. Line breaks are kept. Longer than 4096 characters: the rest is left out, with a warning |
+| `font` | text | `"Inter"` |  | Family name; Inter, JetBrains Mono, Noto Serif are bundled |
+| `style` | text | `"Regular"` |  | Style within the family: Regular, Bold, Italic, Light, ... The menu lists the family's styles |
+| `size` | float | `1` | 0.05 to 20 (soft) | Font size in metres (the font's em, a little more than a capital's height). Kept between 0.001 and 1000, with a warning |
+| `depth` | float | `0.2` | 0 to 5 (soft) | Thickness along y in metres, centred on y = 0. 0 draws a flat front only. Kept between 0 and 1000, with a warning |
+| `spacing` | float | `0` | -0.2 to 1 (soft) | Letter spacing in ems: 0.1 adds a tenth of the font size after each letter. Kept between -1 and 10, with a warning |
+| `align` | center \| left \| right | `"center"` |  | How the lines line up with each other, and which point of the block sits at x = 0. The block's middle sits at z = 0; center: centred; the block's centre at x = 0; left: flush left; the block's left edge at x = 0; right: flush right; the block's right edge at x = 0 |
 
 ### geo.transform
 

@@ -7,6 +7,7 @@ pub mod comp;
 pub mod dmx;
 pub mod freeview;
 pub mod geo;
+pub mod geo_text;
 pub mod http;
 pub mod keyboard;
 pub mod light;
@@ -46,6 +47,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     comp::register(types)?;
     dmx::register(types)?;
     geo::register(types)?;
+    geo_text::register(types)?;
     http::register(types)?;
     keyboard::register(types)?;
     light::register(types)?;
@@ -104,6 +106,7 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("geo.file", &["file in"]),
     ("geo.instance", &["instancing"]),
     ("geo.primitive", &["box", "sphere", "grid"]),
+    ("geo.text", &["text 3d", "3d text", "lettering", "extrude"]),
     ("geo.tex_instance", &["instancing"]),
     ("light.environment", &["environment light"]),
     ("comp.base", &["container"]),

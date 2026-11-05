@@ -4684,7 +4684,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-geo">
 <h3>geo</h3>
-<p class="kinds"><a href="#geo.assign_material">geo.assign_material</a> <a href="#geo.file">geo.file</a> <a href="#geo.instance">geo.instance</a> <a href="#geo.merge">geo.merge</a> <a href="#geo.null">geo.null</a> <a href="#geo.primitive">geo.primitive</a> <a href="#geo.tex_instance">geo.tex_instance</a> <a href="#geo.transform">geo.transform</a></p>
+<p class="kinds"><a href="#geo.assign_material">geo.assign_material</a> <a href="#geo.file">geo.file</a> <a href="#geo.instance">geo.instance</a> <a href="#geo.merge">geo.merge</a> <a href="#geo.null">geo.null</a> <a href="#geo.primitive">geo.primitive</a> <a href="#geo.tex_instance">geo.tex_instance</a> <a href="#geo.text">geo.text</a> <a href="#geo.transform">geo.transform</a></p>
 <details class="entry node" id="geo.assign_material"><summary><code class="name">geo.assign_material</code><span class="sum">Gives geometry a material: how it looks when rendered</span></summary>
 <div class="body">
 <p>Gives geometry a material: how it looks when rendered</p>
@@ -4830,6 +4830,37 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>For a few copies placed by numbers (a table of positions), <a class="ref" href="#geo.instance"><code>geo.instance</code></a> is the simpler node.</p>
 </div>
 <p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+<details class="entry node" id="geo.text"><summary><code class="name">geo.text</code><span class="sum">Text as solid 3D letters: front, back and sides, with the holes in letters open. Upright, facing -y, centred on the origin</span></summary>
+<div class="body">
+<p>Text as solid 3D letters: front, back and sides, with the holes in letters open. Upright, facing -y, centred on the origin</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">geo</span>: The closed body. With mat.wireframe and <code>edges</code> on polygons, lines show the outlines of front and back and the corners of the sides, without the triangles or the steps of curves</li>
+<li><code>front</code> <span class="kind">geo</span>: The front face alone, at the same place: for a second material on it, a picture or a glow. Texture coordinates span the block of text</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>text</code></td><td>text</td><td><code>&quot;Text&quot;</code></td><td></td><td>What is written. Line breaks are kept. Longer than 4096 characters: the rest is left out, with a warning</td></tr>
+<tr><td><code>font</code></td><td>text</td><td><code>&quot;Inter&quot;</code></td><td></td><td>Family name; Inter, JetBrains Mono, Noto Serif are bundled</td></tr>
+<tr><td><code>style</code></td><td>text</td><td><code>&quot;Regular&quot;</code></td><td></td><td>Style within the family: Regular, Bold, Italic, Light, ... The menu lists the family's styles</td></tr>
+<tr><td><code>size</code></td><td>float</td><td><code>1</code></td><td>0.05 to 20 (soft)</td><td>Font size in metres (the font's em, a little more than a capital's height). Kept between 0.001 and 1000, with a warning</td></tr>
+<tr><td><code>depth</code></td><td>float</td><td><code>0.2</code></td><td>0 to 5 (soft)</td><td>Thickness along y in metres, centred on y = 0. 0 draws a flat front only. Kept between 0 and 1000, with a warning</td></tr>
+<tr><td><code>spacing</code></td><td>float</td><td><code>0</code></td><td>-0.2 to 1 (soft)</td><td>Letter spacing in ems: 0.1 adds a tenth of the font size after each letter. Kept between -1 and 10, with a warning</td></tr>
+<tr><td><code>align</code></td><td>center | left | right</td><td><code>&quot;center&quot;</code></td><td></td><td>How the lines line up with each other, and which point of the block sits at x = 0. The block's middle sits at z = 0<ul><li><code>center</code>: centred; the block's centre at x = 0</li><li><code>left</code>: flush left; the block's left edge at x = 0</li><li><code>right</code>: flush right; the block's right edge at x = 0</li></ul></td></tr>
+</tbody>
+</table>
+<div class="more">
+<h5 id="geo.text-lettering-you-can-fly-around">Lettering you can fly around</h5>
+<p><a class="ref" href="#geo.text"><code>geo.text</code></a> writes text as solid 3D letters, in any font <a class="ref" href="#tex.text"><code>tex.text</code></a> can use. The letters stand upright and face -y, so a camera at -y looking towards +y reads them. <code>align</code> places the block of text along x. The block's middle sits at z = 0 and its thickness is centred on y = 0.</p>
+<p><strong>A black body with lit edges.</strong> Give <code>out</code> a <a class="ref" href="#mat.wireframe"><code>mat.wireframe</code></a> with <code>edges</code> on <code>polygons</code> and <code>faces</code> on <code>filled</code>. Lines then run along the outlines of the front and the back and along sharp corners of the sides. The triangles and the steps of curves get no line. A rounded side shows no line along its depth, also where it turns away from the camera.</p>
+<p><strong>A lit front on a dark body.</strong> Give <code>out</code> a <a class="ref" href="#mat.occluder"><code>mat.occluder</code></a> with <code>shows</code> on <code>black</code>, and put a material on <code>front</code> with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>. Move <code>front</code> a little towards -y with a <a class="ref" href="#geo.transform"><code>geo.transform</code></a>, so the two faces do not fight. Texture coordinates span the block of text: a picture on <code>front</code> spreads over all its letters.</p>
+<p><strong>Limits.</strong> Text is cut off after 4096 characters and at about a million triangles, with a warning. <code>size</code>, <code>depth</code> and <code>spacing</code> outside their ranges are kept inside them, with a warning. A group of touching glyphs with more than 8192 segments, or an outline with a broken coordinate, is left out, also with a warning. Outlines that overlap or cross themselves are joined the way a 2D renderer fills them, so an overlap draws no line inside a letter.</p>
+</div>
 </div></details>
 <details class="entry node" id="geo.transform"><summary><code class="name">geo.transform</code><span class="sum">Moves, turns and scales geometry</span></summary>
 <div class="body">
