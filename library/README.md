@@ -832,24 +832,35 @@ in the folder writes the models.
 
 ![floor_reeds](floor_reeds/preview.png)
 
-Reeds at the water's edge of `stage_valley`: two lines of clumps on each side of the lane, thin
-dark lines with jade tips. A clump stands about every 0.55 m, and a few places stay empty. The
-reeds sway across the lane in a wave that runs along the line towards the camera. The bass
+Plants at the water's edge of `stage_valley`: two lines of clumps on each side of the lane. About
+9 m of a shore belong to one kind, then another kind takes over, and the two shores change on
+their own. The kinds are reeds, cattails with dark club heads, tall arching sedge, papyrus with
+dark round heads and black agave rosettes. About one agave in twelve carries a tall black mast.
+Low copper tufts stand in front of them all, between the plants and the lane.
+
+Each clump has its own size. Reeds, cattails, sedge and papyrus sway across the lane in a wave
+that runs along the line towards the camera, stiffer kinds less, and agaves stand still. The bass
 widens the sway. The stage's swell lights the tips: faint in a loud section, a jade glint in a
-breakdown, each clump catching the light at its own moment. All reeds are one
-`geo.tex_instance` of one clump, so they cost little. `reeds.py` in the folder writes the clump.
+breakdown, each clump catching the light at its own moment. Each model is one `geo.tex_instance`,
+7 in all, and all but the tufts share one set of place, aim and glint pictures. `plants.py` in the
+folder writes the models.
 
 - In: `bus`, `lane`, `pose` (the stage's: `swell` comes from it). Out: `out`.
-- Params: `presence` (towards 0 the clumps shrink into the water one after another; a clump
-  shrinks or grows over `ease` bars, 2, and within `hold` metres of the camera, 9, it keeps
-  what it does until it has passed), `spacing`
-  (metres between two clumps of a line), `fill` (share of the places with a clump, 0.8), `size`
-  (a clump's height, metres, 1.2), `sway` (degrees the reeds lean to either side at full bass,
-  7), `calm` (share of the sway left in a quiet bass, 0.3), `wave` (metres between two crests of
-  the sway), `glint` (how bright the tips glint at full swell, 3), `lane` (1.6), `edge` (metres
-  between the lane's edge and the first line, 0.2), `depth` (metres between the two lines),
-  `near`, `far` (30 m), `smooth` (seconds the bass takes to fall), `line_width`, `colors` (the
-  ramp from the foot of a blade, position 0, to its tip, 1).
+- Params: `presence` (towards 0 the clumps shrink into the water one after another, the tufts
+  first; a clump shrinks or grows over `ease` bars, 2, and within `hold` metres of the camera, 9,
+  it keeps what it does until it has passed), `stretch` (metres of shore for one kind, 9),
+  `share_reeds`, `share_cattails`, `share_sedge`, `share_papyrus`, `share_agave` (how often the
+  kind comes against the others, 1; 0 never), `mast` (share of the agaves with a mast, 0.08),
+  `tufts` (share of the places in front with a tuft, 0.6), `seed` (another order of the stretches),
+  `spacing` (metres between two places of a line, 0.55; sedge, papyrus and agaves take every second
+  place), `fill` (share of the places with a clump, 0.8), `size` (the reeds' height, metres, 1.2;
+  the other kinds follow), `sway` (degrees the reeds lean to either side at full bass, 7), `calm`
+  (share of the sway left in a quiet bass, 0.3), `wave` (metres between two crests of the sway),
+  `glint` (how bright the tips glint at full swell, 3), `lane` (1.6), `edge` (metres between the
+  lane's edge and the first line, 0.2), `depth` (metres between the two lines), `near`, `far` (30
+  m), `smooth` (seconds the bass takes to fall), `line_width`, `colors` (the jade ramp from the foot
+  of a blade, position 0, to its tip, 1), `colors_rim` (the same for the copper lines of tufts and
+  agaves).
 
 ### floor_stelae
 
