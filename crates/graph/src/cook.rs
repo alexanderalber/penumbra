@@ -72,6 +72,8 @@ pub struct CookContext<'a> {
     time: FrameTime,
     time_read: Cell<bool>,
     inputs: &'a [Option<Data>],
+    /// The wired inputs that deliver nothing until something changes ([`CookContext::input_stuck`]).
+    stuck: &'a [usize],
     /// Outputs of the nodes named by node reference params, by param name.
     refs: &'a BTreeMap<String, Result<Option<Vec<Data>>, String>>,
     bound: &'a BTreeMap<Name, Value>,
@@ -118,6 +120,14 @@ impl<'a> CookContext<'a> {
 
     pub fn input_as<T: 'static>(&self, index: usize) -> Option<&T> {
         self.input(index).and_then(Data::get)
+    }
+
+    /// Whether input `index` has no result and none is on its way: its source failed, something
+    /// the source waits for failed, or the wire leads nowhere. `false` while the source only
+    /// waits (a job running, a stream without a frame yet). A change of this answer recooks the
+    /// node, so a node may wait on an input as long as this is `false`.
+    pub fn input_stuck(&self, index: usize) -> bool {
+        self.stuck.contains(&index)
     }
 
     /// The outputs of the node a node reference param names ([`ParamSpec::node`]): `Ok(None)`
@@ -1094,6 +1104,39 @@ impl Cooker {
         Some(mask)
     }
 
+    /// Whether `port` has no result and none is on its way ([`CookContext::input_stuck`]): walks up
+    /// from a source without a result, through what it needs, to a failure or to a node that
+    /// waits for something of its own.
+    fn stuck(&self, port: Port) -> bool {
+        let mut seen = BTreeSet::new();
+        let mut todo = vec![port];
+        while let Some(port) = todo.pop() {
+            let Some(s) = self.runtimes.get(&port.node) else { return true };
+            if let Some(outputs) = &s.outputs {
+                if outputs.get(port.output as usize).is_none() {
+                    return true;
+                }
+                continue;
+            }
+            if s.error.is_some() {
+                return true;
+            }
+            if !seen.insert(port.node) {
+                continue;
+            }
+            let needed = self.needed(s, &s.seen_bound);
+            for (i, slot) in s.def.inputs.iter().enumerate() {
+                if let Some(up) = slot
+                    && !s.def.is_previous(i)
+                    && is_needed(needed.as_deref(), i)
+                {
+                    todo.push(*up);
+                }
+            }
+        }
+        false
+    }
+
     fn cook_one(&mut self, id: NodeId, time: FrameTime, report: &mut CookReport) {
         let Some(rt) = self.runtimes.get_mut(&id) else { return };
         if rt.evaluated_pass == self.pass {
@@ -1109,6 +1152,7 @@ impl Cooker {
         let needed = self.needed(rt, &bound);
         let mut inputs = Vec::with_capacity(rt.def.inputs.len());
         let mut signature = Vec::with_capacity(rt.def.inputs.len());
+        let mut stuck = Vec::new();
         for (i, slot) in rt.def.inputs.iter().enumerate() {
             let Some(port) = slot else {
                 inputs.push(None);
@@ -1126,11 +1170,23 @@ impl Cooker {
             let src = self.runtimes.get(&port.node);
             let data =
                 src.and_then(|s| s.outputs.as_ref()).and_then(|o| o.get(port.output as usize)).cloned();
-            inputs.push(data.filter(|_| !(rt.blank_previous && rt.def.is_previous(i))));
+            let previous = rt.def.is_previous(i);
+            let is_stuck = !previous && data.is_none() && self.stuck(*port);
+            if is_stuck {
+                stuck.push(i);
+            }
+            inputs.push(data.filter(|_| !(rt.blank_previous && previous)));
             // A previous-result input does not recook the node when its source changes (the
             // node is time-dependent; otherwise a loop would recook itself forever).
-            let version =
-                if rt.def.is_previous(i) { 0 } else { src.map_or(0, |s| s.output_version(port.output)) };
+            let version = if previous {
+                0
+            } else if is_stuck {
+                // A source that goes from waiting to failed keeps its version, and a node waiting
+                // on it must hear of that.
+                u64::MAX
+            } else {
+                src.map_or(0, |s| s.output_version(port.output))
+            };
             signature.push(Some((*port, version)));
         }
         let refs = self.refs(rt);
@@ -1217,6 +1273,7 @@ impl Cooker {
             time,
             time_read: Cell::new(false),
             inputs: &inputs,
+            stuck: &stuck,
             refs: &ref_data,
             bound: &rt.seen_bound,
             first_cook,
@@ -2276,6 +2333,63 @@ mod tests {
         assert_eq!(f.cook(&["/out"]), ["/sum", "/out"]);
         f.edit(&[Op::Disconnect { to: pp("/sum"), input: 1 }]);
         assert_eq!(f.cook(&["/out"]), ["/sum", "/out"]);
+    }
+
+    /// What `test.stuck` makes of its input: 2 a result, 1 stuck, 0 waiting.
+    #[test]
+    fn a_stuck_input_is_told_from_a_waiting_one() {
+        let settle = |f: &mut Fixture, want: f64| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                f.clock.advance(1);
+                f.cook(&["/s"]);
+                if f.value("/s") == Some(want) {
+                    return;
+                }
+                assert!(Instant::now() < deadline, "/s stays at {:?}, wanted {want}", f.value("/s"));
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        };
+        // A job on its way waits, through a node that waits on it, and then delivers.
+        let mut f = Fixture::new(&[
+            create("/slow", "test.slow"),
+            create("/via", "test.pick"),
+            create("/s", "test.stuck"),
+            connect("/slow", "/via", 0),
+            connect("/via", "/s", 0),
+        ]);
+        f.set("/slow.ms", Value::Int(50));
+        f.cook(&["/s"]);
+        assert_eq!(f.value("/s"), Some(0.0));
+        settle(&mut f, 2.0);
+
+        // A job that fails turns the wait into stuck, with no new version upstream to announce it.
+        let mut f = Fixture::new(&[
+            create("/slow", "test.slow"),
+            create("/via", "test.pick"),
+            create("/s", "test.stuck"),
+            connect("/slow", "/via", 0),
+            connect("/via", "/s", 0),
+        ]);
+        f.set("/slow.ms", Value::Int(50));
+        f.set("/slow.value", Value::Float(-1.0));
+        f.cook(&["/s"]);
+        assert_eq!(f.value("/s"), Some(0.0));
+        settle(&mut f, 1.0);
+
+        // A plain failure two nodes up is stuck at once, and fixing it delivers.
+        let mut f = Fixture::new(&[
+            create("/f", "test.fail"),
+            create("/via", "test.pick"),
+            create("/s", "test.stuck"),
+            connect("/f", "/via", 0),
+            connect("/via", "/s", 0),
+        ]);
+        f.set("/f.fail", Value::Bool(true));
+        f.cook(&["/s"]);
+        assert_eq!(f.value("/s"), Some(1.0));
+        f.set("/f.fail", Value::Bool(false));
+        settle(&mut f, 2.0);
     }
 
     #[test]

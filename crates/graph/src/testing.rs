@@ -121,6 +121,24 @@ pub fn test_types() -> NodeTypes {
     simple(&mut t, NodeDesc::new("test.tex", "A texture").output("out", DataKind::Tex), |_| {
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, ())]))
     });
+    simple(
+        &mut t,
+        NodeDesc::new(
+            "test.stuck",
+            "2 with a result on its input, 1 when the input is stuck, 0 while it waits",
+        )
+        .input("in", DataKind::Chan)
+        .output("out", DataKind::Chan),
+        |cx| {
+            chan(if cx.input(0).is_some() {
+                2.0
+            } else if cx.input_stuck(0) {
+                1.0
+            } else {
+                0.0
+            })
+        },
+    );
     simple(&mut t, NodeDesc::new("test.sink", "Consumes").input("in", DataKind::Chan), |_| {
         Ok(Cooked::Outputs(vec![]))
     });
@@ -164,10 +182,13 @@ pub fn test_types() -> NodeTypes {
     ))
     .unwrap();
     t.register(FnNodeType::new(
-        NodeDesc::new("test.slow", "value * 2 after `ms` milliseconds, off the cook thread")
-            .param(value())
-            .param(ParamSpec::int("ms", 10))
-            .output("out", DataKind::Chan),
+        NodeDesc::new(
+            "test.slow",
+            "value * 2 after `ms` milliseconds, off the cook thread; a negative value fails",
+        )
+        .param(value())
+        .param(ParamSpec::int("ms", 10))
+        .output("out", DataKind::Chan),
         || Box::new(Slow::default()) as Box<dyn Operator>,
     ))
     .unwrap();
@@ -344,11 +365,15 @@ impl Operator for Slow {
                     }
                     std::thread::sleep(Duration::from_millis(1));
                 }
+                if value < 0.0 {
+                    return Err("a negative value".into());
+                }
                 Ok(value * 2.0)
             }));
         }
         match (fresh, self.slot.latest()) {
             (true, Some(v)) => chan(*v),
+            (_, None) if self.slot.error().is_some() => Err(CookError::failed("the job failed")),
             (_, None) => Err(CookError::Pending),
             (false, Some(_)) => Ok(Cooked::Unchanged),
         }

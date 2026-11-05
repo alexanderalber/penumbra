@@ -1960,3 +1960,135 @@ fn a_skinned_fbx_bends_with_its_bones() {
     rig.cook("/fbx");
     assert!(rig.cooker.status(rig.id("/fbx")).unwrap().time_dependent);
 }
+
+/// A box in front of the camera in a material whose `texture` comes from `/picture`, which `feed`
+/// creates; `/seen` renders it.
+fn textured_box(feed: Vec<penumbra_graph::Op>) -> Vec<penumbra_graph::Op> {
+    let mut ops = feed;
+    ops.extend([
+        create("/box", "geo.primitive", &[("size", Value::Vec3([1.0, 1.0, 1.0]))]),
+        create("/m", "mat.constant", &[]),
+        connect("/picture", "/m", 0),
+        create("/painted", "geo.assign_material", &[]),
+        connect("/box", "/painted", 0),
+        connect("/m", "/painted", 1),
+        create(
+            "/seen",
+            "tex.render",
+            &[
+                ("width", Value::Int(16)),
+                ("height", Value::Int(16)),
+                ("position", Value::Vec3([0.0, -3.0, 0.0])),
+                ("antialias", Value::Bool(false)),
+            ],
+        ),
+        connect("/painted", "/seen", 0),
+    ]);
+    ops
+}
+
+const GREEN: &str =
+    "@fragment fn main(v: PnVertex) -> @location(0) vec4f { return vec4f(0.0, 1.0, 0.0, 1.0); }";
+
+fn shader_picture(path: &str, file: &str) -> penumbra_graph::Op {
+    create(
+        path,
+        "tex.shader",
+        &[
+            ("file", file.into()),
+            ("resolution", "custom".into()),
+            ("width", Value::Int(4)),
+            ("height", Value::Int(4)),
+        ],
+    )
+}
+
+#[test]
+fn a_material_waits_for_a_shader_that_is_compiling() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("mat-wait");
+    std::fs::write(dir.join("green.wgsl"), GREEN).unwrap();
+    let mut rig = rig(gpu, Some(&dir), &textured_box(vec![shader_picture("/picture", "green.wgsl")]));
+    // The compile has only just started: no material, so no white box, and no error.
+    rig.cook("/seen");
+    let m = rig.cooker.status(rig.id("/m")).unwrap();
+    assert!(!m.has_output, "{m:?}");
+    assert_eq!(m.error, None);
+    assert!(m.warning.as_deref().is_some_and(|w| w.contains("waiting")), "{m:?}");
+    assert!(rig.tex("/seen").is_none(), "nothing drawn yet");
+
+    let px = rig.pixels("/seen");
+    let c = px.get(8, 8).unwrap();
+    assert!(c[1] > 0.5 && c[0] < 0.1, "the box shows the picture: {c:?}");
+    assert_eq!(rig.cooker.status(rig.id("/m")).unwrap().warning, None);
+    // The material's own picture is there once it has delivered.
+    let data = rig.cooker.output(Port { node: rig.id("/m"), output: 0 }).unwrap();
+    assert!(data.get::<penumbra_gpu::Mat>().unwrap().preview.is_some());
+}
+
+/// A material on a picture that failed draws without it, however far up the failure lies.
+#[test]
+fn a_material_on_a_failed_picture_draws_without_it_and_warns() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("mat-failed");
+    std::fs::write(dir.join("bad.wgsl"), "this is no shader").unwrap();
+    let cases: [(&str, Vec<penumbra_graph::Op>); 3] = [
+        ("does not compile", vec![shader_picture("/picture", "bad.wgsl")]),
+        ("no such file", vec![shader_picture("/picture", "missing.wgsl")]),
+        (
+            "behind a node that waits",
+            vec![
+                shader_picture("/bad", "bad.wgsl"),
+                create("/picture", "tex.blur", &[]),
+                connect("/bad", "/picture", 0),
+            ],
+        ),
+    ];
+    for (name, feed) in cases {
+        let mut rig = rig(gpu.clone(), Some(&dir), &textured_box(feed));
+        let px = rig.pixels("/seen");
+        let c = px.get(8, 8).unwrap();
+        assert!(c[0] > 0.5 && c[1] > 0.5 && c[2] > 0.5, "{name}: the box stands, white: {c:?}");
+        let m = rig.cooker.status(rig.id("/m")).unwrap();
+        assert_eq!(m.error, None, "{name}");
+        assert!(m.warning.as_deref().is_some_and(|w| w.contains("failed")), "{name}: {m:?}");
+        let data = rig.cooker.output(Port { node: rig.id("/m"), output: 0 }).unwrap();
+        assert!(data.get::<penumbra_gpu::Mat>().unwrap().preview.is_some(), "{name}");
+    }
+    // A component's port with nothing wired from outside delivers nothing either.
+    let ops = [
+        create("/c", "comp.base", &[]),
+        create("/c/in", "tex.in", &[]),
+        create("/c/m", "mat.constant", &[]),
+        connect("/c/in", "/c/m", 0),
+    ];
+    let mut rig = rig(gpu, Some(&dir), &ops);
+    rig.cook("/c/m");
+    let m = rig.cooker.status(rig.id("/c/m")).unwrap();
+    assert!(m.has_output, "{m:?}");
+    assert!(m.warning.as_deref().is_some_and(|w| w.contains("failed")), "{m:?}");
+}
+
+/// A shader repaired on disk reaches the material that drew without it.
+#[test]
+fn a_material_takes_the_picture_once_a_failed_shader_is_repaired() {
+    let Some(gpu) = gpu() else { return };
+    let dir = scratch("mat-repaired");
+    let file = dir.join("s.wgsl");
+    std::fs::write(&file, "this is no shader").unwrap();
+    let mut rig = rig(gpu, Some(&dir), &textured_box(vec![shader_picture("/picture", "s.wgsl")]));
+    let px = rig.pixels("/seen");
+    assert!(px.get(8, 8).unwrap()[0] > 0.5, "white first");
+    std::fs::write(&file, GREEN).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        rig.clock.advance(1);
+        rig.cook("/seen");
+        let read = rig.tex("/seen").map(|t| rig.gpu.read(&t).unwrap());
+        if read.and_then(|p| p.get(8, 8)).is_some_and(|c| c[0] < 0.1 && c[1] > 0.5) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the repaired picture never arrived");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}

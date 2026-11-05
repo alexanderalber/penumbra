@@ -6,6 +6,10 @@
 //! A material replaces the file's colours and textures: its colour, times its texture input
 //! where connected. The data on a `mat` connection is a [`Mat`]: the
 //! material and a picture of it on a sphere.
+//!
+//! A material with a wired texture waits until the picture exists, so its geometry never shows
+//! plain white for the frames a shader takes to compile. A texture input that has failed does
+//! not hold the geometry back: the material then draws without the picture and warns.
 
 use std::sync::Arc;
 
@@ -265,6 +269,13 @@ impl Operator for MatNode {
             material.emit = [r, g, b];
         }
         material.texture = cx.input_as::<Tex>(0).cloned();
+        if material.texture.is_none() && cx.def().inputs.first().is_some_and(Option::is_some) {
+            if !cx.input_stuck(0) {
+                cx.warn("waiting for the picture on `texture`: geometry with this material stays hidden until it arrives");
+                return Err(CookError::Pending);
+            }
+            cx.warn("the picture on `texture` failed upstream: this material draws without it");
+        }
         let material = Arc::new(material);
         // An occluder's picture would be empty: a dark matte sphere, a hole, stands in for it.
         let shown = if self.shading == Shading::Occluder {
