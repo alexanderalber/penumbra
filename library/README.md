@@ -565,8 +565,8 @@ the synthwave floor does. The sky elements are `sky_stars`, `sky_horizon_glow`, 
 and `sky_clouds`. To show several, lay them with a `tex.composite` with `op: over`, `sky_stars`
 first: the volcano and the clouds then hide the stars behind them, and the glow adds its light. On the shore stand the floor elements `floor_terraces`, `floor_reeds`,
 `floor_stelae` and `floor_gates` (gates across the lane that the camera flies through). In the
-air hang the mid elements `mid_glyphs` (rings of light that open in a breakdown), `mid_smoke`
-and `mid_birds`.
+air hang the mid elements `mid_glyphs` (rings of light that open in a breakdown), `mid_smoke`,
+`mid_birds` and `mid_title` (lettering the camera passes under, once).
 
 The stage has a slow signal of its own, the swell. It rises over about 8 seconds while the music
 is quiet (a breakdown) and over the 8 bars before a new section (the grid's `build`), and it
@@ -1313,6 +1313,42 @@ slot of `beats.arrange` brings the flock into every second stretch of intros, ou
   (metres between two birds, 1), `flap` (wingbeats per beat, 1), `phase` (beats added for the
   crossings: a larger value brings the first flock earlier), `seed` (other flocks), `extent`.
 - `birds.py` in the folder writes the body and the wings.
+
+### mid_title
+
+![mid_title](mid_title/preview.png)
+
+Solid lettering that stands at one place over the lake of `stage_valley`, for a title at the start
+of a show. It appears `at` seconds into the file, `distance` metres ahead of the camera, and rises
+out of the water. It then stays where it is in the world. The camera comes nearer and passes under
+it. The letters have black bodies, an ember glow low in their faces and bright rims along the
+front's outlines. The swell lifts the glow, and the band's dawn lifts the rims. The lake mirrors the
+lettering faint and rippled.
+
+**Timing.** The camera flies `step` metres per beat: 0.5 m at 125 BPM is about 1 m per second. So
+`distance` is also about the seconds until the title is overhead. A line of 29 characters at `size`
+1 is about 15.5 m wide. On the stage's wide camera it reads from about 25 m at 1920 x 1080 and stays
+in the picture until about 6 m.
+
+**Seek.** Place and light depend only on the music's position. After a seek the title stands
+where it would have stood. Before `at` it is not there, and it rises again when the music passes `at`.
+
+**In a slot.** Connect `bus` and `pose`. The title takes no turns, so it needs no column in the
+arrangement. Add its `out` to the slot's `geo.merge`, and its `shown` output to the channels on the
+merge's `show` input, at the place of its `in<k>`. `shown` is the seconds the title has left. After
+that the title's chain does not cook, and it costs nothing.
+
+- In: `bus`, `pose`.
+- Out: `out`; `shown` (above 0 while the title can still be seen).
+- Params: `text`, `font`, `style`, `size` (font size in metres, 1), `depth` (metres, 0.3), `spacing`,
+  `align` as on `geo.text`; `at` (seconds, 3), `distance` (metres, 30), `height` (metres above the
+  water of the lettering's middle, 4.2; keep the lower edge above the camera), `side` (metres, 0;
+  the camera flies along 0), `step` (set it to the stage's `step`, 0.5), `rise` (seconds, 3), `sink`
+  (metres it starts below `height` and sinks to, 6), `behind` (metres behind the camera at which it
+  is gone, 6), `presence` (towards 0 it sinks into the water and dims; 0 none), `light`, `pulse`
+  (how much the light brightens on each beat, times the bass, 0.15), `warmth` (0 copper rims
+  and an ember face, 1 jade), `line_width` (the rims' width in pixels, 2), `seed` (which veins of
+  light the face has).
 
 ### ceiling_curtains
 
