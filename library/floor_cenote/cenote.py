@@ -84,12 +84,20 @@ def write():
         strip(0.992, 0.3 * h, 0.972, 0.94 * h, 0.005 + 0.006 * grain)
         strip(0.972, 0.94 * h, 0.968, h, 0.16 + 0.14 * grain)
         strip(0.968, h, 0.905, 0.96 * h, 0.006 + 0.008 * grain + 0.01 * far)
-        # A block's side, where the next block stands lower or higher.
-        h2 = parts[(i + 1) % SEGMENTS][0]
-        if h2 != h:
-            low, high = min(h, h2), max(h, h2)
-            ring.face([at(a1, 0.972, low), at(a1, 0.905, low), at(a1, 0.905, high), at(a1, 0.972, high)],
-                      [(0.006 + 0.008 * grain, v)] * 4)
+        # Where the next block begins, both blocks end in a cap of their own cross section. The ring
+        # is hollow between its outer and its inner wall, so without the caps a step between two
+        # blocks opens a slit onto the back of the inner wall.
+        h2, off2 = parts[(i + 1) % SEGMENTS]
+        if (h2, off2) != (h, off):
+            for hh, oo in ((h, off), (h2, off2)):
+                r_in = 0.895 + oo
+                section = [
+                    [(1.0 + oo, FOOT), (r_in, FOOT), (r_in, 0.3 * hh), (0.992 + oo, 0.3 * hh)],
+                    [(0.992 + oo, 0.3 * hh), (r_in, 0.3 * hh), (r_in, 0.94 * hh), (0.972 + oo, 0.94 * hh)],
+                    [(0.972 + oo, 0.94 * hh), (r_in, 0.94 * hh), (0.905 + oo, 0.96 * hh), (0.968 + oo, hh)],
+                ]
+                for quad in section:
+                    ring.face([at(a1, r, z) for r, z in quad], [(0.006 + 0.008 * grain, v)] * 4)
         layers = 8
         for k in range(layers):
             f0 = k / layers
