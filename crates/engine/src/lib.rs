@@ -9,6 +9,7 @@ pub mod audio_file_out;
 pub mod blob_track;
 pub mod buttons;
 pub mod calib;
+mod calib_points;
 pub mod clipboard;
 pub mod command;
 pub mod commands;
@@ -84,6 +85,7 @@ pub fn engine_registry(engine: &Arc<Engine>) -> Registry {
     components::register(&mut registry, engine);
     clipboard::register(&mut registry, engine);
     calib::register(&mut registry);
+    calib_points::register(&mut registry, engine);
     state_commands::register(&mut registry, engine);
     osc::register(&mut registry, engine);
     http::register(&mut registry, engine);

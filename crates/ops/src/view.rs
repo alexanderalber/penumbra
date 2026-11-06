@@ -22,8 +22,19 @@ use crate::geo::{UP_AXIS, perspective};
 pub const CAMERA: &str = "view.camera";
 
 /// The camera's params, in panel order.
-pub const CAMERA_PARAMS: [&str; 10] =
-    ["position", "target", "projection", "fov", "size", "roll", "shift", "calibration", "near", "far"];
+pub const CAMERA_PARAMS: [&str; 11] = [
+    "position",
+    "target",
+    "projection",
+    "fov",
+    "size",
+    "roll",
+    "shift",
+    "calibration",
+    "points",
+    "near",
+    "far",
+];
 
 pub const PROJECTIONS: [&str; 2] = ["perspective", "orthographic"];
 
@@ -258,6 +269,9 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     )
     .param(ParamSpec::text("calibration", "").group(more).doc(
         "A camera calibration as JSON (the `camera` that calib.solve returns). When set, the calibration replaces position, target, projection, fov, size, roll and shift",
+    ))
+    .param(ParamSpec::text("points", "").group(more).doc(
+        "The point pairs this camera is fitted to, as JSON. The calib.points commands edit it and calib.points.solve turns it into the calibration; the camera itself does not read it",
     ))
     .param(
         ParamSpec::float("near", 0.05)

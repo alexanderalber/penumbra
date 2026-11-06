@@ -5222,6 +5222,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>shift</code></td><td>vec2</td><td><code>[0, 0]</code></td><td>-1 to 1 (soft)</td><td>Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height</td></tr>
 <tr><td><code>calibration</code></td><td>text</td><td></td><td></td><td>A camera calibration as JSON (the <code>camera</code> that calib.solve returns). When set, the calibration replaces position, target, projection, fov, size, roll and shift</td></tr>
+<tr><td><code>points</code></td><td>text</td><td></td><td></td><td>The point pairs this camera is fitted to, as JSON. The calib.points commands edit it and calib.points.solve turns it into the calibration; the camera itself does not read it</td></tr>
 <tr><td><code>near</code></td><td>float</td><td><code>0.05</code></td><td>0.0001 to 10000</td><td>Nearest distance drawn, in metres from the camera; anything closer is cut away (orthographic too: nothing behind the camera is drawn)</td></tr>
 <tr><td><code>far</code></td><td>float</td><td><code>100</code></td><td>0.001 to 1000000</td><td>Farthest distance drawn, in metres from the camera; anything beyond is left out</td></tr>
 </tbody>
@@ -5934,6 +5935,38 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <details class="entry command" id="calib.homography"><summary><code class="name">calib.homography</code><span class="sum">Homography from 4 or more point pairs (normalised DLT)</span></summary>
 <div class="body">
 <p>Homography from 4 or more point pairs (normalised DLT); {pairs: [[[x,y],[u,v]],...]}</p>
+</div></details>
+<details class="entry command" id="calib.points.corners"><summary><code class="name">calib.points.corners</code><span class="sum">The sharp corners of a model, per part: the places a point can be set exactly. {geo (a geo.file), degrees? (how far apart in direction its faces must be, 30)}. Replies parts: [{part, corners: [[x,y,z],...]}], in world coordinates</span></summary>
+<div class="body">
+<p>The sharp corners of a model, per part: the places a point can be set exactly. {geo (a geo.file), degrees? (how far apart in direction its faces must be, 30)}. Replies parts: [{part, corners: [[x,y,z],...]}], in world coordinates</p>
+</div></details>
+<details class="entry command" id="calib.points.deviation"><summary><code class="name">calib.points.deviation</code><span class="sum">Expected pixel deviation of the camera's calibration on each part of the object, with the fit's quality (good, fair, weak, unusable)</span></summary>
+<div class="body">
+<p>Expected pixel deviation of the camera's calibration on each part of the object, with the fit's quality (good, fair, weak, unusable); {path, geo (a geo.file) or groups: {name: [[x,y,z],...]}, noise?}</p>
+</div></details>
+<details class="entry command" id="calib.points.list"><summary><code class="name">calib.points.list</code><span class="sum">A view.camera's point list as stored</span></summary>
+<div class="body">
+<p>A view.camera's point list as stored; {path}</p>
+</div></details>
+<details class="entry command" id="calib.points.predict"><summary><code class="name">calib.points.predict</code><span class="sum">Where the camera's current calibration puts model points, in pixels, and how far that may be off</span></summary>
+<div class="body">
+<p>Where the camera's current calibration puts model points, in pixels, and how far that may be off; {path, points: [[x,y,z],...], noise?}. Replies pixels (null behind the camera) and deviation (null without a fit of the list)</p>
+</div></details>
+<details class="entry command" id="calib.points.remove"><summary><code class="name">calib.points.remove</code><span class="sum">Remove point pairs from a view.camera's list (one undo step)</span></summary>
+<div class="body">
+<p>Remove point pairs from a view.camera's list (one undo step); {path, id} or {path, all: true}</p>
+</div></details>
+<details class="entry command" id="calib.points.set"><summary><code class="name">calib.points.set</code><span class="sum">Add a point pair to a view.camera's list, or change the one with <code>id</code> (one undo step). New: {path, world: [x,y,z], picture: [u,v], group?, off?}; changing: {path, id, world?, picture?, group?, off?}. Picture in pixels from the top left corner. <code>off</code> keeps a point in the list but out of the fit. Replies its id</span></summary>
+<div class="body">
+<p>Add a point pair to a view.camera's list, or change the one with <code>id</code> (one undo step). New: {path, world: [x,y,z], picture: [u,v], group?, off?}; changing: {path, id, world?, picture?, group?, off?}. Picture in pixels from the top left corner. <code>off</code> keeps a point in the list but out of the fit. Replies its id</p>
+</div></details>
+<details class="entry command" id="calib.points.setup"><summary><code class="name">calib.points.setup</code><span class="sum">Start or change the point list of a view.camera (one undo step); points already there stay. {path, size: [w,h], kind? (projector: principal point free | picture: a frozen camera picture, principal point at its centre), options? (as calib.solve), focal? (a known focal length in pixels, held fixed; null forgets it)}</span></summary>
+<div class="body">
+<p>Start or change the point list of a view.camera (one undo step); points already there stay. {path, size: [w,h], kind? (projector: principal point free | picture: a frozen camera picture, principal point at its centre), options? (as calib.solve), focal? (a known focal length in pixels, held fixed; null forgets it)}</p>
+</div></details>
+<details class="entry command" id="calib.points.solve"><summary><code class="name">calib.points.solve</code><span class="sum">Fit the camera to its point list and judge the result; the camera goes into its <code>calibration</code> param (one undo step) unless <code>apply</code> is false. {path, apply?, geo? (a geo.file: expected deviation per part), noise? (click noise per axis in pixels)}. Replies camera, rms, spread, pose (position, forward, up, distance and how well they are known), points (id, error, left_out, expected, ratio: a point's error when left out of the fit, over what is expected there), suspects (ids), deviation and quality (with geo), warnings</span></summary>
+<div class="body">
+<p>Fit the camera to its point list and judge the result; the camera goes into its <code>calibration</code> param (one undo step) unless <code>apply</code> is false. {path, apply?, geo? (a geo.file: expected deviation per part), noise? (click noise per axis in pixels)}. Replies camera, rms, spread, pose (position, forward, up, distance and how well they are known), points (id, error, left_out, expected, ratio: a point's error when left out of the fit, over what is expected there), suspects (ids), deviation and quality (with geo), warnings</p>
 </div></details>
 <details class="entry command" id="calib.project"><summary><code class="name">calib.project</code><span class="sum">Pixels of world points through a calibrated camera (null behind it)</span></summary>
 <div class="body">

@@ -1,6 +1,6 @@
 //! `calib.*`: the calibration math of crate `calib` as commands. Pure functions of their params: no
-//! project, no engine state. The calibration mode of the UI stores its pairs and results in the
-//! project and calls the same functions.
+//! project, no engine state. `calib.points.*` (`calib_points.rs`) keeps pairs and results with a
+//! camera in the project and calls the same functions.
 
 use penumbra_calib::{Camera, Homography, Options, calibrate};
 use serde::Deserialize;

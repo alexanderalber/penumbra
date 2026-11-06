@@ -40,6 +40,9 @@ pub struct Options {
     pub distortion: bool,
     /// Levenberg-Marquardt iterations per starting point, 1 to [`MAX_ITERATIONS`].
     pub max_iterations: u32,
+    /// Fit from the initial camera alone, without the DLT and plane starts (needs one). For a
+    /// quick refit from a known answer; a poor initial camera can end in a poor minimum.
+    pub only_initial: bool,
 }
 
 impl Default for Options {
@@ -50,6 +53,7 @@ impl Default for Options {
             fix_principal_point: false,
             distortion: false,
             max_iterations: 100,
+            only_initial: false,
         }
     }
 }
@@ -66,12 +70,24 @@ pub enum Start {
     Initial,
 }
 
-/// How well the points pin the intrinsics down: one standard deviation in pixels, from the
+/// How well the points pin the camera down: one standard deviation of each result, from the
 /// residuals and the fit's Jacobian (0 for fixed parameters).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Spread {
+    /// The noise of a picture point the residuals suggest, per axis, in pixels. With few pairs
+    /// this estimate is itself rough.
+    pub sigma: f64,
+    /// Focal lengths in pixels.
     pub focal: [f64; 2],
+    /// Principal point in pixels.
     pub principal: [f64; 2],
+    /// The camera's position along the world axes, in world units.
+    pub position: [f64; 3],
+    /// The camera's position along its own view axis, in world units: how well the distance to
+    /// the object is known.
+    pub distance: f64,
+    /// The larger uncertainty of the view direction, in degrees.
+    pub direction: f64,
 }
 
 /// A calibrated projector and how well it fits its points.
@@ -158,7 +174,11 @@ pub fn calibrate(
     if let Some(c) = initial {
         starts.push((Start::Initial, settle(frame.state_to_local(c))));
     }
-    if shape.thickness >= PLANAR {
+    if options.only_initial {
+        if initial.is_none() {
+            return Err(Error::new("only_initial needs an initial camera"));
+        }
+    } else if shape.thickness >= PLANAR {
         if pts.len() >= 6 {
             let known = fixed_focal.filter(|_| options.fix_principal_point);
             match dlt_start(&pts, size, known.map(|f| (f, principal))) {
@@ -172,7 +192,7 @@ pub fn calibrate(
             why.push("points not on one plane need six pairs (or an initial camera)".into());
         }
     }
-    if shape.thickness < THIN {
+    if shape.thickness < THIN && !options.only_initial {
         // An estimated focal length first; the initial camera's when the plane cannot tell.
         let mut plane = plane_start(&pts, &shape, size, principal, fixed_focal);
         if plane.is_err()
@@ -204,7 +224,7 @@ pub fn calibrate(
         ));
     };
 
-    let spread = spread(&fit, &free, &pts)?;
+    let spread = spread(&fit, &free, &pts, frame.scale)?;
     let camera = frame.camera_to_world(&fit.state);
     let errors = camera.errors(pairs);
     let max_error = errors.iter().copied().fold(0.0, f64::max);
@@ -532,12 +552,16 @@ fn levenberg_marquardt(
     Some(Fit { state: s, cost, iterations, converged })
 }
 
-/// The intrinsics' standard deviations at the fit; an error when the free parameters are not
-/// determined by the points (the normal matrix is singular).
-fn spread(fit: &Fit, free: &[Param], pts: &[(Vector3<f64>, [f64; 2])]) -> Result<Option<Spread>, Error> {
+/// `(J^T J)^-1` of the free parameters at `state`: their covariance for residuals of variance 1. An
+/// error when the free parameters are not determined by the points (the normal matrix is singular).
+fn covariance(
+    state: &State,
+    free: &[Param],
+    pts: &[(Vector3<f64>, [f64; 2])],
+) -> Result<DMatrix<f64>, Error> {
     let undetermined =
         || Error::new("these points do not determine the free parameters (fix some, or add points)");
-    let j = fit.state.jacobian(free, pts).ok_or_else(undetermined)?;
+    let j = state.jacobian(free, pts).ok_or_else(undetermined)?;
     let norms: Vec<f64> = j.column_iter().map(|c| c.norm()).collect();
     if norms.iter().any(|n| !positive(*n) || !n.is_finite()) {
         return Err(undetermined());
@@ -551,21 +575,154 @@ fn spread(fit: &Fit, free: &[Param], pts: &[(Vector3<f64>, [f64; 2])]) -> Result
     if !positive(lo - 1e-12 * hi) {
         return Err(undetermined());
     }
+    let inv = normal.try_inverse().ok_or_else(undetermined)?;
+    Ok(&scale * inv * &scale)
+}
+
+/// The Jacobian of the camera's position in the local frame by the free parameters.
+fn position_jacobian(state: &State, free: &[Param]) -> DMatrix<f64> {
+    let position = |s: &State| -(s.r.inverse() * s.t);
+    let mut delta = vec![0.0; free.len()];
+    let mut m = DMatrix::zeros(3, free.len());
+    for (k, p) in free.iter().enumerate() {
+        let h = state.step(*p);
+        set(&mut delta, k, h);
+        let a = position(&state.moved(free, &delta));
+        set(&mut delta, k, -h);
+        let b = position(&state.moved(free, &delta));
+        set(&mut delta, k, 0.0);
+        m.set_column(k, &((a - b) / (2.0 * h)));
+    }
+    m
+}
+
+/// The standard deviations at the fit; an error when the free parameters are not determined by
+/// the points. `world_per_local` turns the local frame's lengths into world units.
+fn spread(
+    fit: &Fit,
+    free: &[Param],
+    pts: &[(Vector3<f64>, [f64; 2])],
+    world_per_local: f64,
+) -> Result<Option<Spread>, Error> {
+    let cov = covariance(&fit.state, free, pts)?;
     let dof = 2 * pts.len() - free.len().min(2 * pts.len());
     if dof == 0 {
         return Ok(None);
     }
-    let Some(inv) = normal.try_inverse() else { return Err(undetermined()) };
     let sigma2 = fit.cost / dof as f64;
     let sd = |p: Param| {
         free.iter()
             .position(|q| *q == p)
-            .and_then(|i| Some((i, inv.get((i, i))?, norms.get(i)?)))
-            .map_or(0.0, |(_, v, n)| (sigma2 * v.max(0.0)).sqrt() / n)
+            .and_then(|i| cov.get((i, i)))
+            .map_or(0.0, |v| (sigma2 * v.max(0.0)).sqrt())
     };
     let focal =
         if free.contains(&Param::Focal) { [sd(Param::Focal); 2] } else { [sd(Param::Fx), sd(Param::Fy)] };
-    Ok(Some(Spread { focal, principal: [sd(Param::Cx), sd(Param::Cy)] }))
+    let jp = position_jacobian(&fit.state, free);
+    let cov_position = &jp * &cov * jp.transpose() * (sigma2 * world_per_local * world_per_local);
+    let axis = |i: usize| cov_position.get((i, i)).copied().unwrap_or(0.0).max(0.0).sqrt();
+    let view = fit.state.r.inverse() * Vector3::z();
+    let along = (cov_position.fixed_view::<3, 3>(0, 0) * view).dot(&view);
+    Ok(Some(Spread {
+        sigma: sigma2.sqrt(),
+        focal,
+        principal: [sd(Param::Cx), sd(Param::Cy)],
+        position: [axis(0), axis(1), axis(2)],
+        distance: along.max(0.0).sqrt(),
+        direction: sd(Param::Rot(0)).max(sd(Param::Rot(1))).to_degrees(),
+    }))
+}
+
+/// How far the true picture of each of `points` may lie from where `camera` shows it, in pixels:
+/// one standard deviation of the distance on the picture, from what the pairs leave open.
+/// `sigma` is the noise of a picture point per axis in pixels; without it the pairs' own residuals
+/// give it. `options` says which parameters were free in the fit that made `camera`.
+pub fn expected_deviation(
+    pairs: &[([f64; 3], [f64; 2])],
+    camera: &Camera,
+    options: &Options,
+    sigma: Option<f64>,
+    points: &[[f64; 3]],
+) -> Result<Vec<Option<f64>>, Error> {
+    check_input(pairs, camera.intrinsics.size, Some(camera), options)?;
+    let frame = Frame::of(pairs)?;
+    let pts: Vec<(Vector3<f64>, [f64; 2])> = pairs.iter().map(|(w, q)| (frame.to_local(w), *q)).collect();
+    let state = frame.state_to_local(camera);
+    let free = free_params(options);
+    if 2 * pts.len() < free.len() {
+        return Err(Error::new("too few pairs for the free parameters"));
+    }
+    let cov = covariance(&state, &free, &pts)?;
+    let sigma = match sigma {
+        Some(s) if s.is_finite() && s >= 0.0 => s,
+        Some(_) => return Err(Error::new("sigma must be a finite number, 0 or more")),
+        None => {
+            let dof = 2 * pts.len() - free.len();
+            if dof == 0 {
+                return Err(Error::new(
+                    "as many equations as free parameters: the residuals say nothing, give sigma",
+                ));
+            }
+            let mut r = Vec::new();
+            let cost =
+                state.residuals(&pts, &mut r).ok_or_else(|| Error::new("a point is behind the camera"))?;
+            (cost / dof as f64).sqrt()
+        }
+    };
+    Ok(points
+        .iter()
+        .map(|w| {
+            let one = [(frame.to_local(w), [0.0, 0.0])];
+            let j = state.jacobian(&free, &one)?;
+            let var = (&j * &cov * j.transpose()).trace();
+            Some(sigma * var.max(0.0).sqrt())
+        })
+        .collect())
+}
+
+/// A pair judged by the fit of the others.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LeftOut {
+    /// How far its picture point lies from where the others put it, in pixels.
+    pub error: f64,
+    /// How far it may lie by chance, one standard deviation in pixels: the point's own noise plus
+    /// what the others leave open at that place. Far points read large errors for no fault of
+    /// their own, so `error / expected` is what tells a bad point.
+    pub expected: f64,
+}
+
+/// Noise of a picture point the judging assumes at least, per axis in pixels: exact clicks would
+/// otherwise make any tiny error look infinitely bad.
+const MIN_NOISE: f64 = 0.5;
+
+/// One pair left out of the fit in turn, each judged by the fit of the others, in the order of
+/// `pairs`. Each refit starts from `camera`, the fit of all pairs. `None` where the others do not
+/// determine the camera.
+pub fn leave_one_out(
+    pairs: &[([f64; 3], [f64; 2])],
+    camera: &Camera,
+    options: &Options,
+) -> Result<Vec<Option<LeftOut>>, Error> {
+    check_input(pairs, camera.intrinsics.size, Some(camera), options)?;
+    let refit = Options { only_initial: true, ..*options };
+    let mut rest: Vec<([f64; 3], [f64; 2])> = Vec::with_capacity(pairs.len().saturating_sub(1));
+    Ok(pairs
+        .iter()
+        .enumerate()
+        .map(|(i, (w, q))| {
+            rest.clear();
+            rest.extend(pairs.iter().enumerate().filter(|(k, _)| *k != i).map(|(_, p)| *p));
+            let s = calibrate(&rest, camera.intrinsics.size, Some(camera), &refit).ok()?;
+            let p = s.camera.project(*w)?;
+            let sigma = s.spread.map_or(MIN_NOISE, |x| x.sigma.max(MIN_NOISE));
+            let open = expected_deviation(&rest, &s.camera, &refit, Some(sigma), &[*w]).ok()?;
+            let open = open.first().copied().flatten()?;
+            Some(LeftOut {
+                error: (p[0] - q[0]).hypot(p[1] - q[1]),
+                expected: (open * open + 2.0 * sigma * sigma).sqrt(),
+            })
+        })
+        .collect())
 }
 
 /// The 3x4 projection by the normalised DLT (Hartley and Zisserman, algorithm 7.1), from local

@@ -5,7 +5,8 @@
 //! - The projector as a camera ([`Camera`]: [`Intrinsics`] and [`Pose`]) and its calibration
 //!   from world and picture point pairs ([`calibrate`]): the normalised DLT of the 3x4
 //!   projection (or a plane's homography) as the starting point, then Levenberg-Marquardt over
-//!   pose and intrinsics.
+//!   pose and intrinsics. [`points`]: a list of pairs kept with a camera and a judgement of the
+//!   fit they give.
 //! - Structured light ([`scan`]): Gray-code patterns for a projector and the decoding of a
 //!   camera's pictures of them into maps between camera and projector pixels; [`objects`]:
 //!   the objects in front of a surface from two such scans, and the blend of projectors on them;
@@ -28,6 +29,7 @@ pub mod exposure;
 pub mod flatfield;
 mod homography;
 pub mod objects;
+pub mod points;
 mod raster;
 pub mod regions;
 pub mod relief;
@@ -38,7 +40,9 @@ pub mod synthetic;
 
 pub use camera::{Camera, Intrinsics, MAX_COORDINATE, Pose, unproject_clip};
 pub use homography::{Homography, MAX_PAIRS, ROBUST_SAMPLE, RobustFit};
-pub use solve::{MAX_ITERATIONS, Options, Solution, Spread, Start, calibrate};
+pub use solve::{
+    LeftOut, MAX_ITERATIONS, Options, Solution, Spread, Start, calibrate, expected_deviation, leave_one_out,
+};
 
 #[cfg(test)]
 mod borders_tests;

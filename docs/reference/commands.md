@@ -61,6 +61,14 @@ Every command of the running app, as `penumbra-cli ctl <command>` or a control-c
 | command | |
 |---|---|
 | `calib.homography` | Homography from 4 or more point pairs (normalised DLT); {pairs: [[[x,y],[u,v]],...]} |
+| `calib.points.corners` | The sharp corners of a model, per part: the places a point can be set exactly. {geo (a geo.file), degrees? (how far apart in direction its faces must be, 30)}. Replies parts: [{part, corners: [[x,y,z],...]}], in world coordinates |
+| `calib.points.deviation` | Expected pixel deviation of the camera's calibration on each part of the object, with the fit's quality (good, fair, weak, unusable); {path, geo (a geo.file) or groups: {name: [[x,y,z],...]}, noise?} |
+| `calib.points.list` | A view.camera's point list as stored; {path} |
+| `calib.points.predict` | Where the camera's current calibration puts model points, in pixels, and how far that may be off; {path, points: [[x,y,z],...], noise?}. Replies pixels (null behind the camera) and deviation (null without a fit of the list) |
+| `calib.points.remove` | Remove point pairs from a view.camera's list (one undo step); {path, id} or {path, all: true} |
+| `calib.points.set` | Add a point pair to a view.camera's list, or change the one with `id` (one undo step). New: {path, world: [x,y,z], picture: [u,v], group?, off?}; changing: {path, id, world?, picture?, group?, off?}. Picture in pixels from the top left corner. `off` keeps a point in the list but out of the fit. Replies its id |
+| `calib.points.setup` | Start or change the point list of a view.camera (one undo step); points already there stay. {path, size: [w,h], kind? (projector: principal point free \| picture: a frozen camera picture, principal point at its centre), options? (as calib.solve), focal? (a known focal length in pixels, held fixed; null forgets it)} |
+| `calib.points.solve` | Fit the camera to its point list and judge the result; the camera goes into its `calibration` param (one undo step) unless `apply` is false. {path, apply?, geo? (a geo.file: expected deviation per part), noise? (click noise per axis in pixels)}. Replies camera, rms, spread, pose (position, forward, up, distance and how well they are known), points (id, error, left_out, expected, ratio: a point's error when left out of the fit, over what is expected there), suspects (ids), deviation and quality (with geo), warnings |
 | `calib.project` | Pixels of world points through a calibrated camera (null behind it); {camera, points: [[x,y,z],...]} |
 | `calib.solve` | Calibrate a projector from world and picture points; {pairs: [[[x,y,z],[u,v]],...], size: [w,h], initial?, options?} |
 

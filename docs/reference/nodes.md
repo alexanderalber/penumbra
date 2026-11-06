@@ -2337,6 +2337,7 @@ Outputs: `out` (view).
 | `roll` | float | `0` | -180 to 180° (soft) | Turn about the view axis; positive tilts the picture's top to the right |
 | `shift` *(more)* | vec2 | `[0, 0]` | -1 to 1 (soft) | Lens shift in picture sizes: [0, 0.5] moves the picture up by half its height |
 | `calibration` *(more)* | text |  |  | A camera calibration as JSON (the `camera` that calib.solve returns). When set, the calibration replaces position, target, projection, fov, size, roll and shift |
+| `points` *(more)* | text |  |  | The point pairs this camera is fitted to, as JSON. The calib.points commands edit it and calib.points.solve turns it into the calibration; the camera itself does not read it |
 | `near` *(more)* | float | `0.05` | 0.0001 to 10000 | Nearest distance drawn, in metres from the camera; anything closer is cut away (orthographic too: nothing behind the camera is drawn) |
 | `far` *(more)* | float | `100` | 0.001 to 1000000 | Farthest distance drawn, in metres from the camera; anything beyond is left out |
 
