@@ -245,6 +245,7 @@ Glazed tiles with grout and a wooden rim on a rectified face, appearing one by o
 
 A world that moves with a sound file: a stage (a synthwave floor, a tunnel, a tower to climb or
 a lake in a valley at night), and elements in it.
+The [music-synthwave](../examples/music-synthwave/README.md) example is a whole show built this way, on one song.
 They all take the same music bus, the whole output of a `chan.beat_grid`. A project has one
 `chan.beat_grid` and wires it into the `bus` input of the stage and of every element:
 `node.connect {"from": "/grid", "to": "/stage", "input": "bus"}`. Each component reads the

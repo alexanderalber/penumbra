@@ -1,0 +1,12 @@
+# A streak: a thin triangular prism one unit long along y, centred on the origin, z up, one unit
+# across its cross-section. mid_particles scales it to a few millimetres across, so the
+# wireframe draws its three long edges as one line.
+v 0.0000 -0.5 0.5774
+v -0.5 -0.5 -0.2887
+v 0.5 -0.5 -0.2887
+v 0.0000 0.5 0.5774
+v -0.5 0.5 -0.2887
+v 0.5 0.5 -0.2887
+f 1 2 5 4
+f 2 3 6 5
+f 3 1 4 6

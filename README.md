@@ -370,6 +370,10 @@ Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
 contribution intentionally submitted for inclusion in penumbra, as defined in the Apache-2.0
 license, shall be dual licensed as above, without any additional terms or conditions.
 
+One exception: the song in `examples/music-synthwave/song.mp3` is by krzna, used with the producer's
+permission, and not under these licenses. See
+[its license note](examples/music-synthwave/MUSIC-LICENSE.md).
+
 ## Disclaimer
 
 penumbra is an independent project, not affiliated with, endorsed by or connected to

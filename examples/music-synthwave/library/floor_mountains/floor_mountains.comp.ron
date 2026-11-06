@@ -1,0 +1,20 @@
+// penumbra component. One component at the top level with everything inside it; add it
+// to a project with comp.load or the add dialog.
+(
+    version: 2,
+    nodes: {
+        "/floor_mountains": (kind: "comp.base", params: {"expose": "presence = places.presence\nseed = places.seed\nheight = places.tallest\nwidth = places.base\nspacing = places.spacing\nnear = places.near\nfar = places.far\nlane = places.lane\npeaks = places.peaks\nfoot = places.foot\nvalleys = places.valleys\nspread = places.spread\nlength = sizes.length\ncolor = peak_lines.color\nextent = mountains.extent"}),
+        "/floor_mountains/bus": (kind: "chan.in", pos: [-600.0, 0.0]),
+        "/floor_mountains/lane": (kind: "tex.in", pos: [-600.0, 150.0]),
+        "/floor_mountains/places": (kind: "tex.shader", params: {"far": 12.0, "file": "library/floor_mountains/mountains.wgsl", "foot": 1.5, "height": 64, "keep_size": true, "lane": 1.6, "near": -1.0, "peaks": 3.0, "presence": 1.0, "resolution": "custom", "seed": 1, "tallest": 2.6, "base": 1.8, "spacing": 1.0, "spread": 18.0, "valleys": 0.3, "width": 32}, inputs: {"in0": "lane"}, binds: {"beats": "bus:travelled"}, pos: [-400.0, 100.0]),
+        "/floor_mountains/sizes": (kind: "tex.shader", params: {"file": "library/floor_mountains/sizes.wgsl", "length": 1.4}, inputs: {"in0": "places"}, pos: [-200.0, 200.0]),
+        "/floor_mountains/peak": (kind: "geo.file", params: {"file": "library/floor_mountains/peak.obj", "up": "z"}, pos: [-800.0, -300.0]),
+        "/floor_mountains/peak_lines": (kind: "mat.wireframe", params: {"faces": "hidden", "line_width": 2.0}, pos: [-600.0, -150.0]),
+        "/floor_mountains/peak_wire": (kind: "geo.assign_material", inputs: {"in": "peak", "mat": "peak_lines"}, pos: [-400.0, -200.0]),
+        "/floor_mountains/cover_mat": (kind: "mat.occluder", pos: [-600.0, -320.0]),
+        "/floor_mountains/cover": (kind: "geo.assign_material", inputs: {"in": "peak", "mat": "cover_mat"}, pos: [-400.0, -350.0]),
+        "/floor_mountains/model": (kind: "geo.merge", inputs: {"in0": "peak_wire", "in1": "cover"}, pos: [-200.0, -250.0]),
+        "/floor_mountains/mountains": (kind: "geo.tex_instance", params: {"extent": 24.0}, inputs: {"in": "model", "position": "places", "scale": "sizes"}, pos: [0.0, 0.0]),
+        "/floor_mountains/out": (kind: "geo.out", inputs: {"in": "mountains"}, pos: [200.0, 0.0]),
+    },
+)
