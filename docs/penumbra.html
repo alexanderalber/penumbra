@@ -121,7 +121,7 @@ details.target { outline: 2px solid var(--accent); }
 </section>
 <nav class="toc">
 <p><b>Guides</b> <a href="#getting-started">Getting started</a> <a href="#concepts">Concepts</a> <a href="#glossary">Glossary</a> <a href="#helpers">The Helpers window</a> <a href="#audio">Audio</a> <a href="#dmx">DMX</a> <a href="#recording">Recording</a> <a href="#spout">Spout</a> <a href="#ndi">NDI</a> <a href="#camera">Camera</a> <a href="#tracking">Tracking</a> <a href="#mapping-without-camera">Mapping without a camera</a> <a href="#scanning">Scanning</a> <a href="#navigation">Looking around in 3D</a> <a href="#shaders">Shaders</a> <a href="#scripts">Scripts</a> <a href="#control">Control</a></p>
-<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-ui">ui</a> <a href="#family-component-ports">Component ports</a></p>
+<p><b><a href="#nodes">Nodes</a></b> <a href="#family-tex">tex</a> <a href="#family-chan">chan</a> <a href="#family-audio">audio</a> <a href="#family-table">table</a> <a href="#family-geo">geo</a> <a href="#family-mat">mat</a> <a href="#family-light">light</a> <a href="#family-view">view</a> <a href="#family-vol">vol</a> <a href="#family-script">script</a> <a href="#family-out">out</a> <a href="#family-comp">comp</a> <a href="#family-node">node</a> <a href="#family-ui">ui</a> <a href="#family-component-ports">Component ports</a></p>
 <p><b><a href="#commands">Commands</a></b> <a href="#group-general">general</a> <a href="#group-app">app</a> <a href="#group-audio">audio</a> <a href="#group-audio_file_out">audio_file_out</a> <a href="#group-beats">beats</a> <a href="#group-blob_track">blob_track</a> <a href="#group-calib">calib</a> <a href="#group-camera">camera</a> <a href="#group-chan">chan</a> <a href="#group-comp">comp</a> <a href="#group-cook">cook</a> <a href="#group-dmx">dmx</a> <a href="#group-edit">edit</a> <a href="#group-geo">geo</a> <a href="#group-gpu">gpu</a> <a href="#group-help">help</a> <a href="#group-history">history</a> <a href="#group-http">http</a> <a href="#group-job">job</a> <a href="#group-keyboard">keyboard</a> <a href="#group-mesh_out">mesh_out</a> <a href="#group-midi">midi</a> <a href="#group-mouse">mouse</a> <a href="#group-ndi">ndi</a> <a href="#group-node">node</a> <a href="#group-osc">osc</a> <a href="#group-output">output</a> <a href="#group-palette">palette</a> <a href="#group-project">project</a> <a href="#group-projector">projector</a> <a href="#group-render">render</a> <a href="#group-res">res</a> <a href="#group-scan">scan</a> <a href="#group-script">script</a> <a href="#group-shapes">shapes</a> <a href="#group-show">show</a> <a href="#group-spacenav">spacenav</a> <a href="#group-spout">spout</a> <a href="#group-state">state</a> <a href="#group-system">system</a> <a href="#group-table">table</a> <a href="#group-table_out">table_out</a> <a href="#group-text">text</a> <a href="#group-ui">ui</a> <a href="#group-video">video</a> <a href="#group-video_file">video_file</a> <a href="#group-video_in">video_in</a> <a href="#group-video_out">video_out</a> <a href="#group-view">view</a></p>
 </nav>
 <section id="guides">
@@ -316,6 +316,7 @@ details.target { outline: 2px solid var(--accent); }
 <tr><td><code>mat</code></td><td>pink</td><td>a material</td><td><code>mat</code></td></tr>
 <tr><td><code>light</code></td><td>yellow</td><td>one or more lights</td><td><code>light</code></td></tr>
 <tr><td><code>view</code></td><td>silver</td><td>one camera</td><td><code>view</code></td></tr>
+<tr><td><code>vol</code></td><td>grey-blue</td><td>a volume: a grid of cells filling a box in space, on the GPU</td><td><code>vol</code></td></tr>
 </tbody>
 </table>
 <p>Some nodes take any number of inputs of one kind: <a class="ref" href="#tex.composite"><code>tex.composite</code></a>, <a class="ref" href="#tex.switch"><code>tex.switch</code></a>, <a class="ref" href="#tex.sequence"><code>tex.sequence</code></a>, <a class="ref" href="#chan.merge"><code>chan.merge</code></a>, <a class="ref" href="#geo.merge"><code>geo.merge</code></a> and <a class="ref" href="#light.merge"><code>light.merge</code></a>. Their inputs are numbered from 0 (<code>in0</code>, <code>in1</code>, ...). The node shows the wired ones and one free input below the last; wire into the free one and the next appears. An input left empty in between stays, because the order counts: the composite's layers, the switch's index. <a class="ref" href="#node.connect"><code>node.connect</code></a> without <code>input</code> takes the next free one. Up to 64 fit.</p>
@@ -328,6 +329,8 @@ details.target { outline: 2px solid var(--accent); }
 <li><strong><code>audio</code></strong>: sound. A device input, a test tone, a mix, ready-made instruments and drones. <a class="ref" href="#chan.beat_analysis"><code>chan.beat_analysis</code></a> turns sound into channels (see <a href="#audio">Audio</a>).
 </li>
 <li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
+</li>
+<li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: an emitter blows hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a> draws a volume as a picture, seen from the front through the whole box. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names where they mean the same.
 </li>
 <li><strong><code>geo</code></strong>, <strong><code>mat</code></strong>, <strong><code>light</code></strong>, <strong><code>view</code></strong>: a 3D scene. Geometry from files or primitives, transformed and merged; materials put on it with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>; lights and a <a class="ref" href="#view.camera"><code>view.camera</code></a> wired into a <a class="ref" href="#tex.render"><code>tex.render</code></a>, which makes a picture of it all (a render needs its camera; the camera is perspective, orthographic or calibrated). <a class="ref" href="#light.projector"><code>light.projector</code></a> throws a picture through a camera onto the geometry: a virtual projector, for trying a mapping on a model of the room. Coordinates are metres, z up. <a class="ref" href="#geo.file"><code>geo.file</code></a> reads OBJ, STL, glTF and FBX. FBX works from file version 7.0 on, binary or ASCII. Binary is the default of Blender, Maya, 3ds Max and Unity. An FBX 6 file gives an error: export it again as FBX 2011 or later. Each FBX model becomes a part with its name, placed as in the file, in metres and z up. Materials bring their diffuse colour and texture, embedded or from a file beside the FBX. Animated models play: each part moves as its model does in the file. A skinned character bends with its bones: each vertex follows the bones that weigh on it, blended by the weights (linear blend skinning). <code>take</code> picks the animation (the <code>takes</code> output lists them), <code>play</code>, <code>speed</code> and <code>loop</code> work as for a video, and with <code>play</code> off a channel bound to <code>time</code> drives it. Posing runs on the CPU and costs about 20 ns per vertex and frame. A file whose skin asks for dual quaternion blending is blended linearly, with a warning; twisting joints then thin out a little. Blend shapes, cameras and lights are not read. <a class="ref" href="#out.mesh"><code>out.mesh</code></a> writes geometry to an OBJ, STL or glb file, every model where it stands in the scene. Each part stays a part: an OBJ object or a glTF node. Only glb keeps material colours; textures are not written. File, <code>overwrite</code> and the modes <code>changes</code> and <code>manual</code> work as for <a class="ref" href="#out.table"><code>out.table</code></a>; the command is <a class="ref" href="#mesh_out.write"><code>mesh_out.write</code></a>. Copies from <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are read back from the GPU and written one by one (<code>instances</code> on <code>expand</code>). For copies that move every frame, use mode <code>manual</code>: in mode <code>changes</code> such an input is written every frame. With <code>instances</code> on <code>skip</code> each model is written once, without its copies. A file holds at most 4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
 </li>
@@ -474,7 +477,7 @@ water      15
 <p>Every node has a path: <code>/noise1</code> at the top level, <code>/scene/noise1</code> inside the component <code>scene</code>. A param is addressed as <code>/scene/noise1.speed</code>, one component of a vector as <code>/t.translate.0</code>.</p>
 <p>Where a path refers to another node (a wire's source in the project file, a binding, the <code>node</code> param of <a class="ref" href="#tex.select"><code>tex.select</code></a>), it is read from the level of the node it belongs to: <code>/a/b</code> is absolute, <code>x</code> is the node <code>x</code> beside it, <code>sub/x</code> is below that, <code>../x</code> one level up. So a component's inside refers to its own nodes by name and keeps working when the component is moved or saved to a file.</p>
 <h3 id="concepts-components">Components</h3>
-<p>A <a class="ref" href="#comp.base"><code>comp.base</code></a> holds nodes. Its input and output sockets are port nodes inside it, one pair per data kind: <a class="ref" href="#tex.in"><code>tex.in</code></a> and <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#chan.out"><code>chan.out</code></a>, and so on for <code>table</code>, <code>geo</code>, <code>mat</code>, <code>light</code> and <code>view</code> (<a href="#family-component-ports">Component ports</a>). What is wired to the component outside comes out of its <a class="ref" href="#tex.in"><code>tex.in</code></a> inside. The port nodes read or write no files or devices: that is the job of the <code>out</code> nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may reach anywhere.</p>
+<p>A <a class="ref" href="#comp.base"><code>comp.base</code></a> holds nodes. Its input and output sockets are port nodes inside it, one pair per data kind: <a class="ref" href="#tex.in"><code>tex.in</code></a> and <a class="ref" href="#tex.out"><code>tex.out</code></a>, <a class="ref" href="#chan.in"><code>chan.in</code></a> and <a class="ref" href="#chan.out"><code>chan.out</code></a>, and so on for <code>table</code>, <code>geo</code>, <code>mat</code>, <code>light</code>, <code>view</code> and <code>vol</code> (<a href="#family-component-ports">Component ports</a>). What is wired to the component outside comes out of its <a class="ref" href="#tex.in"><code>tex.in</code></a> inside. The port nodes read or write no files or devices: that is the job of the <code>out</code> nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may reach anywhere.</p>
 <p>Commands name a component's sockets by the names of its port nodes. <a class="ref" href="#node.connect"><code>node.connect</code></a> wires them, and <a class="ref" href="#chan.read"><code>chan.read</code></a>, <a class="ref" href="#table.read"><code>table.read</code></a>, <a class="ref" href="#geo.info"><code>geo.info</code></a> and <a class="ref" href="#node.snapshot"><code>node.snapshot</code></a> read them, with <code>output</code> set to the port node's name (<code>/room</code> with <code>output: &quot;colours&quot;</code>). Without <code>output</code>, a read takes the first output of the kind it reads.</p>
 <ul>
 <li><strong>Group:</strong> select nodes and press Ctrl+G. Ports are added where wires cross.
@@ -2075,7 +2078,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Every built-in node kind with its inputs, outputs and params, by family, and the component ports of all families in a section of their own. A param under a heading such as <i>more</i> sits in that folded section of the param panel. A soft range limits only the slider; typed values outside it are kept.</p>
 <div class="group" id="family-tex">
 <h3>tex</h3>
-<p class="kinds"><a href="#tex.blend_weight">tex.blend_weight</a> <a href="#tex.blob_track">tex.blob_track</a> <a href="#tex.blur">tex.blur</a> <a href="#tex.cache">tex.cache</a> <a href="#tex.channel_mix">tex.channel_mix</a> <a href="#tex.chroma_key">tex.chroma_key</a> <a href="#tex.composite">tex.composite</a> <a href="#tex.constant">tex.constant</a> <a href="#tex.contour">tex.contour</a> <a href="#tex.cross">tex.cross</a> <a href="#tex.denoise">tex.denoise</a> <a href="#tex.displace">tex.displace</a> <a href="#tex.edge">tex.edge</a> <a href="#tex.face_content">tex.face_content</a> <a href="#tex.feedback">tex.feedback</a> <a href="#tex.fit">tex.fit</a> <a href="#tex.flip">tex.flip</a> <a href="#tex.fluid">tex.fluid</a> <a href="#tex.from_chan">tex.from_chan</a> <a href="#tex.hsv">tex.hsv</a> <a href="#tex.image_file">tex.image_file</a> <a href="#tex.layer">tex.layer</a> <a href="#tex.lens_distort">tex.lens_distort</a> <a href="#tex.level">tex.level</a> <a href="#tex.limit">tex.limit</a> <a href="#tex.lookup">tex.lookup</a> <a href="#tex.mapper">tex.mapper</a> <a href="#tex.matte">tex.matte</a> <a href="#tex.monochrome">tex.monochrome</a> <a href="#tex.ndi_in">tex.ndi_in</a> <a href="#tex.noise">tex.noise</a> <a href="#tex.null">tex.null</a> <a href="#tex.optical_flow">tex.optical_flow</a> <a href="#tex.primitive">tex.primitive</a> <a href="#tex.quantize">tex.quantize</a> <a href="#tex.ramp">tex.ramp</a> <a href="#tex.remap">tex.remap</a> <a href="#tex.render">tex.render</a> <a href="#tex.resolution">tex.resolution</a> <a href="#tex.scan">tex.scan</a> <a href="#tex.scan_pattern">tex.scan_pattern</a> <a href="#tex.select">tex.select</a> <a href="#tex.sequence">tex.sequence</a> <a href="#tex.shader">tex.shader</a> <a href="#tex.shape_content">tex.shape_content</a> <a href="#tex.shapes">tex.shapes</a> <a href="#tex.slope">tex.slope</a> <a href="#tex.spout_in">tex.spout_in</a> <a href="#tex.switch">tex.switch</a> <a href="#tex.text">tex.text</a> <a href="#tex.threshold">tex.threshold</a> <a href="#tex.tile">tex.tile</a> <a href="#tex.time_machine">tex.time_machine</a> <a href="#tex.transform">tex.transform</a> <a href="#tex.video_file">tex.video_file</a> <a href="#tex.video_in">tex.video_in</a></p>
+<p class="kinds"><a href="#tex.blend_weight">tex.blend_weight</a> <a href="#tex.blob_track">tex.blob_track</a> <a href="#tex.blur">tex.blur</a> <a href="#tex.cache">tex.cache</a> <a href="#tex.channel_mix">tex.channel_mix</a> <a href="#tex.chroma_key">tex.chroma_key</a> <a href="#tex.composite">tex.composite</a> <a href="#tex.constant">tex.constant</a> <a href="#tex.contour">tex.contour</a> <a href="#tex.cross">tex.cross</a> <a href="#tex.denoise">tex.denoise</a> <a href="#tex.displace">tex.displace</a> <a href="#tex.edge">tex.edge</a> <a href="#tex.face_content">tex.face_content</a> <a href="#tex.feedback">tex.feedback</a> <a href="#tex.fit">tex.fit</a> <a href="#tex.flip">tex.flip</a> <a href="#tex.fluid">tex.fluid</a> <a href="#tex.from_chan">tex.from_chan</a> <a href="#tex.hsv">tex.hsv</a> <a href="#tex.image_file">tex.image_file</a> <a href="#tex.layer">tex.layer</a> <a href="#tex.lens_distort">tex.lens_distort</a> <a href="#tex.level">tex.level</a> <a href="#tex.limit">tex.limit</a> <a href="#tex.lookup">tex.lookup</a> <a href="#tex.mapper">tex.mapper</a> <a href="#tex.matte">tex.matte</a> <a href="#tex.monochrome">tex.monochrome</a> <a href="#tex.ndi_in">tex.ndi_in</a> <a href="#tex.noise">tex.noise</a> <a href="#tex.null">tex.null</a> <a href="#tex.optical_flow">tex.optical_flow</a> <a href="#tex.primitive">tex.primitive</a> <a href="#tex.quantize">tex.quantize</a> <a href="#tex.ramp">tex.ramp</a> <a href="#tex.raymarch">tex.raymarch</a> <a href="#tex.remap">tex.remap</a> <a href="#tex.render">tex.render</a> <a href="#tex.resolution">tex.resolution</a> <a href="#tex.scan">tex.scan</a> <a href="#tex.scan_pattern">tex.scan_pattern</a> <a href="#tex.select">tex.select</a> <a href="#tex.sequence">tex.sequence</a> <a href="#tex.shader">tex.shader</a> <a href="#tex.shape_content">tex.shape_content</a> <a href="#tex.shapes">tex.shapes</a> <a href="#tex.slope">tex.slope</a> <a href="#tex.spout_in">tex.spout_in</a> <a href="#tex.switch">tex.switch</a> <a href="#tex.text">tex.text</a> <a href="#tex.threshold">tex.threshold</a> <a href="#tex.tile">tex.tile</a> <a href="#tex.time_machine">tex.time_machine</a> <a href="#tex.transform">tex.transform</a> <a href="#tex.video_file">tex.video_file</a> <a href="#tex.video_in">tex.video_in</a></p>
 <details class="entry node" id="tex.blend_weight"><summary><code class="name">tex.blend_weight</code><span class="sum">A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only</span></summary>
 <div class="body">
 <p>A projector's picture weighted for a blend: all of it by the blend weight, or the small features from one projector only</p>
@@ -2775,7 +2778,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>steps</code></td><td>bool</td><td><code>false</code></td><td></td><td>With a palette: equal bands, one per colour, instead of blending between them</td></tr>
 </tbody>
 </table>
-<p class="mentions">Mentioned in: <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a>, <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
 </div></details>
 <details class="entry node" id="tex.mapper"><summary><code class="name">tex.mapper</code><span class="sum">Fits a part of the content onto one projector: corner pinning, mesh warp, soft edges where projectors overlap</span></summary>
 <div class="body">
@@ -3041,6 +3044,36 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </tbody>
 </table>
 <p class="mentions">Mentioned in: <a href="#concepts-palettes">Concepts › Palettes</a>, <a href="#scanning-4-relief-scanrelief">Scanning › 4. Relief: scan.relief</a></p>
+</div></details>
+<details class="entry node" id="tex.raymarch"><summary><code class="name">tex.raymarch</code><span class="sum">Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through</span></summary>
+<div class="body">
+<p>Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">vol</span>: The volume: its red is the density</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">tex</span>: The smoke in its colour over transparent black, premultiplied</li>
+<li><code>density</code> <span class="kind">tex</span>: How much the smoke covers, as grey on black: white where nothing shows through. Opaque, so tex.lookup reads the cover rather than the colour</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>width</code></td><td>int</td><td><code>1920</code></td><td>1 to 16384 px</td><td>Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
+<tr><td><code>height</code></td><td>int</td><td><code>1080</code></td><td>1 to 16384 px</td><td>Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on</td></tr>
+<tr><td><code>rotate</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>-36000 to 36000°</td><td>Turns the volume about its centre: about x, then y, then z</td></tr>
+<tr><td><code>view_height</code></td><td>float</td><td><code>0</code></td><td>0 to 10 m (soft)</td><td>How high a slice of the world the picture shows; 0: as much as the whole box needs</td></tr>
+<tr><td><code>pan</code></td><td>vec2</td><td><code>[0, 0]</code></td><td>m</td><td>Moves the view across: the picture's centre this far right and up of the box's centre</td></tr>
+<tr><td><code>thickness</code></td><td>float</td><td><code>4</code></td><td>0 to 20 (soft)</td><td>How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through</td></tr>
+<tr><td><code>color</code></td><td>colour</td><td><code>[1, 1, 1, 1]</code></td><td></td><td>Colour of the smoke; its alpha thins it</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
+<tr><td><code>quality</code></td><td>float</td><td><code>1</code></td><td>0.25 to 4 (soft)</td><td>Steps per cell along each ray. More shows less banding and costs more</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
 </div></details>
 <details class="entry node" id="tex.remap"><summary><code class="name">tex.remap</code><span class="sum">Rearranges a picture by a map: each pixel shows the input where the map's red and green point. Undistorts, unwraps, carries a camera's view onto a projector</span></summary>
 <div class="body">
@@ -5247,6 +5280,63 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </ul>
 </div></details>
 </div>
+<div class="group" id="family-vol">
+<h3>vol</h3>
+<p class="kinds"><a href="#vol.null">vol.null</a> <a href="#vol.smoke">vol.smoke</a></p>
+<details class="entry node" id="vol.null"><summary><code class="name">vol.null</code><span class="sum">Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</span></summary>
+<div class="body">
+<p>Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">vol</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">vol</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="vol.smoke"><summary><code class="name">vol.smoke</code><span class="sum">Smoke in a box in space: an emitter blows hot smoke in, it rises, swirls and fades. tex.raymarch draws it</span></summary>
+<div class="body">
+<p>Smoke in a box in space: an emitter blows hot smoke in, it rises, swirls and fades. tex.raymarch draws it</p>
+<p class="note">Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. <a class="ref" href="#node.reset"><code>node.reset</code></a>, the reset button or R starts the node over.</p>
+<h4>Inputs</h4>
+<p>none</p>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">vol</span>: The smoke: density in red, temperature in green, for tex.raymarch</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>center</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>m</td><td>Centre of the box the smoke lives in</td></tr>
+<tr><td><code>size</code></td><td>vec3</td><td><code>[4, 1.5, 1.5]</code></td><td>0.001 to 10000 m</td><td>Size of the box along x, y and z. Smoke that leaves it is gone</td></tr>
+<tr><td><code>resolution</code></td><td>int</td><td><code>128</code></td><td>32 to 256 (soft)</td><td>Cells along the box's longest side; the other sides get as many as cubic cells need. Doubling it costs about eight times as much. A change starts the smoke over</td></tr>
+<tr><td><code>gravity</code></td><td>vec3</td><td><code>[0, -1, 0]</code></td><td>-1000 to 1000</td><td>Which way is down; hot smoke rises against it. Only its direction counts, <code>buoyancy</code> its strength</td></tr>
+<tr><td><code>buoyancy</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>How strongly temperature lifts the smoke, in metres per second squared per degree</td></tr>
+<tr><td><code>cooling_rate</code></td><td>float</td><td><code>1.5</code></td><td>0 to 5 (soft)</td><td>How fast the smoke cools, per second: at 1, to about a third in a second</td></tr>
+<tr><td><code>velocity_damping</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Share of its speed the smoke loses per second</td></tr>
+<tr><td><code>velocity_fade</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Speed the smoke loses per second, in metres per second, whatever its speed</td></tr>
+<tr><td><code>smoke_damping</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Share of its density the smoke loses per second</td></tr>
+<tr><td><code>smoke_fade</code></td><td>float</td><td><code>0.4</code></td><td>0 to 2 (soft)</td><td>Density the smoke loses per second, whatever its density</td></tr>
+<tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft)</td><td>How fast the simulation runs against the show clock; 0 holds it</td></tr>
+<tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Starts over from still, clear air, every frame while on</td></tr>
+<tr class="section"><th colspan="5">Emitter</th></tr>
+<tr><td><code>emitter_position</code></td><td>vec3</td><td><code>[-1.5, 0, 0]</code></td><td>m</td><td>Centre of the emitter, a sphere that blows smoke in</td></tr>
+<tr><td><code>emitter_radius</code></td><td>float</td><td><code>0.3</code></td><td>0.01 to 1 m (soft)</td><td>Radius of the emitter; 0: off</td></tr>
+<tr><td><code>linear_velocity</code></td><td>vec3</td><td><code>[0, 0.8, 0]</code></td><td>-1000 to 1000</td><td>Speed the emitter blows at, in metres per second along x, y and z</td></tr>
+<tr><td><code>smoke</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft)</td><td>Density of the smoke the emitter makes</td></tr>
+<tr><td><code>temp</code></td><td>float</td><td><code>2</code></td><td>0 to 5 (soft)</td><td>Temperature of the smoke the emitter makes: hotter rises faster (<code>buoyancy</code>)</td></tr>
+<tr><td><code>correction_rate</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1</td><td>How much of the way to its own velocity, smoke and temperature the emitter takes the cells inside it each 60th of a second; 1 sets them</td></tr>
+<tr class="section"><th colspan="5">more</th></tr>
+<tr><td><code>iterations</code></td><td>int</td><td><code>30</code></td><td>4 to 100 (soft)</td><td>Steps that keep the smoke from being squeezed together. Fewer cost less and let it bulge and leak</td></tr>
+<tr><td><code>edges</code></td><td>open | walls</td><td><code>&quot;open&quot;</code></td><td></td><td>What the box's sides are to the smoke<ul><li><code>open</code>: the smoke flows out and is gone</li><li><code>walls</code>: the smoke turns along them</li></ul></td></tr>
+<tr><td><code>persist</code></td><td>bool</td><td><code>true</code></td><td></td><td>Keep the smoke in the state snapshots, so a restart carries on from it</td></tr>
+</tbody>
+</table>
+<p class="mentions">Mentioned in: <a href="#concepts-nodes-families-and-data-kinds">Concepts › Nodes, families and data kinds</a></p>
+</div></details>
+</div>
 <div class="group" id="family-script">
 <h3>script</h3>
 <p class="kinds"><a href="#script.python">script.python</a></p>
@@ -5600,7 +5690,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <div class="group" id="family-component-ports">
 <h3>Component ports</h3>
 <p>The input and output sockets of a component, one pair per data kind. They sit inside a <a class="ref" href="#comp.base"><code>comp.base</code></a>. Whatever is wired to the component's socket outside comes out of its <code>in</code> node inside. Whatever is wired into an <code>out</code> node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.</p>
-<p class="kinds"><a href="#tex.in">tex.in</a> <a href="#tex.out">tex.out</a> <a href="#chan.in">chan.in</a> <a href="#chan.out">chan.out</a> <a href="#audio.in">audio.in</a> <a href="#audio.out">audio.out</a> <a href="#table.in">table.in</a> <a href="#table.out">table.out</a> <a href="#geo.in">geo.in</a> <a href="#geo.out">geo.out</a> <a href="#mat.in">mat.in</a> <a href="#mat.out">mat.out</a> <a href="#light.in">light.in</a> <a href="#light.out">light.out</a> <a href="#view.in">view.in</a> <a href="#view.out">view.out</a></p>
+<p class="kinds"><a href="#tex.in">tex.in</a> <a href="#tex.out">tex.out</a> <a href="#chan.in">chan.in</a> <a href="#chan.out">chan.out</a> <a href="#audio.in">audio.in</a> <a href="#audio.out">audio.out</a> <a href="#table.in">table.in</a> <a href="#table.out">table.out</a> <a href="#geo.in">geo.in</a> <a href="#geo.out">geo.out</a> <a href="#mat.in">mat.in</a> <a href="#mat.out">mat.out</a> <a href="#light.in">light.in</a> <a href="#light.out">light.out</a> <a href="#view.in">view.in</a> <a href="#view.out">view.out</a> <a href="#vol.in">vol.in</a> <a href="#vol.out">vol.out</a></p>
 <details class="entry node" id="tex.in"><summary><code class="name">tex.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
 <div class="body">
 <p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
@@ -5811,6 +5901,32 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <h4>Outputs</h4>
 <ul>
 <li><code>out</code> <span class="kind">view</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="vol.in"><summary><code class="name">vol.in</code><span class="sum">Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</span></summary>
+<div class="body">
+<p>Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes</p>
+<p class="note">Inside a component: one of its inputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">vol</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">vol</span></li>
+</ul>
+</div></details>
+<details class="entry node" id="vol.out"><summary><code class="name">vol.out</code><span class="sum">Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</span></summary>
+<div class="body">
+<p>Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the <code>out</code> nodes</p>
+<p class="note">Inside a component: one of its outputs.</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">vol</span></li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">vol</span></li>
 </ul>
 </div></details>
 </div>

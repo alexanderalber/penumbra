@@ -1743,6 +1743,25 @@ impl Editor {
                         light_body(painter, body_rect, lights, !g.inputs.is_empty(), zoom);
                     }
                 }
+                DataKind::Vol => {
+                    if let Some(m) = first.get::<penumbra_gpu::Medium>()
+                        && zoom > 0.4
+                    {
+                        let lines = crate::viewer::vol_lines(m);
+                        for (i, line) in lines.iter().take(lines_fit(body_rect, zoom)).enumerate() {
+                            painter.text(
+                                pos2(
+                                    body_rect.min.x + 4.0 * zoom,
+                                    body_rect.min.y + (3.0 + 12.0 * i as f32) * zoom,
+                                ),
+                                Align2::LEFT_TOP,
+                                line,
+                                FontId::proportional(10.0 * zoom),
+                                theme::TEXT,
+                            );
+                        }
+                    }
+                }
                 DataKind::View => {
                     if let Some(v) = first.get::<penumbra_ops::view::Viewpoint>()
                         && zoom > 0.4

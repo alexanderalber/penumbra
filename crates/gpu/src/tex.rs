@@ -32,11 +32,29 @@ impl Tex {
         Self::with_format(gpu, width, height, FLOAT_FORMAT, label)
     }
 
+    /// A texture of [`FORMAT`] that compute programs can also write ([`crate::compute`]). Only
+    /// their targets are made so: a texture that may be written as storage can lose the
+    /// driver's compression as a render target.
+    pub fn new_storage(gpu: &Gpu, width: u32, height: u32, label: &str) -> Result<Self, Error> {
+        Self::with_usage(gpu, width, height, FORMAT, wgpu::TextureUsages::STORAGE_BINDING, label)
+    }
+
     fn with_format(
         gpu: &Gpu,
         width: u32,
         height: u32,
         format: wgpu::TextureFormat,
+        label: &str,
+    ) -> Result<Self, Error> {
+        Self::with_usage(gpu, width, height, format, wgpu::TextureUsages::empty(), label)
+    }
+
+    fn with_usage(
+        gpu: &Gpu,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        extra: wgpu::TextureUsages,
         label: &str,
     ) -> Result<Self, Error> {
         let max = gpu.max_texture_size();
@@ -54,7 +72,8 @@ impl Tex {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::COPY_SRC
-                    | wgpu::TextureUsages::COPY_DST,
+                    | wgpu::TextureUsages::COPY_DST
+                    | extra,
                 view_formats: &[],
             })
         });
@@ -88,6 +107,11 @@ impl Tex {
     /// [`FORMAT`], or [`FLOAT_FORMAT`] for a picture of 32-bit floats.
     pub fn format(&self) -> wgpu::TextureFormat {
         self.0.format
+    }
+
+    /// Whether compute programs can write it ([`Tex::new_storage`]).
+    pub fn is_storage(&self) -> bool {
+        self.0.texture.usage().contains(wgpu::TextureUsages::STORAGE_BINDING)
     }
 
     /// Bytes per pixel: 8, or 16 for [`FLOAT_FORMAT`].
@@ -198,11 +222,31 @@ impl TexRing {
 
     /// A texture of this size to render into that nobody else is reading.
     pub fn next(&mut self, gpu: &Gpu, width: u32, height: u32, label: &str) -> Result<Tex, Error> {
-        self.textures.retain(|t| t.size() == (width, height));
+        self.next_of(gpu, width, height, false, label)
+    }
+
+    /// Like [`TexRing::next`], a texture compute programs can write ([`Tex::new_storage`]).
+    pub fn next_storage(&mut self, gpu: &Gpu, width: u32, height: u32, label: &str) -> Result<Tex, Error> {
+        self.next_of(gpu, width, height, true, label)
+    }
+
+    fn next_of(
+        &mut self,
+        gpu: &Gpu,
+        width: u32,
+        height: u32,
+        storage: bool,
+        label: &str,
+    ) -> Result<Tex, Error> {
+        self.textures.retain(|t| t.size() == (width, height) && t.is_storage() == storage);
         if let Some(t) = self.textures.iter().find(|t| !t.shared()) {
             return Ok(t.clone());
         }
-        let t = Tex::new(gpu, width, height, label)?;
+        let t = if storage {
+            Tex::new_storage(gpu, width, height, label)?
+        } else {
+            Tex::new(gpu, width, height, label)?
+        };
         if self.textures.len() >= RING {
             // All held elsewhere: forget the oldest, its holders keep it alive.
             self.textures.remove(0);

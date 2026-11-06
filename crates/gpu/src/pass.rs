@@ -75,7 +75,10 @@ fn pn_vs(@builtin(vertex_index) i: u32) -> PnVertex {
     v.uv = vec2f(x, y);
     return v;
 }
+"#;
 
+/// The hashes and noise every shader gets, fragment passes and compute programs alike.
+pub(crate) const SHARED: &str = r#"
 // PCG3D (Jarzynski and Olano 2020). Integer hashes are bit-identical on every backend, unlike
 // fract(sin(x) * 43758), which differs by up to 254 LSB between Vulkan and DX12.
 fn pn_hash(p: vec3u) -> vec3u {
@@ -137,7 +140,9 @@ fn pn_unpremultiply(c: vec4f) -> vec4f {
 fn pn_luma(rgb: vec3f) -> f32 {
     return dot(rgb, vec3f(0.2126, 0.7152, 0.0722));
 }
+"#;
 
+const PRELUDE_REST: &str = r#"
 // The edge modes of the `extend` choices: hold, zero, repeat, mirror.
 fn pn_extend(t: texture_2d<f32>, uv: vec2f, mode: i32) -> vec4f {
     switch mode {
@@ -336,6 +341,10 @@ impl<'a> Batch<'a> {
 
     /// Submits the passes, after everything recorded before them, and tells without blocking
     /// when they have finished on the GPU.
+    pub(crate) fn gpu(&self) -> &'a Gpu {
+        self.gpu
+    }
+
     pub fn submit(self) -> Done {
         self.gpu.done()
     }
@@ -356,9 +365,10 @@ pub(crate) struct Layouts {
 
 impl Layouts {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
+        // Compute programs ([`crate::compute`]) share these globals.
         let uniform = |binding| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: wgpu::ShaderStages::FRAGMENT,
+            visibility: wgpu::ShaderStages::FRAGMENT.union(wgpu::ShaderStages::COMPUTE),
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset: true,
@@ -433,7 +443,7 @@ impl Layouts {
 
 /// Where a declared parameter lives in the `params` uniform.
 #[derive(Clone, Debug)]
-struct Field {
+pub(crate) struct Field {
     spec: ParamSpec,
     offset: u32,
 }
@@ -509,7 +519,7 @@ impl Pass {
     /// Compiles `source` (see the module docs) with `params`. The error text is meant for the
     /// person who wrote the shader: naga's message with the source line.
     pub fn compile(gpu: &Gpu, label: &str, source: &str, params: &[ParamSpec]) -> Result<Self, Error> {
-        let full = format!("{source}\n{PRELUDE}{}", params_wgsl(params));
+        let full = format!("{source}\n{PRELUDE}{SHARED}{PRELUDE_REST}{}", params_wgsl(params));
         let module = naga::front::wgsl::parse_str(&full)
             .map_err(|e| Error::new(ascii_frame(&e.emit_to_string_with_path(&full, label))))?;
         let info = naga::valid::Validator::new(naga::valid::ValidationFlags::all(), Default::default())
@@ -686,21 +696,26 @@ impl Pass {
 
     /// The `params` uniform: every declared value at its offset.
     fn pack(&self, param: &dyn Fn(&str) -> Option<Value>) -> Vec<u8> {
-        let mut out = vec![0u8; usize::try_from(self.uniform_size).unwrap_or(16)];
-        for f in &self.fields {
-            let value = param(&f.spec.name)
-                .and_then(|v| f.spec.check(&v).ok())
-                .unwrap_or_else(|| f.spec.default.clone());
-            let words = words(&f.spec, &value);
-            for (i, word) in words.iter().enumerate() {
-                let at = f.offset as usize + i * 4;
-                if let Some(slot) = out.get_mut(at..at + 4) {
-                    slot.copy_from_slice(word);
-                }
+        pack(&self.fields, self.uniform_size, param)
+    }
+}
+
+/// The `params` uniform of `size` bytes: every field's value at its offset, the default where
+/// `param` has none or one that does not fit.
+pub(crate) fn pack(fields: &[Field], size: u64, param: &dyn Fn(&str) -> Option<Value>) -> Vec<u8> {
+    let mut out = vec![0u8; usize::try_from(size).unwrap_or(16)];
+    for f in fields {
+        let value =
+            param(&f.spec.name).and_then(|v| f.spec.check(&v).ok()).unwrap_or_else(|| f.spec.default.clone());
+        let words = words(&f.spec, &value);
+        for (i, word) in words.iter().enumerate() {
+            let at = f.offset as usize + i * 4;
+            if let Some(slot) = out.get_mut(at..at + 4) {
+                slot.copy_from_slice(word);
             }
         }
-        out
     }
+    out
 }
 
 /// The 4-byte words of one value, little-endian.
@@ -752,7 +767,7 @@ fn wgsl_type(spec: &ParamSpec) -> Option<&'static str> {
 }
 
 /// `struct Params` and the choice constants.
-fn params_wgsl(params: &[ParamSpec]) -> String {
+pub(crate) fn params_wgsl(params: &[ParamSpec]) -> String {
     let mut s = String::from("struct Params {\n");
     let mut any = false;
     for p in params {
@@ -779,7 +794,7 @@ fn params_wgsl(params: &[ParamSpec]) -> String {
 }
 
 /// Field offsets and the uniform size, as naga lays out `struct Params`.
-fn layout(module: &naga::Module, params: &[ParamSpec]) -> Result<(Vec<Field>, u64), Error> {
+pub(crate) fn layout(module: &naga::Module, params: &[ParamSpec]) -> Result<(Vec<Field>, u64), Error> {
     let (members, span) = module
         .types
         .iter()
@@ -833,7 +848,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
 
     #[test]
     fn layout_follows_wgsl_alignment() {
-        let full = format!("{GRADIENT}\n{PRELUDE}{}", params_wgsl(&specs()));
+        let full = format!("{GRADIENT}\n{PRELUDE}{SHARED}{PRELUDE_REST}{}", params_wgsl(&specs()));
         assert!(full.contains("const mode_b: i32 = 1;"));
         let module = naga::front::wgsl::parse_str(&full).unwrap();
         let (fields, size) = layout(&module, &specs()).unwrap();

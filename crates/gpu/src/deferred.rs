@@ -186,10 +186,26 @@ impl Gpu {
         parts: [&[u8]; 3],
         record: impl FnOnce(&mut wgpu::CommandEncoder, &Slots),
     ) -> Option<String> {
+        self.record_many(label, &[parts], |encoder, slots| {
+            if let Some(s) = slots.first() {
+                record(encoder, s);
+            }
+        })
+    }
+
+    /// Records several passes into one command encoder, each with its own uniforms (`parts`,
+    /// one entry per pass; `record` gets their slots in the same order). One encoder costs the
+    /// CPU less than one per pass, which counts for a simulation's dozens of steps a frame.
+    pub(crate) fn record_many(
+        &self,
+        label: &str,
+        parts: &[[&[u8]; 3]],
+        record: impl FnOnce(&mut wgpu::CommandEncoder, &[Slots]),
+    ) -> Option<String> {
         let thread = std::thread::current().id();
         let mut d = lock(&self.inner.deferred);
         let (buffer, error) = self.scoped(|| {
-            let slots = self.slots(&mut d, thread, parts)?;
+            let slots = parts.iter().map(|p| self.slots(&mut d, thread, *p)).collect::<Option<Vec<_>>>()?;
             let mut encoder =
                 self.device().create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
             record(&mut encoder, &slots);

@@ -93,6 +93,7 @@ kind, and the wire takes that kind's colour:
 | `mat` | pink | a material | `mat` |
 | `light` | yellow | one or more lights | `light` |
 | `view` | silver | one camera | `view` |
+| `vol` | grey-blue | a volume: a grid of cells filling a box in space, on the GPU | `vol` |
 
 Some nodes take any number of inputs of one kind: `tex.composite`, `tex.switch`,
 `tex.sequence`, `chan.merge`, `geo.merge` and `light.merge`. Their inputs are numbered from 0
@@ -126,6 +127,11 @@ The families:
   holds; in mode `manual` it writes only on `table_out.write`. `overwrite` on replaces the file
   in place, for a program that keeps reading it; off, every write gets a new name with `_2`,
   `_3`, ...
+- **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: an emitter blows hot
+  smoke in, the smoke rises against `gravity`, swirls and fades. `tex.raymarch` draws a volume as
+  a picture, seen from the front through the whole box. Its `density` output shows how much
+  smoke covers each pixel, as grey, for `tex.lookup`. `vol.smoke` keeps its smoke in the state
+  snapshots. Its params carry NVIDIA Flow's names where they mean the same.
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
   `view.camera` wired into a `tex.render`, which makes a picture of it all (a render needs its
@@ -554,7 +560,7 @@ moved or saved to a file.
 
 A `comp.base` holds nodes. Its input and output sockets are port nodes inside it, one pair per
 data kind: `tex.in` and `tex.out`, `chan.in` and `chan.out`, and so on for `table`, `geo`,
-`mat`, `light` and `view` ([Component ports](reference/nodes.md#component-ports)). What is
+`mat`, `light`, `view` and `vol` ([Component ports](reference/nodes.md#component-ports)). What is
 wired to the component outside comes out of its `tex.in` inside. The port nodes read or write
 no files or devices: that is the job of the `out` nodes and the sources. Wires cross a component's edge only through ports; bindings and node references may
 reach anywhere.

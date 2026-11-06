@@ -31,6 +31,7 @@ pub mod table;
 pub mod tex;
 pub mod trace;
 pub mod view;
+pub mod vol;
 
 use std::any::Any;
 
@@ -63,6 +64,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
     table::register(types)?;
     tex::register(types)?;
     view::register(types)?;
+    vol::register(types)?;
     for (old, new) in RENAMED_KINDS {
         types.renamed_kind(old, new)?;
     }
@@ -189,7 +191,7 @@ pub fn warm_up(types: &NodeTypes, gpu: &Gpu) {
 }
 
 /// Passes its input on as it is, without a copy: the nulls of every family but `tex`
-/// (`chan.null`, `audio.null`, `table.null`, `geo.null`, `mat.null`, `light.null`, `view.null`).
+/// (`chan.null`, `audio.null`, `table.null`, `geo.null`, `mat.null`, `light.null`, `view.null`, `vol.null`).
 pub(crate) struct Null;
 
 impl Operator for Null {

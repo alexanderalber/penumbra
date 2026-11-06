@@ -467,6 +467,19 @@ impl Viewer {
                     }
                 }
             }
+            DataKind::Vol => {
+                if let Some(m) = data.get::<penumbra_gpu::Medium>() {
+                    for (i, line) in vol_lines(m).into_iter().enumerate() {
+                        painter.text(
+                            pos2(rect.min.x + 8.0, rect.min.y + 8.0 + i as f32 * 18.0),
+                            egui::Align2::LEFT_TOP,
+                            line,
+                            egui::FontId::proportional(13.0),
+                            theme::TEXT,
+                        );
+                    }
+                }
+            }
             DataKind::View => {
                 if let Some(v) = data.get::<Viewpoint>() {
                     for (i, line) in view_lines(v).into_iter().enumerate() {
@@ -778,6 +791,13 @@ pub(crate) fn light_name(l: &penumbra_gpu::render::Light) -> &'static str {
 }
 
 /// Where a camera is, its lens, its depth range.
+/// What a volume holds, as a viewer and a node body show it: its cells and its box.
+pub(crate) fn vol_lines(m: &penumbra_gpu::Medium) -> [String; 3] {
+    let [x, y, z] = m.volume.size();
+    let f = |v: [f32; 3]| v.map(|c| format_value(f64::from(c))).join(", ");
+    [format!("{x} x {y} x {z} cells"), format!("box {} m", f(m.size)), format!("at {}", f(m.center))]
+}
+
 pub(crate) fn view_lines(v: &Viewpoint) -> [String; 3] {
     let p = v.position();
     let lens = match v.lens {

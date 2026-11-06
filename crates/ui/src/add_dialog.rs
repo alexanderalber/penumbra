@@ -43,7 +43,7 @@ const GROUPS: [&[&str]; 7] = [
     &["chan"],
     &["audio"],
     &["table"],
-    &["geo", "mat", "light", "view"],
+    &["geo", "mat", "light", "view", "vol"],
     &["out"],
     &["script", "comp", "ui"],
 ];
@@ -54,11 +54,12 @@ pub const LIBRARY: &str = "library";
 /// by it.
 const NAMES: [(&str, &str); 2] = [("geo", "rendering"), ("script", "system")];
 /// The headings over the families of a shared tab; a family missing here is headed by its name.
-const HEADINGS: [(&str, &str); 7] = [
+const HEADINGS: [(&str, &str); 8] = [
     ("geo", "geometry"),
     ("mat", "materials"),
     ("light", "lights"),
     ("view", "cameras"),
+    ("vol", "volumes"),
     ("script", "scripts"),
     ("comp", "components"),
     ("ui", "notes"),

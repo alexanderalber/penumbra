@@ -592,6 +592,7 @@ fn every_builtin_cooks_without_warnings() {
         create("/mat_feed", "mat.constant", &[]),
         create("/light_feed", "light.ambient", &[]),
         create("/view_feed", "view.camera", &[]),
+        create("/vol_feed", "vol.smoke", &[("resolution", Value::Int(16))]),
         create("/audio_feed", "audio.device_in", &[("device", "test".into())]),
     ];
     let cube = penumbra_mesh::prim::cuboid([1.0; 3]).unwrap();
@@ -695,6 +696,7 @@ fn every_builtin_cooks_without_warnings() {
                 penumbra_graph::DataKind::Mat => Some("/mat_feed"),
                 penumbra_graph::DataKind::Light => Some("/light_feed"),
                 penumbra_graph::DataKind::View => Some("/view_feed"),
+                penumbra_graph::DataKind::Vol => Some("/vol_feed"),
                 // Component ports and nulls pass on what they get and complain about nothing wired.
                 penumbra_graph::DataKind::Audio => Some("/audio_feed"),
                 penumbra_graph::DataKind::Chan
@@ -784,6 +786,7 @@ fn every_family_has_a_null_that_passes_its_input_itself() {
         "mat" => "mat.constant",
         "light" => "light.ambient",
         "view" => "view.camera",
+        "vol" => "vol.smoke",
         other => panic!("no source for the family {other}"),
     };
     let mut ops = Vec::new();
@@ -2578,6 +2581,7 @@ mod layers;
 mod mesh_out;
 mod palettes;
 mod resample;
+mod smoke;
 
 /// A grey camera frame of 32 x 16 pixels, luma `y` give or take `noise` codes at random. One
 /// blue-difference sample follows the seed's parity, so consecutive seeds never make identical

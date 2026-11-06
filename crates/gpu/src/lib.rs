@@ -17,6 +17,7 @@
 
 pub mod bc;
 pub mod canvas;
+pub mod compute;
 pub mod deferred;
 pub mod environment;
 pub mod geo;
@@ -42,6 +43,7 @@ use std::time::{Duration, Instant};
 use penumbra_core::{Error, lock};
 
 pub use canvas::{Canvas, Paint};
+pub use compute::{Compute, Dispatch, Medium, Out, Step, Target, VOLUME_FORMAT, Volume, VolumeRing};
 pub use deferred::{Deferral, Done};
 pub use geo::{Geo, Mat};
 pub use pass::{Batch, Pass, PassInput};
@@ -152,6 +154,8 @@ struct Inner {
     passes: Mutex<HashMap<u64, Arc<Pass>>>,
     video: Mutex<Option<Arc<video::Pipeline>>>,
     yuv: Mutex<Option<Arc<yuv::Pipeline>>>,
+    compute: Mutex<Option<Arc<compute::Layouts>>>,
+    computes: Mutex<compute::Cache>,
     bc: Mutex<Option<Arc<bc::Pipeline>>>,
     canvas: Mutex<Option<Arc<canvas::Pipelines>>>,
     render: Mutex<Option<Arc<render::Pipelines>>>,
@@ -296,6 +300,8 @@ impl Gpu {
                 passes: Mutex::new(HashMap::new()),
                 video: Mutex::new(None),
                 yuv: Mutex::new(None),
+                compute: Mutex::new(None),
+                computes: Mutex::new(HashMap::new()),
                 bc: Mutex::new(None),
                 canvas: Mutex::new(None),
                 render: Mutex::new(None),

@@ -27,8 +27,8 @@ and 11 only so far; Linux is planned but untested, macOS is not planned.
 
 ## Features
 
-About 130 node types in eight data kinds: `tex` pictures, `chan` channels of numbers, `audio`
-sound, `table` text tables, `geo`, `mat`, `light` and `view` for 3D. The [node reference](docs/reference/nodes.md)
+About 130 node types in nine data kinds: `tex` pictures, `chan` channels of numbers, `audio`
+sound, `table` text tables, `geo`, `mat`, `light` and `view` for 3D, `vol` volumes such as smoke. The [node reference](docs/reference/nodes.md)
 lists every one.
 
 - **Pictures:** sources are noise, ramps, text, shapes (rectangle, ellipse, polygon), images,

@@ -4,11 +4,11 @@
 
 Every built-in node type with its inputs, outputs and params, by family. A param marked with a group, like *(more)*, sits in that folded section of the param panel. A param that does something only with some setting of another param, or only while an input is wired, says so; the panel greys it out while it does nothing. A soft range limits only the slider; typed values outside it are kept. For what the families are for, see [Concepts](../concepts.md).
 
-Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [script](#script), [out](#out), [comp](#comp), [node](#node), [ui](#ui), [Component ports](#component-ports)
+Sections: [tex](#tex), [chan](#chan), [audio](#audio), [table](#table), [geo](#geo), [mat](#mat), [light](#light), [view](#view), [vol](#vol), [script](#script), [out](#out), [comp](#comp), [node](#node), [ui](#ui), [Component ports](#component-ports)
 
 ## tex
 
-[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
+[tex.blob_track](#texblob_track), [tex.blur](#texblur), [tex.cache](#texcache), [tex.channel_mix](#texchannel_mix), [tex.chroma_key](#texchroma_key), [tex.composite](#texcomposite), [tex.constant](#texconstant), [tex.contour](#texcontour), [tex.cross](#texcross), [tex.denoise](#texdenoise), [tex.displace](#texdisplace), [tex.edge](#texedge), [tex.feedback](#texfeedback), [tex.fit](#texfit), [tex.flip](#texflip), [tex.fluid](#texfluid), [tex.from_chan](#texfrom_chan), [tex.hsv](#texhsv), [tex.image_file](#teximage_file), [tex.layer](#texlayer), [tex.lens_distort](#texlens_distort), [tex.level](#texlevel), [tex.limit](#texlimit), [tex.lookup](#texlookup), [tex.mapper](#texmapper), [tex.matte](#texmatte), [tex.monochrome](#texmonochrome), [tex.noise](#texnoise), [tex.null](#texnull), [tex.optical_flow](#texoptical_flow), [tex.primitive](#texprimitive), [tex.quantize](#texquantize), [tex.ramp](#texramp), [tex.raymarch](#texraymarch), [tex.remap](#texremap), [tex.render](#texrender), [tex.resolution](#texresolution), [tex.select](#texselect), [tex.sequence](#texsequence), [tex.shader](#texshader), [tex.slope](#texslope), [tex.switch](#texswitch), [tex.text](#textext), [tex.threshold](#texthreshold), [tex.tile](#textile), [tex.time_machine](#textime_machine), [tex.transform](#textransform), [tex.video_file](#texvideo_file)
 
 *inputs:* [tex.ndi_in](#texndi_in), [tex.spout_in](#texspout_in), [tex.video_in](#texvideo_in)
 
@@ -711,6 +711,31 @@ Outputs: `out` (tex).
 | `palette` | palette |  |  | A palette or colormap instead of the keys, its colours spread evenly from 0 to 1 (a name, hex colours, or a number from a channel); empty uses the keys |
 | `steps` | bool | `false` |  | With a palette: equal bands, one per colour, instead of blending between them |
 | `shape` | horizontal \| vertical \| radial \| circular | `"horizontal"` |  | How the key positions 0 to 1 lie on the picture; horizontal: left (0) to right (1); vertical: bottom (0) to top (1); radial: the centre (0) out to the middle of the top edge (1), in rings; circular: once around the centre, counter-clockwise from the right (0) |
+
+### tex.raymarch
+
+Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through
+
+Inputs:
+
+- `in` (vol): The volume: its red is the density
+
+Outputs:
+
+- `out` (tex): The smoke in its colour over transparent black, premultiplied
+- `density` (tex): How much the smoke covers, as grey on black: white where nothing shows through. Opaque, so tex.lookup reads the cover rather than the colour
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `width` | int | `1920` | 1 to 16384 px | Width of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `height` | int | `1080` | 1 to 16384 px | Height of the picture made, in pixels; res.optimize may change it to what the projectors need, unless keep_size is on |
+| `keep_size` *(more)* | bool | `false` |  | res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look |
+| `rotate` | vec3 | `[0, 0, 0]` | -36000 to 36000° | Turns the volume about its centre: about x, then y, then z |
+| `view_height` | float | `0` | 0 to 10 m (soft) | How high a slice of the world the picture shows; 0: as much as the whole box needs |
+| `pan` | vec2 | `[0, 0]` | m | Moves the view across: the picture's centre this far right and up of the box's centre |
+| `thickness` | float | `4` | 0 to 20 (soft) | How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through |
+| `color` | colour | `[1, 1, 1, 1]` |  | Colour of the smoke; its alpha thins it |
+| `quality` *(more)* | float | `1` | 0.25 to 4 (soft) | Steps per cell along each ray. More shows less banding and costs more |
 
 ### tex.remap
 
@@ -2356,6 +2381,56 @@ Inputs:
 
 Outputs: `out` (view).
 
+## vol
+
+[vol.null](#volnull), [vol.smoke](#volsmoke)
+
+### vol.null
+
+Passes its input on unchanged: a fixed point to look at, or to wire on from while the chain before it changes
+
+Inputs:
+
+- `in` (vol)
+
+Outputs: `out` (vol).
+
+### vol.smoke
+
+Smoke in a box in space: an emitter blows hot smoke in, it rises, swirls and fades. tex.raymarch draws it
+
+Follows the show clock: cooks again whenever time moves. Keeps state from frame to frame. `node.reset`, the reset button or R starts the node over.
+
+Inputs: none.
+
+Outputs:
+
+- `out` (vol): The smoke: density in red, temperature in green, for tex.raymarch
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `center` | vec3 | `[0, 0, 0]` | m | Centre of the box the smoke lives in |
+| `size` | vec3 | `[4, 1.5, 1.5]` | 0.001 to 10000 m | Size of the box along x, y and z. Smoke that leaves it is gone |
+| `resolution` | int | `128` | 32 to 256 (soft) | Cells along the box's longest side; the other sides get as many as cubic cells need. Doubling it costs about eight times as much. A change starts the smoke over |
+| `emitter_position` *(Emitter)* | vec3 | `[-1.5, 0, 0]` | m | Centre of the emitter, a sphere that blows smoke in |
+| `emitter_radius` *(Emitter)* | float | `0.3` | 0.01 to 1 m (soft) | Radius of the emitter; 0: off |
+| `linear_velocity` *(Emitter)* | vec3 | `[0, 0.8, 0]` | -1000 to 1000 | Speed the emitter blows at, in metres per second along x, y and z |
+| `smoke` *(Emitter)* | float | `0.5` | 0 to 2 (soft) | Density of the smoke the emitter makes |
+| `temp` *(Emitter)* | float | `2` | 0 to 5 (soft) | Temperature of the smoke the emitter makes: hotter rises faster (`buoyancy`) |
+| `correction_rate` *(Emitter)* | float | `0.5` | 0 to 1 | How much of the way to its own velocity, smoke and temperature the emitter takes the cells inside it each 60th of a second; 1 sets them |
+| `gravity` | vec3 | `[0, -1, 0]` | -1000 to 1000 | Which way is down; hot smoke rises against it. Only its direction counts, `buoyancy` its strength |
+| `buoyancy` | float | `4` | 0 to 10 (soft) | How strongly temperature lifts the smoke, in metres per second squared per degree |
+| `cooling_rate` | float | `1.5` | 0 to 5 (soft) | How fast the smoke cools, per second: at 1, to about a third in a second |
+| `velocity_damping` | float | `0.1` | 0 to 2 (soft) | Share of its speed the smoke loses per second |
+| `velocity_fade` | float | `0.1` | 0 to 2 (soft) | Speed the smoke loses per second, in metres per second, whatever its speed |
+| `smoke_damping` | float | `0.1` | 0 to 2 (soft) | Share of its density the smoke loses per second |
+| `smoke_fade` | float | `0.4` | 0 to 2 (soft) | Density the smoke loses per second, whatever its density |
+| `speed` | float | `1` | 0 to 4 (soft) | How fast the simulation runs against the show clock; 0 holds it |
+| `iterations` *(more)* | int | `30` | 4 to 100 (soft) | Steps that keep the smoke from being squeezed together. Fewer cost less and let it bulge and leak |
+| `edges` *(more)* | open \| walls | `"open"` |  | What the box's sides are to the smoke; open: the smoke flows out and is gone; walls: the smoke turns along them |
+| `reset` | bool | `false` |  | Starts over from still, clear air, every frame while on |
+| `persist` *(more)* | bool | `true` |  | Keep the smoke in the state snapshots, so a restart carries on from it |
+
 ## script
 
 [script.python](#scriptpython)
@@ -2639,7 +2714,7 @@ Outputs: none.
 
 The input and output sockets of a component, one pair per data kind. They sit inside a `comp.base`. Whatever is wired to the component's socket outside comes out of its `in` node inside. Whatever is wired into an `out` node inside comes out of the component's socket. Grouping nodes into a component adds the ports where wires cross its edge.
 
-[tex.in](#texin), [tex.out](#texout), [chan.in](#chanin), [chan.out](#chanout), [audio.in](#audioin), [audio.out](#audioout), [table.in](#tablein), [table.out](#tableout), [geo.in](#geoin), [geo.out](#geoout), [mat.in](#matin), [mat.out](#matout), [light.in](#lightin), [light.out](#lightout), [view.in](#viewin), [view.out](#viewout)
+[tex.in](#texin), [tex.out](#texout), [chan.in](#chanin), [chan.out](#chanout), [audio.in](#audioin), [audio.out](#audioout), [table.in](#tablein), [table.out](#tableout), [geo.in](#geoin), [geo.out](#geoout), [mat.in](#matin), [mat.out](#matout), [light.in](#lightin), [light.out](#lightout), [view.in](#viewin), [view.out](#viewout), [vol.in](#volin), [vol.out](#volout)
 
 ### tex.in
 
@@ -2832,4 +2907,28 @@ Inputs:
 - `in` (view)
 
 Outputs: `out` (view).
+
+### vol.in
+
+Component input: one input socket of the component this node sits in. Whatever is wired to that socket outside comes out of this node. Cameras, files and streams come in through other nodes
+
+Inside a component: one of its inputs.
+
+Inputs:
+
+- `in` (vol)
+
+Outputs: `out` (vol).
+
+### vol.out
+
+Component output: one output socket of the component this node sits in. Whatever is wired into this node comes out of that socket outside. Files, projectors and streams are written by the `out` nodes
+
+Inside a component: one of its outputs.
+
+Inputs:
+
+- `in` (vol)
+
+Outputs: `out` (vol).
 

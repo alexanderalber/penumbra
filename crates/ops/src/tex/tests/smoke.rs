@@ -1,0 +1,213 @@
+//! `vol.smoke` drawn by `tex.raymarch` on WARP: hot smoke rises against gravity, a jet blows
+//! along its velocity, projection keeps the volume's flow free of divergence, reset, a still
+//! show, a restored state, the density output.
+
+use penumbra_core::Value;
+use penumbra_gpu::Pixels;
+use penumbra_graph::Op;
+
+use super::{Rig, connect, create, gpu, set};
+
+/// A small box, 2 x 1 x 1 metres on a 24 x 12 x 12 grid, drawn 48 x 24.
+fn smoke_rig(params: &[(&str, Value)]) -> Rig {
+    let mut smoke: Vec<(&str, Value)> = vec![
+        ("size", Value::Vec3([2.0, 1.0, 1.0])),
+        ("resolution", Value::Int(24)),
+        ("emitter_position", Value::Vec3([0.0, -0.3, 0.0])),
+        ("emitter_radius", Value::Float(0.15)),
+        ("linear_velocity", Value::Vec3([0.0; 3])),
+        ("smoke", Value::Float(1.0)),
+        ("iterations", Value::Int(10)),
+    ];
+    smoke.extend(params.iter().cloned());
+    let ops = [
+        create("/smoke", "vol.smoke", &smoke),
+        create("/march", "tex.raymarch", &[("width", Value::Int(48)), ("height", Value::Int(24))]),
+        connect("/smoke", "/march", 0),
+    ];
+    Rig::new(gpu().unwrap(), None, &ops)
+}
+
+fn frame(rig: &mut Rig) -> Pixels {
+    rig.clock.advance(1);
+    rig.cook("/march");
+    let tex = rig.tex("/march").unwrap();
+    rig.gpu.read(&tex).unwrap()
+}
+
+/// Sum of the alpha channel and its centre (x, y in 0..1 from the top left).
+fn cover(px: &Pixels) -> (f64, [f64; 2]) {
+    let (mut sum, mut mx, mut my) = (0.0, 0.0, 0.0);
+    for y in 0..px.height {
+        for x in 0..px.width {
+            let a = f64::from(px.get(x, y).unwrap()[3]);
+            sum += a;
+            mx += a * (f64::from(x) + 0.5) / f64::from(px.width);
+            my += a * (f64::from(y) + 0.5) / f64::from(px.height);
+        }
+    }
+    (sum, if sum > 0.0 { [mx / sum, my / sum] } else { [0.0; 2] })
+}
+
+fn finite(px: &Pixels) -> bool {
+    px.data.iter().flatten().all(|v| v.is_finite())
+}
+
+/// The first row from the top where the smoke covers more than a tenth.
+fn top(px: &Pixels) -> u32 {
+    (0..px.height).find(|y| (0..px.width).any(|x| px.get(x, *y).unwrap()[3] > 0.1)).unwrap_or(px.height)
+}
+
+#[test]
+fn hot_smoke_rises_against_gravity() {
+    if gpu().is_none() {
+        return;
+    }
+    // The same slow upward puff, with and without buoyancy, and with gravity turned round.
+    let run = |params: &[(&str, Value)]| {
+        let mut all = vec![("linear_velocity", Value::Vec3([0.0, 0.3, 0.0]))];
+        all.extend(params.iter().cloned());
+        let mut rig = smoke_rig(&all);
+        let mut px = frame(&mut rig);
+        for _ in 0..30 {
+            px = frame(&mut rig);
+        }
+        assert!(finite(&px));
+        let (_, [x, _]) = cover(&px);
+        assert!((x - 0.5).abs() < 0.05, "{x}");
+        px
+    };
+    let calm = run(&[("buoyancy", Value::Float(0.0)), ("linear_velocity", Value::Vec3([0.0; 3]))]);
+    let still = top(&run(&[("buoyancy", Value::Float(0.0))]));
+    let lifted = top(&run(&[]));
+    assert!(lifted + 2 < still, "top at row {lifted} with buoyancy, {still} without");
+    let sunk = run(&[("gravity", Value::Vec3([0.0, 1.0, 0.0])), ("linear_velocity", Value::Vec3([0.0; 3]))]);
+    // Heavier than the calm puff's, it sinks below it.
+    let (_, [_, y]) = cover(&sunk);
+    let (_, [_, calm]) = cover(&calm);
+    assert!(y > calm + 0.01, "{y} against {calm}");
+}
+
+#[test]
+fn a_jet_blows_along_its_velocity() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut rig = smoke_rig(&[
+        ("emitter_position", Value::Vec3([-0.6, 0.0, 0.0])),
+        ("linear_velocity", Value::Vec3([3.0, 0.0, 0.0])),
+        ("buoyancy", Value::Float(0.0)),
+    ]);
+    let mut px = frame(&mut rig);
+    for _ in 0..30 {
+        px = frame(&mut rig);
+    }
+    let (_, [x, y]) = cover(&px);
+    // The emitter is at 0.2 of the width; the jet carries the smoke right, its front past the
+    // middle.
+    assert!(x > 0.3, "{x}");
+    assert!((y - 0.5).abs() < 0.05, "{y}");
+    let front = (0..px.width).rev().find(|x| px.get(*x, 12).unwrap()[3] > 0.1).unwrap();
+    assert!(front > px.width / 2, "front at {front} of {}", px.width);
+    // Turned half way round about y, the jet points left: the picture mirrored.
+    rig.edit(&[set("/march.rotate", Value::Vec3([0.0, 180.0, 0.0])), set("/smoke.speed", Value::Float(0.0))]);
+    let (_, [turned, _]) = cover(&frame(&mut rig));
+    assert!((turned - (1.0 - x)).abs() < 0.02, "{turned} against {x}");
+}
+
+#[test]
+fn reset_clears_and_a_still_show_holds_the_smoke() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut rig = smoke_rig(&[]);
+    for _ in 0..10 {
+        frame(&mut rig);
+    }
+    let version = rig.version("/smoke");
+    // The show stands still: nothing new.
+    rig.cook("/march");
+    assert_eq!(rig.version("/smoke"), version);
+    rig.edit(&[set("/smoke.reset", true.into()), set("/smoke.smoke", Value::Float(0.0))]);
+    let (sum, _) = cover(&frame(&mut rig));
+    assert!(sum < 1e-3, "{sum}");
+}
+
+#[test]
+fn hostile_params_keep_the_smoke_finite() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut rig = smoke_rig(&[
+        ("linear_velocity", Value::Vec3([1000.0, -1000.0, 1000.0])),
+        ("buoyancy", Value::Float(1000.0)),
+        ("temp", Value::Float(1000.0)),
+        ("smoke", Value::Float(1000.0)),
+        ("gravity", Value::Vec3([0.0, 0.0, 0.0])),
+    ]);
+    for _ in 0..10 {
+        let px = frame(&mut rig);
+        assert!(finite(&px));
+    }
+    let s = rig.cooker.status(rig.id("/smoke")).unwrap();
+    assert!(s.error.is_none(), "{s:?}");
+}
+
+#[test]
+fn a_restored_smoke_carries_on_where_it_was() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut rig = smoke_rig(&[("smoke_fade", Value::Float(0.0)), ("smoke_damping", Value::Float(0.0))]);
+    for _ in 0..20 {
+        frame(&mut rig);
+    }
+    let (saved, [_, y]) = cover(&frame(&mut rig));
+    let kept = rig.cooker.kept();
+    let items = kept
+        .iter()
+        .find_map(|(id, k)| match k {
+            penumbra_graph::Kept::State(items) if *id == rig.id("/smoke") => Some(items.clone()),
+            _ => None,
+        })
+        .expect("the smoke keeps its state");
+    assert_eq!(items.len(), 3);
+
+    // A restart with the emitter off: the smoke is there, near where it was.
+    let mut again = smoke_rig(&[("smoke_fade", Value::Float(0.0)), ("emitter_radius", Value::Float(0.0))]);
+    again.cooker.cook(&again.net, again.clock.now(), &[], &[]);
+    again.cooker.restore(again.id("/smoke"), penumbra_graph::Kept::State(items)).unwrap();
+    let (sum, [_, ry]) = cover(&frame(&mut again));
+    assert!(sum > 0.5 * saved, "{sum} after {saved}");
+    assert!((ry - y).abs() < 0.1, "{ry} after {y}");
+}
+
+#[test]
+fn the_density_output_is_the_cover_as_opaque_grey() {
+    if gpu().is_none() {
+        return;
+    }
+    let mut rig = smoke_rig(&[]);
+    rig.edit(&[
+        create("/d", "tex.null", &[]),
+        Op::Connect { from: "/march".parse().unwrap(), output: 1, to: "/d".parse().unwrap(), input: 0 },
+    ]);
+    for _ in 0..10 {
+        frame(&mut rig);
+    }
+    rig.clock.advance(1);
+    rig.cook("/d");
+    let out = rig.gpu.read(&rig.tex("/march").unwrap()).unwrap();
+    let d = rig.gpu.read(&rig.tex("/d").unwrap()).unwrap();
+    let mut most = 0.0f32;
+    for y in 0..d.height {
+        for x in 0..d.width {
+            let [r, g, b, a] = d.get(x, y).unwrap();
+            assert_eq!(a, 1.0);
+            assert!(r == g && g == b);
+            assert!((r - out.get(x, y).unwrap()[3]).abs() < 1e-3);
+            most = most.max(r);
+        }
+    }
+    assert!(most > 0.1, "{most}");
+}
