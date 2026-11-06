@@ -430,7 +430,8 @@ fn points_predict(e: &Engine, p: &Json) -> Result<Json> {
         let pairs: Vec<([f64; 3], [f64; 2])> =
             set.points.iter().filter(|c| !c.off).map(|c| (c.world, c.picture)).collect();
         let noise = a.noise.unwrap_or(penumbra_calib::points::MIN_CLICK_NOISE);
-        expected_deviation(&pairs, &camera, &set.options, Some(noise), &a.points).ok()
+        let options = Options { fix_focal: set.focal.is_some(), ..set.options };
+        expected_deviation(&pairs, &camera, &options, Some(noise), &a.points).ok()
     });
     let deviation = deviation.unwrap_or_else(|| vec![None; a.points.len()]);
     Ok(json!({"pixels": pixels, "deviation": deviation}))
