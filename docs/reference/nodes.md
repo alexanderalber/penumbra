@@ -356,6 +356,7 @@ Outputs:
 
 - `out` (tex): The dye, at width x height
 - `velocity` (tex): The fluid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second. tex.displace with midpoint 0 moves a picture along it
+- `density` (tex): How strong the dye is, as grey on black at width x height: white where it is at full strength. Opaque, so tex.lookup and tex.threshold read the strength rather than the dye's colour
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
@@ -369,6 +370,10 @@ Outputs:
 | `amount` | float | `4` | 0 to 30 (soft) | How fast the dye takes on the poured colour, per second, where the fluid moves fast. At 4, about two thirds in a quarter of a second. Pouring paints over, so the dye never gets brighter than the poured colour |
 | `color` | colour | `[0.35, 0.7, 1, 1]` |  | Colour of the dye while the dye input is unwired, and of splats without r, g, b columns. The colour's alpha slows the pouring |
 | `vorticity` | float | `0.3` | 0 to 2 (soft) | Brings back the small swirls the coarse grid smooths away; 0: off |
+| `splat_motion` | push \| set | `"push"` |  | What a splat's vx and vy do to the fluid under it; push: add to its speed every frame, times `force`: a stirring hand; set: become its speed, whatever `force` says: a nozzle that blows at a steady speed |
+| `expansion` | float | `0` | 0 to 10 (soft) | How fast the fluid swells inside the splats, per second: burning gas that pushes out to all sides and puffs up. Needs `edges` open, so the swollen fluid has somewhere to go; 0: off |
+| `buoyancy` | float | `0` | 0 to 10 (soft) | How strongly dye pulls the fluid along `buoyancy_direction`, like hot smoke rising. In image heights per second squared where the dye is at full strength, less where it is thinner; 0: off |
+| `buoyancy_direction` | vec2 | `[0, -1]` | -1 to 1 | The way dye rises: x right, y down, so 0, -1 is up the picture. Only its direction counts |
 | `viscosity` *(more)* | float | `0` | 0 to 0.01 (soft) | Thickness, honey instead of smoke: neighbouring parts take on each other's motion. In image heights squared per second; 0: off, costs nothing |
 | `size` *(more)* | int | `256` | 64 to 512 px (soft) | Width of the simulation grid; the height follows the picture's shape. More gives finer swirls and costs more. The dye keeps the output's size |
 | `iterations` *(more)* | int | `20` | 4 to 60 (soft) | Steps that keep the fluid from being squeezed together. Fewer cost less and let the fluid bulge and leak |

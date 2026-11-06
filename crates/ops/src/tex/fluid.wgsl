@@ -3,12 +3,15 @@
 // resolution.
 //
 //   0 force     in0 the velocity, in1 the force picture, in2 the splats, in3 the obstacles:
-//               adds the force, the splats and vorticity confinement; blue becomes how much
-//               the force picture moves here (the dye pass injects by it)
-//   1 advect    in0 the velocity, in3 the obstacles: carried along by itself, faded
+//               adds the force, the splats (or sets their velocity) and vorticity
+//               confinement; blue becomes how much the force picture moves here (the dye pass
+//               injects by it)
+//   1 advect    in0 the velocity, in1 last frame's dye, in3 the obstacles: carried along by
+//               itself, faded, lifted where there is dye
 //   2 diffuse   in0 the velocity so far, in1 the velocity before diffusing, in3 the obstacles:
 //               one Jacobi step of viscosity
-//   3 divergence in0 the velocity, in3 the obstacles
+//   3 divergence in0 the velocity, in2 the splats, in3 the obstacles: less the expansion
+//               the splats ask for, so the projection leaves that much
 //   4 jacobi    in0 the pressure so far (times `warm`), in1 the divergence, in3 the obstacles:
 //               one Jacobi step of the pressure equation
 //   9 jacobi2   the same, two steps at once
@@ -18,6 +21,7 @@
 //               along, faded, injected
 //   7 resample  in0 anything, bilinear onto this target (a new size, a restored state)
 //   8 velocity  in0 the velocity, in image sizes per second for other nodes
+//  10 density   in0 the dye: its strength (alpha) as opaque grey
 //
 // Units: the velocity is in image heights per second on both axes (so the cells are square in
 // the arithmetic), the pressure in heights squared per second, `h` is one cell in heights and
@@ -123,7 +127,12 @@ fn pn_fl_force(v: PnVertex) -> vec4f {
     }
     for (var i = 0; i < min(params.splats, PN_FL_MAX_SPLATS); i++) {
         let s = pn_fl_splat(in2, i, v.uv);
-        vel += s.velocity * s.weight * params.force * params.dt;
+        if (params.set_splats != 0) {
+            // A nozzle: the fluid inside the splat takes on its velocity, however long it runs.
+            vel = mix(vel, s.velocity, clamp(s.weight, 0.0, 1.0));
+        } else {
+            vel += s.velocity * s.weight * params.force * params.dt;
+        }
     }
     if (params.vorticity > 0.0) {
         // Vorticity confinement (Fedkiw, Stam and Jensen 2001): a push along the curl's
@@ -146,9 +155,14 @@ fn pn_fl_advect(v: PnVertex) -> vec4f {
     }
     let here = pn_fl_clean(textureLoad(in0, p, 0), PN_FL_MAX_SPEED);
     let back = v.uv - params.dt * vec2f(here.x / params.aspect, here.y);
-    let carried = pn_fl_clean(textureSampleLevel(in0, pn_clamp, back, 0.0), PN_FL_MAX_SPEED).xy;
+    var carried = pn_fl_clean(textureSampleLevel(in0, pn_clamp, back, 0.0), PN_FL_MAX_SPEED).xy * params.vel_fade;
+    if (params.dye_last != 0) {
+        // Buoyancy: dye pulls the fluid along `lift`, in proportion to its strength.
+        let dye = clamp(pn_fl_clean(textureSampleLevel(in1, pn_clamp, v.uv, 0.0), PN_FL_MAX_DYE).a, 0.0, 1.0);
+        carried += vec2f(params.lift_x, params.lift_y) * dye * params.dt;
+    }
     // Blue (where the force moves) stays where it was measured.
-    return vec4f(carried * params.vel_fade, here.z, 1.0);
+    return vec4f(pn_fl_clean(vec4f(carried, 0.0, 0.0), PN_FL_MAX_SPEED).xy, here.z, 1.0);
 }
 
 fn pn_fl_diffuse(v: PnVertex) -> vec4f {
@@ -170,7 +184,15 @@ fn pn_fl_divergence(v: PnVertex) -> vec4f {
     let r = pn_fl_side(p + vec2i(1, 0), c, 0);
     let t = pn_fl_side(p - vec2i(0, 1), c, 1);
     let b = pn_fl_side(p + vec2i(0, 1), c, 1);
-    let div = ((r.x - l.x) + (b.y - t.y)) / (2.0 * params.h);
+    var div = ((r.x - l.x) + (b.y - t.y)) / (2.0 * params.h);
+    if (params.expand != 0.0 && !pn_fl_solid(p)) {
+        // Expansion: the projection solves for this much divergence instead of none, so the
+        // fluid swells inside the splats, as burning gas does.
+        let uv = (vec2f(p) + 0.5) * pn.texel;
+        for (var i = 0; i < min(params.splats, PN_FL_MAX_SPLATS); i++) {
+            div -= params.expand * pn_fl_splat(in2, i, uv).weight;
+        }
+    }
     return vec4f(div, 0.0, 0.0, 1.0);
 }
 
@@ -275,6 +297,11 @@ fn pn_fl_dye(v: PnVertex) -> vec4f {
     return vec4f(max(clean.rgb, vec3f(0.0)), clamp(clean.a, 0.0, 1.0));
 }
 
+fn pn_fl_density(v: PnVertex) -> vec4f {
+    let a = clamp(pn_fl_clean(textureSampleLevel(in0, pn_clamp, v.uv, 0.0), PN_FL_MAX_DYE).a, 0.0, 1.0);
+    return vec4f(vec3f(a), 1.0);
+}
+
 fn pn_fl_resample(v: PnVertex) -> vec4f {
     return pn_fl_clean(textureSampleLevel(in0, pn_clamp, v.uv, 0.0), 1e4);
 }
@@ -296,6 +323,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         case 6: { return pn_fl_dye(v); }
         case 7: { return pn_fl_resample(v); }
         case 9: { return pn_fl_jacobi2(v); }
+        case 10: { return pn_fl_density(v); }
         default: { return pn_fl_velocity(v); }
     }
 }

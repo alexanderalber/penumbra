@@ -2548,6 +2548,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <ul>
 <li><code>out</code> <span class="kind">tex</span>: The dye, at width x height</li>
 <li><code>velocity</code> <span class="kind">tex</span>: The fluid's velocity at the grid's size: red x in widths, green y in heights, down positive, per second. tex.displace with midpoint 0 moves a picture along it</li>
+<li><code>density</code> <span class="kind">tex</span>: How strong the dye is, as grey on black at width x height: white where it is at full strength. Opaque, so tex.lookup and tex.threshold read the strength rather than the dye's colour</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -2562,6 +2563,10 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>amount</code></td><td>float</td><td><code>4</code></td><td>0 to 30 (soft)</td><td>How fast the dye takes on the poured colour, per second, where the fluid moves fast. At 4, about two thirds in a quarter of a second. Pouring paints over, so the dye never gets brighter than the poured colour</td></tr>
 <tr><td><code>color</code></td><td>colour</td><td><code>[0.35, 0.7, 1, 1]</code></td><td></td><td>Colour of the dye while the dye input is unwired, and of splats without r, g, b columns. The colour's alpha slows the pouring</td></tr>
 <tr><td><code>vorticity</code></td><td>float</td><td><code>0.3</code></td><td>0 to 2 (soft)</td><td>Brings back the small swirls the coarse grid smooths away; 0: off</td></tr>
+<tr><td><code>splat_motion</code></td><td>push | set</td><td><code>&quot;push&quot;</code></td><td></td><td>What a splat's vx and vy do to the fluid under it<ul><li><code>push</code>: add to its speed every frame, times <code>force</code>: a stirring hand</li><li><code>set</code>: become its speed, whatever <code>force</code> says: a nozzle that blows at a steady speed</li></ul></td></tr>
+<tr><td><code>expansion</code></td><td>float</td><td><code>0</code></td><td>0 to 10 (soft)</td><td>How fast the fluid swells inside the splats, per second: burning gas that pushes out to all sides and puffs up. Needs <code>edges</code> open, so the swollen fluid has somewhere to go; 0: off</td></tr>
+<tr><td><code>buoyancy</code></td><td>float</td><td><code>0</code></td><td>0 to 10 (soft)</td><td>How strongly dye pulls the fluid along <code>buoyancy_direction</code>, like hot smoke rising. In image heights per second squared where the dye is at full strength, less where it is thinner; 0: off</td></tr>
+<tr><td><code>buoyancy_direction</code></td><td>vec2</td><td><code>[0, -1]</code></td><td>-1 to 1</td><td>The way dye rises: x right, y down, so 0, -1 is up the picture. Only its direction counts</td></tr>
 <tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Starts over from a still fluid without dye, every frame while on</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>

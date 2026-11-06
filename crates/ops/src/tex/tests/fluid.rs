@@ -374,3 +374,139 @@ fn viscosity_spreads_a_push_out() {
     }
     assert!(peaks[1] > 0.0 && peaks[1] < peaks[0] * 0.8, "{peaks:?}");
 }
+
+/// The velocity picture's red (x in widths per second) at grid cell (x, y).
+fn red_at(px: &Pixels, x: u32, y: u32) -> f32 {
+    px.get(x, y).map_or(f32::NAN, |c| c[0])
+}
+
+#[test]
+fn a_set_splat_blows_at_its_own_speed_whatever_the_force() {
+    let Some(gpu) = gpu() else { return };
+    let mut speeds = Vec::new();
+    for (motion, force) in [("set", 1.0), ("set", 20.0), ("push", 20.0)] {
+        let ops = [
+            fluid(&[
+                ("splat_motion", motion.into()),
+                ("force", Value::Float(force)),
+                ("splat_radius", Value::Float(0.15)),
+                ("edges", "open".into()),
+            ]),
+            table("0.3,0.5,0.5,0"),
+            create("/v", "tex.null", &[]),
+            wire("/splats", 0, "/fluid", 3),
+            wire("/fluid", 1, "/v", 0),
+        ];
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        let mut px = frame(&mut rig, "/v");
+        for _ in 0..20 {
+            px = frame(&mut rig, "/v");
+        }
+        assert!(all_finite(&px));
+        speeds.push(red_at(&px, px.width * 3 / 10, px.height / 2));
+    }
+    // A set splat ends near its own 0.5 widths per second at its centre (the projection takes
+    // some of it into the swirl around it); a push keeps adding.
+    for s in &speeds[..2] {
+        assert!((0.2..0.6).contains(s), "{speeds:?}");
+    }
+    assert!((speeds[0] - speeds[1]).abs() < 0.05, "{speeds:?}");
+    assert!(speeds[2] > speeds[0] * 1.5, "{speeds:?}");
+}
+
+#[test]
+fn expansion_pushes_out_from_a_splat() {
+    let Some(gpu) = gpu() else { return };
+    for expansion in [0.0, 4.0] {
+        let ops = [
+            fluid(&[
+                ("expansion", Value::Float(expansion)),
+                ("splat_radius", Value::Float(0.1)),
+                ("edges", "open".into()),
+            ]),
+            table("0.5,0.5,0,0"),
+            create("/v", "tex.null", &[]),
+            wire("/splats", 0, "/fluid", 3),
+            wire("/fluid", 1, "/v", 0),
+        ];
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        let mut px = frame(&mut rig, "/v");
+        for _ in 0..10 {
+            px = frame(&mut rig, "/v");
+        }
+        assert!(all_finite(&px));
+        let (left, right) =
+            (red_at(&px, px.width * 4 / 10, px.height / 2), red_at(&px, px.width * 6 / 10, px.height / 2));
+        if expansion > 0.0 {
+            assert!(left < -0.01 && right > 0.01, "outwards: {left} {right}");
+        } else {
+            assert!(left.abs() < 1e-3 && right.abs() < 1e-3, "still: {left} {right}");
+        }
+    }
+}
+
+#[test]
+fn buoyancy_carries_dye_along_its_direction() {
+    let Some(gpu) = gpu() else { return };
+    for (buoyancy, direction) in [(0.0, [0.0, -1.0]), (10.0, [0.0, -1.0]), (10.0, [1.0, 0.0])] {
+        let ops = [
+            fluid(&[
+                ("inject", "everywhere".into()),
+                ("color", Value::Vec4([1.0, 0.0, 0.0, 1.0])),
+                ("buoyancy", Value::Float(buoyancy)),
+                ("buoyancy_direction", Value::Vec2(direction)),
+                ("splat_radius", Value::Float(0.1)),
+            ]),
+            table("0.5,0.5,0,0"),
+            wire("/splats", 0, "/fluid", 3),
+        ];
+        let mut rig = Rig::new(gpu.clone(), None, &ops);
+        for _ in 0..15 {
+            frame(&mut rig, "/fluid");
+        }
+        rig.edit(&[set("/splats.text", "x,y".into())]);
+        let mut px = frame(&mut rig, "/fluid");
+        for _ in 0..30 {
+            px = frame(&mut rig, "/fluid");
+        }
+        assert!(all_finite(&px));
+        let (sum, [x, y]) = mass(&px);
+        assert!(sum > 1.0, "{sum}");
+        if buoyancy == 0.0 {
+            assert!((x - 0.5).abs() < 0.02 && (y - 0.5).abs() < 0.02, "stays: {x} {y}");
+        } else if direction[1] < 0.0 {
+            assert!(y < 0.44 && (x - 0.5).abs() < 0.02, "rises: {x} {y}");
+        } else {
+            assert!(x > 0.53 && (y - 0.5).abs() < 0.02, "drifts right: {x} {y}");
+        }
+    }
+}
+
+#[test]
+fn the_density_output_is_the_dye_strength_as_opaque_grey() {
+    let Some(gpu) = gpu() else { return };
+    let ops = [
+        fluid(&[("inject", "everywhere".into()), ("color", Value::Vec4([1.0, 0.2, 0.0, 0.5]))]),
+        table("0.5,0.5,0,0"),
+        create("/d", "tex.null", &[]),
+        wire("/splats", 0, "/fluid", 3),
+        wire("/fluid", 2, "/d", 0),
+    ];
+    let mut rig = Rig::new(gpu, None, &ops);
+    let mut density = frame(&mut rig, "/d");
+    for _ in 0..10 {
+        density = frame(&mut rig, "/d");
+    }
+    let dye = rig.gpu.read(&rig.tex("/fluid").unwrap()).unwrap();
+    assert_eq!((density.width, density.height), (dye.width, dye.height));
+    let mut strongest = 0.0f32;
+    for y in 0..dye.height {
+        for x in 0..dye.width {
+            let (d, c) = (density.get(x, y).unwrap(), dye.get(x, y).unwrap());
+            assert!((d[0] - c[3]).abs() < 0.01 && d[0] == d[1] && d[1] == d[2], "{d:?} for {c:?}");
+            assert_eq!(d[3], 1.0);
+            strongest = strongest.max(d[0]);
+        }
+    }
+    assert!(strongest > 0.3, "{strongest}");
+}

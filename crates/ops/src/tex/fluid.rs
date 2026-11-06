@@ -1,8 +1,9 @@
 //! `tex.fluid`: a 2D fluid (Stam's Stable Fluids) on the GPU (`fluid.wgsl`). Every show frame:
 //! forces in (a motion picture such as `tex.optical_flow`'s, splats from a table such as
-//! `tex.blob_track`'s, vorticity confinement), the velocity carried along by itself, optionally
-//! diffused, made free of divergence by Jacobi steps on the pressure, and the dye carried along
-//! by the result. The velocity lives on a coarse grid (`size`), the dye at the output's size.
+//! `tex.blob_track`'s, vorticity confinement), the velocity carried along by itself and lifted
+//! where there is dye (buoyancy), optionally diffused, made free of divergence by Jacobi steps
+//! on the pressure (all but the expansion the splats ask for), and the dye carried along by
+//! the result. The velocity lives on a coarse grid (`size`), the dye at the output's size.
 //!
 //! The state (velocity, dye, and the pressure as the next frame's first guess) is kept from cook
 //! to cook. Time steps follow the show clock: a paused show stands still, a frame skipped by a
@@ -49,6 +50,7 @@ const DYE: i64 = 6;
 const RESAMPLE: i64 = 7;
 const VELOCITY: i64 = 8;
 const JACOBI2: i64 = 9;
+const DENSITY: i64 = 10;
 
 /// Column names a splat table may have; `x` and `y` are needed.
 const COLUMNS: [&str; 8] = ["x", "y", "vx", "vy", "r", "g", "b", "radius"];
@@ -108,6 +110,32 @@ fn desc() -> NodeDesc {
                 .clamp(0.0, 100.0)
                 .range(0.0, 2.0)
                 .doc("Brings back the small swirls the coarse grid smooths away; 0: off"),
+        )
+        .param(
+            ParamSpec::choice("splat_motion", &["push", "set"])
+                .doc("What a splat's vx and vy do to the fluid under it")
+                .choice_doc("push", "add to its speed every frame, times `force`: a stirring hand")
+                .choice_doc(
+                    "set",
+                    "become its speed, whatever `force` says: a nozzle that blows at a steady speed",
+                ),
+        )
+        .param(
+            ParamSpec::float("expansion", 0.0).clamp(0.0, 100.0).range(0.0, 10.0).curve(Curve::Power(2.0)).doc(
+                "How fast the fluid swells inside the splats, per second: burning gas that pushes out to all \
+                 sides and puffs up. Needs `edges` open, so the swollen fluid has somewhere to go; 0: off",
+            ),
+        )
+        .param(
+            ParamSpec::float("buoyancy", 0.0).clamp(-100.0, 100.0).range(0.0, 10.0).curve(Curve::Power(2.0)).doc(
+                "How strongly dye pulls the fluid along `buoyancy_direction`, like hot smoke rising. In image \
+                 heights per second squared where the dye is at full strength, less where it is thinner; 0: off",
+            ),
+        )
+        .param(
+            ParamSpec::vec2("buoyancy_direction", [0.0, -1.0])
+                .clamp(-1.0, 1.0)
+                .doc("The way dye rises: x right, y down, so 0, -1 is up the picture. Only its direction counts"),
         )
         .param(
             ParamSpec::float("viscosity", 0.0)
@@ -191,6 +219,13 @@ fn desc() -> NodeDesc {
              per second. tex.displace with midpoint 0 moves a picture along it",
         )
         .lazy_output("velocity")
+        .output("density", DataKind::Tex)
+        .describe_output(
+            "density",
+            "How strong the dye is, as grey on black at width x height: white where it is at full strength. \
+             Opaque, so tex.lookup and tex.threshold read the strength rather than the dye's colour",
+        )
+        .lazy_output("density")
 }
 
 /// The pass's params: nothing the user sets directly, the node works them out per pass.
@@ -207,11 +242,16 @@ fn pass_params() -> Vec<ParamSpec> {
         "viscous",
         "warm",
         "amount",
+        "expand",
+        "lift_x",
+        "lift_y",
     ]
     .iter()
     .map(|n| ParamSpec::float(n, 0.0))
     .collect();
-    for n in ["stage", "edges", "obstacles", "force_in", "dye_in", "moving", "splats"] {
+    for n in
+        ["stage", "edges", "obstacles", "force_in", "dye_in", "moving", "splats", "set_splats", "dye_last"]
+    {
         params.push(ParamSpec::int(n, 0));
     }
     params.push(ParamSpec::color("color", [0.0, 0.0, 0.0, 1.0]));
@@ -256,6 +296,17 @@ pub(crate) fn step(now: Tick, last: Option<Tick>, period: f64) -> f64 {
     } else {
         0.0
     }
+}
+
+/// The push of buoyancy, in heights per second squared: `strength` along `direction` (x right,
+/// y down), whose length does not count. None for a direction of no length or a value that is
+/// not finite.
+pub(crate) fn lift(strength: f64, direction: [f64; 2]) -> [f64; 2] {
+    let len = direction[0].hypot(direction[1]);
+    if !len.is_finite() || len <= 1e-9 || !strength.is_finite() {
+        return [0.0, 0.0];
+    }
+    [strength * direction[0] / len, strength * direction[1] / len]
 }
 
 /// The factor that leaves half after `half_life` seconds, for a step of `dt`.
@@ -345,6 +396,7 @@ struct Fluid {
     divergence_ring: TexRing,
     dye_ring: TexRing,
     out_ring: TexRing,
+    density_ring: TexRing,
     splat_ring: TexRing,
     /// The state: velocity (red, green; blue where the force moved), pressure, dye.
     velocity: Option<Tex>,
@@ -358,8 +410,9 @@ struct Fluid {
     force_frame: Option<Data>,
     force_at: Option<Tick>,
     interval: Option<f64>,
-    /// The last velocity output, while it is read.
+    /// The last velocity and density outputs, while they are read.
     velocity_out: Option<Tex>,
+    density_out: Option<Tex>,
     persist: bool,
 }
 
@@ -375,12 +428,16 @@ struct Shared {
     vorticity: f64,
     viscous: f64,
     amount: f64,
+    expand: f64,
+    lift: [f64; 2],
     edges: i64,
     obstacles: bool,
     force_in: bool,
     dye_in: bool,
     moving: bool,
     splats: i64,
+    set_splats: bool,
+    dye_last: bool,
     color: Value,
 }
 
@@ -401,12 +458,17 @@ impl Shared {
             "vorticity" => f(self.vorticity),
             "viscous" => f(self.viscous),
             "amount" => f(self.amount),
+            "expand" => f(self.expand),
+            "lift_x" => f(self.lift[0]),
+            "lift_y" => f(self.lift[1]),
             "edges" => i(self.edges),
             "obstacles" => i(i64::from(self.obstacles)),
             "force_in" => i(i64::from(self.force_in)),
             "dye_in" => i(i64::from(self.dye_in)),
             "moving" => i(i64::from(self.moving)),
             "splats" => i(self.splats),
+            "set_splats" => i(i64::from(self.set_splats)),
+            "dye_last" => i(i64::from(self.dye_last)),
             "color" => Some(self.color.clone()),
             _ => None,
         }
@@ -455,9 +517,10 @@ impl Operator for Fluid {
             &self.divergence_ring,
             &self.dye_ring,
             &self.out_ring,
+            &self.density_ring,
             &self.splat_ring,
         ];
-        let state = [&self.velocity, &self.pressure, &self.dye, &self.velocity_out];
+        let state = [&self.velocity, &self.pressure, &self.dye, &self.velocity_out, &self.density_out];
         let restored = self.restored.iter().flat_map(|(v, d)| [v, d]);
         penumbra_gpu::unique_bytes(
             rings.into_iter().flat_map(TexRing::iter).chain(state.into_iter().flatten()).chain(restored),
@@ -478,6 +541,7 @@ impl Operator for Fluid {
         let (width, height) = (side(cx, "width")?, side(cx, "height")?);
         let (gw, gh) = grid(width, height, cx.int("size")?);
         let want_velocity = cx.output_wanted(1);
+        let want_density = cx.output_wanted(2);
         let dt = step(now.tick, self.last, period);
         let force_data = cx.input(0);
         self.count_force_frame(force_data, now.tick);
@@ -527,6 +591,10 @@ impl Operator for Fluid {
         };
         let h = 1.0 / f64::from(gh);
         let viscosity = cx.float("viscosity")?.max(0.0);
+        let lift = match cx.param("buoyancy_direction") {
+            Some(Value::Vec2([x, y])) => lift(cx.float("buoyancy")?, [*x, *y]),
+            _ => [0.0, 0.0],
+        };
         let shared = Shared {
             dt,
             aspect,
@@ -538,12 +606,16 @@ impl Operator for Fluid {
             vorticity: cx.float("vorticity")?.max(0.0),
             viscous: viscosity * dt / (h * h),
             amount: cx.float("amount")?,
+            expand: if splats.is_empty() { 0.0 } else { cx.float("expansion")?.max(0.0) },
+            lift,
             edges: i64::from(cx.text("edges")? == "open"),
             obstacles: obstacles.is_some(),
             force_in: force.is_some(),
             dye_in: dye_in.is_some(),
             moving: cx.text("inject")? == "moving",
             splats: splats.len() as i64,
+            set_splats: cx.text("splat_motion")? == "set",
+            dye_last: lift != [0.0, 0.0] && self.dye.is_some(),
             color: Value::Vec4(color),
         };
 
@@ -584,7 +656,7 @@ impl Operator for Fluid {
         render(&forced, FORCE, 1.0, &[self.velocity.as_ref(), force, splat_tex.as_ref(), obstacles]);
         self.velocity = None;
         let advected = self.velocity_ring.next(gpu, gw, gh, KIND)?;
-        render(&advected, ADVECT, 1.0, &[Some(&forced), None, None, obstacles]);
+        render(&advected, ADVECT, 1.0, &[Some(&forced), self.dye.as_ref(), None, obstacles]);
         drop(forced);
         let mut velocity = advected;
         if shared.viscous > 0.0 {
@@ -598,7 +670,7 @@ impl Operator for Fluid {
 
         // Projection: the divergence, the pressure that cancels it, its gradient taken off.
         let divergence = self.divergence_ring.next(gpu, gw, gh, KIND)?;
-        render(&divergence, DIVERGENCE, 1.0, &[Some(&velocity), None, None, obstacles]);
+        render(&divergence, DIVERGENCE, 1.0, &[Some(&velocity), None, splat_tex.as_ref(), obstacles]);
         let iterations = cx.int("iterations")?.clamp(1, MAX_ITERATIONS);
         let mut pressure = previous_pressure;
         let mut done = 0;
@@ -627,21 +699,29 @@ impl Operator for Fluid {
         } else {
             None
         };
+        let density_out = if want_density {
+            let t = self.density_ring.next(gpu, width, height, KIND)?;
+            render(&t, DENSITY, 1.0, &[Some(&dye)]);
+            Some(t)
+        } else {
+            None
+        };
         batch.submit();
 
         self.velocity = Some(projected);
         self.pressure = pressure;
         self.dye = Some(dye.clone());
         self.velocity_out = velocity_out.clone();
+        self.density_out = density_out.clone();
         if reset {
             // Cleared again next cook, so the output stays black while `reset` is on.
             self.clear();
         }
-        let velocity = match velocity_out {
+        let lazy = |t: Option<Tex>| match t {
             Some(t) => Data::new(DataKind::Tex, t),
             None => Data::skipped(DataKind::Tex),
         };
-        Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, dye), velocity]))
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Tex, dye), lazy(velocity_out), lazy(density_out)]))
     }
 
     fn sets_size(&self, _def: &NodeDef, _desc: &NodeDesc) -> bool {
@@ -704,6 +784,16 @@ mod tests {
         assert_eq!(fade(0.1, 0.0), 0.0);
         assert_eq!(fade(0.1, f64::NAN), 0.0);
         assert_eq!(fade(0.1, f64::INFINITY), 1.0);
+    }
+
+    #[test]
+    fn buoyancy_points_along_its_direction_whatever_its_length() {
+        assert_eq!(lift(2.0, [0.0, -1.0]), [0.0, -2.0]);
+        let l = lift(1.0, [3.0, 4.0]);
+        assert!((l[0] - 0.6).abs() < 1e-12 && (l[1] - 0.8).abs() < 1e-12);
+        assert_eq!(lift(5.0, [0.0, 0.0]), [0.0, 0.0]);
+        assert_eq!(lift(f64::NAN, [1.0, 0.0]), [0.0, 0.0]);
+        assert_eq!(lift(1.0, [f64::INFINITY, 0.0]), [0.0, 0.0]);
     }
 
     #[test]
