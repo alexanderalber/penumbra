@@ -34,6 +34,10 @@
 //! [`Seeks`] (`audio.seek`) moves the playhead there at once, with the fades of a restart. A
 //! looping file stays in its pass, so `loops` keeps counting.
 //!
+//! **Waiting for the grid:** with `wait_for_grid` on, the playhead holds as with `play` off while
+//! [`BeatFiles`] has an analysis of this file running, so a show on a `chan.beat_grid` starts in
+//! step on a file it has not seen yet.
+//!
 //! **Crash restarts:** in show mode the playhead is kept, in whole seconds
 //! ([`Operator::show_place`]). After a crash restart the file plays on from there instead of
 //! from `start`, so the music comes back where it was and a show that follows it with it. Not
@@ -57,6 +61,7 @@ use penumbra_graph::{
     Operator,
 };
 
+use super::beat_grid::BeatFiles;
 use super::block::{BlockClock, Span, Step};
 use super::instrument::Presses;
 use super::oscillator::{MAX_RATE, MIN_RATE};
@@ -88,6 +93,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         NodeDesc::new(FILE, "Plays a sound file: music, an atmosphere or a sample, looped or once")
             .param(ParamSpec::file("file", EXTENSIONS).doc("WAV, FLAC, MP3, Ogg Vorbis, or the AAC sound of an MP4, MOV or M4A"))
             .param(ParamSpec::bool("play", true).applies_unless_bound("position").doc("Off fades the sound out and holds the place; on plays on from there"))
+            .param(ParamSpec::bool("wait_for_grid", false).applies_unless_bound("position").doc("On: the file starts when the analysis of its beats ends, so the first open of a file plays from its start with the grid ready. While a chan.beat_grid analyses this file the playhead holds; a file analysed before plays at once"))
             .param(
                 ParamSpec::float("speed", 1.0).applies_unless_bound("position")
                     .clamp(0.0, 16.0)
@@ -378,7 +384,13 @@ impl Operator for FilePlayer {
         }
 
         // Where the playhead goes, as in `tex.video_file`.
-        let moving = if play { speed } else { 0.0 };
+        // The analysis of this file is running: the playhead holds until it ends.
+        let waiting = cx.bool("wait_for_grid")?
+            && cx
+                .resource::<BeatFiles>()
+                .and_then(|files| files.get(std::path::Path::new(&self.path)))
+                .is_some_and(|analysis| analysis.state().busy());
+        let moving = if play && !waiting { speed } else { 0.0 };
         let frame_sec = f64::from(cx.rate().den()) / f64::from(cx.rate().num().max(1));
         let restart =
             advancing && (std::mem::take(&mut self.restart_pending) || reloaded) && resumed.is_none();

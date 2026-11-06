@@ -144,6 +144,10 @@ than half a second it goes on where it was.
 `speed` works as on tape. At 2 the file plays twice as fast and an octave higher; at 0.5, half
 as fast and an octave lower. `play` off fades the sound out and holds the place.
 
+`wait_for_grid` on: the file starts when the beat analysis of a `chan.beat_grid` on it ends. The first
+open of a new file stays silent for those seconds, and the show plays in step from the file's start.
+A file analysed before plays at once.
+
 A restart plays the file again from `start`. You restart with the play button in the panel,
 with `audio.play {path}`, or by turning `restart` on (bind a channel to cue it). With `loop`
 off, a restart plays the file once, as a one-shot sample. `restart_on_show` restarts whenever

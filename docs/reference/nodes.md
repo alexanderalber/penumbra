@@ -1793,6 +1793,7 @@ Outputs:
 |---|---|---|---|---|
 | `file` | file (wav, wave, flac, mp3, ogg, oga, m4a, mp4, mov, aac) |  |  | WAV, FLAC, MP3, Ogg Vorbis, or the AAC sound of an MP4, MOV or M4A |
 | `play` | bool | `true` |  | Off fades the sound out and holds the place; on plays on from there. Does something only while position is not bound. |
+| `wait_for_grid` | bool | `false` |  | On: the file starts when the analysis of its beats ends, so the first open of a file plays from its start with the grid ready. While a chan.beat_grid analyses this file the playhead holds; a file analysed before plays at once. Does something only while position is not bound. |
 | `speed` | float | `1` | 0 to 4 (soft) | Playback rate, as on tape: 2 plays twice as fast and an octave higher, 0.5 half as fast and an octave lower. Does something only while position is not bound. |
 | `loop` | bool | `true` |  | Off plays the file once and then stays silent |
 | `position` | float | `0` | 0 to 60 s (soft) | Where the file is. Bind a channel to scrub: the sound follows it like a tape moved by hand, ignoring play and speed, silent while it stands or moves faster than 4 times real time. Set by hand, the file jumps there and plays on |

@@ -93,6 +93,39 @@ fn ticks(f: &mut F, frames: u64) -> (Vec<u64>, Vec<u64>) {
 }
 
 #[test]
+fn a_player_can_wait_for_the_analysis() {
+    let dir = temp_dir("wait");
+    let file = clicks(&dir);
+    let cache = dir.join("cache");
+    let mut ops = grid_ops(&file);
+    ops.push(set("/p.wait_for_grid", true));
+    let mut f = fixture(&ops, &cache);
+    let busy = |f: &F| {
+        let files = f.cooker.resource::<BeatFiles>().unwrap();
+        files.get(Path::new(&file)).is_none_or(|a| a.state().busy())
+    };
+    let t = Instant::now();
+    let mut held = 0;
+    while busy(&f) {
+        f.clock.advance(1);
+        // The frame that starts the analysis may still move on by itself.
+        if let (Some(c), None) = cook(&mut f) {
+            assert!(value(&c, "seconds") < 0.1, "moved while analysing: {}", value(&c, "seconds"));
+            held += 1;
+        }
+        assert!(t.elapsed() < Duration::from_secs(120), "the analysis never ended");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(held > 0);
+    // The analysis ended: half a second of show is half a second of file.
+    f.clock.advance(1);
+    let from = value(&cook(&mut f).0.unwrap(), "seconds");
+    f.clock.advance(30);
+    let to = value(&cook(&mut f).0.unwrap(), "seconds");
+    assert!((to - from - 0.5).abs() < 0.04, "{from} to {to}");
+}
+
+#[test]
 fn the_grid_follows_the_playhead_and_ticks_ahead() {
     let dir = temp_dir("follow");
     let file = clicks(&dir);
