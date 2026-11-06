@@ -1,4 +1,4 @@
-# silhouette-time-machine
+# silhouette-wake
 
 A person moves in front of a projected wall. Stripes run across the whole wall without ever
 stopping, and the person's movement bends and tears them into copies of their old outlines. The
@@ -24,10 +24,6 @@ Look at `/out`.
 
 The picture is square, as the stripes and the person fill it best that way. Change `width` and
 `height` on `/person` and `/black` together for another shape.
-
-The name is older than this method. No `tex.time_machine` is left in the project: a time machine
-shows old frames, so a pixel that the person just left stands still until its delay runs out. Here
-no pixel stands still.
 
 Try:
 
