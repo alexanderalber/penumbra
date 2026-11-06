@@ -45,8 +45,8 @@ SHOWCASE = [
     ("demo", None, "/show", 45),
     ("curl-noise", EXAMPLES / "curl-noise", "/out", 45),
     ("projection-room", EXAMPLES / "projection-room", "/view", 10),
-    # 70 s: the sky's palette has turned from warm to cold by then.
-    ("synthwave", EXAMPLES / "synthwave", "/out", 70),
+    # 25 s: after the first drop, with the blocks, the sun and the display on.
+    ("music-synthwave", EXAMPLES / "music-synthwave", "/out", 25),
     ("fluid", EXAMPLES / "fluid", "/view", 25),
     ("feedback", EXAMPLES / "feedback", "/show", 20),
 ]

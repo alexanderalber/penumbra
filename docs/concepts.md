@@ -403,7 +403,6 @@ their values. A page from another site or a file cannot send. From the control c
 The [control-page](../examples/control-page/README.md) example has a page to copy: its
 `www/index.html` draws a slider, a switch or a button for every show control of the project it
 is in.
-The [feedback](../examples/feedback/README.md) example has a page made for its own addresses.
 
 ### A clock per piece
 

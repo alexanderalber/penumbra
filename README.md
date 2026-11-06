@@ -214,11 +214,11 @@ colormap. The screenshot at the top of this page shows its network.
 
 ![The curl-noise example: sticks in purple, pink and pale yellow swirling in a flow field](assets/gallery/curl-noise.jpg)
 
-The [synthwave](examples/synthwave/README.md) example: a glider flying over a wireframe city
-between two grids, through a nebula. Everything but the glider is made in the network, without
-pictures; the glider comes from two OBJ files.
+The [music-synthwave](examples/music-synthwave/README.md) example: a whole show on one song. The
+glider's world of wireframe blocks, lamps and a sun moves with the beats, and one command writes
+the arrangement from the beats and sections found in the file.
 
-![The synthwave example: a wireframe glider over wireframe blocks between white grids, in front of a purple and blue nebula](assets/gallery/synthwave.jpg)
+![The music-synthwave example: a wireframe glider over wireframe blocks, in front of a striped sun, between rows of paper lamps and under a purple nebula, with a flight display over the picture](assets/gallery/music-synthwave.jpg)
 
 The [projection-room](examples/projection-room/README.md) example: a 3D room lit by a projector,
 two spot lights and an environment light, with a stained-glass panel, a cube and a chrome ball.

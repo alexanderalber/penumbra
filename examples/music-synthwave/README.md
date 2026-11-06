@@ -3,8 +3,7 @@
 A complete music show on one song, with no hand-placed cues. A synthwave world flies to
 krzna's "Tell Me What You Want" (5:14, 120 BPM). At the drop after the break, the world rolls up
 into a tunnel. penumbra finds the song's beats, sections and break, and one command writes the
-arrangement from them. The [synthwave](../synthwave/README.md) example shows the same look in a
-small hand-made network.
+arrangement from them.
 
 The song is by krzna and comes with this example with the producer's permission. It is not under
 penumbra's licences; see [MUSIC-LICENSE.md](MUSIC-LICENSE.md).
