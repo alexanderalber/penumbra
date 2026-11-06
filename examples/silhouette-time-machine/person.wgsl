@@ -1,8 +1,8 @@
-// A person walking to and fro in front of the wall, as a depth camera's mask shows them: white
-// where the person is, black everywhere else. It stands in for a Kinect, so the example runs
-// without one. The arms swing with the stride and are flung up now and then.
-// @param pace float = 1 0..3 -- how fast the person walks
-// @param size float = 0.85 0.3..1 -- height of the person, in image heights
+// A person dancing in front of the wall, as a depth camera's mask shows them: white where the
+// person is, black everywhere else. It stands in for a Kinect, so the example runs without one.
+// The arms swing with the stride and are flung up now and then.
+// @param pace float = 1 0..3 -- how fast the person moves
+// @param size float = 1.2 0.3..1.6 -- height of the person, in image heights
 // @param ragged float = 0.3 0..1 -- frayed edges, as a depth camera's mask has them
 // @param speckle float = 0.01 0..1 -- stray pixels near the floor, as depth cameras show them
 // @param block float = 3 1..12 -- size of one depth camera pixel, in pixels of this picture: a Kinect's 512 pixels across a wider picture give steps along the outline
@@ -21,9 +21,29 @@ fn smin(a: f32, b: f32, k: f32) -> f32 {
     return mix(b, a, h) - k * h * (1.0 - h);
 }
 
+// Where the person is at time t, from -1 to 1 across the wall. A quick run to the right, a slow
+// way back to the left, and small steps and a sway on top. The stripes behind a slow move lie
+// close together and run against those behind a quick one, so this mix gives both kinds.
+fn way(t: f32) -> f32 {
+    let round = 14.0;
+    let u = fract(t / round);
+    let run = 0.25;
+    var along = 1.0 - 2.0 * (u - run) / (1.0 - run);
+    if u < run {
+        // The run slows down and speeds up three times, which bends the stripes it leaves.
+        let s = smoothstep(0.0, run, u);
+        along = 2.0 * (s + 0.04 * sin(s * 18.85)) - 1.0;
+    }
+    let steps = 0.06 * sin(t * 1.21 + 1.0) * sin(t * 0.47);
+    let sway = 0.025 * sin(t * 2.9);
+    return along + steps + sway;
+}
+
 // A direction at angle `a` from straight down, turned towards the front by `facing`.
 fn limb(a: f32, facing: f32) -> vec2f {
-    return vec2f(sin(a) * facing, -cos(a));
+    // Even face-on, limbs keep a little of their sideways swing.
+    let side = sign(facing + 0.001) * max(abs(facing), 0.35);
+    return vec2f(sin(a) * side, -cos(a));
 }
 
 fn hash01(p: vec3u) -> f32 {
@@ -40,18 +60,17 @@ fn main(v: PnVertex) -> @location(0) vec4f {
     let t = pn_time.seconds * params.pace;
     let s = params.size;
 
-    // To and fro across the wall: x follows a sine, the stride follows the distance walked,
-    // so the feet do not slide.
-    let reach = aspect * 0.5 - 0.25 * s;
-    let u = t * 0.16;
-    let x = aspect * 0.5 + reach * sin(u);
-    let k = floor((u + 1.5707963) / 3.1415927);
-    let turns = select(1.0, -1.0, (i32(k) & 1) == 1);
-    let walked = reach * (2.0 * k + 1.0 + turns * sin(u));
-    let facing = select(-1.0, 1.0, cos(u) >= 0.0);
-    let stride = walked / (0.55 * s) * 6.2831853;
-    // Smaller steps near the turns, where the walk slows down.
-    let swing = 0.45 * clamp(abs(cos(u)) * 1.6, 0.25, 1.0);
+    // Far enough that the whole body leaves the picture at either end, so the stripes the person
+    // leaves reach the edges.
+    let reach = aspect * 0.5 + 0.1 * s;
+    let x = aspect * 0.5 + reach * way(t);
+    // The legs follow the distance from the middle, so the feet do not slide.
+    let stride = x / (0.55 * s) * 6.2831853;
+    let dx = (way(t + 0.05) - way(t - 0.05)) * reach * 10.0;
+    // Sideways only while they move fast; otherwise more towards the wall.
+    let facing = clamp(dx * 6.0, -1.0, 1.0);
+    // Smaller steps when they slow down.
+    let swing = 0.45 * clamp(abs(dx) * 2.5, 0.25, 1.0);
 
     let floor_y = 0.03;
     let thigh = 0.245 * s;

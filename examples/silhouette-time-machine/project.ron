@@ -3,17 +3,13 @@
 (
     version: 2,
     nodes: {
-        "/about": (kind: "ui.note", params: {"height": 165, "text": "# Stripes where a person has been\n- `person` stands in for a depth camera's mask: white where the person is\n- `seen` and `loop` remember when the person was last at each pixel\n- `age` turns that into a map: black where the person is, white `span` seconds after they left\n- `tm` shows each pixel of `pattern` from as long ago as `age` says\n- `out` adds stripes around the person and picks the colours. Look at `out`", "width": 800}, pos: [-200.0, 420.0]),
-        "/about_camera": (kind: "ui.note", params: {"height": 135, "text": "# With a real depth camera\nThe camera's SDK or a free sender sends the mask through Spout or NDI. Add a `tex.spout_in` or `tex.ndi_in`. Wire it into `in0` of `seen` and `in2` of `out` instead of `person`. A `tex.mapper` in between lines the mask up with the projector.", "width": 560}, pos: [650.0, 420.0]),
-        "/about_memory": (kind: "ui.note", params: {"height": 115, "text": "# Time machine memory\n`tm` keeps 20 s of `pattern`: `length` 1200 frames at 60 fps, every fourth kept (`step` 4), at half size (`scale` 0.5). About 550 MB of GPU memory, 16 bits. `span` on `age` must match those 20 s.", "width": 560}, pos: [600.0, -230.0]),
-        "/about_try": (kind: "ui.note", params: {"height": 175, "text": "# Try\n- `local` 0 on `out`: the time machine's stripes alone\n- `shape` on `pattern`: `rings` or `straight`\n- `speed` on `pattern` higher: the stripes bend more near the person\n- `pace` 0 on `person`: the person stands still\n- R on `loop`: forget where the person has been", "width": 480}, pos: [1200.0, 160.0]),
-        "/age": (kind: "tex.shader", params: {"file": "age.wgsl"}, inputs: {"in0": "seen"}, pos: [600.0, 128.0]),
-        "/black": (kind: "tex.constant", params: {"height": 720, "width": 1280}, pos: [0.0, 122.0]),
+        "/about": (kind: "ui.note", params: {"height": 165, "text": "# Stripes that run along the person's path\n- `person` stands in for a depth camera's mask: white where the person is\n- `seen` and `loop` remember when the person was last at each pixel\n- `out` counts stripes at a steady rate from that moment, so lines of equal count are the person's past outlines. Every stripe keeps moving at the same rate. Look at `out`", "width": 800}, pos: [-200.0, 420.0]),
+        "/about_camera": (kind: "ui.note", params: {"height": 135, "text": "# With a real depth camera\nThe camera's SDK or a free sender sends the mask through Spout or NDI. Add a `tex.spout_in` or `tex.ndi_in`. Wire it into `in0` of `seen` and `in1` of `out` instead of `person`. A `tex.mapper` in between lines the mask up with the projector.", "width": 560}, pos: [650.0, 420.0]),
+        "/about_try": (kind: "ui.note", params: {"height": 175, "text": "# Try\n- `across` 0 on `out`: only the stripes the person leaves\n- `speed` on `out`: every stripe at once\n- `gap` 0 on `out`: colour bands without the black\n- `pace` 0 on `person`: the person stands still and the stripes run on\n- R on `loop`: forget where the person has been", "width": 480}, pos: [1000.0, 160.0]),
+        "/black": (kind: "tex.constant", params: {"height": 1080, "width": 1080}, pos: [0.0, 122.0]),
         "/loop": (kind: "tex.feedback", inputs: {"initial": "black", "previous": "seen"}, pos: [200.0, 136.0]),
-        "/out": (kind: "tex.shader", params: {"file": "show.wgsl"}, inputs: {"in0": "tm", "in1": "seen", "in2": "person"}, pos: [1000.0, 194.0]),
-        "/pattern": (kind: "tex.shader", params: {"file": "pattern.wgsl", "height": 720, "width": 1280}, pos: [600.0, 0.0]),
-        "/person": (kind: "tex.shader", params: {"file": "person.wgsl", "height": 720, "width": 1280}, pos: [200.0, 264.0]),
+        "/out": (kind: "tex.shader", params: {"file": "show.wgsl"}, inputs: {"in0": "seen", "in1": "person"}, pos: [800.0, 194.0]),
+        "/person": (kind: "tex.shader", params: {"file": "person.wgsl", "height": 1080, "width": 1080}, pos: [200.0, 264.0]),
         "/seen": (kind: "tex.shader", params: {"file": "seen.wgsl"}, inputs: {"in0": "person", "in1": "loop"}, pos: [400.0, 144.0]),
-        "/tm": (kind: "tex.time_machine", params: {"blend": false, "length": 1200, "scale": 0.5, "step": 4}, inputs: {"in": "pattern", "map": "age"}, pos: [800.0, 64.0]),
     },
 )

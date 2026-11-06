@@ -22,7 +22,7 @@ saves into it.)
 | [pendulum-wave](pendulum-wave/README.md) | 121 pendulums seen from above, drifting apart and back into sync, each striking a note as it passes its rest point, over a hi-hat and kick | `/out` | speakers or headphones |
 | [clips](clips/README.md) | a video file looped with its sound in step, the result recorded as a movie with sound; the clip made by penumbra itself | `/clip` | speakers or headphones |
 | [blob-tracking](blob-tracking/README.md) | finding and following spots of light, with ids that stay | `/view`, `/track` | |
-| [silhouette-time-machine](silhouette-time-machine/README.md) | a person in front of a wall, from a depth camera's mask (drawn by a shader here): a moving pattern, delayed per pixel by how long ago the person was there, bends and tears along their old outlines; stripes around the person run towards them | `/out` | about 550 MB of GPU memory; (for a real person: a depth camera that sends its mask through Spout or NDI) |
+| [silhouette-time-machine](silhouette-time-machine/README.md) | a person in front of a wall, from a depth camera's mask (drawn by a shader here): stripes run across the wall without stopping, and each pixel counts them from the moment the person left it, so they bend and tear into the person's old outlines | `/out` | (for a real person: a depth camera that sends its mask through Spout or NDI) |
 | [python-script](python-script/README.md) | a Python script that keeps state: a bouncing ball | `/view` | Python 3.12 or later |
 | [projection-room](projection-room/README.md) | a 3D room lit by a projector, lamps and its surroundings | `/view`, `/through_beamer` | |
 | [fluid](fluid/README.md) | a fluid stirred by motion: optical flow and blobs push it, the picture colours it | `/view` | |
