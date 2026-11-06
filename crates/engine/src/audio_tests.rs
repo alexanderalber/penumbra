@@ -712,6 +712,9 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         (json!({"extra": 1}), "extra"),
         (json!({"apart": [["/n", "/blocks"]]}), "not an element of a slot"),
         (json!({"apart": [["/blocks", "/mountains"]]}), "of one slot"),
+        (json!({"split_bars": 0}), "split_bars"),
+        (json!({"split_bars": 2.5}), "split_bars"),
+        (json!({"stage_gap": -1.0}), "stage_gap"),
     ] {
         let e = f.fail("beats.arrange", args(extra.clone()));
         assert!(e.contains(says), "{extra}: {e}");
@@ -977,6 +980,15 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
         let want = json!({"param": param, "from": format!("/arrangement_mix:{column}")});
         assert!(controls.as_array().unwrap().contains(&want), "{controls}");
     }
+    // The options for a single song: more rows, and the reply says which breaks it found.
+    let plain = f.call("beats.arrange", args(json!({"opening": false})));
+    assert!(plain.get("breaks").is_none(), "{plain}");
+    let cut = f.call(
+        "beats.arrange",
+        args(json!({"opening": false, "split_bars": 2, "find_break": true, "stage_gap": 0.0})),
+    );
+    assert!(cut["rows"].as_u64() > plain["rows"].as_u64(), "{cut}");
+    assert_eq!(cut["breaks"], json!([[30.98, 44.52]]), "{cut}");
 }
 
 /// The traps' corridor is computed twice, by the traps and by the glider that threads it: both

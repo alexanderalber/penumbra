@@ -161,12 +161,12 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
          stage changes), dwell? (sections, default 3: an element on that long gives way at the next \
          boundary with change 0.3 or more, its slot's turn or not; a slot its stage hides counts on; 0 \
          turns it off), opening? (default true: the file's first section brings its slots in one after another \
-         on bar starts, sky first, then mid, the floor and the rest, the ceiling last, a row per step of at least 2 bars), apart? (pairs of elements of different slots that never share a row, e.g. [[\"/gates\", \"/rings\"]]: where both would be on, the first gives way for that row and its slot shows its next element; every other cell stays as without it), gaps? ({build?, break?}: the share of the floor in gaps, default \
+         on bar starts, sky first, then mid, the floor and the rest, the ceiling last, a row per step of at least 2 bars), apart? (pairs of elements of different slots that never share a row, e.g. [[\"/gates\", \"/rings\"]]: where both would be on, the first gives way for that row and its slot shows its next element; every other cell stays as without it), split_bars? (cuts each section at every so many bar starts, for a single song: each new boundary has change 0.3, so one slot swaps there; a break stays one row, the pieces after a drop's first are main), find_break? (default false, for a single song: a stretch of 4 bars or more where the bass falls 10 dB below its loud level becomes a row of role break, followed by a row of role drop with change 1; a track start in the break is no track start; the reply lists breaks), stage_gap? (s, default 480: the least time between two changes of stage; with find_break the stage may also change on the drop after a break), gaps? ({build?, break?}: the share of the floor in gaps, default \
          0.3 in a build and 0.6 in a break)}. The table has a row per section: start, end, role, change, the \
          presence of each element (the column is named as the element), warmth, intensity, camera (the \
          stage's camera preset: low in a main section, higher in a build, high and wide on a drop, level in \
          a break, a variant per track), stage (changes only at a track start with change 0.8 or more, \
-         at most once in 8 minutes, to the next stage in the list and back again: 0, 1, 2, 1, 0), gaps (the share of the floor broken off: only in a build and a \
+         at most once per stage_gap, to the next stage in the list and back again: 0, 1, 2, 1, 0), gaps (the share of the floor broken off: only in a build and a \
          break) and flight (how the glider flies: 0 along the lane's turns, 1 straight, 2 along the turns \
          with a roll on a downbeat, 3 straight with a lean on each downbeat, 4 through the corridor of a \
          companion such as mid_traps; straight in a break, a roll on a drop, the lean in a build, 0, 1 and \
@@ -792,6 +792,36 @@ enum Entry {
     },
 }
 
+/// The stretches without bass by the file's level bands ([`arrange::bass_gone`]).
+fn without_bass(env: &penumbra_audio::beats::Envelopes, bars: &[f64], end: f64) -> Vec<(f64, f64)> {
+    let mut edges: Vec<f64> = bars.iter().copied().filter(|b| *b < end).collect();
+    edges.push(end);
+    let bass: Vec<f64> = edges
+        .windows(2)
+        .map(|w| match w {
+            [from, to] => match env.energy_db(*from, *to) {
+                Some([_, low, ..]) => low,
+                None => f64::NEG_INFINITY,
+            },
+            _ => f64::NEG_INFINITY,
+        })
+        .collect();
+    arrange::bass_gone(&edges, &bass)
+}
+
+/// The mean level of the music bus from `from` to `to` seconds, 0 to 1.
+fn mean_energy(bus: &penumbra_audio::beats::Bus, from: f64, to: f64) -> f64 {
+    /// Readings per stretch; enough for a mean, and a section is cut only a few times.
+    const SAMPLES: u32 = 64;
+    let sum: f64 = (0..SAMPLES)
+        .map(|k| {
+            let t = from + (to - from) * (f64::from(k) + 0.5) / f64::from(SAMPLES);
+            bus.at(t).energy.first().copied().unwrap_or(0.0)
+        })
+        .sum();
+    sum / f64::from(SAMPLES)
+}
+
 fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -810,6 +840,9 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         opening: Option<bool>,
         gaps: Option<GapShares>,
         apart: Option<Vec<(NodePath, NodePath)>>,
+        split_bars: Option<f64>,
+        find_break: Option<bool>,
+        stage_gap: Option<f64>,
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -863,6 +896,26 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             )));
         }
     };
+    let split_bars = match a.split_bars {
+        None => None,
+        // `as`: a whole number from 1 to SPLIT_BARS_MAX, checked first.
+        Some(n)
+            if n.is_finite() && n.fract() == 0.0 && (1.0..=arrange::SPLIT_BARS_MAX as f64).contains(&n) =>
+        {
+            Some(n as usize)
+        }
+        Some(_) => {
+            return Err(CommandError(format!(
+                "split_bars is a whole number of bars from 1 to {}",
+                arrange::SPLIT_BARS_MAX
+            )));
+        }
+    };
+    let find_break = a.find_break.unwrap_or(false);
+    let stage_gap = a.stage_gap.unwrap_or(arrange::STAGE_GAP);
+    if !stage_gap.is_finite() || stage_gap < 0.0 {
+        return Err(CommandError("stage_gap is seconds from 0 up".into()));
+    }
     let net = e.session().doc().snapshot();
     let kind_at = |path: &NodePath| -> Option<String> {
         net.resolve(path).and_then(|id| net.node(id)).map(|n| n.kind.clone())
@@ -1066,16 +1119,34 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             energy: c.energy,
             track_start: sec.track_start,
             seed: sec.seed,
+            after_break: false,
         })
         .collect();
     let end = s.envelopes.as_ref().map_or(0.0, |env| env.len() as f64 * env.hop_seconds());
+    let bars: &[f64] = s.grid.as_ref().map_or(&[], |grid| &grid.bars);
+    let energy = |from: f64, to: f64| mean_energy(bus, from, to);
+    let parts = match (find_break, s.envelopes.as_ref()) {
+        (true, Some(env)) => arrange::with_breaks(&parts, &without_bass(env, bars, end), bars, &energy),
+        _ => parts,
+    };
+    let breaks: Vec<[f64; 2]> = parts
+        .windows(2)
+        .filter_map(|w| match w {
+            [before, drop] if drop.after_break => Some([before.start, before.end]),
+            _ => None,
+        })
+        .collect();
+    let parts = match split_bars {
+        Some(every) => arrange::split(&parts, bars, every, &energy),
+        None => parts,
+    };
     // The file's first section brings its slots in one after another, at the grid's bar starts.
     let (parts, opening) = match (a.opening.unwrap_or(true), s.grid.as_ref()) {
         (true, Some(grid)) => arrange::opening(&parts, &slots, &grid.bars),
         _ => (parts, 1),
     };
-    let rows =
-        arrange::rows_with(&parts, &slots, stages.len(), arrange::Rules { gaps, dwell, opening, apart });
+    let rules = arrange::Rules { gaps, dwell, opening, apart, stage_gap };
+    let rows = arrange::rows_with(&parts, &slots, stages.len(), rules);
     let table = arrange::table(&slots, &rows);
     if table.len() > penumbra_core::param::MAX_TEXT {
         return Err(CommandError(format!("{} rows do not fit into a table.text", rows.len())));
@@ -1254,6 +1325,9 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         obj.insert("file".into(), json!(file.display().to_string()));
         obj.insert("table".into(), json!(a.table.to_string()));
         obj.insert("sequence".into(), json!(a.sequence.to_string()));
+        if find_break {
+            obj.insert("breaks".into(), json!(breaks));
+        }
         obj.insert("rows".into(), json!(rows.len()));
         obj.insert("columns".into(), json!(columns));
         obj.insert("channels".into(), json!(mix.to_string()));

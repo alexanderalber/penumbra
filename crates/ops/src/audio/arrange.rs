@@ -73,7 +73,8 @@
 //!   it is calm (an intro, an outro, a break), the chase in a build, the pulse on a drop, and a
 //!   variant per track in a main section ([`PATTERN_VARIANTS`]).
 //! - **Stage:** with several stages, the row says which one shows. It changes only where a track
-//!   starts with a `change` of at least [`STAGE_CHANGE`], and at most once per [`STAGE_GAP`].
+//!   starts with a `change` of at least [`STAGE_CHANGE`], or at the drop after a found break
+//!   ([`with_breaks`]), and at most once per [`STAGE_GAP`] (the caller may give another gap).
 //!   It walks to the next stage and back again (0, 1, 2, 1, 0, 1, ...), so every change goes to a
 //!   neighbour in the list: a blending switch fades between the two and never through a third.
 //! - **Opening:** the file's first section brings its slots in one after another, at bar starts:
@@ -88,6 +89,11 @@
 //!   [`SEE_THROUGH`], the first one included; a stretch is the rows of breaks and builds that
 //!   follow each other. Every other row keeps the walls closed, and so do the rows on either side
 //!   of a change of stage, so the walls never open while one stage fades into the next.
+//!
+//! - **A single song:** the rules above were tuned on long mixes, whose sections are short against
+//!   the file. For one song the caller may cut the sections finer. [`bass_gone`] finds the
+//!   stretches without bass, [`with_breaks`] makes each a section of role break with a drop after
+//!   it, and [`split`] cuts long sections at bar starts. All three are off unless asked for.
 //!
 //! The rows go into a `table.text` and a `chan.sequence` with one step per row, its clock on the
 //! file's seconds, so the user can edit the table by hand and the picture follows the edit.
@@ -173,6 +179,25 @@ pub const PATTERN_VARIANTS: [usize; 2] = [PATTERN_CHASE, PATTERN_PULSE];
 pub const STAGE_CHANGE: f64 = 0.8;
 /// The least time between two switches of the stage, in seconds; the file's start counts as one.
 pub const STAGE_GAP: f64 = 480.0;
+/// The `change` of a boundary [`split`] adds: the least that swaps a slot, so one slot swaps at
+/// each such boundary and the colour takes a small step. The music hardly changes there, and the
+/// measured novelty would stay below [`CHANGE_SMALL`] and swap nothing.
+pub const SPLIT_CHANGE: f64 = CHANGE_SMALL;
+/// The longest `split_bars` taken.
+pub const SPLIT_BARS_MAX: usize = 1000;
+/// A bar counts as without bass this many dB below the file's loud bass level ([`bass_gone`]).
+pub const BASS_GONE_DB: f64 = 10.0;
+/// A file whose loud bass level stays below this, in dBFS, has no bass to lose.
+pub const BASS_PRESENT_DB: f64 = -60.0;
+/// The fewest bars without bass that make a break. A shorter dip is a fill.
+pub const BREAK_MIN_BARS: usize = 4;
+/// A found break begins at a section start this many bars away, so no row of a bar or two
+/// stays before it, and a section start this near after its end goes.
+pub const BREAK_SNAP_BARS: usize = 2;
+/// The least `change` into a found break: the floor empties by role, and one slot swaps.
+pub const BREAK_CHANGE: f64 = 0.5;
+/// The `change` of the drop after a found break: every slot swaps and the stage may change.
+pub const DROP_CHANGE: f64 = 1.0;
 /// The fewest bars a step of the opening lasts ([`opening`]).
 pub const OPENING_BARS: usize = 2;
 /// The share of the floor in gaps during a build.
@@ -260,12 +285,197 @@ pub struct Rules {
     pub opening: usize,
     /// Pairs of columns that never share a row; the first of a pair gives way ([`check_apart`]).
     pub apart: Vec<(String, String)>,
+    /// The least time between two switches of the stage, in seconds.
+    pub stage_gap: f64,
 }
 
 impl Default for Rules {
     fn default() -> Rules {
-        Rules { gaps: Gaps::default(), dwell: DWELL, opening: 0, apart: Vec::new() }
+        Rules { gaps: Gaps::default(), dwell: DWELL, opening: 0, apart: Vec::new(), stage_gap: STAGE_GAP }
     }
+}
+
+/// The stretches without bass in a file, as (start, end) in seconds, each from one bar start to
+/// another. `edges` holds the bar starts and then the file's end, `bass` the mean low band of each
+/// bar in dBFS, so one number less than `edges`.
+///
+/// A bar counts as without bass [`BASS_GONE_DB`] below the upper quartile of all bars. One bar with
+/// bass between two without does not end a stretch. A stretch needs [`BREAK_MIN_BARS`] bars, and
+/// bass before and after it, so a quiet start and a fading end are no breaks.
+pub fn bass_gone(edges: &[f64], bass: &[f64]) -> Vec<(f64, f64)> {
+    let mut sorted: Vec<f64> = bass.iter().copied().filter(|x| x.is_finite()).collect();
+    sorted.sort_by(f64::total_cmp);
+    let Some(&loud) = sorted.get(sorted.len() * 3 / 4) else { return Vec::new() };
+    if loud < BASS_PRESENT_DB {
+        return Vec::new();
+    }
+    let without = |i: usize| bass.get(i).is_some_and(|x| !x.is_finite() || *x < loud - BASS_GONE_DB);
+    let gone = |i: usize| without(i) || (i > 0 && without(i - 1) && without(i + 1));
+    let mut found = Vec::new();
+    let mut i = 0;
+    while i < bass.len() {
+        if !gone(i) {
+            i += 1;
+            continue;
+        }
+        let first = i;
+        while i < bass.len() && gone(i) {
+            i += 1;
+        }
+        if first > 0
+            && i < bass.len()
+            && i - first >= BREAK_MIN_BARS
+            && let (Some(from), Some(to)) = (edges.get(first), edges.get(i))
+        {
+            found.push((*from, *to));
+        }
+    }
+    found
+}
+
+/// The blend zone of a boundary at `at` that the music gives none for: the bar before it, so a
+/// fade of the usual length has arrived when the bar begins. A cut where no bar lies before it.
+fn arrive(bars: &[f64], at: f64) -> (f64, f64) {
+    let k = bars.partition_point(|b| *b < at);
+    match k.checked_sub(1).and_then(|p| bars.get(p)) {
+        Some(b) if b.is_finite() => (*b, at),
+        _ => (at, at),
+    }
+}
+
+/// `parts` with each stretch of `found` ([`bass_gone`]) as a section of role break and a drop
+/// after it. The drop runs to the end of the section it falls in. The parts the stretch overlaps
+/// lose what it covers. `energy` gives the mean energy from one moment to another.
+///
+/// The section finder takes a deep break for the start of a new track. A track start at or inside
+/// a found break is therefore dropped, and an outro right before it becomes a main section.
+pub fn with_breaks(
+    parts: &[Part],
+    found: &[(f64, f64)],
+    bars: &[f64],
+    energy: &dyn Fn(f64, f64) -> f64,
+) -> Vec<Part> {
+    let mut out = parts.to_vec();
+    for &(from, to) in found {
+        out = one_break(&out, from, to, bars, energy);
+    }
+    out
+}
+
+fn one_break(
+    parts: &[Part],
+    from: f64,
+    to: f64,
+    bars: &[f64],
+    energy: &dyn Fn(f64, f64) -> f64,
+) -> Vec<Part> {
+    // The length of BREAK_SNAP_BARS bars around here, by the bar the stretch begins with.
+    let bar = bars.iter().copied().find(|b| *b > from).map_or(0.0, |b| b - from);
+    let reach = bar * BREAK_SNAP_BARS as f64;
+    let near = |s: f64| (s - from).abs() <= reach && s < to;
+    let from = parts
+        .iter()
+        .map(|p| p.start)
+        .filter(|s| near(*s))
+        .min_by(|a, b| (a - from).abs().total_cmp(&(b - from).abs()))
+        .unwrap_or(from);
+    let Some(first) = parts.iter().position(|p| p.end > from) else { return parts.to_vec() };
+    let Some(mut last) = parts.iter().position(|p| p.end > to) else { return parts.to_vec() };
+    if parts.get(last).is_some_and(|p| p.end - to <= reach) && last + 1 < parts.len() {
+        last += 1;
+    }
+    let (Some(begins), Some(goes_on)) = (parts.get(first), parts.get(last)) else {
+        return parts.to_vec();
+    };
+    let mut out: Vec<Part> = parts.iter().take(first).copied().collect();
+    if begins.start < from {
+        out.push(Part { end: from, ..*begins });
+    }
+    let false_track = parts
+        .iter()
+        .skip(first)
+        .take(last + 1 - first)
+        .any(|p| p.track_start && p.start >= from && p.start <= to);
+    if false_track
+        && let Some(before) = out.last_mut()
+        && before.role == Role::Outro
+    {
+        before.role = Role::Main;
+    }
+    let entered = if begins.start == from { unit(begins.change) } else { 0.0 };
+    out.push(Part {
+        start: from,
+        end: to,
+        zone: arrive(bars, from),
+        role: Role::Break,
+        change: entered.max(BREAK_CHANGE),
+        energy: energy(from, to),
+        track_start: false,
+        seed: begins.seed,
+        after_break: false,
+    });
+    out.push(Part {
+        start: to,
+        end: goes_on.end,
+        zone: arrive(bars, to),
+        role: Role::Drop,
+        change: DROP_CHANGE,
+        energy: energy(to, goes_on.end),
+        track_start: false,
+        seed: goes_on.seed,
+        after_break: true,
+    });
+    out.extend(parts.iter().skip(last + 1).copied());
+    out
+}
+
+/// `parts` with each long section cut at every `every`-th of `bars`, counted from its start. A
+/// rest shorter than half of `every` stays with the piece before it. A break stays whole. A piece
+/// after the first keeps the section's role, but a drop's becomes main, since a drop is the moment
+/// a section begins with. Each new boundary has a `change` of [`SPLIT_CHANGE`], and each piece the
+/// mean energy `energy` gives for it. The music's blend into a section begins at the earliest half
+/// way through the row before it, so that row still shows.
+pub fn split(parts: &[Part], bars: &[f64], every: usize, energy: &dyn Fn(f64, f64) -> f64) -> Vec<Part> {
+    if every == 0 {
+        return parts.to_vec();
+    }
+    let mut out = Vec::with_capacity(parts.len());
+    for part in parts {
+        let halfway = out.last().map_or(part.zone.0, |p: &Part| (p.start + p.end) / 2.0);
+        let part = &Part { zone: (part.zone.0.max(halfway), part.zone.1), ..*part };
+        let inside: Vec<f64> =
+            bars.iter().copied().filter(|b| b.is_finite() && *b > part.start && *b < part.end).collect();
+        // The cuts: the bars after `every`, 2 `every`, ... from the start, while enough stay after.
+        let count = inside.len() + 1;
+        let keep = every.div_ceil(2);
+        let cuts: Vec<f64> = (1..)
+            .map(|k| k * every)
+            .take_while(|at| at + keep <= count)
+            .filter_map(|at| inside.get(at - 1).copied())
+            .collect();
+        if part.role == Role::Break || cuts.is_empty() {
+            out.push(*part);
+            continue;
+        }
+        let mut start = part.start;
+        for end in cuts.iter().copied().chain([part.end]) {
+            let piece = if start == part.start {
+                *part
+            } else {
+                Part {
+                    zone: arrive(bars, start),
+                    role: if part.role == Role::Drop { Role::Main } else { part.role },
+                    change: SPLIT_CHANGE,
+                    track_start: false,
+                    after_break: false,
+                    ..*part
+                }
+            };
+            out.push(Part { start, end, energy: energy(start, end), ..piece });
+            start = end;
+        }
+    }
+    out
 }
 
 /// The order the opening brings the slots in, as indices into `slots`: the sky, the mid slot,
@@ -362,6 +572,8 @@ pub struct Part {
     pub track_start: bool,
     /// A number fixed per kind of section, for the draws of the arrangement.
     pub seed: u32,
+    /// It is the drop after a found break ([`with_breaks`]): the stage may change here.
+    pub after_break: bool,
 }
 
 /// A spatial layer of the stage and its interchangeable elements, in the order they come on.
@@ -819,7 +1031,8 @@ pub fn rows_with(parts: &[Part], slots: &[Slot], stages: usize, rules: Rules) ->
                 track += 1;
             }
             let start = if part.start.is_finite() { part.start } else { 0.0 };
-            if stages > 1 && part.track_start && change >= STAGE_CHANGE && start - switched >= STAGE_GAP {
+            let may_switch = part.track_start || part.after_break;
+            if stages > 1 && may_switch && change >= STAGE_CHANGE && start - switched >= rules.stage_gap {
                 (stage, onward) = next_stage(stage, onward, stages);
                 switched = start;
             }
@@ -1292,6 +1505,7 @@ mod tests {
                     energy: 0.6,
                     track_start: false,
                     seed: i as u32,
+                    after_break: false,
                 }
             })
             .collect()
@@ -1857,6 +2071,7 @@ mod tests {
                 energy: 0.6,
                 track_start,
                 seed: i as u32,
+                after_break: false,
             });
         }
         let r = rows(&p, std::slice::from_ref(&sky), 3);
@@ -1909,6 +2124,7 @@ mod tests {
                 energy: if i % 3 == 0 { 0.9 } else { 0.5 },
                 track_start,
                 seed: i as u32,
+                after_break: false,
             });
         }
         let sky = Slot::new("sky", &["galaxy", "planet"]);
@@ -2053,6 +2269,7 @@ mod tests {
                 energy: 0.6,
                 track_start,
                 seed: i as u32,
+                after_break: false,
             });
         }
         let sky = Slot::new("sky", &["galaxy", "planet", "bars"]);
@@ -2121,6 +2338,7 @@ mod tests {
                     energy: if i % 3 == 0 { 0.9 } else { 0.6 },
                     track_start,
                     seed: i as u32,
+                    after_break: false,
                 }
             })
             .collect();
@@ -2257,6 +2475,7 @@ mod tests {
                     energy: if i % 3 == 0 { 0.9 } else { 0.6 },
                     track_start,
                     seed: i as u32,
+                    after_break: false,
                 }
             })
             .collect();
@@ -2371,6 +2590,7 @@ mod tests {
                 energy: 0.6,
                 track_start,
                 seed: 7,
+                after_break: false,
             });
         }
         (p, slots)
@@ -2489,5 +2709,173 @@ mod tests {
         assert_eq!(opening(&short, &slots, &few).1, 2);
         assert_eq!(opening(&short, &slots, &[0.0, 10.0]).1, 1);
         assert_eq!(opening(&[], &slots, &bars).1, 0);
+    }
+
+    /// Bar starts every 2 s up to `n` bars, and the file's end.
+    fn edges(n: usize) -> Vec<f64> {
+        (0..=n).map(|i| i as f64 * 2.0).collect()
+    }
+
+    #[test]
+    fn a_stretch_without_bass_counts_only_with_bass_on_both_sides() {
+        // Silence for 6 bars, bass, 12 bars without, bass, a fade of 3 bars.
+        let mut bass = vec![-95.0; 6];
+        bass.extend(vec![-24.0; 60]);
+        bass.extend(vec![-40.0; 12]);
+        bass.extend(vec![-24.0; 60]);
+        bass.extend(vec![-60.0; 3]);
+        let e = edges(bass.len());
+        assert_eq!(bass_gone(&e, &bass), vec![(132.0, 156.0)]);
+        // Two bars are a fill; one bar with bass inside does not end the stretch.
+        let mut dips = vec![-24.0; 40];
+        dips[10] = -40.0;
+        dips[11] = -40.0;
+        for bar in [20, 21, 23, 24] {
+            dips[bar] = -40.0;
+        }
+        assert_eq!(bass_gone(&edges(40), &dips), vec![(40.0, 50.0)]);
+        // No bass to lose, and no numbers at all.
+        assert!(bass_gone(&edges(40), &[-90.0; 40]).is_empty());
+        assert!(bass_gone(&[], &[]).is_empty());
+    }
+
+    fn at(start: f64, end: f64, role: Role, change: f64, track_start: bool) -> Part {
+        Part {
+            start,
+            end,
+            zone: (start, start),
+            role,
+            change,
+            energy: 0.8,
+            track_start,
+            seed: 1,
+            after_break: false,
+        }
+    }
+
+    /// The bars of every 2 s up to `end`.
+    fn bars_to(end: usize) -> Vec<f64> {
+        (0..end / 2).map(|i| i as f64 * 2.0).collect()
+    }
+
+    #[test]
+    fn a_found_break_cuts_the_row_it_lies_in_and_takes_back_a_false_track_start() {
+        let p = [
+            at(0.0, 80.0, Role::Drop, 0.0, true),
+            at(80.0, 142.0, Role::Outro, 0.3, false),
+            at(142.0, 212.0, Role::Intro, 1.0, true),
+            at(212.0, 300.0, Role::Main, 0.6, false),
+        ];
+        // One bar after the section start: the break takes the start.
+        let out = with_breaks(&p, &[(144.0, 168.0)], &bars_to(300), &|_, _| 0.5);
+        let starts: Vec<(f64, f64, Role)> = out.iter().map(|x| (x.start, x.end, x.role)).collect();
+        assert_eq!(
+            starts,
+            vec![
+                (0.0, 80.0, Role::Drop),
+                (80.0, 142.0, Role::Main),
+                (142.0, 168.0, Role::Break),
+                (168.0, 212.0, Role::Drop),
+                (212.0, 300.0, Role::Main),
+            ]
+        );
+        assert!(!out[2].track_start && !out[3].track_start);
+        assert!(out[3].after_break && !out[2].after_break);
+        assert_eq!(out[2].change, 1.0, "the boundary keeps its stronger change");
+        assert_eq!(out[3].change, DROP_CHANGE);
+        assert_eq!(out[3].zone, (166.0, 168.0), "the fade has arrived on the drop");
+        assert_eq!(out[3].energy, 0.5);
+        // In the middle of a section, away from any boundary: it is cut in two around the break.
+        let out = with_breaks(&p, &[(100.0, 120.0)], &bars_to(300), &|_, _| 0.5);
+        assert_eq!(out[1].end, 100.0);
+        assert_eq!(out[1].role, Role::Outro);
+        assert_eq!((out[2].start, out[2].end, out[2].change), (100.0, 120.0, BREAK_CHANGE));
+        assert_eq!((out[3].start, out[3].end), (120.0, 142.0));
+        assert!(out[4].track_start, "a track start after the drop stays");
+        // A section start just after the drop goes: no row of a bar stays.
+        let out = with_breaks(&p, &[(120.0, 140.0)], &bars_to(300), &|_, _| 0.5);
+        assert_eq!((out[2].start, out[2].end), (120.0, 140.0));
+        assert_eq!((out[3].start, out[3].end, out[3].role), (140.0, 212.0, Role::Drop));
+    }
+
+    #[test]
+    fn split_cuts_at_bars_and_keeps_breaks_whole() {
+        // 22 bars, 3 bars, 12 bars: 8 bars each, the rest of 6 stays apart, 3 bars stay whole.
+        let p = [
+            at(0.0, 44.0, Role::Drop, 0.0, true),
+            at(44.0, 50.0, Role::Main, 0.5, false),
+            at(50.0, 74.0, Role::Break, 0.5, false),
+            at(74.0, 94.0, Role::Outro, 0.5, false),
+        ];
+        let out = split(&p, &bars_to(100), 8, &|from, _| from / 100.0);
+        let got: Vec<(f64, f64, Role, f64)> =
+            out.iter().map(|x| (x.start, x.end, x.role, x.change)).collect();
+        assert_eq!(
+            got,
+            vec![
+                (0.0, 16.0, Role::Drop, 0.0),
+                (16.0, 32.0, Role::Main, SPLIT_CHANGE),
+                (32.0, 44.0, Role::Main, SPLIT_CHANGE),
+                (44.0, 50.0, Role::Main, 0.5),
+                (50.0, 74.0, Role::Break, 0.5),
+                (74.0, 94.0, Role::Outro, 0.5),
+            ]
+        );
+        assert!(out[0].track_start && !out[1].track_start);
+        assert_eq!(out[1].zone, (14.0, 16.0));
+        assert_eq!(out[1].energy, 0.16);
+        // A rest under half of `every` stays with the piece before it.
+        let long = [at(0.0, 20.0, Role::Main, 0.0, false)];
+        let out = split(&long, &bars_to(100), 8, &|_, _| 0.5);
+        assert_eq!(out.len(), 1);
+        let long = [at(0.0, 24.0, Role::Main, 0.0, false)];
+        let out = split(&long, &bars_to(100), 8, &|_, _| 0.5);
+        assert_eq!((out.len(), out[0].end), (2, 16.0));
+        // A long blend into the next section leaves the first half of the row before it alone.
+        let mut blend = [at(0.0, 32.0, Role::Main, 0.0, false), at(32.0, 48.0, Role::Main, 0.3, false)];
+        blend[1].zone = (16.0, 32.0);
+        let out = split(&blend, &bars_to(100), 8, &|_, _| 0.5);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[2].zone, (24.0, 32.0));
+        // 0 leaves the parts alone.
+        assert_eq!(split(&p, &bars_to(100), 0, &|_, _| 0.5), p);
+    }
+
+    #[test]
+    fn a_split_boundary_swaps_one_slot_and_moves_no_stage() {
+        let slots =
+            vec![Slot::new("floor", &["blocks", "mountains"]), Slot::new("sky", &["galaxy", "aurora"])];
+        let p = [at(0.0, 48.0, Role::Main, 0.0, false)];
+        let cut = split(&p, &bars_to(100), 8, &|_, _| 0.8);
+        let r = rows_with(&cut, &slots, 2, Rules { dwell: 0, stage_gap: 0.0, ..Rules::default() });
+        assert_eq!(r.len(), 3);
+        let on = |row: &Row| row.presence.iter().map(|x| *x > 0.0).collect::<Vec<bool>>();
+        // The slots take turns.
+        assert_eq!(on(&r[0]), vec![true, false, true, false]);
+        assert_eq!(on(&r[1]), vec![false, true, true, false]);
+        assert_eq!(on(&r[2]), vec![false, true, false, true]);
+        assert!(r.iter().all(|x| x.stage == 0));
+        assert!(r[1].walk > r[0].walk && r[1].walk < 0.1);
+    }
+
+    #[test]
+    fn the_stage_changes_on_the_drop_after_a_break_within_the_gap_given() {
+        let p = [
+            at(0.0, 142.0, Role::Main, 0.0, false),
+            at(142.0, 168.0, Role::Break, 0.5, false),
+            Part { after_break: true, ..at(168.0, 300.0, Role::Drop, DROP_CHANGE, false) },
+        ];
+        let slots = slots();
+        let stages = |rules: Rules| -> Vec<usize> {
+            rows_with(&p, &slots, 2, rules).iter().map(|r| r.stage).collect()
+        };
+        // The old lock of 480 s holds it; a shorter gap lets it go on the drop, and only there.
+        assert_eq!(stages(Rules::default()), vec![0, 0, 0]);
+        assert_eq!(stages(Rules { stage_gap: 120.0, ..Rules::default() }), vec![0, 0, 1]);
+        // A shorter gap alone: a drop that follows no found break keeps the stage.
+        let mut plain = p;
+        plain[2].after_break = false;
+        let r = rows_with(&plain, &slots, 2, Rules { stage_gap: 120.0, ..Rules::default() });
+        assert!(r.iter().all(|x| x.stage == 0));
     }
 }
