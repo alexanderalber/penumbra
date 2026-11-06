@@ -1,8 +1,9 @@
 //! `vol.smoke`: smoke in three dimensions, Stam's Stable Fluids on a grid of cubic cells in a
-//! box (`smoke.wgsl`). Every show frame: forces (buoyancy by temperature along the opposite of
-//! `gravity`, damping, the emitter's velocity), the velocity carried along by itself, Jacobi
-//! steps on the pressure that make it free of divergence, and smoke and temperature carried by
-//! the result, cooled, faded and emitted.
+//! box (`smoke.wgsl`). Every show frame: forces (buoyancy by temperature against `gravity`,
+//! vorticity confinement, damping, the emitter's velocity), the velocity carried along by
+//! itself, Jacobi steps on the pressure that make it free of divergence except where fuel burns
+//! (`expansion`), and smoke, temperature and fuel carried by the result, burnt, cooled, faded and
+//! emitted.
 //!
 //! The parameter names follow NVIDIA Flow's where they mean the same, so a TouchDesigner setup
 //! carries over by name. Time steps follow the show clock as `tex.fluid`'s do. A new grid size
@@ -31,6 +32,10 @@ const MAX_ITERATIONS: i64 = 200;
 const WARM: f64 = 0.8;
 /// Most cells along the box's longest side.
 const MAX_RESOLUTION: i64 = 512;
+/// Divergence per fuel burnt per second at `expansion` 1. NVIDIA Flow does not document its
+/// unit; this scale makes Flow's default of 4 swell the gas about threefold, as Flow's scenes
+/// look. At 1 the gas grew sixtyfold and filled the box.
+const EXPANSION_SCALE: f64 = 0.075;
 
 fn desc() -> NodeDesc {
     NodeDesc::new(KIND, "Smoke in a box in space: an emitter blows hot smoke in, it rises, swirls and fades. tex.raymarch draws it")
@@ -57,7 +62,21 @@ fn desc() -> NodeDesc {
             ParamSpec::vec3("emitter_position", [-1.5, 0.0, 0.0])
                 .unit(Unit::Metres)
                 .group("Emitter")
-                .doc("Centre of the emitter, a sphere that blows smoke in"),
+                .doc("Centre of the emitter, the place that blows smoke in"),
+        )
+        .param(
+            ParamSpec::choice("emitter_type", &["sphere", "box"])
+                .group("Emitter")
+                .doc("Shape of the emitter")
+                .choice_doc("sphere", "a ball of `emitter_radius`")
+                .choice_doc("box", "a box of `emitter_size`"),
+        )
+        .param(
+            ParamSpec::vec3("emitter_size", [0.5, 0.5, 0.5])
+                .clamp(0.0, 1e4)
+                .unit(Unit::Metres)
+                .group("Emitter")
+                .doc("Size of the box emitter along x, y and z"),
         )
         .param(
             ParamSpec::float("emitter_radius", 0.3)
@@ -66,7 +85,7 @@ fn desc() -> NodeDesc {
                 .curve(Curve::Log)
                 .unit(Unit::Metres)
                 .group("Emitter")
-                .doc("Radius of the emitter; 0: off"),
+                .doc("Radius of the sphere emitter; 0: off"),
         )
         .param(
             ParamSpec::vec3("linear_velocity", [0.0, 0.8, 0.0])
@@ -89,6 +108,16 @@ fn desc() -> NodeDesc {
                 .doc("Temperature of the smoke the emitter makes: hotter rises faster (`buoyancy`)"),
         )
         .param(
+            ParamSpec::float("fuel", 1.0)
+                .clamp(0.0, 1000.0)
+                .range(0.0, 5.0)
+                .group("Emitter")
+                .doc(
+                    "Fuel the emitter blows in with the smoke. Fuel hotter than `ignition_temp` burns: it \
+                     heats, makes smoke and swells. 0: smoke without fire",
+                ),
+        )
+        .param(
             ParamSpec::float("correction_rate", 0.5)
                 .clamp(0.0, 1.0)
                 .group("Emitter")
@@ -100,13 +129,13 @@ fn desc() -> NodeDesc {
         .param(
             ParamSpec::vec3("gravity", [0.0, -1.0, 0.0])
                 .clamp(-1000.0, 1000.0)
-                .doc("Which way is down; hot smoke rises against it. Only its direction counts, `buoyancy` its strength"),
+                .doc("Which way is down and how strongly: hot smoke rises against it, times `buoyancy`"),
         )
         .param(
             ParamSpec::float("buoyancy", 4.0)
                 .clamp(-1000.0, 1000.0)
                 .range(0.0, 10.0)
-                .doc("How strongly temperature lifts the smoke, in metres per second squared per degree"),
+                .doc("How strongly temperature lifts the smoke against `gravity`, per degree"),
         )
         .param(
             ParamSpec::float("cooling_rate", 1.5)
@@ -139,6 +168,93 @@ fn desc() -> NodeDesc {
                 .doc("Density the smoke loses per second, whatever its density"),
         )
         .param(
+            ParamSpec::float("vorticity_strength", 10.0)
+                .clamp(0.0, 1000.0)
+                .range(0.0, 40.0)
+                .group("Vorticity")
+                .doc(
+                    "How strongly the smoke's eddies are kept spinning: more curls and billows. The grid \
+                     smears small eddies out, this puts them back. 0: off, the cheapest",
+                ),
+        )
+        .param(
+            ParamSpec::float("vorticity_from_velocity", 1.0)
+                .clamp(-1000.0, 1000.0)
+                .range(0.0, 2.0)
+                .group("Vorticity")
+                .doc("How much faster smoke spins more: the strength grows with the speed times this"),
+        )
+        .param(
+            ParamSpec::float("vorticity_from_smoke", 0.0)
+                .clamp(-1000.0, 1000.0)
+                .range(0.0, 2.0)
+                .group("Vorticity")
+                .doc("How much denser smoke spins more"),
+        )
+        .param(
+            ParamSpec::float("vorticity_from_temp", 0.0)
+                .clamp(-1000.0, 1000.0)
+                .range(0.0, 2.0)
+                .group("Vorticity")
+                .doc("How much hotter smoke spins more"),
+        )
+        .param(
+            ParamSpec::float("vorticity_from_fuel", 0.0)
+                .clamp(-1000.0, 1000.0)
+                .range(0.0, 2.0)
+                .group("Vorticity")
+                .doc("How much smoke with more fuel spins more"),
+        )
+        .param(
+            ParamSpec::float("vorticity_constant", 0.0)
+                .clamp(-1000.0, 1000.0)
+                .range(0.0, 2.0)
+                .group("Vorticity")
+                .doc("Strength everywhere, whatever the smoke"),
+        )
+        .param(
+            ParamSpec::float("ignition_temp", 0.1)
+                .clamp(-1000.0, 1000.0)
+                .range(0.0, 2.0)
+                .group("Burning")
+                .doc("Temperature from which fuel burns"),
+        )
+        .param(
+            ParamSpec::float("burn_per_temp", 4.0)
+                .clamp(0.0, 1000.0)
+                .range(0.0, 10.0)
+                .group("Burning")
+                .doc("How fast fuel burns per degree above `ignition_temp`, per second. 0: nothing burns"),
+        )
+        .param(
+            ParamSpec::float("smoke_per_burn", 4.0)
+                .clamp(0.0, 1000.0)
+                .range(0.0, 10.0)
+                .group("Burning")
+                .doc("Smoke that burning makes"),
+        )
+        .param(
+            ParamSpec::float("temp_per_burn", 8.0)
+                .clamp(-1000.0, 1000.0)
+                .range(0.0, 20.0)
+                .group("Burning")
+                .doc("Heat that burning makes"),
+        )
+        .param(
+            ParamSpec::float("fuel_per_burn", 1.0)
+                .clamp(0.0, 1000.0)
+                .range(0.0, 4.0)
+                .group("Burning")
+                .doc("Fuel that burning uses up: less makes the fuel last longer"),
+        )
+        .param(
+            ParamSpec::float("expansion", 4.0)
+                .clamp(-1000.0, 1000.0)
+                .range(0.0, 10.0)
+                .group("Burning")
+                .doc("How much burning gas swells: the flame pushes out and widens"),
+        )
+        .param(
             ParamSpec::float("speed", 1.0)
                 .clamp(0.0, 100.0)
                 .range(0.0, 4.0)
@@ -148,6 +264,13 @@ fn desc() -> NodeDesc {
             ParamSpec::int("iterations", 30).clamp(1.0, MAX_ITERATIONS as f64).range(4.0, 100.0).more().doc(
                 "Steps that keep the smoke from being squeezed together. Fewer cost less and let it bulge and leak",
             ),
+        )
+        .param(
+            ParamSpec::choice("advection", &["sharp", "smooth"])
+                .more()
+                .doc("How the smoke is carried from frame to frame")
+                .choice_doc("sharp", "keeps the smoke's edges and small detail, costs two more steps a frame")
+                .choice_doc("smooth", "smears them a little every frame, the cheapest"),
         )
         .param(
             ParamSpec::choice("edges", &["open", "walls"])
@@ -163,7 +286,11 @@ fn desc() -> NodeDesc {
                 .doc("Keep the smoke in the state snapshots, so a restart carries on from it"),
         )
         .output("out", DataKind::Vol)
-        .describe_output("out", "The smoke: density in red, temperature in green, for tex.raymarch")
+        .describe_output(
+            "out",
+            "The smoke: density in red, temperature in green, fuel in blue, fuel burning per second in \
+             alpha, for tex.raymarch",
+        )
 }
 
 /// The program's params: worked out per frame, none set by the user directly.
@@ -181,14 +308,31 @@ fn program_params() -> Vec<ParamSpec> {
         "smoke_fade",
         "temp_keep",
         "warm",
+        "emit_fuel",
+        "vort",
+        "vort_constant",
+        "vort_velocity",
+        "vort_smoke",
+        "vort_temp",
+        "vort_fuel",
+        "ignition",
+        "burn_per_temp",
+        "smoke_per_burn",
+        "temp_per_burn",
+        "fuel_per_burn",
+        "expansion",
+        "direction",
     ]
     .iter()
     .map(|n| ParamSpec::float(n, 0.0))
     .collect();
-    for n in ["box", "emit_at", "emit_velocity", "lift"] {
+    for n in ["box", "emit_at", "emit_velocity", "lift", "emit_half"] {
         params.push(ParamSpec::vec3(n, [0.0; 3]));
     }
     params.push(ParamSpec::int("edges", 0));
+    params.push(ParamSpec::int("emit_shape", 0));
+    params.push(ParamSpec::int("inflow", 0));
+    params.push(ParamSpec::int("sharp", 0));
     params
 }
 
@@ -238,6 +382,9 @@ struct Smoke {
     velocity_ring: VolumeRing,
     fields_ring: VolumeRing,
     pressure_ring: VolumeRing,
+    curl_ring: VolumeRing,
+    /// Steps forward and back for sharp advection.
+    scratch_ring: VolumeRing,
     velocity: Option<Volume>,
     fields: Option<Volume>,
     pressure: Option<Volume>,
@@ -263,7 +410,13 @@ impl Smoke {
 
 impl Operator for Smoke {
     fn gpu_bytes(&self) -> u64 {
-        let rings = [&self.velocity_ring, &self.fields_ring, &self.pressure_ring];
+        let rings = [
+            &self.velocity_ring,
+            &self.fields_ring,
+            &self.pressure_ring,
+            &self.curl_ring,
+            &self.scratch_ring,
+        ];
         let volumes = rings.into_iter().flat_map(VolumeRing::iter);
         let kept = [&self.velocity, &self.fields, &self.pressure].into_iter().flatten();
         let atlases = self.atlases.iter().chain(self.restored.iter()).flat_map(|(_, a, b)| [a, b]);
@@ -309,6 +462,8 @@ impl Operator for Smoke {
             self.velocity_ring.clear();
             self.fields_ring.clear();
             self.pressure_ring.clear();
+            self.curl_ring.clear();
+            self.scratch_ring.clear();
             self.velocity = Some(Volume::new(gpu, cells, KIND)?);
             self.fields = Some(Volume::new(gpu, cells, KIND)?);
             self.pressure = None;
@@ -319,7 +474,7 @@ impl Operator for Smoke {
             let g = vec3(cx, "gravity");
             let len = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
             let b = cx.float("buoyancy")?;
-            if len > 1e-9 && len.is_finite() && b.is_finite() { g.map(|x| -x / len * b) } else { [0.0; 3] }
+            if len.is_finite() && b.is_finite() { g.map(|x| -x * b) } else { [0.0; 3] }
         };
         let emitter = vec3(cx, "emitter_position");
         // Positions in the shader count from the box's lower corner.
@@ -330,6 +485,10 @@ impl Operator for Smoke {
         let emit_rate = if rate >= 1.0 { 1.0 } else { 1.0 - (1.0 - rate).powf(dt * 60.0) };
         let previous_pressure = self.pressure.take().filter(|p| p.size() == cells);
         let edges = i64::from(cx.text("edges")? == "walls");
+        let shape = i64::from(cx.text("emitter_type")? == "box");
+        let emit_half = vec3(cx, "emitter_size").map(|s| if s.is_finite() { s.max(0.0) * 0.5 } else { 0.0 });
+        let vort = cx.float("vorticity_strength")?.max(0.0);
+        let sharp = cx.text("advection")? == "sharp";
         let values: Vec<(&str, Value)> = vec![
             ("dt", Value::Float(dt)),
             ("h", Value::Float(h)),
@@ -347,6 +506,23 @@ impl Operator for Smoke {
             ("smoke_fade", Value::Float(cx.float("smoke_fade")?.max(0.0) * dt)),
             ("temp_keep", Value::Float(keep(cx.float("cooling_rate")?, dt))),
             ("edges", Value::Int(edges)),
+            ("emit_shape", Value::Int(shape)),
+            ("emit_half", Value::Vec3(emit_half)),
+            ("emit_fuel", Value::Float(cx.float("fuel")?.max(0.0))),
+            ("vort", Value::Float(vort)),
+            ("vort_constant", Value::Float(cx.float("vorticity_constant")?)),
+            ("vort_velocity", Value::Float(cx.float("vorticity_from_velocity")?)),
+            ("vort_smoke", Value::Float(cx.float("vorticity_from_smoke")?)),
+            ("vort_temp", Value::Float(cx.float("vorticity_from_temp")?)),
+            ("vort_fuel", Value::Float(cx.float("vorticity_from_fuel")?)),
+            ("ignition", Value::Float(cx.float("ignition_temp")?)),
+            ("burn_per_temp", Value::Float(cx.float("burn_per_temp")?.max(0.0))),
+            ("smoke_per_burn", Value::Float(cx.float("smoke_per_burn")?.max(0.0))),
+            ("temp_per_burn", Value::Float(cx.float("temp_per_burn")?)),
+            ("fuel_per_burn", Value::Float(cx.float("fuel_per_burn")?.max(0.0))),
+            ("expansion", Value::Float(cx.float("expansion")? * EXPANSION_SCALE)),
+            ("direction", Value::Float(1.0)),
+            ("sharp", Value::Int(i64::from(sharp))),
         ];
         let iterations = cx.int("iterations")?.clamp(1, MAX_ITERATIONS);
 
@@ -362,38 +538,70 @@ impl Operator for Smoke {
             [self.pressure_ring.next(gpu, cells, KIND)?, self.pressure_ring.next(gpu, cells, KIND)?];
         let carried = self.fields_ring.next(gpu, cells, KIND)?;
         let projected = forced.clone();
+        // The curl only when something reads it.
+        let curl = if vort > 0.0 { Some(self.curl_ring.next(gpu, cells, KIND)?) } else { None };
 
-        let param = |name: &str| values.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
+        // Steps forward and back for sharp advection of the fields.
+        let scratch = if sharp {
+            Some([self.scratch_ring.next(gpu, cells, KIND)?, self.scratch_ring.next(gpu, cells, KIND)?])
+        } else {
+            None
+        };
+
         let warm = if previous_pressure.is_some() { WARM } else { 0.0 };
-        let param_warm = |name: &str| if name == "warm" { Some(Value::Float(warm)) } else { param(name) };
-        let dispatch = |volumes| Dispatch { volumes, pictures: &[], seconds: 0.0, frame: 0, param: &param };
-        let inputs_forces = [Some(&velocity), Some(&fields)];
-        let inputs_advect = [Some(&forced)];
-        let inputs_divergence = [Some(&advected), previous_pressure.as_ref()];
+        // Each dispatch's own values over the frame's: `over` names what differs.
+        let with = |over: Vec<(&'static str, Value)>| {
+            let values = &values;
+            move |name: &str| {
+                over.iter().chain(values.iter()).find(|(n, _)| *n == name).map(|(_, v)| v.clone())
+            }
+        };
+        let plain = with(vec![]);
+        let warmed = with(vec![("warm", Value::Float(warm))]);
+        let fields_ahead = with(vec![("inflow", Value::Int(1))]);
+        let fields_back = with(vec![("inflow", Value::Int(1)), ("direction", Value::Float(-1.0))]);
+        let fields_final = with(vec![("inflow", Value::Int(1))]);
+        fn dispatch<'a>(
+            volumes: &'a [Option<&'a Volume>],
+            param: &'a dyn Fn(&str) -> Option<Value>,
+        ) -> Dispatch<'a> {
+            Dispatch { volumes, pictures: &[], seconds: 0.0, frame: 0, param }
+        }
         let [first, second] = &pressures;
-        let inputs_jacobi = [[Some(first)], [Some(second)]];
         // An even number of steps ends in the first pressure volume, an odd one in the second.
         let last = if iterations % 2 == 0 { first } else { second };
-        let inputs_project = [Some(&advected), Some(last)];
-        let inputs_fields = [Some(&fields), Some(&projected)];
-        let forces = dispatch(&inputs_forces);
-        let advect = dispatch(&inputs_advect);
-        let divergence = Dispatch {
-            volumes: &inputs_divergence,
-            pictures: &[],
-            seconds: 0.0,
-            frame: 0,
-            param: &param_warm,
+        let (ahead, behind) = match &scratch {
+            Some([a, b]) => (Some(a), Some(b)),
+            None => (None, None),
         };
-        let jacobi = [dispatch(&inputs_jacobi[0]), dispatch(&inputs_jacobi[1])];
-        let project = dispatch(&inputs_project);
-        let carry = dispatch(&inputs_fields);
+        let inputs_curl = [Some(&velocity)];
+        let inputs_forces = [Some(&velocity), Some(&fields), curl.as_ref()];
+        let inputs_ahead = [Some(&forced), Some(&forced)];
+        let inputs_divergence = [Some(&advected), previous_pressure.as_ref(), Some(&fields)];
+        let inputs_jacobi = [[Some(first)], [Some(second)]];
+        let inputs_project = [Some(&advected), Some(last)];
+        let inputs_fields_ahead = [Some(&fields), Some(&projected)];
+        let inputs_fields_back = [ahead, Some(&projected)];
+        let inputs_fields = [Some(&fields), Some(&projected), ahead, behind];
+        let curling = dispatch(&inputs_curl, &plain);
+        let forces = dispatch(&inputs_forces, &plain);
+        let carry_ahead = dispatch(&inputs_ahead, &plain);
+        let divergence = dispatch(&inputs_divergence, &warmed);
+        let jacobi = [dispatch(&inputs_jacobi[0], &plain), dispatch(&inputs_jacobi[1], &plain)];
+        let project = dispatch(&inputs_project, &plain);
+        let fields_carry_ahead = dispatch(&inputs_fields_ahead, &fields_ahead);
+        let fields_carry_back = dispatch(&inputs_fields_back, &fields_back);
+        let carry = dispatch(&inputs_fields, &fields_final);
         let step = |entry, out, input| Step { entry, out: Out::Volume(out), input };
-        let mut steps = vec![
-            step("forces", &forced, &forces),
-            step("advect_velocity", &advected, &advect),
-            step("divergence", first, &divergence),
-        ];
+        let mut steps = Vec::with_capacity(iterations as usize + 10);
+        if let Some(c) = &curl {
+            steps.push(step("curl", c, &curling));
+        }
+        steps.push(step("forces", &forced, &forces));
+        // The velocity is carried plainly: sharpened, vorticity confinement spun up eddies one
+        // cell wide until the flow blew up.
+        steps.push(step("carry", &advected, &carry_ahead));
+        steps.push(step("divergence", first, &divergence));
         let [from_first, from_second] = &jacobi;
         for k in 0..iterations {
             // Even steps read the first volume and write the second, odd ones the other way.
@@ -404,13 +612,17 @@ impl Operator for Smoke {
             }
         }
         steps.push(step("project", &projected, &project));
+        if let (Some(a), Some(b)) = (ahead, behind) {
+            steps.push(step("carry", a, &fields_carry_ahead));
+            steps.push(step("carry", b, &fields_carry_back));
+        }
         steps.push(step("advect_fields", &carried, &carry));
         let mut batch = Batch::new(gpu, KIND);
         program.encode_steps(&mut batch, &steps)?;
         batch.submit();
         let pressure = last.clone();
         drop(steps);
-        drop((velocity, fields, previous_pressure, advected));
+        drop((velocity, fields, previous_pressure, advected, curl, scratch));
 
         if self.persist {
             let (w, h) = atlas_size(cells);

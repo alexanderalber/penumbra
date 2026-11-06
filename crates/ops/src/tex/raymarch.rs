@@ -1,7 +1,8 @@
 //! `tex.raymarch`: draws a volume (`vol` data, such as `vol.smoke`'s) by marching a ray through
 //! it for every pixel (`raymarch.wgsl`). The camera is orthographic and looks along -z, the
 //! picture's right along +x and its top along +y; `rotate` turns the volume in front of it. The
-//! smoke absorbs light by its density and shows in `color`, unlit.
+//! smoke absorbs light by its density and shows in `color`, unlit; hot smoke glows in the colour
+//! its temperature has on a palette.
 
 use std::sync::Arc;
 
@@ -55,6 +56,22 @@ fn desc() -> NodeDesc {
         )
         .param(ParamSpec::color("color", [1.0, 1.0, 1.0, 1.0]).doc("Colour of the smoke; its alpha thins it"))
         .param(
+            ParamSpec::float("glow", 0.0)
+                .clamp(0.0, 1e4)
+                .range(0.0, 4.0)
+                .doc(
+                    "How brightly hot smoke glows, on top of `color`: in the palette's colour at its \
+                     temperature. 0: no glow",
+                ),
+        )
+        .param(
+            ParamSpec::float("hot", 2.0)
+                .clamp(1e-6, 1e5)
+                .range(0.1, 10.0)
+                .curve(Curve::Log)
+                .doc("Temperature that glows in the palette's right end; cold smoke takes its left end"),
+        )
+        .param(
             ParamSpec::float("quality", 1.0)
                 .clamp(0.05, MAX_QUALITY)
                 .range(0.25, 4.0)
@@ -63,7 +80,13 @@ fn desc() -> NodeDesc {
                 .doc("Steps per cell along each ray. More shows less banding and costs more"),
         )
         .input("in", DataKind::Vol)
-        .describe_input("in", "The volume: its red is the density")
+        .describe_input("in", "The volume: its red is the density, its green the temperature")
+        .input("palette", DataKind::Tex)
+        .describe_input(
+            "palette",
+            "Colours of the glow from cold on the left to hot on the right, read along the middle row. \
+             Unwired: black over red, orange and yellow to white",
+        )
         .output("out", DataKind::Tex)
         .describe_output("out", "The smoke in its colour over transparent black, premultiplied")
         .output("density", DataKind::Tex)
@@ -77,13 +100,14 @@ fn desc() -> NodeDesc {
 
 fn params() -> Vec<ParamSpec> {
     let mut p: Vec<ParamSpec> =
-        ["far", "thickness", "step"].iter().map(|n| ParamSpec::float(n, 0.0)).collect();
+        ["far", "thickness", "step", "glow", "hot"].iter().map(|n| ParamSpec::float(n, 0.0)).collect();
     for n in ["center", "box", "axis_x", "axis_y", "axis_z"] {
         p.push(ParamSpec::vec3(n, [0.0; 3]));
     }
     p.push(ParamSpec::vec2("pan", [0.0; 2]));
     p.push(ParamSpec::vec2("view", [1.0; 2]));
     p.push(ParamSpec::color("color", [1.0; 4]));
+    p.push(ParamSpec::int("palette", 0));
     p
 }
 
@@ -167,6 +191,10 @@ impl Operator for Raymarch {
         let step = longest / cx.float("quality")?.clamp(0.05, MAX_QUALITY);
         let diagonal = (size[0] * size[0] + size[1] * size[1] + size[2] * size[2]).sqrt();
         let color = cx.param("color").cloned().unwrap_or(Value::Vec4([1.0; 4]));
+        let palette = cx.input_as::<penumbra_gpu::Tex>(1);
+        if palette.is_none() && cx.def().inputs.get(1).is_some_and(Option::is_some) && !cx.input_stuck(1) {
+            return Err(waiting(cx));
+        }
         let values: Vec<(&str, Value)> = vec![
             ("far", Value::Float(center[2] + diagonal + 1.0)),
             ("thickness", Value::Float(cx.float("thickness")?.max(0.0))),
@@ -179,13 +207,16 @@ impl Operator for Raymarch {
             ("pan", Value::Vec2(pan)),
             ("view", Value::Vec2([view_height * aspect, view_height])),
             ("color", color),
+            ("glow", Value::Float(cx.float("glow")?.max(0.0))),
+            ("hot", Value::Float(cx.float("hot")?.max(1e-6))),
+            ("palette", Value::Int(i64::from(palette.is_some()))),
         ];
         let param = |name: &str| values.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
 
         let out = self.out_ring.next_storage(gpu, width, height, KIND)?;
         let input = Dispatch {
             volumes: &[Some(&medium.volume)],
-            pictures: &[],
+            pictures: &[palette],
             seconds: 0.0,
             frame: 0,
             param: &param,

@@ -1,5 +1,5 @@
 // tex.raymarch: a volume seen through an orthographic camera looking along -z. vol0 is the
-// volume (density in red). Rays run in the box's own frame: `axis_x`, `axis_y`, `axis_z` are
+// volume (density in red, temperature in green), pic0 the glow's palette when `palette` is 1. Rays run in the box's own frame: `axis_x`, `axis_y`, `axis_z` are
 // the world's axes there (the box's rotation undone), positions in metres from its centre.
 
 // Where the ray of a pixel enters and leaves the box in texture coordinates, as distances along
@@ -11,6 +11,19 @@ fn slab(origin: vec3f, direction: vec3f) -> vec2f {
     let near = min(a, b);
     let far = max(a, b);
     return vec2f(max(max(near.x, near.y), max(near.z, 0.0)), min(min(far.x, far.y), far.z));
+}
+
+// The glow's colour at temperature `t`, 0 cold to 1 hot: the palette's middle row, or black over
+// red, orange and yellow to white.
+fn glow_color(t: f32) -> vec3f {
+    let x = clamp(t, 0.0, 1.0);
+    if (params.palette == 1) {
+        return max(textureSampleLevel(pic0, pn_clamp, vec2f(x, 0.5), 0.0).rgb, vec3f(0.0));
+    }
+    let r = smoothstep(0.05, 0.45, x);
+    let g = smoothstep(0.3, 0.8, x);
+    let b = smoothstep(0.7, 1.0, x);
+    return vec3f(r, g * 0.85 + b * 0.15, b);
 }
 
 @compute @workgroup_size(8, 8, 1)
@@ -41,9 +54,14 @@ fn march(@builtin(global_invocation_id) id: vec3u) {
                 break;
             }
             let at = origin + step_dir * t;
-            let density = max(textureSampleLevel(vol0, pn_clamp, at, 0.0).r, 0.0);
+            let cell = textureSampleLevel(vol0, pn_clamp, at, 0.0);
+            let density = max(cell.r, 0.0);
             let absorbed = 1.0 - exp(-params.thickness * density * step);
-            light += transmittance * absorbed * params.color.rgb;
+            var color = params.color.rgb;
+            if (params.glow > 0.0) {
+                color += params.glow * glow_color(cell.g / params.hot);
+            }
+            light += transmittance * absorbed * color;
             transmittance *= 1.0 - absorbed;
             if (transmittance < 0.002) {
                 transmittance = 0.0;

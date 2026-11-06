@@ -718,7 +718,8 @@ Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, t
 
 Inputs:
 
-- `in` (vol): The volume: its red is the density
+- `in` (vol): The volume: its red is the density, its green the temperature
+- `palette` (tex): Colours of the glow from cold on the left to hot on the right, read along the middle row. Unwired: black over red, orange and yellow to white
 
 Outputs:
 
@@ -735,6 +736,8 @@ Outputs:
 | `pan` | vec2 | `[0, 0]` | m | Moves the view across: the picture's centre this far right and up of the box's centre |
 | `thickness` | float | `4` | 0 to 20 (soft) | How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through |
 | `color` | colour | `[1, 1, 1, 1]` |  | Colour of the smoke; its alpha thins it |
+| `glow` | float | `0` | 0 to 4 (soft) | How brightly hot smoke glows, on top of `color`: in the palette's colour at its temperature. 0: no glow |
+| `hot` | float | `2` | 0.1 to 10 (soft) | Temperature that glows in the palette's right end; cold smoke takes its left end |
 | `quality` *(more)* | float | `1` | 0.25 to 4 (soft) | Steps per cell along each ray. More shows less banding and costs more |
 
 ### tex.remap
@@ -2405,28 +2408,44 @@ Inputs: none.
 
 Outputs:
 
-- `out` (vol): The smoke: density in red, temperature in green, for tex.raymarch
+- `out` (vol): The smoke: density in red, temperature in green, fuel in blue, fuel burning per second in alpha, for tex.raymarch
 
 | param | type | default | range | meaning |
 |---|---|---|---|---|
 | `center` | vec3 | `[0, 0, 0]` | m | Centre of the box the smoke lives in |
 | `size` | vec3 | `[4, 1.5, 1.5]` | 0.001 to 10000 m | Size of the box along x, y and z. Smoke that leaves it is gone |
 | `resolution` | int | `128` | 32 to 256 (soft) | Cells along the box's longest side; the other sides get as many as cubic cells need. Doubling it costs about eight times as much. A change starts the smoke over |
-| `emitter_position` *(Emitter)* | vec3 | `[-1.5, 0, 0]` | m | Centre of the emitter, a sphere that blows smoke in |
-| `emitter_radius` *(Emitter)* | float | `0.3` | 0.01 to 1 m (soft) | Radius of the emitter; 0: off |
+| `emitter_position` *(Emitter)* | vec3 | `[-1.5, 0, 0]` | m | Centre of the emitter, the place that blows smoke in |
+| `emitter_type` *(Emitter)* | sphere \| box | `"sphere"` |  | Shape of the emitter; sphere: a ball of `emitter_radius`; box: a box of `emitter_size` |
+| `emitter_size` *(Emitter)* | vec3 | `[0.5, 0.5, 0.5]` | 0 to 10000 m | Size of the box emitter along x, y and z |
+| `emitter_radius` *(Emitter)* | float | `0.3` | 0.01 to 1 m (soft) | Radius of the sphere emitter; 0: off |
 | `linear_velocity` *(Emitter)* | vec3 | `[0, 0.8, 0]` | -1000 to 1000 | Speed the emitter blows at, in metres per second along x, y and z |
 | `smoke` *(Emitter)* | float | `0.5` | 0 to 2 (soft) | Density of the smoke the emitter makes |
 | `temp` *(Emitter)* | float | `2` | 0 to 5 (soft) | Temperature of the smoke the emitter makes: hotter rises faster (`buoyancy`) |
+| `fuel` *(Emitter)* | float | `1` | 0 to 5 (soft) | Fuel the emitter blows in with the smoke. Fuel hotter than `ignition_temp` burns: it heats, makes smoke and swells. 0: smoke without fire |
 | `correction_rate` *(Emitter)* | float | `0.5` | 0 to 1 | How much of the way to its own velocity, smoke and temperature the emitter takes the cells inside it each 60th of a second; 1 sets them |
-| `gravity` | vec3 | `[0, -1, 0]` | -1000 to 1000 | Which way is down; hot smoke rises against it. Only its direction counts, `buoyancy` its strength |
-| `buoyancy` | float | `4` | 0 to 10 (soft) | How strongly temperature lifts the smoke, in metres per second squared per degree |
+| `gravity` | vec3 | `[0, -1, 0]` | -1000 to 1000 | Which way is down and how strongly: hot smoke rises against it, times `buoyancy` |
+| `buoyancy` | float | `4` | 0 to 10 (soft) | How strongly temperature lifts the smoke against `gravity`, per degree |
 | `cooling_rate` | float | `1.5` | 0 to 5 (soft) | How fast the smoke cools, per second: at 1, to about a third in a second |
 | `velocity_damping` | float | `0.1` | 0 to 2 (soft) | Share of its speed the smoke loses per second |
 | `velocity_fade` | float | `0.1` | 0 to 2 (soft) | Speed the smoke loses per second, in metres per second, whatever its speed |
 | `smoke_damping` | float | `0.1` | 0 to 2 (soft) | Share of its density the smoke loses per second |
 | `smoke_fade` | float | `0.4` | 0 to 2 (soft) | Density the smoke loses per second, whatever its density |
+| `vorticity_strength` *(Vorticity)* | float | `10` | 0 to 40 (soft) | How strongly the smoke's eddies are kept spinning: more curls and billows. The grid smears small eddies out, this puts them back. 0: off, the cheapest |
+| `vorticity_from_velocity` *(Vorticity)* | float | `1` | 0 to 2 (soft) | How much faster smoke spins more: the strength grows with the speed times this |
+| `vorticity_from_smoke` *(Vorticity)* | float | `0` | 0 to 2 (soft) | How much denser smoke spins more |
+| `vorticity_from_temp` *(Vorticity)* | float | `0` | 0 to 2 (soft) | How much hotter smoke spins more |
+| `vorticity_from_fuel` *(Vorticity)* | float | `0` | 0 to 2 (soft) | How much smoke with more fuel spins more |
+| `vorticity_constant` *(Vorticity)* | float | `0` | 0 to 2 (soft) | Strength everywhere, whatever the smoke |
+| `ignition_temp` *(Burning)* | float | `0.1` | 0 to 2 (soft) | Temperature from which fuel burns |
+| `burn_per_temp` *(Burning)* | float | `4` | 0 to 10 (soft) | How fast fuel burns per degree above `ignition_temp`, per second. 0: nothing burns |
+| `smoke_per_burn` *(Burning)* | float | `4` | 0 to 10 (soft) | Smoke that burning makes |
+| `temp_per_burn` *(Burning)* | float | `8` | 0 to 20 (soft) | Heat that burning makes |
+| `fuel_per_burn` *(Burning)* | float | `1` | 0 to 4 (soft) | Fuel that burning uses up: less makes the fuel last longer |
+| `expansion` *(Burning)* | float | `4` | 0 to 10 (soft) | How much burning gas swells: the flame pushes out and widens |
 | `speed` | float | `1` | 0 to 4 (soft) | How fast the simulation runs against the show clock; 0 holds it |
 | `iterations` *(more)* | int | `30` | 4 to 100 (soft) | Steps that keep the smoke from being squeezed together. Fewer cost less and let it bulge and leak |
+| `advection` *(more)* | sharp \| smooth | `"sharp"` |  | How the smoke is carried from frame to frame; sharp: keeps the smoke's edges and small detail, costs two more steps a frame; smooth: smears them a little every frame, the cheapest |
 | `edges` *(more)* | open \| walls | `"open"` |  | What the box's sides are to the smoke; open: the smoke flows out and is gone; walls: the smoke turns along them |
 | `reset` | bool | `false` |  | Starts over from still, clear air, every frame while on |
 | `persist` *(more)* | bool | `true` |  | Keep the smoke in the state snapshots, so a restart carries on from it |

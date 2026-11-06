@@ -128,10 +128,14 @@ The families:
   in place, for a program that keeps reading it; off, every write gets a new name with `_2`,
   `_3`, ...
 - **`vol`**: volumes, such as smoke. `vol.smoke` simulates smoke in a box: an emitter blows hot
-  smoke in, the smoke rises against `gravity`, swirls and fades. `tex.raymarch` draws a volume as
-  a picture, seen from the front through the whole box. Its `density` output shows how much
-  smoke covers each pixel, as grey, for `tex.lookup`. `vol.smoke` keeps its smoke in the state
-  snapshots. Its params carry NVIDIA Flow's names where they mean the same.
+  smoke in, the smoke rises against `gravity`, swirls and fades. Fuel in the smoke burns once it
+  is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame.
+  `tex.raymarch` draws a volume as a picture, seen from the front through the whole box. Hot
+  smoke glows with `glow`, in the colours of a palette picture on its `palette` input. Its
+  `density` output shows how much smoke covers each pixel, as grey, for `tex.lookup`. Burning
+  smoke is dense: a `thickness` well below 1 lets the eye see into it. `vol.smoke` keeps its
+  smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean
+  the same; how strongly a number acts was matched by eye to one Flow scene.
 - **`geo`**, **`mat`**, **`light`**, **`view`**: a 3D scene. Geometry from files or
   primitives, transformed and merged; materials put on it with `geo.assign_material`; lights and a
   `view.camera` wired into a `tex.render`, which makes a picture of it all (a render needs its

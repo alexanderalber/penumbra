@@ -1,5 +1,7 @@
 // vol.smoke: Stable Fluids in three dimensions. Velocity volumes hold metres per second in
-// xyz; field volumes hold the smoke's density in red, its temperature in green. Pressure
+// xyz; field volumes hold the smoke's density in red, its temperature in green, its fuel in
+// blue and the fuel burnt per second in alpha. Curl volumes hold the curl of the velocity in
+// xyz and its length in w. Pressure
 // volumes hold the pressure in red and the divergence it cancels in green. Cells are cubes of
 // `params.h` metres; positions below are in metres from the box's lower corner.
 
@@ -13,18 +15,64 @@ fn cell_position(id: vec3u) -> vec3f {
     return (vec3f(id) + 0.5) * params.h;
 }
 
-// How much of the cell lies in the emitter's sphere: 1 inside, 0 outside, a cell-wide edge.
+// How much of the cell lies in the emitter: 1 inside, 0 outside, a cell-wide edge. A sphere of
+// `emit_radius`, or a box of `emit_half` on either side of its centre.
 fn emitter(id: vec3u) -> f32 {
-    let d = length(cell_position(id) - params.emit_at);
-    return clamp((params.emit_radius - d) / max(params.h, 1e-6) + 0.5, 0.0, 1.0);
+    let h = max(params.h, 1e-6);
+    let d = cell_position(id) - params.emit_at;
+    if (params.emit_shape == 1) {
+        let inside = clamp((params.emit_half - abs(d)) / h + 0.5, vec3f(0.0), vec3f(1.0));
+        return inside.x * inside.y * inside.z;
+    }
+    return clamp((params.emit_radius - length(d)) / h + 0.5, 0.0, 1.0);
 }
 
 fn texture_coords(id: vec3u) -> vec3f {
     return (vec3f(id) + 0.5) / vec3f(pn.size);
 }
 
-// Forces: buoyancy by temperature, damping and fade, the emitter's velocity. vol0 velocity,
-// vol1 fields.
+// The curl of the velocity and its length. vol0 velocity.
+@compute @workgroup_size(4, 4, 4)
+fn curl(@builtin(global_invocation_id) id: vec3u) {
+    if (any(id >= pn.size)) {
+        return;
+    }
+    let c = vec3i(id);
+    let x = vec3i(1, 0, 0);
+    let y = vec3i(0, 1, 0);
+    let z = vec3i(0, 0, 1);
+    let dx = (velocity_at(c + x) - velocity_at(c - x)) / (2.0 * params.h);
+    let dy = (velocity_at(c + y) - velocity_at(c - y)) / (2.0 * params.h);
+    let dz = (velocity_at(c + z) - velocity_at(c - z)) / (2.0 * params.h);
+    let w = clean(vec4f(dy.z - dz.y, dz.x - dx.z, dx.y - dy.x, 0.0)).xyz;
+    textureStore(vol_out, id, vec4f(w, length(w)));
+}
+
+fn curl_length(c: vec3i) -> f32 {
+    return textureLoad(vol2, clamp(c, vec3i(0), vec3i(pn.size) - 1), 0).w;
+}
+
+// Vorticity confinement: a push that spins up the eddies the grid smears out, towards where
+// the curl is stronger, across it. vol2 curl.
+fn confinement(c: vec3i, strength: f32) -> vec3f {
+    let x = vec3i(1, 0, 0);
+    let y = vec3i(0, 1, 0);
+    let z = vec3i(0, 0, 1);
+    let grad = vec3f(
+        curl_length(c + x) - curl_length(c - x),
+        curl_length(c + y) - curl_length(c - y),
+        curl_length(c + z) - curl_length(c - z),
+    );
+    let len = length(grad);
+    if (len < 1e-6) {
+        return vec3f(0.0);
+    }
+    let w = textureLoad(vol2, c, 0).xyz;
+    return cross(grad / len, w) * (strength * params.h);
+}
+
+// Forces: buoyancy by temperature, vorticity confinement, damping and fade, the emitter's
+// velocity. vol0 velocity, vol1 fields, vol2 curl (when `vort` > 0).
 @compute @workgroup_size(4, 4, 4)
 fn forces(@builtin(global_invocation_id) id: vec3u) {
     if (any(id >= pn.size)) {
@@ -33,25 +81,69 @@ fn forces(@builtin(global_invocation_id) id: vec3u) {
     var v = clean(textureLoad(vol0, id, 0)).xyz;
     let f = clean(textureLoad(vol1, id, 0));
     v += params.lift * f.g * params.dt;
+    if (params.vort > 0.0) {
+        // How much of the strength acts here, 0 to 1.
+        let mask = clamp(params.vort_constant + params.vort_velocity * length(v) + params.vort_smoke * f.r
+            + params.vort_temp * f.g + params.vort_fuel * f.b, 0.0, 1.0);
+        v += confinement(vec3i(id), params.vort * mask) * params.dt;
+    }
     v *= params.vel_keep;
     let speed = length(v);
     if (speed > 0.0) {
         v *= max(speed - params.vel_fade, 0.0) / speed;
     }
     v = mix(v, params.emit_velocity, emitter(id) * params.emit_rate);
-    textureStore(vol_out, id, vec4f(v, 0.0));
+    textureStore(vol_out, id, clean(vec4f(v, 0.0)));
 }
 
-// The velocity carried along by itself (semi-Lagrangian). vol0 velocity.
+// Where the content of cell `id` comes from when velocity `v` carries it: `direction` 1 forward
+// in time, -1 back. In texture coordinates.
+fn carried_from(id: vec3u, v: vec3f) -> vec3f {
+    return texture_coords(id) - params.direction * v * params.dt / params.box;
+}
+
+// Whether content from `source` counts: at open edges (`inflow` 1) what comes in from outside the
+// box is clear air.
+fn counts(source: vec3f) -> bool {
+    let half = 0.5 / vec3f(pn.size);
+    return params.inflow == 0 || params.edges == 1 || (all(source >= -half) && all(source <= 1.0 + half));
+}
+
+// One semi-Lagrangian step. vol0 what is carried, vol1 the velocity carrying it.
 @compute @workgroup_size(4, 4, 4)
-fn advect_velocity(@builtin(global_invocation_id) id: vec3u) {
+fn carry(@builtin(global_invocation_id) id: vec3u) {
     if (any(id >= pn.size)) {
         return;
     }
-    let v = textureLoad(vol0, id, 0).xyz;
+    let source = carried_from(id, textureLoad(vol1, id, 0).xyz);
+    var out = vec4f(0.0);
+    if (counts(source)) {
+        out = clean(textureSampleLevel(vol0, pn_clamp, source, 0.0));
+    }
+    textureStore(vol_out, id, out);
+}
+
+// MacCormack: the forward step `ahead` corrected by half the error a step back from it shows
+// against `start`, kept within the cells the forward step read, so it cannot overshoot. Keeps
+// edges and eddies sharp that one step smears. `v` the velocity at the cell.
+fn sharpened(start: texture_3d<f32>, ahead: texture_3d<f32>, back: texture_3d<f32>, id: vec3u, v: vec3f) -> vec4f {
+    let a = clean(textureLoad(ahead, id, 0));
     let source = texture_coords(id) - v * params.dt / params.box;
-    let carried = textureSampleLevel(vol0, pn_clamp, source, 0.0).xyz;
-    textureStore(vol_out, id, vec4f(carried, 0.0));
+    if (!counts(source)) {
+        return a;
+    }
+    let n = vec3i(pn.size);
+    let base = vec3i(floor(source * vec3f(pn.size) - 0.5));
+    var low = vec4f(3.0e38);
+    var high = vec4f(-3.0e38);
+    for (var k = 0; k < 8; k++) {
+        let corner = clamp(base + vec3i(k & 1, (k >> 1) & 1, (k >> 2) & 1), vec3i(0), n - 1);
+        let c = clean(textureLoad(start, corner, 0));
+        low = min(low, c);
+        high = max(high, c);
+    }
+    let corrected = a + 0.5 * (clean(textureLoad(start, id, 0)) - clean(textureLoad(back, id, 0)));
+    return clamp(corrected, low, high);
 }
 
 // Velocity at cell `c`, also outside the box: walls stand still, open edges continue the edge.
@@ -66,8 +158,23 @@ fn velocity_at(c: vec3i) -> vec3f {
     return textureLoad(vol0, c, 0).xyz;
 }
 
-// The divergence, and last frame's pressure (scaled by `warm`) as the first guess. vol0
-// velocity, vol1 last pressure (when `warm` > 0).
+fn burning_at(c: vec3i) -> f32 {
+    return max(clean(textureLoad(vol2, clamp(c, vec3i(0), vec3i(pn.size) - 1), 0)).a, 0.0);
+}
+
+// The fuel burning per second around cell `c`, averaged with its neighbours: a source that jumps
+// from cell to cell would leave a pattern of stripes the pressure steps cannot smooth.
+fn burning_near(c: vec3i) -> f32 {
+    let x = vec3i(1, 0, 0);
+    let y = vec3i(0, 1, 0);
+    let z = vec3i(0, 0, 1);
+    let around = burning_at(c + x) + burning_at(c - x) + burning_at(c + y) + burning_at(c - y)
+        + burning_at(c + z) + burning_at(c - z);
+    return (2.0 * burning_at(c) + around) / 8.0;
+}
+
+// The divergence, less the expansion of what burns, and last frame's pressure (scaled by `warm`)
+// as the first guess. vol0 velocity, vol1 last pressure (when `warm` > 0), vol2 fields.
 @compute @workgroup_size(4, 4, 4)
 fn divergence(@builtin(global_invocation_id) id: vec3u) {
     if (any(id >= pn.size)) {
@@ -77,8 +184,11 @@ fn divergence(@builtin(global_invocation_id) id: vec3u) {
     let x = vec3i(1, 0, 0);
     let y = vec3i(0, 1, 0);
     let z = vec3i(0, 0, 1);
-    let d = (velocity_at(c + x).x - velocity_at(c - x).x + velocity_at(c + y).y - velocity_at(c - y).y
+    var d = (velocity_at(c + x).x - velocity_at(c - x).x + velocity_at(c + y).y - velocity_at(c - y).y
         + velocity_at(c + z).z - velocity_at(c - z).z) / (2.0 * params.h);
+    if (params.expansion != 0.0) {
+        d -= params.expansion * burning_near(c);
+    }
     var p = 0.0;
     if (params.warm > 0.0) {
         p = clean(textureLoad(vol1, id, 0)).r * params.warm;
@@ -150,24 +260,46 @@ fn project(@builtin(global_invocation_id) id: vec3u) {
     textureStore(vol_out, id, vec4f(v, 0.0));
 }
 
-// Smoke and temperature carried by the new velocity, then cooled, faded and emitted. vol0
-// fields, vol1 velocity.
+// Smoke, temperature and fuel carried by the new velocity; then what is hot enough burns: fuel
+// turns into heat and smoke. Then cooled, faded and emitted. vol0 fields, vol1 velocity; with
+// `sharp` 1, vol2 and vol3 the fields one step forward and back from that.
 @compute @workgroup_size(4, 4, 4)
 fn advect_fields(@builtin(global_invocation_id) id: vec3u) {
     if (any(id >= pn.size)) {
         return;
     }
     let v = textureLoad(vol1, id, 0).xyz;
-    let source = texture_coords(id) - v * params.dt / params.box;
     var f = vec4f(0.0);
-    // At open edges what comes in from outside is clear air.
-    let half = 0.5 / vec3f(pn.size);
-    if (params.edges == 1 || (all(source >= -half) && all(source <= 1.0 + half))) {
-        f = clean(textureSampleLevel(vol0, pn_clamp, source, 0.0));
+    if (params.sharp == 1) {
+        f = sharpened(vol0, vol2, vol3, id, v);
+    } else {
+        let source = carried_from(id, v);
+        if (counts(source)) {
+            f = clean(textureSampleLevel(vol0, pn_clamp, source, 0.0));
+        }
     }
-    let smoke = max(f.r * params.smoke_keep - params.smoke_fade, 0.0);
-    let temperature = f.g * params.temp_keep;
+    var smoke = max(f.r, 0.0);
+    var temperature = f.g;
+    var fuel = max(f.b, 0.0);
+    var burnt = 0.0;
+    if (params.burn_per_temp > 0.0 && fuel > 0.0) {
+        burnt = params.burn_per_temp * max(temperature - params.ignition, 0.0) * params.dt;
+        if (params.fuel_per_burn > 0.0) {
+            burnt = min(burnt, fuel / params.fuel_per_burn);
+        }
+        fuel = max(fuel - params.fuel_per_burn * burnt, 0.0);
+        temperature += params.temp_per_burn * burnt;
+        smoke += params.smoke_per_burn * burnt;
+    }
+    smoke = max(smoke * params.smoke_keep - params.smoke_fade, 0.0);
+    temperature *= params.temp_keep;
     let w = emitter(id) * params.emit_rate;
-    let out = vec4f(mix(smoke, params.emit_smoke, w), mix(temperature, params.emit_temp, w), 0.0, 0.0);
-    textureStore(vol_out, id, out);
+    let rate = select(0.0, burnt / params.dt, params.dt > 0.0);
+    let out = vec4f(
+        mix(smoke, params.emit_smoke, w),
+        mix(temperature, params.emit_temp, w),
+        mix(fuel, params.emit_fuel, w),
+        rate,
+    );
+    textureStore(vol_out, id, clean(out));
 }

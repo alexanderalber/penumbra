@@ -330,7 +330,7 @@ details.target { outline: 2px solid var(--accent); }
 </li>
 <li><strong><code>table</code></strong>: text tables, typed in or read from a file, for scripts and OSC. <a class="ref" href="#table.file"><code>table.file</code></a> reads a CSV, TSV or text file and reloads it when the file changes. <a class="ref" href="#chan.from_table"><code>chan.from_table</code></a> turns a table of numbers into channels, a channel per column (or row), named by its first cell. A param bound to a channel follows the last value in that column (or row). <a class="ref" href="#out.table"><code>out.table</code></a> writes a table to a CSV or TSV file. With <code>file</code> empty it writes <code>export/&lt;node name&gt;.csv</code> in the project folder. In mode <code>changes</code> it writes whenever the table differs from what the file holds; in mode <code>manual</code> it writes only on <a class="ref" href="#table_out.write"><code>table_out.write</code></a>. <code>overwrite</code> on replaces the file in place, for a program that keeps reading it; off, every write gets a new name with <code>_2</code>, <code>_3</code>, ...
 </li>
-<li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: an emitter blows hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. <a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a> draws a volume as a picture, seen from the front through the whole box. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names where they mean the same.
+<li><strong><code>vol</code></strong>: volumes, such as smoke. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> simulates smoke in a box: an emitter blows hot smoke in, the smoke rises against <code>gravity</code>, swirls and fades. Fuel in the smoke burns once it is hot enough: it heats, makes more smoke and swells, so a jet of it widens like a flame. <a class="ref" href="#tex.raymarch"><code>tex.raymarch</code></a> draws a volume as a picture, seen from the front through the whole box. Hot smoke glows with <code>glow</code>, in the colours of a palette picture on its <code>palette</code> input. Its <code>density</code> output shows how much smoke covers each pixel, as grey, for <a class="ref" href="#tex.lookup"><code>tex.lookup</code></a>. Burning smoke is dense: a <code>thickness</code> well below 1 lets the eye see into it. <a class="ref" href="#vol.smoke"><code>vol.smoke</code></a> keeps its smoke in the state snapshots. Its params carry NVIDIA Flow's names and defaults where they mean the same; how strongly a number acts was matched by eye to one Flow scene.
 </li>
 <li><strong><code>geo</code></strong>, <strong><code>mat</code></strong>, <strong><code>light</code></strong>, <strong><code>view</code></strong>: a 3D scene. Geometry from files or primitives, transformed and merged; materials put on it with <a class="ref" href="#geo.assign_material"><code>geo.assign_material</code></a>; lights and a <a class="ref" href="#view.camera"><code>view.camera</code></a> wired into a <a class="ref" href="#tex.render"><code>tex.render</code></a>, which makes a picture of it all (a render needs its camera; the camera is perspective, orthographic or calibrated). <a class="ref" href="#light.projector"><code>light.projector</code></a> throws a picture through a camera onto the geometry: a virtual projector, for trying a mapping on a model of the room. Coordinates are metres, z up. <a class="ref" href="#geo.file"><code>geo.file</code></a> reads OBJ, STL, glTF and FBX. FBX works from file version 7.0 on, binary or ASCII. Binary is the default of Blender, Maya, 3ds Max and Unity. An FBX 6 file gives an error: export it again as FBX 2011 or later. Each FBX model becomes a part with its name, placed as in the file, in metres and z up. Materials bring their diffuse colour and texture, embedded or from a file beside the FBX. Animated models play: each part moves as its model does in the file. A skinned character bends with its bones: each vertex follows the bones that weigh on it, blended by the weights (linear blend skinning). <code>take</code> picks the animation (the <code>takes</code> output lists them), <code>play</code>, <code>speed</code> and <code>loop</code> work as for a video, and with <code>play</code> off a channel bound to <code>time</code> drives it. Posing runs on the CPU and costs about 20 ns per vertex and frame. A file whose skin asks for dual quaternion blending is blended linearly, with a warning; twisting joints then thin out a little. Blend shapes, cameras and lights are not read. <a class="ref" href="#out.mesh"><code>out.mesh</code></a> writes geometry to an OBJ, STL or glb file, every model where it stands in the scene. Each part stays a part: an OBJ object or a glTF node. Only glb keeps material colours; textures are not written. File, <code>overwrite</code> and the modes <code>changes</code> and <code>manual</code> work as for <a class="ref" href="#out.table"><code>out.table</code></a>; the command is <a class="ref" href="#mesh_out.write"><code>mesh_out.write</code></a>. Copies from <a class="ref" href="#geo.tex_instance"><code>geo.tex_instance</code></a> are read back from the GPU and written one by one (<code>instances</code> on <code>expand</code>). For copies that move every frame, use mode <code>manual</code>: in mode <code>changes</code> such an input is written every frame. With <code>instances</code> on <code>skip</code> each model is written once, without its copies. A file holds at most 4 Mi triangles and 256 MiB; over that the node shows an error and writes nothing.
 </li>
@@ -3050,7 +3050,8 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>Draws a volume such as vol.smoke's as seen from the front: thick smoke covers, thin smoke lets through</p>
 <h4>Inputs</h4>
 <ul>
-<li><code>in</code> <span class="kind">vol</span>: The volume: its red is the density</li>
+<li><code>in</code> <span class="kind">vol</span>: The volume: its red is the density, its green the temperature</li>
+<li><code>palette</code> <span class="kind">tex</span>: Colours of the glow from cold on the left to hot on the right, read along the middle row. Unwired: black over red, orange and yellow to white</li>
 </ul>
 <h4>Outputs</h4>
 <ul>
@@ -3068,6 +3069,8 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>pan</code></td><td>vec2</td><td><code>[0, 0]</code></td><td>m</td><td>Moves the view across: the picture's centre this far right and up of the box's centre</td></tr>
 <tr><td><code>thickness</code></td><td>float</td><td><code>4</code></td><td>0 to 20 (soft)</td><td>How much light smoke of density 1 takes away per metre: at 4, a metre of it lets about 2 % through</td></tr>
 <tr><td><code>color</code></td><td>colour</td><td><code>[1, 1, 1, 1]</code></td><td></td><td>Colour of the smoke; its alpha thins it</td></tr>
+<tr><td><code>glow</code></td><td>float</td><td><code>0</code></td><td>0 to 4 (soft)</td><td>How brightly hot smoke glows, on top of <code>color</code>: in the palette's colour at its temperature. 0: no glow</td></tr>
+<tr><td><code>hot</code></td><td>float</td><td><code>2</code></td><td>0.1 to 10 (soft)</td><td>Temperature that glows in the palette's right end; cold smoke takes its left end</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>keep_size</code></td><td>bool</td><td><code>false</code></td><td></td><td>res.optimize leaves width and height alone. For a deliberate resolution: a simulation, a pixel look</td></tr>
 <tr><td><code>quality</code></td><td>float</td><td><code>1</code></td><td>0.25 to 4 (soft)</td><td>Steps per cell along each ray. More shows less banding and costs more</td></tr>
@@ -5303,7 +5306,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <p>none</p>
 <h4>Outputs</h4>
 <ul>
-<li><code>out</code> <span class="kind">vol</span>: The smoke: density in red, temperature in green, for tex.raymarch</li>
+<li><code>out</code> <span class="kind">vol</span>: The smoke: density in red, temperature in green, fuel in blue, fuel burning per second in alpha, for tex.raymarch</li>
 </ul>
 <h4>Params</h4>
 <table class="params">
@@ -5312,8 +5315,8 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>center</code></td><td>vec3</td><td><code>[0, 0, 0]</code></td><td>m</td><td>Centre of the box the smoke lives in</td></tr>
 <tr><td><code>size</code></td><td>vec3</td><td><code>[4, 1.5, 1.5]</code></td><td>0.001 to 10000 m</td><td>Size of the box along x, y and z. Smoke that leaves it is gone</td></tr>
 <tr><td><code>resolution</code></td><td>int</td><td><code>128</code></td><td>32 to 256 (soft)</td><td>Cells along the box's longest side; the other sides get as many as cubic cells need. Doubling it costs about eight times as much. A change starts the smoke over</td></tr>
-<tr><td><code>gravity</code></td><td>vec3</td><td><code>[0, -1, 0]</code></td><td>-1000 to 1000</td><td>Which way is down; hot smoke rises against it. Only its direction counts, <code>buoyancy</code> its strength</td></tr>
-<tr><td><code>buoyancy</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>How strongly temperature lifts the smoke, in metres per second squared per degree</td></tr>
+<tr><td><code>gravity</code></td><td>vec3</td><td><code>[0, -1, 0]</code></td><td>-1000 to 1000</td><td>Which way is down and how strongly: hot smoke rises against it, times <code>buoyancy</code></td></tr>
+<tr><td><code>buoyancy</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>How strongly temperature lifts the smoke against <code>gravity</code>, per degree</td></tr>
 <tr><td><code>cooling_rate</code></td><td>float</td><td><code>1.5</code></td><td>0 to 5 (soft)</td><td>How fast the smoke cools, per second: at 1, to about a third in a second</td></tr>
 <tr><td><code>velocity_damping</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Share of its speed the smoke loses per second</td></tr>
 <tr><td><code>velocity_fade</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Speed the smoke loses per second, in metres per second, whatever its speed</td></tr>
@@ -5322,14 +5325,32 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>speed</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft)</td><td>How fast the simulation runs against the show clock; 0 holds it</td></tr>
 <tr><td><code>reset</code></td><td>bool</td><td><code>false</code></td><td></td><td>Starts over from still, clear air, every frame while on</td></tr>
 <tr class="section"><th colspan="5">Emitter</th></tr>
-<tr><td><code>emitter_position</code></td><td>vec3</td><td><code>[-1.5, 0, 0]</code></td><td>m</td><td>Centre of the emitter, a sphere that blows smoke in</td></tr>
-<tr><td><code>emitter_radius</code></td><td>float</td><td><code>0.3</code></td><td>0.01 to 1 m (soft)</td><td>Radius of the emitter; 0: off</td></tr>
+<tr><td><code>emitter_position</code></td><td>vec3</td><td><code>[-1.5, 0, 0]</code></td><td>m</td><td>Centre of the emitter, the place that blows smoke in</td></tr>
+<tr><td><code>emitter_type</code></td><td>sphere | box</td><td><code>&quot;sphere&quot;</code></td><td></td><td>Shape of the emitter<ul><li><code>sphere</code>: a ball of <code>emitter_radius</code></li><li><code>box</code>: a box of <code>emitter_size</code></li></ul></td></tr>
+<tr><td><code>emitter_size</code></td><td>vec3</td><td><code>[0.5, 0.5, 0.5]</code></td><td>0 to 10000 m</td><td>Size of the box emitter along x, y and z</td></tr>
+<tr><td><code>emitter_radius</code></td><td>float</td><td><code>0.3</code></td><td>0.01 to 1 m (soft)</td><td>Radius of the sphere emitter; 0: off</td></tr>
 <tr><td><code>linear_velocity</code></td><td>vec3</td><td><code>[0, 0.8, 0]</code></td><td>-1000 to 1000</td><td>Speed the emitter blows at, in metres per second along x, y and z</td></tr>
 <tr><td><code>smoke</code></td><td>float</td><td><code>0.5</code></td><td>0 to 2 (soft)</td><td>Density of the smoke the emitter makes</td></tr>
 <tr><td><code>temp</code></td><td>float</td><td><code>2</code></td><td>0 to 5 (soft)</td><td>Temperature of the smoke the emitter makes: hotter rises faster (<code>buoyancy</code>)</td></tr>
+<tr><td><code>fuel</code></td><td>float</td><td><code>1</code></td><td>0 to 5 (soft)</td><td>Fuel the emitter blows in with the smoke. Fuel hotter than <code>ignition_temp</code> burns: it heats, makes smoke and swells. 0: smoke without fire</td></tr>
 <tr><td><code>correction_rate</code></td><td>float</td><td><code>0.5</code></td><td>0 to 1</td><td>How much of the way to its own velocity, smoke and temperature the emitter takes the cells inside it each 60th of a second; 1 sets them</td></tr>
+<tr class="section"><th colspan="5">Vorticity</th></tr>
+<tr><td><code>vorticity_strength</code></td><td>float</td><td><code>10</code></td><td>0 to 40 (soft)</td><td>How strongly the smoke's eddies are kept spinning: more curls and billows. The grid smears small eddies out, this puts them back. 0: off, the cheapest</td></tr>
+<tr><td><code>vorticity_from_velocity</code></td><td>float</td><td><code>1</code></td><td>0 to 2 (soft)</td><td>How much faster smoke spins more: the strength grows with the speed times this</td></tr>
+<tr><td><code>vorticity_from_smoke</code></td><td>float</td><td><code>0</code></td><td>0 to 2 (soft)</td><td>How much denser smoke spins more</td></tr>
+<tr><td><code>vorticity_from_temp</code></td><td>float</td><td><code>0</code></td><td>0 to 2 (soft)</td><td>How much hotter smoke spins more</td></tr>
+<tr><td><code>vorticity_from_fuel</code></td><td>float</td><td><code>0</code></td><td>0 to 2 (soft)</td><td>How much smoke with more fuel spins more</td></tr>
+<tr><td><code>vorticity_constant</code></td><td>float</td><td><code>0</code></td><td>0 to 2 (soft)</td><td>Strength everywhere, whatever the smoke</td></tr>
+<tr class="section"><th colspan="5">Burning</th></tr>
+<tr><td><code>ignition_temp</code></td><td>float</td><td><code>0.1</code></td><td>0 to 2 (soft)</td><td>Temperature from which fuel burns</td></tr>
+<tr><td><code>burn_per_temp</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>How fast fuel burns per degree above <code>ignition_temp</code>, per second. 0: nothing burns</td></tr>
+<tr><td><code>smoke_per_burn</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>Smoke that burning makes</td></tr>
+<tr><td><code>temp_per_burn</code></td><td>float</td><td><code>8</code></td><td>0 to 20 (soft)</td><td>Heat that burning makes</td></tr>
+<tr><td><code>fuel_per_burn</code></td><td>float</td><td><code>1</code></td><td>0 to 4 (soft)</td><td>Fuel that burning uses up: less makes the fuel last longer</td></tr>
+<tr><td><code>expansion</code></td><td>float</td><td><code>4</code></td><td>0 to 10 (soft)</td><td>How much burning gas swells: the flame pushes out and widens</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>iterations</code></td><td>int</td><td><code>30</code></td><td>4 to 100 (soft)</td><td>Steps that keep the smoke from being squeezed together. Fewer cost less and let it bulge and leak</td></tr>
+<tr><td><code>advection</code></td><td>sharp | smooth</td><td><code>&quot;sharp&quot;</code></td><td></td><td>How the smoke is carried from frame to frame<ul><li><code>sharp</code>: keeps the smoke's edges and small detail, costs two more steps a frame</li><li><code>smooth</code>: smears them a little every frame, the cheapest</li></ul></td></tr>
 <tr><td><code>edges</code></td><td>open | walls</td><td><code>&quot;open&quot;</code></td><td></td><td>What the box's sides are to the smoke<ul><li><code>open</code>: the smoke flows out and is gone</li><li><code>walls</code>: the smoke turns along them</li></ul></td></tr>
 <tr><td><code>persist</code></td><td>bool</td><td><code>true</code></td><td></td><td>Keep the smoke in the state snapshots, so a restart carries on from it</td></tr>
 </tbody>

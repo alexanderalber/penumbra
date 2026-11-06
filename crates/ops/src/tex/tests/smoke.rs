@@ -1,6 +1,6 @@
 //! `vol.smoke` drawn by `tex.raymarch` on WARP: hot smoke rises against gravity, a jet blows
 //! along its velocity, projection keeps the volume's flow free of divergence, reset, a still
-//! show, a restored state, the density output.
+//! show, a restored state, the density output, burning, vorticity, the box emitter and the glow.
 
 use penumbra_core::Value;
 use penumbra_gpu::Pixels;
@@ -18,6 +18,7 @@ fn smoke_rig(params: &[(&str, Value)]) -> Rig {
         ("linear_velocity", Value::Vec3([0.0; 3])),
         ("smoke", Value::Float(1.0)),
         ("iterations", Value::Int(10)),
+        ("fuel", Value::Float(0.0)),
     ];
     smoke.extend(params.iter().cloned());
     let ops = [
@@ -65,7 +66,12 @@ fn hot_smoke_rises_against_gravity() {
     }
     // The same slow upward puff, with and without buoyancy, and with gravity turned round.
     let run = |params: &[(&str, Value)]| {
-        let mut all = vec![("linear_velocity", Value::Vec3([0.0, 0.3, 0.0]))];
+        let mut all = vec![
+            ("linear_velocity", Value::Vec3([0.0, 0.3, 0.0])),
+            ("vorticity_strength", Value::Float(0.0)),
+            // Smoothed, the puff's top edge spreads, so the rows between the runs are clearer.
+            ("advection", Value::Text("smooth".into())),
+        ];
         all.extend(params.iter().cloned());
         let mut rig = smoke_rig(&all);
         let mut px = frame(&mut rig);
@@ -210,4 +216,106 @@ fn the_density_output_is_the_cover_as_opaque_grey() {
         }
     }
     assert!(most > 0.1, "{most}");
+}
+
+/// A jet blowing right for `frames` frames; the picture and the smoke's status.
+fn jet(params: &[(&str, Value)], march: &[(&str, Value)], frames: usize) -> Pixels {
+    let mut all = vec![
+        ("emitter_position", Value::Vec3([-0.6, 0.0, 0.0])),
+        ("linear_velocity", Value::Vec3([3.0, 0.0, 0.0])),
+        ("buoyancy", Value::Float(0.0)),
+    ];
+    all.extend(params.iter().cloned());
+    let mut rig = smoke_rig(&all);
+    let edits: Vec<Op> = march.iter().map(|(k, v)| set(&format!("/march.{k}"), v.clone())).collect();
+    rig.edit(&edits);
+    let mut px = frame(&mut rig);
+    for _ in 0..frames {
+        px = frame(&mut rig);
+        assert!(finite(&px));
+    }
+    let s = rig.cooker.status(rig.id("/smoke")).unwrap();
+    assert!(s.error.is_none(), "{s:?}");
+    px
+}
+
+/// How many rows the smoke covers by more than a tenth, in the column at `x` (0..1).
+fn height_at(px: &Pixels, x: f64) -> u32 {
+    let col = ((x * f64::from(px.width)) as u32).min(px.width - 1);
+    (0..px.height).filter(|y| px.get(col, *y).unwrap()[3] > 0.1).count() as u32
+}
+
+#[test]
+fn fuel_burns_into_smoke_that_swells() {
+    if gpu().is_none() {
+        return;
+    }
+    let thin = [("thickness", Value::Float(1.0))];
+    let cold = jet(&[("smoke", Value::Float(0.3))], &thin, 30);
+    let burning = jet(&[("smoke", Value::Float(0.3)), ("fuel", Value::Float(2.0))], &thin, 30);
+    let (sum_cold, _) = cover(&cold);
+    let (sum_burning, _) = cover(&burning);
+    // Burning makes smoke, and the gas swells: more cover, a wider plume downstream.
+    assert!(sum_burning > sum_cold * 1.2, "{sum_burning} against {sum_cold}");
+    assert!(
+        height_at(&burning, 0.6) > height_at(&cold, 0.6),
+        "{} against {}",
+        height_at(&burning, 0.6),
+        height_at(&cold, 0.6)
+    );
+}
+
+#[test]
+fn vorticity_a_box_emitter_and_fire_stay_finite() {
+    if gpu().is_none() {
+        return;
+    }
+    let px = jet(
+        &[
+            ("emitter_type", Value::Text("box".into())),
+            ("emitter_size", Value::Vec3([0.3, 0.3, 0.3])),
+            ("fuel", Value::Float(4.0)),
+            ("vorticity_strength", Value::Float(40.0)),
+            ("expansion", Value::Float(10.0)),
+        ],
+        &[],
+        60,
+    );
+    let (sum, _) = cover(&px);
+    assert!(sum > 1.0, "{sum}");
+    // Sharp and smooth advection both carry the smoke.
+    let smooth = jet(&[("advection", Value::Text("smooth".into()))], &[], 20);
+    assert!(cover(&smooth).0 > 1.0);
+}
+
+#[test]
+fn a_box_emitter_fills_its_box() {
+    if gpu().is_none() {
+        return;
+    }
+    let still = [("linear_velocity", Value::Vec3([0.0; 3])), ("buoyancy", Value::Float(0.0))];
+    let mut ball = vec![("emitter_radius", Value::Float(0.2))];
+    ball.extend(still.iter().cloned());
+    let mut cube =
+        vec![("emitter_type", Value::Text("box".into())), ("emitter_size", Value::Vec3([0.8, 0.2, 0.2]))];
+    cube.extend(still.iter().cloned());
+    let ball = jet(&ball, &[], 3);
+    let cube = jet(&cube, &[], 3);
+    // The box is wider than the ball and lower.
+    let width = |px: &Pixels| (0..px.width).filter(|x| px.get(*x, 12).unwrap()[3] > 0.1).count();
+    assert!(width(&cube) > width(&ball) + 3, "{} against {}", width(&cube), width(&ball));
+    assert!(height_at(&cube, 0.2) < height_at(&ball, 0.2) + 1);
+}
+
+#[test]
+fn hot_smoke_glows() {
+    if gpu().is_none() {
+        return;
+    }
+    let black = Value::Vec4([0.0, 0.0, 0.0, 1.0]);
+    let dark = jet(&[("temp", Value::Float(2.0))], &[("color", black.clone())], 10);
+    let glowing = jet(&[("temp", Value::Float(2.0))], &[("color", black), ("glow", Value::Float(1.0))], 10);
+    let light = |px: &Pixels| px.data.iter().map(|p| f64::from(p[0] + p[1] + p[2])).sum::<f64>();
+    assert!(light(&dark) < 1e-3, "{}", light(&dark));
+    assert!(light(&glowing) > 1.0, "{}", light(&glowing));
 }
