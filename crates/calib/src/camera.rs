@@ -14,7 +14,7 @@
 //!   `d = 1 + k1 r² + k2 r⁴` with `r² = x² + y²`, then `u = fx d x + cx`, `v = fy d y + cy`.
 //!   No skew, no tangential distortion.
 
-use nalgebra::{Matrix3, Matrix4, Rotation3, Vector3};
+use nalgebra::{Matrix3, Matrix4, Rotation3, UnitQuaternion, Vector3};
 use serde::{Deserialize, Serialize};
 
 /// Largest coordinate (world units or pixels) the calibration accepts; beyond this, squares
@@ -117,7 +117,9 @@ pub struct Pose {
 
 impl Pose {
     pub(crate) fn from_parts(r: &Rotation3<f64>, t: &Vector3<f64>) -> Self {
-        let v = r.scaled_axis();
+        // Through the quaternion: `Rotation3::scaled_axis` reads the axis off the antisymmetric part,
+        // which vanishes at exactly half a turn, and would return no rotation at all.
+        let v = UnitQuaternion::from_rotation_matrix(r).scaled_axis();
         Self { rotation: [v.x, v.y, v.z], translation: [t.x, t.y, t.z] }
     }
 
@@ -301,6 +303,22 @@ mod tests {
         assert_eq!(c.project([0.5, -1.2, -10.0]), None);
         assert!(Pose::look_at([0.0; 3], [0.0; 3], [0.0, 1.0, 0.0]).is_none());
         assert!(Pose::look_at([0.0; 3], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0]).is_none());
+    }
+
+    #[test]
+    fn a_pose_of_half_a_turn_keeps_its_rotation() {
+        // Looking along -z with y up is a rotation of exactly half a turn about x.
+        let pose = Pose::look_at([0.0, 0.0, 5.0], [0.0; 3], [0.0, 1.0, 0.0]).unwrap();
+        let c = Camera { intrinsics: Intrinsics::from_throw_ratio([1920, 1080], 1.4), pose };
+        let m = pose.rotation_matrix();
+        assert!((m[0][0] - 1.0).abs() < 1e-9 && (m[1][1] + 1.0).abs() < 1e-9 && (m[2][2] + 1.0).abs() < 1e-9);
+        assert!(c.depth([0.0; 3]) > 4.9);
+        let p = c.position();
+        assert!((p[2] - 5.0).abs() < 1e-9, "{p:?}");
+        // Near half a turn the same, about any axis.
+        let near = Rotation3::from_axis_angle(&Vector3::y_axis(), std::f64::consts::PI - 1e-9);
+        let back = Pose::from_parts(&near, &Vector3::zeros()).rotation3();
+        assert!((back.into_inner() - near.into_inner()).norm() < 1e-6);
     }
 
     #[test]
