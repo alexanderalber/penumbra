@@ -991,6 +991,125 @@ fn beats_arrange_writes_a_table_read_live_as_one_edit() {
     assert_eq!(cut["breaks"], json!([[30.98, 44.52]]), "{cut}");
 }
 
+/// `under` keeps the arrangement's nodes in a component. A project that has them at the top level
+/// moves them there: the table stays cell for cell, wires leave through an output of the component,
+/// and every binding still reads. All of it is one edit, and a rerun finds the nodes there.
+#[test]
+fn beats_arrange_under_a_component_moves_the_nodes_and_keeps_the_table() {
+    let f = Fixture::new("beat_arrange_under");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let music = root.join("examples/beat-grid/music.wav");
+    f.engine.set_shipped_library(Some(root.join("library")));
+    f.call(
+        "node.batch",
+        json!({"ops": [
+            {"op": "create", "path": "/p", "kind": "audio.file", "params": {"file": music.to_string_lossy()}},
+            {"op": "create", "path": "/g", "kind": "chan.beat_grid"},
+            {"op": "connect", "from": "/p", "to": "/g"},
+            {"op": "create", "path": "/stage_index", "kind": "chan.math"},
+        ]}),
+    );
+    for (file, path) in
+        [("stage_synthwave", "/stage"), ("floor_blocks", "/blocks"), ("sky_galaxy", "/galaxy")]
+    {
+        f.call("comp.load", json!({"file": file, "path": path}));
+    }
+    f.call("comp.collapse", json!({"paths": ["/blocks"], "name": "floor_slot"}));
+    f.call("beats.analyze", json!({"path": "/g"}));
+    let args = |extra: Json| {
+        let mut a = json!({
+            "path": "/g",
+            "slots": {"floor": ["/floor_slot/blocks"], "sky": ["/galaxy"]},
+            "stage": "/stage",
+        });
+        if let (Some(o), Some(x)) = (a.as_object_mut(), extra.as_object()) {
+            o.extend(x.clone());
+        }
+        a
+    };
+    let text_of = |path: &str| {
+        let info = f.call("node.info", json!({"path": path}));
+        info["params"].as_array().unwrap().iter().find(|p| p["name"] == "text").unwrap()["value"].clone()
+    };
+    let e = f.fail("beats.arrange", args(json!({})));
+    assert!(e.contains("give table and sequence"), "{e}");
+    for (extra, says) in [
+        (json!({"under": "/"}), "not the root"),
+        (json!({"under": "/stage/nope/deeper"}), "no node at"),
+        (json!({"under": "/g"}), "not a component"),
+        (json!({"under": "/here", "table": "/g"}), "not a table.text"),
+    ] {
+        let e = f.fail("beats.arrange", args(extra.clone()));
+        assert!(e.contains(says), "{extra}: {e}");
+    }
+
+    // At the top level first, with a wire out of the mix.
+    let flat = json!({"table": "/arrangement", "sequence": "/cues"});
+    f.call("beats.arrange", args(flat.clone()));
+    f.call("node.connect", json!({"from": "/arrangement_mix", "to": "/stage_index", "input": 0}));
+    let table = text_of("/arrangement");
+
+    // Now under the table's own name: it becomes the component.
+    let moved = json!({"table": "/arrangement", "sequence": "/cues", "under": "/arrangement"});
+    let r = f.call("beats.arrange", args(moved.clone()));
+    assert_eq!(r["table"], "/arrangement/table", "{r}");
+    assert_eq!(r["sequence"], "/arrangement/cues", "{r}");
+    assert_eq!(r["channels"], "/arrangement/table_mix", "{r}");
+    assert_eq!(r["moved"]["/arrangement"], "/arrangement/table", "{r}");
+    assert_eq!(r["moved"]["/arrangement_pick"], "/arrangement/table_pick", "{r}");
+    assert_eq!(text_of("/arrangement/table"), table);
+    assert!(f.fail("node.info", json!({"path": "/cues"})).contains("no node"));
+    assert!(f.fail("node.info", json!({"path": "/arrangement_mix"})).contains("no node"));
+    let comp = f.call("node.info", json!({"path": "/arrangement"}));
+    assert_eq!(comp["kind"], "comp.base", "{comp}");
+    let inner = f.call("node.info", json!({"path": "/floor_slot/blocks/places"}));
+    assert!(
+        inner["binds"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["param"] == "presence" && b["from"] == "/arrangement/table_mix:blocks"),
+        "{inner}"
+    );
+    // The wire that left now runs through the component's output.
+    let math = f.call("node.info", json!({"path": "/stage_index"}));
+    assert_eq!(math["inputs"][0]["from"], "/arrangement/table_mix_out", "{math}");
+    // The readers still read, from inside the component.
+    f.call("node.watch", json!({"path": "/arrangement/table_mix"}));
+    eventually("the arrangement channels inside the component", || {
+        let m = f.call("chan.read", json!({"path": "/arrangement/table_mix"}));
+        m["channels"].as_array().is_some_and(|c| c.iter().any(|c| c["name"] == "galaxy"))
+            && (0.0..=1.0).contains(&channel(&m, "galaxy"))
+    });
+
+    // A rerun with the same arguments, and one with `under` alone: nothing new, nothing moved.
+    for extra in [moved, json!({"under": "/arrangement"})] {
+        let r = f.call("beats.arrange", args(extra));
+        assert_eq!(r["created"], json!([]), "{r}");
+        assert!(r.get("moved").is_none(), "{r}");
+        assert_eq!(text_of("/arrangement/table"), table);
+    }
+    // The reruns changed nothing, so one undo takes back the move.
+    f.call("history.undo", json!({}));
+    assert_eq!(text_of("/arrangement"), table);
+    f.call("node.info", json!({"path": "/cues"}));
+
+    // A component of that name beside nodes outside it is a clear error.
+    f.call("node.create", json!({"path": "/show", "kind": "comp.base"}));
+    let e = f
+        .fail("beats.arrange", args(json!({"table": "/arrangement", "sequence": "/cues", "under": "/show"})));
+    assert!(e.contains("exists already") && e.contains("outside"), "{e}");
+
+    // A new project: under alone makes the component and everything in it.
+    let r = f.call("beats.arrange", args(json!({"under": "/fresh"})));
+    assert_eq!(r["table"], "/fresh/table", "{r}");
+    assert_eq!(r["created"].as_array().map(Vec::len), Some(13), "{r}");
+    assert_eq!(text_of("/fresh/table"), table);
+    // One undo takes the component with it.
+    f.call("history.undo", json!({}));
+    assert!(f.fail("node.info", json!({"path": "/fresh"})).contains("no node"));
+}
+
 /// The traps' corridor is computed twice, by the traps and by the glider that threads it: both
 /// shaders hold the same code between the markers, so the glider flies where the beams leave room.
 #[test]

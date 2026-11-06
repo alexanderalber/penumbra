@@ -17,14 +17,17 @@ use penumbra_audio::capture::{self, Config};
 use penumbra_audio::measure;
 use penumbra_audio::playback::{self, Settings};
 use penumbra_core::{Name, NodePath, ParamPath, Value};
-use penumbra_graph::Op;
+use penumbra_graph::{Network, Op};
 use penumbra_ops::audio::arrange::{self, Part, Slot};
 use penumbra_ops::audio::beat_grid::{Analysis, BEAT_GRID, State, letter};
 use penumbra_ops::audio::cues::{self, Blend, Level, Pieces};
 use penumbra_ops::audio::file::{FILE, FileStatus};
 use penumbra_ops::audio::instrument::{INSTRUMENT, Presses};
+use penumbra_ops::comp::COMP_KIND;
 use penumbra_ops::sequence::SEQUENCE;
 use penumbra_ops::table::FROM_TABLE;
+use penumbra_project::component;
+use penumbra_project::{Content, diff};
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
@@ -131,7 +134,9 @@ pub fn register(registry: &mut Registry, engine: &Arc<Engine>) {
         "beats.arrange",
         "Writes the arrangement of a music stage from the sections of the file a chan.beat_grid reads, as one \
          undoable edit: {path (the chan.beat_grid), table (a table.text, created when missing), sequence (a \
-         chan.sequence, created when missing), slots ({slot: [element paths]}, e.g. {floor: [\"/blocks\", \
+         chan.sequence, created when missing), under? (a component that holds the table as table, the sequence \
+         as cues and the readers, created when missing; table and sequence are then optional, and given ones \
+         that stand beside the component move into it with their readers, keeping every binding and wire), slots ({slot: [element paths]}, e.g. {floor: [\"/blocks\", \
          \"/mountains\"], sky: [\"/galaxy\"]}; an element may be {path, weight} instead, e.g. {path: \
          \"/glider\", weight: 3}, to come on three times as often as one of weight 1 (default 1, at most \
          100), and with stages: [\"/stage\"] to show only while one of those stages shows (elsewhere it stays at \
@@ -792,6 +797,140 @@ enum Entry {
     },
 }
 
+/// What the table and the sequence are called in the component `under` names.
+const UNDER_TABLE: &str = "table";
+const UNDER_SEQUENCE: &str = "cues";
+
+/// Where the arrangement's table and sequence stand, and what puts them there.
+struct Home {
+    table: NodePath,
+    sequence: NodePath,
+    /// The edit that moves nodes standing elsewhere into the component.
+    moves: Vec<Op>,
+    /// Old path to new path of every node moved.
+    moved: BTreeMap<NodePath, NodePath>,
+    /// The component to create, when nothing was moved and it is missing.
+    make: Option<NodePath>,
+}
+
+/// The table and sequence in the component `under`. A `table` or `sequence` given that stands
+/// elsewhere moves into it with the table's readers; wires that leave run through output nodes of
+/// the component and bindings keep naming the same nodes (`comp.collapse` does the same).
+fn home_under(
+    e: &Engine,
+    net: &Network,
+    under: &NodePath,
+    table: Option<&NodePath>,
+    sequence: Option<&NodePath>,
+) -> CmdResult<Home> {
+    let bad = |err: penumbra_core::Error| CommandError(err.to_string());
+    let Some(level) = under.parent() else {
+        return Err(CommandError("under must name a component, not the root".into()));
+    };
+    let own_table = under.child(name_of(UNDER_TABLE)?).map_err(bad)?;
+    let own_sequence = under.child(name_of(UNDER_SEQUENCE)?).map_err(bad)?;
+    let kind_at = |path: &NodePath| net.resolve(path).and_then(|id| net.node(id)).map(|n| n.kind.as_str());
+    // What stands outside the component's own two places and has to move.
+    let mut members: Vec<NodePath> = Vec::new();
+    let mut names: Vec<(NodePath, String)> = Vec::new();
+    let mut old_table: Option<(String, NodePath)> = None;
+    if let Some(t) = table.filter(|t| **t != own_table && kind_at(t) == Some("table.text")) {
+        let (Some(name), Some(parent)) = (t.name(), t.parent()) else {
+            return Err(CommandError("table must name a node, not the root".into()));
+        };
+        members.push(t.clone());
+        names.push((t.clone(), UNDER_TABLE.to_string()));
+        old_table = Some((name.as_str().to_string(), parent.clone()));
+        for (end, kind) in READERS {
+            let reader = parent.child(name_of(&format!("{name}_{end}"))?).map_err(bad)?;
+            if kind_at(&reader) == Some(kind) {
+                members.push(reader.clone());
+                names.push((reader, format!("{UNDER_TABLE}_{end}")));
+            }
+        }
+    }
+    if let Some(q) = sequence.filter(|q| **q != own_sequence && kind_at(q) == Some(SEQUENCE)) {
+        members.push(q.clone());
+        names.push((q.clone(), UNDER_SEQUENCE.to_string()));
+    }
+    for (given, kind) in [(table, "table.text"), (sequence, SEQUENCE)] {
+        if let Some(path) = given
+            && *path != own_table
+            && *path != own_sequence
+            && *path != *under
+            && let Some(k) = kind_at(path).filter(|k| *k != kind)
+        {
+            return Err(CommandError(format!("{path} is a {k}, not a {kind}")));
+        }
+    }
+    if members.is_empty() {
+        let make = match kind_at(under) {
+            None => {
+                if !level.is_root() && net.resolve(&level).is_none() {
+                    return Err(CommandError(format!(
+                        "no node at {level}: create the component that holds {under} first"
+                    )));
+                }
+                Some(under.clone())
+            }
+            Some(kind) if e.types().desc(kind).is_some_and(|d| d.container) => None,
+            Some(kind) => {
+                return Err(CommandError(format!("{under} is a {kind}, not a component")));
+            }
+        };
+        return Ok(Home {
+            table: own_table,
+            sequence: own_sequence,
+            moves: Vec::new(),
+            moved: BTreeMap::new(),
+            make,
+        });
+    }
+    if let Some(found) = kind_at(under)
+        && !members.contains(under)
+    {
+        return Err(CommandError(format!(
+            "{under} exists already ({found}) and {} stands outside it: rename or delete one of them",
+            members.first().map_or_else(String::new, ToString::to_string)
+        )));
+    }
+    if let Some(m) = members.iter().find(|m| m.parent().as_ref() != Some(&level)) {
+        return Err(CommandError(format!(
+            "{m} cannot move into {under}: it stands at another level; move it beside {under} first"
+        )));
+    }
+    let base = Content::from_network(net).map_err(bad)?;
+    let done = component::collapse(&base, e.types(), &members, under, COMP_KIND).map_err(bad)?;
+    let mut moves = diff(&base, &done.content);
+    let pos = table.and_then(|t| net.resolve(t)).and_then(|id| net.node(id)).and_then(|n| n.pos);
+    moves.push(Op::Place { path: under.clone(), pos });
+    // The nodes keep their old names through the move; they get their names here.
+    let mut moved = done.moved.clone();
+    let mut rename = |path: NodePath, name: &str, old: Option<&NodePath>| -> CmdResult<()> {
+        let new_name = name_of(name)?;
+        if path.name() != Some(&new_name) {
+            let renamed = under.child(new_name.clone()).map_err(bad)?;
+            if let Some(old) = old {
+                moved.insert(old.clone(), renamed);
+            }
+            moves.push(Op::Rename { path, name: new_name });
+        }
+        Ok(())
+    };
+    for (old, name) in &names {
+        let Some(new) = done.moved.get(old) else { continue };
+        rename(new.clone(), name, Some(old))?;
+    }
+    // The output nodes for wires that leave are named after the readers they carry.
+    for port in &done.ports {
+        let Some(name) = port.name().map(|n| n.as_str().to_string()) else { continue };
+        if let Some(rest) = old_table.as_ref().and_then(|(old, _)| name.strip_prefix(&format!("{old}_"))) {
+            rename(port.clone(), &format!("{UNDER_TABLE}_{rest}"), None)?;
+        }
+    }
+    Ok(Home { table: own_table, sequence: own_sequence, moves, moved, make: None })
+}
+
 /// The stretches without bass by the file's level bands ([`arrange::bass_gone`]).
 fn without_bass(env: &penumbra_audio::beats::Envelopes, bars: &[f64], end: f64) -> Vec<(f64, f64)> {
     let mut edges: Vec<f64> = bars.iter().copied().filter(|b| *b < end).collect();
@@ -827,8 +966,9 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     #[serde(deny_unknown_fields)]
     struct A {
         path: NodePath,
-        table: NodePath,
-        sequence: NodePath,
+        table: Option<NodePath>,
+        sequence: Option<NodePath>,
+        under: Option<NodePath>,
         slots: BTreeMap<String, Vec<Entry>>,
         stage: Option<Stages>,
         switch: Option<Targets>,
@@ -917,6 +1057,23 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         return Err(CommandError("stage_gap is seconds from 0 up".into()));
     }
     let net = e.session().doc().snapshot();
+    let home = match &a.under {
+        Some(under) => home_under(e, &net, under, a.table.as_ref(), a.sequence.as_ref())?,
+        None => {
+            let (Some(table), Some(sequence)) = (a.table.clone(), a.sequence.clone()) else {
+                return Err(CommandError(
+                    "give table and sequence, or under with the component that holds them".into(),
+                ));
+            };
+            Home { table, sequence, moves: Vec::new(), moved: BTreeMap::new(), make: None }
+        }
+    };
+    // The checks below and the ops see the network as it stands after the move.
+    let net = if home.moves.is_empty() {
+        net
+    } else {
+        Arc::new(net.apply(e.types(), &home.moves).map_err(|err| CommandError(err.to_string()))?.network)
+    };
     let kind_at = |path: &NodePath| -> Option<String> {
         net.resolve(path).and_then(|id| net.node(id)).map(|n| n.kind.clone())
     };
@@ -927,12 +1084,12 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
             a.path
         )));
     }
-    for (path, kind) in [(&a.table, "table.text"), (&a.sequence, SEQUENCE)] {
+    for (path, kind) in [(&home.table, "table.text"), (&home.sequence, SEQUENCE)] {
         if let Some(k) = kind_at(path).filter(|k| k != kind) {
             return Err(CommandError(format!("{path} is a {k}, not a {kind}")));
         }
     }
-    let (Some(table_name), Some(parent)) = (a.table.name(), a.table.parent()) else {
+    let (Some(table_name), Some(parent)) = (home.table.name(), home.table.parent()) else {
         return Err(CommandError("table must name a node, not the root".into()));
     };
     let mut slots = Vec::new();
@@ -1157,18 +1314,25 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
 
     // New nodes go beside the table, or below the grid when the table is new too.
     let pos_of = |path: &NodePath| net.resolve(path).and_then(|id| net.node(id)).and_then(|n| n.pos);
-    let [x, y] = pos_of(&a.table)
-        .or_else(|| pos_of(&a.path).map(|[x, y]| [x + 250.0, y + 400.0]))
-        .unwrap_or([0.0, 0.0]);
-    let mut ops = Vec::new();
+    let below_grid = pos_of(&a.path).map(|[x, y]| [x + 250.0, y + 400.0]).unwrap_or([0.0, 0.0]);
+    // In a new component the nodes start at its own origin; the component goes below the grid.
+    let [x, y] = match &home.make {
+        Some(_) => [0.0, 0.0],
+        None => pos_of(&home.table).unwrap_or(below_grid),
+    };
+    let mut ops = home.moves.clone();
+    if let Some(under) = &home.make {
+        ops.push(Op::Create { path: under.clone(), kind: COMP_KIND.to_string(), params: BTreeMap::new() });
+        ops.push(Op::Place { path: under.clone(), pos: Some(below_grid) });
+    }
     let mut create = |path: &NodePath, kind: &str, at: [f32; 2]| {
         if net.resolve(path).is_none() {
             ops.push(Op::Create { path: path.clone(), kind: kind.to_string(), params: BTreeMap::new() });
             ops.push(Op::Place { path: path.clone(), pos: Some(at) });
         }
     };
-    create(&a.table, "table.text", [x, y]);
-    create(&a.sequence, SEQUENCE, [x, y + 150.0]);
+    create(&home.table, "table.text", [x, y]);
+    create(&home.sequence, SEQUENCE, [x, y + 150.0]);
     for (i, (path, (_, kind))) in readers.iter().zip(READERS).enumerate() {
         // The picking readers in a second row under the blending ones.
         let (col, row) = if i < 6 { (i, 0.0) } else { (i - 4, 300.0) };
@@ -1186,9 +1350,9 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         input,
     };
     // A bound param would hide the value written here.
-    let mut unbind = vec![param_of(&a.table, "text")?, param_of(&a.table, "format")?];
+    let mut unbind = vec![param_of(&home.table, "text")?, param_of(&home.table, "format")?];
     for p in ["steps", "names", "lead_in", "file"] {
-        unbind.push(param_of(&a.sequence, p)?);
+        unbind.push(param_of(&home.sequence, p)?);
     }
     for (r, p) in [
         (plus, "op"),
@@ -1208,23 +1372,23 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     ops.extend(unbind.into_iter().map(|param| Op::Unbind { param, component: None }));
     // The table, and the sequence: a step per row, on the music's seconds.
     ops.extend([
-        set(&a.table, "text", text(&table))?,
-        set(&a.table, "format", text("csv"))?,
-        set(&a.sequence, "steps", text(&steps.text))?,
-        set(&a.sequence, "names", text(arrange::PIECE))?,
-        set(&a.sequence, "lead_in", Value::Float(0.0))?,
-        Op::Reset { param: param_of(&a.sequence, "file")? },
-        bind_to(param_of(&a.sequence, "clock")?, &a.path, "seconds")?,
+        set(&home.table, "text", text(&table))?,
+        set(&home.table, "format", text("csv"))?,
+        set(&home.sequence, "steps", text(&steps.text))?,
+        set(&home.sequence, "names", text(arrange::PIECE))?,
+        set(&home.sequence, "lead_in", Value::Float(0.0))?,
+        Op::Reset { param: param_of(&home.sequence, "file")? },
+        bind_to(param_of(&home.sequence, "clock")?, &a.path, "seconds")?,
     ]);
     // The row now and the next, and between them by the share of the next.
     ops.extend([
-        connect(&a.table, now, 0),
-        bind_to(param_of(now, "row")?, &a.sequence, "step")?,
-        connect(&a.sequence, plus, 0),
+        connect(&home.table, now, 0),
+        bind_to(param_of(now, "row")?, &home.sequence, "step")?,
+        connect(&home.sequence, plus, 0),
         Op::Disconnect { to: plus.clone(), input: 1 },
         set(plus, "op", text("add"))?,
         set(plus, "b", Value::Float(1.0))?,
-        connect(&a.table, next, 0),
+        connect(&home.table, next, 0),
         bind_to(param_of(next, "row")?, plus, "step")?,
         connect(next, diff, 0),
         connect(now, diff, 1),
@@ -1232,12 +1396,12 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
         connect(diff, ramp, 0),
         Op::Disconnect { to: ramp.clone(), input: 1 },
         set(ramp, "op", text("multiply"))?,
-        bind_to(param_of(ramp, "b")?, &a.sequence, "mix")?,
+        bind_to(param_of(ramp, "b")?, &home.sequence, "mix")?,
         connect(now, mix, 0),
         connect(ramp, mix, 1),
         set(mix, "op", text("add"))?,
         // The share of the next row rounded: 0 before the fade's middle, 1 after it.
-        connect(&a.sequence, half, 0),
+        connect(&home.sequence, half, 0),
         Op::Disconnect { to: half.clone(), input: 1 },
         set(half, "op", text("add"))?,
         set(half, "b", Value::Float(0.5))?,
@@ -1323,8 +1487,13 @@ fn beats_arrange(e: &Engine, p: &Json) -> CmdResult<Json> {
     columns.extend(arrange::TRAILING.iter().map(|c| c.to_string()));
     if let Some(obj) = reply.as_object_mut() {
         obj.insert("file".into(), json!(file.display().to_string()));
-        obj.insert("table".into(), json!(a.table.to_string()));
-        obj.insert("sequence".into(), json!(a.sequence.to_string()));
+        obj.insert("table".into(), json!(home.table.to_string()));
+        obj.insert("sequence".into(), json!(home.sequence.to_string()));
+        if !home.moved.is_empty() {
+            let moved: BTreeMap<String, String> =
+                home.moved.iter().map(|(from, to)| (from.to_string(), to.to_string())).collect();
+            obj.insert("moved".into(), json!(moved));
+        }
         if find_break {
             obj.insert("breaks".into(), json!(breaks));
         }
