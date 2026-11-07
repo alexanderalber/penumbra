@@ -63,21 +63,21 @@ half = "2"
 # Plane samples as bytes for texture uploads (already in the tree through wgpu).
 bytemuck = "1"
 # Image files incl. 16-bit and float.
-photocraft-codecs = { git = "https://github.com/storytold/photocraft", rev = "273ff014e3d21882b3959959eb7da00a42290e56" }
+photocraft-codecs = { git = "https://github.com/storytold/photocraft", rev = "70c0911d4e34ece62036e5972a8ad548527582e4" }
 # PSD and PSB layers (checks lengths before allocating).
-photocraft-psd = { git = "https://github.com/storytold/photocraft", rev = "273ff014e3d21882b3959959eb7da00a42290e56" }
+photocraft-psd = { git = "https://github.com/storytold/photocraft", rev = "70c0911d4e34ece62036e5972a8ad548527582e4" }
 # Text shaping, bidi, line breaking, bundled OFL fonts, glyph outlines (the text node; measured at
 # 0946660, later raised). Glyph outlines are filled by tiny-skia, the rasteriser effectcraft
 # itself uses.
-effectcraft-text = { git = "https://github.com/storytold/effectcraft", rev = "9a7d3e76991d5372448033b473dc12c2480a6a04" }
+effectcraft-text = { git = "https://github.com/storytold/effectcraft", rev = "a41ff5015c6687db15a6f074a47b870b8f09fece" }
 # Video files. Measured at 771b614; raised for the open-GOP seek fix.
-filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
-filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
-filmcraft-frame = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
-filmcraft-color = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
-filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+filmcraft-codecs = { git = "https://github.com/storytold/filmcraft", rev = "72831a4dc2ad79f43235bf0c175c9a58afdd67f0" }
+filmcraft-media = { git = "https://github.com/storytold/filmcraft", rev = "72831a4dc2ad79f43235bf0c175c9a58afdd67f0" }
+filmcraft-frame = { git = "https://github.com/storytold/filmcraft", rev = "72831a4dc2ad79f43235bf0c175c9a58afdd67f0" }
+filmcraft-color = { git = "https://github.com/storytold/filmcraft", rev = "72831a4dc2ad79f43235bf0c175c9a58afdd67f0" }
+filmcraft-time = { git = "https://github.com/storytold/filmcraft", rev = "72831a4dc2ad79f43235bf0c175c9a58afdd67f0" }
 # The MP4/MOV sample tables for HAP, which FilmCraft does not decode; HAP's second stage is Snappy.
-filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+filmcraft-isobmff = { git = "https://github.com/storytold/filmcraft", rev = "72831a4dc2ad79f43235bf0c175c9a58afdd67f0" }
 snap = "1"
 # MIDI devices (WinMM on Windows, ALSA on Linux, CoreMIDI on macOS).
 midir = "0.11"
@@ -85,10 +85,10 @@ midir = "0.11"
 miniz_oxide = "0.9.1"
 # Recording (crates/record): FilmCraft's encoders and its MP4/MOV writer, same pin as the decoders.
 # rayon is the thread pool both encoders use (already in the tree through FilmCraft).
-filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
-filmcraft-prores = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+filmcraft-h264enc = { git = "https://github.com/storytold/filmcraft", rev = "72831a4dc2ad79f43235bf0c175c9a58afdd67f0" }
+filmcraft-prores = { git = "https://github.com/storytold/filmcraft", rev = "72831a4dc2ad79f43235bf0c175c9a58afdd67f0" }
 # The sound of MP4 recordings: FilmCraft's clean-room AAC-LC encoder (and its decoder in tests).
-filmcraft-aac = { git = "https://github.com/storytold/filmcraft", rev = "4e2d0bc2d3646f9cf27ef7aa8b2095c6858c7efe" }
+filmcraft-aac = { git = "https://github.com/storytold/filmcraft", rev = "72831a4dc2ad79f43235bf0c175c9a58afdd67f0" }
 rayon = "1"
 # The script node: embedded CPython through the stable ABI, so one pyhost library serves Python 3.12
 # and later. Only crates/pyhost uses it.
