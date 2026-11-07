@@ -20,6 +20,7 @@ pub mod motion;
 mod obj;
 pub mod prim;
 mod stl;
+pub mod uv_project;
 pub mod write;
 
 use std::collections::HashMap;

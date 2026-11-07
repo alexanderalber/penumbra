@@ -158,6 +158,55 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
         || Box::new(Transform) as Box<dyn Operator>,
     ))?;
     types.register(FnNodeType::new(
+        NodeDesc::new(
+            "geo.uv_project",
+            "Sets how a texture lies on geometry: thrown on along an axis, wrapped around it or onto each side. Replaces the texture coordinates of the file",
+        )
+        .param(
+            ParamSpec::choice("shape", &UV_SHAPES)
+                .doc("How the texture reaches the surface")
+                .choice_doc("planar", "straight along `axis`, like a slide projector: the far side shows it mirrored")
+                .choice_doc("cylinder", "wrapped once around `axis`, the texture's top towards +axis. Large flat triangles show jagged edges in the texture: the angle is only known at their corners")
+                .choice_doc("sphere", "wrapped around `axis` and pinched together at both poles. Large flat triangles show jagged edges too")
+                .choice_doc("box", "onto each of six sides, whichever a triangle faces most; `axis` is unused"),
+        )
+        .param(
+            ParamSpec::choice("axis", &UV_AXES)
+                .doc("planar: the direction the texture travels. cylinder and sphere: the axis it wraps around")
+                .choice_doc("auto", "planar: y, the view from the front. cylinder and sphere: z, upright")
+                .choice_doc("x", "planar: seen from +x")
+                .choice_doc("y", "planar: seen from the front (-y)")
+                .choice_doc("z", "planar: seen from above"),
+        )
+        .param(
+            ParamSpec::choice("fit", &UV_FITS)
+                .doc("How big the texture lies on the surface")
+                .choice_doc("geometry", "the texture spans the box around the input, stretched to it")
+                .choice_doc("units", "one texture per scene unit, its middle at the origin, its proportions kept"),
+        )
+        .param(
+            ParamSpec::vec2("repeat", [1.0; 2])
+                .range(-8.0, 8.0)
+                .doc("How many times the texture fits across and down, about its middle; negative mirrors"),
+        )
+        .param(
+            ParamSpec::float("rotate", 0.0)
+                .range(-180.0, 180.0)
+                .unit(Unit::Degrees)
+                .doc("Turns the texture on the surface, counter-clockwise. 90 makes a left-to-right ramp run bottom to top"),
+        )
+        .param(
+            ParamSpec::vec2("offset", [0.0; 2])
+                .range(-1.0, 1.0)
+                .doc("Moves the texture on the surface, in texture sizes: x to the right, y up"),
+        )
+        .input("in", DataKind::Geo)
+        .output("out", DataKind::Geo)
+        .describe_input("in", "Where the geometry stands decides the mapping: a geo.transform before this node changes it, one after it moves the texture along")
+        .describe_output("out", "The same geometry with new texture coordinates; part ids and materials stay"),
+        || Box::new(UvProject::default()) as Box<dyn Operator>,
+    ))?;
+    types.register(FnNodeType::new(
         NodeDesc::new("geo.assign_material", "Gives geometry a material: how it looks when rendered")
             .input("in", DataKind::Geo)
             .input("mat", DataKind::Mat)
@@ -800,6 +849,86 @@ impl Operator for TexInstance {
             input.items.iter().map(|i| Item { instances: Some(instances.clone()), ..i.clone() }).collect();
         let geo = Geo { items, preview: None };
         Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
+    }
+}
+
+/// Choices of `geo.uv_project`'s `shape`, `axis` and `fit`.
+pub const UV_SHAPES: [&str; 4] = ["planar", "cylinder", "sphere", "box"];
+pub const UV_AXES: [&str; 4] = ["auto", "x", "y", "z"];
+pub const UV_FITS: [&str; 2] = ["geometry", "units"];
+
+/// Most pieces `geo.uv_project` takes: each piece is a model of its own afterwards, so a large
+/// `geo.instance` before the node would upload thousands of them.
+pub const MAX_UV_ITEMS: usize = 256;
+
+/// Keeps the models it made last, which its output holds anyway, to count them.
+#[derive(Default)]
+struct UvProject(Vec<Arc<Model>>);
+
+impl Operator for UvProject {
+    fn gpu_bytes(&self) -> u64 {
+        self.0.iter().map(|m| m.triangle_bytes()).sum()
+    }
+
+    fn cook(&mut self, cx: &CookContext<'_>) -> Result<Cooked, CookError> {
+        use penumbra_mesh::uv_project::{Axis, Projection, Shape, placed_bounds, project};
+        let gpu = gpu(cx)?;
+        let Some(input) = cx.input_as::<Geo>(0) else { return Err(waiting(cx)) };
+        if input.items.len() > MAX_UV_ITEMS {
+            return Err(CookError::failed(format!(
+                "{} pieces of geometry, at most {MAX_UV_ITEMS} work here: put this node before geo.instance",
+                input.items.len()
+            )));
+        }
+        let shape = match cx.text("shape")? {
+            "cylinder" => Shape::Cylinder,
+            "sphere" => Shape::Sphere,
+            "box" => Shape::Cube,
+            _ => Shape::Planar,
+        };
+        let axis = match (cx.text("axis")?, shape) {
+            ("x", _) => Axis::X,
+            ("y", _) => Axis::Y,
+            ("z", _) => Axis::Z,
+            (_, Shape::Planar) => Axis::Y,
+            _ => Axis::Z,
+        };
+        let fit = if cx.text("fit")? == "units" {
+            None
+        } else {
+            input
+                .items
+                .iter()
+                .filter_map(|i| placed_bounds(&i.model.mesh, &i.world))
+                .reduce(|a, b| a.union(b))
+        };
+        let projection = Projection {
+            shape,
+            axis,
+            fit,
+            repeat: vec2(cx, "repeat")?,
+            rotate_degrees: cx.float("rotate")?,
+            offset: vec2(cx, "offset")?,
+        };
+        let max = Limits::default().max_vertices;
+        let mut models = Vec::with_capacity(input.items.len());
+        let mut items = Vec::with_capacity(input.items.len());
+        for item in &input.items {
+            let p = project(&item.model.mesh, &item.world, &projection, max)?;
+            let model = Arc::new(item.model.with_triangles(gpu, p.vertices, p.indices)?);
+            models.push(model.clone());
+            items.push(Item { model, ..item.clone() });
+        }
+        self.0 = models;
+        let geo = Geo { items, preview: None };
+        Ok(Cooked::Outputs(vec![Data::new(DataKind::Geo, geo)]))
+    }
+}
+
+fn vec2(cx: &CookContext<'_>, name: &str) -> Result<[f64; 2], CookError> {
+    match cx.param(name).and_then(|v| v.components()) {
+        Some(&[x, y]) => Ok([x, y]),
+        _ => Err(CookError::failed(format!("`{name}` must be two numbers"))),
     }
 }
 

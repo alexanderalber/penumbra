@@ -1984,7 +1984,7 @@ Outputs: `out` (table).
 
 ## geo
 
-[geo.assign_material](#geoassign_material), [geo.file](#geofile), [geo.instance](#geoinstance), [geo.merge](#geomerge), [geo.null](#geonull), [geo.primitive](#geoprimitive), [geo.tex_instance](#geotex_instance), [geo.text](#geotext), [geo.transform](#geotransform)
+[geo.assign_material](#geoassign_material), [geo.file](#geofile), [geo.instance](#geoinstance), [geo.merge](#geomerge), [geo.null](#geonull), [geo.primitive](#geoprimitive), [geo.tex_instance](#geotex_instance), [geo.text](#geotext), [geo.transform](#geotransform), [geo.uv_project](#geouv_project)
 
 ### geo.assign_material
 
@@ -2129,6 +2129,27 @@ Outputs: `out` (geo).
 | `scale` | vec3 | `[1, 1, 1]` | 0 to 4 (soft) | Size along x, y, z around the origin: 1 keeps the size, negative mirrors |
 | `uniform` | float | `1` | 0.001 to 1000 (soft) | Times the scale: 0.001 turns millimetres into metres |
 | `order` *(more)* | srt \| str \| rst \| rts \| tsr \| trs | `"srt"` |  | The order of scale, rotate and translate. Each step also acts on what the steps before it did; srt: scale, rotate, translate: the move follows the world axes, whatever the turn and size; str: scale, translate, rotate: the move turns with rotate, so the object circles the origin; rst: rotate, scale, translate: a non-uniform scale stretches along the world axes and skews a turned object; rts: rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned object; tsr: translate, scale, rotate: the move grows with scale and turns with rotate, circling the origin; trs: translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned object |
+
+### geo.uv_project
+
+Sets how a texture lies on geometry: thrown on along an axis, wrapped around it or onto each side. Replaces the texture coordinates of the file
+
+Inputs:
+
+- `in` (geo): Where the geometry stands decides the mapping: a geo.transform before this node changes it, one after it moves the texture along
+
+Outputs:
+
+- `out` (geo): The same geometry with new texture coordinates; part ids and materials stay
+
+| param | type | default | range | meaning |
+|---|---|---|---|---|
+| `shape` | planar \| cylinder \| sphere \| box | `"planar"` |  | How the texture reaches the surface; planar: straight along `axis`, like a slide projector: the far side shows it mirrored; cylinder: wrapped once around `axis`, the texture's top towards +axis. Large flat triangles show jagged edges in the texture: the angle is only known at their corners; sphere: wrapped around `axis` and pinched together at both poles. Large flat triangles show jagged edges too; box: onto each of six sides, whichever a triangle faces most; `axis` is unused |
+| `axis` | auto \| x \| y \| z | `"auto"` |  | planar: the direction the texture travels. cylinder and sphere: the axis it wraps around; auto: planar: y, the view from the front. cylinder and sphere: z, upright; x: planar: seen from +x; y: planar: seen from the front (-y); z: planar: seen from above |
+| `fit` | geometry \| units | `"geometry"` |  | How big the texture lies on the surface; geometry: the texture spans the box around the input, stretched to it; units: one texture per scene unit, its middle at the origin, its proportions kept |
+| `repeat` | vec2 | `[1, 1]` | -8 to 8 (soft) | How many times the texture fits across and down, about its middle; negative mirrors |
+| `rotate` | float | `0` | -180 to 180° (soft) | Turns the texture on the surface, counter-clockwise. 90 makes a left-to-right ramp run bottom to top |
+| `offset` | vec2 | `[0, 0]` | -1 to 1 (soft) | Moves the texture on the surface, in texture sizes: x to the right, y up |
 
 ## mat
 

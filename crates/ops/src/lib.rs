@@ -110,6 +110,10 @@ pub const TAGS: &[(&str, &[&str])] = &[
     ("geo.primitive", &["box", "sphere", "grid"]),
     ("geo.text", &["text 3d", "3d text", "lettering", "extrude"]),
     ("geo.tex_instance", &["instancing"]),
+    (
+        "geo.uv_project",
+        &["texture sop", "texture coordinates", "uv map", "unwrap", "planar", "cylindrical", "triplanar"],
+    ),
     ("light.environment", &["environment light"]),
     ("comp.base", &["container"]),
     ("out.audio", &["audio device out"]),

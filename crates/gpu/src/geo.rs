@@ -208,6 +208,62 @@ impl Model {
         })
     }
 
+    /// The same model with other vertices and indices, the triangles in the same order, at the
+    /// same places: new texture coordinates, with vertices copied at seams. Shares the textures.
+    pub fn with_triangles(
+        &self,
+        gpu: &Gpu,
+        vertices: Vec<penumbra_mesh::Vertex>,
+        indices: Vec<u32>,
+    ) -> Result<Model, Error> {
+        if vertices.len() == self.mesh.vertices.len() && indices == self.mesh.indices {
+            return self.with_vertices(gpu, vertices);
+        }
+        let mesh = Mesh { vertices, indices, ..self.mesh.clone() };
+        mesh.check()?;
+        let mut v = Vec::with_capacity(mesh.vertices.len() * VERTEX_BYTES as usize);
+        for x in &mesh.vertices {
+            for f in x.position.iter().chain(&x.normal).chain(&x.uv) {
+                v.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+        if v.len() as u64 > gpu.device().limits().max_buffer_size {
+            return Err(Error::new(format!(
+                "{} vertices exceed the GPU's largest buffer",
+                mesh.vertices.len()
+            )));
+        }
+        let i: Vec<u8> = mesh.indices.iter().flat_map(|i| i.to_le_bytes()).collect();
+        let buffer = |bytes: &[u8], usage: wgpu::BufferUsages, what: &str| -> Result<wgpu::Buffer, Error> {
+            let (b, error) = gpu.scoped(|| {
+                let b = gpu.device().create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("projected model"),
+                    size: bytes.len() as u64,
+                    usage: usage | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                gpu.queue().write_buffer(&b, 0, bytes);
+                b
+            });
+            match error {
+                Some(e) => Err(Error::new(format!("cannot upload the {what}: {e}"))),
+                None => Ok(b),
+            }
+        };
+        let vertices = buffer(&v, wgpu::BufferUsages::VERTEX, "vertices")?;
+        let indices = buffer(&i, wgpu::BufferUsages::INDEX, "indices")?;
+        Ok(Model {
+            mesh,
+            id: next_id(),
+            vertices,
+            indices,
+            textures: self.textures.clone(),
+            centers: self.centers.clone(),
+            bounds: self.bounds,
+            wire: Mutex::new(None),
+        })
+    }
+
     /// The vertices a wireframe draws: three per triangle in index order (so a run of indices
     /// draws the same corners unindexed), each with its barycentric coordinates and, in the
     /// fourth float, a bit per edge that lies inside a flat polygon (bit k: the edge opposite
@@ -269,6 +325,12 @@ impl Model {
     /// adds to the one it was posed from.
     pub fn vertex_bytes(&self) -> u64 {
         self.vertices.size()
+    }
+
+    /// GPU memory of the vertex and index buffers: what a model made by
+    /// [`Model::with_triangles`] adds at most to the one it was made from.
+    pub fn triangle_bytes(&self) -> u64 {
+        self.vertices.size() + self.indices.size()
     }
 
     /// GPU memory of the buffers and textures.

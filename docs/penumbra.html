@@ -4742,7 +4742,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 </div>
 <div class="group" id="family-geo">
 <h3>geo</h3>
-<p class="kinds"><a href="#geo.assign_material">geo.assign_material</a> <a href="#geo.file">geo.file</a> <a href="#geo.instance">geo.instance</a> <a href="#geo.merge">geo.merge</a> <a href="#geo.null">geo.null</a> <a href="#geo.primitive">geo.primitive</a> <a href="#geo.tex_instance">geo.tex_instance</a> <a href="#geo.text">geo.text</a> <a href="#geo.transform">geo.transform</a></p>
+<p class="kinds"><a href="#geo.assign_material">geo.assign_material</a> <a href="#geo.file">geo.file</a> <a href="#geo.instance">geo.instance</a> <a href="#geo.merge">geo.merge</a> <a href="#geo.null">geo.null</a> <a href="#geo.primitive">geo.primitive</a> <a href="#geo.tex_instance">geo.tex_instance</a> <a href="#geo.text">geo.text</a> <a href="#geo.transform">geo.transform</a> <a href="#geo.uv_project">geo.uv_project</a></p>
 <details class="entry node" id="geo.assign_material"><summary><code class="name">geo.assign_material</code><span class="sum">Gives geometry a material: how it looks when rendered</span></summary>
 <div class="body">
 <p>Gives geometry a material: how it looks when rendered</p>
@@ -4941,6 +4941,30 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>uniform</code></td><td>float</td><td><code>1</code></td><td>0.001 to 1000 (soft)</td><td>Times the scale: 0.001 turns millimetres into metres</td></tr>
 <tr class="section"><th colspan="5">more</th></tr>
 <tr><td><code>order</code></td><td>srt | str | rst | rts | tsr | trs</td><td><code>&quot;srt&quot;</code></td><td></td><td>The order of scale, rotate and translate. Each step also acts on what the steps before it did<ul><li><code>srt</code>: scale, rotate, translate: the move follows the world axes, whatever the turn and size</li><li><code>str</code>: scale, translate, rotate: the move turns with rotate, so the object circles the origin</li><li><code>rst</code>: rotate, scale, translate: a non-uniform scale stretches along the world axes and skews a turned object</li><li><code>rts</code>: rotate, translate, scale: the move grows with scale, and a non-uniform scale skews a turned object</li><li><code>tsr</code>: translate, scale, rotate: the move grows with scale and turns with rotate, circling the origin</li><li><code>trs</code>: translate, rotate, scale: the move turns and grows, and a non-uniform scale skews a turned object</li></ul></td></tr>
+</tbody>
+</table>
+</div></details>
+<details class="entry node" id="geo.uv_project"><summary><code class="name">geo.uv_project</code><span class="sum">Sets how a texture lies on geometry: thrown on along an axis, wrapped around it or onto each side. Replaces the texture coordinates of the file</span></summary>
+<div class="body">
+<p>Sets how a texture lies on geometry: thrown on along an axis, wrapped around it or onto each side. Replaces the texture coordinates of the file</p>
+<h4>Inputs</h4>
+<ul>
+<li><code>in</code> <span class="kind">geo</span>: Where the geometry stands decides the mapping: a geo.transform before this node changes it, one after it moves the texture along</li>
+</ul>
+<h4>Outputs</h4>
+<ul>
+<li><code>out</code> <span class="kind">geo</span>: The same geometry with new texture coordinates; part ids and materials stay</li>
+</ul>
+<h4>Params</h4>
+<table class="params">
+<thead><tr><th>param</th><th>type</th><th>default</th><th>range</th><th>meaning</th></tr></thead>
+<tbody>
+<tr><td><code>shape</code></td><td>planar | cylinder | sphere | box</td><td><code>&quot;planar&quot;</code></td><td></td><td>How the texture reaches the surface<ul><li><code>planar</code>: straight along <code>axis</code>, like a slide projector: the far side shows it mirrored</li><li><code>cylinder</code>: wrapped once around <code>axis</code>, the texture's top towards +axis. Large flat triangles show jagged edges in the texture: the angle is only known at their corners</li><li><code>sphere</code>: wrapped around <code>axis</code> and pinched together at both poles. Large flat triangles show jagged edges too</li><li><code>box</code>: onto each of six sides, whichever a triangle faces most; <code>axis</code> is unused</li></ul></td></tr>
+<tr><td><code>axis</code></td><td>auto | x | y | z</td><td><code>&quot;auto&quot;</code></td><td></td><td>planar: the direction the texture travels. cylinder and sphere: the axis it wraps around<ul><li><code>auto</code>: planar: y, the view from the front. cylinder and sphere: z, upright</li><li><code>x</code>: planar: seen from +x</li><li><code>y</code>: planar: seen from the front (-y)</li><li><code>z</code>: planar: seen from above</li></ul></td></tr>
+<tr><td><code>fit</code></td><td>geometry | units</td><td><code>&quot;geometry&quot;</code></td><td></td><td>How big the texture lies on the surface<ul><li><code>geometry</code>: the texture spans the box around the input, stretched to it</li><li><code>units</code>: one texture per scene unit, its middle at the origin, its proportions kept</li></ul></td></tr>
+<tr><td><code>repeat</code></td><td>vec2</td><td><code>[1, 1]</code></td><td>-8 to 8 (soft)</td><td>How many times the texture fits across and down, about its middle; negative mirrors</td></tr>
+<tr><td><code>rotate</code></td><td>float</td><td><code>0</code></td><td>-180 to 180° (soft)</td><td>Turns the texture on the surface, counter-clockwise. 90 makes a left-to-right ramp run bottom to top</td></tr>
+<tr><td><code>offset</code></td><td>vec2</td><td><code>[0, 0]</code></td><td>-1 to 1 (soft)</td><td>Moves the texture on the surface, in texture sizes: x to the right, y up</td></tr>
 </tbody>
 </table>
 </div></details>

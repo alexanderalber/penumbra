@@ -2132,3 +2132,44 @@ fn text_renders_and_empty_text_is_nothing() {
     }
     assert_eq!(ink(&rig.pixels("/r")), 0, "empty text draws nothing");
 }
+
+#[test]
+fn uv_project_decides_which_way_a_texture_runs_over_a_wall() {
+    let Some(gpu) = gpu() else { return };
+    let wall = create(
+        "/wall",
+        "geo.primitive",
+        &[("shape", "plane".into()), ("size", Value::Vec3([2.0, 1.0, 2.0]))],
+    );
+    let look = |path: &str| {
+        render(
+            path,
+            &[
+                ("surface", "uv".into()),
+                ("position", Value::Vec3([0.0, -4.0, 0.0])),
+                ("fov", Value::Float(40.0)),
+            ],
+        )
+    };
+    let ops = vec![
+        wall,
+        create("/along", "geo.uv_project", &[]),
+        create("/up", "geo.uv_project", &[("rotate", Value::Float(90.0))]),
+        connect("/wall", "/along", 0),
+        connect("/wall", "/up", 0),
+        look("/along_look"),
+        look("/up_look"),
+        connect("/along", "/along_look", 0),
+        connect("/up", "/up_look", 0),
+    ];
+    let mut rig = rig(gpu, None, &ops);
+    let (w, h) = (super::W as u32, super::H as u32);
+
+    let along = rig.pixels("/along_look");
+    let (left, right) = (at(&along, w * 3 / 10, h / 2), at(&along, w * 7 / 10, h / 2));
+    assert!(left[0] < 0.45 && right[0] > 0.55, "u runs left to right: {left:?} {right:?}");
+
+    let up = rig.pixels("/up_look");
+    let (top, bottom) = (at(&up, w / 2, h * 3 / 10), at(&up, w / 2, h * 7 / 10));
+    assert!(bottom[0] < 0.45 && top[0] > 0.55, "turned 90 degrees, u runs upwards: {bottom:?} {top:?}");
+}

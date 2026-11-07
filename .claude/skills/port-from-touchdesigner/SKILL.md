@@ -146,6 +146,7 @@ counterpart" below.
 | Box, Sphere, Grid, Rectangle SOP | `geo.primitive` (`box`, `sphere`, `plane` with `cells`) | the plane stands upright facing -y |
 | File In SOP | `geo.file` | |
 | Transform, Merge SOP | `geo.transform`, `geo.merge` | |
+| Texture SOP | `geo.uv_project` | planar, cylinder, sphere, box; no projection from a camera |
 | Copy SOP, Geo COMP instancing from a CHOP or DAT | `geo.instance` | a table with columns `tx ty tz rx ry rz sx sy sz`, axes converted |
 | Geo COMP instancing from TOPs | `geo.tex_instance` | inputs `position`, `aim`, `scale`, `color`, one texel per copy in the order TouchDesigner uses (by instance index), also for a ramp read as the colour. `scale` acts on the model before `aim` turns it; unwired it is 1, an unwired `color` white. `aim` turns the model's +y: build the model with its forward axis (TouchDesigner's `instancerottoforward`) on +y. One axis scaled by one channel (`instancesz = a`) needs a small shader that makes the scale picture. `extent` for framing |
 | Geo COMP | `geo.transform` and `geo.assign_material` | the SOP with the render flag inside is the geometry |
