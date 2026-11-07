@@ -36,6 +36,8 @@ const MAX_RESOLUTION: i64 = 512;
 /// unit; this scale makes Flow's default of 4 swell the gas about threefold, as Flow's scenes
 /// look. At 1 the gas grew sixtyfold and filled the box.
 const EXPANSION_SCALE: f64 = 0.075;
+/// The fastest the smoke moves, in cells per step.
+const MAX_CELLS_PER_STEP: f64 = 6.0;
 
 fn desc() -> NodeDesc {
     NodeDesc::new(KIND, "Smoke in a box in space: an emitter blows hot smoke in, it rises, swirls and fades. tex.raymarch draws it")
@@ -327,6 +329,7 @@ fn program_params() -> Vec<ParamSpec> {
         "fuel_per_burn",
         "expansion",
         "direction",
+        "max_speed",
     ]
     .iter()
     .map(|n| ParamSpec::float(n, 0.0))
@@ -537,6 +540,8 @@ impl Operator for Smoke {
             ("fuel_per_burn", Value::Float(cx.float("fuel_per_burn")?.max(0.0))),
             ("expansion", Value::Float(cx.float("expansion")? * EXPANSION_SCALE)),
             ("direction", Value::Float(1.0)),
+            // Six cells a step; at a still clock any speed passes (nothing moves anyway).
+            ("max_speed", Value::Float(if dt > 0.0 { MAX_CELLS_PER_STEP * h / dt } else { 1.0e30 })),
             ("sharp", Value::Int(i64::from(sharp))),
         ];
         let iterations = cx.int("iterations")?.clamp(1, MAX_ITERATIONS);

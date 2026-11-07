@@ -326,3 +326,28 @@ fn hot_smoke_glows() {
     assert!(light(&dark) < 1e-3, "{}", light(&dark));
     assert!(light(&glowing) > 1.0, "{}", light(&glowing));
 }
+
+#[test]
+fn burning_smoke_out_through_an_open_edge_keeps_going() {
+    if gpu().is_none() {
+        return;
+    }
+    // Hot burning smoke swirling out of the box's far edge for ten seconds. It once spun up
+    // there until the whole box blew empty, the emitter's own smoke included.
+    let px = jet(
+        &[
+            ("emitter_type", Value::Text("box".into())),
+            ("emitter_size", Value::Vec3([0.3, 0.3, 0.3])),
+            ("fuel", Value::Float(4.0)),
+            ("temp", Value::Float(2.65)),
+            ("gravity", Value::Vec3([-0.7, 0.0, 0.0])),
+            ("buoyancy", Value::Float(4.0)),
+            ("vorticity_strength", Value::Float(10.0)),
+        ],
+        &[],
+        600,
+    );
+    assert!(finite(&px));
+    let (sum, _) = cover(&px);
+    assert!(sum > 1.0, "{sum}");
+}

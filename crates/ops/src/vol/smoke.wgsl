@@ -34,6 +34,21 @@ fn damped(v: vec4f, keep: f32, fade: f32) -> vec4f {
     return v - sign(v) * loss;
 }
 
+// At most `max_speed`: a few cells a step. Faster than that the steps no longer hold the smoke
+// together; a spike would grow until it blows the whole box empty.
+fn limited(v: vec3f) -> vec3f {
+    let speed = length(v);
+    if (speed > params.max_speed) {
+        return v * (params.max_speed / speed);
+    }
+    return v;
+}
+
+// Whether all six neighbours of `c` lie inside the box.
+fn inner(c: vec3i) -> bool {
+    return all(c >= vec3i(1)) && all(c <= vec3i(pn.size) - 2);
+}
+
 fn texture_coords(id: vec3u) -> vec3f {
     return (vec3f(id) + 0.5) / vec3f(pn.size);
 }
@@ -88,7 +103,9 @@ fn forces(@builtin(global_invocation_id) id: vec3u) {
     var v = clean(textureLoad(vol0, id, 0)).xyz;
     let f = clean(textureLoad(vol1, id, 0));
     v += params.lift * f.g * params.dt;
-    if (params.vort > 0.0) {
+    // Not at the box's edge: there the curl's neighbours are missing, and an open edge with
+    // smoke flowing out spun up there until the whole box blew empty.
+    if (params.vort > 0.0 && inner(vec3i(id))) {
         // How much of the strength acts here, 0 to 1.
         let mask = clamp(params.vort_constant + params.vort_velocity * length(v) + params.vort_smoke * f.r
             + params.vort_temp * f.g + params.vort_fuel * f.b, 0.0, 1.0);
@@ -96,7 +113,7 @@ fn forces(@builtin(global_invocation_id) id: vec3u) {
     }
     v = damped(vec4f(v, 0.0), params.vel_keep, params.vel_fade).xyz;
     v = mix(v, params.emit_velocity, clamp(emitter(id) * params.emit_rate, 0.0, 1.0));
-    textureStore(vol_out, id, clean(vec4f(v, 0.0)));
+    textureStore(vol_out, id, clean(vec4f(limited(v), 0.0)));
 }
 
 // Where the content of cell `id` comes from when velocity `v` carries it: `direction` 1 forward
@@ -260,7 +277,7 @@ fn project(@builtin(global_invocation_id) id: vec3u) {
         v = select(v, min(v, vec3f(0.0)), high);
         v = select(v, max(v, vec3f(0.0)), low);
     }
-    textureStore(vol_out, id, vec4f(v, 0.0));
+    textureStore(vol_out, id, clean(vec4f(limited(v), 0.0)));
 }
 
 // Smoke, temperature and fuel carried by the new velocity; then what is hot enough burns: fuel
