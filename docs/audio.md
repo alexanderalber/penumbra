@@ -329,7 +329,7 @@ All values are channels of the `out` output, in this order:
 | `level` | loudness, 0 to 1 |
 | `low`, `mid`, `high` | loudness of the bands below 150 Hz, between, above 2.5 kHz (params `low`, `high`) |
 | `onset` | 1 in the frame a sound starts (a hit, a note), else 0 |
-| `kick` | 1 in the frame a sound starts in the low band |
+| `kick` | 1 in the frame a sound starts in the low band. A low band quieter than `floor` gives none |
 | `beat` | 0 at each beat, rising to 1 at the next: drive anything that should move with the beat. Keeps running at the last tempo while not `locked` |
 | `tick` | 1 in the frame a beat starts, only while `locked` or `coasting` |
 | `bar` | 0 at each bar's first beat, rising to 1 at the next bar |

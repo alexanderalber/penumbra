@@ -1225,7 +1225,7 @@ Outputs:
 | `max_bpm` *(more)* | float | `180` | 80 to 300 (soft) | The fastest tempo considered, in beats per minute; see min_bpm |
 | `superflux` *(more)* | bool | `false` |  | Finds the beat in a noisy room: the onsets ignore the slow wobble of broadband noise. Costs a little in clean sound and in reverb, so leave it off unless the room is loud |
 | `normalize` | bool | `true` |  | A quiet input still spans 0 to 1: levels and spectrum are measured against their range over the last 4 seconds. Off: level and bands are the raw RMS, full scale is 1 |
-| `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence: with normalize, levels and spectrum read 0. Set it above the room's noise, so a silent room reads 0 |
+| `floor` *(levels)* | float | `-60` | -90 to -20 dB (soft) | Quieter than this counts as silence: with normalize, levels and spectrum read 0, and a low band quieter than this gives no kick. Set it above the room's noise, so a silent room reads 0 |
 | `trim` *(levels)* | float | `0` | -24 to 24 dB | Makes the sound louder or quieter for the analysis only. Lift a quiet microphone until it is above floor. The rms and peak channels still show the sound as it comes in |
 | `low` *(levels)* | float | `150` | 40 to 500 Hz (soft) | Where the low band ends: the low channel is the level below this frequency |
 | `high` *(levels)* | float | `2500` | 1000 to 8000 Hz (soft) | Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high |

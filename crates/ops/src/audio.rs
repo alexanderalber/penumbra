@@ -183,7 +183,7 @@ pub fn register(types: &mut NodeTypes) -> Result<(), Error> {
                 .range(-90.0, -20.0)
                 .unit(Unit::Decibels)
                 .group("levels")
-                .doc("Quieter than this counts as silence: with normalize, levels and spectrum read 0. Set it above the room's noise, so a silent room reads 0"),
+                .doc("Quieter than this counts as silence: with normalize, levels and spectrum read 0, and a low band quieter than this gives no kick. Set it above the room's noise, so a silent room reads 0"),
         )
         .param(
             ParamSpec::float("trim", 0.0)

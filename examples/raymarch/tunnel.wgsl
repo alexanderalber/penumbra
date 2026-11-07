@@ -140,13 +140,8 @@ fn normal_at(p: vec3f, e: f32) -> vec3f {
 }
 
 fn pick(t: f32) -> vec3f {
-    let n = params.colours.count;
-    if n > 0 {
-        // Reads the palette directly: this runs on every march step, and pn_colormap copies all 32 colours per call.
-        let x = fract(t) * f32(n - 1);
-        let i = clamp(i32(x), 0, n - 1);
-        let j = min(i + 1, n - 1);
-        return mix(params.colours.colours[i].rgb, params.colours.colours[j].rgb, x - f32(i));
+    if params.colours.count > 0 {
+        return pn_colormap(params.colours, fract(t)).rgb;
     }
     return pow(0.5 + 0.5 * cos(TAU * (t + vec3f(0.0, 0.33, 0.67))), vec3f(2.2));
 }

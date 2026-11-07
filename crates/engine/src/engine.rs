@@ -121,6 +121,11 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(250);
 pub const RECORD_FINISH: Duration = Duration::from_secs(5);
 /// How long a command waits for the cook thread before giving up.
 pub const COOK_TASK_TIMEOUT: Duration = Duration::from_secs(5);
+/// Frames a `cook.step` may run ahead of the GPU. The CPU cooks a frame faster than the GPU draws
+/// it, so a long step would otherwise leave seconds of work queued, and the next read-back would
+/// give up waiting for it.
+const STEP_GPU_EVERY: u64 = 8;
+
 /// How often a stepping cook thread looks for messages; it has nothing else to do.
 const STEPPING_POLL: Duration = Duration::from_millis(100);
 /// Passes between two resolution analyses while they are wanted and the network stays the
@@ -355,6 +360,16 @@ struct ViewShared {
 }
 
 impl CookState {
+    /// Blocks until the GPU has caught up with the frames cooked so far. A GPU that takes too
+    /// long is only logged, so a hung adapter cannot stop the steps for good.
+    fn wait_for_gpu(&self) {
+        if let Some(gpu) = &self.gpu
+            && let Err(e) = gpu.wait(penumbra_gpu::readback::READ_TIMEOUT)
+        {
+            log::warn!("cook.step: {e}");
+        }
+    }
+
     /// What drives the show clock now.
     pub fn pace(&self) -> PaceSource {
         self.pace_at(Instant::now())
@@ -1758,9 +1773,13 @@ fn handle(msgs: impl Iterator<Item = CookMsg>, session: &Session, state: &mut Co
             CookMsg::Vsync(at) => real = Some(at),
             CookMsg::Tick(at) => tick = Some(at),
             CookMsg::Step(frames, reply) => {
-                for _ in 0..frames {
+                for i in 1..=frames {
                     run_frame(session, state, 1, Instant::now());
+                    if i.is_multiple_of(STEP_GPU_EVERY) {
+                        state.wait_for_gpu();
+                    }
                 }
+                state.wait_for_gpu();
                 reply.send(state.pass_base + state.last.pass).ok();
             }
             CookMsg::Stop => return false,

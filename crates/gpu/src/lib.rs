@@ -450,6 +450,16 @@ impl Gpu {
         lock(&self.inner.errors).clone()
     }
 
+    /// Blocks until everything submitted so far has finished on the GPU, for at most `timeout`.
+    pub fn wait(&self, timeout: std::time::Duration) -> Result<(), Error> {
+        self.flush();
+        self.inner
+            .device
+            .poll(wgpu::PollType::Wait { submission_index: None, timeout: Some(timeout) })
+            .map(|_| ())
+            .map_err(|e| Error::new(format!("waiting for the GPU: {e}")))
+    }
+
     /// Lets wgpu finish callbacks and free resources without waiting. The cook thread calls it
     /// once per frame.
     pub fn poll(&self) {

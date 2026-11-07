@@ -805,7 +805,11 @@ impl Analyzer {
         let fall = 10f32.powf(-0.5 / fps as f32);
         // `as`: hops for 50 ms (onsets) and 100 ms (kicks).
         out.onset = self.pick.step(flux, s.sensitivity, (0.05 * fps).ceil() as usize, fall);
-        out.kick = self.pick_low.step(flux_low, s.sensitivity, (0.1 * fps).ceil() as usize, fall);
+        let kick = self.pick_low.step(flux_low, s.sensitivity, (0.1 * fps).ceil() as usize, fall);
+        // The picker compares with the last moments only, so in a low band empty for a while it
+        // would take the faintest spill of a note or a hi-hat for a kick.
+        let low = out.bands.first().copied().unwrap_or(0.0).max(0.0).sqrt();
+        out.kick = kick && (!s.normalize || low >= floor(s));
         self.flux_low.push(flux_low);
         let mean = self.flux.mean();
         self.flux.push(flux_beat);

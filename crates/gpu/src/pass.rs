@@ -23,7 +23,7 @@
 //! fn pn_resample(t: texture_2d<f32>, uv: vec2f, footprint: vec2f, mode: i32, edge: i32) -> vec4f
 //!                                               // scaling: 0 linear, 1 cubic, 2 nearest;
 //!                                               // edge as in pn_extend (zero holds here)
-//! struct PnPalette { count: i32, colours: array<vec4f, 32> }   // a palette param's field
+//! struct PnPalette { count: i32, ... }           // a palette param's field; read it with these
 //! fn pn_palette(p: PnPalette, i: i32) -> vec4f  // colour i, wrapping (also below 0)
 //! fn pn_colormap(p: PnPalette, t: f32) -> vec4f // 0..1 along the colours, blended
 //! fn pn_band(p: PnPalette, t: f32) -> vec4f     // 0..1 in equal bands, one per colour
@@ -297,29 +297,32 @@ fn pn_cubic_tap(x: f32, k: f32, i: i32) -> vec2f {
     return vec2f(p, pn_catmull_rom((p - x) / unit));
 }
 
-// A palette param: `count` colours, linear, straight alpha. The colours sit in a `var` before
-// they are indexed: WGSL indexes arrays by a runtime value only through a reference.
-struct PnPalette { count: i32, _pn0: i32, _pn1: i32, _pn2: i32, colours: array<vec4f, 32> }
+// A palette param: `count` colours, linear, straight alpha. Passed by value, so it is small: its
+// colours stay in the uniform and `first` says where they start. The functions that read them
+// come with `params` (`PALETTE_FUNCTIONS`).
+struct PnPalette { count: i32, first: i32, _pn1: i32, _pn2: i32 }
+"#;
 
+/// The functions that read a palette's colours. Only a shader with a palette param gets them,
+/// because `_pn_colours` exists only then. The colours are indexed in the uniform itself:
+/// copying them into a `var` for every call costs more than the rest of many shaders.
+const PALETTE_FUNCTIONS: &str = r#"
 fn pn_palette(p: PnPalette, i: i32) -> vec4f {
     let n = clamp(p.count, 1, 32);
-    var c = p.colours;
-    return c[((i % n) + n) % n];
+    return params._pn_colours[p.first + ((i % n) + n) % n];
 }
 
 fn pn_colormap(p: PnPalette, t: f32) -> vec4f {
     let n = clamp(p.count, 1, 32);
-    var c = p.colours;
     let x = clamp(t, 0.0, 1.0) * f32(n - 1);
     let i = clamp(i32(floor(x)), 0, n - 1);
     let j = min(i + 1, n - 1);
-    return mix(c[i], c[j], x - f32(i));
+    return mix(params._pn_colours[p.first + i], params._pn_colours[p.first + j], x - f32(i));
 }
 
 fn pn_band(p: PnPalette, t: f32) -> vec4f {
     let n = clamp(p.count, 1, 32);
-    var c = p.colours;
-    return c[clamp(i32(floor(clamp(t, 0.0, 1.0) * f32(n))), 0, n - 1)];
+    return params._pn_colours[p.first + clamp(i32(floor(clamp(t, 0.0, 1.0) * f32(n))), 0, n - 1)];
 }
 "#;
 
@@ -446,6 +449,8 @@ impl Layouts {
 pub(crate) struct Field {
     spec: ParamSpec,
     offset: u32,
+    /// For a palette: its number among the shader's palettes, and where its colours start.
+    palette: Option<(u32, u32)>,
 }
 
 /// What a pass needs per render besides its target.
@@ -707,15 +712,24 @@ pub(crate) fn pack(fields: &[Field], size: u64, param: &dyn Fn(&str) -> Option<V
     for f in fields {
         let value =
             param(&f.spec.name).and_then(|v| f.spec.check(&v).ok()).unwrap_or_else(|| f.spec.default.clone());
-        let words = words(&f.spec, &value);
-        for (i, word) in words.iter().enumerate() {
-            let at = f.offset as usize + i * 4;
-            if let Some(slot) = out.get_mut(at..at + 4) {
-                slot.copy_from_slice(word);
-            }
+        if let Some((number, colours_at)) = f.palette {
+            let (head, colours) = palette_words(&value, number);
+            put(&mut out, f.offset, &head);
+            put(&mut out, colours_at, &colours);
+        } else {
+            put(&mut out, f.offset, &words(&f.spec, &value));
         }
     }
     out
+}
+
+fn put(out: &mut [u8], offset: u32, words: &[[u8; 4]]) {
+    for (i, word) in words.iter().enumerate() {
+        let at = offset as usize + i * 4;
+        if let Some(slot) = out.get_mut(at..at + 4) {
+            slot.copy_from_slice(word);
+        }
+    }
 }
 
 /// The 4-byte words of one value, little-endian.
@@ -733,23 +747,24 @@ fn words(spec: &ParamSpec, value: &Value) -> Vec<[u8; 4]> {
         (ParamKind::Float | ParamKind::Vec(_) | ParamKind::Color, v) => {
             v.components().unwrap_or(&[]).iter().map(|x| (*x as f32).to_le_bytes()).collect()
         }
-        (ParamKind::Palette, v) => palette_words(v),
         _ => Vec::new(),
     }
 }
 
-/// A `PnPalette`: the count, three words of padding, then [`palette::MAX_COLOURS`] colours.
-/// Names the built-in set does not know (the project's own) resolve to nothing here: the node
-/// puts those in as hex colours before the pass reads them.
-fn palette_words(value: &Value) -> Vec<[u8; 4]> {
+/// A palette's words: its `PnPalette` (the count, the index of its first colour, two of padding)
+/// and its [`palette::MAX_COLOURS`] colours. Names the built-in set does not know (the project's
+/// own) resolve to nothing here: the node puts those in as hex colours before the pass reads them.
+fn palette_words(value: &Value, number: u32) -> (Vec<[u8; 4]>, Vec<[u8; 4]>) {
     let colours = palette::resolve(value, &[]).ok().flatten().map(|p| p.colours).unwrap_or_default();
     let count = i32::try_from(colours.len().min(palette::MAX_COLOURS)).unwrap_or(0);
-    let mut out = vec![count.to_le_bytes(), [0; 4], [0; 4], [0; 4]];
+    let first = i32::try_from(number as usize * palette::MAX_COLOURS).unwrap_or(0);
+    let head = vec![count.to_le_bytes(), first.to_le_bytes(), [0; 4], [0; 4]];
+    let mut out = Vec::with_capacity(palette::MAX_COLOURS * 4);
     for i in 0..palette::MAX_COLOURS {
         let c = colours.get(i).copied().unwrap_or([0.0; 4]);
         out.extend(c.iter().map(|x| (*x as f32).to_le_bytes()));
     }
-    out
+    (head, out)
 }
 
 /// The WGSL type of a parameter's field; `None` for text and files.
@@ -766,13 +781,16 @@ fn wgsl_type(spec: &ParamSpec) -> Option<&'static str> {
     })
 }
 
-/// `struct Params` and the choice constants.
+/// `struct Params`, the choice constants and, with palettes, the functions that read them.
 pub(crate) fn params_wgsl(params: &[ParamSpec]) -> String {
+    let palettes = params.iter().filter(|p| matches!(p.kind, ParamKind::Palette)).count();
     let mut s = String::from("struct Params {\n");
     let mut any = false;
     for p in params {
         if let Some(ty) = wgsl_type(p) {
-            let _ = writeln!(s, "    {}: {ty},", p.name);
+            // A struct in a uniform starts on a multiple of 16 bytes.
+            let align = if matches!(p.kind, ParamKind::Palette) { "@align(16) " } else { "" };
+            let _ = writeln!(s, "    {align}{}: {ty},", p.name);
             any = true;
         }
     }
@@ -780,7 +798,13 @@ pub(crate) fn params_wgsl(params: &[ParamSpec]) -> String {
         // WGSL structs cannot be empty.
         s.push_str("    _pn_unused: f32,\n");
     }
+    if palettes > 0 {
+        let _ = writeln!(s, "    _pn_colours: array<vec4f, {}>,", palettes * palette::MAX_COLOURS);
+    }
     s.push_str("}\n");
+    if palettes > 0 {
+        s.push_str(PALETTE_FUNCTIONS);
+    }
     for p in params {
         if let ParamKind::Choice(choices) = &p.kind {
             for (i, c) in choices.iter().enumerate() {
@@ -805,13 +829,21 @@ pub(crate) fn layout(module: &naga::Module, params: &[ParamSpec]) -> Result<(Vec
             _ => None,
         })
         .ok_or_else(|| Error::new("the shader must not declare its own `Params`"))?;
+    let colours = members.iter().find(|m| m.name.as_deref() == Some("_pn_colours")).map_or(0, |m| m.offset);
+    let mut palettes = 0u32;
     let mut fields = Vec::new();
     for p in params.iter().filter(|p| wgsl_type(p).is_some()) {
         let m = members
             .iter()
             .find(|m| m.name.as_deref() == Some(p.name.as_str()))
             .ok_or_else(|| Error::new(format!("param `{}` is missing from `Params`", p.name)))?;
-        fields.push(Field { spec: p.clone(), offset: m.offset });
+        let palette = matches!(p.kind, ParamKind::Palette).then(|| {
+            let number = palettes;
+            palettes += 1;
+            let bytes_per_palette = u32::try_from(palette::MAX_COLOURS * 16).unwrap_or(u32::MAX);
+            (number, colours.saturating_add(number.saturating_mul(bytes_per_palette)))
+        });
+        fields.push(Field { spec: p.clone(), offset: m.offset, palette });
     }
     // Uniform buffers are bound in multiples of 16 bytes.
     Ok((fields, u64::from(span).div_ceil(16).max(1) * 16))
@@ -943,6 +975,46 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         let none = |_: &str| None;
         pass.render(&gpu, &target, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &none }).unwrap();
         assert_eq!(gpu.read(&target).unwrap().get(0, 1).unwrap()[3], 0.0);
+        assert_eq!(gpu.errors().count, 0);
+    }
+
+    /// Each palette finds its own colours wherever it sits among the params.
+    #[test]
+    fn several_palettes_keep_their_own_colours() {
+        let Some(gpu) = gpu() else { return };
+        let src = "@fragment fn main(v: PnVertex) -> @location(0) vec4f {
+            switch i32(v.uv.x * 4.0) {
+                case 0: { return pn_palette(params.a, -1); }
+                case 1: { return pn_colormap(params.b, 1.0); }
+                case 2: { return pn_band(params.c, 0.0); }
+                default: {
+                    return vec4f(f32(params.a.count), f32(params.b.count), f32(params.c.count), params.gain) / 4.0;
+                }
+            }
+        }";
+        let specs = [
+            ParamSpec::palette("a", ""),
+            ParamSpec::float("gain", 1.0),
+            ParamSpec::palette("b", ""),
+            ParamSpec::palette("c", ""),
+        ];
+        let pass = Pass::compile(&gpu, "palettes", src, &specs).unwrap();
+        let target = Tex::new(&gpu, 4, 1, "t").unwrap();
+        let value = |name: &str| match name {
+            "a" => Some(Value::Text("ff0000 00ff00".into())),
+            "b" => Some(Value::Text("00ff00 0000ff ff0000".into())),
+            "c" => Some(Value::Text("0000ff".into())),
+            "gain" => Some(Value::Float(2.0)),
+            _ => None,
+        };
+        pass.render(&gpu, &target, &PassInput { inputs: &[], seconds: 0.0, frame: 0, param: &value })
+            .unwrap();
+        let px = gpu.read(&target).unwrap();
+        // Colour -1 of a, wrapped: the last of its two.
+        assert_eq!(px.get(0, 0).unwrap(), [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(px.get(1, 0).unwrap(), [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(px.get(2, 0).unwrap(), [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(px.get(3, 0).unwrap(), [0.5, 0.75, 0.25, 0.5]);
         assert_eq!(gpu.errors().count, 0);
     }
 }

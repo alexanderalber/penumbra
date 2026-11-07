@@ -20,6 +20,7 @@ more channels.
 - `/level` is the loudness, smoothed so that it falls in 0.45 s.
 - `/hit` is each kick with a 0.22 s fade.
 - `/slow_level` is the loudness over several seconds.
+- `/soft` is `/slow_level` plus 0.45: how softly the morph melts.
 - `/flight` adds up the level, so it only grows. `/rate` scales the level first. A channel that
   only grows moves the camera forward without a jump.
 - `/orbit` adds up the level into degrees, from -180 to 180.
@@ -34,7 +35,8 @@ more channels.
 | `/hue` | `hue` | `hue` | `hue` |
 | `/flight` | `travel` | `phase` | `phase` |
 | `/orbit` | | `orbit_angle` | `orbit_angle` |
-| `/slow_level` | | `blend` | `morph` |
+| `/soft` | | `blend` | |
+| `/slow_level` | | | `morph` |
 | `/julia` | | | `julia` |
 
 Leave `speed` and `orbit` alone on the shaders: changing them live makes the camera jump. Bind

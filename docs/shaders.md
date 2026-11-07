@@ -44,7 +44,7 @@ shader declaring one of those names does not load, so call a line width `line`, 
 | `vec2`, `vec3`, `vec4` | `vec2f` to `vec4f` |
 | `color` | `vec4f`, linear, straight alpha |
 | `choice(a\|b\|c)` | `i32`, plus a constant per entry: `const <name>_a: i32` |
-| `palette` | `PnPalette`: `count` and up to 32 `colours`, linear, straight alpha (see [Palettes](concepts.md#palettes)) |
+| `palette` | `PnPalette`: `count`, and up to 32 colours, linear, straight alpha, read with the functions below (see [Palettes](concepts.md#palettes)) |
 
 The default is JSON (`1.5`, `[1, 0, 0, 1]`, `true`), a bare word for a choice, a name or hex
 colours for a palette (`blood`, `31aaa9 f8e0a4`); without one it is zero, false, the first

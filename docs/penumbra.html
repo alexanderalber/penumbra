@@ -849,7 +849,7 @@ water      15
 <tr><td><code>level</code></td><td>loudness, 0 to 1</td></tr>
 <tr><td><code>low</code>, <code>mid</code>, <code>high</code></td><td>loudness of the bands below 150 Hz, between, above 2.5 kHz (params <code>low</code>, <code>high</code>)</td></tr>
 <tr><td><code>onset</code></td><td>1 in the frame a sound starts (a hit, a note), else 0</td></tr>
-<tr><td><code>kick</code></td><td>1 in the frame a sound starts in the low band</td></tr>
+<tr><td><code>kick</code></td><td>1 in the frame a sound starts in the low band. A low band quieter than <code>floor</code> gives none</td></tr>
 <tr><td><code>beat</code></td><td>0 at each beat, rising to 1 at the next: drive anything that should move with the beat. Keeps running at the last tempo while not <code>locked</code></td></tr>
 <tr><td><code>tick</code></td><td>1 in the frame a beat starts, only while <code>locked</code> or <code>coasting</code></td></tr>
 <tr><td><code>bar</code></td><td>0 at each bar's first beat, rising to 1 at the next bar</td></tr>
@@ -1780,7 +1780,7 @@ fn main(v: PnVertex) -&gt; @location(0) vec4f {
 <tr><td><code>vec2</code>, <code>vec3</code>, <code>vec4</code></td><td><code>vec2f</code> to <code>vec4f</code></td></tr>
 <tr><td><code>color</code></td><td><code>vec4f</code>, linear, straight alpha</td></tr>
 <tr><td><code>choice(a|b|c)</code></td><td><code>i32</code>, plus a constant per entry: <code>const &lt;name&gt;_a: i32</code></td></tr>
-<tr><td><code>palette</code></td><td><code>PnPalette</code>: <code>count</code> and up to 32 <code>colours</code>, linear, straight alpha (see <a href="#concepts-palettes">Palettes</a>)</td></tr>
+<tr><td><code>palette</code></td><td><code>PnPalette</code>: <code>count</code>, and up to 32 colours, linear, straight alpha, read with the functions below (see <a href="#concepts-palettes">Palettes</a>)</td></tr>
 </tbody>
 </table>
 <p>The default is JSON (<code>1.5</code>, <code>[1, 0, 0, 1]</code>, <code>true</code>), a bare word for a choice, a name or hex colours for a palette (<code>blood</code>, <code>31aaa9 f8e0a4</code>); without one it is zero, false, the first choice or no palette (<code>count</code> 0, every colour transparent black). The range is the slider's; typed values may go beyond it. Examples:</p>
@@ -2060,7 +2060,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <li><code>resize</code> is refused while recording: every frame has one size.
 </li>
 </ul>
-<p><a class="ref" href="#cook.stepping"><code>cook.stepping {on?}</code></a> and <a class="ref" href="#cook.step"><code>cook.step {frames?}</code></a> are the commands underneath. With stepping on, neither the timer nor a projector's vsync moves the clock. Each <a class="ref" href="#cook.step"><code>cook.step</code></a> cooks the given number of frames at once and answers with the frame and the pass. Stepping off, the show goes on from where the steps left it. While stepping, a node that reads a picture back (<a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a>, <a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a>) waits for the GPU. So its channels belong to the frame they were read in, however slow the GPU. Live, it waits at most 4 ms and otherwise shows the result a frame later.</p>
+<p><a class="ref" href="#cook.stepping"><code>cook.stepping {on?}</code></a> and <a class="ref" href="#cook.step"><code>cook.step {frames?}</code></a> are the commands underneath. With stepping on, neither the timer nor a projector's vsync moves the clock. Each <a class="ref" href="#cook.step"><code>cook.step</code></a> cooks the given number of frames at once and answers with the frame and the pass, once the GPU has drawn them. So a read-back right after a long step does not have to wait for queued frames. Stepping off, the show goes on from where the steps left it. While stepping, a node that reads a picture back (<a class="ref" href="#chan.from_tex"><code>chan.from_tex</code></a>, <a class="ref" href="#tex.blob_track"><code>tex.blob_track</code></a>) waits for the GPU. So its channels belong to the frame they were read in, however slow the GPU. Live, it waits at most 4 ms and otherwise shows the result a frame later.</p>
 <h3 id="control-environment-variables">Environment variables</h3>
 <table>
 <thead><tr><th></th><th></th></tr></thead>
@@ -3720,7 +3720,7 @@ claude mcp add penumbra -- C:\penumbra\penumbra-cli.exe --port 9881 mcp
 <tr><td><code>max_bpm</code></td><td>float</td><td><code>180</code></td><td>80 to 300 (soft)</td><td>The fastest tempo considered, in beats per minute; see min_bpm</td></tr>
 <tr><td><code>superflux</code></td><td>bool</td><td><code>false</code></td><td></td><td>Finds the beat in a noisy room: the onsets ignore the slow wobble of broadband noise. Costs a little in clean sound and in reverb, so leave it off unless the room is loud</td></tr>
 <tr class="section"><th colspan="5">levels</th></tr>
-<tr><td><code>floor</code></td><td>float</td><td><code>-60</code></td><td>-90 to -20 dB (soft)</td><td>Quieter than this counts as silence: with normalize, levels and spectrum read 0. Set it above the room's noise, so a silent room reads 0</td></tr>
+<tr><td><code>floor</code></td><td>float</td><td><code>-60</code></td><td>-90 to -20 dB (soft)</td><td>Quieter than this counts as silence: with normalize, levels and spectrum read 0, and a low band quieter than this gives no kick. Set it above the room's noise, so a silent room reads 0</td></tr>
 <tr><td><code>trim</code></td><td>float</td><td><code>0</code></td><td>-24 to 24 dB</td><td>Makes the sound louder or quieter for the analysis only. Lift a quiet microphone until it is above floor. The rms and peak channels still show the sound as it comes in</td></tr>
 <tr><td><code>low</code></td><td>float</td><td><code>150</code></td><td>40 to 500 Hz (soft)</td><td>Where the low band ends: the low channel is the level below this frequency</td></tr>
 <tr><td><code>high</code></td><td>float</td><td><code>2500</code></td><td>1000 to 8000 Hz (soft)</td><td>Where the high band starts: the high channel is the level above this frequency. The mid channel covers the band between low and high</td></tr>

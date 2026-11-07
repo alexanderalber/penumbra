@@ -3,14 +3,14 @@
 // ring, diamond and capsule. It animates with nothing wired in.
 // @param energy float = 0.35 0..1 -- swells the shapes and brightens the glow. Good for the music's level.
 // @param kick float = 0 0..1 -- pushes the shapes outward for a moment. Good for a beat.
-// @param blend float = 0.65 0.05..1.5 -- how softly the shapes melt into each other.
+// @param blend float = 1.0 0.05..1.5 -- how softly the shapes melt into each other.
 // @param hue float = 0 0..1 -- moves the shapes along the palette.
 // @param colours palette = ff2e63 08d9d6 ff9a00 7c3aed -- colours of the shapes. With no palette, a built-in rainbow.
 // @param speed float = 1 0..4 -- speed of the drift. Changing it makes the shapes jump, so set it once and bind `phase` instead.
 // @param phase float = 0 0..1000 -- seconds added to the drift. Bind a channel that only grows.
 // @group shape
 // @param shapes int = 5 2..6 -- number of shapes.
-// @param spread float = 1.5 0..2 -- how far the shapes move from the centre.
+// @param spread float = 1.6 0..2 -- how far the shapes move from the centre.
 // @param form float = 0.7 0..1 -- 0 keeps every shape a round ball, 1 shows the full box, ring and diamond.
 // @param ripple float = 0.2 0..1 -- waves on the surface.
 // @group camera
@@ -48,13 +48,8 @@ var<private> rim_b: vec3f;
 var<private> rim_c: vec3f;
 
 fn pick(t: f32) -> vec3f {
-    let n = params.colours.count;
-    if n > 0 {
-        // Reads the palette directly: pn_colormap copies all 32 colours per call.
-        let x = fract(t) * f32(n - 1);
-        let i = clamp(i32(x), 0, n - 1);
-        let j = min(i + 1, n - 1);
-        return mix(params.colours.colours[i].rgb, params.colours.colours[j].rgb, x - f32(i));
+    if params.colours.count > 0 {
+        return pn_colormap(params.colours, fract(t)).rgb;
     }
     return pow(0.5 + 0.5 * cos(TAU * (t + vec3f(0.0, 0.33, 0.67))), vec3f(2.2));
 }
@@ -113,7 +108,7 @@ fn scene(p: vec3f) -> vec4f {
             let h = clamp(0.5 + 0.5 * (d - e) / soft, 0.0, 1.0);
             d = mix(d, e, h) - soft * h * (1.0 - h);
             // A narrower blend than the surface's keeps the colours pure away from the seam.
-            col = mix(col, slot_colour[i], smoothstep(0.25, 0.75, h));
+            col = mix(col, slot_colour[i], smoothstep(0.1, 0.9, h));
         }
     }
     if ripple_size > 0.0005 {
@@ -190,7 +185,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         let a = t * (0.21 + 0.05 * f) + f * 2.399;
         let b = t * (0.17 + 0.03 * f) + f * 1.3;
         // Each shape swings in to the centre and out again, so the shapes keep meeting.
-        let reach = spread * (0.5 + 0.5 * sin(t * (0.31 + 0.04 * f) + f * 1.9));
+        let reach = spread * (0.65 + 0.35 * sin(t * (0.31 + 0.04 * f) + f * 1.9));
         slot_pos[i] = reach * vec3f(
             sin(a) * cos(b * 0.7),
             0.75 * sin(b + f),
@@ -198,7 +193,7 @@ fn main(v: PnVertex) -> @location(0) vec4f {
         );
         slot_axes[i] = rot_y(t * 0.4 + f) * rot_x(t * 0.33 + 2.1 * f);
         slot_colour[i] = pick(params.hue + f / f32(slot_count));
-        slot_radius[i] = (0.58 + 0.13 * sin(t * 0.7 + f * 1.7)) * (1.0 + 0.25 * energy);
+        slot_radius[i] = (0.5 + 0.12 * sin(t * 0.7 + f * 1.7)) * (1.0 + 0.25 * energy);
         // Each shape holds its form, then changes to the next one over its last 30 %.
         let cycle = t / 7.0 + f * 0.37;
         let n = floor(cycle);

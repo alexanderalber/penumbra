@@ -53,8 +53,8 @@ const MAX_READ_SECONDS: f64 = 2.0;
 /// First word of a cache file.
 const MAGIC: &str = "penumbra-envelopes";
 /// Raised whenever the analysis, the resampling or the file's layout changes what a hop holds
-/// (2: the coarse spectrum).
-const VERSION: u32 = 2;
+/// (2: the coarse spectrum, 3: a kick needs sound in the low band).
+const VERSION: u32 = 3;
 /// Bands of the coarse spectrum, log-spaced from [`crate::analysis::SPECTRUM_LOW`] to
 /// [`crate::analysis::SPECTRUM_HIGH`].
 pub const SPECTRUM_BANDS: usize = 32;

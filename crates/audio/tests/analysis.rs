@@ -504,6 +504,54 @@ fn a_minute_of_room_noise_makes_no_tick() {
     }
 }
 
+/// A falling sine of `seconds` at `hz`, `gain` after a 5 ms attack, added into `out` at `at` seconds.
+fn add_hit(out: &mut [f32], rate: f64, at: f64, hz: f64, seconds: f64, gain: f64) {
+    let first = (at * rate) as usize;
+    for i in 0..(seconds * rate) as usize {
+        let s = i as f64 / rate;
+        let attack = (s / 0.005).min(1.0);
+        let v = (std::f64::consts::TAU * hz * s).sin() * (-s * 5.0 / seconds).exp() * gain * attack;
+        if let Some(o) = out.get_mut(first + i) {
+            *o += v as f32;
+        }
+    }
+}
+
+fn kicks(frames: &[(f64, Features)], after: f64) -> usize {
+    frames.iter().filter(|(t, f)| *t > after && f.kick).count()
+}
+
+/// With nothing in the low band, the picker's threshold has no kick to measure against. Notes
+/// far above the band must not read as kicks; a quiet kick still does.
+#[test]
+fn a_kick_needs_sound_in_the_low_band() {
+    let rate = 48_000.0;
+    let (seconds, step) = (10.0, 60.0 / 256.0);
+    let settings = Settings::default();
+    let mut notes = vec![0.0f32; (rate * seconds) as usize];
+    let mut at = 0.2;
+    while at < seconds - 0.3 {
+        add_hit(&mut notes, rate, at, 2_000.0, 0.2, 0.3);
+        at += step;
+    }
+    let frames = run(rate, &notes, &settings);
+    assert_eq!(kicks(&frames, 4.0), 0, "kicks in notes at 2 kHz");
+    // Without the floor the same notes do read as kicks.
+    let no_floor = Settings { floor_db: -200.0, ..Settings::default() };
+    assert!(kicks(&run(rate, &notes, &no_floor), 4.0) > 10);
+    // The same notes over a kick 30 dB down, one every other note.
+    let mut mixed = notes.clone();
+    let mut hits = 0;
+    let mut at = 0.2;
+    while at < seconds - 0.3 {
+        add_hit(&mut mixed, rate, at, 60.0, 0.15, 0.03);
+        hits += usize::from(at > 4.0);
+        at += step * 2.0;
+    }
+    let found = kicks(&run(rate, &mixed, &settings), 4.0);
+    assert!(found.abs_diff(hits) <= 1, "{found} kicks for {hits} hits");
+}
+
 #[test]
 fn superflux_finds_the_beat_in_noise_and_in_clean_sound() {
     let rate = 48_000.0;
