@@ -1,11 +1,13 @@
 # music-synthwave
 
 A complete music show on one song, with no hand-placed cues. A synthwave world flies to
-krzna's "Tell Me What You Want" (5:14, 120 BPM). At the drop after the break, the world rolls up
+Krzna's "Tell Me What You Want" (5:14, 120 BPM). At the drop after the break, the world rolls up
 into a tunnel. penumbra finds the song's beats, sections and break, and one command writes the
 arrangement from them.
 
-The song is by krzna and comes with this example with the producer's permission. It is not under
+The song is by Krzna and comes with this example with the producer's permission. Find Krzna on
+[SoundCloud](https://soundcloud.com/k_r_z_n_a) and
+[Spotify](https://open.spotify.com/artist/73iQd7lpsRbWXwlsc1cY1w). The song is not under
 penumbra's licences; see [MUSIC-LICENSE.md](MUSIC-LICENSE.md).
 
 Look at `/out`, from the start of the song. The sound plays on the system's default output.
@@ -32,7 +34,7 @@ Over the last 8 bars before a new section, nebula and galaxy brighten.
 
 ## How it is built
 
-**The network.** The top level reads left to right, 17 nodes and 3 notes. `/music`, `/speakers`
+**The network.** The top level reads left to right, 17 nodes and 4 notes. `/music`, `/speakers`
 and `/grid_beats` are the sound and its grid. `/arrangement` holds the table. `/floor_slot`,
 `/ceiling_slot`, `/sky_slot` and `/mid_slot` hold the elements. `/stage` and `/tunnel` draw them,
 `/stages` shows one of the two, `/post_slot` draws over the picture, `/out` and `/preview` show
