@@ -1,7 +1,7 @@
 # music-synthwave
 
 A complete music show on one song, with no hand-placed cues. A synthwave world flies to
-Krzna's "Tell Me What You Want" (5:14, 120 BPM). At the drop after the break, the world rolls up
+Krzna's "Tell Me What You Want" (5:16, 120 BPM). At the drop after the break, the world rolls up
 into a tunnel. penumbra finds the song's beats, sections and break, and one command writes the
 arrangement from them.
 
@@ -21,9 +21,9 @@ work on that CPU. The picture stands still until then. Later opens find the resu
 
 | time | what happens |
 |---|---|
-| 0:02 to 0:13 | the song is nearly silent; sky and glider first, then the mountains, then the lamps |
-| 0:13 | first drop: every slot swaps, wireframe blocks shoot out of the floor on the beat, the sun, the HUD and the scanlines come on |
-| 0:32 to 2:22 | a change about every 16 s, each swapping one slot: palms, horse, mountains; sun, aurora, skyline; particles, lasers, glider |
+| 0:02 to 0:15 | the song is nearly silent; sky and glider first, then the mountains, then the lamps |
+| 0:15 | first drop: every slot swaps, wireframe blocks shoot out of the floor on the beat, the sun, the HUD and the scanlines come on |
+| 0:30 to 2:22 | a change about every 16 s, each swapping one slot: palms, horse, mountains; sun, aurora, skyline; particles, lasers, glider |
 | 2:22 | the break: no bass for 26 s. The floor breaks off in gaps, the glider flies on over nothing, only the galaxy stays in the sky |
 | 2:48 | the drop: the floor rolls up into the tunnel over 4 s, with the fade's middle on the drop |
 | 2:48 to 4:54 | the tunnel: rings of equaliser bars fly past in every row; glider, lasers or particles between them |
@@ -100,7 +100,7 @@ beats.arrange {path: "/grid_beats", under: "/arrangement",
 
 No cell of the table is edited by hand. On this song the call gives 21 rows:
 
-- `find_break` finds the break from 2:21.90 to 2:47.88.
+- `find_break` finds the break from 2:21.82 to 2:48.06.
 - `split_bars: 8` cuts the sections every 8 bars, so a slot swaps about every 16 s.
 - `stage_gap: 120` allows the stage to change at the drop after the break. The stage stays on
   `/tunnel` to the end, since there is no second break.
@@ -153,9 +153,9 @@ audio.seek {path: "/music", seconds: 0}
 video_out.start {path: "/film"}
 ```
 
-The song ends after 5:14.57. `video_out.stop {path: "/film"}` finishes the file. A window of the
+The song ends after 5:16.00. `video_out.stop {path: "/film"}` finishes the file. A window of the
 app drops a frame when a frame takes too long. For a film with every frame, use `cook.stepping`
-and `cook.step` in a [headless script](../../docs/control.md). The whole song that way took 6:15 on an RTX 3090: 18 875 frames at 1920 x 1080, none dropped, 1.6 GB with `encoder: gpu` and `preset: best`.
+and `cook.step` in a [headless script](../../docs/control.md). The whole song that way took about 6 minutes on an RTX 3090 at 1920 x 1080: no frame dropped, about 1.6 GB with `encoder: gpu` and `preset: best`.
 
 ## Try
 
